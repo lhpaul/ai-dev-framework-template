@@ -528,6 +528,12 @@ Not applicable — no user interface in this repository.
     `<path><TAB><platform><TAB><body>` representation would corrupt.
 7c. Each record carries its platform, and the summary names the platform that
     produced the finding which kept the round non-small.
+7e. The stored record carries the body **as received**: with a body emitted as
+    `some prose\ndecision matrix is wrong`, the record's body field is
+    byte-identical to what the reviewer wrote, not the space-normalised form.
+    The normalisation exists only as the matcher's input, and the record is the
+    single place the raw text survives — the summary carries derived causes,
+    never bodies.
 8. The consecutive count stops at the first ledger entry whose recorded head
    differs from the current head: with two prior small rounds on an older head
    and one on the current head, the count is 1, not 3, and the stop reason is
@@ -642,11 +648,11 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 8, 8a, 8b, 8c, 9, 9a, 9b,
+  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 7e, 8, 8a, 8b, 8c, 9, 9a, 9b,
   10, 10a, 10b, 11 and 14, as new cases in the existing `HARNESS_MODE=1`
   harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all fifteen of them
-  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 8a, 8b, 8c, 9a, 9b, 10a, 10b) guard a
+  sub-lettered scenarios are the ones a range drops, and all sixteen of them
+  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 7e, 8a, 8b, 8c, 9a, 9b, 10a, 10b) guard a
   behavior the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12 and 13, the two replay regressions, which need
@@ -689,7 +695,7 @@ demonstrated runs per proof, each citing a concrete file and line. The twenty-on
 | P15 | Deduplicate the findings array by path, keeping the first record | a scratch copy of the collector | scenario 7a fails when the cosmetic finding sorts first: the contract finding is dropped and the round is classified small; restoring the non-deduplicating collection passes |
 | P17 | Replace the JSON record with a tab-separated one | a scratch copy of the collector | scenario 7d fails: a path or body containing a tab shifts the columns, the platform and body fields are read from the wrong text, and a contract-bearing blocker is classified against corrupted data; restoring the JSON record passes |
 | P16 | Match the contract-surface test against the raw body without normalising `\n` | a scratch copy of the classifier | scenario 7b fails, because a term following a line break abuts the sequence and misses the word boundary; restoring the normalisation passes |
-| P18 | Use the normalised body as the stored record and summary value | a scratch copy of the collector | the record no longer carries the body as received, so the summary misreports what the reviewer wrote; restoring the raw value for storage passes while scenario 7b still passes |
+| P18 | Store the normalised body in the finding record instead of the raw one | a scratch copy of the collector | scenario 7e fails: the stored record no longer carries the body as received, so the one place the raw reviewer text survives has been overwritten with the matcher's input; restoring the raw value for storage passes while scenario 7b still passes |
 | P14 | Break the contract-surface matching entirely, returning failure for every body | a scratch copy of the tier-2 predicate | scenario 12a fails, because a #1661-shaped ledger on a non-normative path terminates; scenario 12 still passes, which is exactly why 12a exists. Restoring the predicate passes both |
 | P20 | Narrow the acceptance-criteria pattern to a single digit | a scratch copy of the surface list | scenario 4b fails on `AC-10` and `AC-147`, so contract findings citing any criterion past nine are classified small on tier-2 paths; restoring `AC-[0-9]+` passes |
 | P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
@@ -803,7 +809,7 @@ and neither may claim that *every* finding on a normative document is non-small
 | The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The normative-document list is narrow and enumerated: `docs/project/**`, fixtures, snapshots and `CHANGELOG.md` stay in the second tier, where a cosmetic blocking finding is still small. Scenarios 3, 6 and 13 assert the mechanism still fires there, and proof P6 plants the widening |
 | The classification depends on reviewers using particular vocabulary | **High** | High — a contract finding worded as *"required error handling is missing"* contains no listed term and would be cleared as small, which is the original bug for ordinary wording | The vocabulary test is never the only guard: tier 1 makes a blocking finding on a normative document non-small whatever it says, and tier 2's escalation applies only where a cosmetic tail is still wanted. Scenario 2's third case uses a contract finding with no listed term, and proof P12 drops tier 1 and requires it to fail |
 | The contract-surface test is written as a deny-list of cosmetic terms | Med | High — an unrecognised contract finding would be classified small, reproducing the bug | The test is an explicit allow-list of surfaces, and a body it does not recognise falls through to the path rule rather than being declared cosmetic; proof P3 plants the inversion |
-| Path/body pairing is lost in collection | Med | High — a body would be classified against the wrong path, or a contract finding sharing a path with a cosmetic one would be dropped and the round called small | Findings are collected as one compact JSON object per finding in a dedicated array that is explicitly **not** deduplicated, separate from the existing path array; scenarios 7a and 7c and proof P15 pin it |
+| Path/body pairing is lost in collection | Med | High — a body would be classified against the wrong path, or a contract finding sharing a path with a cosmetic one would be dropped and the round called small | Findings are collected as one compact JSON object per finding in a dedicated array that is explicitly **not** deduplicated, separate from the existing path array; scenarios 7a and 7d and proof P15 pin it |
 | A delimiter-separated record is corrupted by its own data | Med | High — git paths may contain tabs and finding bodies are not tab-escaped, so a column shift would classify a blocker against the wrong text | The record is JSON built with `jq --arg` and read with `jq -r`, which escapes and decodes every field including tabs, quotes and backslashes; `jq` is already a hard dependency. Scenario 7d covers all four hostile characters and proof P17 plants the tab-separated form |
 | The encoded body is matched without normalisation | Med | Med — a contract term following a line break abuts the `\n` sequence and misses the word boundary, so the finding is classified small | The sequence is replaced with a space before matching; scenario 7b and proof P16 pin it |
 | The producer's newline encoding is treated as reversible | Med | Med — `local-ai-reviewer.sh` does not escape pre-existing backslashes, so a real newline and a literal `\n` are indistinguishable downstream, and a plan that claims to decode them would be specifying something impossible | The plan normalises rather than decodes, states the encoding is lossy, and shows the classification is correct for either original; scenario 7b-i pins both. The raw value is still what is stored and displayed, which proof P18 protects |
@@ -931,14 +937,14 @@ reviewer_loop_finding_touches_contract_surface() {
    `aggregate_blocking_findings`. Before matching, **replace** each occurrence
    of the two-character sequence `\n` with a single space — a normalisation
    applied only to the string handed to the matcher. Do **not** decode it: the
-   producer's encoding is lossy and not reversible, and the stored and
-   summarised body must remain the value as received. Then replace
+   producer's encoding is lossy and not reversible, and the **stored** body
+   must remain the value as received. Then replace
    `reviewer_loop_all_paths_non_shipped` with
    `reviewer_loop_all_findings_are_small`. **Verify**: scenarios 5, 6, 7, 7a,
-   7b, 7b-i, 7c and 7d — in particular that two findings on one path both
+   7b, 7b-i, 7c, 7d and 7e — in particular that two findings on one path both
    survive collection, that a path or body containing a tab is classified from
-   intact fields, and that a real newline and a literal `\n` give the same
-   answer. Record in the PR whether any caller outside this
+   intact fields, that a real newline and a literal `\n` give the same
+   answer, and that the record holds the un-normalised body. Record in the PR whether any caller outside this
    change set required the old name.
 4. Write `contributing_platforms[]` into each small-findings ledger entry,
    derived from the `platform` field of the `aggregate_blocking_findings`
