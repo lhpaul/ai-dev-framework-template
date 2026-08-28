@@ -83,19 +83,24 @@ the synthetic `unknown-…` placeholder never classifies as `current`.
 names the current PR head once and lists one row per configured platform, each
 row ending in `current`, `not-current`, or `not-reported`. The suite exits 0.
 
-### Step 2b: One head snapshot per iteration
+### Step 2b: One head snapshot, shared with the aggregate evidence
 
-**Maps to**: the single-capture rule in the plan's Layer-by-Layer changes.
+**Maps to**: the reuse-`loop_head_sha` rule in the plan's Layer-by-Layer
+changes.
 
-1. In the harness, mock `reviewer_loop_history_current_head_sha` so it returns a
-   different SHA on each call.
+1. In the harness, mock `gh pr view --json headRefOid` so it returns a
+   *different* SHA on every call.
 2. Run one loop iteration and read the rendered summary block, the ledger entry,
    and the emitted `LOCAL_AI_HEAD_CURRENT`.
+3. Compare the ledger entry's `classification_head` with the run's
+   `POST_CLEAN_HEAD_SHA`.
 
-**Expected result**: all three report the same current head and the same
-classification for each platform. A differing value in any of the three means a
-renderer re-read the live head instead of using the iteration snapshot, which
-the plan places out of bounds.
+**Expected result**: all three surfaces report the same current head and the
+same per-platform classification, and `classification_head` equals
+`POST_CLEAN_HEAD_SHA`. A differing value anywhere means a renderer issued its
+own lookup instead of reading the pre-dispatch `loop_head_sha`, which the plan
+places out of bounds. Confirm no `gh` call was added: the mock should be
+consulted the same number of times as on the unmodified script.
 
 ### Step 3: Reviewed heads recorded in the reviewer-loop ledger
 
@@ -160,16 +165,28 @@ fixture produces `verified`. The suite exits 0.
 value (platform not configured, or no head reported) does not block but must be
 named in the runner summary.
 
-### Step 7: Not-configured repositories are unaffected
+### Step 7: The three readiness states are distinguishable
 
-**Maps to**: the "downstream consumers" risk in the plan.
+**Maps to**: brief scope bullet 3 and the "downstream consumers" risk in the
+plan.
 
 1. Run the loop against a resolved platform list that omits
    `local-ai-reviewer`, using the harness mocks.
+2. Run it again with `local-ai-reviewer` in the list but mocked to report no
+   reviewed head.
+3. Run it a third time with `local-ai-reviewer` reporting the current head.
 
-**Expected result**: `LOCAL_AI_HEAD_CURRENT` is empty, the head-evidence block
-either is absent or lists only the configured platforms, and readiness is not
-blocked.
+**Expected result**:
+
+| Run | `LOCAL_AI_HEAD_CURRENT` | Readiness |
+| --- | --- | --- |
+| Platform not in the resolved list | key absent from the output | condition does not apply; not blocked |
+| Platform ran, reported no head | present and empty | **blocked** — missing evidence is not a pass |
+| Platform ran, head matches | `1` | not blocked |
+
+An absent key and an empty value must be distinguishable in the output; if the
+loop emits an empty key in the not-configured run, the fail-closed rule would
+stall every repository that does not configure the platform.
 
 ### Step 8: Static checks
 
