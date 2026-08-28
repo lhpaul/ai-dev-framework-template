@@ -449,7 +449,10 @@ rows. Proof P29.
 
 1. Render a record whose findings touch **twelve** distinct files, all path
    names short.
-2. Render a record touching twelve files whose paths each exceed 60 characters.
+2. Render a record touching twelve files whose paths are each **90 characters**
+   — a length derived from the budget, not chosen: the fixed parts take 116 and
+   this record's counts and remainder take 13, leaving about 71, so no path
+   fits.
 3. Render a record built from **eight** blocking findings spread over three
    files.
 4. Render an entry carrying twenty records with long paths.
@@ -466,7 +469,7 @@ most three paths and **always** the total file count. Case 1 names three of its
 twelve files. Case 2 names **zero** paths — the bound stops the list before the
 first one fits — and still states the total, the state and the classification: a
 valid line, not a failure — its path length is computed from the budget rather
-than picked, since "longer than 60 characters" still fits in an 87-character
+than picked, since "longer than 60 characters" still fits in a 71-character
 budget and would name one path, proving the opposite of what the case is for.
 Case 3 reports `path_total` **3**, not 8, and names three distinct files. Case 4
 adds at most twenty lines and 4,000 characters.
@@ -499,11 +502,12 @@ it is closed **without** abbreviating anything: both counts render in full —
 `9999999`, seven digits each — because AC-14 requires the total and the omitted
 count to be exact.
 
-The fixed parts occupy 102 characters (literals 42, reviewer 18, short SHA 8,
-label-and-classification 34), so what remains for the two counts, the
-remainder's own copy of the total, and at least zero paths is
-`blocking_digits + 2 × total_digits ≤ 98`. This case spends 21 of the 98.
-Exhausting it needs a 46-digit file count — not a number a diff can produce.
+The fixed parts occupy **116** characters — literals 56 (prefix 42, suffix 14),
+reviewer 18, short SHA 8, label-and-classification 34 — and the remainder text
+adds 8 literals plus its own copy of the total's digits. What remains for the
+two counts and at least zero paths is
+`blocking_digits + 2 × total_digits ≤ 76`. This case spends 21 of the 76.
+Exhausting it needs a 35-digit file count — not a number a diff can produce.
 
 The budget must be computed from the counts' **actual** width. A fixed
 reservation fails both ways: too small and a seven-digit count overflows the
