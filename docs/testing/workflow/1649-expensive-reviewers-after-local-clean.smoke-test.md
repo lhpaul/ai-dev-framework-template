@@ -68,15 +68,19 @@ The four conditions are: the local reviewer clean and current; every reviewer
 that **precedes** this one having produced acceptable evidence — a `clean`
 result, or a `skipped` one whose reason is a member of
 `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`, deliberately **not** every `skipped` and
-deliberately not "any reason that is not a known failure"; zero unresolved non-outdated review threads; and green
-non-reviewer baseline checks. Steps 3 and 3d pin the second condition's two
-halves.
+deliberately not "any reason that is not a known failure"; zero unresolved
+non-outdated review threads; and a non-empty set of non-reviewer baseline
+checks, all green. Steps 3 and 3d pin the second condition's two halves, and
+every fixture in this runbook drives condition 1 through the in-loop state
+rather than the stdout keys — see Step 3e.
 
 **Maps to**: brief scope bullet 1.
 
-1. Drive the condition fixture with `LOCAL_AI_CONFIGURED=1`,
-   `LOCAL_AI_HEAD_CURRENT=1`, every peer reviewer `clean`, zero unresolved
-   non-outdated threads, and all non-reviewer checks green.
+1. Drive the condition fixture through the **in-loop state**, never by
+   exporting the stdout keys: put `local-ai-reviewer` in the resolved platform
+   list, set its `platform_reviewed_heads` entry to `loop_head_sha`, mark every
+   preceding peer `clean`, leave zero unresolved non-outdated threads, and make
+   the non-reviewer check set non-empty and all green.
 
 **Expected result**: `EXPENSIVE_GATE_RESULT=dispatched`, an empty
 `EXPENSIVE_GATE_REASON`, `EXPENSIVE_GATE_HEAD` equal to the run's
@@ -328,7 +332,11 @@ script that disagree about what a bad value means would be its own defect.
 **Maps to**: brief scope bullet 3.
 
 1. Set `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1`.
-2. Run the gate with `LOCAL_AI_HEAD_CURRENT=0`.
+2. Run the gate with the `local-ai-reviewer` entry of `platform_reviewed_heads`
+   recording a head that is not `loop_head_sha`, so the derivation yields `0`
+   and condition 1 is unmet. As everywhere else, drive this through the in-loop
+   state rather than by exporting `LOCAL_AI_HEAD_CURRENT` — Step 3e requires the
+   gate to ignore that name.
 
 **Expected result**: `EXPENSIVE_GATE_RESULT=forced`,
 `EXPENSIVE_GATE_REASON=local_evidence_stale` still present,

@@ -311,8 +311,12 @@ Not applicable — this repository ships workflow tooling, not a service.
       `reviewer_loop_resolve_max_cycles` deliberately: two bounds resolvers in
       one script that disagree about what a bad value means is its own defect.
       Resolve once per run, not per gate call, and emit the effective value as
-      `EXPENSIVE_GATE_MAX_DEFERRALS` so the bound in force is visible alongside
-      `EXPENSIVE_GATE_DEFERRALS`.
+      `EXPENSIVE_GATE_MAX_DEFERRALS` on every gate call so the bound in force is
+      visible alongside `EXPENSIVE_GATE_DEFERRALS`. Resolve into a run-scoped
+      `expensive_gate_max_deferrals` variable before the platform iteration and
+      read that variable in the gate; resolving inside the gate would re-emit
+      the `WARN` once per expensive platform and re-parse a value that cannot
+      change within a run.
 - [ ] **The deferral counter is fail-closed only on a genuinely unreadable
       ledger — an absent one is the normal first run.** The counter mirrors the
       three states `reviewer_loop_history_entries_count` already distinguishes,
@@ -833,6 +837,10 @@ with mock `gh` commands and require no network access.
 ```bash
 # Illustrative — adapt during implementation.
 EXPENSIVE_REVIEWER_PLATFORMS=(codex-github)
+EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS=(not_configured explicit-skip release_pr unsupported-platform)
+
+# Resolved ONCE per run, before the platform iteration — not inside the gate.
+expensive_gate_max_deferrals="$(expensive_gate_resolve_max_deferrals)"
 
 is_expensive_reviewer_platform() {
   array_contains_value "$1" "${EXPENSIVE_REVIEWER_PLATFORMS[@]}"
@@ -884,6 +892,8 @@ expensive_reviewer_gate() {
   print_kv EXPENSIVE_GATE_HEAD "$head_sha"
   print_kv EXPENSIVE_GATE_REASON "$reason"
   print_kv EXPENSIVE_GATE_DEFERRALS "$deferrals"
+  # Resolved once per run into expensive_gate_max_deferrals, not per call.
+  print_kv EXPENSIVE_GATE_MAX_DEFERRALS "$expensive_gate_max_deferrals"
   if [ -n "$reason" ]; then
     if [ "${PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS:-0}" = "1" ]; then
       print_kv EXPENSIVE_GATE_RESULT forced
@@ -896,7 +906,7 @@ expensive_reviewer_gate() {
       print_kv EXPENSIVE_GATE_ESCALATION expensive_gate_deferral_budget_unreadable
       return 1
     fi
-    if [ "$deferrals" -ge "$(expensive_gate_resolve_max_deferrals)" ]; then
+    if [ "$deferrals" -ge "$expensive_gate_max_deferrals" ]; then
       # Stop cycling; escalate so a human sees which condition kept failing.
       print_kv EXPENSIVE_GATE_RESULT deferral_cap
       print_kv EXPENSIVE_GATE_ESCALATION expensive_gate_deferral_cap
