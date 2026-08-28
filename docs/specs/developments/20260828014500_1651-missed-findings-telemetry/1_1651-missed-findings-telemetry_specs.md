@@ -21,7 +21,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 | # | Objective (from #1651) | Where it is satisfied |
 | --- | --- | --- |
-| 1 | *Problem* — quantify whether the local reviewer reduces external rounds, by tracking what external reviewers found after a local clean result | Use Cases 1-6; the counting rule and the record-every-qualifying-round rule in Business Rules; the Decision Matrix rows 4-7; AC-1 through AC-7 |
+| 1 | *Problem* — quantify whether the local reviewer reduces external rounds, by tracking what external reviewers found after a local clean result | Use Cases 1-6; the counting rule and the record-every-qualifying-round rule in Business Rules; the Decision Matrix rows 5-8; AC-1 through AC-7 and AC-7a |
 | 2 | *Outcome* — the reviewer-loop history records missed-by-local findings when an external reviewer reports blockers after a local clean result | Use Case 1; AC-1 through AC-3; Operational Visibility, reviewer-loop history |
 | 3 | *Scope* — capture the reviewer | AC-1; Use Case 1, Information shown |
 | 4 | *Scope* — capture the head commit | AC-1; the attribution rule in Business Rules; AC-11 for the case where it cannot be established |
