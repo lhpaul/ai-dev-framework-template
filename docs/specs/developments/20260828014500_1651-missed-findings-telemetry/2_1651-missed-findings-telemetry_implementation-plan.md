@@ -479,9 +479,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       accident later.
 
 - [ ] **Build the records.** Add
-      `reviewer_loop_missed_finding_records <reviewed_head>`, returning a JSON
-      array with one object per **external** platform that reported blocking
-      findings this round:
+      `reviewer_loop_missed_finding_records`, returning a JSON array with one
+      object per **external** platform that reported blocking findings this
+      round. It takes **no** head argument: each platform's head is joined from
+      `reviewed_heads[]` on that platform's own name, inside the per-platform
+      loop. A single `<reviewed_head>` parameter — which an earlier revision of
+      this plan had — cannot represent a round in which two platforms reviewed
+      different commits, and that is not a corner case: reviewers are dispatched
+      at different moments and a push between them gives them different heads.
+      One would then be attributed to the other's commit, and a
+      `clean_same_commit` could follow from it.
 
       ```text
       {
@@ -493,7 +500,7 @@ Not applicable — this repository ships workflow tooling, not a service.
         "_paths_is": "every distinct file, in first-appearance order",
         "_path_total_is": "distinct files, not findings",
         "local_evidence_state": "clean_same_commit",
-        "classification": "confirmed_miss"
+        "classification": "confirmed_miss"   # see the three-value enum below
       }
       ```
 
@@ -533,6 +540,22 @@ Not applicable — this repository ships workflow tooling, not a service.
          fallback: `loop_head_sha` is not substituted;
       4. the round is not eligible at all, which rows 1 and 2 of the spec's
          matrix already cover.
+
+      **`classification` has exactly three values**, and the mapping is total
+      over the spec's ten states:
+
+      | Local evidence state | `classification` |
+      | --- | --- |
+      | `clean_same_commit` | `confirmed_miss` |
+      | `clean_earlier_commit` | `possible_miss` |
+      | the other eight, including `unknown` | `not_a_miss` |
+
+      Three values rather than two plus an absent field: a record with no
+      `classification` key is indistinguishable from one written before the
+      field existed, and `not_a_miss` is a positive statement that the round was
+      recorded and judged. AC-17 fixes the first two rows as one state each;
+      the third is everything else, so the mapping cannot gain a fourth value
+      without changing the spec.
 
       `classification` is written into the record rather than left for a reader
       to re-derive from the state. AC-17a requires the two counts to be
@@ -842,6 +865,15 @@ Not applicable — this repository ships workflow tooling, not a service.
 16. A record carries `classification` directly, and the confirmed and possible
     counts are separable by reading records alone, with no reader-side mapping
     from state to classification.
+16a. The state-to-classification mapping is exercised **once per state** — ten
+    cases: `clean_same_commit` → `confirmed_miss`, `clean_earlier_commit` →
+    `possible_miss`, and the remaining eight → `not_a_miss`. Every record
+    carries the key; none omits it.
+16b. A round in which **two** external platforms report blocking findings on
+    **different** commits produces two records, each carrying its own
+    reviewer's head from `reviewed_heads[]`. A builder taking one head for the
+    round attributes both records to one commit, and a `clean_same_commit` can
+    follow from the wrong one.
 
 **Files**:
 
@@ -1020,14 +1052,14 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty-four proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-six proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **15** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22 |
+| Overclaiming | **16** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22, P25 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
-| Contract | **8** | P5, P6, P7, P9, P11, P13, P23, P24 | a report, a line, or a stored history that breaks its own stated contract |
+| Contract | **9** | P5, P6, P7, P9, P11, P13, P23, P24, P26 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -1049,6 +1081,8 @@ three groups:
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
 | P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
+| P25 | Take one `reviewed_head` for the whole round instead of joining per platform | a scratch copy of the record builder | scenario 16b fails: two platforms that reviewed different commits are both attributed to one, so one record names a commit its reviewer never read and a `clean_same_commit` can follow from it. Every single-platform scenario passes, which is all of the others; restoring the per-platform join passes |
+| P26 | Omit `classification` for the eight non-miss states | a scratch copy of the classifier | scenario 16a fails on eight of its ten cases: a record with no key is indistinguishable from one written before the field existed, so a later report cannot tell *judged and not a miss* from *not judged*; restoring `not_a_miss` passes |
 | P24 | Render counts unclamped | a scratch copy of the renderer | scenario 13c-ii fails: a record with a seven-digit count consumes the space the arithmetic reserves for it, `budget` goes negative, and the line either exceeds 200 characters or names no path on a record whose paths would have fit. The clamp is the only bound this plan introduces into the worst-case sum, so removing it is the one change that reopens it; restoring `9999+` passes |
 | P23 | Append paths until the budget is full, then add the remainder text | a scratch copy of the renderer | scenario 13c-i fails: a record sized to the boundary emits a line longer than 200 characters, over-long by exactly the `, +N more` that announces the omission — so the one line guaranteed to be short is the one that says it left something out. Scenario 13's ordinary cases pass, because they are nowhere near the boundary; restoring the reserved budget passes |
 | P20 | Store only the three paths the summary line will name | a scratch copy of the record builder | scenario 13a-i fails: a twelve-file round's record holds three paths and the other nine are unrecoverable, so AC-16's read-back is incomplete and #1657 cannot answer which files external reviewers find things in. Every other scenario passes, because they all read the rendered line rather than the record; restoring the complete list passes |
@@ -1056,7 +1090,7 @@ three groups:
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Fifteen proofs plant the overclaiming direction because that is the direction with
+Sixteen proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -1103,7 +1137,9 @@ object exposes it.
    artifact shapes, and one case per adapter including
    `claude-code-action`'s no-head result.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
-   `continue`s, storing the **complete** de-duplicated path list. Attribution
+   `continue`s, joining each platform's head from `reviewed_heads[]` inside the
+   per-platform loop — no round-level head argument — and storing the
+   **complete** de-duplicated path list. Attribution
    uses the reviewer's own `REVIEWED_HEAD` and has **no fallback**;
    `loop_head_sha` must not be substituted. **Verify**: scenario 13a-i first —
    a builder that stores three paths passes every other scenario, because every
@@ -1120,7 +1156,7 @@ object exposes it.
 7. Add the summary renderer: de-duplicate paths before counting and naming,
    reserve `remainder_max` in the budget before appending any path, and compute
    the actual remainder from the paths named. **Verify**: scenarios 13, 13a,
-   13a-i, 13c, 13c-i, 13c-ii and 15 — the zero-path line, the
+   13a-i, 13c, 13c-i, 13c-ii, 16a, 16b and 15 — the zero-path line, the
    eight-findings-over-three-files case, the three remainder forms, the
    complete stored path list, the boundary case that exposes an unreserved
    budget, and the worst-case line with both counts clamped.
@@ -1129,7 +1165,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty-four planted-violation proofs (P1-P24) and record them in the PR
+10. Produce the twenty-six planted-violation proofs (P1-P26) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

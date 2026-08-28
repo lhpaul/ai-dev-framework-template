@@ -497,9 +497,28 @@ the string exactly while a new key it ignores would not.
 2. Produce the confirmed-miss count and the possible-miss count from the records
    alone.
 
+3. Read a record in each of the ten local evidence states and check its
+   `classification`.
+4. Read the two records from a round in which two external platforms reported
+   blocking findings on **different** commits.
+
 **Expected result**: one confirmed, one possible, five records total. Neither
 count folds into the other, and no reader-side mapping from state to
 classification is needed.
+
+Step 3 finds exactly three values, total over the ten states:
+`clean_same_commit` → `confirmed_miss`, `clean_earlier_commit` →
+`possible_miss`, the other eight → `not_a_miss`. Every record carries the key.
+`not_a_miss` is a positive statement rather than an absent field, because a
+record with no key is indistinguishable from one written before the field
+existed — *judged and not a miss* and *not judged* would collapse. Proof P26.
+
+Step 4's two records each carry their **own** reviewer's head, joined from
+`reviewed_heads[]` on the platform name. Reviewers are dispatched at different
+moments and a push between them gives them different heads; a builder taking one
+head for the round attributes both to one commit, and a `clean_same_commit` can
+follow from the wrong one. Every single-platform case in this runbook passes with
+that defect in place. Proof P25.
 
 `classification` is stored rather than re-derived because AC-17a requires a
 later report to separate the counts, and a reader that re-derives it keeps a
@@ -558,11 +577,11 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P24 each record the command, the file and line of the
+2. Confirm P1 through P26 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-four proofs in three groups — **fifteen**
-overclaiming, **eight** contract, **one** under-recording, per the plan's
+**Expected result**: twenty-six proofs in three groups — **sixteen**
+overclaiming, **nine** contract, **one** under-recording, per the plan's
 proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
