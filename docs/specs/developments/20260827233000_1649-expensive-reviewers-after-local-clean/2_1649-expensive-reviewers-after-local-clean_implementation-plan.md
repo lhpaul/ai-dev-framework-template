@@ -596,6 +596,9 @@ reads them against each other and fails on any divergence.
     kept failing is still reported. With one fewer recorded deferral it defers
     normally. This is the scenario the existing dual caps cannot cover, because
     they bucket `needs_fixes` uniquely by head and result.
+14. The deferral counter is head-scoped: deferrals recorded against a different
+    `expensive_gate.head` do not count toward the cap for the current head, so a
+    new push starts the budget over.
 14b. `expensive_gate_resolve_max_deferrals` returns `3` for unset and empty;
     the configured value for `1` and `999999`; and `3` with a `WARN` on stderr
     for `0`, `-1`, `1000000`, `abc`, `2.5`, and a value with surrounding
@@ -604,9 +607,6 @@ reads them against each other and fails on any divergence.
     `integer expression expected` and evaluate false, defeating the cap, while
     `0` or a negative value trips it before the first deferral and escalates
     every gated PR.
-14. The deferral counter is head-scoped: deferrals recorded against a different
-    `expensive_gate.head` do not count toward the cap for the current head, so a
-    new push starts the budget over.
 15. `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` with condition 1 unmet →
     `EXPENSIVE_GATE_RESULT=forced`, `EXPENSIVE_GATE_REASON=local_evidence_stale`
     preserved, `run_platform_review` **is** called, and the aggregate is **not**
@@ -624,7 +624,6 @@ reads them against each other and fails on any divergence.
 18. A ledger entry written without `expensive_gate` still parses through
     `reviewer_loop_history_payload_from_existing` — `v1` backward compatibility,
     same contract as #1648's added fields.
-
 19. The deferral budget is genuinely unreadable — the history marker is present
     but its JSON block is unparseable, its schema does not match, or its
     persisted `history_status` is not `available` →
@@ -633,6 +632,24 @@ reads them against each other and fails on any divergence.
     `EXPENSIVE_GATE_DEFERRALS=-1`, and the loop escalates. Without this the
     bounded-deferral guarantee would hold only when the ledger happens to be
     readable, which is not a guarantee.
+19b. The ledger is **absent** — no summary comment yet, or a body with no
+    history marker — → `EXPENSIVE_GATE_DEFERRALS=0` and the gate defers or
+    dispatches normally. This is every PR's first reviewer-loop run; escalating
+    here would bypass the bounded deferrals on every PR without prior history
+    and the bound would never be exercised.
+
+**Files**:
+20. The relocation is behavior-preserving: `pr-ci-loop.sh` produces identical
+    `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS` and `REVIEWER_CHECKS_JSON` before
+    and after `configured_reviewer_check_names_json` moves to
+    `workflow-lib.sh`, and `expensive_gate_baseline_checks_status` classifies
+    the same check names as reviewer-owned.
+21. A draft-phase defer does not start the ready phase: with `codex-github` on
+    draft deferring and `bugbot` on ready, the loop breaks out immediately —
+    `ensure_pr_ready_for_ready_phase` is not called, `gh pr ready` is not run,
+    the PR stays draft, and no `EXPENSIVE_GATE_*` or phase telemetry is emitted
+    for `bugbot`. Without the short-circuit the gate would produce a visible,
+    hard-to-undo side effect while refusing to proceed.
 22. In-loop derivation matches the printed contract: with #1648's actual
     producer populating `platform_reviewed_heads` — not with the variables
     pre-seeded — `expensive_gate_local_ai_configured` and
@@ -641,28 +658,15 @@ reads them against each other and fails on any divergence.
     current head, a stale head, an unreported head, and a run where
     `local-ai-reviewer` is not configured. This is the composition test with the
     dependency rather than a mock of it.
-21. A draft-phase defer does not start the ready phase: with `codex-github` on
-    draft deferring and `bugbot` on ready, the loop breaks out immediately —
-    `ensure_pr_ready_for_ready_phase` is not called, `gh pr ready` is not run,
-    the PR stays draft, and no `EXPENSIVE_GATE_*` or phase telemetry is emitted
-    for `bugbot`. Without the short-circuit the gate would produce a visible,
-    hard-to-undo side effect while refusing to proceed.
-20. The relocation is behavior-preserving: `pr-ci-loop.sh` produces identical
-    `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS` and `REVIEWER_CHECKS_JSON` before
-    and after `configured_reviewer_check_names_json` moves to
-    `workflow-lib.sh`, and `expensive_gate_baseline_checks_status` classifies
-    the same check names as reviewer-owned.
-19b. The ledger is **absent** — no summary comment yet, or a body with no
-    history marker — → `EXPENSIVE_GATE_DEFERRALS=0` and the gate defers or
-    dispatches normally. This is every PR's first reviewer-loop run; escalating
-    here would bypass the bounded deferrals on every PR without prior history
-    and the bound would never be exercised.
 
-**Files**:
+Every scenario is assigned to exactly one suite. The list below enumerates them
+individually rather than by range, because the sub-lettered scenarios added
+during review (6b, 14b, 19b) are the ones a range silently drops — and each of
+them covers a fail-closed edge, which is precisely what must not go untested.
 
-- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1–14
-  (including 6b), 18 and 19, as new cases in the existing `HARNESS_MODE=1`
-  harness.
+- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
+  3, 4, 5, 6, 6b, 7, 8, 9, 10, 11, 12, 13, 14, 14b, 18, 19 and 19b, as new
+  cases in the existing `HARNESS_MODE=1` harness.
 - `scripts/development-workflow/tests/test-pr-ci-loop.sh` — scenario 20, which
   asserts that `pr-ci-loop.sh` still produces the same `REVIEWER_CHECK_COUNT`,
   `REVIEWER_CHECKS` and `REVIEWER_CHECKS_JSON` after
@@ -671,8 +675,9 @@ reads them against each other and fails on any divergence.
   add `# covers: scripts/development-workflow/workflow-lib.sh` so a later edit
   to the relocated function also selects it.
 - `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` — a new
-  suite for scenarios 15–17, 21 and 22, the override and composition cases, which need
-  their own mock scaffolding for the phase and filter paths. It must declare:
+  suite for scenarios 15, 16, 17, 21 and 22 — the override and composition
+  cases, which need their own mock scaffolding for the phase and filter paths.
+  It must declare:
 
   ```text
   # covers: scripts/development-workflow/pr-review-loop.sh
