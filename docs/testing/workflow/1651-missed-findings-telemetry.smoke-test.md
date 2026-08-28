@@ -352,24 +352,26 @@ do with. Proof P5.
 
 **Maps to**: AC-13, AC-14, AC-14a, AC-15.
 
-1. Render a record with three short paths.
-2. Render a record whose three paths each exceed 60 characters.
+1. Render a record whose findings touch **twelve** distinct files, all path
+   names short.
+2. Render a record touching twelve files whose paths each exceed 60 characters.
 3. Render a record built from **eight** blocking findings spread over three
    files.
 4. Render an entry carrying twenty records with long paths.
-
-5. Render a record whose files all fit within three names.
+5. Render a record whose findings touch **two** files, both short.
 
 **Expected result**: one line per record, each at most 200 characters, naming at
-most three paths and **always** the total file count. Case 2 names **zero**
-paths and still states the total, the state and the classification — a valid
-line, not a failure. Case 3 reports `path_total` **3**, not 8, and names three
-distinct files. Case 4 adds at most twenty lines and 4,000 characters.
+most three paths and **always** the total file count. Case 1 names three of its
+twelve files. Case 2 names **zero** paths — the bound stops the list before the
+first one fits — and still states the total, the state and the classification: a
+valid line, not a failure. Case 3 reports `path_total` **3**, not 8, and names
+three distinct files. Case 4 adds at most twenty lines and 4,000 characters.
+Case 5 names both of its two files.
 
 Every line that omits files states **how many more**, computed from the paths
-actually named rather than from a fixed three: case 1 reads `+9 more` for twelve
-files, case 2's zero-path line reads `+12 more`, and case 5 omits the remainder
-entirely rather than printing `+0 more`. A renderer that subtracts a constant
+actually named rather than from a fixed three: case 1 reads `+9 more`, case 2's
+zero-path line reads `+12 more`, and case 5 omits the remainder entirely rather
+than printing `+0 more`. A renderer that subtracts a constant
 three is correct only when exactly three paths fit — the common case, which is
 why the other two are the ones tested. Proof P13.
 
