@@ -57,7 +57,8 @@ sequencing constraint on implementation only — the two plan PRs are independen
 | Repo revision | `git rev-parse --short origin/develop-internal-reviewer-effectiveness` | `903de533` |
 | The history entry builder and its shape | `sed -n '6876,6950p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_build_entry` produces a flat object of eighteen fields plus one nested object, `phase_after_clean`. The nested object is the precedent this plan follows: a related group of values belongs in one sub-object rather than as five sibling keys |
 | The entry carries no per-platform outcome | Same range | `result` is the **aggregate** loop result for the round and `platforms` is a list of names. A round where the local reviewer was clean and an external one reported findings records `needs_fixes` and nothing that separates them, so the local verdict cannot be recovered from a stored entry. #1648 adds per-reviewer *heads*, not per-reviewer *outcomes* — hence `platform_results` in this plan |
-| The per-platform outcome exists in memory but is not persisted | `sed -n '9603,9614p' scripts/development-workflow/pr-review-loop.sh` | `platform_result_tokens[]` holds `name:display` pairs for the current round and is used only to build the summary line. `platform_results` is that data written to the ledger, not a new derivation |
+| The raw per-platform outcome exists in memory but is not persisted | `sed -n '8624,8630p' scripts/development-workflow/pr-review-loop.sh` | `platform_result` and `platform_reason` are read straight from the companion script's `RESULT` and `REASON` keys — the machine-readable pair. `platform_results` is that pair written to the ledger, not a new derivation |
+| The display array is **not** a usable source | `sed -n '8652,8674p' scripts/development-workflow/pr-review-loop.sh` | `platform_result_tokens[]` is built after the raw pair for the summary comment: it applies a platform-supplied `DISPLAY_RESULT` override, renders `escalate` as `escalated (<reason>)`, and folds `skipped/unavailable` and `skipped/not_configured` into one word. Two spec states are unreachable from it and escalations are unparseable |
 | The configured platform list has a source | `grep -n "workflow_config_review_platforms" scripts/development-workflow/pr-review-loop.sh` | Produced at line 8339. It is the only thing that distinguishes `not_configured` from `not_yet_run`, since both look identical in an empty history |
 | Writability is already a decided state — and today it **destroys** the history | `sed -n '6960,7030p' scripts/development-workflow/pr-review-loop.sh` | `append_safe`, `history_status` and `history_unavailable_reason` already exist. On malformed history, unknown schema, or a prior unavailable payload the loop builds a **replacement** payload with `entries: []` and renders it over the previous block. The spec's row 4 is this branch, but AC-7a's byte-for-byte preservation is **not** current behavior and needs the change described in Layer-by-Layer |
 | The reason vocabulary that already exists | Same range | `malformed_history`, `unknown_schema`, and a pass-through `prior_unavailable`. Row 4's "report why" is satisfied by surfacing these, not by adding new ones |
@@ -124,9 +125,20 @@ Not applicable — this repository ships workflow tooling, not a service.
       AC-4a cannot be satisfied by it. #1648 supplies each reviewer's reviewed
       **head**; it does not supply each reviewer's **outcome**.
 
-      Add `platform_results` to the entry, built from `platform_result_tokens`
-      — the `name:display` array the loop already assembles for the summary
-      comment at `pr-review-loop.sh:9605`:
+      Add `platform_results` to the entry, built at the per-platform call site
+      from the **raw** values `platform_result` and `platform_reason`
+      (`pr-review-loop.sh:8624` and `:8629`), which are read straight from the
+      companion script's `RESULT` and `REASON` keys.
+
+      **Not from `platform_result_tokens`.** That array is built twelve lines
+      later for the summary comment and is *display* text: it applies a
+      `DISPLAY_RESULT` override supplied by the platform, renders `escalate` as
+      `escalated (<reason>)`, and folds `skipped` with reason `unavailable` or
+      `not_configured` into the single word `unavailable`. Parsing it back into
+      an outcome would mean re-deriving a value that was already discarded, and
+      would return `unknown` for every escalation and every override. Collect a
+      parallel `platform_result_records` array of compact JSON objects at the
+      same call site instead:
 
       ```text
       "platform_results": [
@@ -136,7 +148,31 @@ Not applicable — this repository ships workflow tooling, not a service.
       ```
 
       `reviewed_head` is #1648's per-reviewer evidence, carried here so one
-      array answers both questions the derivation asks.
+      array answers both questions the derivation asks. `reason` is carried
+      because two spec states are distinguished by it and by nothing else.
+
+      The raw pair maps to the spec's outcomes:
+
+      | `result` | `reason` | Outcome recorded |
+      | --- | --- | --- |
+      | `clean` | — | `clean` |
+      | `needs_fixes` | — | `needs_fixes` |
+      | `skipped` | `unavailable` | `unavailable` |
+      | `skipped` | `not_configured` | `not_configured` |
+      | `skipped` | anything else | `skipped` |
+      | `escalate` | — | `unavailable` — a reviewer that could not complete |
+      | anything else | — | `unknown` |
+
+      `skipped` splits three ways on `reason` alone, which is why the reason is
+      stored rather than dropped: a reviewer that was deliberately skipped and
+      one that timed out both arrive as `RESULT=skipped`, and the spec keeps
+      them apart.
+
+      When `skipped/not_configured` and the configured-platform list disagree,
+      the **list wins** and the state is `not_configured`: the list describes
+      the repository, the result describes one round, and a configuration that
+      lists the reviewer while a round reports it unconfigured is a round-level
+      anomaly rather than a fact about the repository.
 
       **Entries written before this change carry no `platform_results`, and
       those entries yield `unknown` — never the aggregate `result`.** Reading
@@ -268,10 +304,20 @@ Not applicable — this repository ships workflow tooling, not a service.
         "blocking_count": 7,
         "paths": ["a.ts", "b.ts", "c.ts"],
         "path_total": 12,
+        "_path_total_is": "distinct files, not findings",
         "local_evidence_state": "clean_same_commit",
         "classification": "confirmed_miss"
       }
       ```
+
+      **`path_total` counts distinct paths, not findings.**
+      `reviewer_loop_blocking_paths_from_output` emits one line per finding, so
+      three blockers in one file yield that path three times. AC-14 asks for the
+      total number of *files*, so the list is de-duplicated — preserving first
+      appearance order — before both the total and the three named paths are
+      taken. Without it a record claiming "12 files" on a pull request touching
+      four would overstate the blast radius of every finding, and the named
+      paths could be three copies of one file. Scenario 13a pins it.
 
       Four exclusions, each from a spec rule and each an early `continue`
       rather than a filter on the finished array, so a record that must not
@@ -429,6 +475,15 @@ Not applicable — this repository ships workflow tooling, not a service.
 13. The summary line: one line per record; at most 200 characters; at most three
     paths; the total always stated; and a case with paths long enough that zero
     fit, which must still state the total and the state.
+13a. Paths are de-duplicated before counting and naming: eight blocking findings
+    spread over three files produce `path_total` 3, not 8, and the named paths
+    are three **distinct** files rather than repeats of one.
+13b. An external round whose reviewed commit **cannot be established** produces
+    no record, and the round's output states the attribution failure and its
+    reason. This is AC-11, and it is the third of the spec's three no-record
+    cases — the other two, local-reviewer findings and advisory-only findings,
+    are scenarios 7 and 8. Without it the only tested no-record paths would be
+    the two that never reach attribution.
 14. The history entry retains all eighteen existing fields and the
     `phase_after_clean` object, unchanged in name and type, and adds exactly
     two: `platform_results` and `missed_findings`. Asserted against an
@@ -572,13 +627,13 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The ten proofs fall into
+runs per proof, each citing a concrete file and line. The twelve proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **6** | P1, P2, P3, P4, P8, P10 | a number asserted on evidence that does not support it |
-| Contract | **4** | P5, P6, P7, P9 | a report, a line, or a stored history that breaks its own stated contract |
+| Overclaiming | **7** | P1, P2, P3, P4, P8, P10, P12 | a number asserted on evidence that does not support it |
+| Contract | **5** | P5, P6, P7, P9, P11 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -591,9 +646,11 @@ two groups:
 | P5 | Test writability before eligibility | a scratch copy of the record entry point | scenario 12 fails: a round whose only findings came from the local reviewer reports a telemetry failure on an unwritable history, though no record was owed. Scenario 11 still passes; restoring the spec's row order passes both |
 | P7 | Keep the current behavior: re-render the history section with the unavailable stub when `append_safe` is 0 | a scratch copy of the render path | scenario 11 fails: the prior block is replaced by an empty stub, so a history that failed to parse once loses every entry it held — and the loss is invisible, because the stub looks like a well-formed report of a problem; restoring the do-not-re-render rule passes |
 | P8 | Fall back to the entry's aggregate `result` when `platform_results` is absent | a scratch copy of the selector | scenario 3a fails: a pre-change entry whose round was aggregate-clean is read as a clean **local** verdict, so rounds the local reviewer never ran are recorded as confirmed misses. The plant only affects historical entries, which is where nobody looks; restoring the `unknown` fallback passes |
+| P11 | Build `platform_results` from `platform_result_tokens` instead of the raw pair | a scratch copy of the collection step | the raw-to-outcome scenarios in step 1a fail: every `escalate` becomes the unparseable `escalated (<reason>)`, every `DISPLAY_RESULT` override becomes whatever the platform chose, and both `skipped` reasons collapse into `unavailable` — so `skipped` and `not_configured` become unreachable and escalations record as `unknown`. Restoring the raw pair passes |
+| P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Six proofs plant the overclaiming direction because that is the direction with
+Seven proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -610,8 +667,11 @@ object exposes it.
 1. Add `reviewer_loop_commit_ancestry`, capturing every `git` status with
    `|| status=$?`. **Verify**: scenarios 4, 5 and 5a in the new suite,
    including the deleted-object fixture and the errexit check.
-1a. Add `platform_results` to `reviewer_loop_history_build_entry`, built from
-   `platform_result_tokens`. **Verify**: scenario 14 and scenario 3b.
+1a. Collect `platform_result_records` from the raw `platform_result` and
+   `platform_reason` at the per-platform call site, and write it into the entry
+   as `platform_results`. **Verify**: scenario 14, scenario 3b, and one case per
+   row of the raw-to-outcome table — in particular the two `skipped` reasons and
+   `escalate`, which `platform_result_tokens` cannot distinguish.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
    configured-platform list. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
    over cleanliness, the two absent-reviewer values kept apart by the
@@ -620,18 +680,21 @@ object exposes it.
 3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenario 6 — one case
    per row, including both routes to `unknown`.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
-   `continue`s. **Verify**: scenarios 7, 8, 9, 10 and 16.
+   `continue`s. **Verify**: scenarios 7, 8, 9, 10, 13b and 16 — including the
+   unattributable-commit case, which must produce no record **and** report the
+   attribution reason.
 5. Extend `reviewer_loop_history_build_entry` with `missed_findings`, schema
    string unchanged. **Verify**: scenario 14, field by field.
 6. Change the render path so an unappendable history is **not** re-rendered,
    and add the eligibility-then-writability ordering and the row-4 report.
    **Verify**: scenarios 11 and 12, including the byte-for-byte comparison
    against a saved prior body.
-7. Add the summary renderer. **Verify**: scenarios 13 and 15, including the
-   zero-path line.
+7. Add the summary renderer, de-duplicating paths before counting and naming.
+   **Verify**: scenarios 13, 13a and 15, including the zero-path line and the
+   eight-findings-over-three-files case.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
+10. Produce the twelve planted-violation proofs (P1-P12) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

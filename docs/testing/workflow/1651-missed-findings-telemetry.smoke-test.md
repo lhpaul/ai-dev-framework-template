@@ -70,8 +70,19 @@ P4.
    external reviewer failed, while the local reviewer's own entry in
    `platform_results` reads `clean`.
 
-**Expected result**: `unknown` for 1 and 2; `clean` for 3. A record is written
-in every case, and 1 and 2 are neither confirmed nor possible misses.
+4. Call it with an entry whose local-reviewer record is `result: "skipped"` and
+   `reason: "unavailable"`, and again with `reason` empty.
+
+**Expected result**: `unknown` for 1 and 2; `clean` for 3; `unavailable` and
+`skipped` for 4's two calls. A record is written in every case, and 1 and 2 are
+neither confirmed nor possible misses.
+
+Case 4 is why the raw `reason` is stored alongside the raw `result`. A reviewer
+deliberately skipped and one that timed out both arrive as `RESULT=skipped`, and
+the spec keeps them apart. The summary's display array cannot: it folds both
+into the single word `unavailable` and renders escalations as
+`escalated (<reason>)`, which is why `platform_results` is built from the raw
+pair. Proof P11.
 
 `unknown` here is not a failure — the history is readable and simply does not
 say. That is why it belongs in the denominator rather than being dropped.
@@ -150,8 +161,17 @@ from an undecidable ancestry and once from an unrecognised outcome.
    `not_clean`.
 4. Run two qualifying rounds with identical reviewer, commit and finding count.
 
-**Expected result**: no record for 1 or 2; a record for 3; **two** records for
-4, neither replacing the other.
+5. Run a round with external blocking findings whose **reviewed commit cannot
+   be established**.
+
+**Expected result**: no record for 1, 2 or 5; a record for 3; **two** records
+for 4, neither replacing the other. Case 5's output states the attribution
+failure and its reason.
+
+Case 5 is the third of the spec's three no-record paths, and the only one that
+reaches attribution before failing — the other two are excluded before the
+commit is ever consulted. Without it the only tested no-record cases would be
+the two that never get that far.
 
 Case 3 is the denominator, and it is the one an implementation drops first: a
 record that is not a miss looks like noise. Without it the reported rate is
@@ -198,12 +218,22 @@ do with. Proof P5.
 
 1. Render a record with three short paths.
 2. Render a record whose three paths each exceed 60 characters.
-3. Render an entry carrying twenty records with long paths.
+3. Render a record built from **eight** blocking findings spread over three
+   files.
+4. Render an entry carrying twenty records with long paths.
 
 **Expected result**: one line per record, each at most 200 characters, naming at
 most three paths and **always** the total file count. Case 2 names **zero**
 paths and still states the total, the state and the classification — a valid
-line, not a failure. Case 3 adds at most twenty lines and 4,000 characters.
+line, not a failure. Case 3 reports `path_total` **3**, not 8, and names three
+distinct files. Case 4 adds at most twenty lines and 4,000 characters.
+
+Case 3 is the de-duplication check. `reviewer_loop_blocking_paths_from_output`
+emits one line per **finding**, so three blockers in one file yield that path
+three times. AC-14 asks for the number of *files*: without de-duplication a
+record claiming twelve files on a pull request touching four overstates the
+blast radius of every finding, and the three path slots can be filled by three
+copies of one name. Proof P12.
 
 The bound is enforced by build order, not by truncation: the total and the state
 are written before the paths, and paths stop at the first one that would exceed
@@ -276,11 +306,11 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P10 each record the command, the file and line of the
+2. Confirm P1 through P12 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: ten proofs in two groups — **six** overclaiming, **four**
-contract, per the plan's proof-group table.
+**Expected result**: twelve proofs in two groups — **seven** overclaiming,
+**five** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is
