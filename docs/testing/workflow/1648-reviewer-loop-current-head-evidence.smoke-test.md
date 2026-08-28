@@ -177,10 +177,16 @@ live head.
 2. Read the readiness checklist in Protocol 91 where `POST_CLEAN_HEAD_SHA` is
    already enforced.
 
-**Expected result**: Both documents state that a `clean` Step 7 result with
-`LOCAL_AI_HEAD_CURRENT=0` blocks `ready-for-human-review`, and that an empty
-value (platform not configured, or no head reported) does not block but must be
-named in the runner summary.
+**Expected result**: Both documents state the same fail-closed rule as the
+implementation plan and as Step 7 below — when `local-ai-reviewer` is in the
+resolved platform list and Step 7 returned `clean`, `LOCAL_AI_HEAD_CURRENT`
+must be exactly `1`; both `0` and a present-but-empty value block
+`ready-for-human-review`, the latter because the reviewer ran and reported no
+head, which is missing evidence. Neither document may describe an empty value as
+non-blocking: the non-applicable case is the **absent** key, emitted only when
+the platform is not in the resolved list, and that distinction must be explicit
+in both. Reading the two documents against the Step 7 table below must surface
+no contradiction.
 
 ### Step 7: The three readiness states are distinguishable
 
