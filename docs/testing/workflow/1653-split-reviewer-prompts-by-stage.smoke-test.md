@@ -260,6 +260,26 @@ replaces the contract**, and none may claim the file tier can override the
 branch tier. Reading them against Steps 1 through 3 must surface no
 contradiction.
 
+## Step 8a: No mirrored surface enumerates the contract's sections
+
+**Maps to**: the cross-cutting checklist classification.
+
+<!-- workflow-shell-contract: bash -->
+
+```bash
+grep -rl "Code Review Checklist\|Spec Review Checklist\|Plan Review Checklist" \
+  .claude .cursor .codex; echo "exit=$?"
+```
+
+**Expected result**: no output, `exit=1`.
+
+This is the one command the plan's entire not-applicable table rests on. Every
+agent and skill file references `REVIEW.md` as a whole, or a `### Pass` block
+inside the Code checklist; none lists the set of level-2 checklists. Adding a
+fourth section therefore invalidates nothing. If this search ever returns a
+file, the table is wrong and that file needs the same edit — which is why the
+check is a runbook step rather than a sentence in the plan.
+
 ## Step 9: Static checks
 
 1. Run `shellcheck` on `scripts/development-workflow/local-ai-reviewer.sh` and

@@ -478,6 +478,69 @@ is the shell harnesses named above; all **three** are extended in this item —
 
 ---
 
+## Cross-Cutting Checklist Classification
+
+**Classification**: `Cross-cutting checklist` — **applicable**. Protocol 02's
+first signal is *"adding or renaming a checklist category in `REVIEW.md`"*, and
+this plan adds `## Workflow Policy Review Checklist`. The other two signals do
+not apply: no acceptance criterion is imposed on every plan, and no conditional
+guidance block is added to a planning or implementation protocol.
+
+**Live search**, run at `3901d6e1` rather than reasoned about:
+
+<!-- workflow-shell-contract: bash -->
+
+```bash
+grep -rl "REVIEW\.md" .claude .cursor .codex .agents
+grep -rl "Code Review Checklist\|Spec Review Checklist\|Plan Review Checklist" \
+  .claude .cursor .codex
+```
+
+The first returns fifteen files; the second returns **none**. That second result
+is the finding that shapes this section: no agent or skill file enumerates the
+*set* of `REVIEW.md` checklists, so adding a fourth section does not invalidate
+any of them. They reference the contract as a whole, or a `Pass` sub-checklist
+inside the Code checklist, which this item does not touch.
+
+### Files to modify
+
+| File | Change | Why |
+| --- | --- | --- |
+| `REVIEW.md` | **Edit** | the new `## Workflow Policy Review Checklist` section |
+| `scripts/development-workflow/local-ai-reviewer.sh` | **Edit** | harness guard, three resolvers, bundle fields, evidence keys, `--help` |
+| `scripts/development-workflow/local-codex-review-command.sh` | **Edit** | the stage sentence |
+| `docs/workflow/development-workflow/integrations/local-ai-reviewer.md` | **Edit** | bundle fields, evidence keys, the decision table, the custom-command caveat |
+| `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | **Edit** | the new `PLATFORM_<n>_REVIEW_*` keys in loop summaries |
+| The three test suites in **Testing Strategy** | **Edit** | new scenarios |
+
+### Enumerated not-applicable surfaces
+
+Every target Protocol 02 names at minimum, with a reason rather than a silent
+omission:
+
+| File | Result | Rationale |
+| --- | --- | --- |
+| `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | `Not applicable` | the plan-writing procedure is unchanged; nothing is required of future plans |
+| `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | `Not applicable` | the implementation procedure is unchanged; the new checklist is applied *by a reviewer*, not followed by an implementer |
+| `.claude/agents/developer.md`, `.cursor/agents/developer.md` | `Not applicable` | both reference `REVIEW.md` as a whole and neither enumerates its sections |
+| `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md` | `Not applicable` | planning behavior is unchanged; their `REVIEW.md` reference is to the cross-cutting rule itself, which this plan follows rather than modifies |
+| `.claude/agents/code-reviewer.md`, `.cursor/agents/code-reviewer.md` | `Not applicable` | both restrict themselves to `### Pass 1` / `### Pass 2` **inside** the Code checklist, which is untouched. A fourth level-2 section changes nothing they name |
+| `.codex/skills/workflow-code-reviewer/SKILL.md` | `Not applicable` | same reason — it selects a `Pass` sub-checklist by dispatch prompt |
+| `.codex/skills/workflow-plan-writer/SKILL.md` | `Not applicable` | mirrors the tech-lead cross-cutting rule; unchanged |
+| `.cursor/commands/review-code.md`, `review-spec.md`, `review-implementation-plan.md` | `Not applicable` | each says *"use `REVIEW.md` as the primary review contract"* without naming sections, so each picks up the new section automatically |
+| `.cursor/rules/workflow.mdc` | `Not applicable` | names `REVIEW.md` as the review gate; no section list |
+| `.claude/commands/sync-template.md`, `.claude/skills/sync-template.md`, `.cursor/commands/sync-template.md` | `Not applicable` | they list `REVIEW.md` among files the template sync touches; the file is still that file |
+| `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | `Not applicable` | none enumerates `REVIEW.md`'s sections |
+
+**Why no mirror edit is needed, stated as a claim that can fail.** Every
+not-applicable row above rests on one fact: no agent or skill file lists the
+checklists of `REVIEW.md`. That is the second `grep` above, and it returns
+nothing today. If it ever returns a file, this table is wrong — so the
+implementer must re-run both searches at implementation time and record the
+output in the PR, rather than trusting this table.
+
+---
+
 ## Documentation Updates
 
 - `REVIEW.md` — the new `## Workflow Policy Review Checklist` section.
@@ -659,7 +722,10 @@ Workflow Policy checklist named on every PR carries no information.
 6. Export `REVIEW_STAGE` and `REVIEW_CHECKLISTS` to the command, and add the
    stage sentence to the preset. **Verify**: scenarios 10, 11 and 15 — the
    sentence's wording, the byte-identical `default` prompt, and the override.
-7. Update the `--help` block, the integration document and Protocol 93.
+7. Re-run the two searches in **Cross-Cutting Checklist Classification** and
+   record their output in the PR. If the checklist-enumeration search returns
+   anything, stop and revise the plan. Then update the `--help` block, the
+   integration document and Protocol 93.
    **Verify**: runbook Step 8 reads all four surfaces against each other.
 8. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
    with the command, file, line and both outcomes for each.
