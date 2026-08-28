@@ -275,9 +275,39 @@ Not applicable — this repository ships workflow tooling, not a service.
          check, which fires *after* the dispatch it would need to prevent.
          Detecting the race requires looking at the moment before the gate
          opens, which is here.
-      4. If it is anything else, end the cycle with that result — the same
-         `needs_fixes` / `escalate` path a first-pass finding takes — and do
-         **not** convert the pull request to ready.
+      4. If it is anything other than **clean**, do **not** convert the pull
+         request to ready. The pass's result decides how the cycle ends, and
+         "anything else" is not specific enough — the shared processor
+         normalises some results toward the aggregate in ways that would open
+         the gate. The mapping is total over what the local reviewer can
+         return:
+
+         | Pass result | Cycle ends as | Why |
+         | --- | --- | --- |
+         | `clean` | proceeds to the gate | the evidence exists |
+         | `needs_fixes` | `needs_fixes` | a finding; the fixer path, as a first-pass finding takes |
+         | `escalate` | `escalate` | the reviewer could not complete |
+         | `skipped` — any reason, including `unavailable` and `not_configured` | **`escalate`**, reason `local_pass_unavailable` | see below |
+         | `needs_rerun` | `escalate`, reason `local_pass_unavailable` | a rerun the guard cannot itself perform without reopening the loop it closed |
+         | anything else, or unparseable | `escalate`, reason `local_pass_unavailable` | an unrecognised result is not evidence |
+
+         **The `skipped` row is the one that inverts.** The shared processor
+         treats a skipped platform as not blocking — correct for an ordinary
+         platform, and wrong here: the guard dispatched this pass *because* the
+         gate needs evidence, and a skipped pass produced none. Letting it fall
+         through to the aggregate would open the gate on the strength of a
+         review that did not happen, which is the fail-open this item exists to
+         close, arriving through the machinery the guard borrows.
+
+         So the guard reads the pass's own result **before** the shared
+         processor's aggregate contribution and overrides it: every non-clean
+         result closes the gate. The processor still parses, records and
+         forwards the pass exactly as it does any platform — only the gate
+         decision is the guard's.
+
+         `escalate` rather than `needs_fixes` for the last three rows: none of
+         them describes something a fixer can fix, and each would otherwise
+         invite an automated retry of a dispatch that produced no verdict.
 
       Step 4 is what makes the guard worth having: a ready-phase reviewer is not
       merely delayed, and the pull request is not converted, so the expensive
@@ -365,7 +395,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       ```text
       LOCAL_SECOND_PASS=0|1
-      LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass
+      LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable
       ```
 
       `failed_for_head` is the refusal row — the pass did not run **and** the
@@ -392,8 +422,8 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 ### Infrastructure / Configuration
 
-- [ ] Document both keys and **all seven** reasons — the five conditions plus
-      `head_moved_during_pass` and
+- [ ] Document both keys and **all eight** reasons — the five conditions plus
+      `head_moved_during_pass`, `local_pass_unavailable` and
       `failed_for_head` — in the `--help` block and in Protocol 93. The two
       easiest to omit are the ones that report neither a satisfied nor a
       repaired gate: `failed_for_head`, a **blocked** one, and
@@ -507,7 +537,17 @@ Order step 0.
 6. A **clean** second pass proceeds to the gate and the pull request is
    converted to ready.
 7. A **needs_fixes** second pass ends the cycle with `needs_fixes`, does **not**
-   convert the pull request, and dispatches no ready-phase platform. Asserted on
+   convert the pull request, and dispatches no ready-phase platform.
+7a. Every **non-clean** pass result closes the gate, one case per row of the
+   mapping: `needs_fixes`, `escalate`, `skipped` with reason `unavailable`,
+   `skipped` with reason `not_configured`, `skipped` with any other reason,
+   `needs_rerun`, and an unparseable result. None converts the pull request and
+   none dispatches a ready-phase platform.
+7b. The `skipped` rows specifically: the shared processor treats a skipped
+   platform as not blocking, so without the guard's override a skipped pass
+   would open the gate on a review that did not happen. Asserted through the
+   real processor rather than a stub, because the inversion lives in what the
+   processor does with the result, not in what the guard reads. Asserted on
    all three, because converting-but-not-dispatching would leave the pull
    request in a state the loop did not intend.
 8. The guard dispatches **at most once per head**: two cycles with no new
@@ -580,8 +620,9 @@ Order step 0.
 ## Documentation Updates
 
 - `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-  — the guard, all **seven** reasons including `no_local_reviewer`,
-  `failed_for_head` and `head_moved_during_pass`, the two keys,
+  — the guard, all **eight** reasons including `no_local_reviewer`,
+  `failed_for_head`, `head_moved_during_pass` and `local_pass_unavailable`, the
+  two keys,
   and the `local_second_pass_failed_head` ledger field.
 - The `--help` block of `pr-review-loop.sh`.
 - `changelog.d/1656.changed.second-local-pass.md` — `changed` rather than
@@ -601,6 +642,7 @@ Order step 0.
 | The pass increments a cycle cap | Med | Med — every run needing a pass gets a shorter budget, and `max_cycles_exceeded` starts meaning two different things | The pass is a dispatch inside an already-counted cycle. Scenarios 9 and 10; proof **P3** increments |
 | A failed pass converts the pull request anyway | Med | Med — the pull request is left ready with no reviewer dispatched, a state the loop never intended | The cycle ends before the gate. Scenario 7 asserts all three consequences; proof **P4** converts first |
 | The extraction changes the ordinary path | Med — it touches the busiest block in the script | **High** — every run's output shifts, and the cause is a refactor nobody was reviewing for behaviour | Byte-identical output required for a run needing no pass, in its own commit so the diff is readable. Scenario 5a and proof **P8** |
+| A skipped or unparseable pass opens the gate | **High** — the shared processor treats skipped as not blocking, which is right for a platform and wrong for this pass | **High** — the gate opens on a review that did not happen, through the machinery the guard borrows | Every non-clean result closes the gate, by an override the guard applies before the aggregate. Scenarios 7a and 7b, proof **P15** |
 | The head moves while the pass is running | Med — the pass takes as long as a review | **High** — a clean verdict for the old commit opens the gate, and expensive reviewers read code the local reviewer never saw: the item's guarantee broken on its own success path | One head re-read immediately before the gate, used only for an equality test and only to refuse. Scenario 3a and proof **P13** |
 | The refusal mints a new reason token | **High** — a precise new name is the natural choice | Med — the round is counted as a cycle and a fixer is dispatched with nothing to fix, because two existing contracts key on `head_moved_during_run` | The loop's `REASON` reuses the established token; the finer detail lives in `LOCAL_SECOND_PASS_REASON`. Scenario 3b and proof **P14** |
 | The condition receives the invocation's platform list | **High** — `platforms` is in scope and looks right | **High** — an explicit `--platform` run omitting a configured reviewer reports `no_local_reviewer` and proceeds, which is the item's motivating case turned into a fail-open | The repository's configured list is resolved independently of `--platform`, by its own helper. Scenario 2b and proof **P11** |
@@ -655,12 +697,12 @@ reviewer_loop_local_pass_required() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The fourteen proofs fall into
+runs per proof, each citing a concrete file and line. The fifteen proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Fail-open | **6** | P2, P4, P6, P10, P11, P13 | the gate reached, or the pull request converted, without the evidence |
+| Fail-open | **7** | P2, P4, P6, P10, P11, P13, P15 | the gate reached, or the pull request converted, without the evidence |
 | Loop and cost | **5** | P1, P3, P5, P12, P14 | a guard that repeats, shortens the run, or runs where there is nothing to guard |
 | Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it |
 
@@ -671,6 +713,7 @@ three groups:
 | P9 | Hold the failed head in a shell variable instead of the ledger | a scratch copy of the guard | scenario 8c fails: the invocation after a failed pass starts with an empty variable, sees the same non-clean verdict, and dispatches again — one dispatch per invocation forever on a pull request whose reviewer never goes clean. Scenario 8's within-run count still passes, because a variable survives a run; only crossing an invocation separates them; restoring the ledger field passes |
 | P8 | Call `run_platform_review` from the guard without processing its output | a scratch copy of the dispatch block | scenario 5's ledger assertion fails: the pass runs, its verdict decides the gate, and it appears in no ledger entry and no `key=value` output — so the telemetry says the gate opened with no evidence of what opened it. The gate behaviour is still correct, which is what makes this the plant a hurried extraction invites; restoring the shared processor passes |
 | P6 | Make the flag suppress the dispatch without refusing the gate | same scratch copy | scenario 8a fails: the cycle after a failed pass reaches the gate with no current clean evidence, because the condition still owes a pass and nothing runs — a fail-open created by the anti-loop mechanism itself. Scenario 8's dispatch count still passes, which is what makes this the plant a two-way guard invites; restoring the refusal passes both |
+| P15 | Let the pass's result reach the aggregate without overriding the gate decision | a scratch copy of the guard | scenario 7b fails: a `skipped` pass — which the shared processor treats as not blocking — opens the ready-phase gate on a review that did not happen, the fail-open this item exists to close, arriving through the machinery the guard borrows. Scenario 7's `needs_fixes` case still passes, because that result blocks on its own; restoring the override passes both |
 | P14 | Report the mid-pass move with a new `head_moved_during_run`-style token of its own | a scratch copy of the refusal | scenario 3b fails: the round is counted as a cycle and Protocol 91 dispatches a fixer for a head move, which has nothing to fix. Scenario 3a passes, because the gate still closes — the plant only breaks the two contracts attached to the established token, neither of which is visible from the refusal itself; restoring `head_moved_during_run` passes both |
 | P13 | Open the gate on a clean pass without re-reading the head | a scratch copy of the guard | scenario 3a fails: the head moves during the pass, the clean verdict for the old commit opens the gate, and ready-phase reviewers read code the local reviewer never saw — the exact guarantee this item exists to provide, broken on its own success path. Every scenario with a stable head passes, which is all of the others, and the loop's end-of-run head-move check cannot help because it fires after the dispatch; restoring the re-read passes |
 | P12 | Refuse with `needs_fixes` instead of `escalate` | same scratch copy | scenario 10a fails: the lifetime cap counts `unique` `head_sha\|result` pairs and `CYCLE_COUNT` resets each invocation, so an unchanged head refuses forever with neither cap advancing — the boundedness the plan claims would be asserted and untrue. Scenario 8a's single-refusal assertion still passes, which is why 10a runs a **second** invocation; restoring `escalate` passes both |
@@ -681,7 +724,7 @@ three groups:
 | P4 | Call `ensure_pr_ready_for_ready_phase` before checking the pass's result | same scratch copy | scenario 7 fails on its conversion assertion: a failed pass leaves the pull request converted to ready with no reviewer dispatched — a state the loop never intended and a human has to undo. The `needs_fixes` result is still reported, so a test asserting only the result passes; restoring the order passes |
 | P5 | Run the guard even when no ready-phase platform is configured | same scratch copy | scenario 13 fails: every draft-only run dispatches the local reviewer twice, doubling the cost of the cheapest gate for no benefit — the pass exists to protect a gate that is not there; restoring the no-op passes |
 
-Six proofs plant the fail-open direction, and P2 is the one to read twice: it is
+Seven proofs plant the fail-open direction, and P2 is the one to read twice: it is
 the natural default, it passes every scenario that supplies a verdict, and the
 pull requests it lets through are exactly the ones nobody reviewed locally.
 
@@ -711,7 +754,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    recording in the ledger the head a pass **failed** on, before
    `ensure_pr_ready_for_ready_phase`, and compose the current round into the
    payload before evaluating the condition. **Verify**: scenarios 4, 5, 5b, 6,
-   3a, 3b, 7, 8, 8a, 8b and 8c — the dispatch count across cycles, all three consequences of a failed
+   3a, 3b, 7, 7a, 7b, 8, 8a, 8b and 8c — the dispatch count across cycles, all three consequences of a failed
    pass, the refusal on the next cycle at the same head, and the `not_required`
    path after a clean pass.
 3. Confirm the caps are untouched and that the refusal terminates without one.
@@ -724,7 +767,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook **Step
    10**, which reads both surfaces and the fragment against each other — Step 8
    is the no-gate/no-guard case.
-7. Produce the fourteen planted-violation proofs (P1-P14) and record them in the PR
+7. Produce the fifteen planted-violation proofs (P1-P15) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

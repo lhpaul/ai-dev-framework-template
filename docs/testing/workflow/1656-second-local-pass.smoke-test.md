@@ -172,12 +172,25 @@ Proof P13.
 **Maps to**: the brief's outcome, the failure half.
 
 1. Same as Step 4, but the second pass reports `needs_fixes`.
+2. Repeat once per remaining non-clean result: `escalate`; `skipped` with
+   reason `unavailable`; `skipped` with reason `not_configured`; `skipped` with
+   any other reason; `needs_rerun`; and an unparseable result. Run these through
+   the **real** shared processor, not a stub.
 
-**Expected result**: three things, all asserted:
+**Expected result**: for **every** case, three things, all asserted:
 
 - the cycle ends with `needs_fixes`;
 - the pull request is **not** converted to ready;
 - **no** ready-phase platform is dispatched.
+
+The `skipped` rows are the ones that invert. The shared processor treats a
+skipped platform as **not blocking** — correct for an ordinary platform, and
+wrong for this pass: the guard dispatched it *because* the gate needs evidence,
+and a skipped pass produced none. Without the guard's override, a skipped pass
+opens the ready-phase gate on a review that did not happen — the fail-open this
+item exists to close, arriving through the machinery the guard borrows. Run them
+through the real processor, because the inversion lives in what the processor
+does with the result rather than in what the guard reads. Proof P15.
 
 Asserting only the result would pass an implementation that converts the pull
 request first and then reports the failure — leaving it ready, with no reviewer
@@ -312,9 +325,9 @@ isolation, and the failure is only visible where they meet.
 2. Run `scripts/development-workflow/pr-review-loop.sh --help`.
 3. Read `changelog.d/1656.changed.second-local-pass.md`.
 
-**Expected result**: both surfaces describe the same **seven** reasons — the
-five conditions plus `failed_for_head` and `head_moved_during_pass` — and the
-same two keys, and neither describes the pass as consuming a cycle or as running
+**Expected result**: both surfaces describe the same **eight** reasons — the
+five conditions plus `failed_for_head`, `head_moved_during_pass` and
+`local_pass_unavailable` — and the same two keys, and neither describes the pass as consuming a cycle or as running
 without a ready-phase platform. The fragment is `changed`, not `added` — the
 ready-phase gate already existed and this alters when it fires.
 
@@ -337,10 +350,10 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P14 each record the command, the file and line of the
+2. Confirm P1 through P15 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: fourteen proofs in three groups — **six** fail-open,
+**Expected result**: fifteen proofs in three groups — **seven** fail-open,
 **five** loop and cost, **three** integration, per the plan's proof-group
 table.
 
