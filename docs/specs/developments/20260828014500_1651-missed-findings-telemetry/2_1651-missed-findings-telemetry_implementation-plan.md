@@ -685,7 +685,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       | Literal text of both parts | 42 | fixed strings |
       | Reviewer name | 18 | the longest of the eleven names `run_platform_review` dispatches, `claude-code-action` |
       | Short SHA | 8 | fixed rendering |
-      | Blocking count, path total | 5 each | **clamped**: a value above 9,999 renders as `9999+` |
+      | Blocking count, path total | their own decimal width, **exact** | AC-14 requires the total and the omitted count to be exact, so neither is clamped or abbreviated |
       | State label **and** classification, jointly | 34 | the largest **reachable** pair — see below |
 
       The label and the classification are bounded **together**, not
@@ -834,14 +834,15 @@ Not applicable — this repository ships workflow tooling, not a service.
     summary line names three. Read the record back and confirm every path is
     present — the assertion that separates storage from rendering, and the one
     that fails if an implementer applies the line's bound to the record.
-13c-ii. The worst-case line fits, and the fixture is a **reachable** record: the
+13c-ii. The worst realistic line fits and its counts are **exact**: the
     longest reviewer name (`claude-code-action`), the longest reachable
     label-and-classification pair (`Clean, earlier commit` with
     `possible_miss`, 34 characters — longer than the longest label paired with
-    its own classification), and both counts above 9,999. It renders at most 200
-    characters, with the counts shown as `9999+` and at least one path named.
-    The clamp is asserted directly — a count of 1,000,000 must render as
-    `9999+`, not as seven digits. Pairing `Clean, unrelated commit` with
+    its own classification), and both counts at 9,999,999. It renders at most
+    200 characters with both counts in full — seven digits each, never
+    abbreviated — and at least one path named. The budget must be computed from
+    the counts' actual width: a fixed reservation drops a path that would have
+    fit. Pairing `Clean, unrelated commit` with
     `confirmed_miss` would be a shorter line *and* an impossible record, since
     AC-17 makes `clean_same_commit` the only confirmed miss.
 13c-i. The bound is met by **reservation**: a record whose paths would fit
@@ -1116,7 +1117,7 @@ three groups:
 | P25 | Take one `reviewed_head` for the whole round instead of joining per platform | a scratch copy of the record builder | scenario 16b fails: two platforms that reviewed different commits are both attributed to one, so one record names a commit its reviewer never read and a `clean_same_commit` can follow from it. Every single-platform scenario passes, which is all of the others; restoring the per-platform join passes |
 | P27 | Key the evidence-state rows on the raw outcomes `escalate` and `timeout` instead of the normalized `unavailable` | a scratch copy of the mapping | scenario 6's `unavailable` case fails: nothing the selector emits matches those rows, the verdict falls through to `unknown`, and an outage becomes indistinguishable from missing evidence — the distinction AC-6 exists for. Every other row still passes, because only this one was renamed by normalization; restoring the normalized key passes |
 | P26 | Omit `classification` for the eight non-miss states | a scratch copy of the classifier | scenario 16a fails on eight of its ten cases: a record with no key is indistinguishable from one written before the field existed, so a later report cannot tell *judged and not a miss* from *not judged*; restoring `not_a_miss` passes |
-| P24 | Render counts unclamped | a scratch copy of the renderer | scenario 13c-ii fails: a record with a seven-digit count consumes the space the arithmetic reserves for it, `budget` goes negative, and the line either exceeds 200 characters or names no path on a record whose paths would have fit. The clamp is the only bound this plan introduces into the worst-case sum, so removing it is the one change that reopens it; restoring `9999+` passes |
+| P24 | Reserve a fixed five characters for each count instead of their actual width | a scratch copy of the renderer | scenario 13c-ii fails in both directions: a seven-digit count under-reserves and the line exceeds 200 characters, while a one-digit count over-reserves and drops a path that would have fit. Ordinary records with three- or four-digit counts pass, which is every other scenario; restoring the actual-width computation passes |
 | P23 | Append paths until the budget is full, then add the remainder text | a scratch copy of the renderer | scenario 13c-i fails: a record sized to the boundary emits a line longer than 200 characters, over-long by exactly the `, +N more` that announces the omission — so the one line guaranteed to be short is the one that says it left something out. Scenario 13's ordinary cases pass, because they are nowhere near the boundary; restoring the reserved budget passes |
 | P20 | Store only the three paths the summary line will name | a scratch copy of the record builder | scenario 13a-i fails: a twelve-file round's record holds three paths and the other nine are unrecoverable, so AC-16's read-back is incomplete and #1657 cannot answer which files external reviewers find things in. Every other scenario passes, because they all read the rendered line rather than the record; restoring the complete list passes |
 | P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
