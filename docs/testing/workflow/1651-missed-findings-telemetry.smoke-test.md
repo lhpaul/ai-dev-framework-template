@@ -179,8 +179,20 @@ why its fixture deliberately deletes an object. Proof P3.
 1. Call `reviewer_loop_local_evidence_state` once per row of the plan's
    eleven-row mapping table.
 
+2. Call it once more with a local verdict carrying **no** `reviewed_head`,
+   inside an entry whose `head_sha` is set and equal to the external reviewer's
+   commit.
+
 **Expected result**: the ten spec states, with `unknown` reached twice — once
-from an undecidable ancestry and once from an unrecognised outcome.
+from an undecidable ancestry and once from an unrecognised outcome. Call 2
+yields **`unknown`**, not `clean_same_commit`.
+
+Call 2 is the entry-head trap. An entry's `head_sha` is the live head at write
+time — what the pull request pointed at when the row was written — not the
+commit that reviewer examined. Falling back to it compares the external
+reviewer's commit against a commit the local reviewer may never have looked at,
+and produces a confirmed miss from two unrelated facts. It is invisible whenever
+the two coincide, which is most rounds. Proof P16.
 
 ## Step 7: What creates a record, and what does not
 
@@ -377,10 +389,10 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P15 each record the command, the file and line of the
+2. Confirm P1 through P16 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: fifteen proofs in two groups — **nine** overclaiming,
+**Expected result**: sixteen proofs in two groups — **ten** overclaiming,
 **six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:

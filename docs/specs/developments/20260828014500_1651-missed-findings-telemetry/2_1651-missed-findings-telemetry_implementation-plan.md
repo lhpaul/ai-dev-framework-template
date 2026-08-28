@@ -404,11 +404,11 @@ Not applicable — this repository ships workflow tooling, not a service.
          own findings;
       2. the platform reported no **blocking** findings — advisory findings do
          not qualify;
-      3. the reviewed commit cannot be established from **either** source —
-         no unattributable record. With `loop_head_sha` as the fallback this is
-         now rare, which is the point: the exclusion should fire on genuine
-         ignorance, not on the ordinary case of an external reviewer that does
-         not report its head;
+      3. the platform did not emit `REVIEWED_HEAD` — the reviewed commit
+         cannot be established, so no record. There is **no** fallback:
+         `loop_head_sha` is not substituted, and with today's adapters this
+         exclusion fires on every external round, which is the honest state of
+         the feature rather than a defect in it;
       4. the round is not eligible at all, which rows 1 and 2 of the spec's
          matrix already cover.
 
@@ -563,6 +563,12 @@ Not applicable — this repository ships workflow tooling, not a service.
     a classification.
 6. `reviewer_loop_local_evidence_state` produces each of the ten states, one
    case per row of its eleven-row table, including both routes to `unknown`.
+6a. A **local** verdict carrying no `reviewed_head` yields `unknown`, not a
+    state derived from the entry's `head_sha`. The entry's head is the live head
+    at write time — what the pull request pointed at when the row was written —
+    and using it would compare the external reviewer's commit against a commit
+    the local reviewer may never have examined, producing `clean_same_commit`
+    from two unrelated facts.
 7. A record is **not** built for the local reviewer's own blocking findings.
 8. A record is **not** built for an external platform whose findings are
    advisory only.
@@ -734,7 +740,11 @@ reviewer_loop_local_latest_verdict() {
            | {outcome: (.result // "unknown"),   # normalized at collection time; the
                                          # reconciliation below is the only
                                          # transformation applied after
-              head_sha: (.reviewed_head // $entry.head_sha // ""),
+              # No fallback to $entry.head_sha: that is the live head at write
+              # time, not the commit this reviewer examined. A verdict with no
+              # reviewer-supplied head cannot be compared, and an empty head
+              # makes the ancestry undecidable, which maps to `unknown`.
+              head_sha: (.reviewed_head // ""),
               iteration: $entry.iteration})
       ]
     | sort_by(.iteration)
@@ -758,12 +768,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The fifteen proofs fall into
+runs per proof, each citing a concrete file and line. The sixteen proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **9** | P1, P2, P3, P4, P8, P10, P12, P14, P15 | a number asserted on evidence that does not support it |
+| Overclaiming | **10** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16 | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -781,10 +791,11 @@ two groups:
 | P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
+| P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Nine proofs plant the overclaiming direction because that is the direction with
+Ten proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -814,8 +825,9 @@ object exposes it.
    over cleanliness, the two absent-reviewer values kept apart by the
    configuration argument alone, and the `unknown` fallback for pre-change
    entries.
-3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenario 6 — one case
-   per row, including both routes to `unknown`.
+3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenarios 6 and 6a —
+   one case per row, both routes to `unknown`, and a local verdict with no
+   reviewer-supplied head.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
    `continue`s. Attribution uses the reviewer's own `REVIEWED_HEAD` and has
    **no fallback**; `loop_head_sha` must not be substituted. **Verify**:
@@ -834,7 +846,7 @@ object exposes it.
    eight-findings-over-three-files case, and the three remainder forms.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the fifteen planted-violation proofs (P1-P15) and record them in the PR
+10. Produce the sixteen planted-violation proofs (P1-P16) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
