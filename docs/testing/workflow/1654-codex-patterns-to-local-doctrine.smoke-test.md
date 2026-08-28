@@ -178,6 +178,28 @@ key of its own. Step 2 runs the real function rather than reading its source,
 because "no change needed in the loop" is the kind of claim that holds until a
 value contains a newline. Proof P6.
 
+## Step 6a: The evidence artifact carries the three values
+
+**Maps to**: AC-15.
+
+1. Run the reviewer with `LOCAL_AI_REVIEWER_EVIDENCE_FILE` set, once on a
+   `supplied` catalogue and once on an `oversized` one.
+2. Read the evidence JSON. Confirm a `review_doctrine` object with the state as
+   a string, the pattern count as a **number**, and the version as a string, and
+   that the file still validates as `local_ai_reviewer_evidence.v1`.
+
+**Expected result**: both runs carry all three; the `oversized` run's count is
+`0` and its version is present.
+
+The evidence file is a **different surface** from the `key=value` output, and
+AC-15 names it separately for that reason: the output is what the loop summary
+renders, the evidence file is what a later report reads. An implementation that
+writes the three values only to stdout passes Step 6 and every other step here,
+and leaves the artifact empty. Proof P13.
+
+The `oversized` run is the one to include, because it is where the evidence's
+copy of the count differs from what the catalogue contains.
+
 ## Step 7: Every stage gets the doctrine
 
 **Maps to**: AC-13.
@@ -321,10 +343,10 @@ changelog bullet from the reader's perspective.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P12 each record the command, the file and line of the
+2. Confirm P1 through P13 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twelve proofs in three groups — **four** silent, **five**
+**Expected result**: thirteen proofs in three groups — **four** silent, **six**
 contract, **three** fail-open, per the plan's proof-group table.
 
 The silent group carries the weight, because a review that used less doctrine
