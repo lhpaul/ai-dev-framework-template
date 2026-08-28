@@ -20,6 +20,11 @@ in this shell; call anything that returns non-zero as a normal answer inside an
 3. Call it with a catalogue of 12,001 bytes.
 4. Call it with a well-formed catalogue of three patterns.
 
+5. Call it four more times, each with a **different** file operation failing
+   while the others succeed: the size probe, the digest, the pattern count, and
+   the `jq --rawfile` read — for instance by removing the file between the probe
+   and the read, or by putting a failing stub first on `PATH`.
+
 **Expected result**:
 
 | Case | `state` | `text` | `pattern_count` | `version` |
@@ -34,6 +39,15 @@ states are error paths with different owners — a repository that never adopted
 the catalogue, a broken environment, and a maintainer's edit that needs undoing
 — and only the third is actionable by someone reading the pull request.
 Collapsing them into one "not supplied" is the tempting simplification. Proof P1.
+
+Case 5's four runs all return `unreadable` **and the reviewer keeps running**.
+This step runs in a shell that has sourced the script, so `set -euo pipefail` is
+active — which is how it runs in production, and the reason a permission-bit
+test is not enough: an ACL, an I/O error, or a file removed between the test and
+the use all pass `[ -r … ]`, and the failure that follows would abort the
+reviewer rather than report a state. AC-8 requires the review to still run. A
+handler that is present but reached only after `set -e` has aborted is not a
+handler. Proof P10.
 
 ## Step 2: An oversized catalogue supplies nothing and still names itself
 
@@ -274,11 +288,11 @@ changelog bullet from the reader's perspective.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P9 each record the command, the file and line of the
+2. Confirm P1 through P10 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nine proofs in two groups — **four** silent, **five**
-contract, per the plan's proof-group table.
+**Expected result**: ten proofs in three groups — **four** silent, **five**
+contract, **one** fail-open, per the plan's proof-group table.
 
 The silent group carries the weight, because a review that used less doctrine
 than it reports leaves no trace anywhere. P5 is the one to read twice: its

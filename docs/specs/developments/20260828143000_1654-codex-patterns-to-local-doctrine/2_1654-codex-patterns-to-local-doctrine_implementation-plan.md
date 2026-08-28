@@ -174,6 +174,15 @@ Not applicable — this repository ships workflow tooling, not a service.
       {"state": "...", "text": "...", "pattern_count": N, "version": "..."}
       ```
 
+      **Every read is attempted, and every read's failure is `unreadable`.** A
+      permission-bit test is not a read: an ACL, an I/O error, or a file removed
+      between the test and the use all pass `[ -r … ]`, and under `set -euo
+      pipefail` the failure that follows would terminate the reviewer rather
+      than report a state — which AC-8 forbids, because the review must still
+      run. So `wc -c` doubles as the open probe, and the digest, the count and
+      `jq --rawfile` each carry their own handler. There is no window in which a
+      check has succeeded and the operation it authorised has not been tried.
+
       Its four states are the spec's, decided by three ordered inputs:
 
       | # | Present | Readable | Within bound | State | `text` | `pattern_count` | `version` |
@@ -259,6 +268,11 @@ catalogue and the reviewer's recorded output.
 1. `reviewer_doctrine_supply` returns each of the four states, one case per row
    of its table, asserting **all four** returned values and not the state
    alone.
+1a. Every file operation's failure yields `unreadable` and the reviewer keeps
+   running: the size probe, the digest, the pattern count and the `jq --rawfile`
+   read, each failed in turn while the others succeed. Exercised under
+   `set -euo pipefail`, which is how the script runs — a handler that is merely
+   present but reached after `set -e` has already aborted is not a handler.
 2. The `oversized` row returns empty `text` **and** a non-empty `version`. Both
    halves are asserted: a truncated text is AC-9's failure, and a missing
    version is the maintainer's only clue about which catalogue is too big.
@@ -443,6 +457,7 @@ the document.
 | The doctrine is supplied truncated when over the bound | **High** — truncating is the obvious thing to do with a too-large string | **High** — partial doctrine looks complete, and it drops the newest patterns, which are the ones nobody has internalised | `text` is empty in the `oversized` row, asserted by scenario 2; proof **P2** supplies the first 12,000 bytes instead |
 | The bound is duplicated between the linter and the reviewer | **High** if the linter is written in Python like its neighbours | Med — the two drift, and the reviewer accepts a catalogue CI rejects or the reverse | One constant in `workflow-lib.sh`, sourced by both; the linter is Bash for that reason. Scenario 15 moves the constant and requires both to follow; proof **P3** gives the linter its own copy |
 | The incident-reference check is applied to the whole file | Med | Med — contribution guidance legitimately cites repository paths, so the check would reject a valid catalogue and be switched off | Entry-scoped, with the preamble excluded by the same parse that finds the entries. Scenario 13 and proof **P4** |
+| A file operation fails after a permission-bit test and aborts the reviewer | Med | **High** — under `set -e` the round produces no result at all, which is worse than a review without the doctrine | Every read is attempted with its own handler; `wc -c` is the open probe. Scenario 1a and proof **P10** |
 | The digest command is missing and the version is silently empty | Low | Med — two reviews that saw different catalogues become indistinguishable, on one machine, invisibly | No digest means state `unreadable`, not `supplied`. Scenario 6 and proof **P5** |
 | The doctrine's text lands in the `key=value` output | Med | Med — a multi-line value is re-emitted as fabricated keys by the loop | Only the three scalars are printed. Scenario 8 runs the loop's real function; proof **P6** prints the text |
 | The doctrine is supplied only at some stages | Med | Med — the patterns are stage-independent, and a reviewer looking for them at one stage only finds them there | Supplied at every stage including default. Scenario 9, one case per stage; proof **P7** makes it stage-conditional |
@@ -461,10 +476,19 @@ reviewer_doctrine_supply() {
   local bytes version count
 
   [ -f "$path" ] || { printf '{"state":"absent","text":"","pattern_count":0,"version":""}\n'; return 0; }
-  # Readability is probed without capturing: `$(cat …)` strips every trailing
-  # newline, and the bundle must carry the catalogue's stored bytes exactly.
-  # The text itself is read by `jq --rawfile` below, which preserves them.
-  [ -r "$path" ] || {
+  # Every read is attempted and its failure handled. `[ -r … ]` alone is a
+  # permission-bit test, not a read: an ACL, an I/O error, or a file removed
+  # between the check and the use all pass it, and under `set -e` the failure
+  # that follows would terminate the reviewer instead of reporting
+  # `unreadable` — which AC-8 forbids, since the review must still run.
+  #
+  # `wc -c` is the open probe *and* the size measurement, so no separate
+  # existence-then-read race is introduced; the digest and `jq --rawfile`
+  # below each carry their own `||` handler for the same reason.
+  bytes="$(wc -c <"$path" 2>/dev/null)" || {
+    printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
+  bytes="${bytes//[[:space:]]/}"
+  [ -n "$bytes" ] || {
     printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
 
   # No digest command is `unreadable`, never `supplied` with an empty version:
@@ -473,7 +497,6 @@ reviewer_doctrine_supply() {
   version="$(reviewer_doctrine_version "$path")" || {
     printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
 
-  bytes="$(wc -c <"$path" | tr -d ' ')"
   if [ "$bytes" -gt "$REVIEW_DOCTRINE_MAX_BYTES" ]; then
     # text empty (AC-9: never truncated), version present (which catalogue is
     # too big is what the maintainer needs), count 0 (patterns *supplied*).
@@ -482,11 +505,13 @@ reviewer_doctrine_supply() {
     return 0
   fi
 
-  count="$(grep -c '^### ' "$path" || true)"
+  count="$(grep -c '^### ' "$path" 2>/dev/null || true)"
   # --rawfile, never --arg with a command substitution: it reads the file's
-  # bytes verbatim, trailing newlines included.
+  # bytes verbatim, trailing newlines included. Its own failure is `unreadable`
+  # too — the file can disappear between the size probe and this call.
   jq -n --rawfile t "$path" --arg v "$version" --argjson c "${count:-0}" \
-    '{state:"supplied", text:$t, pattern_count:$c, version:$v}'
+    '{state:"supplied", text:$t, pattern_count:$c, version:$v}' 2>/dev/null || {
+    printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
 }
 ```
 
@@ -495,19 +520,21 @@ reviewer_doctrine_supply() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The nine proofs fall into
-two groups:
+runs per proof, each citing a concrete file and line. The ten proofs fall into
+three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Silent | **4** | P1, P2, P5, P7 | a review that used less doctrine than it reports, with nothing to show it |
-| Contract | **5** | P3, P4, P6, P8, P9 | a check or an output that breaks its own stated rule |
+| Contract | **5** | P3, P4, P6, P8, P9 |
+| Fail-open | **1** | P10 | an error path that aborts the reviewer instead of reporting a state | a check or an output that breaks its own stated rule |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Collapse `absent`, `unreadable` and `oversized` into one `not_supplied` state | a scratch copy of `reviewer_doctrine_supply` | scenario 1 fails: the three states have different owners — a repository that never adopted the catalogue, a broken environment, and a maintainer's edit that needs undoing — and only the third is actionable by anyone reading the pull request; restoring the four states passes |
 | P2 | Supply the first `REVIEW_DOCTRINE_MAX_BYTES` of an oversized catalogue | same scratch copy | scenario 2 fails: `text` is non-empty in the `oversized` row, so the reviewer receives a catalogue that looks complete and is missing its most recent patterns. This is AC-9, and the plant is the obvious thing to do with a too-large string; restoring the empty text passes |
 | P8 | Declare the bound with a bare `REVIEW_DOCTRINE_MAX_BYTES=12000` instead of `:-` | a scratch copy of `workflow-lib.sh` | scenario 15 fails on its overridden-value assertion. Without that assertion the plant would be invisible — the override is ignored, both consumers keep 12,000, and "the two agree" is still true — which is why the scenario checks the value took effect rather than only that they match; restoring `:-` passes |
+| P10 | Replace the read handlers with a single `[ -r "$path" ]` test | a scratch copy of `reviewer_doctrine_supply` | scenario 1a fails: with the file removed after the test, the reviewer aborts under `set -e` instead of reporting `unreadable`, so the round produces no result at all rather than a review that ran without the doctrine. Scenario 1's ordinary unreadable case — a permission bit — still passes, because there the test itself catches it; restoring the per-operation handlers passes both |
 | P9 | Read the text with `text="$(cat "$path")"` and pass it as `--arg` | a scratch copy of `reviewer_doctrine_supply` | scenario 7a fails: the bundle's copy loses the file's trailing newlines, so what the reviewer receives is not what the repository stores. Scenario 5's interior-sentence match still passes, which is why 7a compares bytes; restoring `--rawfile` passes |
 | P3 | Give `review-doctrine-lint.sh` its own copy of the bound instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails: with the constant overridden, the linter and the reviewer disagree about the same catalogue — CI rejects what the reviewer supplies, or the reverse. Scenarios 11, 12 and 14 all pass, because they never move the constant; restoring the source passes |
 | P4 | Apply the incident-reference check to the whole file rather than to entries | same scratch copy | scenario 13 fails: a catalogue whose preamble cites `docs/specs/developments/` — which is what contribution guidance does — is rejected, so the check must be either weakened or switched off; restoring the entry scope passes |
@@ -539,8 +566,8 @@ everywhere it is tested.
    scenarios 16 and 16a — the catalogue passes its own linter, has five
    patterns, its preamble carries the AC-3 statement and the AC-3a request, and
    the obligation appears in **both** places AC-5a names.
-4. Add `reviewer_doctrine_supply` and its version helper. **Verify**: scenarios
-   1 through 6 — all four states with all four values, the `oversized` row's
+4. Add `reviewer_doctrine_supply` and its version helper, with a handler on
+   every file operation. **Verify**: scenarios 1, 1a and 2 through 6 — all four states with all four values, the `oversized` row's
    empty text and present version, and the missing-digest case.
 5. Add the four bundle fields and the three `print_kv` lines, plus the evidence
    object. **Verify**: scenarios 7, 7a, 8 and 10 — the enumerated field list,
@@ -550,7 +577,7 @@ everywhere it is tested.
    deliberately malformed catalogue.
 7. Update the `--help` block, the integration document, Protocol 93, and add
    `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook Step 8.
-8. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
+8. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
