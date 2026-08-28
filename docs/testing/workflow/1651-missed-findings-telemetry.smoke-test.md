@@ -116,19 +116,27 @@ P4.
    external reviewer failed, while the local reviewer's own entry in
    `platform_results` reads `clean`.
 
-4. Call it with an entry whose local-reviewer record is `result: "skipped"` and
-   `reason: "unavailable"`, and again with `reason` empty.
+4. Call it with an entry whose local-reviewer record is
+   `{"result": "unavailable", "raw_result": "skipped", "raw_reason": "unavailable"}`,
+   and again with `{"result": "skipped", "raw_result": "skipped", "raw_reason": ""}`.
 
 **Expected result**: `unknown` for 1 and 2; `clean` for 3; `unavailable` and
 `skipped` for 4's two calls. A record is written in every case, and 1 and 2 are
 neither confirmed nor possible misses.
 
-Case 4 is why the raw `reason` is stored alongside the raw `result`. A reviewer
-deliberately skipped and one that timed out both arrive as `RESULT=skipped`, and
-the spec keeps them apart. The summary's display array cannot: it folds both
-into the single word `unavailable` and renders escalations as
-`escalated (<reason>)`, which is why `platform_results` is built from the raw
-pair. Proof P11.
+Case 4's fixtures are **already normalized**, which is the point: normalization
+happens once, at collection time, and `result` is what the selector reads. The
+raw pair travels beside it for audit — `raw_result: "skipped"` with
+`raw_reason: "unavailable"` versus an empty reason is what distinguishes a
+reviewer that timed out from one deliberately skipped, and both arrive from the
+companion script as `RESULT=skipped`. Assert all three fields, not just
+`result`: a normalizer that dropped the raw pair would pass a check on `result`
+alone while destroying the only evidence that the normalization was right.
+
+The summary's display array cannot carry this distinction — it folds both into
+the single word `unavailable` and renders escalations as `escalated (<reason>)`
+— which is why `platform_results` is built from the raw pair at collection.
+Proof P11 plants the display array as the source.
 
 `unknown` here is not a failure — the history is readable and simply does not
 say. That is why it belongs in the denominator rather than being dropped.
