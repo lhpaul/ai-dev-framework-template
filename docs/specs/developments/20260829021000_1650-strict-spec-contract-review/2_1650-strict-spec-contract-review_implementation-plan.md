@@ -508,9 +508,10 @@ and this item derives a copy from its output and edits nothing there.
    appears in `STRICT_<n>_*`, does not appear in `BLOCKING_<n>_*`, and does not
    change `RESULT`.
 5. A review at a non-spec stage produces **byte-identical** `key=value` output
-   to the same review before this change, excluding the two keys this item
-   always adds. No strict pass is dispatched, so the comparison covers the
-   ordinary pass end to end.
+   to the same review before this change, excluding the one key this item always
+   adds, `STRICT_SPEC_STATE`. The four conditional keys must not appear at all
+   at this stage, so their absence is asserted rather than excluded. No strict
+   pass is dispatched, so the comparison covers the ordinary pass end to end.
 5a. A **spec-stage** review whose strict pass returns no findings produces the
    same ordinary output as the same review with the checklist removed —
    verdict, blocking block, order and numbering identical. This is AC-3's own
@@ -642,12 +643,17 @@ checklist reaches the strict pass at the spec stage, that the two passes never
 merge, that the counts are reported — is scenarios 1 through 13, and those are
 automated.
 
-**A check that cannot demonstrate its pair still ships, and says so**, recorded
-as undemonstrated in the pull request and in its own checklist section. The
-alternative is worse: a check that quietly detects nothing produces a permanent
-zero in #1657's data, and a zero reads as *this problem does not occur* rather
-than *this check does not work*. Making that failure visible is the same
-principle as `unavailable` never being written as `0`.
+**A check that cannot demonstrate its pair does not ship.** `REVIEW.md` requires
+both runs for every new check, and an undemonstrated one blocks readiness — the
+proof not being a CI gate says where it is asserted, not whether it is required.
+The repair is to sharpen the check's question in the checklist until it detects
+its own planted violation, and that happens at step 5a, before merge.
+
+The reason to hold the line rather than ship the check with a note: a check that
+detects nothing produces a permanent zero in #1657's data, and a zero reads as
+*this problem does not occur* rather than *this check does not work*. Shipping
+it undemonstrated would put an unfalsifiable row into the measurement this
+entire item exists to make possible.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1650-strict-spec-contract-review.smoke-test.md`

@@ -416,9 +416,12 @@ P10 through P17 are the per-check pair: the check fires on the fixture carrying
 its planted violation and does not fire on the same fixture with that one
 violation removed. Both runs recorded. Without the second run, a check that
 fires on everything is indistinguishable from one that works. A check that
-cannot demonstrate its pair still ships and is recorded as undemonstrated — a
-check that quietly detects nothing produces a permanent zero in #1657's data,
-and a zero reads as *this problem does not occur*.
+cannot demonstrate its pair **does not ship**: `REVIEW.md` requires both runs
+for every new check, and the proof not being a CI gate says where it is asserted
+rather than whether it is required. The repair is to sharpen that check's
+question until it detects its own planted violation. Shipping it undemonstrated
+would put a permanent zero into #1657's data, and a zero reads as *this problem
+does not occur* rather than *this check does not work*.
 
 P1 is the one to read first: with the two responses merged the feature does not
 merely fail, it turns every specification review red, and the resulting pressure
