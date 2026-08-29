@@ -117,16 +117,29 @@ Not applicable — this repository ships workflow tooling, not a service.
       defined. The parser and the tests read them from here rather than
       repeating them, so a ninth check is one edit and not four.
 
-- [ ] **Supply it to the strict pass only.** One field on the context bundle,
-      at the same `jq -n` site the other epic items use:
+- [ ] **Give the strict pass its own bundle, derived from the ordinary one.**
+      The `jq -n` site is **not touched**. The ordinary bundle is built exactly
+      as today and written to exactly the same file; the strict bundle is that
+      file plus one key:
 
       ```text
-      strict_spec_checks: "<the checklist's stored bytes, or empty>"
+      jq --rawfile checks "$checklist" \
+        '. + { strict_spec_checks: $checks }' \
+        "$context_file" >"$strict_context_file"
       ```
 
-      It is **empty in the ordinary pass's bundle at every stage, including
-      `spec`**, and carries the text only in the strict pass's bundle. The text
-      is read with `jq --rawfile`, as #1654's is and for the same reason.
+      **The ordinary pass's bundle is therefore byte-identical, not merely
+      unchanged in content** — it is the same file, unmodified, and the strict
+      bundle is a copy with one key added. An earlier revision added an empty
+      `strict_spec_checks` to the shared bundle and claimed in the same document
+      that the ordinary review was untouched; that was a contradiction, and this
+      removes it rather than restating the claim more carefully.
+
+      It also removes the collision with #1654: nothing here edits the `jq -n`
+      object, so whichever item lands second has nothing to merge at that site.
+
+      The text is read with `jq --rawfile`, as #1654's is and for the same
+      reason.
 
       The state is not a bundle field. Rows 1 through 3 are decided by
       `local-ai-reviewer.sh` before it dispatches anything, and they decide
@@ -163,9 +176,42 @@ Not applicable — this repository ships workflow tooling, not a service.
       invocations do not need the promise.
 
 - [ ] **Run the strict checks as their own invocation.** A second call to
-      `LOCAL_AI_REVIEWER_COMMAND`, with the checklist in its bundle and a prompt
-      that asks for one thing: findings against the eight checks, each carrying
+      `LOCAL_AI_REVIEWER_COMMAND`, with the strict bundle and a prompt that asks
+      for one thing: findings against the eight checks, each carrying
       `check: "<identifier>"`, a path, a line and a body.
+
+- [ ] **Give the command a way to know which pass it is running, and a way to
+      say it understood.** The prompt lives in the reviewer command, not in
+      `local-ai-reviewer.sh`, so the mode has to cross that boundary explicitly:
+
+      - `local-ai-reviewer.sh` exports **`LOCAL_AI_REVIEWER_MODE`** —
+        `ordinary` or `strict` — beside `CONTEXT_BUNDLE_PATH` on each call.
+      - `local-codex-review-command.sh` selects its prompt on that variable. Its
+        prompt is hard-coded today and asks for the REVIEW.md verdict schema —
+        `result`, `reviewed_head`, `findings[]` with `severity` and
+        `clear_in_scope` — which is the wrong request for this pass. The strict
+        prompt asks for `{ mode, findings: [{check, path, line, body}] }` and
+        **no verdict**.
+      - Its `LOCAL_CODEX_REVIEWER_PROMPT` override applies to the ordinary
+        prompt only; a second variable, `LOCAL_CODEX_REVIEWER_STRICT_PROMPT`,
+        overrides the strict one. Letting the existing override apply to both
+        would send an ordinary-review instruction into the strict pass whenever
+        anyone customised their reviewer.
+
+      **The response must carry `mode: "strict_spec_checks"`, and the parser
+      refuses it otherwise.** This is the part that matters, and it is about
+      custom commands rather than the preset. `LOCAL_AI_REVIEWER_COMMAND` is
+      configurable; a command that ignores `LOCAL_AI_REVIEWER_MODE` answers the
+      strict call with an ordinary review — `result` plus `findings[]` carrying
+      `severity` and no `check`. Every one of those findings would be classified
+      `unknown`, and the pass would report `applied` with a large
+      `unknown_count`: **an ordinary review recorded as a completed run of the
+      strict checks**, putting fabricated incidence into #1657's data.
+
+      A silent contract needs a positive acknowledgement, and the mode marker is
+      it: absent or different means `strict_pass_failed`, so an unconfigured
+      custom command degrades to "the checks did not run" rather than to
+      invented numbers.
 
       **Its response has no verdict, and the parser reads none.** Any
       verdict-shaped key it emits — `result`, `status`, anything else — is
@@ -405,8 +451,10 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 - [ ] Document the five keys, the three states, the three `unavailable`
       reasons, the two-pass structure and what each pass may affect, the
-      unknown-identifier classification, and the closed identifier set in
-      the `--help` block, in
+      unknown-identifier classification, the closed identifier set, and the
+      **command contract** — `LOCAL_AI_REVIEWER_MODE`, the required
+      `mode: "strict_spec_checks"` response marker, and
+      `LOCAL_CODEX_REVIEWER_STRICT_PROMPT` — in the `--help` block, in
       `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`,
       and in Protocol 93.
 - [ ] Add the checklist to `markdown-lint.yml`'s `paths` filter — a
@@ -425,13 +473,13 @@ in lines:
 | | #1654 | This item |
 | --- | --- | --- |
 | Document | the review doctrine, all stages | the strict checks, spec stage only |
-| Bundle fields | four | one |
+| Bundle fields | four, at the `jq -n` site | one, on a derived copy |
 | Supplies when | always, to the one pass | only to the strict pass |
 | Findings | none of its own | its own pass, its own block |
 
-Whichever lands second re-reads the merged `jq -n` object and the merged
-`print_kv` block rather than this plan's copy of them. Scenario 11's enumerated
-field list is built at implementation time for that reason.
+Whichever lands second re-reads the merged `print_kv` block rather than this
+plan's copy of it. The `jq -n` object is no longer contended: #1654 edits it,
+and this item derives a copy from its output and edits nothing there.
 
 ---
 
@@ -488,6 +536,12 @@ field list is built at implementation time for that reason.
    object case is the quietest failure: without a type guard its property values
    are walked as findings and a malformed response is recorded as a completed
    run.
+7b. A strict response **without** `mode: "strict_spec_checks"` is
+   `strict_pass_failed`, run in two shapes: a response missing the field, and a
+   complete ordinary review — `result` plus findings carrying `severity` and no
+   `check` — which is what a custom `LOCAL_AI_REVIEWER_COMMAND` that ignores
+   `LOCAL_AI_REVIEWER_MODE` returns. The second must **not** be `applied` with a
+   large `unknown_count`.
 8. A mixed review — two blocking findings from the ordinary pass and three from
    the strict pass — reports `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and
    `RESULT=needs_fixes` driven by the ordinary two.
@@ -518,10 +572,15 @@ field list is built at implementation time for that reason.
 10. `STRICT_SPEC_CHECKS` names the **distinct** checks that fired, not one entry
     per finding. Exercised with three findings drawn from a pair of checks: the
     key reports that pair, not three identifiers.
-11. The bundle keeps every field present before this change — enumerated from
-    the merged object at implementation time, not from this plan — and adds
-    exactly one, which is **empty in the ordinary pass's bundle at every
-    stage**, including `spec`.
+11. The **ordinary** bundle is byte-identical to the one built before this
+    change, at every stage including `spec` — the `jq -n` site is not touched
+    and the file is not rewritten. The **strict** bundle is that file plus
+    exactly one key, `strict_spec_checks`, compared by `keys`.
+11a. `LOCAL_AI_REVIEWER_MODE` is `ordinary` on the first call and `strict` on
+    the second, asserted from a recording stub. The preset selects its prompt on
+    it, and `LOCAL_CODEX_REVIEWER_PROMPT` overrides only the ordinary prompt
+    while `LOCAL_CODEX_REVIEWER_STRICT_PROMPT` overrides only the strict one —
+    asserted with each set alone.
 12. The `strict_spec` object is present on **every** round at any stage, and
     mirrors the output by the table above: `state` and `count` always present,
     `count` `null` outside `applied`; `reason`, `checks` and `unknown_count`
@@ -667,22 +726,34 @@ def ident:
 
 def known($c): $c != null and ($known_checks | index($c) != null);
 
-(if   has("findings") then .findings
- elif has("comments") then .comments
- elif has("issues")   then .issues
- else null end) as $f
-| if ($f | type) != "array" then { malformed: true }
-  else
-    ($f | map(select(known(ident))))       as $named
-  | ($f | map(select(known(ident) | not))) as $unnamed
-  | { malformed:     false,
-      count:         ($named   | length),
-      checks:        ($named   | map(ident) | unique | join(",")),
-      unknown_count: ($unnamed | length) }
-  end
+if (.mode? // null) != "strict_spec_checks" then { malformed: true }
+else
+  (if   has("findings") then .findings
+   elif has("comments") then .comments
+   elif has("issues")   then .issues
+   else null end) as $f
+  | if ($f | type) != "array" then { malformed: true }
+    else
+      ($f | map(select(known(ident))))       as $named
+    | ($f | map(select(known(ident) | not))) as $unnamed
+    | { malformed:     false,
+        count:         ($named   | length),
+        checks:        ($named   | map(ident) | unique | join(",")),
+        unknown_count: ($unnamed | length) }
+    end
+end
 ```
 
-Five details are not stylistic, and the first two are the same principle twice.
+Six details are not stylistic, and the first three are the same principle three
+times.
+
+**The response must claim the mode.** A configurable
+`LOCAL_AI_REVIEWER_COMMAND` that ignores `LOCAL_AI_REVIEWER_MODE` answers with
+an ordinary review, whose findings carry `severity` and no `check` — every one
+counted `unknown`, the pass reporting `applied` with a large `unknown_count`,
+and an ordinary review recorded as a completed run of the strict checks. The
+marker is the positive acknowledgement that makes an unconfigured command
+degrade to "the checks did not run".
 
 **The findings key must be explicitly present**, which is why the program tests
 `has()` rather than writing `.findings // .comments // .issues // []`. That
@@ -715,8 +786,10 @@ than of the prompt.
 else. The ordinary pass's array is never in scope here, and this program's
 output never reaches `BLOCKING_<n>_*`.
 
-Verified as a standalone program against seven inputs. Counted: a six-finding
-array — two known identifiers with one repeated, one undefined identifier, one
+Verified as a standalone program against nine inputs. Refused for the mode: a
+response with no `mode`, and a full ordinary review (`result` plus a
+`severity`-carrying finding) — the shape a custom command returns if it ignores
+the mode variable. Then, with the mode present, counted: a six-finding array — two known identifiers with one repeated, one undefined identifier, one
 numeric, one with no `check` at all — yielding `count` 3, `checks`
 `ac_consistency,gate_matrix` and `unknown_count` 3; `{"findings": []}` yielding
 `count` 0; and a response using `comments` rather than `findings`, to confirm
@@ -771,11 +844,13 @@ is to disable the checks rather than to fix the merge.
    13c and 13d — the identifiers extracted from the shipped document match the
    spec's list as a set, compared by extraction and not by reading.
 2. Add the strict pass: the state test that decides whether to dispatch, the
-   second invocation, its own `jq` program, and the merge that keeps the two
-   responses apart. **Verify**: scenarios 4, 5, 5a, 6, 7, 8, 8a, 9, 9a and 9b —
-   these first, because everything else is reporting.
-3. Add the bundle field and the supply condition, carrying the cause when the
-   state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
+   derived bundle, `LOCAL_AI_REVIEWER_MODE`, the preset's second prompt and its
+   override variable, the second invocation, its own `jq` program with the mode
+   guard, and the merge that keeps the two responses apart. **Verify**:
+   scenarios 4, 5, 5a, 6, 7, 7a, 7b, 8, 8a, 9, 9a, 9b, 11 and 11a — these first,
+   because everything else is reporting.
+3. Add the supply condition, carrying the cause when the state is
+   `unavailable`. **Verify**: scenarios 1 and 1a.
 4. Add the five `print_kv` keys, the `STRICT_<n>_*` block, the evidence object
    and the ledger fields. **Verify**: scenarios 1a, 2, 3, 10 and 12.
 5. Pass `$known_checks` from the checklist. **Verify**: scenario 13.

@@ -128,6 +128,19 @@ them. Proof P3.
    `check: "not_a_real_check"`.
 2. Repeat with `check: 7`, then `check: {}`, then `check: null`, then a finding
    with no `check` key at all.
+2b. Then two responses that never claim the mode: one missing
+   `mode: "strict_spec_checks"`, and one that is a complete **ordinary** review
+   — `result` plus findings carrying `severity` and no `check`. Both are
+   `strict_pass_failed`.
+
+   The second is the realistic one. `LOCAL_AI_REVIEWER_COMMAND` is configurable,
+   and a custom command that ignores `LOCAL_AI_REVIEWER_MODE` answers the strict
+   call with its ordinary review. Every finding in it lacks a `check`, so
+   without the mode marker all of them count as unknown and the pass reports
+   `applied` with a large `unknown_count` — **an ordinary review recorded as a
+   completed run of the strict checks**, and fabricated incidence in #1657's
+   data. A silent contract needs a positive acknowledgement; this is it.
+
 2a. Then four malformed responses: `{}` with no findings key at all,
    `{"findings": null}`, an object value, and a string value. All four are
    `strict_pass_failed`, **not** counts. Run `{"findings": []}` immediately
