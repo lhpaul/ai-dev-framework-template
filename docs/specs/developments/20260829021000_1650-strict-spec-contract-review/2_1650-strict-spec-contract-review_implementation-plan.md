@@ -480,11 +480,14 @@ field list is built at implementation time for that reason.
    unknown, and the parser **does not abort**: `ascii_downcase` raises on a
    non-string, so the type guard has to run first. Asserted on all four shapes,
    since a program that errors here loses the entire strict pass.
-7a. A strict response whose `findings` value is an **object**, and one where it
-   is a **string**, are `strict_pass_failed` refusals — not `applied` with a
-   large `unknown_count`, and not a crash. The object case is the dangerous one:
-   without a type guard its property values are walked as findings and a
-   malformed response is recorded as a completed run.
+7a. Four malformed strict responses are `strict_pass_failed` refusals, **not**
+   counts: `{}` with no findings key at all, `{"findings": null}`, an
+   **object** value, and a **string** value. Asserted against
+   `{"findings": []}`, which must be `applied` with count `0` — the two inputs
+   differ by four characters and are the two sides of silence versus zero. The
+   object case is the quietest failure: without a type guard its property values
+   are walked as findings and a malformed response is recorded as a completed
+   run.
 8. A mixed review — two blocking findings from the ordinary pass and three from
    the strict pass — reports `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and
    `RESULT=needs_fixes` driven by the ordinary two.
@@ -645,7 +648,7 @@ file enumerates it.
 | `unavailable` is reported without its cause | Med | Med — a reader cannot tell a pull request whose stage could not be resolved from a repository missing the checklist or a reviewer command that failed, and the three have different owners | `STRICT_SPEC_REASON` carries one of three values. Scenario 1a and proof **P7** |
 | `0` is written where the checks did not run | **High** — an empty numeric field invites a default | **High** — unexamined rounds enter #1657's denominator and the rate is wrong in the flattering direction | Count and identifiers are empty outside `applied`. Scenarios 2 and 3; proof **P5** |
 | The identifier set is duplicated in the parser | Med | Med — a ninth check works in the document and not in the code, or the reverse | `$known_checks` is passed from the checklist. Scenario 13 and proof **P6** |
-| A malformed `findings` value is counted instead of refused | Med | **High** — an object value is walked as its property values, reported `applied` with a large `unknown_count`, and a malformed response enters #1657's data as a completed run | Array type checked before anything iterates; both shapes refuse as `strict_pass_failed`. Scenario 7a |
+| A malformed or absent `findings` key is counted instead of refused | **High** — `// []` is the idiomatic default and reads as harmless | **High** — an empty response is recorded as `applied` with count `0`, which says the checks ran and found nothing: silence entering #1657's data as zero, which is the confusion the whole feature exists to prevent | The key must be explicitly present via `has()`, and its value must be an array before anything iterates. Four refusal shapes asserted against `{"findings": []}`. Scenario 7a |
 | The extractor silently drops a malformed section | Med — one mistyped heading | **High** — the reviewer is handed seven checks, reports against seven, and the count reads as a completed run: the exact failure this feature exists to detect, inside the mechanism meant to detect it | Heading count compared against extracted count; any mismatch refuses the document as `checklist_unreadable`. Scenarios 13a to 13c |
 | `grep -c` exits 1 under `set -e` and kills the review | Med — it is the idiomatic way to write the count | **High** — the checklist-with-no-headings case produces no review at all rather than a refusal, and the failure appears on the one input the refusal tests exist for | Status read explicitly, exit 1 separated from exit greater than 1. Scenario 13c asserts the refusal is reached, not merely that its state is right |
 
@@ -664,7 +667,10 @@ def ident:
 
 def known($c): $c != null and ($known_checks | index($c) != null);
 
-(.findings // .comments // .issues // []) as $f
+(if   has("findings") then .findings
+ elif has("comments") then .comments
+ elif has("issues")   then .issues
+ else null end) as $f
 | if ($f | type) != "array" then { malformed: true }
   else
     ($f | map(select(known(ident))))       as $named
@@ -676,14 +682,24 @@ def known($c): $c != null and ($known_checks | index($c) != null);
   end
 ```
 
-Four details are not stylistic. **The array type is checked before anything
-iterates it**, and `malformed` is a `strict_pass_failed` refusal rather than a
-count. Without the guard a `findings` value that is an **object** is walked as
-its property values: each becomes a "finding", none carries a `check`, and the
-pass reports `applied` with a large `unknown_count` — a malformed response
-recorded as a completed run, which is the one outcome this feature exists to
-make impossible. A **string** value is worse only in being louder: `.[]` raises
-and the pass dies where it should refuse. Both are now the same refusal.
+Five details are not stylistic, and the first two are the same principle twice.
+
+**The findings key must be explicitly present**, which is why the program tests
+`has()` rather than writing `.findings // .comments // .issues // []`. That
+`//` chain reads as a convenience and is a silent failure: an empty response —
+`{}`, a reviewer that printed nothing usable, a command that produced no JSON at
+all — defaults to `[]` and is recorded as `applied` with count `0`, which says
+*the checks ran and found nothing*. It is the silence-versus-zero confusion the
+spec is built around, produced by the code that is supposed to report the
+distinction. An absent key is `strict_pass_failed`; an explicitly empty array is
+`applied` with `0`.
+
+**The array type is checked before anything iterates it**, and `malformed` is a
+refusal rather than a count. Without the guard a `findings` value that is an
+**object** is walked as its property values: each becomes a "finding", none
+carries a `check`, and the pass reports `applied` with a large `unknown_count`.
+A **string** value is worse only in being louder: `.[]` raises and the pass dies
+where it should refuse. Both are the same refusal, and so is `null`.
 
 The other three: the identifier is passed to `known` as an
 **argument** rather than piped, because inside `index(...)` the `.` is the
@@ -699,12 +715,18 @@ than of the prompt.
 else. The ordinary pass's array is never in scope here, and this program's
 output never reaches `BLOCKING_<n>_*`.
 
-Verified as a standalone program against four inputs: a six-finding array — two
-known identifiers with one repeated, one undefined identifier, one numeric, one
-with no `check` at all — yielding `count` 3, `checks`
-`ac_consistency,gate_matrix` and `unknown_count` 3; an **object** `findings`
-value and a **string** one, both yielding `malformed`; and a response with no
-findings key at all, yielding `count` 0 and no refusal.
+Verified as a standalone program against seven inputs. Counted: a six-finding
+array — two known identifiers with one repeated, one undefined identifier, one
+numeric, one with no `check` at all — yielding `count` 3, `checks`
+`ac_consistency,gate_matrix` and `unknown_count` 3; `{"findings": []}` yielding
+`count` 0; and a response using `comments` rather than `findings`, to confirm
+the alternative keys still work. Refused: `{}`, `{"findings": null}`, an
+**object** value and a **string** one.
+
+The pair worth reading together is `{}` and `{"findings": []}`. They differ by
+four characters and they are the two sides of the distinction this feature
+exists to preserve: one is a pass that produced nothing, the other is a pass
+that examined a specification and found nothing wrong with it.
 
 ---
 

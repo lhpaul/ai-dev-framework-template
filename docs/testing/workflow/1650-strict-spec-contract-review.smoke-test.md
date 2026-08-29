@@ -128,11 +128,20 @@ them. Proof P3.
    `check: "not_a_real_check"`.
 2. Repeat with `check: 7`, then `check: {}`, then `check: null`, then a finding
    with no `check` key at all.
-2a. Then two responses whose `findings` **value** is not an array: an object,
-   and a string. These are a different failure from an unrecognised identifier
-   and must produce `strict_pass_failed`, **not** `applied` with a large
-   `unknown_count` — an object walked without a type guard yields one "finding"
-   per property value, and a malformed response is recorded as a completed run.
+2a. Then four malformed responses: `{}` with no findings key at all,
+   `{"findings": null}`, an object value, and a string value. All four are
+   `strict_pass_failed`, **not** counts. Run `{"findings": []}` immediately
+   after: it must be `applied` with count `0`.
+
+   **The `{}` and `{"findings": []}` pair is the assertion that matters most in
+   this runbook.** They differ by four characters. One is a pass that produced
+   nothing — a reviewer that printed no usable JSON — and the other is a pass
+   that examined a specification and found nothing wrong with it. Writing the
+   parser as `.findings // .comments // .issues // []` collapses them, records
+   the first as `applied` with count `0`, and feeds silence into #1657 as a
+   zero. The object case is the quietest of the four: its property values are
+   walked as findings, so a malformed response is recorded as a completed run
+   with a large `unknown_count`.
 
 **Expected result**: each is reported with `STRICT_<n>_CHECK=unknown`, counted
 in `STRICT_SPEC_UNKNOWN_COUNT`, excluded from `STRICT_SPEC_COUNT` and
