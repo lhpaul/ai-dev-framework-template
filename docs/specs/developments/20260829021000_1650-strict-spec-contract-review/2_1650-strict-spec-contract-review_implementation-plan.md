@@ -244,7 +244,59 @@ Not applicable — this repository ships workflow tooling, not a service.
       a silent discard.
 
       **`$known_checks` is read from the checklist** via `--argjson`, so the
-      closed set has one definition and a ninth check needs no parser edit.
+      closed set has one definition and a ninth check needs no parser edit. How
+      the document becomes that array is the next bullet: it is a contract, not
+      an implementation detail.
+
+- [ ] **Extract the identifiers from the checklist, and refuse an ambiguous
+      document.** The checklist's section heading **is** the identifier:
+
+      ```text
+      ### <identifier>
+      ```
+
+      one level-3 heading per check, the identifier alone on the line, matching
+      `[a-z][a-z0-9_]*` — the same shape as the spec's eight names. The
+      question and the finding shape follow as prose beneath it.
+
+      Extraction is two commands, and the second is the validation:
+
+      ```text
+      declared="$(grep -c '^### ' "$checklist")"        # every level-3 heading
+      known="$(sed -n 's/^### \([a-z][a-z0-9_]*\)[[:space:]]*$/\1/p' "$checklist" \
+                 | jq -R -s 'split("\n") | map(select(length > 0))')"
+      ```
+
+      Then three tests, all of which mean **`unavailable` with reason
+      `checklist_unreadable`**, and none of which mean "carry on with what
+      parsed":
+
+      1. `known` is empty — a document with no identifiers is not a checklist.
+      2. `known | length` differs from `declared` — a level-3 heading the
+         pattern did not match. `### Ambiguous Phrase` is a section a reader
+         sees and the extractor does not.
+      3. `known | length` differs from `known | unique | length` — the same
+         identifier twice, which would make one check's incidence
+         double-counted and the other's invisible.
+
+      **Test 2 is the one worth arguing for.** Without it the extractor
+      *silently drops* a malformed section: the reviewer is handed seven checks,
+      reports against seven, and the count reads as a completed run. That is
+      the failure this whole feature exists to prevent — a review that looks
+      like it happened — reproduced inside the mechanism meant to detect it. So
+      the extractor refuses the document rather than working with the part of it
+      it understood.
+
+      `checklist_unreadable` covers all three. The spec's cause is "missing or
+      unreadable", and a document that cannot be turned into a usable identifier
+      set is unreadable in the only sense that matters here. **No fourth cause
+      is added**: the owner is the same in every case — whoever edits the
+      checklist — and splitting it further would put a distinction in the data
+      that nobody acts on differently.
+
+      The eight identifiers are checked against the spec's list at
+      implementation time, by extraction rather than by reading, and that
+      comparison is Implementation Order step 1.
 
 - [ ] **Report the state and the count.** Five `print_kv` keys beside the
       existing block — two always emitted, three conditional:
@@ -425,6 +477,18 @@ field list is built at implementation time for that reason.
     section to a fixture checklist makes a strict-pass finding carrying that
     ninth identifier counted rather than unknown, with no change to the parser
     or the tests.
+13a. A checklist with a level-3 heading the identifier pattern does **not**
+    match — `### Ambiguous Phrase` — yields `unavailable` with
+    `checklist_unreadable`, and **not** a run over the seven that did match.
+    The assertion is on both halves: the state, and the absence of any
+    `STRICT_SPEC_COUNT` value.
+13b. A checklist declaring the same identifier twice yields the same refusal.
+    Left unchecked it would double one check's incidence and hide another's.
+13c. A checklist with no level-3 headings at all, and an empty file, yield the
+    same refusal. Neither is a checklist.
+13d. The extraction is asserted directly, not only through its consequences:
+    the eight shipped identifiers are extracted from the shipped checklist and
+    compared to the spec's list as a set.
 14. **The checks fire on planted violations.** Eleven fixture specifications:
     **eight** positives, one per check, each containing exactly one planted
     instance of that check's shape; and **three** negative controls, one per
@@ -524,6 +588,7 @@ file enumerates it.
 | `unavailable` is reported without its cause | Med | Med — a reader cannot tell a pull request whose stage could not be resolved from a repository missing the checklist or a reviewer command that failed, and the three have different owners | `STRICT_SPEC_REASON` carries one of three values. Scenario 1a and proof **P7** |
 | `0` is written where the checks did not run | **High** — an empty numeric field invites a default | **High** — unexamined rounds enter #1657's denominator and the rate is wrong in the flattering direction | Count and identifiers are empty outside `applied`. Scenarios 2 and 3; proof **P5** |
 | The identifier set is duplicated in the parser | Med | Med — a ninth check works in the document and not in the code, or the reverse | `$known_checks` is passed from the checklist. Scenario 13 and proof **P6** |
+| The extractor silently drops a malformed section | Med — one mistyped heading | **High** — the reviewer is handed seven checks, reports against seven, and the count reads as a completed run: the exact failure this feature exists to detect, inside the mechanism meant to detect it | Heading count compared against extracted count; any mismatch refuses the document as `checklist_unreadable`. Scenarios 13a to 13c |
 
 ---
 
@@ -605,8 +670,10 @@ is to disable the checks rather than to fix the merge.
    `strict_pass_failed` cause and AC-16a — is merged, since steps 2 and 4 build
    a state the unamended spec does not contain. Re-read the merged `jq -n`
    object and `print_kv` block, which #1654 may also have changed.
-1. Add the checklist document with its eight sections and identifiers.
-   **Verify**: the identifiers match the spec's list, by extraction.
+1. Add the checklist document with its eight sections and identifiers, and the
+   extraction with its three refusal tests. **Verify**: scenarios 13, 13a, 13b,
+   13c and 13d — the identifiers extracted from the shipped document match the
+   spec's list as a set, compared by extraction and not by reading.
 2. Add the strict pass: the state test that decides whether to dispatch, the
    second invocation, its own `jq` program, and the merge that keeps the two
    responses apart. **Verify**: scenarios 4, 5, 5a, 6, 7, 8, 8a, 9, 9a and 9b —

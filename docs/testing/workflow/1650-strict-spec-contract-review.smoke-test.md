@@ -161,6 +161,25 @@ The eight shipped checks pass whether the set is read from the document or
 hard-coded in the parser, which is why this step adds a ninth. Two definitions
 of a closed set is one definition that will drift. Proof P6.
 
+Then the refusals, run as three more cases against fixture checklists:
+
+3. A checklist containing `### Ambiguous Phrase` — a level-3 heading the
+   identifier pattern does not match.
+4. A checklist declaring the same identifier twice.
+5. A checklist with no level-3 headings, and an empty file.
+
+**Expected result**: every one yields `STRICT_SPEC_STATE=unavailable` with
+`STRICT_SPEC_REASON=checklist_unreadable`, no `STRICT_SPEC_COUNT` value, and no
+strict pass dispatched.
+
+**Case 3 is the one to check hardest.** The tempting behaviour is to carry on
+with the seven identifiers that did parse — the reviewer is then handed seven
+checks, reports against seven, and the count reads as a completed run of a
+checklist that has eight. That is a review that looks like it happened,
+reproduced inside the mechanism built to detect exactly that, and it is why the
+extractor compares its result against the document's level-3 heading count
+instead of trusting what it managed to match.
+
 ## Step 6: The state, the count, and what is empty
 
 **Maps to**: AC-15, AC-17, AC-17a.
