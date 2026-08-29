@@ -149,6 +149,55 @@ Incidence is counted per pull request per check; a key listing an identifier
 once per finding would make a check that fires three times on one specification
 look like three specifications.
 
+## Step 8a: The checks fire on planted violations
+
+**Maps to**: AC-4 through AC-13.
+
+1. Run the reviewer, checklist supplied, against each of the twelve fixture
+   specifications: one per check with a single planted instance of that check's
+   shape, plus two negative controls — a gate enumerating every reachable
+   combination, and an unsettled phrase sitting only in a rationale.
+2. Record which check fired on each.
+3. Repeat all twelve with the checklist **absent**, and record again.
+
+**Expected result**: with the checklist, each of the ten violation fixtures
+produces a finding from its own check, and neither control produces one. Without
+it, the state is `unavailable` and no strict finding appears.
+
+**This step is recorded, not gated**, and the reason is the same one that makes
+the findings non-blocking: whether a model notices a planted contradiction is
+not deterministic. A step that failed the build when one check missed its own
+fixture would be red for reasons no implementer could fix, and the fix would be
+to delete the step.
+
+The **second** run is what gives the first its meaning. A check firing on its
+planted violation shows the reviewer is capable; a check firing *only* when the
+checklist is supplied shows this feature caused it. Without the contrast the
+step proves the model is good at reading, not that the checks do anything.
+
+A check that fires in neither run is a finding about that check — worth having
+before its counts start accumulating, and exactly the kind of thing #1657's
+report would otherwise take months to surface.
+
+## Step 8b: One check, two rounds, counted once
+
+**Maps to**: AC-17c.
+
+1. Run two review rounds on the same pull request, both producing a finding from
+   the same check — the second because the first was not acted on, which AC-18
+   requires to be re-reported.
+2. Read both ledger entries and compute the per-check incidence for the pull
+   request.
+
+**Expected result**: two rounds, each recording that identifier; the pull
+request counts that check **once**.
+
+Deduplication *within* a round is Step 8. This is deduplication *across* rounds,
+and it is the one that matters for the measurement: a finding nobody acts on is
+re-reported every round by design, so summing rounds would make a check look
+more frequent the longer its specification took to merge. The identifiers are
+unioned across rounds, never added.
+
 ## Step 9: Documentation agrees
 
 **Maps to**: the documentation-drift risk.
