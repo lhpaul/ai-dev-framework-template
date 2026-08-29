@@ -221,6 +221,29 @@ Five rows over three ordered inputs: can the stage be resolved, is it the spec s
 
 **The count is empty, not zero, in every row but the last two.** `0` means *the checks ran and found nothing*, and it is the only thing distinguishing a clean specification from one the checks never examined. Writing `0` for `unavailable` or `not_applicable` would put those rounds into the denominator of any later rate as if they had been checked, which is precisely the measurement this feature exists to make possible.
 
+### What each outcome requires, on every surface
+
+The matrix decides the state; this table says what follows from it, so no
+surface is left to inference:
+
+| State | Next action | Reviewer output | Review comments | Reviewer-loop history |
+| --- | --- | --- | --- | --- |
+| `unavailable` (rows 1, 3) | none — the review proceeds and its verdict is unchanged | the state and its cause; no count, no identifiers | nothing added | the state and its cause; count and identifiers empty |
+| `not_applicable` (row 2) | none | the state; no count, no identifiers | nothing added | the state; count and identifiers empty |
+| `applied`, count `0` (row 4) | none | the state and count `0`; identifier list empty | nothing added | the state, count `0`, empty identifier list |
+| `applied`, count *n* (row 5) | none that gates — the findings are reported and the verdict is decided without them | the state, the count, and the identifiers that fired | each finding, labelled with its check, grouped apart from blocking findings | the state, the count, and the identifiers that fired |
+
+**"Next action" is empty in every row, and that is the feature.** No state
+gates, escalates, retries or demands acknowledgement. The only row with any
+follow-up is row 5, whose follow-up is to *report* — which is why the column
+exists rather than being omitted: a reader checking whether some state blocks
+should find the answer here rather than infer it from silence.
+
+The comment surface is touched in exactly one row. A reader seeing no strict
+findings on a pull request cannot tell rows 1 through 4 apart from the comments
+alone, which is why the state is on the reviewer output and in the history for
+every review.
+
 Row 5's last column is the feature's central claim and the one most likely to erode: findings exist, are labelled, are counted, and change nothing about whether the pull request may proceed.
 
 Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the checks do not apply to; rows 1 and 3 are changes the checks *should* have examined and could not — one because the stage was unknown, one because the checklist was missing. Both are defects, with different owners, and collapsing either into "no strict findings" makes it invisible.
