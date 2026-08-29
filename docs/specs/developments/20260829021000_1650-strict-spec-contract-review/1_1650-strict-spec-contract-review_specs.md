@@ -93,26 +93,27 @@ Every objective stated in issue #1650 maps to acceptance criteria and use cases 
 
 **Considerations**:
 
-- **Silence and zero are different**, and the distinction is the feature's only defence against quietly not working. A run where the checks did not fire — wrong stage, missing checklist, an older reviewer — must not look like a run where they fired and found nothing.
+- **Silence and zero are different**, and the distinction is the feature's only defence against quietly not working. A run where the checks did not fire — wrong stage, missing checklist, an older reviewer, or an attempt that failed — must not look like a run where they fired and found nothing.
 
 ---
 
-### Use Case 4: The strict checklist is unavailable
+### Use Case 4: The strict checks produce no result
 
 **Actor**: The reviewer loop.
-**Preconditions**: The checklist cannot be supplied — the document is missing, or the stage could not be resolved.
+**Preconditions**: The checks reach no verdict, for one of three reasons — the stage could not be resolved, the checklist is missing or unreadable, or the checks were attempted and did not complete.
 
 **Steps**:
 
 1. The reviewer runs its ordinary review.
-2. It records that the strict checks did not run, and why.
+2. It records that the strict checks produced no result, and which of the three causes applies.
 
-**Postconditions**: The review completed and its verdict is unaffected. The record says the strict checks were absent.
+**Postconditions**: The review completed and its verdict is unaffected. The record says the strict checks reached no verdict, and says why.
 
 **Considerations**:
 
-- The review is never failed for this. The strict checks are an addition to a review, not a precondition for one.
-- What must not happen is the silent case: a review that reports no strict findings because none ran.
+- **Two of the causes mean the checks never started; the third means they started and did not finish.** The outcome for the review is identical — no findings, no verdict change, nothing gated — and the outcome for whoever has to fix it is not. A missing checklist is a repository defect; a pass that crashes is a defect in the reviewer command or its environment, and it is the only one of the three that can appear and disappear between two rounds of the same pull request.
+- The review is never failed for this, whichever cause applies. The strict checks are an addition to a review, not a precondition for one — and that has to hold for a failure *inside* them as much as for their absence, or an unrelated defect in the reviewer command starts blocking pull requests that had no findings.
+- What must not happen is the silent case: a review that reports no strict findings because none ran, or because the run died.
 
 ---
 
