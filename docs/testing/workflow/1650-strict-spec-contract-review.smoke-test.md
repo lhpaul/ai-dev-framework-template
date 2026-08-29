@@ -128,6 +128,11 @@ them. Proof P3.
    `check: "not_a_real_check"`.
 2. Repeat with `check: 7`, then `check: {}`, then `check: null`, then a finding
    with no `check` key at all.
+2a. Then two responses whose `findings` **value** is not an array: an object,
+   and a string. These are a different failure from an unrecognised identifier
+   and must produce `strict_pass_failed`, **not** `applied` with a large
+   `unknown_count` — an object walked without a type guard yields one "finding"
+   per property value, and a malformed response is recorded as a completed run.
 
 **Expected result**: each is reported with `STRICT_<n>_CHECK=unknown`, counted
 in `STRICT_SPEC_UNKNOWN_COUNT`, excluded from `STRICT_SPEC_COUNT` and
