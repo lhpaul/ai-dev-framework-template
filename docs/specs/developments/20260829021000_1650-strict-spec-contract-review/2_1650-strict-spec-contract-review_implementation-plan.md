@@ -23,9 +23,9 @@ every spec review red.
 
 So the strict checks get **their own invocation**. The ordinary review runs
 exactly as it does today — same prompt, same bundle, same parser — and its
-verdict is emitted verbatim; the checks run as a second call whose response
-carries findings and no verdict, and whose output the parser is never allowed to
-merge into the blocking block. AC-3 is then structural rather than promised: the
+verdict is whatever that unchanged parser computes; the checks run as a second
+call whose response carries findings and no verdict, and whose output the parser
+is never allowed to merge into the blocking block. AC-3 is then structural rather than promised: the
 model that decides the verdict never sees the checklist.
 
 **Estimated complexity**: M
@@ -151,15 +151,23 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 - [ ] **Run the ordinary review exactly as today.** No edit to its prompt, no
       checklist in its bundle, no change to the `jq` program that reads its
-      response, no new field it must emit. Its `result` is the emitted verdict,
-      verbatim, and its findings are the blocking block, unchanged.
+      response, no new field it must emit.
+
+      **The guarantee is that the parser is unchanged, not that `result` is
+      passed through.** That parser does more than echo the reviewer: it
+      overrides a `clean` result when blocking or unclassifiable findings are
+      present, and derives a verdict when `result` is absent. Those behaviours
+      predate this item and stay exactly as they are. Saying the verdict is
+      emitted "verbatim" would describe a parser this repository does not have,
+      and would be unverifiable against the one it does.
 
       **This is the whole of AC-3's mechanism, and it is structural.** AC-3 asks
       that a review with strict findings report the same verdict as *the same
       review with the strict checks disabled*. The ordinary pass **is** that
-      review: same prompt, same inputs, same parser. There is nothing for the
-      strict checks to influence, because the model that produces the verdict
-      never sees them.
+      review: same prompt, same inputs, same parser, same overrides. There is
+      nothing for the strict checks to influence, because the model that
+      produces the verdict never sees them and the code that computes it never
+      receives their findings.
 
       Four earlier revisions of this plan tried to reach AC-3 from a single
       invocation that saw both, and each failed in a way the next one inherited.
