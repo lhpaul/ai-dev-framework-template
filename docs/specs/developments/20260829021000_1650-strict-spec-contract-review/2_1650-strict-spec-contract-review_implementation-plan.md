@@ -175,9 +175,22 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       ```text
       STRICT_SPEC_STATE=applied|not_applicable|unavailable
+      STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable   # only when unavailable
       STRICT_SPEC_COUNT=<n>            # only when applied; empty otherwise
       STRICT_SPEC_CHECKS=<ids>         # comma-separated; only when applied
       ```
+
+      **`unavailable` has two causes and they have different owners**, which is
+      why the state alone is not enough: `stage_unresolved` is a branch the
+      resolver could not classify, and `checklist_unreadable` is a missing or
+      unreadable document. The first is a defect in the pull request's shape,
+      the second in the repository's contents, and a reader seeing only
+      `unavailable` cannot tell which to go and fix. The spec's outcome table
+      requires the cause to be reported; the reason key is where it lives.
+
+      `STRICT_SPEC_REASON` is empty in `applied` and `not_applicable`, by the
+      same rule that empties the count outside `applied`: a value present where
+      it has no meaning invites a reader to interpret it.
 
       `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **empty** in the two
       non-applied states, never `0` and never an empty list rendered as
@@ -186,7 +199,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       they never examined. A `0` written for `unavailable` would put unexamined
       rounds into the denominator of #1657's rate.
 
-      The same three values go into the evidence JSON under a `strict_spec`
+      The same **four** values go into the evidence JSON under a `strict_spec`
       object, and into the ledger entry, so incidence can be computed per pull
       request without re-reading comments.
 
@@ -205,7 +218,8 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 ### Infrastructure / Configuration
 
-- [ ] Document the three keys, the three states and the closed identifier set in
+- [ ] Document the four keys, the three states, the two `unavailable` reasons
+      and the closed identifier set in
       the `--help` block, in
       `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`,
       and in Protocol 93.
@@ -245,9 +259,15 @@ field list is built at implementation time for that reason.
    `not_applicable` at every other stage, and `unavailable` when the stage
    cannot be resolved or the checklist cannot be read — one case per row of the
    spec's five-row matrix.
+1a. The two `unavailable` rows are **distinguishable by their reason**:
+   `stage_unresolved` for row 1, `checklist_unreadable` for row 3. Asserted as
+   two different values, since the state alone leaves a reader unable to tell a
+   defect in the pull request's shape from one in the repository's contents.
+   `STRICT_SPEC_REASON` is empty in the other three rows.
 2. `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **empty** in
    `not_applicable` and `unavailable`, and present in `applied` — including
-   `0` and an empty list when the checks found nothing.
+   `0` and an empty list when the checks found nothing. `STRICT_SPEC_REASON` is
+   the mirror: present only in `unavailable`, empty in the other two.
 3. A round recorded as `unavailable` is distinguishable from one recorded as
    `applied` with count `0`, by reading the ledger entry alone.
 4. A finding carrying a **known** `strict_check` identifier is counted as
@@ -278,9 +298,10 @@ field list is built at implementation time for that reason.
 11. The bundle keeps every field present before this change — enumerated from
     the merged object at implementation time, not from this plan — and adds
     exactly two.
-12. The three values reach the evidence JSON and the ledger entry, and the
-    ledger's `strict_spec` object is present on every round at any stage, with
-    the count and identifiers empty where the state is not `applied`.
+12. All **four** values reach the evidence JSON and the ledger entry, and the
+    ledger's `strict_spec` object is present on every round at any stage — with
+    the count and identifiers empty where the state is not `applied`, and the
+    reason empty where it is not `unavailable`.
 13. The checklist's identifiers are read from the document: adding a ninth
     section to a fixture checklist makes a finding carrying that ninth
     identifier strict, with no change to the parser or the tests.
@@ -376,6 +397,7 @@ file enumerates it.
 | The marker becomes a way to opt out of blocking | Med | **High** — a mislabelled or over-applied marker downgrades real findings, invisibly | Only identifiers the checklist defines count as strict; anything else is ordinary, which for an unrecognised finding means blocking. Scenarios 6 and 7; proof **P2** trusts the marker alone |
 | A strict finding is forwarded as a blocker by the loop | Med | **High** — `BLOCKING_<n>_*` is what the loop reads; counts elsewhere would not save it | Strict findings are emitted in their own `STRICT_<n>_*` block and never in the blocking one. Scenario 4 and proof **P3** |
 | The partition changes ordinary output | Med | Med — every review's output shifts for a feature that should be invisible to them | Byte-identical output required for an all-ordinary review. Scenario 5 and proof **P4** |
+| `unavailable` is reported without its cause | Med | Med — a reader cannot tell a pull request whose stage could not be resolved from a repository missing the checklist, and the two have different owners | `STRICT_SPEC_REASON` carries `stage_unresolved` or `checklist_unreadable`. Scenario 1a and proof **P7** |
 | `0` is written where the checks did not run | **High** — an empty numeric field invites a default | **High** — unexamined rounds enter #1657's denominator and the rate is wrong in the flattering direction | Count and identifiers are empty outside `applied`. Scenarios 2 and 3; proof **P5** |
 | The identifier set is duplicated in the parser | Med | Med — a ninth check works in the document and not in the code, or the reverse | `$known_checks` is passed from the checklist. Scenario 13 and proof **P6** |
 
@@ -424,13 +446,13 @@ identifier, one unmarked, one unknown identifier, one numeric — which partitio
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The six proofs fall into
+runs per proof, each citing a concrete file and line. The seven proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Blocking | **3** | P1, P3, P4 | a non-blocking class that blocks, or changes what does |
-| Measurement | **3** | P2, P5, P6 | a count or a class that admits what it should not |
+| Measurement | **4** | P2, P5, P6, P7 | a count or a class that admits what it should not |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -439,6 +461,7 @@ two groups:
 | P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | same scratch copy | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
 | P4 | Rebuild the `BLOCKING_<n>_*` lines from a re-sorted array while partitioning | same scratch copy | scenario 5 fails: an all-ordinary review's output differs from before the change — different order, or a renumbered index — so a feature that should be invisible to ordinary reviews is not; restoring the untouched computation passes |
 | P5 | Write `0` and an empty list for `unavailable` and `not_applicable` | a scratch copy of the print block | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they found nothing, so #1657's rate counts unexamined specifications as clean — an error in the flattering direction, which is the one nobody questions; restoring the empty values passes |
+| P7 | Report `unavailable` without a reason, or with one constant value | a scratch copy of the print block | scenario 1a fails: the two `unavailable` rows become indistinguishable, so a reader sees a state with two possible owners and no way to tell which — and the more likely of the two, a missing checklist, is the one a maintainer could fix in a minute. Every other scenario passes, because none reads the reason; restoring the two values passes |
 | P6 | Hard-code the eight identifiers in the parser | same scratch copy | scenario 13 fails: a ninth check added to the checklist is recognised by no code, so its findings are classified as ordinary and block. The eight shipped checks still pass, which is why the scenario adds a ninth; restoring `$known_checks` passes |
 
 P1 is the proof to read first: without the partition the feature does not
@@ -457,10 +480,10 @@ is to disable the checks rather than to fix the parser.
 2. Add the partition to the `jq` program, binding `$findings` to the ordinary
    subset. **Verify**: scenarios 4, 5, 6, 7, 8 and 9 — the parser scenarios
    first, because everything else is reporting.
-3. Add the two bundle fields and the supply condition. **Verify**: scenarios 1
-   and 11.
-4. Add the three `print_kv` lines, the `STRICT_<n>_*` block, the evidence object
-   and the ledger fields. **Verify**: scenarios 2, 3, 10 and 12.
+3. Add the two bundle fields and the supply condition, carrying the cause when
+   the state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
+4. Add the four `print_kv` lines, the `STRICT_<n>_*` block, the evidence object
+   and the ledger fields. **Verify**: scenarios 1a, 2, 3, 10 and 12.
 5. Pass `$known_checks` from the checklist. **Verify**: scenario 13.
 6. Add the summary rendering. **Verify**: runbook Step 7.
 6a. Write the eleven fixture specifications — eight positives, three negatives —
@@ -471,7 +494,7 @@ is to disable the checks rather than to fix the parser.
    check, and one worth having before the counts accumulate.
 7. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
-8. Produce the six planted-violation proofs (P1-P6) and record them in the PR
+8. Produce the seven planted-violation proofs (P1-P7) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

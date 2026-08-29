@@ -105,12 +105,18 @@ of a closed set is one definition that will drift. Proof P6.
 
 **Expected result**:
 
-| Case | `STRICT_SPEC_STATE` | `STRICT_SPEC_COUNT` | `STRICT_SPEC_CHECKS` |
-| --- | --- | --- | --- |
-| 1 | `applied` | `0` | empty list |
-| 2 | `not_applicable` | **empty** | **empty** |
-| 3 | `unavailable` | **empty** | **empty** |
-| 4 | `unavailable` | **empty** | **empty** |
+| Case | `STRICT_SPEC_STATE` | `STRICT_SPEC_REASON` | `STRICT_SPEC_COUNT` | `STRICT_SPEC_CHECKS` |
+| --- | --- | --- | --- | --- |
+| 1 | `applied` | **empty** | `0` | empty list |
+| 2 | `not_applicable` | **empty** | **empty** | **empty** |
+| 3 | `unavailable` | `checklist_unreadable` | **empty** | **empty** |
+| 4 | `unavailable` | `stage_unresolved` | **empty** | **empty** |
+
+Cases 3 and 4 share a state and must not share a record. The two causes have
+different owners — a missing checklist is the repository's, an unresolvable
+stage is the pull request's — and a reader given only `unavailable` cannot tell
+which to go and fix. The more likely of the two is also the more fixable.
+Proof P7.
 
 Case 1 against cases 3 and 4 is the assertion that matters: `0` means the checks
 ran and found nothing, and it is the only thing distinguishing a clean
