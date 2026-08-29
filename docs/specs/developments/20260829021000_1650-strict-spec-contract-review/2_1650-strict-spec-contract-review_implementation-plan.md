@@ -284,13 +284,15 @@ field list is built at implementation time for that reason.
 13. The checklist's identifiers are read from the document: adding a ninth
     section to a fixture checklist makes a finding carrying that ninth
     identifier strict, with no change to the parser or the tests.
-14. **The checks fire on planted violations.** Ten fixture specifications: one
-    per check, each containing exactly one planted instance of that check's
-    shape, plus two negative controls — a specification whose gate enumerates
-    every reachable combination (AC-7) and one where an unsettled phrase appears
-    only in a rationale (AC-13). The reviewer is run against each with the
-    checklist supplied, and the check that fired is recorded.
-15. The same ten fixtures with the checklist **absent**: the state is
+14. **The checks fire on planted violations.** Eleven fixture specifications:
+    **eight** positives, one per check, each containing exactly one planted
+    instance of that check's shape; and **three** negative controls, one per
+    acceptance criterion that requires *no* finding — a gate enumerating every
+    reachable combination (AC-7); a gate that short-circuits and **states its
+    evaluation order** (AC-6a); and an unsettled phrase appearing only in a
+    rationale (AC-13). The reviewer is run against each with the checklist
+    supplied, and the check that fired is recorded.
+15. The same eleven fixtures with the checklist **absent**: the state is
     `unavailable` and no strict finding is produced. This is what separates *the
     reviewer found the violation because the checklist told it to look* from
     *the reviewer would have found it anyway* — without it, scenario 14 proves
@@ -311,7 +313,7 @@ that the checklist is supplied at the spec stage, that a marked finding is
 partitioned, that the counts are reported — is scenarios 1 through 13, and those
 are automated.
 
-So the implementer runs the twelve fixtures both ways and **records which checks
+So the implementer runs the eleven fixtures both ways and **records which checks
 fired in each**, in the pull request. A check that fires on its own planted
 violation and not on the no-checklist run has demonstrated it does something; a
 check that fires in neither has not, and that is a finding about the check worth
@@ -330,7 +332,7 @@ rather than a gate.
 
 | Fixture | Contents | Location |
 | --- | --- | --- |
-| Fixture specifications | Twelve short specification documents: one per check containing exactly one planted instance of that check's shape, plus a gate that enumerates every reachable combination and a specification whose unsettled phrase sits only in a rationale | `scripts/development-workflow/tests/fixtures/strict-spec-specs/` |
+| Fixture specifications | **Eleven** short specification documents: eight positives, one per check, each with a single planted instance of that check's shape; and three negatives — a gate enumerating every reachable combination (AC-7), a gate that short-circuits and states its evaluation order (AC-6a), and an unsettled phrase confined to a rationale (AC-13) | `scripts/development-workflow/tests/fixtures/strict-spec-specs/` |
 | Reviewer outputs | Eight JSON documents: all-ordinary; all-strict; mixed; a known identifier; an unknown identifier; a non-string `strict_check`; three findings from two checks; and one with no findings | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
 | Checklist fixtures | A well-formed eight-section checklist; a nine-section one for scenario 13; and an unreadable one | `scripts/development-workflow/tests/fixtures/strict-spec-checks/` |
 | Bundle field list | The field names present before this change, enumerated from the merged `jq -n` object at implementation time | inline in the same suite |
@@ -461,7 +463,8 @@ is to disable the checks rather than to fix the parser.
    and the ledger fields. **Verify**: scenarios 2, 3, 10 and 12.
 5. Pass `$known_checks` from the checklist. **Verify**: scenario 13.
 6. Add the summary rendering. **Verify**: runbook Step 7.
-6a. Write the twelve fixture specifications and run the reviewer against each
+6a. Write the eleven fixture specifications — eight positives, three negatives —
+   and run the reviewer against each
    with the checklist supplied and again without it. **Verify**: scenarios 14
    and 15 — record which checks fired in each run, in the pull request. This is
    evidence, not a gate: a check firing in neither run is a finding about that
