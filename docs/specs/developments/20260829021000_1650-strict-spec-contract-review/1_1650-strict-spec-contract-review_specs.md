@@ -122,7 +122,8 @@ Every objective stated in issue #1650 maps to acceptance criteria and use cases 
 
 **Steps**:
 
-1. They read strict-finding **counts** across many pull requests, per check.
+1. They read, per check, **on how many pull requests it fired at least once** —
+   not how many findings it produced in total.
 2. They decide whether any check has earned the right to block.
 
 **Postconditions**: A decision informed by incidence data rather than by
@@ -141,6 +142,12 @@ expectation.
   or is miscalibrated, and either way it has not earned the right to block; a
   check that fires rarely is the candidate. Distinguishing those needs
   frequency, which this feature provides.
+- **Frequency is counted per pull request.** Summing per-round findings would
+  count one unresolved contradiction once per review round — AC-18 requires it
+  to be reported again each time — so a check would appear more frequent the
+  longer its specification took to merge. The recorded per-round set of check
+  identifiers is what makes the per-pull-request measure computable without
+  per-finding identity.
 - A maintainer who wants to know whether a specific finding was addressed reads
   the pull request. That is a human judgement over a document, and the spec does
   not pretend to automate it.
@@ -152,7 +159,8 @@ expectation.
 - The strict checks run **only** at the spec stage.
 - Strict findings are **non-blocking**. They never change a review's verdict in either direction.
 - Every strict finding names the check that produced it.
-- Every review reports the strict-check **state**. The **count** accompanies it only when the state is `applied` — including when it is zero — and is empty otherwise, so a round the checks never examined cannot be counted as one they found nothing in.
+- Every review reports the strict-check **state**. The **count** and the set of **check identifiers that produced findings** accompany it only when the state is `applied` — the count including when it is zero — and are empty otherwise, so a round the checks never examined cannot be counted as one they found nothing in.
+- Incidence is measured **per pull request**, never by summing rounds: a check fired on a specification if any of its rounds reported that check. Rounds repeat the same findings by design, so a sum would measure how long a pull request stayed open.
 - A review where the checks did not run reports that fact and its reason, and is distinguishable from a review where they ran and found nothing.
 - A strict finding that a maintainer ignores has no consequence: no label, no gate, no repetition of the demand.
 - Each check answers a question that can be **wrong**, not one that is a matter of taste. A check whose finding is a preference produces noise, and noise is what makes a label stop being read.
@@ -201,13 +209,13 @@ Three states, and `applied` with a count of zero is deliberately not the same as
 
 The complete gate, from a review starting to strict findings existing or not. Rows are evaluated in order and the first match decides.
 
-| # | Stage resolves | Stage | Checklist available | Checks run | Findings | State | Count | Verdict affected |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | **No** | — | — | No | — | `unavailable` | **empty** | No |
-| 2 | Yes | not spec | — | No | — | `not_applicable` | **empty** | No |
-| 3 | Yes | spec | **No** | No | — | `unavailable` | **empty** | No |
-| 4 | Yes | spec | Yes | Yes | none | `applied` | `0` | No |
-| 5 | Yes | spec | Yes | Yes | one or more | `applied` | *n* | **No** |
+| # | Stage resolves | Stage | Checklist available | Checks run | Findings | State | Count | Check ids | Verdict affected |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | **No** | — | — | No | — | `unavailable` | **empty** | **empty** | No |
+| 2 | Yes | not spec | — | No | — | `not_applicable` | **empty** | **empty** | No |
+| 3 | Yes | spec | **No** | No | — | `unavailable` | **empty** | **empty** | No |
+| 4 | Yes | spec | Yes | Yes | none | `applied` | `0` | empty list | No |
+| 5 | Yes | spec | Yes | Yes | one or more | `applied` | *n* | the checks that fired | **No** |
 
 Five rows over three ordered inputs: can the stage be resolved, is it the spec stage, is the checklist available. The order matters — an unresolved stage cannot be compared against `spec`, so row 1 precedes row 2 and no combination evaluates both.
 
@@ -223,7 +231,9 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 
 - **Reviewer output**: the strict-check state on every review, and the finding count when the state is `applied`.
 - **Review comments**: each strict finding, labelled with its check identifier, grouped separately from blocking findings.
-- **Reviewer-loop history**: the state recorded per round, with the count where it applies, so counts accumulate across a pull request's life without re-reading comments — and rounds the checks did not examine stay out of the total.
+- **Reviewer-loop history**: per round, the state, the count where it applies, and **which checks produced findings** — the set of check identifiers, not only how many findings there were.
+
+**The unit of measurement is the pull request, not the round.** A round is not an independent observation: the same unresolved finding is reported again on every later round, which AC-18 requires, so summing per-round counts would count one contradiction as many and make a check look more frequent the longer its pull request takes to merge. A check "fired" on a specification when **any** round reports it, and that is what the recorded identifier set makes computable — no per-finding identity needed, and no acknowledgement mechanism.
 
 ---
 
@@ -245,7 +255,9 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 - [ ] **AC-14.** The strict checks do not run outside the spec stage, and the state is `not_applicable`.
 - [ ] **AC-15.** At the spec stage with the checks applied and nothing found, the state is `applied` and the count is `0` — distinguishable from `unavailable` and from `not_applicable`.
 - [ ] **AC-16.** When the checklist cannot be supplied, the state is `unavailable`, the review still runs, and its verdict is unaffected.
-- [ ] **AC-17.** The state appears in the reviewer's output and in the reviewer-loop history for **every** review, at any stage. The count accompanies it only in the `applied` state; in `not_applicable` and `unavailable` the count is **empty**, never `0`.
+- [ ] **AC-17.** The state appears in the reviewer's output and in the reviewer-loop history for **every** review, at any stage. The count **and** the set of check identifiers that produced findings accompany it only in the `applied` state; in `not_applicable` and `unavailable` both are **empty**, and the count is never `0`.
+- [ ] **AC-17b.** A reader can determine, from the history alone, **which** checks produced findings on a round — not only how many findings there were.
+- [ ] **AC-17c.** Two rounds reporting the same unresolved finding count that check **once** for the pull request: incidence is per pull request, and repeated rounds do not increase it.
 - [ ] **AC-17a.** A round recorded as `unavailable` or `not_applicable` is distinguishable from one recorded as `applied` with count `0`, by reading the history alone.
 - [ ] **AC-18.** Ignoring a strict finding has no effect on any later review: no label, no gate, no escalation, and the same finding may be reported again on a later round without penalty.
 
