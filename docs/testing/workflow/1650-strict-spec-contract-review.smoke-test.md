@@ -366,20 +366,29 @@ the two outputs. It is the pair that distinguishes the check from one that
 simply demands every Boolean combination — which would fire on most
 correctly-written gates, including this epic's own.
 
-**This step is recorded, not gated**, and the reason is the same one that makes
-the findings non-blocking: whether a model notices a planted contradiction is
-not deterministic. A step that failed the build when one check missed its own
-fixture would be red for reasons no implementer could fix, and the fix would be
-to delete the step.
+**This step is not a CI gate, and it is a readiness gate.** The distinction
+matters and the two halves have different reasons.
+
+It is not a build gate because whether a model notices a planted contradiction
+is not deterministic: a suite that went red when one check missed its fixture
+would be red for reasons no implementer could fix, and the fix would be to
+delete the suite.
+
+It **is** a readiness gate because `REVIEW.md` requires every new check to
+demonstrate both runs, and Step 11 checks that P10 through P17 record them. **A
+check that cannot demonstrate its pair does not ship**: the repair is to sharpen
+that check's question in the checklist until it detects its own planted
+violation, and the pull request is not ready until every one of the eight has.
 
 The **second** run is what gives the first its meaning. A check firing on its
 planted violation shows the reviewer is capable; a check firing *only* when the
 checklist is supplied shows this feature caused it. Without the contrast the
 step proves the model is good at reading, not that the checks do anything.
 
-A check that fires in neither run is a finding about that check — worth having
-before its counts start accumulating, and exactly the kind of thing #1657's
-report would otherwise take months to surface.
+A check that fires in neither run is a finding about that check, and the reason
+it blocks rather than being noted: shipping it would put a permanent zero into
+#1657's data, and a zero reads as *this problem does not occur* rather than
+*this check does not work*.
 
 ## Step 8b: One check, two rounds, counted once
 
