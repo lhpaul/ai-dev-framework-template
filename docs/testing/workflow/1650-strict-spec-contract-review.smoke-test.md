@@ -120,49 +120,29 @@ reviewer and break one layer up. The two blocks are built from two different
 responses, so this can only fail by an implementation that deliberately joins
 them. Proof P3.
 
-## Step 4: An unrecognised identifier is counted, not discarded and not blocking
+## Step 4: Unrecognised identifiers are counted; unusable responses are refused
 
-**Maps to**: AC-2, AC-3.
+**Maps to**: AC-2, AC-3, AC-16a.
 
-1. Run a review whose strict pass returns a finding carrying
-   `check: "not_a_real_check"`.
+Two different outcomes live in this step and they must not be run together: a
+finding the parser cannot attribute is **counted apart**, while a response the
+parser cannot use is **refused**. Run part A first, then part B.
+
+### Part A: an identifier the checklist does not define
+
+1. Run a review whose strict pass returns `mode: "strict_spec_checks"` and a
+   finding carrying `check: "not_a_real_check"`.
 2. Repeat with `check: 7`, then `check: {}`, then `check: null`, then a finding
-   with no `check` key at all.
-2b. Then two responses that never claim the mode: one missing
-   `mode: "strict_spec_checks"`, and one that is a complete **ordinary** review
-   — `result` plus findings carrying `severity` and no `check`. Both are
-   `strict_pass_failed`.
+   with no `check` key at all. The response stays well-formed in all five: the
+   mode is present and `findings` is an array.
 
-   The second is the realistic one. `LOCAL_AI_REVIEWER_COMMAND` is configurable,
-   and a custom command that ignores `LOCAL_AI_REVIEWER_MODE` answers the strict
-   call with its ordinary review. Every finding in it lacks a `check`, so
-   without the mode marker all of them count as unknown and the pass reports
-   `applied` with a large `unknown_count` — **an ordinary review recorded as a
-   completed run of the strict checks**, and fabricated incidence in #1657's
-   data. A silent contract needs a positive acknowledgement; this is it.
+**Expected result for part A**: each finding is reported with
+`STRICT_<n>_CHECK=unknown`, counted in `STRICT_SPEC_UNKNOWN_COUNT`, excluded
+from `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS`, and **not** blocking —
+`RESULT` is the ordinary pass's verdict in every run, the state stays `applied`,
+and the parser does not abort on any of the four non-string shapes.
 
-2a. Then four malformed responses: `{}` with no findings key at all,
-   `{"findings": null}`, an object value, and a string value. All four are
-   `strict_pass_failed`, **not** counts. Run `{"findings": []}` immediately
-   after: it must be `applied` with count `0`.
-
-   **The `{}` and `{"findings": []}` pair is the assertion that matters most in
-   this runbook.** They differ by four characters. One is a pass that produced
-   nothing — a reviewer that printed no usable JSON — and the other is a pass
-   that examined a specification and found nothing wrong with it. Writing the
-   parser as `.findings // .comments // .issues // []` collapses them, records
-   the first as `applied` with count `0`, and feeds silence into #1657 as a
-   zero. The object case is the quietest of the four: its property values are
-   walked as findings, so a malformed response is recorded as a completed run
-   with a large `unknown_count`.
-
-**Expected result**: each is reported with `STRICT_<n>_CHECK=unknown`, counted
-in `STRICT_SPEC_UNKNOWN_COUNT`, excluded from `STRICT_SPEC_COUNT` and
-`STRICT_SPEC_CHECKS`, and **not** blocking: `RESULT` is the ordinary pass's
-verdict in every run, and the parser does not abort on any of the four
-non-string shapes.
-
-**The fail-closed direction reverses with two passes, and this step is where the
+**The fail-closed direction reverses with two passes, and this part is where the
 reversal is asserted.** In a single-invocation design an unrecognised marker had
 to be treated as blocking, because the marker was a way to opt out of blocking.
 Here a strict-pass finding was never in the blocking set, so promoting it would
@@ -174,6 +154,43 @@ impossible. Proof P2.
 The exclusion from `STRICT_SPEC_COUNT` follows from what the count is for: it
 feeds #1657's per-check incidence, and a finding naming no known check belongs
 to no check's rate.
+
+### Part B: a response the parser cannot use
+
+3. Four malformed responses, each with the mode present: `{}` with no findings
+   key at all, `{"findings": null}`, an object value, and a string value.
+4. Two responses that never claim the mode: one missing
+   `mode: "strict_spec_checks"`, and one that is a complete **ordinary** review
+   — `result` plus findings carrying `severity` and no `check`.
+5. Then `{"findings": []}` with the mode present, immediately after.
+
+**Expected result for part B**: all six of cases 3 and 4 produce
+`STRICT_SPEC_STATE=unavailable` with `STRICT_SPEC_REASON=strict_pass_failed`,
+**no** `STRICT_SPEC_COUNT`, no `STRICT_SPEC_UNKNOWN_COUNT` and no `STRICT_<n>_*`
+entries — refusals, not counts. Case 5 is `applied` with count `0`. The ordinary
+verdict and blocking block are untouched throughout.
+
+**Case 4's second shape is the realistic one.** `LOCAL_AI_REVIEWER_COMMAND` is
+configurable, and a custom command that ignores `LOCAL_AI_REVIEWER_MODE` answers
+the strict call with its ordinary review. Every finding in it lacks a `check`,
+so without the mode marker all of them would count as unknown and the pass would
+report `applied` with a large `unknown_count` — **an ordinary review recorded as
+a completed run of the strict checks**, and fabricated incidence in #1657's
+data. A silent contract needs a positive acknowledgement; this is it.
+
+**The `{}` and `{"findings": []}` pair is the assertion that matters most in
+this runbook.** They differ by four characters. One is a pass that produced
+nothing — a reviewer that printed no usable JSON — and the other is a pass that
+examined a specification and found nothing wrong with it. Writing the parser as
+`.findings // .comments // .issues // []` collapses them, records the first as
+`applied` with count `0`, and feeds silence into #1657 as a zero. The object
+case is the quietest of the four: its property values are walked as findings, so
+a malformed response is recorded as a completed run with a large
+`unknown_count`.
+
+**What separates the two parts**: in part A the parser knows what it received
+and cannot attribute one finding; in part B it cannot trust what it received at
+all. The first is data with a hole in it, the second is not data.
 
 ## Step 5: The identifier set comes from the checklist
 
@@ -389,11 +406,19 @@ checklist, so a checklist-only change is still linted.
 ## Step 11: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P9 each record the command, the file and line of the
+2. Confirm P1 through P17 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nine proofs in two groups — **five** blocking, **four**
-measurement, per the plan's proof-group table.
+**Expected result**: seventeen proofs in three groups — **five** blocking,
+**four** measurement, **eight** detection, per the plan's proof-group table.
+
+P10 through P17 are the per-check pair: the check fires on the fixture carrying
+its planted violation and does not fire on the same fixture with that one
+violation removed. Both runs recorded. Without the second run, a check that
+fires on everything is indistinguishable from one that works. A check that
+cannot demonstrate its pair still ships and is recorded as undemonstrated — a
+check that quietly detects nothing produces a permanent zero in #1657's data,
+and a zero reads as *this problem does not occur*.
 
 P1 is the one to read first: with the two responses merged the feature does not
 merely fail, it turns every specification review red, and the resulting pressure

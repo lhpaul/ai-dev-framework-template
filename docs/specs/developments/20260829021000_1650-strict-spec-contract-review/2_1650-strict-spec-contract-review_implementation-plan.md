@@ -628,21 +628,26 @@ and this item derives a copy from its output and edits nothing there.
   for `LOCAL_AI_REVIEWER_COMMAND` so invocation counts can be asserted.
 - The **smoke runbook** — scenarios 14 and 15, which need a real model.
 
-**Scenarios 14 and 15 are recorded, not asserted, and the plan says so rather
-than pretending otherwise.** Whether a model notices a planted contradiction is
-not deterministic: a run may miss one, and a suite that failed the build on that
-would be red for reasons no implementer could fix. What *is* deterministic —
-that the checklist is supplied to the strict pass at the spec stage, that the
-two passes never merge, that the counts are reported — is scenarios 1 through
-13, and those are automated.
+**Scenarios 14 and 15 are demonstrated in the pull request rather than asserted
+in CI, and that is not an exemption from the proof requirement.** Every one of
+the eight checks gets its two demonstrated runs — proofs P10 through P17 — with
+the fixture path, the planted line and both outcomes recorded, which is what
+`REVIEW.md` requires. What they are not is a build gate.
 
-So the implementer runs the eleven fixtures both ways and **records which checks
-fired in each**, in the pull request. A check that fires on its own planted
-violation and not on the no-checklist run has demonstrated it does something; a
-check that fires in neither has not, and that is a finding about the check worth
-knowing before the counts start accumulating. Neither outcome gates the merge —
-the same reasoning that makes the findings non-blocking makes this evidence
-rather than a gate.
+The reason is that whether a model notices a planted contradiction is not
+deterministic. A suite failing the build on a missed detection would be red for
+reasons no implementer could fix, and the pressure would be to delete the
+assertion rather than to improve the check. What *is* deterministic — that the
+checklist reaches the strict pass at the spec stage, that the two passes never
+merge, that the counts are reported — is scenarios 1 through 13, and those are
+automated.
+
+**A check that cannot demonstrate its pair still ships, and says so**, recorded
+as undemonstrated in the pull request and in its own checklist section. The
+alternative is worse: a check that quietly detects nothing produces a permanent
+zero in #1657's data, and a zero reads as *this problem does not occur* rather
+than *this check does not work*. Making that failure visible is the same
+principle as `unavailable` never being written as `0`.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1650-strict-spec-contract-review.smoke-test.md`
@@ -804,13 +809,20 @@ that examined a specification and found nothing wrong with it.
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The nine proofs fall into
-two groups:
+runs per proof, each citing a concrete file and line. The **seventeen** proofs
+fall into three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Blocking | **5** | P1, P3, P4, P8, P9 | a non-blocking pass that blocks, that costs, or that takes the review with it |
 | Measurement | **4** | P2, P5, P6, P7 | a count that admits or discards what it should not |
+| Detection | **8** | P10-P17 | a check that does not find the violation it exists to find |
+
+**The detection group is one proof per check**, and it covers what the first two
+groups cannot: P1 through P9 plant defects in the dispatch, the merge and the
+reporting — the machinery *around* the checks — and would every one of them pass
+with eight checks that detect nothing. `REVIEW.md` asks for each new check to be
+demonstrated against a concrete violation, so each of the eight gets its pair.
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -822,6 +834,7 @@ two groups:
 | P9 | Let a failed strict pass propagate — return its exit status, or emit no ordinary output | same scratch copy | scenario 9a fails on all three failure shapes: a reviewer command that crashes takes the ordinary review with it, so an unrelated defect blocks a pull request that had no findings; restoring the `strict_pass_failed` state passes |
 | P5 | Write `0` and an empty list for `unavailable` and `not_applicable` | a scratch copy of the print block | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they found nothing, so #1657's rate counts unexamined specifications as clean — an error in the flattering direction, which is the one nobody questions; restoring the empty values passes |
 | P7 | Report `unavailable` without a reason, or with one constant value | a scratch copy of the print block | scenario 1a fails: the two `unavailable` rows become indistinguishable, so a reader sees a state with two possible owners and no way to tell which — and the more likely of the two, a missing checklist, is the one a maintainer could fix in a minute. Every other scenario passes, because none reads the reason; restoring the two values passes |
+| P10-P17 | For each check in turn, remove its planted violation from that check's positive fixture — one proof per check, in the spec's order: `ac_consistency`, `ac_testability`, `gate_matrix`, `opt_out_source`, `trigger_semantics`, `example_contradiction`, `parser_surface`, `ambiguous_phrase` | the eight positive fixture specifications | the check fires on the fixture carrying its violation and does **not** fire on the same fixture with that one violation removed. Both runs are recorded with the fixture path, the line the violation sat on, and the identifier set the round reported. The pair is the demonstration `REVIEW.md` asks for: without the second run a check that fires on everything looks identical to one that works |
 | P6 | Hard-code the eight identifiers in the strict pass's parser | a scratch copy of the strict `jq` program | scenario 13 fails: a ninth check added to the checklist is recognised by no code, so its findings are counted in `STRICT_SPEC_UNKNOWN_COUNT` and named by no identifier in `STRICT_SPEC_CHECKS` — the check exists in the document and is invisible in the measurement, which is the failure that matters once #1657 reads these counts. It does **not** block, because a strict-pass finding never can; the eight shipped checks still pass, which is why the scenario adds a ninth; restoring `$known_checks` passes |
 
 P1 is the proof to read first: with the two arrays merged the feature does not
@@ -875,8 +888,10 @@ is to disable the checks rather than to fix the merge.
    check, and one worth having before the counts accumulate.
 6. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
-7. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
-   with the command, file, line and both outcomes for each.
+7. Produce the **seventeen** planted-violation proofs and record them in the PR
+   with the command, file, line and both outcomes for each: P1-P9 against
+   scratch copies of the dispatch, merge, parser and print steps, and P10-P17 as
+   the detection pair for each of the eight checks, run from step 5a's fixtures.
 
 ---
 
