@@ -57,7 +57,9 @@ seam in **Interaction with #1654** rather than sequencing them.
 | The reviewer command has exactly one invocation site | `grep -n 'LOCAL_AI_REVIEWER_COMMAND' scripts/development-workflow/local-ai-reviewer.sh` | Seven matches, of which one executes: line 380, `run_with_timeout … sh -c "$LOCAL_AI_REVIEWER_COMMAND"`. A second pass is a second call at that same site with a different bundle, not a new integration |
 | The invocation is already wrapped and its failure already handled | `sed -n '372,392p' scripts/development-workflow/local-ai-reviewer.sh` | `set +e` around the call, `command_exit` captured, exit 124 handled as a timeout with `print_result escalate`. The strict pass reuses the wrapper and handles its own non-zero status locally instead of reaching that path |
 | The stage resolution is #1653's | #1653's merged plan | `review_stage` is `spec` for `spec/*` branches; the strict checks key on that value and resolve nothing themselves |
-| Evidence keys reach the loop summary unchanged | `sed -n '754,772p' scripts/development-workflow/pr-review-loop.sh` | `emit_prefixed_platform_output` re-emits every key it does not skip, so `STRICT_SPEC_*` needs no loop change |
+| Evidence keys reach the loop **summary** unchanged | `sed -n '754,772p' scripts/development-workflow/pr-review-loop.sh` | `emit_prefixed_platform_output` re-emits every key except five reserved ones, so `STRICT_SPEC_*` reaches the comment with no loop change |
+| The **ledger** does not forward arbitrary keys | `sed -n '6876,6952p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_build_entry` builds a fixed `jq -n` object from named locals and globals; no platform `key=value` output is copied in. The `strict_spec` object has to be added there, which is this item's only change to `pr-review-loop.sh` |
+| That function already takes state through globals | Same range, and its `run_id` comment | `unresolved_thread_count`, `late_thread_count` and `current_run_id` are read from globals set by the caller rather than passed positionally, explicitly to avoid growing the parameter list. The five strict values follow that convention rather than inventing one |
 
 **What this log does not establish.** It does not show the cost of a second
 invocation on a real spec review, which depends on the configured reviewer
@@ -434,6 +436,37 @@ Not applicable — this repository ships workflow tooling, not a service.
       count exists for this round*. A third representation — present, `null`,
       or empty — would sit between them and be read as either.
 
+- [ ] **Carry the five values into the ledger, which needs a change in
+      `pr-review-loop.sh`.** The loop already forwards every unrecognised
+      `key=value` line from a platform into its summary —
+      `emit_prefixed_platform_output` re-emits all but five reserved keys — so
+      `STRICT_SPEC_*` reaches the **comment** with no loop change at all. The
+      **ledger** is a different path and does not:
+      `reviewer_loop_history_build_entry` builds its entry from a fixed
+      `jq -n` object over named locals, and platform key/value output is not
+      among them. Nothing arbitrary is copied in.
+
+      So the loop gains, at that function:
+
+      - a `strict_spec` object in the entry, built from the five values;
+      - the values themselves read from the local reviewer's `key=value` output
+        by the same caller that already reads `RESULT` and `BLOCKING_COUNT`,
+        passed in through globals set before the call — the convention
+        `unresolved_thread_count`, `late_thread_count` and `current_run_id`
+        already use there, and the reason that function takes eleven positional
+        parameters and no more;
+      - the object **absent** from the entry on rounds with no local reviewer
+        at all, distinct from present-with-state-`not_applicable`. A repository
+        that does not run `local-ai-reviewer` has no strict-check state, which
+        is not the same fact as a round where the checks did not apply.
+
+      **This is the one part of the item that changes `pr-review-loop.sh`**, and
+      it is why AC-17, AC-17b and AC-17c cannot be satisfied inside
+      `local-ai-reviewer.sh`: they are about what the *history* records, and the
+      history is written a layer up. An earlier revision of this plan listed the
+      ledger fields without naming that layer, which left the criteria resting
+      on an unwritten implementation.
+
 - [ ] **Render the findings separately.** The strict findings are emitted as
       their own `key=value` block — `STRICT_<n>_CHECK`, `STRICT_<n>_PATH`,
       `STRICT_<n>_LINE`, `STRICT_<n>_BODY` — parallel to `BLOCKING_<n>_*`.
@@ -581,10 +614,15 @@ and this item derives a copy from its output and edits nothing there.
     it, and `LOCAL_CODEX_REVIEWER_PROMPT` overrides only the ordinary prompt
     while `LOCAL_CODEX_REVIEWER_STRICT_PROMPT` overrides only the strict one —
     asserted with each set alone.
-12. The `strict_spec` object is present on **every** round at any stage, and
-    mirrors the output by the table above: `state` always present; `count`,
-    `checks`, `unknown_count` and `reason` **absent** — not null — on the rounds
-    where their keys are not emitted. Asserted with `has()` rather than by
+12. The `strict_spec` object is present on **every** round that ran the local
+    reviewer, at any stage, and mirrors the output by the table above: `state`
+    always present; `count`, `checks`, `unknown_count` and `reason` **absent** —
+    not null — on the rounds where their keys are not emitted. On a round with
+    no local reviewer at all the object itself is absent, which is not the same
+    fact as `not_applicable`. Asserted on both surfaces: the reviewer's output
+    in `test-local-ai-reviewer.sh`, and the ledger entry in
+    `test-pr-review-loop.sh`, since the two are written by different scripts and
+    only the first is covered by the reviewer's own suite. Asserted with `has()` rather than by
     comparing values, since a present-null field and an absent one compare equal
     in the reading that matters here and not in `jq`.
 13. The checklist's identifiers are read from the document: adding a ninth
@@ -623,8 +661,14 @@ and this item derives a copy from its output and edits nothing there.
 
 **Files**:
 
+- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 12's
+  ledger half, beside the existing `reviewer_loop_history_build_entry` cases at
+  lines 2932 onward, which already set globals directly and assert on the
+  built entry. Three cases: the five values present in `strict_spec` on an
+  `applied` round; the four conditional fields absent on a `not_applicable`
+  round; and the `strict_spec` object itself absent when no local reviewer ran.
 - `scripts/development-workflow/tests/test-local-ai-reviewer.sh` — scenarios 1
-  through 13. The parser scenarios run both real `jq` programs with crafted
+  through 13, and scenario 12's reviewer-output half. The parser scenarios run both real `jq` programs with crafted
   reviewer output, not stubs, and the dispatch scenarios use a recording stub
   for `LOCAL_AI_REVIEWER_COMMAND` so invocation counts can be asserted.
 - The **smoke runbook** — scenarios 14 and 15, which need a real model.
@@ -881,8 +925,10 @@ is to disable the checks rather than to fix the merge.
    exactly what proof P6 plants as a defect.
 3. Add the supply condition, carrying the cause when the state is
    `unavailable`. **Verify**: scenarios 1 and 1a.
-4. Add the five `print_kv` keys, the `STRICT_<n>_*` block, the evidence object
-   and the ledger fields. **Verify**: scenarios 1a, 2, 3, 10, 12, 13a, 13b and
+4. Add the five `print_kv` keys, the `STRICT_<n>_*` block and the evidence
+   object in `local-ai-reviewer.sh`, **and** the `strict_spec` entry object in
+   `reviewer_loop_history_build_entry` with the globals its caller sets.
+   **Verify**: scenarios 1a, 2, 3, 10, 12, 13a, 13b and
    13c — the last three are step 1's refusals, assertable now that the state and
    reason are emitted.
 5. Add the summary rendering. **Verify**: runbook Step 7.

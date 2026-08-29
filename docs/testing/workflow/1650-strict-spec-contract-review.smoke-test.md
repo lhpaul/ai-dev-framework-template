@@ -271,7 +271,14 @@ the set of rounds whose state is `applied`, which is why the state is the only
 key on every round and the count needs no placeholder. Proof P5.
 
 Read the ledger too, not only stdout: the per-round record is what a later
-report reads, and the distinction has to survive into it. The `strict_spec`
+report reads, and the distinction has to survive into it. **It reaches the
+ledger by a different path than it reaches the comment**: the loop forwards any
+unrecognised `key=value` line into the summary, but
+`reviewer_loop_history_build_entry` builds a fixed object and copies nothing
+arbitrary, so the `strict_spec` entry is an explicit change in
+`pr-review-loop.sh`. Read the entry rather than inferring it from the comment.
+On a round that ran no local reviewer the object is absent entirely, which is
+not the same fact as `not_applicable`. The `strict_spec`
 object mirrors the output exactly: a key emitted is a field present, a key not
 emitted is a field **absent** rather than null, and only `state` appears on
 every round. Check the absences with `has()`, not by comparing values — a
