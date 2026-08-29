@@ -339,12 +339,29 @@ Not applicable — this repository ships workflow tooling, not a service.
       they never examined. A `0` written for `unavailable` would put unexamined
       rounds into the denominator of #1657's rate.
 
-      All **five** — `state`, `count`, `reason`, `checks` and `unknown_count` —
-      go into the evidence JSON under a `strict_spec` object, and into the
-      ledger entry, so incidence can be computed per pull request without
-      re-reading comments. The conditional three are absent from the object on
-      the reviews where they are absent from the output, rather than present and
-      null.
+      The same five go into the evidence JSON under a `strict_spec` object and
+      into the ledger entry, so incidence can be computed per pull request
+      without re-reading comments.
+
+      **One rule governs both surfaces: the object mirrors the output.** A key
+      emitted in the `key=value` block is a field in the object; a key not
+      emitted is a field that is **absent**, not present and null. So on every
+      review, at any stage:
+
+      | | `key=value` output | `strict_spec` object |
+      | --- | --- | --- |
+      | `state` | always, with a value | always, with a value |
+      | `count` | always; value empty outside `applied` | always; `null` outside `applied` |
+      | `reason` | only when `unavailable` | present only when `unavailable` |
+      | `checks` | only when `applied` | present only when `applied` |
+      | `unknown_count` | only when `applied` and above zero | present only when `applied` and above zero |
+
+      `count` is the one key that is always present and sometimes empty, and it
+      is deliberate: it is #1657's denominator, so a consumer must be able to
+      read it on every round and tell "ran, found nothing" (`0`) from "did not
+      run" (`null`) without inspecting the state as well. The other three carry
+      no such obligation, and a field present where it has no meaning invites a
+      reader to interpret it.
 
 - [ ] **Render the findings separately.** The strict findings are emitted as
       their own `key=value` block — `STRICT_<n>_CHECK`, `STRICT_<n>_PATH`,
@@ -469,10 +486,13 @@ field list is built at implementation time for that reason.
     the merged object at implementation time, not from this plan — and adds
     exactly one, which is **empty in the ordinary pass's bundle at every
     stage**, including `spec`.
-12. All **five** values reach the evidence JSON and the ledger entry, and the
-    ledger's `strict_spec` object is present on every round at any stage — with
-    the count and identifiers empty where the state is not `applied`, and the
-    reason empty where it is not `unavailable`.
+12. The `strict_spec` object is present on **every** round at any stage, and
+    mirrors the output by the table above: `state` and `count` always present,
+    `count` `null` outside `applied`; `reason`, `checks` and `unknown_count`
+    **absent** — not null — on the rounds where their keys are not emitted.
+    Asserted with `has()` rather than by comparing values, since a present-null
+    field and an absent one compare equal in the reading that matters here and
+    not in `jq`.
 13. The checklist's identifiers are read from the document: adding a ninth
     section to a fixture checklist makes a strict-pass finding carrying that
     ninth identifier counted rather than unknown, with no change to the parser

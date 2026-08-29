@@ -222,7 +222,14 @@ would put unexamined rounds into #1657's denominator and make the rate wrong in
 the flattering direction — the direction nobody questions. Proof P5.
 
 Read the ledger too, not only stdout: the per-round record is what a later
-report reads, and the distinction has to survive into it.
+report reads, and the distinction has to survive into it. The `strict_spec`
+object mirrors the output — a key emitted is a field present, a key not emitted
+is a field **absent** rather than null — with one exception, `count`, which is
+always present and `null` outside `applied`. Check the absences with `has()`,
+not by comparing values: `count` must be readable on every round so a consumer
+can tell `0` from "did not run" without also reading the state, while a `reason`
+present and null on an `applied` round is a field inviting interpretation it has
+no meaning for.
 
 ## Step 7: The summary shows strict findings separately
 
