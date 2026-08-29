@@ -162,6 +162,30 @@ Not applicable — this repository ships workflow tooling, not a service.
       and is classified as it would be today, which for an unrecognised finding
       means blocking.
 
+      **The partition is necessary and not sufficient: the verdict needs one
+      more rule.** Removing strict findings from the blocking set fixes the
+      count, and the parser's last branch still honours the reviewer's *own*
+      `result`. A reviewer that looked at eight checks, found three
+      contradictions and concluded `needs_fixes` would therefore block — with
+      `BLOCKING_COUNT=0` — and AC-3 would fail on exactly the review the feature
+      exists to produce.
+
+      So one normalisation, stated narrowly:
+
+      > When the reviewer's own result is `needs_fixes`, there are **no**
+      > ordinary blocking findings and no unclassifiable ones, and **at least
+      > one strict finding is present**, the emitted result is `clean`.
+
+      The last clause is what keeps this feature invisible to everything else.
+      A reviewer that reports `needs_fixes` with no findings at all is a
+      different case — today it blocks, and it must keep blocking, because
+      nothing here has established that its verdict was about strict checks.
+      Scenario 5's byte-identical requirement covers that: the normalisation
+      cannot fire on a review with no strict findings.
+
+      Scenario 9a asserts the downgrade and scenario 9b the case it must not
+      touch.
+
       That direction is deliberate and is the plan's sharpest choice. The
       alternative — treat any `strict_check` marker as strict — makes the
       marker a way to opt out of blocking: a reviewer that mislabels, or a
@@ -288,6 +312,14 @@ field list is built at implementation time for that reason.
 8. A mixed review — two ordinary blocking findings and three strict — reports
    `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and `RESULT=needs_fixes` driven by
    the two, not the three.
+9a. A review whose **own** `result` is `needs_fixes`, with three strict findings
+   and no ordinary blocking ones, emits `RESULT=clean`. The reviewer concluded
+   from the strict findings; the emitted verdict must match what the same review
+   would report with the strict checks disabled, which is AC-3 stated exactly.
+9b. A review whose own `result` is `needs_fixes` with **no findings at all**
+   still emits `needs_fixes`. The normalisation requires a strict finding to be
+   present, so a bare `needs_fixes` keeps today's behaviour — nothing has
+   established that its verdict was about strict checks.
 9. A review with **only** strict findings reports `RESULT=clean`,
    `BLOCKING_COUNT` 0 and `STRICT_SPEC_COUNT` above zero. This is the spec's
    central claim and the one an implementation is most likely to get wrong by
@@ -394,6 +426,7 @@ file enumerates it.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Strict findings turn every spec review red | **High** without the parser change — the residue class is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The partition runs before `blocking`, and every existing computation reads `$ordinary`. Scenarios 4 and 9; proof **P1** leaves `$unknown` over `$findings` |
+| The counts say non-blocking and the verdict blocks anyway | **High** — the reviewer draws its own conclusion from what it found | **High** — AC-3 fails on the review the feature exists to produce, and the counts look correct while the pull request is red | One narrow normalisation: `needs_fixes` with no ordinary blockers **and** at least one strict finding emits `clean`. Scenarios 9a and 9b; proof **P8** |
 | The marker becomes a way to opt out of blocking | Med | **High** — a mislabelled or over-applied marker downgrades real findings, invisibly | Only identifiers the checklist defines count as strict; anything else is ordinary, which for an unrecognised finding means blocking. Scenarios 6 and 7; proof **P2** trusts the marker alone |
 | A strict finding is forwarded as a blocker by the loop | Med | **High** — `BLOCKING_<n>_*` is what the loop reads; counts elsewhere would not save it | Strict findings are emitted in their own `STRICT_<n>_*` block and never in the blocking one. Scenario 4 and proof **P3** |
 | The partition changes ordinary output | Med | Med — every review's output shifts for a feature that should be invisible to them | Byte-identical output required for an all-ordinary review. Scenario 5 and proof **P4** |
@@ -446,16 +479,17 @@ identifier, one unmarked, one unknown identifier, one numeric — which partitio
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The seven proofs fall into
+runs per proof, each citing a concrete file and line. The eight proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Blocking | **3** | P1, P3, P4 | a non-blocking class that blocks, or changes what does |
+| Blocking | **4** | P1, P3, P4, P8 | a non-blocking class that blocks, or changes what does |
 | Measurement | **4** | P2, P5, P6, P7 | a count or a class that admits what it should not |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
+| P8 | Partition the findings but leave the reviewer's own `result` untouched | a scratch copy of the `jq` program | scenario 9a fails: a review that found three contradictions and concluded `needs_fixes` blocks with `BLOCKING_COUNT=0` — the counts say non-blocking and the verdict blocks, which is AC-3 failing on precisely the review the feature exists to produce. Scenario 9 passes, because there the reviewer's own result was already `clean`; only a reviewer that draws its verdict from the strict findings separates them. Restoring the normalisation passes both |
 | P1 | Compute `$unknown` and `$blocking_findings` over `$all` instead of the ordinary subset | a scratch copy of the `jq` program | scenario 9 fails: a review whose only findings are strict reports `needs_fixes`, because the residue class is blocking — so every specification with eight checks applied turns red and the feature is switched off before it produces a single count; restoring the partition passes |
 | P2 | Treat any `strict_check` marker as strict, without consulting the checklist | same scratch copy | scenario 6 fails: a finding naming an undefined check is exempted from blocking, so the marker becomes a way to opt out and a mislabelled real finding disappears from the blocking count with nothing in the output to show it; restoring the identifier test passes |
 | P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | same scratch copy | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
@@ -478,7 +512,8 @@ is to disable the checks rather than to fix the parser.
 1. Add the checklist document with its eight sections and identifiers.
    **Verify**: the identifiers match the spec's list, by extraction.
 2. Add the partition to the `jq` program, binding `$findings` to the ordinary
-   subset. **Verify**: scenarios 4, 5, 6, 7, 8 and 9 — the parser scenarios
+   subset, **and** the verdict normalisation. **Verify**: scenarios 4, 5, 6, 7,
+   8, 9, 9a and 9b — the parser scenarios
    first, because everything else is reporting.
 3. Add the two bundle fields and the supply condition, carrying the cause when
    the state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
@@ -494,7 +529,7 @@ is to disable the checks rather than to fix the parser.
    check, and one worth having before the counts accumulate.
 7. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
-8. Produce the seven planted-violation proofs (P1-P7) and record them in the PR
+8. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

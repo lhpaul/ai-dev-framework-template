@@ -31,6 +31,28 @@ checks without partitioning first and every specification review turns red,
 after which the pressure is to disable the checks rather than fix the parser.
 Proof P1.
 
+## Step 1a: The reviewer's own verdict is normalised too
+
+**Maps to**: AC-3.
+
+1. Feed output whose own `result` is `needs_fixes`, carrying three known strict
+   findings and **no** ordinary blocking ones.
+2. Feed output whose own `result` is `needs_fixes` with **no findings at all**.
+
+**Expected result**: case 1 emits `RESULT=clean`. Case 2 still emits
+`needs_fixes`.
+
+The partition fixes the count and not the verdict. The parser's last branch
+honours the reviewer's own `result`, so a reviewer that read eight checks, found
+three contradictions and concluded `needs_fixes` would block with
+`BLOCKING_COUNT=0` — counts saying non-blocking, pull request red, AC-3 failing
+on precisely the review this feature exists to produce. Proof P8.
+
+Case 2 is the boundary the normalisation must not cross. It requires **at least
+one strict finding** to be present; a bare `needs_fixes` keeps today's behaviour,
+because nothing there establishes the verdict was about strict checks. That is
+also what lets Step 2 demand byte-identical output for ordinary reviews.
+
 ## Step 2: Ordinary findings are untouched
 
 **Maps to**: the invisibility requirement.
@@ -253,10 +275,10 @@ lists the checklist, so a checklist-only change is still linted.
 ## Step 11: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P7 each record the command, the file and line of the
+2. Confirm P1 through P8 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: seven proofs in two groups — **three** blocking, **four**
+**Expected result**: eight proofs in two groups — **four** blocking, **four**
 measurement, per the plan's proof-group table.
 
 P1 is the one to read first: without the partition the feature does not merely
