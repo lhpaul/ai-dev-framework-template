@@ -269,6 +269,7 @@ Rows 1 through 4 differ in what a reader can conclude. Row 2 is a change the che
 ## Operational Visibility
 
 - **Reviewer output**: the strict-check state on every review, its cause in each `unavailable` row, and the finding count when the state is `applied`.
+- **Cost**: running the checks costs time on the reviews that run them, bounded by AC-16b. That cost is elapsed time and never an outcome: no review is gated, retried or decided differently because the checks ran, failed, or took their full budget.
 - **Review comments**: each strict finding, labelled with its check identifier, grouped separately from blocking findings.
 - **Reviewer-loop history**: per round, the state, the count where it applies, and **which checks produced findings** — the set of check identifiers, not only how many findings there were.
 
@@ -296,7 +297,8 @@ Rows 1 through 4 differ in what a reader can conclude. Row 2 is a change the che
 - [ ] **AC-14.** The strict checks do not run outside the spec stage, and the state is `not_applicable`.
 - [ ] **AC-15.** At the spec stage with the checks applied and nothing found, the state is `applied` and the count is `0` — distinguishable from `unavailable` and from `not_applicable`.
 - [ ] **AC-16.** When the checklist cannot be supplied, the state is `unavailable`, the review still runs, and its verdict is unaffected.
-- [ ] **AC-16a.** When the checks are attempted and do not complete — however they fail — the state is `unavailable` with a cause distinguishing it from the other two, the review still runs, and its verdict, findings and their order are what the same review produces with the checks never attempted. A failure in the checks never blocks, delays or alters a review.
+- [ ] **AC-16a.** When the checks are attempted and do not complete — however they fail — the state is `unavailable` with a cause distinguishing it from the other two, the review still runs, and its verdict, findings and their order are what the same review produces with the checks never attempted. A failure in the checks never **blocks, gates, retries or escalates** a review, and never alters its outcome.
+- [ ] **AC-16b.** The checks are attempted within their own bounded time budget, and a failure costs at most that bound. Running them takes time that a review without them would not spend; what that time can never do is change the review's outcome or make a round unbounded.
 - [ ] **AC-17.** The state appears in the reviewer's output and in the reviewer-loop history for **every** review, at any stage. The count **and** the set of check identifiers that produced findings accompany it only in the `applied` state; in `not_applicable` and `unavailable` both are **empty**, and the count is never `0`.
 - [ ] **AC-17b.** A reader can determine, from the history alone, **which** checks produced findings on a round — not only how many findings there were.
 - [ ] **AC-17c.** Two rounds reporting the same unresolved finding count that check **once** for the pull request: incidence is per pull request, and repeated rounds do not increase it.
