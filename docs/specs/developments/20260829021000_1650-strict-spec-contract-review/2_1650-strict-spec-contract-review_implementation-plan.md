@@ -261,8 +261,10 @@ field list is built at implementation time for that reason.
    means blocking, and `RESULT` becomes `needs_fixes`. This is the fail-closed
    direction, and the scenario fails if the marker alone is trusted.
 7. A finding carrying `strict_check` with a non-string value — a number, an
-   object, `null` — is also not strict, for the same reason and by the same
-   branch.
+   object, `null` — is also not strict, and the parser **does not abort**:
+   `ascii_downcase` raises on a non-string, so the type guard has to run first.
+   Asserted on all three values, since a program that errors here fails the
+   whole review rather than classifying one finding.
 8. A mixed review — two ordinary blocking findings and three strict — reports
    `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and `RESULT=needs_fixes` driven by
    the two, not the three.
@@ -356,8 +358,9 @@ The partition, and why it precedes everything:
 # `$known_checks` comes from the checklist via --argjson: one definition of the
 # closed set, and a ninth check needs no parser edit.
 def strict:
-  (.strict_check? | type) == "string"
-  and ($known_checks | index(.strict_check | ascii_downcase) != null);
+  ((.strict_check? // null)
+     | if type == "string" then ascii_downcase else null end) as $c
+  | $c != null and ($known_checks | index($c) != null);
 
 . as $root
 | (findings) as $all
@@ -365,9 +368,25 @@ def strict:
 | ($all | map(select(strict | not))) as $findings   # everything below is unchanged
 ```
 
+Two details of that predicate are not stylistic. The identifier is captured into
+`$c` **before** `$known_checks` becomes the input, because inside
+`index(...)` the `.` is the array, not the finding — `index(.strict_check)`
+raises *Cannot index array with string*. And the `if type == "string"` guard
+runs before `ascii_downcase`, which errors on a number or an object: scenario 7
+feeds exactly those, and without the guard the parser aborts rather than
+classifying them as ordinary.
+
+`findings` is the program's existing definition, which normalises `findings`,
+`comments` or `issues` into one array; the sample calls it rather than reading
+`.findings` so the partition sees the same set the rest of the program does.
+
 Binding `$findings` to the ordinary subset is the whole change: `blocking`,
 `advisory`, `$unknown`, `$blocking_findings` and the `BLOCKING_<n>_*` lines keep
 their present text and now operate on the ordinary findings alone.
+
+Verified as a standalone program against a four-finding fixture — one known
+identifier, one unmarked, one unknown identifier, one numeric — which partitions
+1 strict and 3 ordinary.
 
 ---
 
