@@ -174,10 +174,13 @@ Not applicable — this repository ships workflow tooling, not a service.
       property of what the parser reads, not of what the model was asked to
       write.
 
-      It runs only when the state is `applied`: the stage resolves, it is
-      `spec`, and the checklist is readable. Every other row of the matrix
-      dispatches nothing, which is why `not_applicable` and `unavailable`
-      reviews cost exactly what they cost today.
+      It is dispatched exactly when the matrix's first three rows do not match:
+      the stage resolves, it is `spec`, and the checklist is readable. Those
+      three inputs decide the **call**; the state is decided afterwards by what
+      the call returns, which is why row 4 is `unavailable` and was dispatched.
+      Rows 1 through 3 dispatch nothing, which is why `not_applicable` reviews
+      and the two never-attempted `unavailable` rows cost exactly what they
+      cost today.
 
       **The cost is one extra invocation on spec-stage reviews**, and it is the
       price of the guarantee. It falls only on spec branches with a readable
@@ -395,11 +398,15 @@ field list is built at implementation time for that reason.
    output. Each is a separate run. In all three the state is `unavailable` with
    reason `strict_pass_failed`, and the ordinary verdict, blocking block and
    numbering are identical to the same review with no strict pass attempted.
-9b. **The strict pass is not dispatched at all** outside the `applied` state:
-   asserted by counting invocations of `LOCAL_AI_REVIEWER_COMMAND`, which is 1
-   in rows 1 through 4 of the matrix and 2 in rows 5 and 6 — row 4 is one
-   invocation because the pass was dispatched and did not complete. A second
-   call on a
+9b. **The strict pass is dispatched exactly where the matrix says**, and the
+   state is not the test — rows 1 to 3 decide dispatch, and the state is
+   decided afterwards by what the pass returns, which is why row 4 is
+   `unavailable` and dispatched. Asserted by counting invocations of `LOCAL_AI_REVIEWER_COMMAND`, which is 1
+   in rows 1, 2 and 3 and **2** in rows 4, 5 and 6. Row 4 counts two: a pass
+   that fails is a pass that was called, and the count measures dispatch rather
+   than success — a row 4 asserting one invocation would be satisfied by an
+   implementation that never dispatched at all, which is the opposite defect.
+   A second call on a
    `not_applicable` review would double the cost of every plan and
    implementation review, which is the failure most likely to go unnoticed
    because nothing about the output would show it.
