@@ -1006,11 +1006,16 @@ is to disable the checks rather than to fix the merge.
    reason are emitted.
 5. Add the summary rendering. **Verify**: runbook Step 7.
 5a. Write the twelve fixture specifications — nine positives, three negatives —
-   and run the reviewer against each
-   with the checklist supplied and again without it. **Verify**: scenarios 14
-   and 15 — record which checks fired in each run, in the pull request. This is
-   evidence, not a gate: a check firing in neither run is a finding about that
-   check, and one worth having before the counts accumulate.
+   and run the reviewer against each with the checklist supplied and again
+   without it. **Verify**: scenarios 14 and 15 — record which checks fired in
+   each run, in the pull request.
+
+   **Not a CI gate, and a readiness gate.** No build goes red when a model
+   misses a fixture, because that failure is not deterministic and the fix would
+   be to delete the suite. But a check that cannot demonstrate its pair does not
+   ship: the repair is to sharpen its question in the checklist until it detects
+   its own planted violation, and this step is not done until all eight have.
+   That is step 7's proofs P10-P17 stated as a task rather than as evidence.
 6. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
 7. Produce the **seventeen** planted-violation proofs and record them in the PR
