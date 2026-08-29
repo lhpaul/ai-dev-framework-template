@@ -211,18 +211,15 @@ Three states, and `applied` with a count of zero is deliberately not the same as
 
 The complete gate, from a review starting to strict findings existing or not. Rows are evaluated in order and the first match decides.
 
-| # | Stage resolves | Stage | Checklist available | Checks complete | Findings | State | Count | Check ids | Verdict affected |
+| # | Stage resolves | Stage | Checklist available | Checks run | Findings | State | Count | Check ids | Verdict affected |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | **No** | — | — | not attempted | — | `unavailable` | **empty** | **empty** | No |
-| 2 | Yes | not spec | — | not attempted | — | `not_applicable` | **empty** | **empty** | No |
-| 3 | Yes | spec | **No** | not attempted | — | `unavailable` | **empty** | **empty** | No |
-| 4 | Yes | spec | Yes | **No** | — | `unavailable` | **empty** | **empty** | No |
-| 5 | Yes | spec | Yes | Yes | none | `applied` | `0` | empty list | No |
-| 6 | Yes | spec | Yes | Yes | one or more | `applied` | *n* | the checks that fired | **No** |
+| 1 | **No** | — | — | No | — | `unavailable` | **empty** | **empty** | No |
+| 2 | Yes | not spec | — | No | — | `not_applicable` | **empty** | **empty** | No |
+| 3 | Yes | spec | **No** | No | — | `unavailable` | **empty** | **empty** | No |
+| 4 | Yes | spec | Yes | Yes | none | `applied` | `0` | empty list | No |
+| 5 | Yes | spec | Yes | Yes | one or more | `applied` | *n* | the checks that fired | **No** |
 
-Six rows over four ordered inputs: can the stage be resolved, is it the spec stage, is the checklist available, did the checks complete. The order matters — an unresolved stage cannot be compared against `spec`, and checks never attempted cannot complete — so row 1 precedes row 2, rows 1 through 3 precede row 4, and no combination evaluates an input the earlier answer made unreachable.
-
-**Row 4 is the one this specification originally omitted**, and the omission is exactly the `gate_matrix` shape check 3 exists to catch: the first draft enumerated the three inputs that decide whether to *start* the checks and never the one that decides whether they *finished*. It was found while planning the implementation, and it is recorded here rather than quietly repaired, because a specification that demands enumerated gates and ships an unenumerated one is the strongest argument the check has.
+Five rows over three ordered inputs: can the stage be resolved, is it the spec stage, is the checklist available. The order matters — an unresolved stage cannot be compared against `spec`, so row 1 precedes row 2 and no combination evaluates both.
 
 **The count is empty, not zero, in every row but the last two.** `0` means *the checks ran and found nothing*, and it is the only thing distinguishing a clean specification from one the checks never examined. Writing `0` for `unavailable` or `not_applicable` would put those rounds into the denominator of any later rate as if they had been checked, which is precisely the measurement this feature exists to make possible.
 
@@ -233,31 +230,31 @@ surface is left to inference:
 
 | State | Next action | Reviewer output | Review comments | Reviewer-loop history |
 | --- | --- | --- | --- | --- |
-| `unavailable` (rows 1, 3, 4) | none — the review proceeds and its verdict is unchanged | the state and its cause; no count, no identifiers | nothing added | the state and its cause; count and identifiers empty |
+| `unavailable` (rows 1, 3) | none — the review proceeds and its verdict is unchanged | the state and its cause; no count, no identifiers | nothing added | the state and its cause; count and identifiers empty |
 | `not_applicable` (row 2) | none | the state; no count, no identifiers | nothing added | the state; count and identifiers empty |
-| `applied`, count `0` (row 5) | none | the state and count `0`; identifier list empty | nothing added | the state, count `0`, empty identifier list |
-| `applied`, count *n* (row 6) | none that gates — the findings are reported and the verdict is decided without them | the state, the count, and the identifiers that fired | each finding, labelled with its check, grouped apart from blocking findings | the state, the count, and the identifiers that fired |
+| `applied`, count `0` (row 4) | none | the state and count `0`; identifier list empty | nothing added | the state, count `0`, empty identifier list |
+| `applied`, count *n* (row 5) | none that gates — the findings are reported and the verdict is decided without them | the state, the count, and the identifiers that fired | each finding, labelled with its check, grouped apart from blocking findings | the state, the count, and the identifiers that fired |
 
 **"Next action" is empty in every row, and that is the feature.** No state
 gates, escalates, retries or demands acknowledgement. The only row with any
-follow-up is row 6, whose follow-up is to *report* — which is why the column
+follow-up is row 5, whose follow-up is to *report* — which is why the column
 exists rather than being omitted: a reader checking whether some state blocks
 should find the answer here rather than infer it from silence.
 
 The comment surface is touched in exactly one row. A reader seeing no strict
-findings on a pull request cannot tell rows 1 through 5 apart from the comments
+findings on a pull request cannot tell rows 1 through 4 apart from the comments
 alone, which is why the state is on the reviewer output and in the history for
 every review.
 
-Row 6's last column is the feature's central claim and the one most likely to erode: findings exist, are labelled, are counted, and change nothing about whether the pull request may proceed.
+Row 5's last column is the feature's central claim and the one most likely to erode: findings exist, are labelled, are counted, and change nothing about whether the pull request may proceed.
 
-Rows 1 through 4 differ in what a reader can conclude. Row 2 is a change the checks do not apply to; rows 1, 3 and 4 are changes the checks *should* have examined and could not — the stage was unknown, the checklist was missing, or the checks were attempted and did not finish. All three are defects, with three different owners — the pull request's shape, the repository's contents, the reviewer command or its environment — and collapsing any of them into "no strict findings" makes it invisible.
+Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the checks do not apply to; rows 1 and 3 are changes the checks *should* have examined and could not — one because the stage was unknown, one because the checklist was missing. Both are defects, with different owners, and collapsing either into "no strict findings" makes it invisible.
 
 ---
 
 ## Operational Visibility
 
-- **Reviewer output**: the strict-check state on every review, its cause in each `unavailable` row, and the finding count when the state is `applied`.
+- **Reviewer output**: the strict-check state on every review, and the finding count when the state is `applied`.
 - **Review comments**: each strict finding, labelled with its check identifier, grouped separately from blocking findings.
 - **Reviewer-loop history**: per round, the state, the count where it applies, and **which checks produced findings** — the set of check identifiers, not only how many findings there were.
 
@@ -285,7 +282,6 @@ Rows 1 through 4 differ in what a reader can conclude. Row 2 is a change the che
 - [ ] **AC-14.** The strict checks do not run outside the spec stage, and the state is `not_applicable`.
 - [ ] **AC-15.** At the spec stage with the checks applied and nothing found, the state is `applied` and the count is `0` — distinguishable from `unavailable` and from `not_applicable`.
 - [ ] **AC-16.** When the checklist cannot be supplied, the state is `unavailable`, the review still runs, and its verdict is unaffected.
-- [ ] **AC-16a.** When the checks are attempted and do not complete — however they fail — the state is `unavailable` with a cause distinguishing it from the other two, the review still runs, and its verdict, findings and their order are what the same review produces with the checks never attempted. A failure in the checks never blocks, delays or alters a review.
 - [ ] **AC-17.** The state appears in the reviewer's output and in the reviewer-loop history for **every** review, at any stage. The count **and** the set of check identifiers that produced findings accompany it only in the `applied` state; in `not_applicable` and `unavailable` both are **empty**, and the count is never `0`.
 - [ ] **AC-17b.** A reader can determine, from the history alone, **which** checks produced findings on a round — not only how many findings there were.
 - [ ] **AC-17c.** Two rounds reporting the same unresolved finding count that check **once** for the pull request: incidence is per pull request, and repeated rounds do not increase it.

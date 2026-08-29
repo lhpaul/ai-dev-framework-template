@@ -191,17 +191,20 @@ Not applicable — this repository ships workflow tooling, not a service.
       the ordinary pass's verdict and findings are emitted as if the strict pass
       had never been attempted.
 
-      **This is a matrix row the spec did not have, and the spec is amended in
-      this pull request** — row 4, the `strict_pass_failed` cause, and AC-16a.
-      The spec's matrix claimed to be the complete gate over three ordered
-      inputs, all three deciding whether the checks *start*; a dispatched pass
-      that does not *finish* is a fourth input and was unenumerated.
+      **This is a matrix row the spec did not have**, and it is added by a
+      separate spec pull request — row 4, the `strict_pass_failed` cause, and
+      AC-16a — which is a **hard dependency of this plan**, listed in the
+      Implementation Order's step 0. The spec's matrix claimed to be the
+      complete gate over three ordered inputs, all three deciding whether the
+      checks *start*; a dispatched pass that does not *finish* is a fourth input
+      and was unenumerated.
 
       That omission is precisely the `gate_matrix` shape check 3 exists to
-      catch, in the specification that defines check 3. It is recorded in the
-      spec rather than quietly repaired here, because the alternative — a plan
-      that silently adds a state its spec does not have — is the divergence this
-      epic keeps finding in other people's documents.
+      catch, in the specification that defines check 3. It goes through the spec
+      stage rather than riding along here: a plan pull request that edits its
+      own approved spec is a workflow-stage violation, and the alternative — a
+      plan silently adding a state its spec does not have — is the divergence
+      this epic keeps finding in other people's documents.
 
 - [ ] **Merge the two responses.** The verdict and `BLOCKING_<n>_*` come from
       the ordinary pass. `STRICT_<n>_*` comes from the strict pass. Nothing
@@ -249,7 +252,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       STRICT_SPEC_COUNT=<n>             # value only when applied; empty otherwise
 
       # conditional
-      STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable
+      STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable|strict_pass_failed
                                         # only when unavailable
       STRICT_SPEC_CHECKS=<ids>          # comma-separated; only when applied
       STRICT_SPEC_UNKNOWN_COUNT=<n>     # only when applied and above zero
@@ -580,7 +583,7 @@ two groups:
 | P9 | Let a failed strict pass propagate — return its exit status, or emit no ordinary output | same scratch copy | scenario 9a fails on all three failure shapes: a reviewer command that crashes takes the ordinary review with it, so an unrelated defect blocks a pull request that had no findings; restoring the `strict_pass_failed` state passes |
 | P5 | Write `0` and an empty list for `unavailable` and `not_applicable` | a scratch copy of the print block | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they found nothing, so #1657's rate counts unexamined specifications as clean — an error in the flattering direction, which is the one nobody questions; restoring the empty values passes |
 | P7 | Report `unavailable` without a reason, or with one constant value | a scratch copy of the print block | scenario 1a fails: the two `unavailable` rows become indistinguishable, so a reader sees a state with two possible owners and no way to tell which — and the more likely of the two, a missing checklist, is the one a maintainer could fix in a minute. Every other scenario passes, because none reads the reason; restoring the two values passes |
-| P6 | Hard-code the eight identifiers in the parser | same scratch copy | scenario 13 fails: a ninth check added to the checklist is recognised by no code, so its findings are classified as ordinary and block. The eight shipped checks still pass, which is why the scenario adds a ninth; restoring `$known_checks` passes |
+| P6 | Hard-code the eight identifiers in the strict pass's parser | a scratch copy of the strict `jq` program | scenario 13 fails: a ninth check added to the checklist is recognised by no code, so its findings are counted in `STRICT_SPEC_UNKNOWN_COUNT` and named by no identifier in `STRICT_SPEC_CHECKS` — the check exists in the document and is invisible in the measurement, which is the failure that matters once #1657 reads these counts. It does **not** block, because a strict-pass finding never can; the eight shipped checks still pass, which is why the scenario adds a ninth; restoring `$known_checks` passes |
 
 P1 is the proof to read first: with the two arrays merged the feature does not
 merely fail, it makes every specification review red, and the resulting pressure
@@ -591,8 +594,10 @@ is to disable the checks rather than to fix the merge.
 ## Implementation Order
 
 0. **Hard stop**: confirm #1653 is implemented and merged and that
-   `review_stage` carries `spec`. Re-read the merged `jq -n` object and
-   `print_kv` block, which #1654 may also have changed.
+   `review_stage` carries `spec`; confirm the spec amendment — matrix row 4, the
+   `strict_pass_failed` cause and AC-16a — is merged, since steps 2 and 4 build
+   a state the unamended spec does not contain. Re-read the merged `jq -n`
+   object and `print_kv` block, which #1654 may also have changed.
 1. Add the checklist document with its eight sections and identifiers.
    **Verify**: the identifiers match the spec's list, by extraction.
 2. Add the strict pass: the state test that decides whether to dispatch, the
@@ -613,10 +618,7 @@ is to disable the checks rather than to fix the merge.
    check, and one worth having before the counts accumulate.
 7. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
-8. Amend the spec: the fourth matrix row, the `strict_pass_failed` reason, and
-   AC-16a. **Verify**: the matrix's input list and row count match, by
-   extraction.
-9. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
+8. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

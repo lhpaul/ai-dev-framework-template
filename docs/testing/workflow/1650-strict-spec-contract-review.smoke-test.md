@@ -191,8 +191,10 @@ and see. Proof P7.
 Case 5 is the row the specification originally lacked: its matrix enumerated the
 three inputs that decide whether the checks *start* and not the one that decides
 whether they *finish*. That is the `gate_matrix` shape check 3 exists to catch,
-found in the document defining check 3, and the spec is amended in this pull
-request rather than the gap being papered over in the plan.
+found in the document defining check 3. It is fixed by a **separate spec pull
+request**, which this plan depends on — a plan pull request that edits its own
+approved spec is a workflow-stage violation, so the gap goes back through the
+spec stage rather than riding along with the plan.
 
 Case 1 against cases 3 and 4 is the assertion that matters: `0` means the checks
 ran and found nothing, and it is the only thing distinguishing a clean
