@@ -610,10 +610,14 @@ and this item derives a copy from its output and edits nothing there.
    findings reports `RESULT=clean`, `BLOCKING_COUNT` 0 and `STRICT_SPEC_COUNT`
    3. This is the spec's central claim, and with two passes it is the direct
    consequence of never merging the two arrays.
-9a. **The strict pass fails** — non-zero exit, timeout, empty response, or
-   unparseable output. Each is a separate run. In all three the state is `unavailable` with
-   reason `strict_pass_failed`, and the ordinary verdict, blocking block and
-   numbering are identical to the same review with no strict pass attempted.
+9a. **The strict pass fails in five shapes** — non-zero exit, timeout, empty
+   response, unparseable output, and an ordinary pass that consumed the whole
+   `--timeout` so the checks were never attempted. Each is a separate run. In
+   **all five** the state is `unavailable` with reason `strict_pass_failed`, and
+   the ordinary verdict, blocking block and numbering are identical to the same
+   review with no strict pass attempted. The fifth is the one AC-16d classifies:
+   it is not distinguished from the other four, because *the checks produced no
+   result* is the whole of what a reader needs.
 9b. **The strict pass is dispatched exactly where the matrix says**, and the
    state is not the test — rows 1 to 3 decide dispatch, and the state is
    decided afterwards by what the pass returns, which is why row 4 is
@@ -626,14 +630,12 @@ and this item derives a copy from its output and edits nothing there.
    `not_applicable` review would double the cost of every plan and
    implementation review, which is the failure most likely to go unnoticed
    because nothing about the output would show it.
-9c. The round is **bounded by `--timeout` in total**, not by twice it. Three
-   cases: a strict pass that sleeps past the remaining budget is killed and
-   reports `strict_pass_failed`; an ordinary pass that consumes the whole
-   budget leaves the strict pass unattempted, reporting the same cause; and a
-   review with `--timeout` set to a small value completes within it in both.
-   Asserted on **elapsed time** against the single bound, not only on the state
-   — an unbounded pass fails no other scenario here, because every other stub
-   returns promptly.
+9c. The round is **bounded by `--timeout` in total**, not by twice it. This is
+   scenario 9a's timeout and exhausted-budget shapes measured rather than
+   classified: with `--timeout` set low enough to time, the elapsed round does
+   not exceed it in either. Asserted on **elapsed time** against the single
+   bound — an unbounded pass fails no other scenario here, because every other
+   stub returns promptly, and 9a would pass on state alone.
 9d. **No second timeout setting exists.** Asserted by absence: no environment
    variable or flag sets the strict pass's budget, and `--timeout` is the only
    thing that changes either pass's bound. The scenario greps the implementation
@@ -764,7 +766,7 @@ entire item exists to make possible.
 | Fixture | Contents | Location |
 | --- | --- | --- |
 | Fixture specifications | **Twelve** short specification documents: nine positives — one per check with a single planted instance of that check's shape, plus a second `gate_matrix` positive because that check has two positive criteria (AC-6, a reachable combination unmentioned; AC-6b, a short-circuit gate that does not state its evaluation order); and three negatives — a gate enumerating every reachable combination (AC-7), a gate that short-circuits and states its evaluation order (AC-6a), and an unsettled phrase confined to a rationale (AC-13) | `scripts/development-workflow/tests/fixtures/strict-spec-specs/` |
-| Reviewer outputs | Two sets. **Ordinary pass**: clean; two blocking findings. **Strict pass**: no findings; three findings from two checks; an unknown identifier; a non-string `check`; no `check` at all; one carrying its own `result`; and three failure shapes — non-zero exit, empty, unparseable | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
+| Reviewer outputs | Two sets. **Ordinary pass**: clean; two blocking findings; one that consumes the whole `--timeout`. **Strict pass**: no findings; three findings from two checks; an unknown identifier; a non-string `check`; no `check` at all; one carrying its own `result`; one with no `mode`; a complete ordinary review; and **five** failure shapes — non-zero exit, timeout, empty, unparseable, and never attempted for want of budget | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
 | Checklist fixtures | A well-formed eight-section checklist; a nine-section one for scenario 13; and an unreadable one | `scripts/development-workflow/tests/fixtures/strict-spec-checks/` |
 | Bundle field list | The field names present before this change, enumerated from the merged `jq -n` object at implementation time | inline in the same suite |
 
@@ -805,7 +807,7 @@ file enumerates it.
 | --- | --- | --- | --- |
 | Strict findings turn every spec review red | **High** if the two responses are merged — an unsorted finding is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The two arrays are never joined: blocking comes from the ordinary pass, `STRICT_<n>_*` from the strict one. Scenarios 4 and 9; proof **P1** appends one to the other |
 | The verdict is influenced by checks the same model just read | **High** in any single-invocation design — and undetectable from the response | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | Two invocations. The pass that decides the verdict never receives the checklist, so there is nothing to influence it and no promise to audit. Scenarios 5a and 8a; proof **P4** |
-| The strict pass fails and takes the review with it | Med — any invocation can fail | **High** — an unrelated defect in the reviewer command blocks pull requests that had no findings at all | State `unavailable` with reason `strict_pass_failed`, ordinary output untouched. Scenario 9a on four failure shapes; proof **P9** |
+| The strict pass fails and takes the review with it | Med — any invocation can fail | **High** — an unrelated defect in the reviewer command blocks pull requests that had no findings at all | State `unavailable` with reason `strict_pass_failed`, ordinary output untouched. Scenario 9a on five failure shapes; proof **P9** |
 | The strict pass hangs and the round never ends | Med — a reviewer command can hang | **High** — the cost stops being bounded, and a feature that produces measurements starts costing arbitrary wall-clock time | The remaining `--timeout` through the existing `run_with_timeout` wrapper: one budget, shared. Scenario 9c asserts on elapsed time, since no other scenario would notice |
 | A second timeout setting is added for convenience | Med — it is the obvious way to make the strict pass configurable | Med — two values disagree about a bound whose purpose is that a round cannot outlast it, and the checks can be configured to outlive the review that dispatched them | AC-16c forbids it and scenario 9d asserts its absence by grep, since a knob nobody sets is invisible to behavioural tests |
 | The extra invocation runs where it should not | Med | Med — every plan and implementation review costs twice as much, and nothing in the output shows it | The state test gates the dispatch, and the invocation count is asserted per matrix row. Scenario 9b; proof **P8** |
@@ -936,7 +938,7 @@ demonstrated against a concrete violation, so each of the eight gets its pair.
 | P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | a scratch copy of the merge step | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
 | P4 | Read the strict response's `result` field into the emitted verdict | a scratch copy of the merge step | scenario 8a fails: the two runs that differ only in the strict pass's verdict emit different `RESULT` values, so the pass that cannot block does block; restoring the ignored field passes |
 | P8 | Dispatch the strict pass unconditionally, without testing the state | a scratch copy of the dispatch step | scenario 9b fails: the invocation count is 2 on a `not_applicable` review, doubling the cost of every plan and implementation review while the output looks correct; restoring the state test passes |
-| P9 | Let a failed strict pass propagate — return its exit status, or emit no ordinary output | same scratch copy | scenario 9a fails on all three failure shapes: a reviewer command that crashes takes the ordinary review with it, so an unrelated defect blocks a pull request that had no findings; restoring the `strict_pass_failed` state passes |
+| P9 | Let a failed strict pass propagate — return its exit status, or emit no ordinary output | same scratch copy | scenario 9a fails on all five failure shapes: a reviewer command that crashes takes the ordinary review with it, so an unrelated defect blocks a pull request that had no findings; restoring the `strict_pass_failed` state passes |
 | P5 | Emit `STRICT_SPEC_COUNT=0` and an empty `STRICT_SPEC_CHECKS` for `unavailable` and `not_applicable`, where both keys must not be emitted at all | a scratch copy of the print block | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they ran and found nothing, so #1657's rate counts unexamined specifications as clean — an error in the flattering direction, which is the one nobody questions. Scenario 12 fails with it, since the evidence object mirrors the output. Restoring the two keys to unemitted passes |
 | P7 | Report `unavailable` without a reason, or with one constant value for all three of its rows | a scratch copy of the print block | scenario 1a fails: the three `unavailable` rows — `stage_unresolved`, `checklist_unreadable`, `strict_pass_failed` — become indistinguishable, so a reader sees one state with three possible owners and no way to tell which to go and see. Scenario 9a fails too, since it asserts the reason on the failed-pass row. Every other scenario passes, because none reads the reason; restoring the three values passes |
 | P10-P17 | For each check in turn, remove its planted violation from that check's positive fixture — one proof per check, in the spec's order: `ac_consistency`, `ac_testability`, `gate_matrix`, `opt_out_source`, `trigger_semantics`, `example_contradiction`, `parser_surface`, `ambiguous_phrase`. `gate_matrix`'s proof runs on **both** its positives, AC-6's and AC-6b's, since removing the violation differs between them: enumerating the missing combination in the first, stating the evaluation order in the second | the nine positive fixture specifications | the check fires on the fixture carrying its violation and does **not** fire on the same fixture with that one violation removed. Both runs are recorded with the fixture path, the line the violation sat on, and the identifier set the round reported. The pair is the demonstration `REVIEW.md` asks for: without the second run a check that fires on everything looks identical to one that works |
