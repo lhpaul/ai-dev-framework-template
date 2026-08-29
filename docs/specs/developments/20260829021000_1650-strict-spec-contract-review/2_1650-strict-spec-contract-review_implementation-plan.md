@@ -372,18 +372,18 @@ Not applicable — this repository ships workflow tooling, not a service.
       comparison is Implementation Order step 1.
 
 - [ ] **Report the state and the count.** Five `print_kv` keys beside the
-      existing block — two always emitted, three conditional:
+      existing block — **one** always emitted, four conditional:
 
       ```text
       # always emitted
       STRICT_SPEC_STATE=applied|not_applicable|unavailable
-      STRICT_SPEC_COUNT=<n>             # value only when applied; empty otherwise
 
       # conditional
-      STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable|strict_pass_failed
-                                        # only when unavailable
+      STRICT_SPEC_COUNT=<n>             # only when applied; may be 0
       STRICT_SPEC_CHECKS=<ids>          # comma-separated; only when applied
       STRICT_SPEC_UNKNOWN_COUNT=<n>     # only when applied and above zero
+      STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable|strict_pass_failed
+                                        # only when unavailable
       ```
 
       **`unavailable` has three causes and they have different owners**, which
@@ -397,15 +397,14 @@ Not applicable — this repository ships workflow tooling, not a service.
       table requires the cause to be reported; the reason key is where it
       lives.
 
-      `STRICT_SPEC_REASON` is not emitted in `applied` and `not_applicable`, by
-      the same rule that empties the count outside `applied`: a value present
-      where it has no meaning invites a reader to interpret it. The distinction
-      between the two groups is deliberate — `STRICT_SPEC_STATE` and
-      `STRICT_SPEC_COUNT` appear on **every** review so that a consumer can
-      always tell the three states apart and always has a denominator, while the
-      remaining three appear only where they mean something.
+      **Only the state is unconditional**, and the spec's outcome table is
+      explicit about why: outside `applied` there is *no count*, not a count
+      that happens to be empty. A key present where it has no meaning invites a
+      reader to interpret it, and the state is enough to tell the three
+      situations apart — #1657's denominator is the set of rounds whose state is
+      `applied`, which needs no second key to compute.
 
-      `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **empty** in the two
+      `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **absent** in the two
       non-applied states, never `0` and never an empty list rendered as
       something. The spec's reason: `0` means the checks ran and found nothing,
       and it is the only thing distinguishing a clean specification from one
@@ -424,17 +423,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       | | `key=value` output | `strict_spec` object |
       | --- | --- | --- |
       | `state` | always, with a value | always, with a value |
-      | `count` | always; value empty outside `applied` | always; `null` outside `applied` |
-      | `reason` | only when `unavailable` | present only when `unavailable` |
+      | `count` | only when `applied`; may be `0` | present only when `applied` |
       | `checks` | only when `applied` | present only when `applied` |
       | `unknown_count` | only when `applied` and above zero | present only when `applied` and above zero |
+      | `reason` | only when `unavailable` | present only when `unavailable` |
 
-      `count` is the one key that is always present and sometimes empty, and it
-      is deliberate: it is #1657's denominator, so a consumer must be able to
-      read it on every round and tell "ran, found nothing" (`0`) from "did not
-      run" (`null`) without inspecting the state as well. The other three carry
-      no such obligation, and a field present where it has no meaning invites a
-      reader to interpret it.
+      **Nothing is present-and-null anywhere**, which is the whole content of
+      the rule. `0` and absent are the two values `count` can take, and they
+      mean *the checks examined this specification and found nothing* and *no
+      count exists for this round*. A third representation — present, `null`,
+      or empty — would sit between them and be read as either.
 
 - [ ] **Render the findings separately.** The strict findings are emitted as
       their own `key=value` block — `STRICT_<n>_CHECK`, `STRICT_<n>_PATH`,
@@ -499,10 +497,11 @@ and this item derives a copy from its output and edits nothing there.
    state alone leaves a reader unable to tell a defect in the pull request's
    shape from one in the repository's contents from one in the reviewer command
    — three owners. `STRICT_SPEC_REASON` is not emitted in rows 2, 5 and 6.
-2. `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **empty** in
-   `not_applicable` and `unavailable`, and present in `applied` — including
+2. `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **not emitted** in
+   `not_applicable` and `unavailable`, and are present in `applied` — including
    `0` and an empty list when the checks found nothing. `STRICT_SPEC_REASON` is
-   the mirror: present only in `unavailable`, empty in the other two.
+   the mirror: emitted only in `unavailable`. Asserted on key presence, not on
+   values.
 3. A round recorded as `unavailable` is distinguishable from one recorded as
    `applied` with count `0`, by reading the ledger entry alone.
 4. A strict-pass finding carrying a **known** `check` identifier is counted,
@@ -582,12 +581,11 @@ and this item derives a copy from its output and edits nothing there.
     while `LOCAL_CODEX_REVIEWER_STRICT_PROMPT` overrides only the strict one —
     asserted with each set alone.
 12. The `strict_spec` object is present on **every** round at any stage, and
-    mirrors the output by the table above: `state` and `count` always present,
-    `count` `null` outside `applied`; `reason`, `checks` and `unknown_count`
-    **absent** — not null — on the rounds where their keys are not emitted.
-    Asserted with `has()` rather than by comparing values, since a present-null
-    field and an absent one compare equal in the reading that matters here and
-    not in `jq`.
+    mirrors the output by the table above: `state` always present; `count`,
+    `checks`, `unknown_count` and `reason` **absent** — not null — on the rounds
+    where their keys are not emitted. Asserted with `has()` rather than by
+    comparing values, since a present-null field and an absent one compare equal
+    in the reading that matters here and not in `jq`.
 13. The checklist's identifiers are read from the document: adding a ninth
     section to a fixture checklist makes a strict-pass finding carrying that
     ninth identifier counted rather than unknown, with no change to the parser
@@ -595,8 +593,8 @@ and this item derives a copy from its output and edits nothing there.
 13a. A checklist with a level-3 heading the identifier pattern does **not**
     match — `### Ambiguous Phrase` — yields `unavailable` with
     `checklist_unreadable`, and **not** a run over the seven that did match.
-    The assertion is on both halves: the state, and the absence of any
-    `STRICT_SPEC_COUNT` value.
+    The assertion is on both halves: the state, and `STRICT_SPEC_COUNT` not
+    emitted at all.
 13b. A checklist declaring the same identifier twice yields the same refusal.
     Left unchecked it would double one check's incidence and hide another's.
 13c. A checklist with no level-3 headings at all, and an empty file, yield the

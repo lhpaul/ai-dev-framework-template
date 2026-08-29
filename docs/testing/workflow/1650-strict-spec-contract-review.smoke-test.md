@@ -86,9 +86,9 @@ that a failure in the checks costs the review nothing. Proofs P4, P8 and P9.
 1. Run a **non-spec-stage** review whose ordinary pass returns two blocking
    findings.
 2. Compare the entire `key=value` output to the same input before this change,
-   excluding the two keys this item always emits — `STRICT_SPEC_STATE` and
-   `STRICT_SPEC_COUNT`. The three conditional keys are **not** excluded: none
-   may appear here, and their absence is part of what the comparison asserts.
+   excluding the one key this item always emits — `STRICT_SPEC_STATE`. The four
+   conditional keys are **not** excluded: none may appear here, and their
+   absence is part of what the comparison asserts.
 3. Count the invocations of `LOCAL_AI_REVIEWER_COMMAND`.
 
 **Expected result**: byte-identical, and **one** invocation.
@@ -222,11 +222,14 @@ instead of trusting what it managed to match.
 
 | Case | `STRICT_SPEC_STATE` | `STRICT_SPEC_REASON` | `STRICT_SPEC_COUNT` | `STRICT_SPEC_CHECKS` |
 | --- | --- | --- | --- | --- |
-| 1 | `applied` | **empty** | `0` | empty list |
-| 2 | `not_applicable` | **empty** | **empty** | **empty** |
-| 3 | `unavailable` | `checklist_unreadable` | **empty** | **empty** |
-| 4 | `unavailable` | `stage_unresolved` | **empty** | **empty** |
-| 5 | `unavailable` | `strict_pass_failed` | **empty** | **empty** |
+| 1 | `applied` | **absent** | `0` | empty list |
+| 2 | `not_applicable` | **absent** | **absent** | **absent** |
+| 3 | `unavailable` | `checklist_unreadable` | **absent** | **absent** |
+| 4 | `unavailable` | `stage_unresolved` | **absent** | **absent** |
+| 5 | `unavailable` | `strict_pass_failed` | **absent** | **absent** |
+
+**Absent means the key is not emitted at all**, not emitted with an empty value.
+Check presence, not content.
 
 Cases 3, 4 and 5 share a state and must not share a record. The three causes
 have three owners — a missing checklist is the repository's, an unresolvable
@@ -246,17 +249,19 @@ Case 1 against cases 3 and 4 is the assertion that matters: `0` means the checks
 ran and found nothing, and it is the only thing distinguishing a clean
 specification from one they never examined. A `0` written for `unavailable`
 would put unexamined rounds into #1657's denominator and make the rate wrong in
-the flattering direction — the direction nobody questions. Proof P5.
+the flattering direction — the direction nobody questions. The denominator is
+the set of rounds whose state is `applied`, which is why the state is the only
+key on every round and the count needs no placeholder. Proof P5.
 
 Read the ledger too, not only stdout: the per-round record is what a later
 report reads, and the distinction has to survive into it. The `strict_spec`
-object mirrors the output — a key emitted is a field present, a key not emitted
-is a field **absent** rather than null — with one exception, `count`, which is
-always present and `null` outside `applied`. Check the absences with `has()`,
-not by comparing values: `count` must be readable on every round so a consumer
-can tell `0` from "did not run" without also reading the state, while a `reason`
-present and null on an `applied` round is a field inviting interpretation it has
-no meaning for.
+object mirrors the output exactly: a key emitted is a field present, a key not
+emitted is a field **absent** rather than null, and only `state` appears on
+every round. Check the absences with `has()`, not by comparing values — a
+present-null field and an absent one compare equal in the reading that matters
+and not in `jq`. `count` has exactly two meanings, `0` and absent: *the checks
+examined this specification and found nothing*, and *no count exists for this
+round*. Anything between them would be read as either.
 
 ## Step 7: The summary shows strict findings separately
 
