@@ -185,20 +185,13 @@ Each is stated as the question it asks and the shape of a finding it produces. T
 | 1 | `ac_consistency` | Do any two acceptance criteria contradict each other, or does one contradict a business rule? | two criteria that cannot both hold |
 | 2 | `ac_testability` | Could a test distinguish this criterion being met from its being unmet? | a criterion whose outcome no observation would differ on |
 | 3 | `gate_matrix` | Does behavior described as depending on several inputs enumerate every **reachable** combination of them, under the evaluation order the document states? | a described gate with a reachable combination unmentioned, or with an evaluation order it never states |
-
-**Check 3 asks for *reachable* combinations, not all of them**, and the
-distinction is not a softening. A gate whose inputs are evaluated in order —
-an unresolved stage never compared against a stage name, an absent file never
-measured — has fewer reachable combinations than the product of its inputs, and
-enumerating the impossible ones would mean inventing answers for states the
-system cannot enter. What the check requires instead is that the **order be
-stated**: unreachability is a claim, and a document that omits combinations
-without saying why is indistinguishable from one that forgot them.
 | 4 | `opt_out_source` | Does each way of disabling or bypassing behavior name exactly one source of truth? | an opt-out named in two places, or in none |
 | 5 | `trigger_semantics` | Does each condition that starts behavior say what happens when its inputs are absent, empty or malformed? | a trigger with no stated behavior for a missing input |
 | 6 | `example_contradiction` | Does each worked example do what the rule beside it requires? | an example demonstrating what its rule forbids |
 | 7 | `parser_surface` | Is each statement about how input is recognised consistent with the syntax the document requires elsewhere, and with the stated tooling? | a matching rule the stated tool cannot express |
 | 8 | `ambiguous_phrase` | Does any phrase whose meaning is unsettled — *next update*, *absence of evidence*, *as needed*, *where appropriate* — determine behavior? | an unsettled phrase load-bearing in a rule |
+
+**Check 3 asks for *reachable* combinations, not all of them**, and the distinction is not a softening. A gate whose inputs are evaluated in order — an unresolved stage never compared against a stage name, an absent file never measured — has fewer reachable combinations than the product of its inputs, and enumerating the impossible ones would mean inventing answers for states the system cannot enter. What the check requires instead is that the **order be stated**: unreachability is a claim, and a document that omits combinations without saying why is indistinguishable from one that forgot them.
 
 **Check 8 is bounded to phrases that change behavior.** The same words in a rationale or an aside are not findings. A check that flagged every occurrence would produce a finding on most documents and be switched off within a week — which is the failure mode this whole feature is designed around.
 
