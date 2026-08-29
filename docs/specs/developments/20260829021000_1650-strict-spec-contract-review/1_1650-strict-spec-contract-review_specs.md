@@ -122,14 +122,28 @@ Every objective stated in issue #1650 maps to acceptance criteria and use cases 
 
 **Steps**:
 
-1. They read strict-finding counts across many pull requests, and how many were acted on.
+1. They read strict-finding **counts** across many pull requests, per check.
 2. They decide whether any check has earned the right to block.
 
-**Postconditions**: A decision informed by data rather than by expectation.
+**Postconditions**: A decision informed by incidence data rather than by
+expectation.
 
 **Considerations**:
 
-- This feature makes that decision possible and does not take it. The blocking behaviour, and the per-check granularity it would need, are deferred.
+- **The data is incidence, not compliance**, and the difference is deliberate.
+  This feature records how often each check fires. It does **not** record which
+  findings were acted on, and cannot: it has no per-finding identity and no
+  acknowledgement mechanism, both excluded under Out of Scope for the reason
+  that tracking dismissals would make ignoring a finding cost something — after
+  which the counts measure obedience rather than incidence.
+- Counts alone are enough for the decision the item defers. A check that fires
+  on nearly every specification is either finding something real and pervasive
+  or is miscalibrated, and either way it has not earned the right to block; a
+  check that fires rarely is the candidate. Distinguishing those needs
+  frequency, which this feature provides.
+- A maintainer who wants to know whether a specific finding was addressed reads
+  the pull request. That is a human judgement over a document, and the spec does
+  not pretend to automate it.
 
 ---
 
@@ -241,6 +255,7 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 
 1. **Making any check blocking.** Deferred until counts exist. This feature produces the data; the decision needs it, and needs to be taken per check rather than for all eight at once — the checks will not earn it at the same rate.
 2. **A report over strict-finding counts.** #1657 owns reporting. This feature records the state and count per round so that report is possible.
+2a. **Any measure of whether a finding was acted on.** The recorded data is incidence — how often each check fires — and never disposition. Measuring dismissals would require per-finding identity and an acknowledgement step, and would make ignoring a finding cost something, which Business Rules forbid. Use Case 5's decision is taken on frequency alone, and the spec says so rather than implying a richer dataset it does not produce.
 3. **Strict checks for plans and implementations.** The same idea applies to a plan, and its questions are different ones. Extending it is a separate item, and doing it here would mean writing three checklists to validate one.
 4. **Suppression, acknowledgement or per-finding dismissal.** Ignoring a finding must cost nothing, which is exactly why there is no mechanism for recording that you ignored it. Adding one would make the counts measure compliance rather than incidence.
 5. **Automatically fixing what the checks find.** Every one of the eight names a contradiction, and choosing which side is correct is a product decision.
