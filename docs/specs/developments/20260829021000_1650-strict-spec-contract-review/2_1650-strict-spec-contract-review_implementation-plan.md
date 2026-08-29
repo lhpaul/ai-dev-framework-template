@@ -36,9 +36,20 @@ whose current invariant is *every finding is blocking unless proven advisory*,
 and this feature adds a class that is neither while that invariant must keep
 holding for everything else.
 
-**Dependencies**: **#1653 must be implemented and merged before this item's
-implementation PR opens** — the checks run only at the spec stage, and the
-stage resolution is #1653's. **#1654 is not a dependency but overlaps**: both
+**Dependencies**: three, all hard, all restated as step 0 of the Implementation
+Order rather than left to it.
+
+- **#1653** must be implemented and merged before this item's implementation PR
+  opens — the checks run only at the spec stage, and the stage resolution is
+  #1653's.
+- **#1677** (merged) — matrix row 4, the `strict_pass_failed` cause and AC-16a.
+  Steps 2 and 4 build a state the unamended spec does not contain.
+- **#1678** (merged) — AC-16a's corrected wording, AC-16b's shared bound,
+  AC-16c's single configuration source and AC-16d's classification. Step 2
+  builds a bound the unamended spec does not contain, and AC-16c is what
+  forbids the second timeout setting an earlier revision proposed.
+
+**#1654 is not a dependency but overlaps**: both
 add a document supplied through the context bundle and both add `print_kv`
 lines. Whichever lands second inherits the other's fields; the plan records the
 seam in **Interaction with #1654** rather than sequencing them.
@@ -49,14 +60,16 @@ seam in **Interaction with #1654** rather than sequencing them.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short origin/develop-internal-reviewer-effectiveness` | `85dea08b` |
+| Repo revision | `git rev-parse --short origin/develop-internal-reviewer-effectiveness` | `0a09bb47` — re-resolved after #1677 and #1678 merged; every row below was re-run at this revision |
+| The ordinary parser overrides the reviewer's own verdict | `sed -n '470,480p' scripts/development-workflow/local-ai-reviewer.sh` | Three branches: `$unknown > 0` forces `needs_fixes`; `$result == "clean" and $blocking > 0` forces `needs_fixes`; `$result == ""` infers from the blocking count. **The plan changes none of them**, which is why its guarantee is "the parser is unchanged" and not "`result` is passed through" |
 | The parser has two classes, and the residue is blocking | `sed -n '440,480p' scripts/development-workflow/local-ai-reviewer.sh` | `blocking` and `advisory` are `jq` predicates over severity and scope text. `$unknown` is `blocking \| not` **and** `advisory \| not`, and `$blocking_findings` is `blocking or ((blocking \| not) and (advisory \| not))` — so a finding matching neither predicate is emitted as blocking |
 | An unclassifiable finding also forces `needs_fixes` | `sed -n '473,476p' scripts/development-workflow/local-ai-reviewer.sh` | `if $unknown > 0 then … RESULT=needs_fixes` — regardless of what the reviewer itself concluded. This is the behaviour strict findings must be exempted from, and the exemption must not weaken it for anything else |
 | Blocking findings are what the loop forwards | Same range | `BLOCKING_<n>_PATH` / `_LINE` / `_BODY` are emitted from `$blocking_findings` only. A strict finding must not appear there, or the loop will treat it as a blocker regardless of the reviewer's own count |
 | The bundle is built in one `jq -n` call | `sed -n '339,366p' scripts/development-workflow/local-ai-reviewer.sh` | Thirteen fields at this revision; #1653 adds three and #1654 four. **This plan adds none there**: it derives the strict bundle from that call's output file instead, so the ordinary bundle stays byte-identical and the site is uncontended |
-| The reviewer command has exactly one invocation site | `grep -n 'LOCAL_AI_REVIEWER_COMMAND' scripts/development-workflow/local-ai-reviewer.sh` | Seven matches, of which one executes: line 380, `run_with_timeout … sh -c "$LOCAL_AI_REVIEWER_COMMAND"`. A second pass is a second call at that same site with a different bundle, not a new integration |
+| The reviewer command has exactly one invocation site | `grep -n 'LOCAL_AI_REVIEWER_COMMAND' scripts/development-workflow/local-ai-reviewer.sh` | Ten matches, of which one executes: line 380, `run_with_timeout … sh -c "$LOCAL_AI_REVIEWER_COMMAND"`. A second pass is a second call at that same site with a different bundle, not a new integration |
 | The invocation is already wrapped and its failure already handled | `sed -n '372,392p' scripts/development-workflow/local-ai-reviewer.sh` | `set +e` around the call, `command_exit` captured, exit 124 handled as a timeout with `print_result escalate`. The strict pass reuses the wrapper and handles its own non-zero status locally instead of reaching that path |
 | The stage resolution is #1653's | #1653's merged plan | `review_stage` is `spec` for `spec/*` branches; the strict checks key on that value and resolve nothing themselves |
+| The review's timeout has one source and a default | `grep -n 'TIMEOUT=' scripts/development-workflow/local-ai-reviewer.sh` | Line 170, `TIMEOUT="${LOCAL_AI_REVIEWER_TIMEOUT:-300}"`, and line 176 for `--timeout`. AC-16c's "no second setting" is satisfied by adding nothing here, and the strict pass takes what remains of this value |
 | Evidence keys reach the loop **summary** unchanged | `sed -n '754,772p' scripts/development-workflow/pr-review-loop.sh` | `emit_prefixed_platform_output` re-emits every key except five reserved ones, so `STRICT_SPEC_*` reaches the comment with no loop change |
 | The **ledger** does not forward arbitrary keys | `sed -n '6876,6952p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_build_entry` builds a fixed `jq -n` object from named locals and globals; no platform `key=value` output is copied in. The `strict_spec` object has to be added there, which is this item's only change to `pr-review-loop.sh` |
 | That function already takes state through globals | Same range, and its `run_id` comment | `unresolved_thread_count`, `late_thread_count` and `current_run_id` are read from globals set by the caller rather than passed positionally, explicitly to avoid growing the parameter list. The five strict values follow that convention rather than inventing one |
