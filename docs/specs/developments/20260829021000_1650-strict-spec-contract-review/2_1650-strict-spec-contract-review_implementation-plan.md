@@ -645,15 +645,31 @@ and this item derives a copy from its output and edits nothing there.
 13d. The extraction is asserted directly, not only through its consequences:
     the eight shipped identifiers are extracted from the shipped checklist and
     compared to the spec's list as a set.
-14. **The checks fire on planted violations.** Eleven fixture specifications:
-    **eight** positives, one per check, each containing exactly one planted
-    instance of that check's shape; and **three** negative controls, one per
-    acceptance criterion that requires *no* finding — a gate enumerating every
-    reachable combination (AC-7); a gate that short-circuits and **states its
-    evaluation order** (AC-6a); and an unsettled phrase appearing only in a
-    rationale (AC-13). The reviewer is run against each with the checklist
-    supplied, and the check that fired is recorded.
-15. The same eleven fixtures with the checklist **absent**: the state is
+14. **The checks fire on planted violations.** Twelve fixture specifications:
+    **nine** positives and **three** negative controls.
+
+    The positives are one per check, each containing exactly one planted
+    instance of that check's shape — plus a **ninth for `gate_matrix`**, because
+    that check has two positive criteria and they are different documents: AC-6
+    is a gate with a reachable combination unmentioned, and **AC-6b** is a gate
+    that short-circuits and does **not** state its evaluation order. The second
+    is the harder and more common case, since its unmentioned combinations are
+    unreachable *if* the order held and indistinguishable from forgotten ones
+    when the order is unstated — which is exactly the finding AC-6b requires and
+    a fixture built for AC-6 does not produce.
+
+    The negative controls are one per acceptance criterion that requires *no*
+    finding: a gate enumerating every reachable combination (AC-7); a gate that
+    short-circuits and **states its evaluation order** (AC-6a); and an unsettled
+    phrase appearing only in a rationale (AC-13).
+
+    AC-6a and AC-6b are the same document but for one sentence, and the pair is
+    what makes `gate_matrix` falsifiable: stating the order must silence the
+    check, omitting it must not.
+
+    The reviewer is run against each with the checklist supplied, and the check
+    that fired is recorded.
+15. The same twelve fixtures with the checklist **absent**: the state is
     `unavailable` and no strict finding is produced. This is what separates *the
     reviewer found the violation because the checklist told it to look* from
     *the reviewer would have found it anyway* — without it, scenario 14 proves
@@ -884,7 +900,7 @@ demonstrated against a concrete violation, so each of the eight gets its pair.
 | P9 | Let a failed strict pass propagate — return its exit status, or emit no ordinary output | same scratch copy | scenario 9a fails on all three failure shapes: a reviewer command that crashes takes the ordinary review with it, so an unrelated defect blocks a pull request that had no findings; restoring the `strict_pass_failed` state passes |
 | P5 | Emit `STRICT_SPEC_COUNT=0` and an empty `STRICT_SPEC_CHECKS` for `unavailable` and `not_applicable`, where both keys must not be emitted at all | a scratch copy of the print block | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they ran and found nothing, so #1657's rate counts unexamined specifications as clean — an error in the flattering direction, which is the one nobody questions. Scenario 12 fails with it, since the evidence object mirrors the output. Restoring the two keys to unemitted passes |
 | P7 | Report `unavailable` without a reason, or with one constant value for all three of its rows | a scratch copy of the print block | scenario 1a fails: the three `unavailable` rows — `stage_unresolved`, `checklist_unreadable`, `strict_pass_failed` — become indistinguishable, so a reader sees one state with three possible owners and no way to tell which to go and see. Scenario 9a fails too, since it asserts the reason on the failed-pass row. Every other scenario passes, because none reads the reason; restoring the three values passes |
-| P10-P17 | For each check in turn, remove its planted violation from that check's positive fixture — one proof per check, in the spec's order: `ac_consistency`, `ac_testability`, `gate_matrix`, `opt_out_source`, `trigger_semantics`, `example_contradiction`, `parser_surface`, `ambiguous_phrase` | the eight positive fixture specifications | the check fires on the fixture carrying its violation and does **not** fire on the same fixture with that one violation removed. Both runs are recorded with the fixture path, the line the violation sat on, and the identifier set the round reported. The pair is the demonstration `REVIEW.md` asks for: without the second run a check that fires on everything looks identical to one that works |
+| P10-P17 | For each check in turn, remove its planted violation from that check's positive fixture — one proof per check, in the spec's order: `ac_consistency`, `ac_testability`, `gate_matrix`, `opt_out_source`, `trigger_semantics`, `example_contradiction`, `parser_surface`, `ambiguous_phrase`. `gate_matrix`'s proof runs on **both** its positives, AC-6's and AC-6b's, since removing the violation differs between them: enumerating the missing combination in the first, stating the evaluation order in the second | the nine positive fixture specifications | the check fires on the fixture carrying its violation and does **not** fire on the same fixture with that one violation removed. Both runs are recorded with the fixture path, the line the violation sat on, and the identifier set the round reported. The pair is the demonstration `REVIEW.md` asks for: without the second run a check that fires on everything looks identical to one that works |
 | P6 | Hard-code the eight identifiers in the strict pass's parser | a scratch copy of the strict `jq` program | scenario 13 fails: a ninth check added to the checklist is recognised by no code, so its findings are counted in `STRICT_SPEC_UNKNOWN_COUNT` and named by no identifier in `STRICT_SPEC_CHECKS` — the check exists in the document and is invisible in the measurement, which is the failure that matters once #1657 reads these counts. It does **not** block, because a strict-pass finding never can; the eight shipped checks still pass, which is why the scenario adds a ninth; restoring `$known_checks` passes |
 
 P1 is the proof to read first: with the two arrays merged the feature does not
@@ -932,7 +948,7 @@ is to disable the checks rather than to fix the merge.
    13c — the last three are step 1's refusals, assertable now that the state and
    reason are emitted.
 5. Add the summary rendering. **Verify**: runbook Step 7.
-5a. Write the eleven fixture specifications — eight positives, three negatives —
+5a. Write the twelve fixture specifications — nine positives, three negatives —
    and run the reviewer against each
    with the checklist supplied and again without it. **Verify**: scenarios 14
    and 15 — record which checks fired in each run, in the pull request. This is

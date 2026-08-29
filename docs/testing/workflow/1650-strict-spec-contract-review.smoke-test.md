@@ -319,26 +319,29 @@ look like three specifications.
 
 **Maps to**: AC-4 through AC-13.
 
-1. Run the reviewer, checklist supplied, against each of the **eleven** fixture
-   specifications: **eight** positives, one per check, each with a single
-   planted instance of that check's shape; and **three** negatives, one per
-   acceptance criterion that requires no finding — a gate enumerating every
-   reachable combination (AC-7); a gate that short-circuits and **states its
-   evaluation order** (AC-6a); and an unsettled phrase confined to a rationale
-   (AC-13).
+1. Run the reviewer, checklist supplied, against each of the **twelve** fixture
+   specifications: **nine** positives, one per check with a single planted
+   instance of that check's shape — plus a second for `gate_matrix`, since that
+   check has two positive criteria and they are different documents: **AC-6**, a
+   gate with a reachable combination unmentioned, and **AC-6b**, a gate that
+   short-circuits and does **not** state its evaluation order; and **three**
+   negatives, one per acceptance criterion that requires no finding — a gate
+   enumerating every reachable combination (AC-7); a gate that short-circuits
+   and **states its evaluation order** (AC-6a); and an unsettled phrase confined
+   to a rationale (AC-13).
 2. Record which check fired on each.
-3. Repeat all eleven with the checklist **absent**, and record again.
+3. Repeat all twelve with the checklist **absent**, and record again.
 
-**Expected result**: with the checklist, each of the eight positives produces a
+**Expected result**: with the checklist, each of the nine positives produces a
 finding from its own check, and **none** of the three negatives produces one.
 Without it, the state is `unavailable` and no strict finding appears.
 
-The AC-6a negative is the one easiest to leave out and the most informative:
-a gate that short-circuits *and says so* must produce no `gate_matrix` finding,
-while the same gate without its stated order must produce one. It is the pair
-that distinguishes the check from one that simply demands every Boolean
-combination — which would fire on most correctly-written gates, including this
-epic's own.
+**The AC-6a and AC-6b fixtures are the same document but for one sentence**, and
+that pair is what makes `gate_matrix` falsifiable: stating the evaluation order
+must silence the check, omitting it must not. Run them adjacently and compare
+the two outputs. It is the pair that distinguishes the check from one that
+simply demands every Boolean combination — which would fire on most
+correctly-written gates, including this epic's own.
 
 **This step is recorded, not gated**, and the reason is the same one that makes
 the findings non-blocking: whether a model notices a planted contradiction is
