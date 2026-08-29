@@ -358,7 +358,7 @@ field list is built at implementation time for that reason.
    the two, not the three.
 9a. `ordinary_result` **present** and `clean`, with `result` `needs_fixes` and
    three strict findings: the emitted verdict is `clean`, and
-   `STRICT_SPEC_VERDICT_DERIVED` is absent. The reviewer stated its ordinary
+   `STRICT_SPEC_VERDICT_UNRESOLVED` is absent. The reviewer stated its ordinary
    verdict; nothing is inferred.
 9b. `ordinary_result` **present** and `needs_fixes`, with ordinary blocking
    findings: the emitted verdict is `needs_fixes`. The field is used in both
