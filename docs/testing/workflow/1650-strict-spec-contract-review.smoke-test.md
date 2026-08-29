@@ -31,34 +31,38 @@ checks without partitioning first and every specification review turns red,
 after which the pressure is to disable the checks rather than fix the parser.
 Proof P1.
 
-## Step 1a: An ambiguous verdict is reported, not resolved
+## Step 1a: The verdict comes from the ordinary review
 
-**Maps to**: AC-3, and the limit of what the parser can know.
+**Maps to**: AC-3.
 
-1. Feed output whose own `result` is `needs_fixes`, carrying three known strict
-   findings and **no** ordinary blocking ones.
-2. Feed a `clean` result with strict findings; a `needs_fixes` with ordinary
-   blockers; and a `needs_fixes` with no findings at all.
+1. Feed output with `ordinary_result: "clean"`, `result: "needs_fixes"`, three
+   known strict findings and no ordinary blocking ones.
+2. Feed output with `ordinary_result: "needs_fixes"` and ordinary blocking
+   findings.
+3. Feed output with **no** `ordinary_result`, three strict findings and no
+   ordinary ones.
+4. Feed output with no `ordinary_result` and **no** strict findings.
 
-**Expected result**: case 1 emits `STRICT_SPEC_VERDICT_AMBIGUOUS=1` **and keeps
-`RESULT=needs_fixes`**. None of case 2's three emits the flag.
+**Expected result**: case 1 emits `clean`, no derivation flag. Case 2 emits
+`needs_fixes`. Case 3 emits `clean` **and** `STRICT_SPEC_VERDICT_DERIVED=1`.
+Case 4 uses `result` exactly as today, with no flag.
 
 The partition fixes the count and not the verdict: the parser's last branch
 honours the reviewer's own `result`, so a reviewer that read the checks, found
 three contradictions and concluded `needs_fixes` blocks with
-`BLOCKING_COUNT=0`.
+`BLOCKING_COUNT=0` — strict findings changing the verdict, which AC-3 forbids.
 
-**Downgrading it would be the wrong repair**, and this step asserts that it does
-not happen. That combination has two indistinguishable causes — a reviewer that
-folded strict findings into its verdict, or one that blocked for a reason it
-never wrote as a finding — and unblocking the second is strict findings moving
-the verdict, which the spec forbids in *both* directions. Proof P8.
+**Two repairs were tried and withdrawn**, and this step is written to reject
+both. Downgrading `needs_fixes` whenever no ordinary blocker was parsed also
+unblocks a reviewer that blocked for a reason it never wrote as a finding.
+Leaving the verdict alone and merely flagging it leaves strict findings blocking
+the pull request. AC-3 forbids movement in *either* direction, so neither guess
+is admissible: the response has to say which verdict is the ordinary one.
 
-So the contract moves to the prompt: `result` reports the ordinary verdict, and
-strict findings must not influence it. The parser's job is to refuse to hide the
-ambiguity — the flag says a human should look, because either reading is worth
-knowing and neither is safe to resolve automatically. Proof P9 covers omitting
-the flag and over-firing it; a flag on most spec reviews is a flag nobody reads.
+Case 2 matters as much as case 1 — `ordinary_result` is used in both
+directions, not only to unblock. Case 4 is what scenario 5's byte-identical
+requirement rests on: a reviewer emitting no strict findings behaves exactly as
+before. Proofs P8 and P9.
 
 ## Step 2: Ordinary findings are untouched
 
@@ -68,7 +72,7 @@ the flag and over-firing it; a flag on most spec reviews is a flag nobody reads.
 2. Compare the entire `key=value` output to the same input before this change,
    excluding the four keys this item always emits: `STRICT_SPEC_STATE`,
    `STRICT_SPEC_REASON`, `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS`.
-   `STRICT_SPEC_VERDICT_AMBIGUOUS` is **not** excluded: it requires a strict
+   `STRICT_SPEC_VERDICT_DERIVED` is **not** excluded: it requires a strict
    finding, so its absence here is part of what the comparison asserts.
 
 **Expected result**: byte-identical.
@@ -259,7 +263,8 @@ unioned across rounds, never added.
 
 **Expected result**: the checklist's identifiers match the spec's list exactly;
 the three surfaces describe the same five keys, three states, two `unavailable`
-reasons and the ambiguity flag's three conditions; none describes
+reasons, the `ordinary_result` contract and the derivation flag's two
+conditions; none describes
 a strict finding as blocking or as affecting the verdict; and the `paths` filter
 lists the checklist, so a checklist-only change is still linted.
 

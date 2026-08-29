@@ -162,50 +162,53 @@ Not applicable — this repository ships workflow tooling, not a service.
       and is classified as it would be today, which for an unrecognised finding
       means blocking.
 
-      **The partition is necessary and not sufficient, and the missing piece
-      is a contract rather than a rule.** Removing strict findings from the
-      blocking set fixes the count; the parser's last branch still honours the
-      reviewer's *own* `result`, so a reviewer that read the checks, found three
-      contradictions and concluded `needs_fixes` would block with
-      `BLOCKING_COUNT=0`.
+      **The partition is necessary and not sufficient: the emitted verdict has
+      to be derived from ordinary findings, not inherited from a field the
+      strict checks may have influenced.** Removing strict findings from the
+      blocking set fixes the count; the parser's last branch honours the
+      reviewer's own `result`, so a reviewer that read the checks, found three
+      contradictions and concluded `needs_fixes` blocks with
+      `BLOCKING_COUNT=0` — strict findings changing the verdict, which AC-3
+      forbids.
 
-      An earlier revision of this plan normalised that away: `needs_fixes` with
-      no ordinary blockers and at least one strict finding became `clean`. It is
-      **withdrawn**, because it cannot distinguish the case it targets from a
-      different one — a reviewer that concluded `needs_fixes` for an independent
-      reason it did not express as a finding, on a review that happens to carry
-      strict findings too. Downgrading that is unblocking a real verdict, and
-      the spec forbids strict findings from moving the verdict in *either*
-      direction.
+      Two earlier revisions of this plan tried to repair that after the fact.
+      One downgraded `needs_fixes` to `clean` whenever no ordinary blocker was
+      parsed and a strict finding was present — which also unblocks a reviewer
+      that blocked for a reason it never expressed as a finding. The other left
+      the verdict alone and merely reported the ambiguity — which leaves strict
+      findings blocking the pull request. **Both are withdrawn**; neither
+      satisfies a rule that forbids movement in *either* direction, because both
+      were guessing at a cause the response did not state.
 
-      So the rule becomes an instruction to the reviewer, stated in the prompt
-      and in the checklist's preamble:
+      The response has to state it. Three parts:
 
-      > `result` reports your verdict on the ordinary review. Strict-check
-      > findings are reported in `findings[]` with their `strict_check`
-      > identifier and must not influence it.
+      1. **The reviewer emits `ordinary_result`** alongside `result`: its verdict
+         on the ordinary review, explicitly excluding strict findings. The
+         prompt and the checklist's preamble require it.
+      2. **The parser uses `ordinary_result` as the verdict** when present, and
+         `result` only when it is absent — which is every review before this
+         feature, and every review from a reviewer that emits no strict
+         findings.
+      3. **When `ordinary_result` is absent and strict findings are present**,
+         the parser cannot tell whether `result` was influenced. It derives the
+         verdict from the ordinary findings alone — `needs_fixes` if any
+         ordinary blocking or unclassifiable finding exists, otherwise `clean` —
+         and emits `STRICT_SPEC_VERDICT_DERIVED=1` so the derivation is visible
+         rather than silent.
 
-      The parser then trusts `result` exactly as it does today, and applies no
-      normalisation. AC-3 holds by construction of the contract rather than by
-      the parser guessing which of two indistinguishable causes produced a
-      verdict.
+      That is a mechanism rather than an inference: the ordinary verdict has its
+      own field, and the fallback is a derivation from data the strict checks do
+      not touch. A reviewer that folds strict findings into `ordinary_result`
+      remains possible — as with any instruction to a model — but it is now a
+      contract violation with a name, and #1657 can count how often the
+      derivation fallback fires as its proxy.
 
-      **What the parser can do is refuse to hide the ambiguity.** When `result`
-      is `needs_fixes`, no ordinary blocking finding was parsed, and at least
-      one strict finding is present, it emits:
+      **Reviewers that emit no strict findings are unaffected in every case.**
+      `ordinary_result` absent and no strict findings means `result` is used
+      exactly as today, which is what lets scenario 5 demand byte-identical
+      output.
 
-      ```text
-      STRICT_SPEC_VERDICT_AMBIGUOUS=1
-      ```
-
-      The verdict stands — the pull request blocks — and the key says a human
-      should look, because either the reviewer folded strict findings into its
-      verdict (a prompt-following defect, and #1657 can count it) or it blocked
-      for a reason it never wrote down (a reviewer defect). Both are worth
-      knowing and neither is safe to resolve automatically.
-
-      Scenario 9a asserts the flag on that combination, 9b that the verdict is
-      **not** changed, and 9c that the flag is absent everywhere else.
+      Scenarios 9a through 9d cover the four combinations.
 
       That direction is deliberate and is the plan's sharpest choice. The
       alternative — treat any `strict_check` marker as strict — makes the
@@ -223,7 +226,8 @@ Not applicable — this repository ships workflow tooling, not a service.
       STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable   # only when unavailable
       STRICT_SPEC_COUNT=<n>            # only when applied; empty otherwise
       STRICT_SPEC_CHECKS=<ids>         # comma-separated; only when applied
-      STRICT_SPEC_VERDICT_AMBIGUOUS=1  # only on the three-condition combination
+      STRICT_SPEC_VERDICT_DERIVED=1    # only when ordinary_result was absent
+                                       # and strict findings were present
       ```
 
       **`unavailable` has two causes and they have different owners**, which is
@@ -265,7 +269,8 @@ Not applicable — this repository ships workflow tooling, not a service.
 ### Infrastructure / Configuration
 
 - [ ] Document the five keys, the three states, the two `unavailable` reasons,
-      the ambiguity flag's three conditions and the closed identifier set in
+      the derivation flag's two conditions, the `ordinary_result` contract and
+      the closed identifier set in
       the `--help` block, in
       `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`,
       and in Protocol 93.
@@ -321,7 +326,7 @@ field list is built at implementation time for that reason.
    does not change `RESULT`.
 5. A review whose findings are all ordinary produces **byte-identical**
    `key=value` output to the same review before this change, excluding the keys
-   this item adds. The ambiguity flag cannot fire there — it requires a strict
+   this item adds. The derivation flag cannot fire there — it requires a strict
    finding — so its absence is part of the comparison rather than an exclusion. The partition must be invisible to every existing path.
 6. A finding carrying an **unknown** `strict_check` identifier is **not** strict:
    it is classified as an ordinary finding, which for an unrecognised finding
@@ -335,17 +340,22 @@ field list is built at implementation time for that reason.
 8. A mixed review — two ordinary blocking findings and three strict — reports
    `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and `RESULT=needs_fixes` driven by
    the two, not the three.
-9a. A review whose **own** `result` is `needs_fixes`, with three strict findings
-   and no ordinary blocking ones, emits `STRICT_SPEC_VERDICT_AMBIGUOUS=1`.
-9b. That same review still emits `RESULT=needs_fixes`. The flag reports the
-   ambiguity; it does not resolve it. Downgrading would unblock a verdict the
-   reviewer may have reached for a reason it never expressed as a finding, and
-   the spec forbids strict findings from moving the verdict in either
-   direction.
-9c. The flag is **absent** in every other combination: a `clean` result with
-   strict findings, a `needs_fixes` with ordinary blockers, and a `needs_fixes`
-   with no findings at all. Asserted on all three, since a flag that fires
-   broadly is one a reader stops reading.
+9a. `ordinary_result` **present** and `clean`, with `result` `needs_fixes` and
+   three strict findings: the emitted verdict is `clean`, and
+   `STRICT_SPEC_VERDICT_DERIVED` is absent. The reviewer stated its ordinary
+   verdict; nothing is inferred.
+9b. `ordinary_result` **present** and `needs_fixes`, with ordinary blocking
+   findings: the emitted verdict is `needs_fixes`. The field is used in both
+   directions, not only to unblock.
+9c. `ordinary_result` **absent** with strict findings present: the verdict is
+   derived from the ordinary findings alone — `clean` when there are none — and
+   `STRICT_SPEC_VERDICT_DERIVED=1` is emitted. The derivation is visible rather
+   than silent, and #1657 can count how often it fires as a proxy for reviewers
+   ignoring the contract.
+9d. `ordinary_result` absent and **no** strict findings: `result` is used
+   exactly as today, and `STRICT_SPEC_VERDICT_DERIVED` is absent. This is every
+   review before this feature and every ordinary review after it, which is what
+   scenario 5's byte-identical requirement rests on.
 9. A review with **only** strict findings reports `RESULT=clean`,
    `BLOCKING_COUNT` 0 and `STRICT_SPEC_COUNT` above zero. This is the spec's
    central claim and the one an implementation is most likely to get wrong by
@@ -452,7 +462,7 @@ file enumerates it.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Strict findings turn every spec review red | **High** without the parser change — the residue class is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The partition runs before `blocking`, and every existing computation reads `$ordinary`. Scenarios 4 and 9; proof **P1** leaves `$unknown` over `$findings` |
-| The reviewer folds strict findings into its own verdict | Med | **High** — AC-3 fails on the review the feature exists to produce, and the counts look correct while the pull request is red | The contract says `result` reports the ordinary verdict; the parser reports the ambiguous combination rather than resolving it, because the alternative cause is indistinguishable. Scenarios 9a, 9b, 9c; proofs **P8** and **P9** |
+| The verdict is inherited from a field the strict checks may have influenced | **High** — `result` is what the parser reads today | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | The reviewer emits `ordinary_result`; the parser prefers it, and derives from ordinary findings alone when it is absent, flagging the derivation. Scenarios 9a-9d; proofs **P8** and **P9** |
 | The marker becomes a way to opt out of blocking | Med | **High** — a mislabelled or over-applied marker downgrades real findings, invisibly | Only identifiers the checklist defines count as strict; anything else is ordinary, which for an unrecognised finding means blocking. Scenarios 6 and 7; proof **P2** trusts the marker alone |
 | A strict finding is forwarded as a blocker by the loop | Med | **High** — `BLOCKING_<n>_*` is what the loop reads; counts elsewhere would not save it | Strict findings are emitted in their own `STRICT_<n>_*` block and never in the blocking one. Scenario 4 and proof **P3** |
 | The partition changes ordinary output | Med | Med — every review's output shifts for a feature that should be invisible to them | Byte-identical output required for an all-ordinary review. Scenario 5 and proof **P4** |
@@ -515,8 +525,8 @@ two groups:
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
-| P8 | Downgrade `needs_fixes` to `clean` when no ordinary blocker was parsed and a strict finding is present | a scratch copy of the `jq` program | scenario 9b fails: a reviewer that blocked for a reason it did not express as a finding is silently unblocked whenever the same review happens to carry strict findings — strict findings moving the verdict, in the direction the spec forbids just as much as the other. Scenario 9a passes, because the ambiguity is still detected; only the verdict assertion separates them; restoring the report-don't-resolve rule passes |
-| P9 | Omit `STRICT_SPEC_VERDICT_AMBIGUOUS`, or emit it whenever strict findings exist | same scratch copy | scenario 9c fails: omitting it hides a reviewer that folded strict findings into its verdict — the prompt-following defect this feature's contract depends on and cannot otherwise detect; emitting it broadly makes it a flag on most spec reviews, which is a flag nobody reads. Restoring the three-condition test passes |
+| P8 | Ignore `ordinary_result` and keep using `result` as the verdict | a scratch copy of the `jq` program | scenario 9a fails: a reviewer that stated a `clean` ordinary verdict is blocked by its own strict findings, which AC-3 forbids. Scenarios 9b and 9d pass, because there the two fields agree or neither is present; only a review whose strict findings changed its overall conclusion separates them; restoring the field's precedence passes |
+| P9 | Derive the fallback verdict from **all** findings rather than the ordinary ones | same scratch copy | scenario 9c fails: with `ordinary_result` absent, three strict findings and no ordinary ones, the derivation returns `needs_fixes` — so the fallback meant to protect AC-3 is the thing that breaks it. Scenario 9d passes, because there are no strict findings to mis-derive from; restoring the ordinary-only derivation passes |
 | P1 | Compute `$unknown` and `$blocking_findings` over `$all` instead of the ordinary subset | a scratch copy of the `jq` program | scenario 9 fails: a review whose only findings are strict reports `needs_fixes`, because the residue class is blocking — so every specification with eight checks applied turns red and the feature is switched off before it produces a single count; restoring the partition passes |
 | P2 | Treat any `strict_check` marker as strict, without consulting the checklist | same scratch copy | scenario 6 fails: a finding naming an undefined check is exempted from blocking, so the marker becomes a way to opt out and a mislabelled real finding disappears from the blocking count with nothing in the output to show it; restoring the identifier test passes |
 | P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | same scratch copy | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
@@ -539,8 +549,8 @@ is to disable the checks rather than to fix the parser.
 1. Add the checklist document with its eight sections and identifiers.
    **Verify**: the identifiers match the spec's list, by extraction.
 2. Add the partition to the `jq` program, binding `$findings` to the ordinary
-   subset, **and** the ambiguity flag — not a normalisation. **Verify**:
-   scenarios 4, 5, 6, 7, 8, 9, 9a, 9b and 9c — the parser scenarios
+   subset, **and** the `ordinary_result` precedence with its derivation
+   fallback. **Verify**: scenarios 4, 5, 6, 7, 8, 9, 9a, 9b, 9c and 9d — the parser scenarios
    first, because everything else is reporting.
 3. Add the two bundle fields and the supply condition, carrying the cause when
    the state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
