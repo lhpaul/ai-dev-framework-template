@@ -641,16 +641,25 @@ and this item derives a copy from its output and edits nothing there.
    result* is the whole of what a reader needs.
 9b. **The strict pass is dispatched exactly where the matrix says**, and the
    state is not the test — rows 1 to 3 decide dispatch, and the state is
-   decided afterwards by what the pass returns, which is why row 4 is
-   `unavailable` and dispatched. Asserted by counting invocations of `LOCAL_AI_REVIEWER_COMMAND`, which is 1
-   in rows 1, 2 and 3 and **2** in rows 4, 5 and 6. Row 4 counts two: a pass
-   that fails is a pass that was called, and the count measures dispatch rather
-   than success — a row 4 asserting one invocation would be satisfied by an
-   implementation that never dispatched at all, which is the opposite defect.
-   A second call on a
-   `not_applicable` review would double the cost of every plan and
-   implementation review, which is the failure most likely to go unnoticed
-   because nothing about the output would show it.
+   decided afterwards by what the pass returns, which is why row 4 can be
+   `unavailable` *and* dispatched. Asserted by counting invocations of
+   `LOCAL_AI_REVIEWER_COMMAND`:
+
+   - **Rows 1, 2 and 3: exactly 1.** This is the assertion that matters. A
+     second call on a `not_applicable` review would double the cost of every
+     plan and implementation review, and nothing about the output would show it.
+   - **Rows 5 and 6, and row 4's four dispatched failure shapes: 2.** A pass
+     that fails is a pass that was called, and the count measures dispatch
+     rather than success — asserting one here would be satisfied by an
+     implementation that never dispatched at all.
+   - **Row 4's exhausted-budget shape: 1.** The pass was gated by the clock
+     before it could be called, so there is nothing to count.
+
+   **Row 4 is therefore asserted per shape, not per row**, because it is the one
+   row reachable two ways: the pass ran and failed, or the pass never ran
+   because AC-16b's shared budget was spent. Both report `strict_pass_failed`,
+   by AC-16d, and they differ in exactly one observable — the invocation count —
+   which is why that count is the thing this scenario reads.
 9c. The round is **bounded by `--timeout` in total**, not by twice it. This is
    scenario 9a's timeout and exhausted-budget shapes measured rather than
    classified: with `--timeout` set low enough to time, the elapsed round does
