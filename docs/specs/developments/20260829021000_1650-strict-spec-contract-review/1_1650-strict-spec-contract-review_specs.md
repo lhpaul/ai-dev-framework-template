@@ -269,7 +269,7 @@ Rows 1 through 4 differ in what a reader can conclude. Row 2 is a change the che
 ## Operational Visibility
 
 - **Reviewer output**: the strict-check state on every review, its cause in each `unavailable` row, and the finding count when the state is `applied`.
-- **Cost**: running the checks costs time on the reviews that run them, taken from inside the review's existing `--timeout` rather than added to it (AC-16b). No round takes longer than one that never ran them, and no review is gated, retried or decided differently because the checks ran, failed, or exhausted what was left.
+- **Cost**: running the checks costs time on the reviews that run them, taken from inside the review's existing `--timeout` rather than added to it (AC-16b). A round that runs them is typically slower than one that does not; what it is not is *less bounded* — both share the same maximum. And no review is gated, retried or decided differently because the checks ran, failed, or exhausted what was left.
 - **Review comments**: each strict finding, labelled with its check identifier, grouped separately from blocking findings.
 - **Reviewer-loop history**: per round, the state, the count where it applies, and **which checks produced findings** — the set of check identifiers, not only how many findings there were.
 
