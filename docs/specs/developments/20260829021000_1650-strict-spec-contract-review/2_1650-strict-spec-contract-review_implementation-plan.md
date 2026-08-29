@@ -274,7 +274,7 @@ field list is built at implementation time for that reason.
    strict, appears in `STRICT_<n>_*`, does not appear in `BLOCKING_<n>_*`, and
    does not change `RESULT`.
 5. A review whose findings are all ordinary produces **byte-identical**
-   `key=value` output to the same review before this change, excluding the three
+   `key=value` output to the same review before this change, excluding the four
    keys this item adds. The partition must be invisible to every existing path.
 6. A finding carrying an **unknown** `strict_check` identifier is **not** strict:
    it is classified as an ordinary finding, which for an unrecognised finding
@@ -502,7 +502,7 @@ is to disable the checks rather than to fix the parser.
 ## Rollback
 
 Revert the implementation PR. It removes the checklist, the partition, two
-bundle fields, three `key=value` keys, the `STRICT_<n>_*` block, the evidence
+bundle fields, four `key=value` keys, the `STRICT_<n>_*` block, the evidence
 object, the ledger fields, the summary section, the `paths` entry and the
 documentation updates. Reverting restores the two-class parser exactly; a
 reviewer that still emits `strict_check` markers afterwards has them ignored,

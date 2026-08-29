@@ -37,7 +37,8 @@ Proof P1.
 
 1. Feed reviewer output with two ordinary blocking findings and no strict ones.
 2. Compare the entire `key=value` output to the same input before this change,
-   excluding `STRICT_SPEC_STATE`, `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS`.
+   excluding the **four** keys this item adds: `STRICT_SPEC_STATE`,
+   `STRICT_SPEC_REASON`, `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS`.
 
 **Expected result**: byte-identical.
 
@@ -226,7 +227,8 @@ unioned across rounds, never added.
 6. Read `.github/workflows/markdown-lint.yml`'s `paths` filter.
 
 **Expected result**: the checklist's identifiers match the spec's list exactly;
-the three surfaces describe the same three keys and three states; none describes
+the three surfaces describe the same four keys, three states and two
+`unavailable` reasons; none describes
 a strict finding as blocking or as affecting the verdict; and the `paths` filter
 lists the checklist, so a checklist-only change is still linted.
 
@@ -251,10 +253,10 @@ lists the checklist, so a checklist-only change is still linted.
 ## Step 11: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P6 each record the command, the file and line of the
+2. Confirm P1 through P7 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: six proofs in two groups — **three** blocking, **three**
+**Expected result**: seven proofs in two groups — **three** blocking, **four**
 measurement, per the plan's proof-group table.
 
 P1 is the one to read first: without the partition the feature does not merely
