@@ -259,13 +259,40 @@ Not applicable — this repository ships workflow tooling, not a service.
       `[a-z][a-z0-9_]*` — the same shape as the spec's eight names. The
       question and the finding shape follow as prose beneath it.
 
-      Extraction is two commands, and the second is the validation:
+      Extraction is two commands, and the second is the validation. Both run
+      inside `local-ai-reviewer.sh`, which sets `set -euo pipefail` at line 7,
+      so neither may be written bare:
 
       ```text
-      declared="$(grep -c '^### ' "$checklist")"        # every level-3 heading
-      known="$(sed -n 's/^### \([a-z][a-z0-9_]*\)[[:space:]]*$/\1/p' "$checklist" \
-                 | jq -R -s 'split("\n") | map(select(length > 0))')"
+      status=0
+      declared="$(grep -c '^### ' "$checklist")" || status=$?
+      if [ "$status" -eq 1 ]; then
+        declared=0                       # no headings: a refusal, not a crash
+      elif [ "$status" -ne 0 ]; then
+        strict_spec_unreadable; return 0 # grep itself failed
+      fi
+
+      ids="$(sed -n 's/^### \([a-z][a-z0-9_]*\)[[:space:]]*$/\1/p' \
+               "$checklist")" || { strict_spec_unreadable; return 0; }
+      known="$(printf '%s\n' "$ids" \
+               | jq -R -s 'split("\n") | map(select(length > 0))')" \
+        || { strict_spec_unreadable; return 0; }
       ```
+
+      **`grep -c` exits 1 when it matches nothing**, and under `set -e` that
+      ends the script — on the *exact* input the refusal tests are written to
+      exercise. A checklist with no level-3 headings would kill the reviewer
+      before it could report `unavailable`, so the one case with no findings to
+      report would instead produce no review at all. The status is therefore
+      read explicitly, and **exit 1 is separated from exit greater than 1**:
+      the first is "no headings", a refusal; the second is grep failing, which
+      is also a refusal but not the same fact, and conflating them would report
+      a broken document where the tool broke. #1654 hit this same pair in
+      `review-doctrine-lint.sh` and resolved it the same way.
+
+      The `sed` is split from the `jq` for `pipefail`'s sake: piped directly,
+      a `jq` failure and a `sed` failure are one status, and the intermediate
+      value is wanted anyway.
 
       Then three tests, all of which mean **`unavailable` with reason
       `checklist_unreadable`**, and none of which mean "carry on with what
@@ -505,7 +532,11 @@ field list is built at implementation time for that reason.
 13b. A checklist declaring the same identifier twice yields the same refusal.
     Left unchecked it would double one check's incidence and hide another's.
 13c. A checklist with no level-3 headings at all, and an empty file, yield the
-    same refusal. Neither is a checklist.
+    same refusal. Neither is a checklist. **Both must reach the refusal**: this
+    is the input on which `grep -c` exits 1, so an implementation that reads the
+    count bare does not fail this scenario by reporting the wrong state — it
+    fails it by producing no output at all, which is what the assertion has to
+    be written against.
 13d. The extraction is asserted directly, not only through its consequences:
     the eight shipped identifiers are extracted from the shipped checklist and
     compared to the spec's list as a set.
@@ -609,6 +640,7 @@ file enumerates it.
 | `0` is written where the checks did not run | **High** — an empty numeric field invites a default | **High** — unexamined rounds enter #1657's denominator and the rate is wrong in the flattering direction | Count and identifiers are empty outside `applied`. Scenarios 2 and 3; proof **P5** |
 | The identifier set is duplicated in the parser | Med | Med — a ninth check works in the document and not in the code, or the reverse | `$known_checks` is passed from the checklist. Scenario 13 and proof **P6** |
 | The extractor silently drops a malformed section | Med — one mistyped heading | **High** — the reviewer is handed seven checks, reports against seven, and the count reads as a completed run: the exact failure this feature exists to detect, inside the mechanism meant to detect it | Heading count compared against extracted count; any mismatch refuses the document as `checklist_unreadable`. Scenarios 13a to 13c |
+| `grep -c` exits 1 under `set -e` and kills the review | Med — it is the idiomatic way to write the count | **High** — the checklist-with-no-headings case produces no review at all rather than a refusal, and the failure appears on the one input the refusal tests exist for | Status read explicitly, exit 1 separated from exit greater than 1. Scenario 13c asserts the refusal is reached, not merely that its state is right |
 
 ---
 
