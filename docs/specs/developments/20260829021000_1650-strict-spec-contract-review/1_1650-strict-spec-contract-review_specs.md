@@ -86,7 +86,7 @@ Every objective stated in issue #1650 maps to acceptance criteria and use cases 
 
 **Steps**:
 
-1. The reviewer applies all eight checks and none matches.
+1. The reviewer applies every check in the list and none matches.
 2. It reports a strict-finding count of zero.
 
 **Postconditions**: The count is zero and is reported. A specification that produced no strict findings is distinguishable from one where the checks did not run.
@@ -271,10 +271,10 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 
 ## Acceptance Criteria
 
-- [ ] **AC-1.** At the spec stage, the local reviewer applies all eight checks listed in Statuses / Enum Values.
+- [ ] **AC-1.** At the spec stage, the local reviewer applies every check listed in Statuses / Enum Values — `ac_consistency`, `ac_testability`, `gate_matrix`, `opt_out_source`, `trigger_semantics`, `example_contradiction`, `parser_surface` and `ambiguous_phrase` — naming them rather than counting them, so a check added later cannot be silently omitted by a criterion that still reads as satisfied.
 - [ ] **AC-2.** Each strict finding names the check that produced it, using that check's identifier.
 - [ ] **AC-3.** Strict findings never change a review's verdict: a review with strict findings and no blocking findings reports the same verdict as the same review with the strict checks disabled.
-- [ ] **AC-4.** A specification containing two acceptance criteria that cannot both hold produces an `ac_consistency` finding.
+- [ ] **AC-4.** A specification containing a pair of acceptance criteria that cannot both hold produces an `ac_consistency` finding.
 - [ ] **AC-5.** A specification containing an acceptance criterion whose satisfaction no observation could distinguish produces an `ac_testability` finding.
 - [ ] **AC-6.** A specification describing behavior that depends on two or more inputs, without enumerating every **reachable** combination of them, produces a `gate_matrix` finding.
 - [ ] **AC-6a.** A specification whose gate short-circuits — an earlier input's answer making a later one unevaluated — and which **states that order**, produces **no** `gate_matrix` finding for the combinations the order makes unreachable.
