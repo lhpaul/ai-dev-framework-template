@@ -953,12 +953,16 @@ is to disable the checks rather than to fix the merge.
 ## Implementation Order
 
 0. **Hard stop**: confirm #1653 is implemented and merged and that
-   `review_stage` carries `spec`; confirm the spec amendment — matrix row 4, the
-   `strict_pass_failed` cause and AC-16a — is merged, **and** the timing
-   amendment (#1678: AC-16a's wording, AC-16b's shared bound, AC-16c's single
-   configuration source and AC-16d's classification), since steps 2 and 4 build
-   a state and a bound the unamended spec does not contain. Both are merged. Re-read the merged `jq -n`
-   object and `print_kv` block, which #1654 may also have changed.
+   `review_stage` carries `spec`. Both spec amendments are merged and are hard
+   dependencies: **#1677** (matrix row 4, the `strict_pass_failed` cause,
+   AC-16a) and **#1678** (AC-16a's wording, AC-16b's shared bound, AC-16c's
+   single configuration source, AC-16d's classification). Steps 2 and 4 build a
+   state and a bound the unamended spec does not contain.
+
+   Re-read the merged `print_kv` block, which #1654 may also have changed. The
+   `jq -n` bundle object needs no re-reading for merge purposes — this plan
+   adds nothing there — but its field list is what scenario 11 enumerates at
+   implementation time.
    **Each scenario is verified at the step that first makes its assertion
    observable**, which is not always the step that implements the behaviour it
    describes: the extraction's three refusals are built in step 1 and only
