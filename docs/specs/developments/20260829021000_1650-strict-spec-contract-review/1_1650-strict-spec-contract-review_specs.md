@@ -162,7 +162,7 @@ expectation.
 - Every review reports the strict-check **state**. The **count** and the set of **check identifiers that produced findings** accompany it only when the state is `applied` — the count including when it is zero — and are empty otherwise, so a round the checks never examined cannot be counted as one they found nothing in.
 - Incidence is measured **per pull request**, never by summing rounds: a check fired on a specification if any of its rounds reported that check. Rounds repeat the same findings by design, so a sum would measure how long a pull request stayed open.
 - A review where the checks did not run reports that fact and its reason, and is distinguishable from a review where they ran and found nothing.
-- A strict finding that a maintainer ignores has no consequence: no label, no gate, no repetition of the demand.
+- A strict finding that a maintainer ignores has no consequence: no pull-request label, no gate, no escalation, no repetition of the demand beyond the ordinary re-reporting of an unresolved finding. This is about **workflow labels** — the kind applied to a pull request to mark its state. Every strict finding still carries its **check identifier**, which is what makes it readable and countable; that identifier is part of the finding, not a mark against the pull request.
 - Each check answers a question that can be **wrong**, not one that is a matter of taste. A check whose finding is a preference produces noise, and noise is what makes a label stop being read.
 - The checks are a fixed, enumerated set. Adding one is a change to this contract, not a change to a prompt.
 
@@ -184,7 +184,16 @@ Each is stated as the question it asks and the shape of a finding it produces. T
 | --- | --- | --- | --- |
 | 1 | `ac_consistency` | Do any two acceptance criteria contradict each other, or does one contradict a business rule? | two criteria that cannot both hold |
 | 2 | `ac_testability` | Could a test distinguish this criterion being met from its being unmet? | a criterion whose outcome no observation would differ on |
-| 3 | `gate_matrix` | Does behavior described as depending on several inputs enumerate every combination of them? | a described gate with a combination of inputs unmentioned |
+| 3 | `gate_matrix` | Does behavior described as depending on several inputs enumerate every **reachable** combination of them, under the evaluation order the document states? | a described gate with a reachable combination unmentioned, or with an evaluation order it never states |
+
+**Check 3 asks for *reachable* combinations, not all of them**, and the
+distinction is not a softening. A gate whose inputs are evaluated in order —
+an unresolved stage never compared against a stage name, an absent file never
+measured — has fewer reachable combinations than the product of its inputs, and
+enumerating the impossible ones would mean inventing answers for states the
+system cannot enter. What the check requires instead is that the **order be
+stated**: unreachability is a claim, and a document that omits combinations
+without saying why is indistinguishable from one that forgot them.
 | 4 | `opt_out_source` | Does each way of disabling or bypassing behavior name exactly one source of truth? | an opt-out named in two places, or in none |
 | 5 | `trigger_semantics` | Does each condition that starts behavior say what happens when its inputs are absent, empty or malformed? | a trigger with no stated behavior for a missing input |
 | 6 | `example_contradiction` | Does each worked example do what the rule beside it requires? | an example demonstrating what its rule forbids |
@@ -267,8 +276,10 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 - [ ] **AC-3.** Strict findings never change a review's verdict: a review with strict findings and no blocking findings reports the same verdict as the same review with the strict checks disabled.
 - [ ] **AC-4.** A specification containing two acceptance criteria that cannot both hold produces an `ac_consistency` finding.
 - [ ] **AC-5.** A specification containing an acceptance criterion whose satisfaction no observation could distinguish produces an `ac_testability` finding.
-- [ ] **AC-6.** A specification describing behavior that depends on two or more inputs, without enumerating every combination of them, produces a `gate_matrix` finding.
-- [ ] **AC-7.** A specification that does enumerate every combination produces **no** `gate_matrix` finding.
+- [ ] **AC-6.** A specification describing behavior that depends on two or more inputs, without enumerating every **reachable** combination of them, produces a `gate_matrix` finding.
+- [ ] **AC-6a.** A specification whose gate short-circuits — an earlier input's answer making a later one unevaluated — and which **states that order**, produces **no** `gate_matrix` finding for the combinations the order makes unreachable.
+- [ ] **AC-6b.** A specification whose gate short-circuits and does **not** state the order produces a `gate_matrix` finding: the unmentioned combinations are indistinguishable from forgotten ones, and the reader cannot tell which.
+- [ ] **AC-7.** A specification that enumerates every reachable combination produces **no** `gate_matrix` finding.
 - [ ] **AC-8.** A specification naming a way to disable behavior in two places, or in none, produces an `opt_out_source` finding.
 - [ ] **AC-9.** A specification whose trigger condition does not say what happens when an input is absent, empty or malformed produces a `trigger_semantics` finding.
 - [ ] **AC-10.** A specification containing a worked example that does what its neighbouring rule forbids produces an `example_contradiction` finding.
@@ -282,7 +293,7 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 - [ ] **AC-17b.** A reader can determine, from the history alone, **which** checks produced findings on a round — not only how many findings there were.
 - [ ] **AC-17c.** Two rounds reporting the same unresolved finding count that check **once** for the pull request: incidence is per pull request, and repeated rounds do not increase it.
 - [ ] **AC-17a.** A round recorded as `unavailable` or `not_applicable` is distinguishable from one recorded as `applied` with count `0`, by reading the history alone.
-- [ ] **AC-18.** Ignoring a strict finding has no effect on any later review: no label, no gate, no escalation, and the same finding may be reported again on a later round without penalty.
+- [ ] **AC-18.** Ignoring a strict finding has no effect on any later review: no **pull-request label**, no gate, no escalation, and the same finding may be reported again on a later round without penalty. The finding's own check identifier, required by AC-2, is unaffected — it identifies the finding and marks nothing about the pull request.
 
 ---
 
@@ -292,6 +303,6 @@ Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the chec
 2. **A report over strict-finding counts.** #1657 owns reporting. This feature records the state and count per round so that report is possible.
 2a. **Any measure of whether a finding was acted on.** The recorded data is incidence — how often each check fires — and never disposition. Measuring dismissals would require per-finding identity and an acknowledgement step, and would make ignoring a finding cost something, which Business Rules forbid. Use Case 5's decision is taken on frequency alone, and the spec says so rather than implying a richer dataset it does not produce.
 3. **Strict checks for plans and implementations.** The same idea applies to a plan, and its questions are different ones. Extending it is a separate item, and doing it here would mean writing three checklists to validate one.
-4. **Suppression, acknowledgement or per-finding dismissal.** Ignoring a finding must cost nothing, which is exactly why there is no mechanism for recording that you ignored it. Adding one would make the counts measure compliance rather than incidence.
+4. **Suppression, acknowledgement or per-finding dismissal.** Ignoring a finding must cost nothing, which is exactly why there is no mechanism for recording that you ignored it. Adding one would make the counts measure compliance rather than incidence. "Costs nothing" refers to pull-request state — no workflow label, no gate, no escalation — and not to the finding's own check identifier, which every finding carries.
 5. **Automatically fixing what the checks find.** Every one of the eight names a contradiction, and choosing which side is correct is a product decision.
 6. **Tuning the checks by measured yield.** The checks ship as written. Retiring or rewording one belongs to the same later item that decides on blocking, with the same data behind it.
