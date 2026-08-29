@@ -45,10 +45,10 @@ Proof P1.
 4. Feed output with no `ordinary_result` and **no** strict findings.
 
 **Expected result**: case 1 emits `clean`, no flag. Case 2 emits `needs_fixes`.
-All four of case 3 emit `RESULT=escalate`, reason `malformed_output`, and
-`STRICT_SPEC_VERDICT_UNRESOLVED=1` — **no verdict is inferred**, and the
-escalation does not depend on what `result` said or what findings were present.
-Case 4 uses `result` exactly as today, with no flag.
+All four of case 3 emit the verdict `result` already carried — unchanged — plus
+`STRICT_SPEC_VERDICT_UNVERIFIED=1`. Nothing is inferred, nothing gates, nothing
+escalates; the flag is the only difference from today's output. Case 4 uses
+`result` exactly as today, with no flag.
 
 The partition fixes the count and not the verdict: the parser's last branch
 honours the reviewer's own `result`, so a reviewer that read the checks, found
@@ -58,28 +58,33 @@ three contradictions and concluded `needs_fixes` blocks with
 **Three repairs were tried and withdrawn**, and this step is written to reject
 all of them. Downgrading `needs_fixes` whenever no ordinary blocker was parsed
 unblocks a reviewer that blocked for a reason it never wrote as a finding.
-Leaving the verdict alone and flagging it leaves strict findings blocking the
-pull request. Deriving from the ordinary findings is the first one again with a
-different name. AC-3 forbids movement in *either* direction, so **every**
-inference is inadmissible: the response has to say which verdict is the ordinary
-one, and when it does not, the round escalates.
+Deriving from the ordinary findings is that one again under another name.
+Escalating the round introduces exactly the gate AC-18 forbids — "no label, no
+gate, no escalation".
 
-Case 3's four runs are one case, deliberately: the escalation is caused by the
-missing field, not by what `result` happened to say, and testing only the
-`needs_fixes` shape would leave an implementation free to infer in the other
-three.
+What is left is the baseline: with the strict checks switched off, `result` is
+the verdict, so using `result` unchanged is the only fallback provably identical
+to the counterfactual AC-3 measures against. The residue — a reviewer that folds
+strict findings into `result` and omits `ordinary_result` — is not detectable
+from the response, so it is measured by the flag and counted by #1657 rather
+than guessed at here.
+
+Case 3's four runs are one case, deliberately: the emitted verdict must equal
+`result` whatever `result` said and whatever findings were present, and testing
+only the `needs_fixes` shape would leave an implementation free to infer in the
+other three.
 
 Case 2 matters as much as case 1 — `ordinary_result` is used in both
 directions, not only to unblock. Case 4 is what scenario 5's byte-identical
 requirement rests on: a reviewer emitting no strict findings behaves exactly as
-before, and nothing escalates, because with no strict findings there is nothing
-that could have influenced the verdict. Proofs P8 and P9.
+before, flag included, because with no strict findings there is nothing that
+could have influenced the verdict. Proofs P8 and P9.
 
-The escalation is a real cost and the plan states it rather than hiding it: a
-reviewer that emits strict findings and omits `ordinary_result` produces no
-usable review. That falls on a contract violation, is visible immediately rather
-than silently wrong, and is the price of a rule forbidding the verdict from
-moving in either direction.
+What the four runs of case 3 do **not** assert is that the verdict was
+uninfluenced — only that this parser did not influence it. A reviewer that folds
+strict findings into `result` and omits `ordinary_result` is indistinguishable
+here from a legitimate `needs_fixes`, which is why the flag exists and why
+#1657 counts its rate rather than this test asserting it away.
 
 ## Step 2: Ordinary findings are untouched
 
@@ -87,9 +92,10 @@ moving in either direction.
 
 1. Feed reviewer output with two ordinary blocking findings and no strict ones.
 2. Compare the entire `key=value` output to the same input before this change,
-   excluding the four keys this item always emits: `STRICT_SPEC_STATE`,
-   `STRICT_SPEC_REASON`, `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS`.
-   `STRICT_SPEC_VERDICT_UNRESOLVED` is **not** excluded: it requires a strict
+   excluding the four `STRICT_SPEC_*` keys this item may emit here:
+   `STRICT_SPEC_STATE`, `STRICT_SPEC_COUNT`, `STRICT_SPEC_REASON` and
+   `STRICT_SPEC_CHECKS`.
+   `STRICT_SPEC_VERDICT_UNVERIFIED` is **not** excluded: it requires a strict
    finding, so its absence here is part of what the comparison asserts.
 
 **Expected result**: byte-identical.
@@ -280,8 +286,8 @@ unioned across rounds, never added.
 
 **Expected result**: the checklist's identifiers match the spec's list exactly;
 the three surfaces describe the same five keys, three states, two `unavailable`
-reasons, the `ordinary_result` contract with its escalation, and the unresolved
-flag's two conditions; none describes
+reasons, the `ordinary_result` contract with its `result` fallback, and the
+unverified flag's two conditions; none describes
 a strict finding as blocking or as affecting the verdict; and the `paths` filter
 lists the checklist, so a checklist-only change is still linted.
 
