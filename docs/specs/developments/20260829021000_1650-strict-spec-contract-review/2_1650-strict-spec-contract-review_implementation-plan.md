@@ -190,18 +190,34 @@ Not applicable — this repository ships workflow tooling, not a service.
          feature, and every review from a reviewer that emits no strict
          findings.
       3. **When `ordinary_result` is absent and strict findings are present**,
-         the parser cannot tell whether `result` was influenced. It derives the
-         verdict from the ordinary findings alone — `needs_fixes` if any
-         ordinary blocking or unclassifiable finding exists, otherwise `clean` —
-         and emits `STRICT_SPEC_VERDICT_DERIVED=1` so the derivation is visible
-         rather than silent.
+         the parser **does not infer a verdict**. It escalates: `RESULT=escalate`
+         with the existing reason `malformed_output`, plus
+         `STRICT_SPEC_VERDICT_UNRESOLVED=1`.
 
-      That is a mechanism rather than an inference: the ordinary verdict has its
-      own field, and the fallback is a derivation from data the strict checks do
-      not touch. A reviewer that folds strict findings into `ordinary_result`
-      remains possible — as with any instruction to a model — but it is now a
-      contract violation with a name, and #1657 can count how often the
-      derivation fallback fires as its proxy.
+      The third part is the one two earlier revisions got wrong, in opposite
+      directions, and the reason both were wrong is the same: with
+      `ordinary_result` missing there is **no** verdict in the response that is
+      known to exclude strict findings, and deriving one from the ordinary
+      findings unblocks a review whose `needs_fixes` came from an ordinary
+      reason the reviewer never wrote as a finding. Keeping `result` blocks a
+      review whose verdict came from the strict checks. Every automatic
+      resolution moves the verdict in one direction or the other, and AC-3
+      forbids both.
+
+      Escalating moves it in neither. The response failed to honour a contract
+      the review depends on, which is what `malformed_output` already means, and
+      the loop's existing handling — escalate, surface to a human, no fixer
+      dispatched for a parse failure — is exactly right. Reusing the reason
+      rather than minting one is the same choice #1656 made and for the same
+      cause: the token carries behaviour, and a new one would inherit none of
+      it. The finer detail lives in `STRICT_SPEC_VERDICT_UNRESOLVED`, which
+      #1657 can count as the proxy for reviewers ignoring the contract.
+
+      This is a real cost, stated rather than hidden: a reviewer that emits
+      strict findings and omits `ordinary_result` produces no usable review, and
+      the round is escalated. That is the price of a rule which forbids the
+      verdict from moving in either direction, and it falls on a contract
+      violation rather than on an ordinary review.
 
       **Reviewers that emit no strict findings are unaffected in every case.**
       `ordinary_result` absent and no strict findings means `result` is used
@@ -226,7 +242,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable   # only when unavailable
       STRICT_SPEC_COUNT=<n>            # only when applied; empty otherwise
       STRICT_SPEC_CHECKS=<ids>         # comma-separated; only when applied
-      STRICT_SPEC_VERDICT_DERIVED=1    # only when ordinary_result was absent
+      STRICT_SPEC_VERDICT_UNRESOLVED=1 # only when ordinary_result was absent
                                        # and strict findings were present
       ```
 
@@ -269,8 +285,8 @@ Not applicable — this repository ships workflow tooling, not a service.
 ### Infrastructure / Configuration
 
 - [ ] Document the five keys, the three states, the two `unavailable` reasons,
-      the derivation flag's two conditions, the `ordinary_result` contract and
-      the closed identifier set in
+      the unresolved flag's two conditions, the `ordinary_result` contract and
+      its escalation, and the closed identifier set in
       the `--help` block, in
       `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`,
       and in Protocol 93.
@@ -326,7 +342,7 @@ field list is built at implementation time for that reason.
    does not change `RESULT`.
 5. A review whose findings are all ordinary produces **byte-identical**
    `key=value` output to the same review before this change, excluding the keys
-   this item adds. The derivation flag cannot fire there — it requires a strict
+   this item adds. The unresolved flag cannot fire there — it requires a strict
    finding — so its absence is part of the comparison rather than an exclusion. The partition must be invisible to every existing path.
 6. A finding carrying an **unknown** `strict_check` identifier is **not** strict:
    it is classified as an ordinary finding, which for an unrecognised finding
@@ -347,13 +363,16 @@ field list is built at implementation time for that reason.
 9b. `ordinary_result` **present** and `needs_fixes`, with ordinary blocking
    findings: the emitted verdict is `needs_fixes`. The field is used in both
    directions, not only to unblock.
-9c. `ordinary_result` **absent** with strict findings present: the verdict is
-   derived from the ordinary findings alone — `clean` when there are none — and
-   `STRICT_SPEC_VERDICT_DERIVED=1` is emitted. The derivation is visible rather
-   than silent, and #1657 can count how often it fires as a proxy for reviewers
-   ignoring the contract.
+9c. `ordinary_result` **absent** with strict findings present: `RESULT=escalate`
+   with reason `malformed_output` and `STRICT_SPEC_VERDICT_UNRESOLVED=1`. No
+   verdict is inferred. Run with `result` `needs_fixes` **and** with `result`
+   `clean`, and with ordinary findings present and absent — the escalation does
+   not depend on which, because the missing field is what makes the response
+   unusable.
 9d. `ordinary_result` absent and **no** strict findings: `result` is used
-   exactly as today, and `STRICT_SPEC_VERDICT_DERIVED` is absent. This is every
+   exactly as today, and `STRICT_SPEC_VERDICT_UNRESOLVED` is absent. Nothing
+   escalates: with no strict findings there is nothing that could have
+   influenced the verdict. This is every
    review before this feature and every ordinary review after it, which is what
    scenario 5's byte-identical requirement rests on.
 9. A review with **only** strict findings reports `RESULT=clean`,
@@ -462,7 +481,8 @@ file enumerates it.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Strict findings turn every spec review red | **High** without the parser change — the residue class is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The partition runs before `blocking`, and every existing computation reads `$ordinary`. Scenarios 4 and 9; proof **P1** leaves `$unknown` over `$findings` |
-| The verdict is inherited from a field the strict checks may have influenced | **High** — `result` is what the parser reads today | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | The reviewer emits `ordinary_result`; the parser prefers it, and derives from ordinary findings alone when it is absent, flagging the derivation. Scenarios 9a-9d; proofs **P8** and **P9** |
+| The verdict is inherited from a field the strict checks may have influenced | **High** — `result` is what the parser reads today | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | The reviewer emits `ordinary_result` and the parser prefers it; when it is absent with strict findings present, the round escalates rather than inferring. Scenarios 9a-9d; proofs **P8** and **P9** |
+| A reviewer omits `ordinary_result` and its reviews stop working | Med — it is a new field | Med — spec reviews escalate until the prompt is fixed, which is visible immediately rather than silently wrong | Accepted and stated: escalation falls on a contract violation, and every automatic alternative moves the verdict in a direction AC-3 forbids. `STRICT_SPEC_VERDICT_UNRESOLVED` names it so the cause is unambiguous |
 | The marker becomes a way to opt out of blocking | Med | **High** — a mislabelled or over-applied marker downgrades real findings, invisibly | Only identifiers the checklist defines count as strict; anything else is ordinary, which for an unrecognised finding means blocking. Scenarios 6 and 7; proof **P2** trusts the marker alone |
 | A strict finding is forwarded as a blocker by the loop | Med | **High** — `BLOCKING_<n>_*` is what the loop reads; counts elsewhere would not save it | Strict findings are emitted in their own `STRICT_<n>_*` block and never in the blocking one. Scenario 4 and proof **P3** |
 | The partition changes ordinary output | Med | Med — every review's output shifts for a feature that should be invisible to them | Byte-identical output required for an all-ordinary review. Scenario 5 and proof **P4** |
@@ -526,7 +546,7 @@ two groups:
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P8 | Ignore `ordinary_result` and keep using `result` as the verdict | a scratch copy of the `jq` program | scenario 9a fails: a reviewer that stated a `clean` ordinary verdict is blocked by its own strict findings, which AC-3 forbids. Scenarios 9b and 9d pass, because there the two fields agree or neither is present; only a review whose strict findings changed its overall conclusion separates them; restoring the field's precedence passes |
-| P9 | Derive the fallback verdict from **all** findings rather than the ordinary ones | same scratch copy | scenario 9c fails: with `ordinary_result` absent, three strict findings and no ordinary ones, the derivation returns `needs_fixes` — so the fallback meant to protect AC-3 is the thing that breaks it. Scenario 9d passes, because there are no strict findings to mis-derive from; restoring the ordinary-only derivation passes |
+| P9 | Infer a verdict when `ordinary_result` is absent — either by keeping `result` or by deriving from the ordinary findings | same scratch copy | scenario 9c fails on whichever half the plant chooses: keeping `result` blocks a review whose verdict came from the strict checks, deriving unblocks one whose `needs_fixes` came from an ordinary reason never written as a finding. Both move the verdict, and AC-3 forbids both. Scenario 9d passes either way, because with no strict findings there is nothing to be influenced by; restoring the escalation passes |
 | P1 | Compute `$unknown` and `$blocking_findings` over `$all` instead of the ordinary subset | a scratch copy of the `jq` program | scenario 9 fails: a review whose only findings are strict reports `needs_fixes`, because the residue class is blocking — so every specification with eight checks applied turns red and the feature is switched off before it produces a single count; restoring the partition passes |
 | P2 | Treat any `strict_check` marker as strict, without consulting the checklist | same scratch copy | scenario 6 fails: a finding naming an undefined check is exempted from blocking, so the marker becomes a way to opt out and a mislabelled real finding disappears from the blocking count with nothing in the output to show it; restoring the identifier test passes |
 | P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | same scratch copy | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
@@ -549,8 +569,8 @@ is to disable the checks rather than to fix the parser.
 1. Add the checklist document with its eight sections and identifiers.
    **Verify**: the identifiers match the spec's list, by extraction.
 2. Add the partition to the `jq` program, binding `$findings` to the ordinary
-   subset, **and** the `ordinary_result` precedence with its derivation
-   fallback. **Verify**: scenarios 4, 5, 6, 7, 8, 9, 9a, 9b, 9c and 9d — the parser scenarios
+   subset, **and** the `ordinary_result` precedence with its escalation.
+   **Verify**: scenarios 4, 5, 6, 7, 8, 9, 9a, 9b, 9c and 9d — the parser scenarios
    first, because everything else is reporting.
 3. Add the two bundle fields and the supply condition, carrying the cause when
    the state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
