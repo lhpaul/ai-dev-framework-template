@@ -199,11 +199,21 @@ Each is stated as the question it asks and the shape of a finding it produces. T
 
 | State | Meaning |
 | --- | --- |
-| `applied` | The checks ran; the count is what they found, and may be zero |
+| `applied` | The checks ran to completion; the count is what they found, and may be zero |
 | `not_applicable` | The change is not at the spec stage |
-| `unavailable` | The checks could not run — the stage could not be resolved, or the checklist is missing |
+| `unavailable` | The checks did not produce a result — one of three causes below |
 
 Three states, and `applied` with a count of zero is deliberately not the same as `unavailable`. The **count accompanies `applied` only**: it is empty in the other two states, because a number there would claim the checks reached a verdict they never reached.
+
+`unavailable` has **three causes**, and they are three different things to go and fix:
+
+| Cause | What happened | Whose |
+| --- | --- | --- |
+| `stage_unresolved` | The change's stage could not be classified, so the checks were never attempted | the pull request's shape |
+| `checklist_unreadable` | The stage is `spec` and the checklist is missing or unreadable, so the checks were never attempted | the repository's contents |
+| `strict_pass_failed` | The checks were attempted and did not complete — however they failed | the reviewer command or its environment |
+
+The first two mean *never started*; the third means *started and did not finish*. A reader given only `unavailable` cannot tell which, and the three have different owners, which is why the cause is reported wherever the state is.
 
 ---
 
