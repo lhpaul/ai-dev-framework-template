@@ -236,6 +236,22 @@ Not applicable — this repository ships workflow tooling, not a service.
       independent of #1656's second pass, which runs after a clean result rather
       than within a round.
 
+      **That cost is elapsed time and never an outcome**, which is the
+      distinction AC-16a draws and AC-16b bounds. The pass is dispatched
+      synchronously through the existing `run_with_timeout` wrapper with its own
+      budget, `STRICT_SPEC_TIMEOUT`, defaulting to the reviewer's `--timeout`.
+      A command that hangs costs that budget once and then reports
+      `strict_pass_failed`; it cannot extend a round without limit, and it
+      cannot change what the round decides.
+
+      Running the checks does take time a review without them would not spend,
+      and no mechanism makes that untrue. Deferring the pass — emitting the
+      ordinary result first and the strict findings later — would buy nothing:
+      the loop reads one `key=value` block per platform per round, so a late
+      strict result would have to land in the next round or nowhere, and a count
+      attributed to the wrong head is worse than a count that cost thirty
+      seconds.
+
 - [ ] **Handle the strict pass failing without touching the review.** A
       non-zero exit, an empty response, or output the findings parser cannot
       read leaves the state `unavailable` with reason `strict_pass_failed`, and
@@ -586,8 +602,8 @@ and this item derives a copy from its output and edits nothing there.
    findings reports `RESULT=clean`, `BLOCKING_COUNT` 0 and `STRICT_SPEC_COUNT`
    3. This is the spec's central claim, and with two passes it is the direct
    consequence of never merging the two arrays.
-9a. **The strict pass fails** — non-zero exit, empty response, or unparseable
-   output. Each is a separate run. In all three the state is `unavailable` with
+9a. **The strict pass fails** — non-zero exit, timeout, empty response, or
+   unparseable output. Each is a separate run. In all three the state is `unavailable` with
    reason `strict_pass_failed`, and the ordinary verdict, blocking block and
    numbering are identical to the same review with no strict pass attempted.
 9b. **The strict pass is dispatched exactly where the matrix says**, and the
@@ -602,6 +618,11 @@ and this item derives a copy from its output and edits nothing there.
    `not_applicable` review would double the cost of every plan and
    implementation review, which is the failure most likely to go unnoticed
    because nothing about the output would show it.
+9c. The strict pass is **bounded**: a reviewer command that sleeps past
+   `STRICT_SPEC_TIMEOUT` is killed at the bound, the round reports
+   `strict_pass_failed`, and the ordinary output is untouched. Asserted on
+   elapsed time against the bound, not only on the state — an unbounded pass
+   fails no other scenario here, because every other stub returns promptly.
 10. `STRICT_SPEC_CHECKS` names the **distinct** checks that fired, not one entry
     per finding. Exercised with three findings drawn from a pair of checks: the
     key reports that pair, not three identifiers.
@@ -768,7 +789,8 @@ file enumerates it.
 | --- | --- | --- | --- |
 | Strict findings turn every spec review red | **High** if the two responses are merged — an unsorted finding is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The two arrays are never joined: blocking comes from the ordinary pass, `STRICT_<n>_*` from the strict one. Scenarios 4 and 9; proof **P1** appends one to the other |
 | The verdict is influenced by checks the same model just read | **High** in any single-invocation design — and undetectable from the response | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | Two invocations. The pass that decides the verdict never receives the checklist, so there is nothing to influence it and no promise to audit. Scenarios 5a and 8a; proof **P4** |
-| The strict pass fails and takes the review with it | Med — any invocation can fail | **High** — an unrelated defect in the reviewer command blocks pull requests that had no findings at all | State `unavailable` with reason `strict_pass_failed`, ordinary output untouched. Scenario 9a on three failure shapes; proof **P9** |
+| The strict pass fails and takes the review with it | Med — any invocation can fail | **High** — an unrelated defect in the reviewer command blocks pull requests that had no findings at all | State `unavailable` with reason `strict_pass_failed`, ordinary output untouched. Scenario 9a on four failure shapes; proof **P9** |
+| The strict pass hangs and the round never ends | Med — a reviewer command can hang | **High** — the cost stops being bounded, and a feature that produces measurements starts costing arbitrary wall-clock time | Its own budget, `STRICT_SPEC_TIMEOUT`, through the existing `run_with_timeout` wrapper. Scenario 9c asserts on elapsed time, since no other scenario would notice |
 | The extra invocation runs where it should not | Med | Med — every plan and implementation review costs twice as much, and nothing in the output shows it | The state test gates the dispatch, and the invocation count is asserted per matrix row. Scenario 9b; proof **P8** |
 | Unknown identifiers vanish from the count | Med | Med — a renamed check or a drifted prompt loses its findings silently, and #1657's rate looks better than the reviewer's behaviour | Reported with `CHECK=unknown` and counted in `STRICT_SPEC_UNKNOWN_COUNT`, never blocking and never discarded. Scenarios 6 and 7; proof **P2** |
 | A strict finding is forwarded as a blocker by the loop | Med | **High** — `BLOCKING_<n>_*` is what the loop reads; counts elsewhere would not save it | Strict findings are emitted in their own `STRICT_<n>_*` block and never in the blocking one. Scenario 4 and proof **P3** |
@@ -913,8 +935,9 @@ is to disable the checks rather than to fix the merge.
 
 0. **Hard stop**: confirm #1653 is implemented and merged and that
    `review_stage` carries `spec`; confirm the spec amendment — matrix row 4, the
-   `strict_pass_failed` cause and AC-16a — is merged, since steps 2 and 4 build
-   a state the unamended spec does not contain. Re-read the merged `jq -n`
+   `strict_pass_failed` cause and AC-16a — is merged, **and** the timing
+   amendment (#1678: AC-16a's wording and AC-16b's bound), since steps 2 and 4
+   build a state and a budget the unamended spec does not contain. Re-read the merged `jq -n`
    object and `print_kv` block, which #1654 may also have changed.
    **Each scenario is verified at the step that first makes its assertion
    observable**, which is not always the step that implements the behaviour it
@@ -928,10 +951,11 @@ is to disable the checks rather than to fix the merge.
    output, so it needs nothing downstream.
 2. Add the strict pass: the state test that decides whether to dispatch, the
    derived bundle, `LOCAL_AI_REVIEWER_MODE`, the preset's second prompt and its
-   override variable, the second invocation, its own `jq` program with the mode
-   guard, **`$known_checks` passed to it from step 1's extraction** via
-   `--argjson`, and the merge that keeps the two responses apart. **Verify**:
-   scenarios 4, 5, 5a, 6, 7, 7a, 7b, 8, 8a, 9, 9a, 9b, 11, 11a and 13 — these
+   override variable, the second invocation with `STRICT_SPEC_TIMEOUT`, its own
+   `jq` program with the mode guard, **`$known_checks` passed to it from step
+   1's extraction** via `--argjson`, and the merge that keeps the two responses
+   apart. **Verify**: scenarios 4, 5, 5a, 6, 7, 7a, 7b, 8, 8a, 9, 9a, 9b, 9c, 11,
+   11a and 13 — these
    first, because everything else is reporting.
 
    The identifier set is wired here rather than later because the parser cannot

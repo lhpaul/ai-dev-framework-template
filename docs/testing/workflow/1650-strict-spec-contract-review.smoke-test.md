@@ -44,15 +44,30 @@ checks rather than fix the merge. Proof P1.
 3. Run the same review with the strict pass returning its own
    `result: "needs_fixes"`, and again with `result: "clean"`, the ordinary pass
    held fixed in both.
-4. Run the same review three more times with the strict pass failing: non-zero
-   exit, empty response, unparseable output.
+4. Run the same review four more times with the strict pass failing: non-zero
+   exit, empty response, unparseable output, and a command that sleeps past
+   `STRICT_SPEC_TIMEOUT`.
+
+   Time the fourth. The elapsed round must not exceed the ordinary review plus
+   that bound — an unbounded strict pass fails no other case in this runbook,
+   because every other stub returns promptly, and a reviewer command that hangs
+   is the one way this feature could cost arbitrary wall-clock time.
 
 **Expected result**: in step 2 the verdict, the blocking block, its order and
 its numbering are **identical** to step 1 — only the `STRICT_SPEC_*` keys and
 the `STRICT_<n>_*` block differ. In step 3 `RESULT` is identical across both
 runs and equals the ordinary pass's verdict. In step 4 all three runs emit
 `STRICT_SPEC_STATE=unavailable` with `STRICT_SPEC_REASON=strict_pass_failed`,
-and their ordinary output matches step 2's.
+and their ordinary output matches step 2's; the timeout case additionally
+completes within its bound.
+
+**What AC-16a guarantees and what it does not.** Running the checks costs time a
+review without them would not spend, and no mechanism makes that untrue — the
+loop reads one `key=value` block per platform per round, so deferring the strict
+result would attribute it to the wrong head rather than save anything. What the
+criterion forbids is a failure changing an outcome: no review is blocked, gated,
+retried or decided differently because the checks ran, failed, or took their
+full budget. AC-16b bounds the time so it stays a cost rather than a hazard.
 
 **Step 2 is AC-3's own wording executed.** The criterion asks that a review with
 strict findings report the same verdict as *the same review with the strict
