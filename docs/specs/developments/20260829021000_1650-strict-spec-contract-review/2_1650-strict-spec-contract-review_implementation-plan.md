@@ -21,11 +21,12 @@ anything it cannot sort is counted as **blocking**. Strict findings must be
 neither. Emitted without a change to that parser, eight new checks would turn
 every spec review red.
 
-So the plan adds an explicit marker on the finding, a third branch in the
-parser that recognises it before the blocking test runs, and a rule that a
-finding claiming to be strict but naming no known check is **not** treated as
-strict — because the fail-open and the fail-closed here point in opposite
-directions and the choice has to be made deliberately.
+So the strict checks get **their own invocation**. The ordinary review runs
+exactly as it does today — same prompt, same bundle, same parser — and its
+verdict is emitted verbatim; the checks run as a second call whose response
+carries findings and no verdict, and whose output the parser is never allowed to
+merge into the blocking block. AC-3 is then structural rather than promised: the
+model that decides the verdict never sees the checklist.
 
 **Estimated complexity**: M
 
@@ -52,12 +53,16 @@ seam in **Interaction with #1654** rather than sequencing them.
 | The parser has two classes, and the residue is blocking | `sed -n '440,480p' scripts/development-workflow/local-ai-reviewer.sh` | `blocking` and `advisory` are `jq` predicates over severity and scope text. `$unknown` is `blocking \| not` **and** `advisory \| not`, and `$blocking_findings` is `blocking or ((blocking \| not) and (advisory \| not))` — so a finding matching neither predicate is emitted as blocking |
 | An unclassifiable finding also forces `needs_fixes` | `sed -n '473,476p' scripts/development-workflow/local-ai-reviewer.sh` | `if $unknown > 0 then … RESULT=needs_fixes` — regardless of what the reviewer itself concluded. This is the behaviour strict findings must be exempted from, and the exemption must not weaken it for anything else |
 | Blocking findings are what the loop forwards | Same range | `BLOCKING_<n>_PATH` / `_LINE` / `_BODY` are emitted from `$blocking_findings` only. A strict finding must not appear there, or the loop will treat it as a blocker regardless of the reviewer's own count |
-| The bundle is built in one `jq -n` call | `sed -n '339,366p' scripts/development-workflow/local-ai-reviewer.sh` | Thirteen fields at this revision; #1653 adds three and #1654 four. This plan adds two more, at the same site |
+| The bundle is built in one `jq -n` call | `sed -n '339,366p' scripts/development-workflow/local-ai-reviewer.sh` | Thirteen fields at this revision; #1653 adds three and #1654 four. This plan adds one more, at the same site |
+| The reviewer command has exactly one invocation site | `grep -n 'LOCAL_AI_REVIEWER_COMMAND' scripts/development-workflow/local-ai-reviewer.sh` | Seven matches, of which one executes: line 380, `run_with_timeout … sh -c "$LOCAL_AI_REVIEWER_COMMAND"`. A second pass is a second call at that same site with a different bundle, not a new integration |
+| The invocation is already wrapped and its failure already handled | `sed -n '372,392p' scripts/development-workflow/local-ai-reviewer.sh` | `set +e` around the call, `command_exit` captured, exit 124 handled as a timeout with `print_result escalate`. The strict pass reuses the wrapper and handles its own non-zero status locally instead of reaching that path |
 | The stage resolution is #1653's | #1653's merged plan | `review_stage` is `spec` for `spec/*` branches; the strict checks key on that value and resolve nothing themselves |
 | Evidence keys reach the loop summary unchanged | `sed -n '754,772p' scripts/development-workflow/pr-review-loop.sh` | `emit_prefixed_platform_output` re-emits every key it does not skip, so `STRICT_SPEC_*` needs no loop change |
 
-**What this log does not establish.** It does not show how often the eight
-checks will fire. That is the measurement the spec defers to #1657, and the
+**What this log does not establish.** It does not show the cost of a second
+invocation on a real spec review, which depends on the configured reviewer
+command; the plan bounds *when* it happens rather than how long it takes. Nor
+does it show how often the eight checks will fire. That is the measurement the spec defers to #1657, and the
 reason this feature reports counts rather than blocking on them.
 
 ---
@@ -112,135 +117,128 @@ Not applicable — this repository ships workflow tooling, not a service.
       defined. The parser and the tests read them from here rather than
       repeating them, so a ninth check is one edit and not four.
 
-- [ ] **Supply it when the stage is `spec`.** Two fields on the context bundle,
+- [ ] **Supply it to the strict pass only.** One field on the context bundle,
       at the same `jq -n` site the other epic items use:
 
       ```text
-      strict_spec_checks:       "<the checklist's stored bytes, or empty>"
-      strict_spec_check_state:  "applied" | "not_applicable" | "unavailable"
+      strict_spec_checks: "<the checklist's stored bytes, or empty>"
       ```
 
-      The state is decided by the spec's five-row matrix, whose three inputs are
-      evaluated in order: can the stage be resolved, is it `spec`, is the
-      checklist readable. The text is read with `jq --rawfile`, as #1654's is
-      and for the same reason.
+      It is **empty in the ordinary pass's bundle at every stage, including
+      `spec`**, and carries the text only in the strict pass's bundle. The text
+      is read with `jq --rawfile`, as #1654's is and for the same reason.
 
-      Note what is **not** here: the count. It is not known when the bundle is
-      built — the checks have not run — and it appears only in the output and
-      the evidence, after the reviewer replies.
+      The state is not a bundle field. Rows 1 through 3 are decided by
+      `local-ai-reviewer.sh` before it dispatches anything, and they decide
+      whether the strict pass runs at all; rows 4 through 6 are decided by what
+      the pass returns. The count is not here either: it is not known when the bundle is
+      built, and it appears only in the output and the evidence.
 
-- [ ] **Give strict findings a marker the parser can see.** Each finding the
-      reviewer emits for a strict check carries `strict_check: "<identifier>"`.
-      The prompt instructs it; the parser keys on it.
+- [ ] **Run the ordinary review exactly as today.** No edit to its prompt, no
+      checklist in its bundle, no change to the `jq` program that reads its
+      response, no new field it must emit. Its `result` is the emitted verdict,
+      verbatim, and its findings are the blocking block, unchanged.
 
-      A marker on the finding rather than a separate array, because the finding
-      already travels through `findings[]` with a path and a body, and a
-      parallel array would need its own path and body handling and its own
-      failure mode when the two disagree about length.
+      **This is the whole of AC-3's mechanism, and it is structural.** AC-3 asks
+      that a review with strict findings report the same verdict as *the same
+      review with the strict checks disabled*. The ordinary pass **is** that
+      review: same prompt, same inputs, same parser. There is nothing for the
+      strict checks to influence, because the model that produces the verdict
+      never sees them.
 
-- [ ] **Add the third class to the parser, before the blocking test.** In the
-      `jq` program in `local-ai-reviewer.sh`, a predicate and a partition:
+      Four earlier revisions of this plan tried to reach AC-3 from a single
+      invocation that saw both, and each failed in a way the next one inherited.
+      Downgrading `needs_fixes` when no ordinary blocker was parsed unblocks a
+      reviewer that blocked for a reason it never wrote as a finding. Deriving
+      the verdict from the ordinary findings is that same move renamed.
+      Escalating when the ordinary verdict was unavailable introduces exactly
+      the gate AC-18 forbids — "no label, no gate, no escalation". Asking the
+      reviewer for a separate `ordinary_result` field and forwarding `result`
+      when it was missing left the verdict influenceable and called the residue
+      measurement.
+
+      They failed for one reason: **a single invocation can only ever promise
+      that what it read did not affect what it concluded, and no parser can
+      audit that promise.** The information is not in the response. Two
+      invocations do not need the promise.
+
+- [ ] **Run the strict checks as their own invocation.** A second call to
+      `LOCAL_AI_REVIEWER_COMMAND`, with the checklist in its bundle and a prompt
+      that asks for one thing: findings against the eight checks, each carrying
+      `check: "<identifier>"`, a path, a line and a body.
+
+      **Its response has no verdict, and the parser reads none.** Any
+      verdict-shaped key it emits — `result`, `status`, anything else — is
+      ignored rather than merged, so a reviewer that volunteers one cannot
+      affect the outcome by accident. That the strict pass cannot block is a
+      property of what the parser reads, not of what the model was asked to
+      write.
+
+      It runs only when the state is `applied`: the stage resolves, it is
+      `spec`, and the checklist is readable. Every other row of the matrix
+      dispatches nothing, which is why `not_applicable` and `unavailable`
+      reviews cost exactly what they cost today.
+
+      **The cost is one extra invocation on spec-stage reviews**, and it is the
+      price of the guarantee. It falls only on spec branches with a readable
+      checklist, never on plans, implementations or refactors, and it is
+      independent of #1656's second pass, which runs after a clean result rather
+      than within a round.
+
+- [ ] **Handle the strict pass failing without touching the review.** A
+      non-zero exit, an empty response, or output the findings parser cannot
+      read leaves the state `unavailable` with reason `strict_pass_failed`, and
+      the ordinary pass's verdict and findings are emitted as if the strict pass
+      had never been attempted.
+
+      **This is a matrix row the spec did not have, and the spec is amended in
+      this pull request** — row 4, the `strict_pass_failed` cause, and AC-16a.
+      The spec's matrix claimed to be the complete gate over three ordered
+      inputs, all three deciding whether the checks *start*; a dispatched pass
+      that does not *finish* is a fourth input and was unenumerated.
+
+      That omission is precisely the `gate_matrix` shape check 3 exists to
+      catch, in the specification that defines check 3. It is recorded in the
+      spec rather than quietly repaired here, because the alternative — a plan
+      that silently adds a state its spec does not have — is the divergence this
+      epic keeps finding in other people's documents.
+
+- [ ] **Merge the two responses.** The verdict and `BLOCKING_<n>_*` come from
+      the ordinary pass. `STRICT_<n>_*` comes from the strict pass. Nothing
+      crosses:
 
       ```text
-      def strict: (.strict_check? | type) == "string"
-                  and ((.strict_check | ascii_downcase) as $c
-                       | $known_checks | index($c) != null);
-
-      $findings | map(select(strict))           as $strict_findings
-      $findings | map(select(strict | not))     as $ordinary
+      RESULT / BLOCKING_<n>_*   <- ordinary pass, unchanged
+      STRICT_<n>_*              <- strict pass, never merged into blocking
+      STRICT_SPEC_*             <- computed by the script from both
       ```
 
-      Every existing computation — `blocking`, `advisory`, `$unknown`,
-      `$blocking_findings` and the `BLOCKING_<n>_*` lines — then runs over
-      `$ordinary` and not over `$findings`. That single substitution is the
-      whole behavioural change for ordinary findings: **none**. Scenario 5
-      asserts byte-identical output for a review with no strict findings.
+      A strict finding placed in the blocking block would be forwarded by the
+      loop as a blocker whatever the counts say, so the two blocks are built
+      from two different arrays and never from one partitioned list.
 
-      **`$known_checks` is passed in from the checklist**, via `--argjson`, so
-      the closed set has one definition. A strict finding naming a check the
-      checklist does not define is **not** strict: it falls into `$ordinary`
-      and is classified as it would be today, which for an unrecognised finding
-      means blocking.
+- [ ] **Classify identifiers the checklist does not define.** A strict-pass
+      finding whose `check` is not in the closed set is reported with
+      `STRICT_<n>_CHECK=unknown`, is **excluded** from `STRICT_SPEC_COUNT` and
+      `STRICT_SPEC_CHECKS`, and is counted in `STRICT_SPEC_UNKNOWN_COUNT`.
 
-      **The partition is necessary and not sufficient: the emitted verdict has
-      to be derived from ordinary findings, not inherited from a field the
-      strict checks may have influenced.** Removing strict findings from the
-      blocking set fixes the count; the parser's last branch honours the
-      reviewer's own `result`, so a reviewer that read the checks, found three
-      contradictions and concluded `needs_fixes` blocks with
-      `BLOCKING_COUNT=0` — strict findings changing the verdict, which AC-3
-      forbids.
+      **The fail-closed direction reverses here, and the reversal is the point.**
+      In the single-invocation design an unrecognised marker had to be treated
+      as an ordinary blocking finding, because the marker was a way to opt out of
+      blocking: mislabel a real finding and it silently stops blocking. With two
+      passes there is nothing to opt out of — a strict-pass finding was never in
+      the blocking set — and promoting it into blocking would *add* a blocker
+      the ordinary review did not raise, which is AC-3 broken in the other
+      direction. So the unknown identifier is reported and counted apart
+      instead: visible, attributable to no check, and inert.
 
-      Three earlier revisions of this plan tried to repair that after the
-      fact, and all three are **withdrawn**. One downgraded `needs_fixes` to
-      `clean` whenever no ordinary blocker was parsed and a strict finding was
-      present — which also unblocks a reviewer that blocked for a reason it
-      never expressed as a finding. The second left the verdict alone and merely
-      reported the ambiguity — which leaves strict findings blocking the pull
-      request. The third escalated the round — which AC-18 forbids in as many
-      words: ignoring a strict finding costs "no label, no gate, no
-      escalation", and a round that escalates because a strict finding exists is
-      exactly the gate the specification rules out.
+      It is excluded from the count because the count feeds #1657's per-check
+      incidence, and a finding that names no known check belongs to no check's
+      rate. `STRICT_SPEC_UNKNOWN_COUNT` is what keeps that exclusion from being
+      a silent discard.
 
-      All three were guessing at a cause the response did not state. **The
-      response has to state it.** Three parts:
-
-      1. **The reviewer emits `ordinary_result`** alongside `result`: its verdict
-         on the ordinary review, explicitly excluding strict findings. The
-         prompt and the checklist's preamble require it.
-      2. **The parser uses `ordinary_result` as the verdict** when present, and
-         `result` only when it is absent — which is every review before this
-         feature, and every review from a reviewer that emits no strict
-         findings.
-      3. **When `ordinary_result` is absent and strict findings are present**,
-         the parser uses `result` **unchanged** and emits
-         `STRICT_SPEC_VERDICT_UNVERIFIED=1`. It infers nothing, changes nothing
-         and gates nothing.
-
-      The third part is where the withdrawn revisions went wrong, and the
-      resolution is a question about the baseline AC-3 measures against. "Strict
-      findings never change the verdict" is a comparison with the review that
-      would have happened with the strict checks switched off — and with them
-      off, `result` is the verdict. So using `result` is the one branch that is
-      **provably** identical to the counterfactual: whatever the reviewer put
-      there, this feature did not put it there.
-
-      Every other branch moves the verdict away from that baseline. Deriving
-      from the ordinary findings unblocks a review whose `needs_fixes` came from
-      an ordinary reason the reviewer never wrote as a finding. Escalating
-      introduces a gate on a round that would otherwise have proceeded, which is
-      the consequence AC-18 names and forbids.
-
-      **What remains is a reviewer-prompt risk, and it is handled as one.** A
-      reviewer that folds strict findings into `result` and omits
-      `ordinary_result` violates its own prompt, and no parser rule can
-      distinguish that response from a legitimate `needs_fixes` — the
-      information is simply not in it. The defence is the contract in part 1,
-      and `STRICT_SPEC_VERDICT_UNVERIFIED` is how the residue is **measured**
-      rather than guessed: it marks every round where the verdict could not be
-      confirmed to exclude strict findings, and #1657 counts it. A rate near
-      zero says the contract holds; a rate that is not says the prompt needs
-      work, which is a prompt fix and not a parser one.
-
-      This is the honest boundary of what the parser can do, stated rather than
-      papered over: it can guarantee strict findings never *enter* the blocking
-      set, and it can guarantee it never *itself* moves a verdict. It cannot
-      audit a number the reviewer computed before it ran.
-
-      **Reviewers that emit no strict findings are unaffected in every case.**
-      `ordinary_result` absent and no strict findings means `result` is used
-      exactly as today, which is what lets scenario 5 demand byte-identical
-      output.
-
-      Scenarios 9a through 9d cover the four combinations.
-
-      That direction is deliberate and is the plan's sharpest choice. The
-      alternative — treat any `strict_check` marker as strict — makes the
-      marker a way to opt out of blocking: a reviewer that mislabels, or a
-      future prompt that over-applies the field, silently downgrades real
-      findings, and nothing in the output would show it. Fail-closed here means
-      an unknown marker is treated as an ordinary finding, and the cost of the
-      error is a false blocker rather than a missed one.
+      **`$known_checks` is read from the checklist** via `--argjson`, so the
+      closed set has one definition and a ninth check needs no parser edit.
 
 - [ ] **Report the state and the count.** Five `print_kv` keys beside the
       existing block — two always emitted, three conditional:
@@ -254,17 +252,19 @@ Not applicable — this repository ships workflow tooling, not a service.
       STRICT_SPEC_REASON=stage_unresolved|checklist_unreadable
                                         # only when unavailable
       STRICT_SPEC_CHECKS=<ids>          # comma-separated; only when applied
-      STRICT_SPEC_VERDICT_UNVERIFIED=1  # only when ordinary_result was absent
-                                        # and strict findings were present
+      STRICT_SPEC_UNKNOWN_COUNT=<n>     # only when applied and above zero
       ```
 
-      **`unavailable` has two causes and they have different owners**, which is
-      why the state alone is not enough: `stage_unresolved` is a branch the
-      resolver could not classify, and `checklist_unreadable` is a missing or
-      unreadable document. The first is a defect in the pull request's shape,
-      the second in the repository's contents, and a reader seeing only
-      `unavailable` cannot tell which to go and fix. The spec's outcome table
-      requires the cause to be reported; the reason key is where it lives.
+      **`unavailable` has three causes and they have different owners**, which
+      is why the state alone is not enough: `stage_unresolved` is a branch the
+      resolver could not classify, `checklist_unreadable` is a missing or
+      unreadable document, and `strict_pass_failed` is a dispatched pass that
+      did not return usable output. The first is a defect in the pull request's
+      shape, the second in the repository's contents, the third in the reviewer
+      command or its environment — three different people to go and see, and a
+      reader given only `unavailable` cannot tell which. The spec's outcome
+      table requires the cause to be reported; the reason key is where it
+      lives.
 
       `STRICT_SPEC_REASON` is not emitted in `applied` and `not_applicable`, by
       the same rule that empties the count outside `applied`: a value present
@@ -281,18 +281,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       they never examined. A `0` written for `unavailable` would put unexamined
       rounds into the denominator of #1657's rate.
 
-      All **five** — `state`, `count`, `reason`, `checks` and
-      `verdict_unverified` — go into the evidence JSON under a `strict_spec`
-      object, and into the ledger entry, so incidence can be computed per pull
-      request without re-reading comments. The conditional three are absent from
-      the object on the reviews where they are absent from the output, rather
-      than present and null.
+      All **five** — `state`, `count`, `reason`, `checks` and `unknown_count` —
+      go into the evidence JSON under a `strict_spec` object, and into the
+      ledger entry, so incidence can be computed per pull request without
+      re-reading comments. The conditional three are absent from the object on
+      the reviews where they are absent from the output, rather than present and
+      null.
 
 - [ ] **Render the findings separately.** The strict findings are emitted as
       their own `key=value` block — `STRICT_<n>_CHECK`, `STRICT_<n>_PATH`,
-      `STRICT_<n>_LINE`, `STRICT_<n>_BODY` — parallel to `BLOCKING_<n>_*` and
-      never mixed into it. A strict finding in the blocking block would be
-      forwarded by the loop as a blocker whatever the counts say.
+      `STRICT_<n>_LINE`, `STRICT_<n>_BODY` — parallel to `BLOCKING_<n>_*`.
 
 ### Frontend / UI
 
@@ -303,9 +301,9 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 ### Infrastructure / Configuration
 
-- [ ] Document the five keys, the three states, the two `unavailable` reasons,
-      the unverified flag's two conditions, the `ordinary_result` contract and
-      the `result` fallback, and the closed identifier set in
+- [ ] Document the five keys, the three states, the three `unavailable`
+      reasons, the two-pass structure and what each pass may affect, the
+      unknown-identifier classification, and the closed identifier set in
       the `--help` block, in
       `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`,
       and in Protocol 93.
@@ -325,9 +323,9 @@ in lines:
 | | #1654 | This item |
 | --- | --- | --- |
 | Document | the review doctrine, all stages | the strict checks, spec stage only |
-| Bundle fields | four | two |
-| Supplies when | always | `review_stage` is `spec` |
-| Findings | none of its own | a third class, marked and partitioned |
+| Bundle fields | four | one |
+| Supplies when | always, to the one pass | only to the strict pass |
+| Findings | none of its own | its own pass, its own block |
 
 Whichever lands second re-reads the merged `jq -n` object and the merged
 `print_kv` block rather than this plan's copy of them. Scenario 11's enumerated
@@ -344,7 +342,7 @@ field list is built at implementation time for that reason.
 1. The state is `applied` at the spec stage with a readable checklist,
    `not_applicable` at every other stage, and `unavailable` when the stage
    cannot be resolved or the checklist cannot be read — one case per row of the
-   spec's five-row matrix.
+   spec's six-row matrix.
 1a. The two `unavailable` rows are **distinguishable by their reason**:
    `stage_unresolved` for row 1, `checklist_unreadable` for row 3. Asserted as
    two different values, since the state alone leaves a reader unable to tell a
@@ -356,61 +354,67 @@ field list is built at implementation time for that reason.
    the mirror: present only in `unavailable`, empty in the other two.
 3. A round recorded as `unavailable` is distinguishable from one recorded as
    `applied` with count `0`, by reading the ledger entry alone.
-4. A finding carrying a **known** `strict_check` identifier is counted as
-   strict, appears in `STRICT_<n>_*`, does not appear in `BLOCKING_<n>_*`, and
-   does not change `RESULT`.
-5. A review whose findings are all ordinary produces **byte-identical**
-   `key=value` output to the same review before this change, excluding the keys
-   this item adds. The unverified flag cannot fire there — it requires a strict
-   finding — so its absence is part of the comparison rather than an exclusion. The partition must be invisible to every existing path.
-6. A finding carrying an **unknown** `strict_check` identifier is **not** strict:
-   it is classified as an ordinary finding, which for an unrecognised finding
-   means blocking, and `RESULT` becomes `needs_fixes`. This is the fail-closed
-   direction, and the scenario fails if the marker alone is trusted.
-7. A finding carrying `strict_check` with a non-string value — a number, an
-   object, `null` — is also not strict, and the parser **does not abort**:
-   `ascii_downcase` raises on a non-string, so the type guard has to run first.
-   Asserted on all three values, since a program that errors here fails the
-   whole review rather than classifying one finding.
-8. A mixed review — two ordinary blocking findings and three strict — reports
-   `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and `RESULT=needs_fixes` driven by
-   the two, not the three.
-9a. `ordinary_result` **present** and `clean`, with `result` `needs_fixes` and
-   three strict findings: the emitted verdict is `clean`, and
-   `STRICT_SPEC_VERDICT_UNVERIFIED` is absent. The reviewer stated its ordinary
-   verdict; nothing is inferred.
-9b. `ordinary_result` **present** and `needs_fixes`, with ordinary blocking
-   findings: the emitted verdict is `needs_fixes`. The field is used in both
-   directions, not only to unblock.
-9c. `ordinary_result` **absent** with strict findings present: `result` is used
-   **unchanged** and `STRICT_SPEC_VERDICT_UNVERIFIED=1` is emitted. Nothing is
-   inferred, nothing gates, nothing escalates. Run with `result` `needs_fixes`
-   **and** with `result` `clean`, and with ordinary findings present and absent:
-   in all four the emitted verdict equals `result`, and the flag is the only
-   difference from today's output.
-9d. `ordinary_result` absent and **no** strict findings: `result` is used
-   exactly as today, and `STRICT_SPEC_VERDICT_UNVERIFIED` is absent — with no
-   strict findings there is nothing that could have influenced the verdict, so
-   there is nothing unverified to report. This is every
-   review before this feature and every ordinary review after it, which is what
-   scenario 5's byte-identical requirement rests on.
-9. A review with **only** strict findings reports `RESULT=clean`,
-   `BLOCKING_COUNT` 0 and `STRICT_SPEC_COUNT` above zero. This is the spec's
-   central claim and the one an implementation is most likely to get wrong by
-   leaving `$unknown` computed over `$findings`.
+4. A strict-pass finding carrying a **known** `check` identifier is counted,
+   appears in `STRICT_<n>_*`, does not appear in `BLOCKING_<n>_*`, and does not
+   change `RESULT`.
+5. A review at a non-spec stage produces **byte-identical** `key=value` output
+   to the same review before this change, excluding the two keys this item
+   always adds. No strict pass is dispatched, so the comparison covers the
+   ordinary pass end to end.
+5a. A **spec-stage** review whose strict pass returns no findings produces the
+   same ordinary output as the same review with the checklist removed —
+   verdict, blocking block, order and numbering identical. This is AC-3's own
+   wording turned into a test, and the two-pass structure is what makes it
+   assertable at all: the second run is literally the review with the checks
+   disabled.
+6. A strict-pass finding carrying an **unknown** `check` identifier is reported
+   with `STRICT_<n>_CHECK=unknown`, excluded from `STRICT_SPEC_COUNT` and
+   `STRICT_SPEC_CHECKS`, counted in `STRICT_SPEC_UNKNOWN_COUNT`, and does
+   **not** become blocking. Asserted in both directions: it must not silently
+   vanish, and it must not add a blocker the ordinary review never raised.
+7. A strict-pass finding carrying `check` with a non-string value — a number,
+   an object, `null` — and one carrying no `check` at all are counted as
+   unknown, and the parser **does not abort**: `ascii_downcase` raises on a
+   non-string, so the type guard has to run first. Asserted on all four shapes,
+   since a program that errors here loses the entire strict pass.
+8. A mixed review — two blocking findings from the ordinary pass and three from
+   the strict pass — reports `BLOCKING_COUNT` 2, `STRICT_SPEC_COUNT` 3, and
+   `RESULT=needs_fixes` driven by the ordinary two.
+8a. The strict response's own verdict field is **ignored**. The same review is
+   run with the strict pass returning `result: "needs_fixes"` and then
+   `result: "clean"`, with the ordinary verdict held fixed in each: the emitted
+   `RESULT` is identical across both, and equals the ordinary pass's.
+9. A review whose ordinary pass is clean and whose strict pass returns three
+   findings reports `RESULT=clean`, `BLOCKING_COUNT` 0 and `STRICT_SPEC_COUNT`
+   3. This is the spec's central claim, and with two passes it is the direct
+   consequence of never merging the two arrays.
+9a. **The strict pass fails** — non-zero exit, empty response, or unparseable
+   output. Each is a separate run. In all three the state is `unavailable` with
+   reason `strict_pass_failed`, and the ordinary verdict, blocking block and
+   numbering are identical to the same review with no strict pass attempted.
+9b. **The strict pass is not dispatched at all** outside the `applied` state:
+   asserted by counting invocations of `LOCAL_AI_REVIEWER_COMMAND`, which is 1
+   in rows 1 through 4 of the matrix and 2 in rows 5 and 6 — row 4 is one
+   invocation because the pass was dispatched and did not complete. A second
+   call on a
+   `not_applicable` review would double the cost of every plan and
+   implementation review, which is the failure most likely to go unnoticed
+   because nothing about the output would show it.
 10. `STRICT_SPEC_CHECKS` names the **distinct** checks that fired, not one entry
     per finding. Exercised with three findings drawn from a pair of checks: the
     key reports that pair, not three identifiers.
 11. The bundle keeps every field present before this change — enumerated from
     the merged object at implementation time, not from this plan — and adds
-    exactly two.
-12. All **four** values reach the evidence JSON and the ledger entry, and the
+    exactly one, which is **empty in the ordinary pass's bundle at every
+    stage**, including `spec`.
+12. All **five** values reach the evidence JSON and the ledger entry, and the
     ledger's `strict_spec` object is present on every round at any stage — with
     the count and identifiers empty where the state is not `applied`, and the
     reason empty where it is not `unavailable`.
 13. The checklist's identifiers are read from the document: adding a ninth
-    section to a fixture checklist makes a finding carrying that ninth
-    identifier strict, with no change to the parser or the tests.
+    section to a fixture checklist makes a strict-pass finding carrying that
+    ninth identifier counted rather than unknown, with no change to the parser
+    or the tests.
 14. **The checks fire on planted violations.** Eleven fixture specifications:
     **eight** positives, one per check, each containing exactly one planted
     instance of that check's shape; and **three** negative controls, one per
@@ -428,17 +432,18 @@ field list is built at implementation time for that reason.
 **Files**:
 
 - `scripts/development-workflow/tests/test-local-ai-reviewer.sh` — scenarios 1
-  through 13. The parser scenarios run the real `jq` program with crafted
-  reviewer output, not a stub, since the partition is the thing under test.
+  through 13. The parser scenarios run both real `jq` programs with crafted
+  reviewer output, not stubs, and the dispatch scenarios use a recording stub
+  for `LOCAL_AI_REVIEWER_COMMAND` so invocation counts can be asserted.
 - The **smoke runbook** — scenarios 14 and 15, which need a real model.
 
 **Scenarios 14 and 15 are recorded, not asserted, and the plan says so rather
 than pretending otherwise.** Whether a model notices a planted contradiction is
 not deterministic: a run may miss one, and a suite that failed the build on that
 would be red for reasons no implementer could fix. What *is* deterministic —
-that the checklist is supplied at the spec stage, that a marked finding is
-partitioned, that the counts are reported — is scenarios 1 through 13, and those
-are automated.
+that the checklist is supplied to the strict pass at the spec stage, that the
+two passes never merge, that the counts are reported — is scenarios 1 through
+13, and those are automated.
 
 So the implementer runs the eleven fixtures both ways and **records which checks
 fired in each**, in the pull request. A check that fires on its own planted
@@ -460,7 +465,7 @@ rather than a gate.
 | Fixture | Contents | Location |
 | --- | --- | --- |
 | Fixture specifications | **Eleven** short specification documents: eight positives, one per check, each with a single planted instance of that check's shape; and three negatives — a gate enumerating every reachable combination (AC-7), a gate that short-circuits and states its evaluation order (AC-6a), and an unsettled phrase confined to a rationale (AC-13) | `scripts/development-workflow/tests/fixtures/strict-spec-specs/` |
-| Reviewer outputs | Eight JSON documents: all-ordinary; all-strict; mixed; a known identifier; an unknown identifier; a non-string `strict_check`; three findings from two checks; and one with no findings | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
+| Reviewer outputs | Two sets. **Ordinary pass**: clean; two blocking findings. **Strict pass**: no findings; three findings from two checks; an unknown identifier; a non-string `check`; no `check` at all; one carrying its own `result`; and three failure shapes — non-zero exit, empty, unparseable | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
 | Checklist fixtures | A well-formed eight-section checklist; a nine-section one for scenario 13; and an unreadable one | `scripts/development-workflow/tests/fixtures/strict-spec-checks/` |
 | Bundle field list | The field names present before this change, enumerated from the merged `jq -n` object at implementation time | inline in the same suite |
 
@@ -499,13 +504,14 @@ file enumerates it.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Strict findings turn every spec review red | **High** without the parser change — the residue class is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The partition runs before `blocking`, and every existing computation reads `$ordinary`. Scenarios 4 and 9; proof **P1** leaves `$unknown` over `$findings` |
-| The verdict is inherited from a field the strict checks may have influenced | **High** — `result` is what the parser reads today | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | The reviewer emits `ordinary_result` and the parser prefers it; when it is absent, `result` is used unchanged, which is provably the switched-off baseline. Scenarios 9a-9d; proofs **P8** and **P9** |
-| A reviewer folds strict findings into `result` and omits `ordinary_result` | Med — it violates its own prompt | Med — that one review's verdict is influenced, and no parser rule can detect it: the information is not in the response | Not resolvable in the parser, so it is **measured**: `STRICT_SPEC_VERDICT_UNVERIFIED` marks every unconfirmable round and #1657 counts the rate. A rate that is not near zero is a prompt fix. Escalating instead was tried and withdrawn — AC-18 forbids the gate |
-| The marker becomes a way to opt out of blocking | Med | **High** — a mislabelled or over-applied marker downgrades real findings, invisibly | Only identifiers the checklist defines count as strict; anything else is ordinary, which for an unrecognised finding means blocking. Scenarios 6 and 7; proof **P2** trusts the marker alone |
+| Strict findings turn every spec review red | **High** if the two responses are merged — an unsorted finding is blocking | **High** — the feature is switched off within a day, and the counts it exists to produce are never gathered | The two arrays are never joined: blocking comes from the ordinary pass, `STRICT_<n>_*` from the strict one. Scenarios 4 and 9; proof **P1** appends one to the other |
+| The verdict is influenced by checks the same model just read | **High** in any single-invocation design — and undetectable from the response | **High** — AC-3 fails on the review the feature exists to produce: counts say non-blocking, pull request red | Two invocations. The pass that decides the verdict never receives the checklist, so there is nothing to influence it and no promise to audit. Scenarios 5a and 8a; proof **P4** |
+| The strict pass fails and takes the review with it | Med — any invocation can fail | **High** — an unrelated defect in the reviewer command blocks pull requests that had no findings at all | State `unavailable` with reason `strict_pass_failed`, ordinary output untouched. Scenario 9a on three failure shapes; proof **P9** |
+| The extra invocation runs where it should not | Med | Med — every plan and implementation review costs twice as much, and nothing in the output shows it | The state test gates the dispatch, and the invocation count is asserted per matrix row. Scenario 9b; proof **P8** |
+| Unknown identifiers vanish from the count | Med | Med — a renamed check or a drifted prompt loses its findings silently, and #1657's rate looks better than the reviewer's behaviour | Reported with `CHECK=unknown` and counted in `STRICT_SPEC_UNKNOWN_COUNT`, never blocking and never discarded. Scenarios 6 and 7; proof **P2** |
 | A strict finding is forwarded as a blocker by the loop | Med | **High** — `BLOCKING_<n>_*` is what the loop reads; counts elsewhere would not save it | Strict findings are emitted in their own `STRICT_<n>_*` block and never in the blocking one. Scenario 4 and proof **P3** |
-| The partition changes ordinary output | Med | Med — every review's output shifts for a feature that should be invisible to them | Byte-identical output required for an all-ordinary review. Scenario 5 and proof **P4** |
-| `unavailable` is reported without its cause | Med | Med — a reader cannot tell a pull request whose stage could not be resolved from a repository missing the checklist, and the two have different owners | `STRICT_SPEC_REASON` carries `stage_unresolved` or `checklist_unreadable`. Scenario 1a and proof **P7** |
+| The strict pass changes ordinary output | Med | Med — every review's output shifts for a feature that should be invisible to them | Byte-identical output required for an all-ordinary review. Scenario 5 and proof **P4** |
+| `unavailable` is reported without its cause | Med | Med — a reader cannot tell a pull request whose stage could not be resolved from a repository missing the checklist or a reviewer command that failed, and the three have different owners | `STRICT_SPEC_REASON` carries one of three values. Scenario 1a and proof **P7** |
 | `0` is written where the checks did not run | **High** — an empty numeric field invites a default | **High** — unexamined rounds enter #1657's denominator and the rate is wrong in the flattering direction | Count and identifiers are empty outside `applied`. Scenarios 2 and 3; proof **P5** |
 | The identifier set is duplicated in the parser | Med | Med — a ninth check works in the document and not in the code, or the reverse | `$known_checks` is passed from the checklist. Scenario 13 and proof **P6** |
 
@@ -513,41 +519,43 @@ file enumerates it.
 
 ## Code Samples
 
-The partition, and why it precedes everything:
+The strict pass's parser — a **separate** program, run over the strict
+response only, and the reason the ordinary program needs no edit at all:
 
 ```text
 # `$known_checks` comes from the checklist via --argjson: one definition of the
 # closed set, and a ninth check needs no parser edit.
-def strict:
-  ((.strict_check? // null)
-     | if type == "string" then ascii_downcase else null end) as $c
-  | $c != null and ($known_checks | index($c) != null);
+def ident:
+  ((.check? // null) | if type == "string" then ascii_downcase else null end);
 
-. as $root
-| (findings) as $all
-| ($all | map(select(strict)))       as $strict_findings
-| ($all | map(select(strict | not))) as $findings   # everything below is unchanged
+def known($c): $c != null and ($known_checks | index($c) != null);
+
+[ (.findings // .comments // .issues // []) | .[] ] as $raw
+| ($raw | map(select(known(ident))))       as $named
+| ($raw | map(select(known(ident) | not))) as $unnamed
+| { count:         ($named   | length),
+    checks:        ($named   | map(ident) | unique | join(",")),
+    unknown_count: ($unnamed | length) }
 ```
 
-Two details of that predicate are not stylistic. The identifier is captured into
-`$c` **before** `$known_checks` becomes the input, because inside
-`index(...)` the `.` is the array, not the finding — `index(.strict_check)`
-raises *Cannot index array with string*. And the `if type == "string"` guard
-runs before `ascii_downcase`, which errors on a number or an object: scenario 7
-feeds exactly those, and without the guard the parser aborts rather than
-classifying them as ordinary.
+Three details are not stylistic. The identifier is passed to `known` as an
+**argument** rather than piped, because inside `index(...)` the `.` is the
+array, not the finding — `index(.check)` raises *Cannot index array with
+string*. The `if type == "string"` guard runs before `ascii_downcase`, which
+errors on a number or an object, and without it the whole strict pass aborts
+instead of classifying one finding as unknown. And the program reads **no**
+verdict field: `result` may be present in the response and is never referenced,
+which is what makes "the strict pass cannot block" a property of the code rather
+than of the prompt.
 
-`findings` is the program's existing definition, which normalises `findings`,
-`comments` or `issues` into one array; the sample calls it rather than reading
-`.findings` so the partition sees the same set the rest of the program does.
+`$named` and `$unnamed` partition the strict pass's own findings and nothing
+else. The ordinary pass's array is never in scope here, and this program's
+output never reaches `BLOCKING_<n>_*`.
 
-Binding `$findings` to the ordinary subset is the whole change: `blocking`,
-`advisory`, `$unknown`, `$blocking_findings` and the `BLOCKING_<n>_*` lines keep
-their present text and now operate on the ordinary findings alone.
-
-Verified as a standalone program against a four-finding fixture — one known
-identifier, one unmarked, one unknown identifier, one numeric — which partitions
-1 strict and 3 ordinary.
+Verified as a standalone program against a six-finding fixture — two known
+identifiers with one repeated, one undefined identifier, one numeric, one with
+no `check` at all — which yields `count` 3, `checks`
+`ac_consistency,gate_matrix` and `unknown_count` 3.
 
 ---
 
@@ -559,24 +567,24 @@ two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Blocking | **5** | P1, P3, P4, P8, P9 | a non-blocking class that blocks, or changes what does |
-| Measurement | **4** | P2, P5, P6, P7 | a count or a class that admits what it should not |
+| Blocking | **5** | P1, P3, P4, P8, P9 | a non-blocking pass that blocks, that costs, or that takes the review with it |
+| Measurement | **4** | P2, P5, P6, P7 | a count that admits or discards what it should not |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
-| P8 | Ignore `ordinary_result` and keep using `result` as the verdict | a scratch copy of the `jq` program | scenario 9a fails: a reviewer that stated a `clean` ordinary verdict is blocked by its own strict findings, which AC-3 forbids. Scenarios 9b and 9d pass, because there the two fields agree or neither is present; only a review whose strict findings changed its overall conclusion separates them; restoring the field's precedence passes |
-| P9 | Derive the fallback verdict from the ordinary findings when `ordinary_result` is absent, instead of using `result` | same scratch copy | scenario 9c fails on the `result=needs_fixes`, no-ordinary-findings run: the derivation returns `clean`, unblocking a review whose verdict came from an ordinary reason never written as a finding, and the emitted verdict no longer equals `result`. Scenario 9d passes, because with no strict findings the fallback is not reached; restoring the unchanged `result` passes |
-| P1 | Compute `$unknown` and `$blocking_findings` over `$all` instead of the ordinary subset | a scratch copy of the `jq` program | scenario 9 fails: a review whose only findings are strict reports `needs_fixes`, because the residue class is blocking — so every specification with eight checks applied turns red and the feature is switched off before it produces a single count; restoring the partition passes |
-| P2 | Treat any `strict_check` marker as strict, without consulting the checklist | same scratch copy | scenario 6 fails: a finding naming an undefined check is exempted from blocking, so the marker becomes a way to opt out and a mislabelled real finding disappears from the blocking count with nothing in the output to show it; restoring the identifier test passes |
-| P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | same scratch copy | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
-| P4 | Rebuild the `BLOCKING_<n>_*` lines from a re-sorted array while partitioning | same scratch copy | scenario 5 fails: an all-ordinary review's output differs from before the change — different order, or a renumbered index — so a feature that should be invisible to ordinary reviews is not; restoring the untouched computation passes |
+| P1 | Append the strict pass's findings to the ordinary array before the blocking test | a scratch copy of the merge step | scenario 9 fails: a review whose ordinary pass was clean reports `needs_fixes`, because an unsorted finding is blocking — so every specification with eight checks applied turns red and the feature is switched off before it produces a single count; restoring the separate arrays passes |
+| P2 | Drop unknown-identifier findings from the strict pass silently, instead of counting them | a scratch copy of the strict `jq` program | scenario 6 fails in its first direction: `STRICT_SPEC_UNKNOWN_COUNT` is absent while findings were discarded, so a reviewer emitting an undefined identifier — a prompt drift, a renamed check — loses its findings with nothing in the output to show it; restoring the unknown class passes |
+| P3 | Emit strict findings in the `BLOCKING_<n>_*` block as well as their own | a scratch copy of the merge step | scenario 4 fails: the loop reads `BLOCKING_<n>_*` and forwards each as a blocker regardless of `BLOCKING_COUNT`, so the non-blocking guarantee holds in the reviewer and breaks one layer up; restoring the separate block passes |
+| P4 | Read the strict response's `result` field into the emitted verdict | a scratch copy of the merge step | scenario 8a fails: the two runs that differ only in the strict pass's verdict emit different `RESULT` values, so the pass that cannot block does block; restoring the ignored field passes |
+| P8 | Dispatch the strict pass unconditionally, without testing the state | a scratch copy of the dispatch step | scenario 9b fails: the invocation count is 2 on a `not_applicable` review, doubling the cost of every plan and implementation review while the output looks correct; restoring the state test passes |
+| P9 | Let a failed strict pass propagate — return its exit status, or emit no ordinary output | same scratch copy | scenario 9a fails on all three failure shapes: a reviewer command that crashes takes the ordinary review with it, so an unrelated defect blocks a pull request that had no findings; restoring the `strict_pass_failed` state passes |
 | P5 | Write `0` and an empty list for `unavailable` and `not_applicable` | a scratch copy of the print block | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they found nothing, so #1657's rate counts unexamined specifications as clean — an error in the flattering direction, which is the one nobody questions; restoring the empty values passes |
 | P7 | Report `unavailable` without a reason, or with one constant value | a scratch copy of the print block | scenario 1a fails: the two `unavailable` rows become indistinguishable, so a reader sees a state with two possible owners and no way to tell which — and the more likely of the two, a missing checklist, is the one a maintainer could fix in a minute. Every other scenario passes, because none reads the reason; restoring the two values passes |
 | P6 | Hard-code the eight identifiers in the parser | same scratch copy | scenario 13 fails: a ninth check added to the checklist is recognised by no code, so its findings are classified as ordinary and block. The eight shipped checks still pass, which is why the scenario adds a ninth; restoring `$known_checks` passes |
 
-P1 is the proof to read first: without the partition the feature does not
+P1 is the proof to read first: with the two arrays merged the feature does not
 merely fail, it makes every specification review red, and the resulting pressure
-is to disable the checks rather than to fix the parser.
+is to disable the checks rather than to fix the merge.
 
 ---
 
@@ -587,12 +595,12 @@ is to disable the checks rather than to fix the parser.
    `print_kv` block, which #1654 may also have changed.
 1. Add the checklist document with its eight sections and identifiers.
    **Verify**: the identifiers match the spec's list, by extraction.
-2. Add the partition to the `jq` program, binding `$findings` to the ordinary
-   subset, **and** the `ordinary_result` precedence with its `result` fallback.
-   **Verify**: scenarios 4, 5, 6, 7, 8, 9, 9a, 9b, 9c and 9d — the parser scenarios
-   first, because everything else is reporting.
-3. Add the two bundle fields and the supply condition, carrying the cause when
-   the state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
+2. Add the strict pass: the state test that decides whether to dispatch, the
+   second invocation, its own `jq` program, and the merge that keeps the two
+   responses apart. **Verify**: scenarios 4, 5, 5a, 6, 7, 8, 8a, 9, 9a and 9b —
+   these first, because everything else is reporting.
+3. Add the bundle field and the supply condition, carrying the cause when the
+   state is `unavailable`. **Verify**: scenarios 1, 1a and 11.
 4. Add the five `print_kv` keys, the `STRICT_<n>_*` block, the evidence object
    and the ledger fields. **Verify**: scenarios 1a, 2, 3, 10 and 12.
 5. Pass `$known_checks` from the checklist. **Verify**: scenario 13.
@@ -605,16 +613,22 @@ is to disable the checks rather than to fix the parser.
    check, and one worth having before the counts accumulate.
 7. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
-8. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
+8. Amend the spec: the fourth matrix row, the `strict_pass_failed` reason, and
+   AC-16a. **Verify**: the matrix's input list and row count match, by
+   extraction.
+9. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
 
 ## Rollback
 
-Revert the implementation PR. It removes the checklist, the partition, two
-bundle fields, five `key=value` keys, the `STRICT_<n>_*` block, the evidence
-object, the ledger fields, the summary section, the `paths` entry and the
-documentation updates. Reverting restores the two-class parser exactly; a
-reviewer that still emits `strict_check` markers afterwards has them ignored,
-and its findings are classified as they were before the feature existed.
+Revert the implementation PR. It removes the checklist, the strict pass and its
+dispatch, one bundle field, five `key=value` keys, the `STRICT_<n>_*` block, the
+evidence object, the ledger fields, the summary section, the `paths` entry and
+the documentation updates.
+
+**The ordinary review needs no restoring, because it was never changed.** That
+is the two-pass structure's second benefit after AC-3: the rollback surface is
+the strict pass alone, and reverting cannot regress an ordinary review because
+nothing in one was touched. Spec-stage reviews return to one invocation.
