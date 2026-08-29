@@ -441,15 +441,16 @@ field list is built at implementation time for that reason.
 
 **Key scenarios to test**:
 
-1. The state is `applied` at the spec stage with a readable checklist,
-   `not_applicable` at every other stage, and `unavailable` when the stage
-   cannot be resolved or the checklist cannot be read — one case per row of the
-   spec's six-row matrix.
-1a. The two `unavailable` rows are **distinguishable by their reason**:
-   `stage_unresolved` for row 1, `checklist_unreadable` for row 3. Asserted as
-   two different values, since the state alone leaves a reader unable to tell a
-   defect in the pull request's shape from one in the repository's contents.
-   `STRICT_SPEC_REASON` is empty in the other three rows.
+1. The state is `applied` at the spec stage with a readable checklist and a
+   pass that completes, `not_applicable` at every other stage, and `unavailable`
+   when the stage cannot be resolved, the checklist cannot be read, or the pass
+   does not complete — one case per row of the spec's six-row matrix, six cases.
+1a. The **three** `unavailable` rows are distinguishable by their reason:
+   `stage_unresolved` for row 1, `checklist_unreadable` for row 3,
+   `strict_pass_failed` for row 4. Asserted as three different values, since the
+   state alone leaves a reader unable to tell a defect in the pull request's
+   shape from one in the repository's contents from one in the reviewer command
+   — three owners. `STRICT_SPEC_REASON` is not emitted in rows 2, 5 and 6.
 2. `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS` are **empty** in
    `not_applicable` and `unavailable`, and present in `applied` — including
    `0` and an empty list when the checks found nothing. `STRICT_SPEC_REASON` is
