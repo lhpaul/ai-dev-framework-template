@@ -839,31 +839,45 @@ is to disable the checks rather than to fix the merge.
    `strict_pass_failed` cause and AC-16a — is merged, since steps 2 and 4 build
    a state the unamended spec does not contain. Re-read the merged `jq -n`
    object and `print_kv` block, which #1654 may also have changed.
+   **Each scenario is verified at the step that first makes its assertion
+   observable**, which is not always the step that implements the behaviour it
+   describes: the extraction's three refusals are built in step 1 and only
+   become assertable in step 4, when the state and reason are emitted.
+
 1. Add the checklist document with its eight sections and identifiers, and the
-   extraction with its three refusal tests. **Verify**: scenarios 13, 13a, 13b,
-   13c and 13d — the identifiers extracted from the shipped document match the
-   spec's list as a set, compared by extraction and not by reading.
+   extraction with its three refusal tests. **Verify**: scenario 13d — the
+   identifiers extracted from the shipped document match the spec's list as a
+   set, compared by extraction and not by reading. This is the step's own
+   output, so it needs nothing downstream.
 2. Add the strict pass: the state test that decides whether to dispatch, the
    derived bundle, `LOCAL_AI_REVIEWER_MODE`, the preset's second prompt and its
    override variable, the second invocation, its own `jq` program with the mode
-   guard, and the merge that keeps the two responses apart. **Verify**:
-   scenarios 4, 5, 5a, 6, 7, 7a, 7b, 8, 8a, 9, 9a, 9b, 11 and 11a — these first,
-   because everything else is reporting.
+   guard, **`$known_checks` passed to it from step 1's extraction** via
+   `--argjson`, and the merge that keeps the two responses apart. **Verify**:
+   scenarios 4, 5, 5a, 6, 7, 7a, 7b, 8, 8a, 9, 9a, 9b, 11, 11a and 13 — these
+   first, because everything else is reporting.
+
+   The identifier set is wired here rather than later because the parser cannot
+   classify anything without it: every scenario in this step's list that
+   distinguishes a known identifier from an unknown one depends on it, and
+   deferring it would mean hard-coding the eight identifiers temporarily —
+   exactly what proof P6 plants as a defect.
 3. Add the supply condition, carrying the cause when the state is
    `unavailable`. **Verify**: scenarios 1 and 1a.
 4. Add the five `print_kv` keys, the `STRICT_<n>_*` block, the evidence object
-   and the ledger fields. **Verify**: scenarios 1a, 2, 3, 10 and 12.
-5. Pass `$known_checks` from the checklist. **Verify**: scenario 13.
-6. Add the summary rendering. **Verify**: runbook Step 7.
-6a. Write the eleven fixture specifications — eight positives, three negatives —
+   and the ledger fields. **Verify**: scenarios 1a, 2, 3, 10, 12, 13a, 13b and
+   13c — the last three are step 1's refusals, assertable now that the state and
+   reason are emitted.
+5. Add the summary rendering. **Verify**: runbook Step 7.
+5a. Write the eleven fixture specifications — eight positives, three negatives —
    and run the reviewer against each
    with the checklist supplied and again without it. **Verify**: scenarios 14
    and 15 — record which checks fired in each run, in the pull request. This is
    evidence, not a gate: a check firing in neither run is a finding about that
    check, and one worth having before the counts accumulate.
-7. Update the `--help` block, the integration document, Protocol 93, the
+6. Update the `--help` block, the integration document, Protocol 93, the
    `paths` filter, and add the changelog fragment. **Verify**: runbook Step 9.
-8. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
+7. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
