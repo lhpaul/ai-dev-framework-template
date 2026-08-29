@@ -31,27 +31,34 @@ checks without partitioning first and every specification review turns red,
 after which the pressure is to disable the checks rather than fix the parser.
 Proof P1.
 
-## Step 1a: The reviewer's own verdict is normalised too
+## Step 1a: An ambiguous verdict is reported, not resolved
 
-**Maps to**: AC-3.
+**Maps to**: AC-3, and the limit of what the parser can know.
 
 1. Feed output whose own `result` is `needs_fixes`, carrying three known strict
    findings and **no** ordinary blocking ones.
-2. Feed output whose own `result` is `needs_fixes` with **no findings at all**.
+2. Feed a `clean` result with strict findings; a `needs_fixes` with ordinary
+   blockers; and a `needs_fixes` with no findings at all.
 
-**Expected result**: case 1 emits `RESULT=clean`. Case 2 still emits
-`needs_fixes`.
+**Expected result**: case 1 emits `STRICT_SPEC_VERDICT_AMBIGUOUS=1` **and keeps
+`RESULT=needs_fixes`**. None of case 2's three emits the flag.
 
-The partition fixes the count and not the verdict. The parser's last branch
-honours the reviewer's own `result`, so a reviewer that read eight checks, found
-three contradictions and concluded `needs_fixes` would block with
-`BLOCKING_COUNT=0` — counts saying non-blocking, pull request red, AC-3 failing
-on precisely the review this feature exists to produce. Proof P8.
+The partition fixes the count and not the verdict: the parser's last branch
+honours the reviewer's own `result`, so a reviewer that read the checks, found
+three contradictions and concluded `needs_fixes` blocks with
+`BLOCKING_COUNT=0`.
 
-Case 2 is the boundary the normalisation must not cross. It requires **at least
-one strict finding** to be present; a bare `needs_fixes` keeps today's behaviour,
-because nothing there establishes the verdict was about strict checks. That is
-also what lets Step 2 demand byte-identical output for ordinary reviews.
+**Downgrading it would be the wrong repair**, and this step asserts that it does
+not happen. That combination has two indistinguishable causes — a reviewer that
+folded strict findings into its verdict, or one that blocked for a reason it
+never wrote as a finding — and unblocking the second is strict findings moving
+the verdict, which the spec forbids in *both* directions. Proof P8.
+
+So the contract moves to the prompt: `result` reports the ordinary verdict, and
+strict findings must not influence it. The parser's job is to refuse to hide the
+ambiguity — the flag says a human should look, because either reading is worth
+knowing and neither is safe to resolve automatically. Proof P9 covers omitting
+the flag and over-firing it; a flag on most spec reviews is a flag nobody reads.
 
 ## Step 2: Ordinary findings are untouched
 
@@ -59,8 +66,10 @@ also what lets Step 2 demand byte-identical output for ordinary reviews.
 
 1. Feed reviewer output with two ordinary blocking findings and no strict ones.
 2. Compare the entire `key=value` output to the same input before this change,
-   excluding the **four** keys this item adds: `STRICT_SPEC_STATE`,
+   excluding the four keys this item always emits: `STRICT_SPEC_STATE`,
    `STRICT_SPEC_REASON`, `STRICT_SPEC_COUNT` and `STRICT_SPEC_CHECKS`.
+   `STRICT_SPEC_VERDICT_AMBIGUOUS` is **not** excluded: it requires a strict
+   finding, so its absence here is part of what the comparison asserts.
 
 **Expected result**: byte-identical.
 
@@ -249,8 +258,8 @@ unioned across rounds, never added.
 6. Read `.github/workflows/markdown-lint.yml`'s `paths` filter.
 
 **Expected result**: the checklist's identifiers match the spec's list exactly;
-the three surfaces describe the same four keys, three states and two
-`unavailable` reasons; none describes
+the three surfaces describe the same five keys, three states, two `unavailable`
+reasons and the ambiguity flag's three conditions; none describes
 a strict finding as blocking or as affecting the verdict; and the `paths` filter
 lists the checklist, so a checklist-only change is still linted.
 
@@ -275,10 +284,10 @@ lists the checklist, so a checklist-only change is still linted.
 ## Step 11: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P8 each record the command, the file and line of the
+2. Confirm P1 through P9 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eight proofs in two groups — **four** blocking, **four**
+**Expected result**: nine proofs in two groups — **five** blocking, **four**
 measurement, per the plan's proof-group table.
 
 P1 is the one to read first: without the partition the feature does not merely
