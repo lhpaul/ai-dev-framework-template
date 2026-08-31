@@ -720,6 +720,15 @@ expensive_gate_last_platform=""
 expensive_gate_last_result=""
 expensive_gate_last_reason=""
 expensive_gate_last_head=""
+# Strict-spec ledger globals (#1650); set by capture_strict_spec_globals_from_output
+# when local-ai-reviewer runs. Object absent from history when not recorded.
+strict_spec_recorded=0
+strict_spec_state=""
+strict_spec_count=""
+strict_spec_checks=""
+strict_spec_unknown_count=""
+strict_spec_reason=""
+strict_spec_summary_section=""
 # Peer evidence collected during this invocation: "platform|result|reason".
 declare -a platform_peer_evidence=()
 
@@ -3567,6 +3576,60 @@ run_coderabbit_cli_review() {
   esac
 }
 
+# Forward STRICT_* keys from local-ai-reviewer.sh output unchanged.
+emit_local_ai_strict_spec_keys() {
+  local script_output="$1"
+  local line key
+  while IFS= read -r line; do
+    [ -z "${line:-}" ] && continue
+    key="${line%%=*}"
+    case "$key" in
+      STRICT_SPEC_STATE|STRICT_SPEC_COUNT|STRICT_SPEC_CHECKS|STRICT_SPEC_UNKNOWN_COUNT|STRICT_SPEC_REASON)
+        print_kv "$key" "${line#*=}"
+        ;;
+      STRICT_[0-9]*_CHECK|STRICT_[0-9]*_PATH|STRICT_[0-9]*_LINE|STRICT_[0-9]*_BODY)
+        print_kv "$key" "${line#*=}"
+        ;;
+    esac
+  done <<< "$script_output"
+}
+
+# Capture STRICT_SPEC_* into globals for reviewer_loop_history_build_entry.
+# Present object vs absent object is gated by strict_spec_recorded.
+capture_strict_spec_globals_from_output() {
+  local script_output="$1"
+  local state
+  local idx
+  local check path line body
+  state="$(kv_value_default STRICT_SPEC_STATE "$script_output" "")"
+  if [ -z "$state" ]; then
+    return 0
+  fi
+  strict_spec_recorded=1
+  strict_spec_state="$state"
+  strict_spec_count="$(kv_value_default STRICT_SPEC_COUNT "$script_output" "")"
+  strict_spec_checks="$(kv_value_default STRICT_SPEC_CHECKS "$script_output" "")"
+  strict_spec_unknown_count="$(kv_value_default STRICT_SPEC_UNKNOWN_COUNT "$script_output" "")"
+  strict_spec_reason="$(kv_value_default STRICT_SPEC_REASON "$script_output" "")"
+  strict_spec_summary_section=""
+  if [ "$state" = "applied" ] && [ -n "$strict_spec_count" ] && [ "$strict_spec_count" -gt 0 ]; then
+    strict_spec_summary_section="
+
+**Strict spec findings (non-blocking):**"
+    idx=1
+    while true; do
+      check="$(kv_value_default "STRICT_${idx}_CHECK" "$script_output" "")"
+      [ -z "$check" ] && break
+      path="$(kv_value_default "STRICT_${idx}_PATH" "$script_output" "")"
+      line="$(kv_value_default "STRICT_${idx}_LINE" "$script_output" "")"
+      body="$(kv_value_default "STRICT_${idx}_BODY" "$script_output" "")"
+      strict_spec_summary_section="${strict_spec_summary_section}
+- \`${check}\` ${path}:${line} — ${body}"
+      idx=$((idx + 1))
+    done
+  fi
+}
+
 run_local_ai_reviewer_review() {
   # Runs local-ai-reviewer.sh and maps its exit codes to the standard
   # pr-review-loop key=value output contract.
@@ -3629,6 +3692,7 @@ run_local_ai_reviewer_review() {
       print_kv SUGGESTION_COUNT "$suggestion_count"
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      emit_local_ai_strict_spec_keys "$script_output"
       return 0
       ;;
     1)
@@ -3657,6 +3721,7 @@ run_local_ai_reviewer_review() {
       done
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      emit_local_ai_strict_spec_keys "$script_output"
       return 1
       ;;
     2)
@@ -3676,6 +3741,7 @@ run_local_ai_reviewer_review() {
       print_kv SUGGESTION_COUNT "$suggestion_count"
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      emit_local_ai_strict_spec_keys "$script_output"
       return 2
       ;;
     *)
@@ -3695,6 +3761,7 @@ run_local_ai_reviewer_review() {
       print_kv SUGGESTION_COUNT "$suggestion_count"
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      emit_local_ai_strict_spec_keys "$script_output"
       return 0
       ;;
   esac
@@ -7820,6 +7887,12 @@ reviewer_loop_history_build_entry() {
     --arg egResult "${expensive_gate_last_result:-}" \
     --arg egReason "${expensive_gate_last_reason:-}" \
     --arg egHead "${expensive_gate_last_head:-}" \
+    --argjson strictRecorded "${strict_spec_recorded:-0}" \
+    --arg strictState "${strict_spec_state:-}" \
+    --arg strictCount "${strict_spec_count:-}" \
+    --arg strictChecks "${strict_spec_checks:-}" \
+    --arg strictUnknown "${strict_spec_unknown_count:-}" \
+    --arg strictReason "${strict_spec_reason:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -7849,6 +7922,30 @@ reviewer_loop_history_build_entry() {
     }
     | if ($egResult | length) > 0 then
         . + {expensive_gate: {platform: $egPlatform, result: $egResult, reason: $egReason, head: $egHead}}
+      else
+        .
+      end
+    | if $strictRecorded == 1 then
+        . + {
+          strict_spec: (
+            { state: $strictState }
+            | if $strictState == "applied" then
+                . + {
+                  count: ($strictCount | tonumber),
+                  checks: ($strictChecks | if . == "" then [] else (split(",") | map(select(length > 0))) end)
+                }
+                | if ($strictUnknown | length) > 0 then
+                    . + { unknown_count: ($strictUnknown | tonumber) }
+                  else
+                    .
+                  end
+              elif $strictState == "unavailable" then
+                . + { reason: $strictReason }
+              else
+                .
+              end
+          )
+        }
       else
         .
       end'
@@ -9678,6 +9775,9 @@ for index in "${!platforms[@]}"; do
   print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
   print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
   emit_prefixed_platform_output "$platform_index" "$platform_output"
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    capture_strict_spec_globals_from_output "$platform_output"
+  fi
   # Record a human-readable display token for the PR summary comment.
   _prt_reason="$platform_reason"
   _prt_display_override="$(kv_value_default DISPLAY_RESULT "$platform_output" "")"
@@ -10090,7 +10190,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
+${small_findings_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
