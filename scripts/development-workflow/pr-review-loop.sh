@@ -5140,6 +5140,7 @@ coderabbit_thread_gate_clean() {
   done
 
   if [ "${out:-0}" -gt 0 ]; then
+    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
     print_kv RESULT needs_fixes
     print_kv REASON coderabbit_unresolved_review_threads
     print_kv PLATFORM "$platform"
