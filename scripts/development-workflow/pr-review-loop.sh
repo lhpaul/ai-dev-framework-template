@@ -723,6 +723,19 @@ expensive_gate_last_head=""
 # Peer evidence collected during this invocation: "platform|result|reason".
 declare -a platform_peer_evidence=()
 
+# expensive_gate_sync_last_from_output <gate_kv_output>
+#
+# Command substitution runs expensive_reviewer_gate in a subshell, so assignments
+# to expensive_gate_last_* inside the gate are lost. Rehydrate them from the
+# captured EXPENSIVE_GATE_* telemetry before the caller branches or history runs.
+expensive_gate_sync_last_from_output() {
+  local out="$1"
+  expensive_gate_last_platform="$(kv_value_default EXPENSIVE_GATE_PLATFORM "$out" "${expensive_gate_last_platform:-}")"
+  expensive_gate_last_result="$(kv_value_default EXPENSIVE_GATE_RESULT "$out" "")"
+  expensive_gate_last_reason="$(kv_value_default EXPENSIVE_GATE_REASON "$out" "")"
+  expensive_gate_last_head="$(kv_value_default EXPENSIVE_GATE_HEAD "$out" "${expensive_gate_last_head:-}")"
+}
+
 is_expensive_reviewer_platform() {
   array_contains_value "$1" "${EXPENSIVE_REVIEWER_PLATFORMS[@]:-}"
 }
@@ -9451,6 +9464,7 @@ for index in "${!platforms[@]}"; do
         expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$_eg_plat" "$loop_head_sha" "earlier_buckets")"
         expensive_gate_status=$?
         set -e
+        expensive_gate_sync_last_from_output "$expensive_gate_output"
         printf '%s\n' "$expensive_gate_output"
         if [ "$expensive_gate_status" -ne 0 ]; then
           last_platform="$_eg_plat"
@@ -9529,6 +9543,7 @@ for index in "${!platforms[@]}"; do
     expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")"
     expensive_gate_status=$?
     set -e
+    expensive_gate_sync_last_from_output "$expensive_gate_output"
     # Re-emit gate telemetry on the loop's stdout contract.
     printf '%s\n' "$expensive_gate_output"
     if [ "$expensive_gate_status" -ne 0 ]; then

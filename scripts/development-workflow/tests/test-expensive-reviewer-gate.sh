@@ -319,6 +319,23 @@ done
 run_test "1649_s24_ready_called" "1" "$_ready_called"
 run_test "1649_s24_not_deferred" "skipped" "$aggregate_result"
 
+# --- Scenario 25: command-substitution must rehydrate expensive_gate_last_* ---
+platforms=(local-ai-reviewer pr-agent codex-github)
+phase_after_clean_platforms=()
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+platform_reviewed_heads=("local-ai-reviewer:$_other")
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_head"; }
+expensive_gate_baseline_checks_status() { printf 'green %s\n' "$_head"; }
+expensive_gate_max_deferrals=3
+EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+expensive_gate_last_result=""
+expensive_gate_last_reason=""
+_out="$(expensive_reviewer_gate 25 codex-github "$_head" 2>/dev/null)" || true
+run_test "1649_s25_subshell_loses_globals" "" "${expensive_gate_last_result:-}"
+expensive_gate_sync_last_from_output "$_out"
+run_test "1649_s25_sync_restores_result" "deferred" "${expensive_gate_last_result:-}"
+run_test "1649_s25_sync_restores_reason" "local_evidence_stale" "${expensive_gate_last_reason:-}"
+
 # Docs parity: both docs mention both escalation values + ready-phase preflight.
 # Grep files directly — do not $(cat) Protocol 93 into argv (ARG_MAX).
 _p93="$REPO_ROOT/docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md"
