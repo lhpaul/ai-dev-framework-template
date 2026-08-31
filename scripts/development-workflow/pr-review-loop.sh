@@ -7790,13 +7790,19 @@ reviewer_loop_local_latest_verdict() {
                 | .reviewed_head // ""
               ),
               iteration: ($entry.iteration // 0)})
-      ]
-    | sort_by(.iteration)
-    | last
-    // (if ($entries | length) == 0
-        then {outcome: "not_yet_run", head_sha: "", iteration: 0}
-        else {outcome: "unknown",     head_sha: "", iteration: 0}
-        end)
+      ] as $local_verdicts
+    | if ($local_verdicts | length) > 0 then
+        ($local_verdicts | sort_by(.iteration) | last)
+      elif [ $entries[]
+          | select(
+              ((.platforms // []) | index("local-ai-reviewer")) != null
+              or any(.reviewed_heads[]?; .platform == "local-ai-reviewer")
+            )
+        ] | length > 0 then
+        {outcome: "unknown", head_sha: "", iteration: 0}
+      else
+        {outcome: "not_yet_run", head_sha: "", iteration: 0}
+      end
     | if .outcome == "not_configured" then .outcome = "unavailable" else . end'
 }
 
