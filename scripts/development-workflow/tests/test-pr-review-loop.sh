@@ -296,6 +296,12 @@ case "$*" in
   # gh pr view --json headRefOid — used by run_copilot_review to resolve head SHA.
   # Tests set MOCK_GH_HEAD_SHA to control the returned value; default empty string
   # triggers the head-sha-unavailable escalation path.
+  # When statusCheckRollup is also requested (#1649 expensive gate baseline helper),
+  # return the combined payload from MOCK_GH_PR_VIEW_ROLLUP (full JSON object).
+  *"statusCheckRollup"*)
+    printf '%s\n' "${MOCK_GH_PR_VIEW_ROLLUP:-{\"statusCheckRollup\":[],\"headRefOid\":\"${MOCK_GH_HEAD_SHA:-}\"}}"
+    exit "${MOCK_GH_EXIT:-0}"
+    ;;
   *"headRefOid"*)
     printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
     exit "${MOCK_GH_EXIT:-0}"
@@ -16390,7 +16396,52 @@ run_test "1649_s10_pending" "deferred|baseline_checks_pending" "$(_1649_checks_r
 run_test "1649_s10_green" "dispatched|" "$(_1649_checks_row green)"
 run_test "1649_s10_empty" "deferred|baseline_checks_unobserved" "$(_1649_checks_row empty)"
 
-# --- Scenario 11: evidence head moved ---
+# --- Scenario 10 real helper (no stub): parse rollup, exclude reviewer checks ---
+unset -f expensive_gate_baseline_checks_status
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+
+_1649_baseline_helper_row() {
+  local rollup="$1"
+  export MOCK_GH_PR_VIEW_ROLLUP="$rollup"
+  export MOCK_GH_EXIT=0
+  expensive_gate_baseline_checks_status 42 "$_1649_head"
+}
+
+_1649_green_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_fail_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_pending_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"IN_PROGRESS","conclusion":null},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_exclude_rollup='{"statusCheckRollup":[{"name":"Cursor Bugbot","status":"IN_PROGRESS","conclusion":null},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_empty_rollup='{"statusCheckRollup":[],"headRefOid":"'"$_1649_head"'"}'
+_1649_reviewer_only_rollup='{"statusCheckRollup":[{"name":"Cursor Bugbot","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+
+run_test "1649_s10_real_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_green_rollup")"
+run_test "1649_s10_real_failed" "failed $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_fail_rollup")"
+run_test "1649_s10_real_pending" "pending $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_pending_rollup")"
+# Pending reviewer-owned check + green non-reviewer → green (exclusion)
+run_test "1649_s10_real_exclude_reviewer" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_exclude_rollup")"
+run_test "1649_s10_real_empty" "empty $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_empty_rollup")"
+run_test "1649_s10_real_reviewer_only" "empty $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_reviewer_only_rollup")"
+export MOCK_GH_EXIT=1
+run_test "1649_s10_real_unavailable" "unavailable" \
+  "$(expensive_gate_baseline_checks_status 42 "$_1649_head" | awk '{print $1}')"
+export MOCK_GH_EXIT=0
+unset MOCK_GH_PR_VIEW_ROLLUP
+# Restore stubs for remaining gate scenarios.
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "${MOCK_THREADS_HEAD:-$_1649_head}"; }
+expensive_gate_baseline_checks_status() {
+  printf '%s %s\n' "${MOCK_CHECKS_STATE:-green}" "${MOCK_CHECKS_HEAD:-$_1649_head}"
+}
+platforms=(local-ai-reviewer pr-agent codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+
 expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_other"; }
 expensive_gate_baseline_checks_status() { printf 'green %s\n' "$_1649_head"; }
 _out="$(_1649_run_gate)"
