@@ -55,7 +55,7 @@ What that gate cannot see is a step **inside** the plan document that nothing in
 **Steps**:
 
 1. The loop starts a local review.
-2. The reviewer is given the ordinary review contract, and — new here — the strict plan checklist, the full text of every implementation-plan document the pull request changes, and the plan's declared source of truth when that source is in the repository.
+2. The reviewer is given the ordinary review contract, and — new here — the strict plan checklist, the full text of every implementation-plan document the pull request changes, and the approved spec whenever one is present in that plan's development directory — independently of what the plan declares.
 3. It applies each applicable check to each of those plan documents.
 4. It reports what it finds: ordinary findings as it does today, and strict-check findings **labelled as such**, each naming the check it came from and the plan document it applies to.
 5. The review's overall verdict is decided **without** the strict findings.
@@ -103,7 +103,7 @@ What that gate cannot see is a step **inside** the plan document that nothing in
 **Steps**:
 
 1. The reviewer applies each check that needs no source document: `source_declaration`, `phase_ordering`, `dependency_state` and `reversal_risk`.
-2. It does not apply the checks that compare the plan against its source — `unspecified_step`, `spec_traceability` and `ac_test_coverage` — because the source text is not in the repository, whichever of the three reasons put it out of reach.
+2. It does not apply the checks that compare the plan against its source — `unspecified_step`, `spec_traceability` and `ac_test_coverage` — because no approved spec is present in the development directory, and there is nothing for them to compare against.
 3. It reports the state, the findings, and **the set of checks it applied**.
 
 **Postconditions**: The review is complete and unaffected. A reader can tell that three checks did not run on this pull request, and which three.
