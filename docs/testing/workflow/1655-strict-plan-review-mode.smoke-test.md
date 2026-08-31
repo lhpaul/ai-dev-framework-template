@@ -146,8 +146,8 @@ from which.
 
 1. Run a plan-stage review whose ordinary pass returns no findings and whose
    strict pass returns three, each carrying an applied identifier.
-2. Run the same review with the checklist removed, so no strict pass is
-   dispatched.
+2. Run the same review with the checklist removed, so the strict pass
+   produces no result — `unavailable` with `checklist_unreadable`.
 3. Run a non-plan-stage review and compare its whole `key=value` output to the
    same input before this change, excluding `STRICT_PLAN_STATE` and its reason.
 4. Time a plan-stage round with `--timeout` set low enough to measure, then grep
@@ -160,11 +160,17 @@ step 1's. Step 3 is byte-identical with **one** invocation. Step 4's round
 completes within `--timeout` — not twice it — and there is no second timeout
 name.
 
-Steps 1 and 2 are AC-3's own wording executed rather than reasoned about: the
-second review *is* the review with the checks disabled. Step 3 catches the two
-failures nothing else would show — an implementation that renumbers the blocking
-lines while merging, and one that dispatches a plan pass on a stage that should
-never see it.
+Steps 1 and 2 are AC-3's comparison executed rather than reasoned about. **The
+second review is not "the checks disabled"** — AC-26 forbids any setting that
+disables them, so no such review exists to run. It is a review whose strict pass
+produced no result because the checklist was unavailable, which is the
+`unavailable` row of the matrix and the only reachable way to observe the same
+input with no strict findings. AC-3 is worded against that comparison for the
+same reason.
+
+Step 3 catches the two failures nothing else would show — an implementation that
+renumbers the blocking lines while merging, and one that dispatches a plan pass
+on a stage that should never see it.
 
 ## Step 8: The checks fire on planted violations
 

@@ -222,6 +222,14 @@ Not applicable — this repository ships workflow tooling, not a service.
       script. An eighth check is then one edit to one document, which is the
       same property #1650 bought with `$known_checks`.
 
+      **Two spellings exist and the boundary between them is one line of `sed`.**
+      The document says `not required`, because it is read by people; the
+      internal token is `not_required`, because it is compared in `jq` where a
+      space is a hazard. The extraction maps one to the other at the point of
+      reading — see **Code Samples** — and no other site sees both. Everything
+      downstream of the extraction uses `required` and `not_required`; the
+      checklist and this plan's prose use `required` and `not required`.
+
       **The extraction gains a fourth refusal.** #1650 refuses a checklist whose
       headings and identifiers disagree, one that repeats an identifier, and one
       with no headings at all. A section with no `Source:` line, or with a value
@@ -414,9 +422,12 @@ depends on, and #1650's own scenarios are the only thing that would catch it.
    to the same review before this change, excluding the one key this item always
    adds, `STRICT_PLAN_STATE`, and its reason. No plan pass is dispatched.
 5a. A **plan-stage** review whose strict pass returns no findings produces the
-   same ordinary output as the same review with the checklist removed — verdict,
-   blocking block, order and numbering identical. AC-3 turned into a test, which
-   the two-pass structure is what makes assertable.
+   same ordinary output as the same review whose strict pass produced **no
+   result** — verdict, blocking block, order and numbering identical. The second
+   review is reached by removing the checklist, which is the `unavailable` row;
+   AC-26 forbids a setting that disables the checks, so there is no
+   checks-disabled review to compare against and AC-3 is worded against this
+   comparison instead.
 6. An **unknown** `check` identifier is reported with `STRICT_<n>_CHECK=unknown`,
    excluded from `STRICT_PLAN_COUNT` and `STRICT_PLAN_CHECKS`, counted in
    `STRICT_PLAN_UNKNOWN_COUNT`, and does not become blocking. Asserted in both
@@ -534,8 +545,8 @@ rather than *this check does not work*.
 
 | Fixture | Contents | Location |
 | --- | --- | --- |
-| Fixture plan documents | **Eleven**: seven positives, one per check with a single planted instance of its shape; four negatives — a declared addition (AC-5a), a step declared irreversible (AC-10a), a plan whose criteria all have falsifying tests, and a Refactor plan correctly declaring its tracker brief | `scripts/development-workflow/tests/fixtures/strict-plan-plans/` |
-| Fixture source specs | Two: one paired with the positives so the source-dependent checks have something to compare against, and one deliberately absent so the no-source applied set is exercised | same directory, as sibling `1_*_specs.md` files |
+| Fixture plan documents | **Eleven**: seven positives, one per check with a single planted instance of its shape; four negatives — a declared addition (AC-5a), a step declared irreversible (AC-10a), a plan whose criteria all have falsifying tests, and a Refactor plan correctly declaring its tracker brief. Ten sit under `with-source/`; the Refactor negative sits under `no-source/` | `scripts/development-workflow/tests/fixtures/strict-plan-plans/` |
+| Fixture source specs | **One** committed `1_*_specs.md`, a sibling of the positives, so the source-dependent checks have something to compare against. The no-source case is a **second fixture directory** containing a plan and no sibling spec — an absence is a directory without a file, not a file | `.../strict-plan-plans/with-source/` and `.../strict-plan-plans/no-source/` |
 | Git fixtures | A temporary repository with a plan committed at one revision and rewritten in the working tree, for scenario 8; a path removed from the index, for scenario 11 | built inline in `test-local-ai-reviewer.sh` |
 | Reviewer outputs | **Ordinary pass**: clean; two blocking findings. **Strict pass**: no findings; findings from two applied checks; an unknown identifier; an identifier that is in the checklist but not in the applied set; and the failure shapes #1650 enumerates | inline in the same suite |
 | Checklist fixtures | A well-formed seven-section checklist with `Source:` lines; one with an eighth section; one with a section missing its `Source:` line; one with an invalid `Source:` value; and #1650's three malformed shapes | `scripts/development-workflow/tests/fixtures/strict-plan-checks/` |
@@ -597,7 +608,8 @@ else is #1650's, read from the registry entry.
 
 ```text
 # $sections comes from the checklist: one object per level-3 section, carrying
-# the identifier and its Source: line. The closed set and the split have one
+# the identifier and its Source: line, already normalised to `required` or
+# `not_required` by the extraction below. The closed set and the split have one
 # definition, and it is the document.
 #
 #   [ { "id": "source_declaration", "source": "not_required" }, ... ]
@@ -628,9 +640,15 @@ carrying an unapplied identifier is `unknown`: visible in
 The `Source:` extraction, with the fourth refusal:
 
 ```text
+# The document's two spellings map to the two internal tokens here and nowhere
+# else: `not required` is what a reader writes, `not_required` is what jq
+# compares. Two -e expressions rather than one alternation, so the mapping is
+# explicit rather than a substitution that happens to preserve the text.
 status=0
-sources="$(sed -n 's/^Source:[[:space:]]*\(required\|not_required\)[[:space:]]*$/\1/p' \
-             "$checklist")" || status=$?
+sources="$(sed -n \
+  -e 's/^Source:[[:space:]]*required[[:space:]]*$/required/p' \
+  -e 's/^Source:[[:space:]]*not required[[:space:]]*$/not_required/p' \
+  "$checklist")" || status=$?
 if [ "$status" -ne 0 ]; then
   strict_unreadable; return 0
 fi
