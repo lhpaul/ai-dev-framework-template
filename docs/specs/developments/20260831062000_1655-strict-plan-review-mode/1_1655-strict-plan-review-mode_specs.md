@@ -27,7 +27,7 @@ Every objective stated in issue #1655 maps to acceptance criteria and use cases 
 | 5 | *Scope* — flag phase ordering gaps | Checks 5 and 6; AC-8, AC-9 |
 | 6 | *Scope* — flag unclear rollback/migration risk | Check 7; AC-10 |
 | 7 | *Scope* — flag implementation hidden in plan-only pull requests | Check 2 for the document-level case (AC-5); the file-level case is already gated deterministically — see **Relationship to checks that already exist** |
-| 8 | *Scope* — emit checklist coverage in the summary | Use Case 3; AC-17, AC-18, AC-19 |
+| 8 | *Scope* — emit checklist coverage in the summary | Use Case 3; AC-17, AC-18, AC-19, AC-19b, AC-19c |
 
 ---
 
@@ -95,10 +95,10 @@ What that gate cannot see is a step **inside** the plan document that nothing in
 
 ---
 
-### Use Case 3: A refactor plan is reviewed with part of the checklist
+### Use Case 3: A plan is reviewed with part of the checklist
 
 **Actor**: The local reviewer.
-**Preconditions**: The change is at the plan stage and the plan declares no approved spec, because the item is a Refactor whose brief is the tracker issue.
+**Preconditions**: The change is at the plan stage and the plan's source of truth is not in the repository — either because the item is a Refactor whose brief is the tracker issue, or because the plan declares an approved spec that is not there.
 
 **Steps**:
 
@@ -112,7 +112,8 @@ What that gate cannot see is a step **inside** the plan document that nothing in
 
 - **A count without its denominator is not a rate**, and this is the case that forces the point. Two plans each reporting one finding are not comparable if one was asked seven questions and the other four. #1657 computes incidence per check, and a check that was never applied belongs in neither the numerator nor the denominator.
 - Partial coverage is **not** a failure state. Nothing is retried, nothing is gated, and the review's verdict is what it would be with all seven applied. It is an ordinary outcome for an ordinary kind of item, and the only thing required of it is that it be visible.
-- **Partial coverage has exactly one cause**: the plan's source of truth is not in the repository. A plan that declares a spec which is absent is a different thing — that is a finding from check 1, not a coverage gap, because a plan naming a source that does not exist is a defect in the plan rather than a limit on the reviewer.
+- **Partial coverage has exactly one cause — the plan's source of truth is not in the repository — and that cause arises in two ways.** A Refactor plan whose brief lives in the tracker is the ordinary one. A plan that declares an approved spec which is not present in its development directory is the other, and it is a defect. Both produce the same applied set, because the three source-dependent checks have nothing to compare against either way; what tells them apart is that the second one also produces a `source_declaration` finding, and the first does not.
+- Coverage therefore records *what was asked*, and check 1 records *whether the plan was at fault for the gap*. Reading a partial applied set as an accusation, or the absence of a `source_declaration` finding as full coverage, gets both backwards.
 
 ---
 
@@ -179,7 +180,7 @@ What that gate cannot see is a step **inside** the plan document that nothing in
 - The checks are applied to the **full text of each changed plan document at the reviewed head**, and to the full text of its source when that source is in the repository — not to the pull request's diff. A plan amended in a later pull request has most of its content outside that diff, and checks run over hunks would report absences that are artifacts of where the diff happens to end.
 - Every review reports the strict-plan **state**. The **count**, the set of **checks that produced findings**, and the set of **checks that were applied** accompany it only when the state is `applied` — the count including when it is zero — and are empty otherwise.
 - The set of applied checks is reported whenever the state is `applied`, including when it is all seven. A reader must never have to infer coverage from the spec's text and the round's date.
-- **Partial coverage has exactly one cause**: the plan's declared source of truth is not in the repository, which is the ordinary case for a Refactor item. There is no separate field recording that cause, because a second place to state one fact is a second place for two statements to disagree; the applied set is the record.
+- **Partial coverage has exactly one cause**: the plan's source of truth is not in the repository. That cause arises when the item is a Refactor whose brief is the tracker issue, and when a plan declares an approved spec that is absent; the applied set is the same in both, and only the second produces a `source_declaration` finding. There is no separate field recording the cause, because a second place to state one fact is a second place for two statements to disagree; the applied set and check 1's finding are the record.
 - The state of each strict checklist is reported **independently**. A review at the spec stage reports the plan checklist as `not_applicable` and the spec checklist as `applied`, and the reverse holds at the plan stage. #1650's contract is unchanged by this item.
 - At most one strict checklist reaches the `applied` state on any review, because a change has one stage.
 - Incidence is measured **per pull request**, never by summing rounds: a check fired on a plan if any of its rounds reported that check, and was applied to that plan if any of its rounds applied it.
@@ -187,7 +188,9 @@ What that gate cannot see is a step **inside** the plan document that nothing in
 - A strict finding that a maintainer ignores has no consequence: no **workflow label** on the pull request, no gate, no escalation, no repetition of the demand beyond the ordinary re-reporting of an unresolved finding. Every strict finding still carries its **check identifier**, which is what makes it readable and countable; that identifier is part of the finding, not a mark against the pull request.
 - Each check answers a question that can be **wrong**, not one that is a matter of taste.
 - The checks are a fixed, enumerated set. Adding one, removing one, or moving one between the source-dependent and source-independent groups is a change to this contract, not a change to a prompt.
-- An **empty or unreadable plan document** at the reviewed head is not a state of its own. The applicable checks are applied to it and report what they find, which for a document with no declared source is at least a `source_declaration` finding. Only the checklist being unreadable — not the plan being unreadable — produces `unavailable`, because a plan the reviewer cannot make sense of is a defect in the plan and belongs in the findings.
+- **A plan document whose text is retrieved is examined, whatever that text is.** Empty, truncated, malformed or incoherent prose is not a state of its own: the applicable checks are applied and report what they find, which for a document declaring no source is at least a `source_declaration` finding. A document a reader cannot make sense of is a defect in the plan and belongs in the findings, not in a state.
+- **A plan document whose text cannot be retrieved at all** — the file is listed as changed and its bytes do not arrive — is the checks failing to complete, reported as `unavailable` with reason `strict_pass_failed`. It gets no reason of its own: the review's outcome and the owner of the fix are the same as for any other failed attempt, and a fourth reason would divide one thing to fix into two.
+- The word *unreadable* appears in exactly one reason, `checklist_unreadable`, and refers to the checklist rather than to any plan document.
 - **There is no way to disable the strict plan checks by themselves.** They run when the local reviewer runs and the conditions above hold; disabling the local reviewer is the single mechanism that stops them, and it is the only one.
 
 ---
@@ -250,21 +253,28 @@ Each of `not_applicable` and `unavailable` carries a **reason**, and each reason
 
 The complete gate, from a review starting to strict findings existing or not. Rows are evaluated in order and the first match decides.
 
-The order asks three questions about the change before either question about the machinery: **what is this change** (rows 1–3), **can the checks run** (rows 4–5), **what did they find** (rows 6–9). An unresolved stage cannot be compared against `plan`; a pull request with no plan document has nothing for a checklist to be applied to; and checks never attempted cannot complete. No row evaluates an input that an earlier answer made unreachable.
+The order asks three questions about the change before either question about the machinery: **what is this change** (rows 1–3), **can the checks run** (rows 4–5), **what did they find** (rows 6–10). An unresolved stage cannot be compared against `plan`; a pull request with no plan document has nothing for a checklist to be applied to; and checks never attempted cannot complete. No row evaluates an input that an earlier answer made unreachable.
 
-| # | Stage resolves | Stage | Plan doc changed | Checklist available | Checks complete | Source readable | Findings | State | Reason | Applied checks | Count | Checks that fired |
+**Plan's source** is the sixth input and takes three values: the plan declares an approved spec and it is `present`; the plan declares an approved spec and it is `absent`; or the plan declares a tracker brief, which is `not in repository` by design.
+
+| # | Stage resolves | Stage | Plan doc changed | Checklist available | Checks complete | Plan's source | Findings | State | Reason | Applied checks | Count | Checks that fired |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | **No** | — | — | — | not attempted | — | — | `unavailable` | `stage_unresolved` | **empty** | **empty** | **empty** |
 | 2 | Yes | not plan | — | — | not attempted | — | — | `not_applicable` | `stage_not_plan` | **empty** | **empty** | **empty** |
 | 3 | Yes | plan | **No** | — | not attempted | — | — | `not_applicable` | `no_plan_document_changed` | **empty** | **empty** | **empty** |
 | 4 | Yes | plan | Yes | **No** | not attempted | — | — | `unavailable` | `checklist_unreadable` | **empty** | **empty** | **empty** |
 | 5 | Yes | plan | Yes | Yes | **No** | — | — | `unavailable` | `strict_pass_failed` | **empty** | **empty** | **empty** |
-| 6 | Yes | plan | Yes | Yes | Yes | Yes | none | `applied` | none | all seven | `0` | empty list |
-| 7 | Yes | plan | Yes | Yes | Yes | Yes | one or more | `applied` | none | all seven | *n* | the checks that fired |
-| 8 | Yes | plan | Yes | Yes | Yes | **No** | none | `applied` | none | the four needing no source | `0` | empty list |
-| 9 | Yes | plan | Yes | Yes | Yes | **No** | one or more | `applied` | none | the four needing no source | *n* | the checks that fired |
+| 6 | Yes | plan | Yes | Yes | Yes | spec `present` | none | `applied` | none | all seven | `0` | empty list |
+| 7 | Yes | plan | Yes | Yes | Yes | spec `present` | one or more | `applied` | none | all seven | *n* | the checks that fired |
+| 8 | Yes | plan | Yes | Yes | Yes | spec `absent` | one or more | `applied` | none | the four needing no source | *n* | the checks that fired, always including `source_declaration` |
+| 9 | Yes | plan | Yes | Yes | Yes | `not in repository` | none | `applied` | none | the four needing no source | `0` | empty list |
+| 10 | Yes | plan | Yes | Yes | Yes | `not in repository` | one or more | `applied` | none | the four needing no source | *n* | the checks that fired |
 
-**Rows 8 and 9 are not degraded rows 6 and 7.** Source readability does not gate anything; it partitions the applied set. That is why it is evaluated after completion rather than before: it changes what the checks cover, never whether they run.
+**Rows 8 through 10 are not degraded rows 6 and 7.** The plan's source does not gate anything; it partitions the applied set. That is why it is evaluated after completion rather than before: it changes what the checks cover, never whether they run.
+
+**There is no row pairing an absent declared spec with no findings, and the omission is not an oversight.** A plan that names a spec which is not there produces a `source_declaration` finding by definition of check 1, so the combination *spec `absent`* with *findings: none* is unreachable. That is why rows 8 through 10 are three rather than four: the `not in repository` value takes both find/find-nothing branches and the `absent` value takes only one.
+
+**Rows 8 and 10 have the same applied set and differ in what fired.** Both mean the three source-dependent checks had nothing to compare against. Only row 8 is a defect in the plan, and `source_declaration` in the fired set is the whole of what says so.
 
 **The count is empty, not zero, in rows 1 through 5.** `0` means *the applied checks ran and found nothing*, and it is the only thing distinguishing a clean plan from one the checks never examined. Writing `0` for the other rows would put those rounds into the denominator of any later rate as if they had been checked.
 
@@ -278,12 +288,12 @@ The matrix decides the state; this table says what follows from it, so no surfac
 | --- | --- | --- | --- | --- |
 | `unavailable` (rows 1, 4, 5) | none — the review proceeds and its verdict is unchanged | the state and its reason; no count, no check sets | nothing added | the state and its reason; count and both sets empty |
 | `not_applicable` (rows 2, 3) | none | the state and its reason; no count, no check sets | nothing added | the state and its reason; count and both sets empty |
-| `applied`, count `0` (rows 6, 8) | none | the state, count `0`, and the applied set; fired set empty | nothing added | the state, count `0`, the applied set, and an empty fired set |
-| `applied`, count *n* (rows 7, 9) | none that gates — the findings are reported and the verdict is decided without them | the state, the count, the applied set, and the checks that fired | each finding, labelled with its check and its document, grouped apart from blocking findings | the state, the count, the applied set, and the checks that fired |
+| `applied`, count `0` (rows 6, 9) | none | the state, count `0`, and the applied set; fired set empty | nothing added | the state, count `0`, the applied set, and an empty fired set |
+| `applied`, count *n* (rows 7, 8, 10) | none that gates — the findings are reported and the verdict is decided without them | the state, the count, the applied set, and the checks that fired | each finding, labelled with its check and its document, grouped apart from blocking findings | the state, the count, the applied set, and the checks that fired |
 
-**"Next action" is empty in every row, and that is the feature.** No state gates, escalates, retries or demands acknowledgement. The only row group with any follow-up is 7 and 9, whose follow-up is to *report* — which is why the column exists rather than being omitted: a reader checking whether some state blocks should find the answer here rather than infer it from silence.
+**"Next action" is empty in every row, and that is the feature.** No state gates, escalates, retries or demands acknowledgement. The only row group with any follow-up is 7, 8 and 10, whose follow-up is to *report* — which is why the column exists rather than being omitted: a reader checking whether some state blocks should find the answer here rather than infer it from silence.
 
-The comment surface is touched in exactly one row group. A reader seeing no strict findings on a pull request cannot tell rows 1 through 6 and 8 apart from the comments alone, which is why the state is on the reviewer output and in the history for every review.
+The comment surface is touched in exactly one row group. A reader seeing no strict findings on a pull request cannot tell rows 1 through 6 and row 9 apart from the comments alone, which is why the state is on the reviewer output and in the history for every review.
 
 ---
 
@@ -314,6 +324,8 @@ The comment surface is touched in exactly one row group. A reader seeing no stri
 - [ ] **AC-10a.** A step that states it cannot be undone produces **no** `reversal_risk` finding. The check requires an answer, not a rollback path.
 - [ ] **AC-11.** A plan that satisfies a check produces no finding from that check, for each of the seven independently.
 - [ ] **AC-12.** The checks are applied to the full text of each changed plan document at the reviewed head, and to the full text of its source when that source is in the repository. A pull request amending an existing plan produces the same findings it would produce if the whole document were new, for the parts of the document its diff does not touch.
+- [ ] **AC-12a.** A changed plan document whose text is retrieved is examined whatever that text is: an empty document, a truncated one, and one whose prose is incoherent each yield state `applied` and are reported through findings — at minimum `source_declaration` for a document declaring no source. None of the three yields `unavailable`.
+- [ ] **AC-12b.** A changed plan document whose text cannot be retrieved at all yields `unavailable` with reason `strict_pass_failed`, the same reason as any other attempt that did not complete, and no reason of its own.
 - [ ] **AC-13.** Every strict finding is reported on the plan document it applies to, and a pull request changing two plan documents reports each document's findings against that document.
 - [ ] **AC-14.** The strict plan checks do not run outside the plan stage, and the state is `not_applicable` with reason `stage_not_plan`.
 - [ ] **AC-15.** A plan-stage pull request that changes no implementation-plan document reports `not_applicable` with reason `no_plan_document_changed`, distinguishable from `stage_not_plan` and from `applied` with count `0`.
@@ -324,7 +336,9 @@ The comment surface is touched in exactly one row group. A reader seeing no stri
 - [ ] **AC-16d.** A budget exhausted before or during the checks is `unavailable` with reason `strict_pass_failed`, and is not distinguished from any other failed attempt: the review is complete, its outcome is unaffected, and *the checks produced no result* is the whole of what a reader needs.
 - [ ] **AC-17.** The state appears in the reviewer's output and in the reviewer-loop history for **every** review, at any stage. The count, the applied set and the fired set accompany it only in the `applied` state; in `not_applicable` and `unavailable` all three are **empty**, and the count is never `0`.
 - [ ] **AC-18.** In the `applied` state the **set of checks applied** is reported, including when it is all seven, in the reviewer's output and in the reviewer-loop history.
-- [ ] **AC-19.** At the plan stage with the checks applied and the plan's source not present in the repository, the applied set is exactly those that need no source — `source_declaration`, `phase_ordering`, `dependency_state` and `reversal_risk` — and the state is `applied`, not `unavailable`.
+- [ ] **AC-19.** At the plan stage with the checks applied and the plan declaring a tracker brief rather than an approved spec, the applied set is exactly those that need no source — `source_declaration`, `phase_ordering`, `dependency_state` and `reversal_risk` — and the state is `applied`, not `unavailable`.
+- [ ] **AC-19b.** At the plan stage with the checks applied and the plan declaring an approved spec that is not present in its development directory, the applied set is the same as in AC-19 **and** the fired set contains `source_declaration`. The count is never `0` in this case.
+- [ ] **AC-19c.** The applied set does not distinguish a plan declaring a tracker brief from one declaring an absent spec; a reader tells them apart by whether `source_declaration` is in the fired set.
 - [ ] **AC-19a.** The set of checks that fired is a subset of the set of checks applied, on every round in the `applied` state.
 - [ ] **AC-20.** Ignoring a strict finding has no effect on any later review: no **workflow label** on the pull request, no gate, no escalation, and the same finding may be reported again on a later round without penalty. The finding's own check identifier, required by AC-2, is unaffected — it identifies the finding and marks nothing about the pull request.
 - [ ] **AC-21.** A reader can determine, from the reviewer-loop history alone, **which** checks produced findings on a round and **which** were applied — not only how many findings there were.
