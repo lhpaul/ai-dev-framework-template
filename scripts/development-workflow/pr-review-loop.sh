@@ -4866,7 +4866,7 @@ _unreplied_rest_blocking_comment_json_lines() {
   local resolved_ids_json="${4:-[]}"
 
   gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-    | jq -s --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
+    | jq -rs --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
         (
           [.[][] | select(
             .in_reply_to_id != null and
