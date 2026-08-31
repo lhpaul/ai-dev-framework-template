@@ -72,6 +72,18 @@ Every objective stated in issue #1657 maps to acceptance criteria and use cases 
 2. The report reads each one's reviewer-loop history.
 3. It presents each pull request's row, then the aggregate, then the accounting for what the aggregate is over.
 
+**What *n* may be**, since a window size is an input like any other and its edges decide behavior:
+
+| *n* | Behavior |
+| --- | --- |
+| Absent | A documented default window size is used, and the report states the size it used |
+| A positive whole number | That many of the most recent pull requests, or all of them when fewer exist |
+| `0`, negative, or not a whole number | The report refuses, names the value it was given, and produces no report |
+
+**Fewer pull requests than requested is not a refusal.** A repository with nine pull requests and a request for forty produces a report over nine, with requested reconciling against what was found rather than against what was asked — a window is a maximum, not a demand.
+
+**A malformed *n* is refused rather than defaulted.** Silently substituting the default would produce a report whose window the reader believes they chose, and every aggregate in it would be over a denominator they did not ask for.
+
 **Postconditions**: Nothing changed.
 
 **Information shown**:
@@ -233,21 +245,21 @@ The order is: is there a history comment, can its payload be parsed, does the pa
 | 2 | Yes | **No** | — | — | No | `unparseable_history` | — |
 | 3 | Yes | Yes | `unavailable` | — | No | `history_unavailable` | — |
 | 4 | Yes | Yes | available | **No** | In every **other** measure | none | `not_recorded` |
-| 5 | Yes | Yes | available | Yes | Yes | none | the number |
+| 5 | Yes | Yes | available | Yes | Yes | none | the measure's own value |
 
 **Rows 1 through 3 exclude the whole pull request; row 4 excludes one measure.** That is the distinction Use Case 5 exists for, and collapsing it in either direction is a real error: excluding the pull request entirely discards its sound measures, and including it with `0` for the missing one puts a fabricated observation into an aggregate.
 
 **Row 4 is evaluated once per measure, not once per pull request.** A pull request can be row 4 for confirmed misses and row 5 for everything else. Its "included" cell says *in every other measure* rather than yes or no because the answer is per measure by construction.
 
-**No row produces a zero for an absent field.** `0` appears only in row 5, where the history recorded the thing and the count was none.
+**No row produces a zero for an absent field.** `0` appears only in row 5, and only for a measure whose unit is a count — where the history recorded the thing and the count was none. Measure 7's row-5 value is a state; a `0` there would be an invented number rather than an observation.
 
 ### What each outcome requires, on every surface
 
 | Outcome | Per-PR row | Aggregate | Exclusion accounting |
 | --- | --- | --- | --- |
 | Rows 1-3 | listed with its reason, no measures | contributes to no measure's numerator or denominator | counted, listed, and its reason named |
-| Row 4 | the measure shows **Not recorded**; the others show numbers | contributes to every other measure only | not counted as an exclusion — the pull request is included |
-| Row 5 | numbers | contributes to every measure | not counted |
+| Row 4 | the measure shows **Not recorded**; the others show their own computed values | contributes to every other measure only | not counted as an exclusion — the pull request is included |
+| Row 5 | each measure's own computed value — a count, or a state for measure 7 | contributes to every measure | not counted |
 
 A pull request excluded by rows 1-3 appears **only** in the exclusion accounting. A pull request in row 4 appears in the rows and in the aggregates it can join, and its absence from one measure is visible in that measure's denominator rather than in the exclusion list — two different lists for two different facts.
 
@@ -268,6 +280,9 @@ A pull request excluded by rows 1-3 appears **only** in the exclusion accounting
 
 - [ ] **AC-1.** For a single pull request with a readable history, the report presents all seven measures listed in Statuses / Enum Values.
 - [ ] **AC-2.** The report supports a single pull request and a window of the most recent *n* pull requests, and produces the same per-pull-request values in both.
+- [ ] **AC-2a.** With no window size given, the report uses a documented default and states the size it used.
+- [ ] **AC-2b.** A window size that is `0`, negative, or not a whole number is refused: the report names the value it was given and produces no report.
+- [ ] **AC-2c.** A window larger than the number of pull requests that exist produces a report over the ones that exist, and is not a refusal. The requested count reconciles against what was found.
 - [ ] **AC-3.** Rounds equals the number of history entries recorded for the pull request.
 - [ ] **AC-4.** External blocking rounds counts the rounds for which a missed-finding record exists, whatever local evidence state that record carries.
 - [ ] **AC-4a.** Blocking findings is reported as its own measure, in findings, and is **not** apportioned between reviewers. A report that attributes any part of the aggregate count to a named reviewer fails this criterion, because the history does not say who raised what.
