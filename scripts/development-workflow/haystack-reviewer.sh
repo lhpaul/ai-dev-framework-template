@@ -148,14 +148,8 @@ POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
 PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
 CHECK_NAME="${HAYSTACK_CHECK_NAME:-Haystack / Review}"
 
-# #1651: reviewed head from the PR head the check-run query already uses.
-# Empty when unresolvable — fail closed (no REVIEWED_HEAD emitted).
+# #1651: set only when a check run artifact is fetched (see fetch_haystack_check_run_json).
 REVIEWED_HEAD_SHA=""
-if REVIEWED_HEAD_SHA="$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha // empty' 2>/dev/null)"; then
-  :
-else
-  REVIEWED_HEAD_SHA=""
-fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -239,6 +233,8 @@ fetch_haystack_check_run_json() {
     return 1
   fi
   [ -n "$check_json" ] || return 1
+
+  REVIEWED_HEAD_SHA="$(printf '%s\n' "$check_json" | jq -r '.head_sha // .headSha // empty' 2>/dev/null)" || REVIEWED_HEAD_SHA=""
 
   printf '%s\n' "$check_json"
 }

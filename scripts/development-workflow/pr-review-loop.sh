@@ -6707,7 +6707,8 @@ run_coderabbit_review() {
         | {
             path: "",
             line: 0,
-            body: (.body // "CHANGES_REQUESTED review without body")
+            body: (.body // "CHANGES_REQUESTED review without body"),
+            commit_id: (.commit_id // .commitId // "")
           }
         | @json
       '
