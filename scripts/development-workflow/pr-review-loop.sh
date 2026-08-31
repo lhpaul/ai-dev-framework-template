@@ -9522,15 +9522,11 @@ for index in "${!platforms[@]}"; do
         set -e
         expensive_gate_sync_last_from_output "$expensive_gate_output"
         if [ "$expensive_gate_status" -eq 0 ]; then
-          # Preflight success is not a dispatch — rewrite telemetry so summary/
-          # history/first-match stdout cannot claim the expensive reviewer ran
-          # before same-bucket peers complete and run_platform_review fires.
-          expensive_gate_output="$(
-            printf '%s\n' "$expensive_gate_output" | sed \
-              -e 's/^EXPENSIVE_GATE_RESULT=dispatched$/EXPENSIVE_GATE_RESULT=preflight_ok/' \
-              -e 's/^EXPENSIVE_GATE_RESULT=forced$/EXPENSIVE_GATE_RESULT=preflight_ok/'
-          )"
-          printf '%s\n' "$expensive_gate_output"
+          # Successful preflight is not a dispatch and must not emit
+          # EXPENSIVE_GATE_RESULT=dispatched/forced (or any new enum value) into
+          # the machine-consumed stdout contract / summary / history. Deferrals
+          # still emit the full EXPENSIVE_GATE_* block below.
+          echo "INFO: expensive-gate ready preflight passed for ${_eg_plat} (earlier_buckets); full gate still runs before dispatch" >&2
           expensive_gate_last_platform=""
           expensive_gate_last_result=""
           expensive_gate_last_reason=""
@@ -10038,10 +10034,6 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
         expensive_gate_section="
 
 **Expensive reviewer gate:** ${expensive_gate_last_platform} — dispatched at head \`${expensive_gate_last_head}\`."
-        ;;
-      preflight_ok)
-        # Ready-phase preflight only; do not claim dispatch in the summary.
-        expensive_gate_section=""
         ;;
       *)
         expensive_gate_section="
