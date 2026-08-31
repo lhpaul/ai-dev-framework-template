@@ -16442,6 +16442,10 @@ run_test "1649_s10_real_empty" "empty $_1649_head" \
   "$(_1649_baseline_helper_row "$_1649_empty_rollup")"
 run_test "1649_s10_real_reviewer_only" "empty $_1649_head" \
   "$(_1649_baseline_helper_row "$_1649_reviewer_only_rollup")"
+# Stale failed duplicate + newer green same name → green (pr-ci-loop normalization)
+_1649_dup_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:00:00Z"},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T01:00:00Z"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1649_s10_real_dup_latest_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_dup_rollup")"
 export MOCK_GH_EXIT=1
 run_test "1649_s10_real_unavailable" "unavailable" \
   "$(expensive_gate_baseline_checks_status 42 "$_1649_head" | awk '{print $1}')"

@@ -1073,12 +1073,15 @@ expensive_gate_unresolved_threads_status() {
 #
 # Snapshot of non-reviewer checks on the PR. Prints
 # "<state> <live_head>" where state is green|failed|pending|empty|unavailable.
-# Does NOT call pr-ci-loop.sh.
+# Does NOT call pr-ci-loop.sh. Collapses statusCheckRollup duplicates to the
+# latest entry per check key (same normalization as pr-ci-loop.sh) before
+# excluding reviewer-owned names and classifying.
 expensive_gate_baseline_checks_status() {
   local pr_number_arg="$1"
   local payload=""
   local live_head=""
   local reviewer_names=""
+  local normalized_json=""
   local baseline_json=""
   local state=""
 
@@ -1097,10 +1100,38 @@ expensive_gate_baseline_checks_status() {
   live_head="$(printf '%s\n' "$payload" | jq -r '.headRefOid // ""' 2>/dev/null)" || live_head=""
   reviewer_names="$(configured_reviewer_check_names_json "")" || reviewer_names='[]'
 
+  if ! normalized_json="$(
+    printf '%s\n' "$payload" | jq '
+      (.statusCheckRollup // [])
+      | map(
+          . + {
+            __check_key: (
+              if (.context // "") != "" then
+                "status:" + .context
+              elif (.workflowName // "") != "" and (.name // "") != "" then
+                "check:" + .workflowName + "/" + .name
+              elif (.name // "") != "" then
+                "check:" + .name
+              else
+                "unknown"
+              end
+            ),
+            __check_ts: (.startedAt // .completedAt // .createdAt // "")
+          }
+        )
+      | sort_by(.__check_key, .__check_ts)
+      | group_by(.__check_key)
+      | map(last | del(.__check_key, .__check_ts))
+    ' 2>/dev/null
+  )"; then
+    printf 'unavailable %s\n' "$live_head"
+    return 0
+  fi
+
   if ! baseline_json="$(
-    printf '%s\n' "$payload" | jq --argjson reviewer_names "$reviewer_names" '
+    printf '%s\n' "$normalized_json" | jq --argjson reviewer_names "$reviewer_names" '
       [
-        (.statusCheckRollup // [])[]
+        .[]
         | select(
             (.name // .context // .workflowName // "unknown") as $check_name
             | ($reviewer_names | index($check_name) | not)
