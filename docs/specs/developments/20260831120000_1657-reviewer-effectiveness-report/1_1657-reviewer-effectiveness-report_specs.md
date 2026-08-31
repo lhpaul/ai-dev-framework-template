@@ -25,11 +25,11 @@ Every objective stated in issue #1657 maps to acceptance criteria and use cases 
 | 1 | *Problem* — evidence on whether the local reviewer reduces external cycles, not just that it ran | Use Cases 1 and 3; AC-1, AC-4, AC-5 |
 | 2 | *Outcome* — a report summarising effectiveness per pull request and across recent ones | Use Cases 1 and 2; AC-1, AC-2 |
 | 3 | *Scope* — total cycles | Measure 1; AC-3 |
-| 4 | *Scope* — local findings | Measure 2, as **rounds** rather than findings, plus Measure 4 for the aggregate the history does carry; AC-4, AC-4a. Per-reviewer finding counts are **deferred** — Out of Scope 8, with the reason |
-| 5 | *Scope* — external findings | Measure 3, on the same terms; AC-4, AC-4a; same deferral |
-| 6 | *Scope* — missed-by-local findings | Measures 5 and 6; AC-5, AC-5a |
-| 7 | *Scope* — `codex-github` invocations | Measure 7; AC-6 |
-| 8 | *Scope* — final current-head evidence | Measure 8; AC-7 |
+| 4 | *Scope* — local findings | **Deferred** — Out of Scope 8, with the reason: the history attributes no finding and no blocking result to the local reviewer, and no item in this epic adds one. Measure 3 reports the aggregate that does exist; AC-4b forbids inventing the split |
+| 5 | *Scope* — external findings | Measure 2, as **rounds** with a stated floor, plus Measure 3 for the aggregate count; AC-4, AC-4a |
+| 6 | *Scope* — missed-by-local findings | Measures 4 and 5; AC-5, AC-5a, AC-5b |
+| 7 | *Scope* — `codex-github` invocations | Measure 6; AC-6 |
+| 8 | *Scope* — final current-head evidence | Measure 7; AC-7 |
 | 9 | *Scope* — support a single pull request and a recent-PR window | Use Cases 1 and 2; AC-2, AC-9 |
 | 10 | *Scope* — use existing reviewer-loop history comments where possible | Business Rules, the single-source rule; AC-8, AC-16 |
 
@@ -46,13 +46,13 @@ Every objective stated in issue #1657 maps to acceptance criteria and use cases 
 
 1. They ask for the report for that pull request.
 2. The report reads the pull request's reviewer-loop history.
-3. It presents the eight measures, each with the rounds it was computed from.
+3. It presents the seven measures, each with the rounds it was computed from.
 
 **Postconditions**: Nothing changed. The reader has the numbers and, for each one, whether it is complete.
 
 **Information shown**:
 
-- The eight measures below, per pull request.
+- The seven measures below, per pull request.
 - For each measure, whether the history contained the fields it needs — and when it did not, that it did not.
 
 **Considerations**:
@@ -138,11 +138,12 @@ Every objective stated in issue #1657 maps to acceptance criteria and use cases 
 2. For the measure whose field is missing, it reports **not recorded** rather than a number.
 3. It excludes that pull request from **that measure's** aggregate only, and from no other.
 
-**Postconditions**: Seven measures over the full window and one over a subset, each saying which.
+**Postconditions**: Some measures over the full window and others over a subset, each saying which.
 
 **Considerations**:
 
-- **Exclusion is per measure, not per pull request.** A pull request that predates #1651 still has usable round counts and finding counts; dropping it entirely would discard seven good measures to avoid one bad one.
+- **Exclusion is per measure, not per pull request, and a pull request can be excluded from several measures at once.** One that predates #1651 loses measures 2, 4 and 5 together, since all three read its records; it keeps rounds, blocking findings, `codex-github` invocations and the final head evidence. Dropping the pull request entirely would discard four sound measures to avoid three absent ones.
+- The count of measures a pull request loses is not fixed and is not the point. What is fixed is that each measure decides for itself, and that a measure whose fields are absent says so rather than reporting a number.
 - This makes the denominators differ *between* measures within one report, which is correct and must be visible. Each measure carries its own included count.
 
 ---
@@ -177,31 +178,36 @@ The reader is a maintainer at a terminal or an agent parsing output.
 
 ## Statuses / Enum Values
 
-### The eight measures
+### The seven measures
 
 | # | Measure | Unit | What it counts | Source in the history |
 | --- | --- | --- | --- | --- |
 | 1 | Rounds | rounds | Loop iterations recorded for the pull request | one per history entry |
-| 2 | Local blocking rounds | rounds | Rounds in which the local reviewer's own result was blocking | #1651's per-platform result for `local-ai-reviewer` |
-| 3 | External blocking rounds | rounds | Rounds in which any reviewer other than the local one had a blocking result | #1651's per-platform results for every other platform |
-| 4 | Blocking findings | findings | Blocking findings recorded for the round, across all reviewers together | the round's aggregate blocking count |
-| 5 | Confirmed misses | records | External blocking findings on a commit the local reviewer had cleared **exactly** | #1651's missed-finding records, state `clean_same_commit` |
-| 6 | Possible misses | records | The same, where the local reviewer's clean verdict covered an **ancestor** | #1651's records, state `clean_earlier_commit` |
-| 7 | `codex-github` invocations | rounds | Rounds in which the `codex-github` reviewer was dispatched | the per-round platform list |
-| 8 | Final current-head evidence | state | Whether the last recorded round's verdict was made against the pull request's current head | #1648's per-platform reviewed-head states on the last entry |
+| 2 | External blocking rounds | rounds | Rounds in which an external reviewer reported blocking findings and the commit it reviewed could be established | #1651's missed-finding records — one per qualifying external round, whatever the local verdict was |
+| 3 | Blocking findings | findings | Blocking findings recorded for the round, across all reviewers together | the round's aggregate blocking count |
+| 4 | Confirmed miss records | records | Records in which the local reviewer had cleared the **exact** commit the external reviewer reviewed | #1651's records, state `clean_same_commit` |
+| 5 | Possible miss records | records | Records in which the local reviewer's clean verdict covered an **ancestor** of that commit | #1651's records, state `clean_earlier_commit` |
+| 6 | `codex-github` invocations | rounds | Rounds in which the `codex-github` reviewer was dispatched | the per-round platform list |
+| 7 | Final current-head evidence | state | Whether the last recorded round's verdict was made against the pull request's current head | #1648's per-platform reviewed-head states on the last entry |
 
-Measures 5 and 6 are reported as a pair and never added together.
+Measures 4 and 5 are reported as a pair and never added together.
 
-**Measures 2 and 3 count rounds, not findings, and the reason is that the history does not carry the finding counts.** The round entry records **one aggregate blocking count across all reviewers** and a per-platform *result*; it does not attribute findings to the reviewer that raised them. So *how many* findings the local reviewer raised is not recoverable, and *in how many rounds it raised any* is. Measure 4 reports the aggregate that does exist, as its own measure and its own unit, rather than being split between measures 2 and 3 on a guess.
+**There is no measure for what the local reviewer found, and its absence is the honest answer rather than an oversight.** The round entry records **one aggregate blocking count across all reviewers** and a list of which reviewers ran; it does not attribute a finding, or a blocking result, to the reviewer that produced it. No item in this epic adds one. So *how many* findings the local reviewer raised is not recoverable, and neither is *in how many rounds it raised any* — the second looked derivable and is not, because the only per-reviewer outcome the history gains is #1651's local **evidence state**, which is written on qualifying **external** rounds and says nothing about a round the local reviewer was alone in.
 
-Splitting it would be the report inventing an observation. Recovering it properly needs the loop to record per-reviewer counts, which is a change to what the loop **writes** — see Out of Scope 8.
+Reporting it anyway would mean inventing an observation, which is the one thing this report must never do. Objective 4 is therefore deferred with its reason — **Out of Scope 8** — and the question the brief actually asks is still answerable without it: the local reviewer's miss rate is measures 4 and 5 over measure 2.
+
+**Measures 4 and 5 count records, not findings.** #1651 writes one record per qualifying external round, and a single record can describe several blocking findings. Summing the findings inside them would produce a third unit nobody asked for and would weight one noisy round above three quiet ones. The pair is a count of *occasions*, and the unit column says so.
+
+**Measure 2 is bounded below and says so.** #1651 deliberately writes no record for an external round whose reviewed commit cannot be established, so a pull request with such rounds has more external blocking rounds than this measure reports. That is a floor, not an estimate, and the report does not correct for it — correcting would mean inferring the commit #1651 refused to infer.
 
 ### Per-measure availability
 
 | Value | Display label | Meaning |
 | --- | --- | --- |
-| `computed` | a number | The history carried the fields this measure reads |
+| `computed` | the measure's own value — a count for the six counting measures, a state for measure 7 | The history carried the fields this measure reads |
 | `not_recorded` | Not recorded | The history is readable and does not carry them |
+
+**`computed` is not a synonym for "a number".** Measure 7 is a state, and rendering its `computed` value as a number would require inventing one. The display is whatever that measure's unit says it is.
 
 ### Pull-request exclusion reasons
 
@@ -229,7 +235,7 @@ The order is: is there a history comment, can its payload be parsed, does the pa
 | 4 | Yes | Yes | available | **No** | In every **other** measure | none | `not_recorded` |
 | 5 | Yes | Yes | available | Yes | Yes | none | the number |
 
-**Rows 1 through 3 exclude the whole pull request; row 4 excludes one measure.** That is the distinction Use Case 5 exists for, and collapsing it in either direction is a real error: excluding the pull request entirely discards seven sound measures, and including it with `0` for the missing one puts a fabricated observation into an aggregate.
+**Rows 1 through 3 exclude the whole pull request; row 4 excludes one measure.** That is the distinction Use Case 5 exists for, and collapsing it in either direction is a real error: excluding the pull request entirely discards its sound measures, and including it with `0` for the missing one puts a fabricated observation into an aggregate.
 
 **Row 4 is evaluated once per measure, not once per pull request.** A pull request can be row 4 for confirmed misses and row 5 for everything else. Its "included" cell says *in every other measure* rather than yes or no because the answer is per measure by construction.
 
@@ -249,7 +255,7 @@ A pull request excluded by rows 1-3 appears **only** in the exclusion accounting
 
 ## Operational Visibility
 
-- **Per pull request**: the eight measures, each `computed` with a value or `not_recorded`.
+- **Per pull request**: the seven measures, each `computed` with a value or `not_recorded`.
 - **Per window**: each measure's aggregate with its own included count; the requested, included and excluded counts; and the exclusions listed with reasons.
 - **Strict checks**: per check, the pull requests it fired on over the pull requests it was applied to — a pair, never a single percentage that hides either half.
 - **What the report does not show**: any composite score, any threshold, any pass/fail verdict, and any recommendation.
@@ -260,24 +266,27 @@ A pull request excluded by rows 1-3 appears **only** in the exclusion accounting
 
 ## Acceptance Criteria
 
-- [ ] **AC-1.** For a single pull request with a readable history, the report presents all eight measures listed in Statuses / Enum Values.
+- [ ] **AC-1.** For a single pull request with a readable history, the report presents all seven measures listed in Statuses / Enum Values.
 - [ ] **AC-2.** The report supports a single pull request and a window of the most recent *n* pull requests, and produces the same per-pull-request values in both.
 - [ ] **AC-3.** Rounds equals the number of history entries recorded for the pull request.
-- [ ] **AC-4.** Local blocking rounds and external blocking rounds are reported separately, and a round in which both the local reviewer and an external one had a blocking result contributes to both.
-- [ ] **AC-4a.** Blocking findings is reported as its own measure, in findings, and is **not** apportioned between the local and external measures. A report that splits the aggregate count between reviewers fails this criterion.
-- [ ] **AC-5.** Confirmed misses and possible misses are reported as two values and are never summed into one.
-- [ ] **AC-5a.** A pull request with confirmed misses and possible misses shows both; a report presenting only their total fails this criterion.
+- [ ] **AC-4.** External blocking rounds counts the rounds for which a missed-finding record exists, whatever local evidence state that record carries.
+- [ ] **AC-4a.** Blocking findings is reported as its own measure, in findings, and is **not** apportioned between reviewers. A report that attributes any part of the aggregate count to a named reviewer fails this criterion, because the history does not say who raised what.
+- [ ] **AC-4b.** The report presents **no** measure of what the local reviewer found. A measure purporting to count local findings or local blocking rounds fails this criterion.
+- [ ] **AC-5.** Confirmed miss records and possible miss records are reported as two values and are never summed into one.
+- [ ] **AC-5a.** A pull request with both kinds of record shows both; a report presenting only their total fails this criterion.
+- [ ] **AC-5b.** Both measures count **records**, one per qualifying external round. A record describing three blocking findings contributes one, not three.
 - [ ] **AC-6.** `codex-github` invocations equals the number of rounds in which that reviewer was dispatched, counted from the per-round platform list.
-- [ ] **AC-7.** Final current-head evidence reflects the **last** recorded round, and states whether that round's verdict was made against the pull request's current head.
+- [ ] **AC-7.** Final current-head evidence reflects the **last** recorded round, and states whether that round's verdict was made against the pull request's current head. Its `computed` value is that state, not a number.
 - [ ] **AC-8.** Every measure is computed from the reviewer-loop history alone. No measure re-runs a reviewer, reads a diff, or derives a value the history does not contain.
 - [ ] **AC-9.** In window mode the report shows one row per included pull request, then the aggregates, then the exclusion accounting.
 - [ ] **AC-10.** Requested, included and excluded counts reconcile: requested equals included plus excluded.
 - [ ] **AC-11.** Every excluded pull request carries exactly one of `no_history`, `unparseable_history` or `history_unavailable`, and the three are distinguishable in the output.
 - [ ] **AC-12.** A pull request excluded by rows 1-3 contributes to no measure's numerator and no measure's denominator.
 - [ ] **AC-13.** A measure whose fields are absent from a readable history reports **not recorded**, never `0`, and never an empty rendering.
+- [ ] **AC-13b.** A pull request may be **not recorded** for more than one measure at once, and each such measure independently excludes it from that measure's denominator alone.
 - [ ] **AC-13a.** A pull request in that state still contributes to every other measure, and is **not** listed as an excluded pull request.
 - [ ] **AC-14.** Each measure's aggregate carries its own included count, and two measures in one report may have different included counts.
-- [ ] **AC-15.** The eight measures are totals and states: a pull request with four blocking rounds contributes four to the local or external blocking-round measure, not one. No measure is capped at one per pull request.
+- [ ] **AC-15.** The seven measures are totals and states: a pull request with four external blocking rounds contributes four to that measure, not one. No measure is capped at one per pull request.
 - [ ] **AC-15a.** The per-pull-request cap applies to **strict-check incidence only**: a check reported on three rounds of one pull request contributes one to that check's numerator.
 - [ ] **AC-16.** Strict-check incidence is reported per check as pull requests fired over pull requests the check was applied to, never over the window's pull-request count.
 - [ ] **AC-16b.** The denominator for a **spec** check is the pull requests whose recorded spec strict-check state was `applied`; the denominator for a **plan** check is the pull requests whose recorded applied set contains that check. The report does not read an applied set from #1650's records, which contain none.
@@ -292,10 +301,10 @@ A pull request excluded by rows 1-3 appears **only** in the exclusion accounting
 ## Out of Scope (MVP)
 
 1. **Deciding anything.** The report does not make a check blocking, change a reviewer's configuration, or set a threshold. Deferral note: this epic's whole sequence is measurement before response, and a control loop built on a report nobody has read yet would inherit every error in it.
-2. **A composite effectiveness score.** Combining eight measures into one number requires weights, and no basis for choosing them exists. Deferral note: the reader compares the measures; when a weighting has been argued for on real data, it can be added.
+2. **A composite effectiveness score.** Combining seven measures into one number requires weights, and no basis for choosing them exists. Deferral note: the reader compares the measures; when a weighting has been argued for on real data, it can be added.
 3. **Attributing a miss to a cause.** #1651 records that a miss happened, not why, and the report does not guess. Deferral note: cause attribution is #1651's own deferral and nothing here changes it.
 4. **Reconstructing history the loop did not write.** A pull request reviewed before a field existed does not get that field inferred from its diff, its comments or its checks. Deferral note: an inferred value is indistinguishable in the output from a recorded one, and this report's value depends entirely on that distinction holding.
 5. **Trends over time.** The window is the most recent *n* pull requests, not a time series, and the report draws no line through them. Deferral note: a trend over a denominator that changes between measures would mislead more than it shows.
 6. **Storing or caching results.** Each run reads the histories again. Deferral note: a cache would have to be invalidated when a pull request is re-reviewed, and the report is cheap enough that the correctness risk is not worth the saving.
 7. **Reporting across repositories.** One repository per run. Deferral note: nothing in the design forbids it, and nothing in this epic needs it.
-8. **Per-reviewer blocking-finding counts.** The history records one aggregate blocking count per round and a per-reviewer *result*, so how many findings each reviewer raised is not recoverable from it. Deferral note: recovering it means changing what the reviewer loop **writes**, and this item is a reader — an item that both extends the ledger and reports over it would ship its own denominator. Measures 2 and 3 count rounds instead, measure 4 reports the aggregate that exists, and the objective is met in the shape the data supports rather than dropped.
+8. **Anything the local reviewer found, per reviewer.** The history records one aggregate blocking count per round and a list of which reviewers ran; it attributes no finding and no blocking result to a reviewer, and no item in this epic adds one. #1651's local evidence state is written on qualifying **external** rounds and says nothing about a round the local reviewer was alone in. Deferral note: recovering this means changing what the reviewer loop **writes**, and this item is a reader — an item that both extended the ledger and reported over it would ship its own denominator. The brief's question is still answerable without it: the miss rate is measures 4 and 5 over measure 2.
