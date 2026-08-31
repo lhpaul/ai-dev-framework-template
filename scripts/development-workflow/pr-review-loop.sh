@@ -7999,11 +7999,11 @@ reviewer_loop_print_blocking_from_unresolved_bot_threads() {
     body="$(printf '%s' "$row" | jq -r '.body // ""')"
     title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
     if [ -z "$title" ]; then
-      title="$(printf '%.120s' "$body")"
+      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
-    print_kv "BLOCKING_${idx}_BODY" "$title"
+    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
   done < <(printf '%s\n' "$json" | jq -c '.[]?')
   return 0
 }
