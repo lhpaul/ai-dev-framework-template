@@ -1395,6 +1395,7 @@ After the selected item reaches a terminal condition, provide a concise summary:
 - Final state: ready for human review / waiting on human decision / blocked / escalated
 - Path taken: plan written -> reviewed -> PR opened -> automated review clean -> CI green
 - Next human action: merge PR / answer architecture question / unblock dependency
+- Local reviewer head evidence: LOCAL_AI_CONFIGURED=[0|1], LOCAL_AI_REVIEWED_HEAD=[sha|empty], LOCAL_AI_HEAD_CURRENT=[1|0|empty]
 
 ## Ground-Truth Completion Verification
 
@@ -2043,7 +2044,7 @@ set -euo pipefail
 # Drop settle telemetry from any earlier invocation first. A loop that exits
 # before emitting POST_CLEAN_* (outer timeout, interruption, API failure)
 # must leave Check 0.6 with nothing — not with the previous HEAD's verdict.
-for settle_var in $(env | grep -o '^POST_CLEAN_[A-Z_]*' || true); do
+for settle_var in $(env | grep -oE '^(POST_CLEAN|LOCAL_AI)_[A-Z_]*' || true); do
   unset "$settle_var"
 done
 loop_out="$(mktemp)"
@@ -2054,7 +2055,7 @@ if [ "$loop_status" -ne 0 ]; then
   echo "Reviewer loop exited ${loop_status}: act on its RESULT=/REASON= lines (needs_fixes, escalate, ...). Do not enter Step 8a on this run."
 else
   settle_kv="$(mktemp)"
-  grep -E '^POST_CLEAN_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
+  grep -E '^(POST_CLEAN|LOCAL_AI)_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
   while IFS='=' read -r key value; do
     export "$key=$value"
   done < "$settle_kv"
@@ -2419,7 +2420,7 @@ Interpret the result as follows:
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
-| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, or `POST_CLEAN_HEAD_SHA` differs from the live PR head | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
+| 12        | Reviewer-loop clean verdict not settled (Check 0.6 / 0.6b): `POST_CLEAN_*` or `LOCAL_AI_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, `POST_CLEAN_HEAD_SHA` differs from the live PR head, or `LOCAL_AI_HEAD_CURRENT` is not exactly `1` when `LOCAL_AI_CONFIGURED=1` | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` and `LOCAL_AI_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2754,6 +2755,21 @@ else
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
 
+# Check 0.6b: local-ai-reviewer current-head evidence (issue #1648).
+if [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
+  echo "ERROR: Reviewer-loop telemetry was not carried forward (LOCAL_AI_CONFIGURED is not set)."
+  echo "Re-run Step 7 and export its POST_CLEAN_* and LOCAL_AI_* fields before re-entering Step 8a."
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+elif [ "$LOCAL_AI_CONFIGURED" = "0" ]; then
+  echo "✅ Local-reviewer head check not applicable: local-ai-reviewer is not configured."
+elif [ "${LOCAL_AI_HEAD_CURRENT:-__unset__}" != "1" ]; then
+  echo "ERROR: local-ai-reviewer head evidence is not current (LOCAL_AI_HEAD_CURRENT=${LOCAL_AI_HEAD_CURRENT:-<empty>})."
+  echo "Re-run Step 7 on the live HEAD and export its POST_CLEAN_* and LOCAL_AI_* fields before applying ready-for-human-review."
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+else
+  echo "✅ Local-reviewer head check: LOCAL_AI_HEAD_CURRENT=1 for head ${LOCAL_AI_REVIEWED_HEAD:-<unknown>}."
+fi
+
 # Check 1: PR is non-draft
 DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
 if [ "$DRAFT" = "true" ]; then
@@ -3086,7 +3102,7 @@ a wait of its own (issue #1574).
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
   - If `late-arriving review threads detected` (exit 6 from Step 8a.1 re-check): Unresolved review threads were discovered after the pre-Check-4 gate — a platform posted after the loop's verdict. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a.
-  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), the settle window ran out while the platform was still active (`POST_CLEAN_SETTLE_TIMEOUT=1`), or the verdict describes a head the PR has moved past (`POST_CLEAN_HEAD_SHA` differs from the live head). Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` fields, and re-enter Step 8a from the beginning. If a second consecutive run reports `POST_CLEAN_SETTLE_TIMEOUT=1`, escalate to the human with reason `settle_never_quiet` rather than re-running again.
+  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6 / 0.6b): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), the settle window ran out while the platform was still active (`POST_CLEAN_SETTLE_TIMEOUT=1`), the verdict describes a head the PR has moved past (`POST_CLEAN_HEAD_SHA` differs from the live head), `LOCAL_AI_CONFIGURED` was not carried forward, or `LOCAL_AI_HEAD_CURRENT` is not exactly `1` when `local-ai-reviewer` is configured. Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` and `LOCAL_AI_*` fields, and re-enter Step 8a from the beginning. If a second consecutive run reports `POST_CLEAN_SETTLE_TIMEOUT=1`, escalate to the human with reason `settle_never_quiet` rather than re-running again.
   - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
   - If `documentation-stage alignment mismatch` (exit 8 from Check 3.6):
     the PR is on `spec/*` or `implementation-plan/*` but includes files outside
