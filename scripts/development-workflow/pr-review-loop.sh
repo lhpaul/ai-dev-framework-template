@@ -1857,7 +1857,7 @@ run_codex_github_review() {
   fi
 
   if [ "$unresolved_count" -gt 0 ]; then
-    reviewer_loop_print_reviewed_head_from_bot_pr_artifacts "$repo" "$pr_number" "$bot_login" "$graphql_bot_login"
+    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
     print_kv RESULT needs_fixes
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
@@ -3931,13 +3931,6 @@ run_devin_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
-    {
-      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
-      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
-      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
-      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
-      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
-    } | reviewer_loop_print_reviewed_head_from_json_lines
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -4098,13 +4091,6 @@ run_devin_review() {
 
         if [ "$stale_count" -gt 0 ]; then
           print_kv RESULT needs_fixes
-    {
-      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
-      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
-      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
-      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
-      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
-    } | reviewer_loop_print_reviewed_head_from_json_lines
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -4121,6 +4107,7 @@ run_devin_review() {
             print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
+          reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
           rm -f "$stale_file"
           return 1
         fi
@@ -4237,13 +4224,6 @@ run_devin_review() {
 
   if [ "$blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
-    {
-      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
-      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
-      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
-      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
-      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
-    } | reviewer_loop_print_reviewed_head_from_json_lines
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -4259,6 +4239,7 @@ run_devin_review() {
       print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
+    reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
     rm -f "$blocking_lines_file"
     return 1
   fi
@@ -6528,13 +6509,6 @@ run_coderabbit_review() {
 
         if [ "$stale_blocking_count" -gt 0 ]; then
           print_kv RESULT needs_fixes
-      {
-        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
-        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
-        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
-        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
-        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
-      } | reviewer_loop_print_reviewed_head_from_json_lines
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -6553,6 +6527,7 @@ run_coderabbit_review() {
             print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
+          reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
           rm -f "$stale_file"
           return 1
         fi
@@ -7901,36 +7876,40 @@ reviewer_loop_print_reviewed_head_from_json_lines() {
 
 # Fetch PR review comments and reviews for a bot login and emit REVIEWED_HEAD when
 # exactly one unique commit_id is present in those artifacts.
-reviewer_loop_print_reviewed_head_from_bot_pr_artifacts() {
-  local repo="$1"
-  local pr_number="$2"
-  local bot_login="$3"
-  local graphql_bot_login="${4:-${bot_login%\[bot\]}}"
+reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local owner repo_name commits
 
-  {
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg gbot "$graphql_bot_login" '
-          .[]
-          | select(
-              .user.login == $bot or
-              .user.login == $gbot or
-              .user.login == ($bot + "[bot]")
-            )
-          | {commit_id: (.commit_id // "")}
-          | @json
-        ' 2>/dev/null || true
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg gbot "$graphql_bot_login" '
-          .[]
-          | select(
-              .user.login == $bot or
-              .user.login == $gbot or
-              .user.login == ($bot + "[bot]")
-            )
-          | {commit_id: (.commit_id // .commitId // "")}
-          | @json
-        ' 2>/dev/null || true
-  } | reviewer_loop_print_reviewed_head_from_json_lines
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  commits="$(
+    gh api graphql \
+      -f query='query($owner:String!,$repo:String!,$pr:Int!){
+        repository(owner:$owner,name:$repo){
+          pullRequest(number:$pr){
+            reviewThreads(first:100){
+              nodes{
+                isResolved
+                originalCommitOid
+                comments(first:1){nodes{author{login}}}
+              }
+            }
+          }
+        }
+      }' \
+      -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+      --jq --arg bot "$graphql_bot_login" '
+        [.data.repository.pullRequest.reviewThreads.nodes[]
+          | select(.isResolved == false)
+          | select((.comments.nodes[0].author.login // "") == $bot)
+          | .originalCommitOid // empty
+        ] | unique | .[]' 2>/dev/null || true
+  )"
+
+  printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
 }
 
 # Build missed_findings JSON array for the current round.
@@ -8741,6 +8720,42 @@ reviewer_loop_history_select_latest_summary_record() {
   '
 }
 
+reviewer_loop_history_extract_preserved_section() {
+  local existing_body="$1"
+  local prior=""
+
+  prior="$(printf '%s\n' "$existing_body" | awk '
+    /<details>/ { in_details=1 }
+    in_details { buf = buf $0 "\n" }
+    /<\/details>/ && in_details {
+      if (index(buf, "<!-- reviewer-loop-history:v1 -->") > 0) {
+        latest = buf
+      }
+      buf = ""
+      in_details = 0
+    }
+    END { printf "%s", latest }
+  ')"
+  if [ -n "$prior" ]; then
+    printf '%s' "$prior"
+    return 0
+  fi
+
+  if ! printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    return 1
+  fi
+
+  # Marker-only blocks (e.g. unavailable stub) have no <details> wrapper.
+  printf '%s\n' "$existing_body" | awk -v marker="$REVIEWER_LOOP_HISTORY_MARKER" '
+    index($0, marker) { in_block=1 }
+    in_block {
+      print
+      if ($0 ~ /^```json/) { in_fence=1; next }
+      if (in_fence && $0 ~ /^```[[:space:]]*$/) { exit }
+    }
+  '
+}
+
 reviewer_loop_history_append_to_summary() {
   local comment_body="$1"
   local existing_body="${2:-}"
@@ -8783,18 +8798,7 @@ reviewer_loop_history_append_to_summary() {
   # leave that block byte-for-byte unchanged — do not re-render a stub over it.
   if [ "${reviewer_loop_history_last_append_safe:-1}" -eq 0 ] \
       && [ "${reviewer_loop_history_had_prior_block:-0}" -eq 1 ]; then
-    prior_section="$(printf '%s\n' "$existing_body" | awk '
-      /<details>/ { in_details=1 }
-      in_details { buf = buf $0 "\n" }
-      /<\/details>/ && in_details {
-        if (index(buf, "<!-- reviewer-loop-history:v1 -->") > 0) {
-          latest = buf
-        }
-        buf = ""
-        in_details = 0
-      }
-      END { printf "%s", latest }
-    ')"
+    prior_section="$(reviewer_loop_history_extract_preserved_section "$existing_body")"
     if [ -n "$prior_section" ]; then
       printf '%s\n\n%s\n' "$comment_body" "$prior_section"
       return 0
