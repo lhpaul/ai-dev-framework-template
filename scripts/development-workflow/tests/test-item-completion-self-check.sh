@@ -773,7 +773,7 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-summary true)"
-unset MOCK_GH_SUMMARY_MODE
+unset MOCK_GH_SUMMARY_MODE MOCK_GH_PR_MODE MOCK_GH_HEAD_OID
 run_test "bold_clean_summary_exit_zero" "0" "$(status_code "$out")"
 run_contains "bold_clean_summary_verified" "| pull_request.review_summary | verified | clean_or_skipped |" "$(body "$out")"
 
