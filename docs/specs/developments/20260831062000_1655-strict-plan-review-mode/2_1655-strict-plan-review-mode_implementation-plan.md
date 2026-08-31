@@ -47,14 +47,20 @@ are quiet in the same way #1650's were — a document read from the wrong revisi
 produces confident findings about text the pull request does not contain, and
 nothing in the output shows it.
 
-**Dependencies**: two hard, both restated as step 0 of the Implementation Order
-rather than left to it.
+**Dependencies**: three hard, all restated as step 0 of the Implementation
+Order rather than left to it.
 
 - **#1650's implementation.** Not its plan — its code. This item refactors the
   strict pass into a registry, and there is nothing to refactor until #1650 has
   shipped one. Recorded as a `Conflict` below.
 - **#1653's implementation**, transitively through #1650 and directly here: the
   checks run at the `plan` stage, and `review_stage` is #1653's.
+- **#1681** (merged) — the spec amendment that makes coverage follow what is
+  **present** rather than what the plan declares. The applied-set bullet and
+  scenarios 7 and 7a build a rule the unamended spec does not contain; against
+  the unamended text they are a contradiction rather than an implementation.
+  The amendment was found while writing this plan and went through the spec
+  stage, because a plan pull request cannot edit its own spec.
 
 **#1657 is a consumer, not a dependency.** It reads the counts and the applied
 sets this item records; it does not need to exist for this item to ship, and
@@ -269,24 +275,30 @@ Not applicable — this repository ships workflow tooling, not a service.
       The source is resolved by path convention: for
       `docs/specs/developments/<dir>/2_<slug>_implementation-plan.md` the source
       is `docs/specs/developments/<dir>/1_<slug>_specs.md`, supplied when
-      `git show` retrieves it and omitted when it does not.
+      `git show` retrieves it and omitted when it does not. The plan's own text
+      is not consulted — see the next bullet.
 
-- [ ] **Compute the applied set, and do not try to explain it.** The set is all
-      seven when at least one source was supplied, and the four `Source: not
-      required` checks when none was.
+- [ ] **Compute the applied set from what is present.** The set is all seven
+      when at least one source was supplied, and the four `Source: not required`
+      checks when none was.
 
-      **The script cannot tell a Refactor plan from one whose declared spec is
-      missing, and must not try.** The spec's source column has three values;
-      the script sees two, because whether an absent source is a defect depends
-      on what the plan *declares*, which is prose. That is check 1's question,
-      and check 1 is applied in all three cases precisely because it needs no
-      source. The mapping is exact rather than lossy: the spec requires the
-      applied set to be identical across all three (AC-19c), and the script
-      computes only the applied set.
+      **Coverage follows presence and never the declaration**, which is the
+      amended spec's central rule (#1681) and the reason the script needs to
+      read no prose at all. Whether the plan *named* its source is check 1's
+      question, answered in a finding; whether a source *exists to compare
+      against* is what decides coverage, and it is a file test.
 
-      A script that parsed the plan's `**Spec**:` header to make the
-      distinction would be answering a checklist question in shell, and would
-      answer it wrong on the first plan that phrased the line differently.
+      The two vary independently, and all four combinations are producible and
+      correct (AC-19c): a plan that declares nothing while its spec sits beside
+      it gets **all seven** applied and a `source_declaration` finding. Nothing
+      here withholds an available spec to penalise a missing declaration.
+
+      A script that parsed the plan's `**Spec**:` header to decide what to
+      supply would be answering a checklist question in shell, would answer it
+      wrong on the first plan that phrased the line differently, and would make
+      a coverage decision on the result. **The first revision of this plan was
+      correct and its spec was wrong**; #1681 repaired the spec rather than
+      importing the parse here.
 
 - [ ] **Report the state, the reason, the applied set and the count.** Six
       `print_kv` keys — **one** always emitted, five conditional:
@@ -404,11 +416,12 @@ depends on, and #1650's own scenarios are the only thing that would catch it.
 
 **Key scenarios to test**:
 
-1. One case per row of the spec's **ten**-row matrix: `applied` at the plan
+1. One case per row of the spec's **nine**-row matrix: `applied` at the plan
    stage with a plan document changed, a readable checklist and a pass that
-   completes; `not_applicable` at other stages and on a plan-stage pull request
-   with no plan document; `unavailable` when the stage cannot be resolved, the
-   checklist cannot be read, or the pass does not complete.
+   completes — in both source values and both finding branches; `not_applicable`
+   at other stages and on a plan-stage pull request with no plan document;
+   `unavailable` when the stage cannot be resolved, the checklist cannot be
+   read, or the pass does not complete.
 1a. The **five** reasons are distinguishable and each appears in its own row:
    `stage_unresolved`, `stage_not_plan`, `no_plan_document_changed`,
    `checklist_unreadable`, `strict_pass_failed`. `STRICT_PLAN_REASON` is
@@ -449,6 +462,11 @@ depends on, and #1650's own scenarios are the only thing that would catch it.
    and exactly `source_declaration,phase_ordering,dependency_state,reversal_risk`
    when none was. Asserted as sets, from a plan directory with a sibling
    `1_*_specs.md` and one without.
+7a. **Coverage does not read the plan's declaration.** A plan whose `**Spec**:`
+   header says `None — Refactor item`, in a directory that nonetheless contains
+   a sibling `1_*_specs.md`, has **all seven** applied. AC-19b. This is the case
+   the first revision of this plan got right and its spec got wrong, and it is
+   asserted rather than left to the absence of a parse.
 8. **The documents are supplied at the reviewed head, not from the working
    tree.** The fixture commits a plan document, then rewrites the working-tree
    copy with different text. The supplied `text` must match the committed
@@ -607,7 +625,7 @@ The contrast with #1653 is the useful one: that item added a section to
 | The registry refactor changes when the spec checks dispatch | Med | **High** — this item breaks the item it depends on, and only #1650's own scenarios would notice | #1650's suite runs unchanged as step 1's acceptance condition. Scenario 18 |
 | The applied set is not reported and a count has no denominator | Med — the count is the obvious thing to emit and coverage reads as redundant | **High** — #1657 computes a rate over a denominator that varies invisibly, and Refactor plans drag three checks' incidence toward zero | `STRICT_PLAN_APPLIED` emitted whenever the state is `applied`. Scenarios 2 and 7; proof **P3** |
 | A source-dependent check's finding is counted on a round where it was not applied | Med — the reviewer answers what it was not asked | Med — a check's incidence rises on rounds it never ran, in the flattering direction for whichever check is noisiest | The parser admits only identifiers in the applied set; the rest are `unknown`. Scenario 6a; proof **P4** |
-| The script parses the plan's `**Spec**:` header to classify the source | Med — the spec names three source cases and two look like a shell test | Med — a checklist question answered in shell, wrong on the first plan that words the line differently, and a coverage decision made on a regex | The script computes only the applied set, from whether a source was retrieved. Which case obtains is check 1's finding. Scenario 7 asserts the set and not the classification |
+| The script parses the plan's `**Spec**:` header to classify the source | Med — it is the obvious way to honour a declaration-shaped rule, and the first review of this plan proposed it | Med — a checklist question answered in shell, wrong on the first plan that words the line differently, and a coverage decision made on a regex; a plan whose spec is present is reviewed with four checks as a penalty for not naming it | Coverage follows presence, per #1681. Scenarios 7 and 7a; proof **P3a** |
 | The path predicate drifts between the gate and the reviewer | Med — two copies of one regex | Med — a path the readiness gate allows and the reviewer does not recognise is a plan document nobody checks | One definition in `workflow-lib.sh`, both callers. Scenarios 19 and 13 |
 | Supplying whole documents exceeds the reviewer command's limits | **Med to High** on long plans — this epic's own plans run past a thousand lines, and a pull request can change two | Med — the checks routinely produce no result on exactly the plans most worth checking | No truncation and no size setting: a truncated plan produces traceability findings that are wrong rather than absent, which is worse than no result. A pass that cannot complete is `strict_pass_failed`, the same cause and the same owner as any other failed attempt, and #1657 sees it as a rate rather than as silence. **Residual and declared**: this may be the plan checks' most common failure, and the data will say so |
 | `not_applicable` is reported without its reason | Med — #1650's does not carry one, so the registry default is to omit it | Med — a runbook-only plan pull request is indistinguishable in the record from a spec pull request, and #1657's denominator quietly includes rounds nothing was asked of | The entry declares that it reports a reason in `not_applicable`. Scenario 1a; proof **P5** |
@@ -712,12 +730,12 @@ resolves it the same way.
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. **Thirteen** proofs in two
+runs per proof, each citing a concrete file and line. **Fourteen** proofs in two
 groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Machinery | **6** | P1-P6 | a supply, a coverage or a count that reports what it did not check |
+| Machinery | **7** | P1-P6, P3a | a supply, a coverage or a count that reports what it did not check |
 | Detection | **7** | P7-P13 | a check that does not find the violation it exists to find |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -725,6 +743,7 @@ groups:
 | P1 | Read the plan document with `cat "$path"` instead of `git show "$HEAD_SHA:$path"` | a scratch copy of the supply step | scenario 8 fails: the supplied text is the working tree's, so on any run without `--repo-root` the checks review bytes the pull request does not contain and report findings against them; restoring `git show` passes |
 | P2 | Supply the plan's diff hunks instead of its full text | same scratch copy | scenario 9 fails: an amendment pull request supplies three lines, and `spec_traceability` reports every criterion as unaddressed because no step is in scope; restoring the full text passes |
 | P3 | Omit `STRICT_PLAN_APPLIED` and emit the count alone | a scratch copy of the print block | scenarios 2 and 7 fail: a count of one on a Refactor plan is indistinguishable from a count of one on a Feature plan, so #1657's rate divides by a denominator that varies invisibly; restoring the key passes |
+| P3a | Gate the source supply on the plan's `**Spec**:` header — withhold a present spec when the plan declares none | a scratch copy of the supply step | scenario 7a fails: a plan whose spec sits beside it is reviewed with four checks instead of seven, so the document most able to be checked is checked least, as a penalty for a defect `source_declaration` already reports. No count is wrong and no other scenario notices; restoring the presence test passes |
 | P4 | Admit any checklist identifier, not only applied ones — `$known_checks` in place of `$applied_checks` | a scratch copy of the strict `jq` program | scenario 6a fails: a `spec_traceability` finding on a round with no source is counted, raising that check's incidence on rounds it never ran; restoring `$applied_checks` passes |
 | P5 | Omit the reason in `not_applicable`, keeping it in `unavailable` as #1650 does | a scratch copy of the print block | scenario 1a fails: `stage_not_plan` and `no_plan_document_changed` collapse, so a runbook-only plan pull request enters #1657's records as a spec pull request; restoring the reason passes |
 | P6 | Emit `STRICT_PLAN_COUNT=0` and an empty applied set for `unavailable` and `not_applicable` | same scratch copy | scenarios 2 and 3 fail: a round the checks never examined is indistinguishable from one where they ran and found nothing, so unexamined plans enter the denominator as clean — an error in the flattering direction, which is the one nobody questions; scenario 16 fails with it, since the object mirrors the output; restoring the unemitted keys passes |
@@ -738,7 +757,8 @@ while every count remains internally consistent and every other scenario passes.
 
 ## Implementation Order
 
-0. **Hard stop**: confirm #1650's **implementation** is merged and that its
+0. **Hard stop**: confirm #1681 is merged — it is, and the applied-set rule
+   depends on it. Then confirm #1650's **implementation** is merged and that its
    strict pass has the shape the registry table above assumes — the stage test,
    the derived bundle, `LOCAL_AI_REVIEWER_MODE`, the strict parser with its mode
    guard, and the identifier extraction with its three refusals. Confirm #1653
@@ -759,7 +779,7 @@ while every count remains internally consistent and every other scenario passes.
    14c and 14d.
 4. Add the plan entry: its stage, checklist, prefix and marker, the document
    supply by `git show`, the source resolution by path convention, and the
-   applied-set computation. **Verify**: scenarios 7, 8, 9, 10, 11, 12 and 13.
+   applied-set computation. **Verify**: scenarios 7, 7a, 8, 9, 10, 11, 12 and 13.
 5. Add the six `print_kv` keys, the evidence object and the `strict_plan` entry
    in `reviewer_loop_history_build_entry`. **Verify**: scenarios 1, 1a, 2, 3, 4,
    5, 5a, 6, 6a, 14, 15, 16 and 17.
@@ -772,7 +792,7 @@ while every count remains internally consistent and every other scenario passes.
    and the repair is to sharpen its question until it does.
 6. Update the `--help` block, the integration document, Protocol 93, the `paths`
    filter, and add the changelog fragment. **Verify**: runbook Step 9.
-7. Produce the **thirteen** planted-violation proofs and record them in the pull
+7. Produce the **fourteen** planted-violation proofs and record them in the pull
    request with the command, file, line and both outcomes for each.
 
 ---
