@@ -1944,7 +1944,6 @@ run_codex_github_review() {
       print_kv COMMENT_COUNT "$unresolved_count"
       print_kv BLOCKING_COUNT "$unresolved_count"
       print_kv SUGGESTION_COUNT 0
-      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 1
       ;;
     3)
