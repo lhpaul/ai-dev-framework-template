@@ -1857,6 +1857,7 @@ run_codex_github_review() {
   fi
 
   if [ "$unresolved_count" -gt 0 ]; then
+    reviewer_loop_print_reviewed_head_from_bot_pr_artifacts "$repo" "$pr_number" "$bot_login" "$graphql_bot_login"
     print_kv RESULT needs_fixes
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
@@ -7896,6 +7897,40 @@ reviewer_loop_print_reviewed_head_from_json_lines() {
   local commits
   commits="$(jq -r '.commit_id // empty' 2>/dev/null | grep -v '^$' || true)"
   printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
+}
+
+# Fetch PR review comments and reviews for a bot login and emit REVIEWED_HEAD when
+# exactly one unique commit_id is present in those artifacts.
+reviewer_loop_print_reviewed_head_from_bot_pr_artifacts() {
+  local repo="$1"
+  local pr_number="$2"
+  local bot_login="$3"
+  local graphql_bot_login="${4:-${bot_login%\[bot\]}}"
+
+  {
+    gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg gbot "$graphql_bot_login" '
+          .[]
+          | select(
+              .user.login == $bot or
+              .user.login == $gbot or
+              .user.login == ($bot + "[bot]")
+            )
+          | {commit_id: (.commit_id // "")}
+          | @json
+        ' 2>/dev/null || true
+    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+      | jq -r --arg bot "$bot_login" --arg gbot "$graphql_bot_login" '
+          .[]
+          | select(
+              .user.login == $bot or
+              .user.login == $gbot or
+              .user.login == ($bot + "[bot]")
+            )
+          | {commit_id: (.commit_id // .commitId // "")}
+          | @json
+        ' 2>/dev/null || true
+  } | reviewer_loop_print_reviewed_head_from_json_lines
 }
 
 # Build missed_findings JSON array for the current round.
