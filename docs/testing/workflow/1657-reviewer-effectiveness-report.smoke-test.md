@@ -112,6 +112,26 @@ frequent the longer its pull request stayed open, which inverts the ranking a
 reader is about to act on; capping a total at one per pull request contradicts
 the rounds measure. Proofs P4 and P5.
 
+## Step 4a: External blocking rounds counts records, not verdicts
+
+**Maps to**: AC-4, AC-5, AC-5a, AC-5b.
+
+1. Run against a fixture with three missed-finding records — one
+   `clean_same_commit`, one `clean_earlier_commit`, one carrying a non-clean
+   local evidence state.
+2. Read external blocking rounds, confirmed miss records and possible miss
+   records.
+3. Read a fixture whose single record describes **three** blocking findings.
+
+**Expected result**: external blocking rounds reads **3** — every record counts,
+whatever the local verdict had been. Confirmed reads **1**, possible reads
+**1**, and the third record feeds neither. Nothing in the output sums confirmed
+and possible. In step 3 the record contributes **1**, not 3.
+
+**The measure counts occasions and the local verdict decides only which
+numerator a record also joins.** A report that counted only the records that
+qualify as misses would put the miss rate over itself, which is a ratio of one.
+
 ## Step 5: There is no measure of what the local reviewer found
 
 **Maps to**: AC-4a, AC-4b.

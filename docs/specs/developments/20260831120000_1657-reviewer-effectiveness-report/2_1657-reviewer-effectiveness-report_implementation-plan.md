@@ -313,6 +313,16 @@ Not applicable.
    shown. AC-14.
 10. Measures 4 and 5 are reported separately and no output sums them. AC-5,
     AC-5a. A record describing three findings contributes one. AC-5b.
+10a. **External blocking rounds equals the number of missed-finding records,
+    across every local-evidence state.** A fixture whose records carry
+    `clean_same_commit`, `clean_earlier_commit` and a non-clean state in turn
+    contributes **one** to measure 2 for each — the measure counts qualifying
+    external rounds, and what the local reviewer's verdict had been decides only
+    which of measures 4 and 5 the record also feeds, or neither. AC-4.
+10b. A round with **no** record contributes nothing to measure 2, including a
+    round whose reviewers reported advisory findings only. #1651 writes records
+    for blocking findings alone, and the measure inherits that boundary rather
+    than restating it.
 11. Measure 3 is the sum of the rounds' aggregate blocking counts and is
     **not** attributed to any reviewer. AC-4a.
 11a. **Measure 6 counts exactly the rounds that dispatched `codex-github`.** A
@@ -506,7 +516,7 @@ direction nobody questions.
    **Verify**: scenarios 15 and 16.
 3. Add the classifier. **Verify**: scenarios 1, 1a, 1b, 2, 3, 4, 5 and 18.
 4. Add the measures and their availability test. **Verify**: scenarios 6, 7, 8,
-   10, 11 and 12.
+   10, 10a, 10b, 11 and 12.
 5. Add the aggregation and the strict-check section. **Verify**: scenarios 9,
    11a, 11b, 13 and 14.
 6. Add the rendering, text and JSON. **Verify**: scenarios 7, 17, 19 and 20.
