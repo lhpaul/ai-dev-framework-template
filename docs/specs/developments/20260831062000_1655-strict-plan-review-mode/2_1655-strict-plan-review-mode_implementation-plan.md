@@ -230,13 +230,20 @@ Not applicable — this repository ships workflow tooling, not a service.
       downstream of the extraction uses `required` and `not_required`; the
       checklist and this plan's prose use `required` and `not required`.
 
-      **The extraction gains a fourth refusal.** #1650 refuses a checklist whose
-      headings and identifiers disagree, one that repeats an identifier, and one
-      with no headings at all. A section with no `Source:` line, or with a value
-      that is neither, is `checklist_unreadable` on the same grounds: a check
-      whose applicability is unknown cannot be silently placed in either group,
-      and placing it in the applied set would report coverage the pass did not
-      have.
+      **The extraction gains a fourth refusal, and it is per section.** #1650
+      refuses a checklist whose headings and identifiers disagree, one that
+      repeats an identifier, and one with no headings at all. To those this item
+      adds: **every** section must carry exactly one recognised `Source:` line.
+      A section with none, with a value that is neither, or with two is
+      `checklist_unreadable`.
+
+      *Exactly one, per section* rather than *as many lines as sections* is the
+      part that has to be built rather than assumed. A document with two lines
+      in one section and none in another has matching totals, and a count
+      comparison accepts it while the applicability values land on the wrong
+      identifiers — coverage that is confidently wrong rather than absent, which
+      is the failure this feature exists to avoid producing. Scenarios 14c and
+      14d.
 
 - [ ] **Supply the documents, at the reviewed head.** For the plan entry, the
       derived bundle gains two keys beyond #1650's checklist key:
@@ -468,11 +475,19 @@ depends on, and #1650's own scenarios are the only thing that would catch it.
 14a. The three inherited refusals plus the new fourth: a level-3 heading the
    identifier pattern does not match; a repeated identifier; no headings at all
    and an empty file; and **a section with a missing or invalid `Source:`
-   line**. All four are `unavailable` with `checklist_unreadable`, and in none
-   of them is `STRICT_PLAN_COUNT` emitted.
+   line**. All are `unavailable` with `checklist_unreadable`, and in none of
+   them is `STRICT_PLAN_COUNT` emitted.
 14b. The seven shipped identifiers are extracted from the shipped checklist and
    compared to the spec's list as a set, and their `Source:` values are compared
    to the spec's four/three split — by extraction, not by reading.
+14c. **The compensating-duplicate case**: one section carrying two recognised
+   `Source:` lines and another carrying none. The document-wide totals agree, so
+   a count comparison accepts it and assigns applicability to the wrong
+   identifiers. It must be `checklist_unreadable`. This is the case a total
+   count cannot see, and it is the reason the extraction is per section.
+14d. **The last section is covered.** A checklist whose final section carries no
+   `Source:` line is refused — asserted separately, because a per-section test
+   evaluated only at section boundaries silently exempts the last one.
 15. **Both entries report on every review, and never both `applied`.** On a
    spec-stage pull request: `STRICT_SPEC_STATE=applied` and
    `STRICT_PLAN_STATE=not_applicable` with `stage_not_plan`. On a plan-stage
@@ -545,8 +560,8 @@ rather than *this check does not work*.
 
 | Fixture | Contents | Location |
 | --- | --- | --- |
-| Fixture plan documents | **Eleven**: seven positives, one per check with a single planted instance of its shape; four negatives — a declared addition (AC-5a), a step declared irreversible (AC-10a), a plan whose criteria all have falsifying tests, and a Refactor plan correctly declaring its tracker brief. Ten sit under `with-source/`; the Refactor negative sits under `no-source/` | `scripts/development-workflow/tests/fixtures/strict-plan-plans/` |
-| Fixture source specs | **One** committed `1_*_specs.md`, a sibling of the positives, so the source-dependent checks have something to compare against. The no-source case is a **second fixture directory** containing a plan and no sibling spec — an absence is a directory without a file, not a file | `.../strict-plan-plans/with-source/` and `.../strict-plan-plans/no-source/` |
+| Fixture plan documents | **Eleven**, one per **directory**, mirroring a real development directory: `<name>/2_<name>_implementation-plan.md`. Seven positives, one per check with a single planted instance of its shape; four negatives — a declared addition (AC-5a), a step declared irreversible (AC-10a), a plan whose criteria all have falsifying tests, and a Refactor plan correctly declaring its tracker brief | `scripts/development-workflow/tests/fixtures/strict-plan-plans/<name>/` |
+| Fixture source specs | **Ten**: one `1_<name>_specs.md` per fixture directory, because the source is resolved by slug from the plan's own filename and one file cannot be the sibling of ten differently named plans. Three are tailored rather than shared — `unspecified_step`'s omits the step the plan adds, `spec_traceability`'s carries a criterion no step addresses, and `ac_test_coverage`'s carries the criterion whose named test does not falsify it; the rest share one short body. The **eleventh** directory, the Refactor negative, has no sibling at all: an absence is a directory without a file | `.../strict-plan-plans/<name>/1_<name>_specs.md` |
 | Git fixtures | A temporary repository with a plan committed at one revision and rewritten in the working tree, for scenario 8; a path removed from the index, for scenario 11 | built inline in `test-local-ai-reviewer.sh` |
 | Reviewer outputs | **Ordinary pass**: clean; two blocking findings. **Strict pass**: no findings; findings from two applied checks; an unknown identifier; an identifier that is in the checklist but not in the applied set; and the failure shapes #1650 enumerates | inline in the same suite |
 | Checklist fixtures | A well-formed seven-section checklist with `Source:` lines; one with an eighth section; one with a section missing its `Source:` line; one with an invalid `Source:` value; and #1650's three malformed shapes | `scripts/development-workflow/tests/fixtures/strict-plan-checks/` |
@@ -640,37 +655,57 @@ carrying an unapplied identifier is `unknown`: visible in
 The `Source:` extraction, with the fourth refusal:
 
 ```text
+# Pairs each section's identifier with its Source: value, and refuses any
+# section that does not carry exactly one recognised Source: line.
+#
 # The document's two spellings map to the two internal tokens here and nowhere
 # else: `not required` is what a reader writes, `not_required` is what jq
-# compares. Two -e expressions rather than one alternation, so the mapping is
-# explicit rather than a substitution that happens to preserve the text.
+# compares. Two rules rather than one alternation, so the mapping is explicit
+# rather than a substitution that happens to preserve the text.
 status=0
-sources="$(sed -n \
-  -e 's/^Source:[[:space:]]*required[[:space:]]*$/required/p' \
-  -e 's/^Source:[[:space:]]*not required[[:space:]]*$/not_required/p' \
-  "$checklist")" || status=$?
+pairs="$(awk '
+  /^### / {
+    if (id != "" && n != 1) { bad = 1 }
+    id = $2; n = 0; next
+  }
+  /^Source: *required$/     { print id "\trequired";     n++; next }
+  /^Source: *not required$/ { print id "\tnot_required"; n++; next }
+  END { if (id == "" || n != 1 || bad) exit 3 }
+' "$checklist")" || status=$?
 if [ "$status" -ne 0 ]; then
   strict_unreadable; return 0
 fi
-# One Source: line per section, or the document is refused.
-[ "$(printf '%s\n' "$sources" | grep -c .)" -eq "$declared" ] || {
+# The two extractions must agree about which identifiers the document declares.
+[ "$(printf '%s\n' "$pairs" | cut -f1 | sort -u)" = "$(printf '%s\n' "$ids" | sort -u)" ] || {
   strict_unreadable; return 0
 }
 ```
 
-The count comparison is the refusal that matters, and it is #1650's heading
-comparison applied to a second property. A section whose `Source:` line is
-missing or misspelled would otherwise be placed in one group by default, and the
-applied set would claim coverage the pass did not have — a number that is wrong
-rather than absent, which is the error this whole feature exists to avoid
-producing.
+**The check is per section, not per document, and the difference is the whole
+of this refusal's value.** Comparing a total count of `Source:` lines against a
+total count of sections passes on a document where one section carries two lines
+and another carries none — the totals agree and the applicability values are
+assigned to the wrong identifiers. That is worse than a refusal and worse than a
+crash: the checks then run with a coverage claim that is confidently wrong, and
+nothing downstream can tell. The `n != 1` test is evaluated at each section
+boundary and again at `END`, so the last section is covered too.
 
-`grep -c` is read for its count and not its status here because the surrounding
-`|| status=$?` on the `sed` already covers the failure path; the count itself is
-compared, and a zero count fails the comparison rather than the script. Under
-`set -euo pipefail` this matters: #1650 records the same trap on `grep -c` and
-resolves it by reading the status explicitly, which is the pattern the shipped
-extraction follows.
+**Pairing is by section, not by position.** The identifier and its value leave
+the extraction attached to each other, so a document the parser accepts cannot
+later be misread by an off-by-one. The set comparison against `$ids` — #1650's
+identifier extraction — is what keeps the two readings of one document from
+disagreeing silently; either extraction objecting refuses the document.
+
+A section whose `Source:` line is missing or misspelled would otherwise be
+placed in one group by default, and the applied set would claim coverage the
+pass did not have — a number that is wrong rather than absent, which is the
+error this whole feature exists to avoid producing.
+
+`awk` is used rather than `sed` because the property is *positional within a
+section* and `sed -n` has no notion of the section it is inside. Under
+`set -euo pipefail` its non-zero exit is read into `status` explicitly rather
+than left to kill the script — #1650 records the same trap on `grep -c` and
+resolves it the same way.
 
 ---
 
@@ -720,7 +755,8 @@ while every count remains internally consistent and every other scenario passes.
    edit to its assertions. This step ships nothing new and is the only step
    whose failure means the refactor was wrong rather than incomplete.
 3. Add the plan checklist with its seven sections, identifiers and `Source:`
-   lines, and the fourth extraction refusal. **Verify**: scenarios 14b and 14a.
+   lines, and the fourth extraction refusal. **Verify**: scenarios 14a, 14b,
+   14c and 14d.
 4. Add the plan entry: its stage, checklist, prefix and marker, the document
    supply by `git show`, the source resolution by path convention, and the
    applied-set computation. **Verify**: scenarios 7, 8, 9, 10, 11, 12 and 13.
