@@ -210,7 +210,8 @@ Conditions are evaluated in order and stop at the first unmet one:
    (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`)
    **and** `reviewer_failed_label_required_for_result` returns false. Peer set
    is phase-scoped, not the whole list — a draft-phase expensive reviewer does
-   not wait on ready-phase peers.3. **Review threads** — zero unresolved, non-outdated review threads, bound to
+   not wait on ready-phase peers.
+3. **Review threads** — zero unresolved, non-outdated review threads, bound to
    the same `loop_head_sha` (else `evidence_head_moved` /
    `evidence_unavailable_review_threads`).
 4. **Baseline checks** — the non-reviewer check set on `loop_head_sha` is
