@@ -8182,6 +8182,13 @@ reviewer_loop_missed_finding_records() {
   printf '%s\n' "$records_json"
 }
 
+# Collect all missed-finding records persisted in a history payload.
+reviewer_loop_missed_findings_from_history_payload() {
+  local payload="${1:-}"
+  printf '%s' "$payload" | jq -c '[(.entries // [])[] | (.missed_findings // [])[]]' 2>/dev/null \
+    || printf '[]\n'
+}
+
 # Render one summary line (<=200 chars) for a missed-finding record JSON object.
 reviewer_loop_missed_finding_summary_line() {
   local record_json="${1:-}"
@@ -11063,9 +11070,6 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   _mf_count="$(printf '%s\n' "$missed_findings_json" | jq 'length' 2>/dev/null)" || _mf_count=0
   [[ "$_mf_count" =~ ^[0-9]+$ ]] || _mf_count=0
 
-  if [ "$_mf_count" -gt 0 ]; then
-    missed_findings_section="$(reviewer_loop_missed_findings_summary_section "$missed_findings_json")"
-  fi
   local attribution_section=""
   if [ -n "${missed_finding_attribution_reports:-}" ]; then
     while IFS= read -r _attr_line; do
@@ -11113,6 +11117,19 @@ ${_attr_line}"
     missed_findings_section=""
     missed_finding_telemetry_section="
 **Missed-finding telemetry:** could not be recorded this round (${_hist_unavail_reason:-unknown}). Existing reviewer-loop history was left unchanged."
+  fi
+
+  local _display_missed_findings_json='[]'
+  _display_missed_findings_json="$(reviewer_loop_missed_findings_from_history_payload "$_prior_payload")"
+  if [ "$_mf_count" -gt 0 ] && [ "$_hist_append_safe" -eq 1 ]; then
+    _display_missed_findings_json="$(jq -s 'add' \
+      <(printf '%s\n' "$_display_missed_findings_json") \
+      <(printf '%s\n' "$missed_findings_json"))"
+  fi
+  if [ "$(printf '%s\n' "$_display_missed_findings_json" | jq 'length' 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    missed_findings_section="$(reviewer_loop_missed_findings_summary_section "$_display_missed_findings_json")"
+  else
+    missed_findings_section=""
   fi
 
   local comment_body
