@@ -16493,15 +16493,16 @@ platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
 # --- Scenario 13 / 14: deferral cap + head-scoped ---
 _1649_ledger_entries() {
   local n="$1" head="${2:-$_1649_head}"
-  local i entries="["
+  local i
+  local _1649_json_entries="["
   for i in $(seq 1 "$n"); do
-    [ "$i" -gt 1 ] && entries+=","
-    entries+="{\"result\":\"needs_fixes\",\"reason\":\"expensive_gate_deferred\",\"head_sha\":\"$head\",\"expensive_gate\":{\"platform\":\"codex-github\",\"result\":\"deferred\",\"reason\":\"baseline_checks_pending\",\"head\":\"$head\"}}"
+    [ "$i" -gt 1 ] && _1649_json_entries+=","
+    _1649_json_entries+="{\"result\":\"needs_fixes\",\"reason\":\"expensive_gate_deferred\",\"head_sha\":\"$head\",\"expensive_gate\":{\"platform\":\"codex-github\",\"result\":\"deferred\",\"reason\":\"baseline_checks_pending\",\"head\":\"$head\"}}"
   done
-  entries+="]"
+  _1649_json_entries+="]"
   printf '%s\n' "<!-- reviewer-loop-history:v1 -->
 \`\`\`json
-{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"available\",\"entries\":${entries}}
+{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"available\",\"entries\":${_1649_json_entries}}
 \`\`\`"
 }
 
