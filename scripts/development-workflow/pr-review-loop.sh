@@ -1047,16 +1047,41 @@ expensive_gate_unresolved_threads_status() {
       return 0
     fi
     if [ -z "$head_sha" ]; then
-      head_sha="$(printf '%s\n' "$result" | jq -r '.headRefOid // ""' 2>/dev/null)" || head_sha=""
+      if ! head_sha="$(printf '%s\n' "$result" | jq -r '.headRefOid // ""' 2>/dev/null)"; then
+        printf 'unavailable - \n'
+        return 0
+      fi
     fi
-    unresolved=$((unresolved + $(
+    _eg_page_unresolved=""
+    if ! _eg_page_unresolved="$(
       printf '%s\n' "$result" | jq '
         [.reviewThreads.nodes[]?
          | select((.isResolved | not) and (.isOutdated | not))]
-        | length' 2>/dev/null || printf '0'
-    )))
-    has_next="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null)" || has_next="false"
-    cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty' 2>/dev/null)" || cursor=""
+        | length'
+    )"; then
+      printf 'unavailable - \n'
+      return 0
+    fi
+    if [ -z "${_eg_page_unresolved}" ]; then
+      printf 'unavailable - \n'
+      return 0
+    fi
+    case "${_eg_page_unresolved}" in
+      *[!0-9]*)
+        printf 'unavailable - \n'
+        return 0
+        ;;
+    esac
+    unresolved=$((unresolved + _eg_page_unresolved))
+    unset _eg_page_unresolved
+    if ! has_next="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage // false')"; then
+      printf 'unavailable - \n'
+      return 0
+    fi
+    if ! cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty')"; then
+      printf 'unavailable - \n'
+      return 0
+    fi
     if [ "$has_next" != "true" ] && [ "$has_next" != "1" ]; then
       break
     fi
@@ -9496,6 +9521,23 @@ for index in "${!platforms[@]}"; do
         expensive_gate_status=$?
         set -e
         expensive_gate_sync_last_from_output "$expensive_gate_output"
+        if [ "$expensive_gate_status" -eq 0 ]; then
+          # Preflight success is not a dispatch — rewrite telemetry so summary/
+          # history/first-match stdout cannot claim the expensive reviewer ran
+          # before same-bucket peers complete and run_platform_review fires.
+          expensive_gate_output="$(
+            printf '%s\n' "$expensive_gate_output" | sed \
+              -e 's/^EXPENSIVE_GATE_RESULT=dispatched$/EXPENSIVE_GATE_RESULT=preflight_ok/' \
+              -e 's/^EXPENSIVE_GATE_RESULT=forced$/EXPENSIVE_GATE_RESULT=preflight_ok/'
+          )"
+          printf '%s\n' "$expensive_gate_output"
+          expensive_gate_last_platform=""
+          expensive_gate_last_result=""
+          expensive_gate_last_reason=""
+          expensive_gate_last_head=""
+          unset expensive_gate_output expensive_gate_status
+          continue
+        fi
         printf '%s\n' "$expensive_gate_output"
         if [ "$expensive_gate_status" -ne 0 ]; then
           last_platform="$_eg_plat"
@@ -9996,6 +10038,10 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
         expensive_gate_section="
 
 **Expensive reviewer gate:** ${expensive_gate_last_platform} — dispatched at head \`${expensive_gate_last_head}\`."
+        ;;
+      preflight_ok)
+        # Ready-phase preflight only; do not claim dispatch in the summary.
+        expensive_gate_section=""
         ;;
       *)
         expensive_gate_section="
