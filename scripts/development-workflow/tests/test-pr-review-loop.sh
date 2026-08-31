@@ -15553,6 +15553,7 @@ run_test "gate_no_thread_platforms_other_head_refused" "12" "$(_1574_run_gate PO
 run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
 run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
 run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_skipped_no_platforms_unset_local_ai_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true LOCAL_AI_CONFIGURED=)"
 run_test "gate_local_ai_unset_refused" "12" "$(_1574_run_gate LOCAL_AI_CONFIGURED= POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
 run_test "gate_local_ai_not_current_refused" "12" "$(_1574_run_gate LOCAL_AI_CONFIGURED=1 LOCAL_AI_HEAD_CURRENT=0 LOCAL_AI_REVIEWED_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
 run_test "gate_local_ai_current_passes" "0" "$(_1574_run_gate LOCAL_AI_CONFIGURED=1 LOCAL_AI_HEAD_CURRENT=1 LOCAL_AI_REVIEWED_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
@@ -16082,7 +16083,9 @@ run_test "1648_legacy_payload_parses" "1" \
 
 # Check 0.6b gate (Protocol 91 lines 2758-2771) — planted-violation proof P2/P3
 check_066b_local_ai_head() {
-  if [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
+  if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+    return 0
+  elif [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
     return 12
   elif [ "$LOCAL_AI_CONFIGURED" = "0" ]; then
     return 0
@@ -16093,10 +16096,17 @@ check_066b_local_ai_head() {
   fi
 }
 
-unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD 2>/dev/null || true
+unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD REVIEWER_LOOP_SKIPPED_NO_PLATFORMS 2>/dev/null || true
 _1648_check_rc=0
 check_066b_local_ai_head || _1648_check_rc=$?
 run_test "1648_check_066b_unset_configured" "12" "$_1648_check_rc"
+
+export REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true
+unset LOCAL_AI_CONFIGURED
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_skipped_no_platforms_pass" "0" "$_1648_check_rc"
+unset REVIEWER_LOOP_SKIPPED_NO_PLATFORMS
 
 export LOCAL_AI_CONFIGURED=1
 export LOCAL_AI_HEAD_CURRENT=

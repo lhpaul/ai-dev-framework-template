@@ -2756,7 +2756,9 @@ else
 fi
 
 # Check 0.6b: local-ai-reviewer current-head evidence (issue #1648).
-if [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+  echo "✅ Local-reviewer head check not applicable: Step 7 was skipped (no review platforms)."
+elif [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
   echo "ERROR: Reviewer-loop telemetry was not carried forward (LOCAL_AI_CONFIGURED is not set)."
   echo "Re-run Step 7 and export its POST_CLEAN_* and LOCAL_AI_* fields before re-entering Step 8a."
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
