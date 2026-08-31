@@ -16932,6 +16932,34 @@ _1651_recs="$missed_findings_json"
 run_test "1651_s13d_no_record" "0" "$(printf '%s\n' "$_1651_recs" | jq 'length')"
 run_contains "1651_s13d_attribution_report" "could not be established" "$missed_finding_attribution_reports"
 
+# --- Scenario 13e: single commit_id emits head; two distinct commits do not ---
+_1651_head_out="$(printf '%s\n' "{\"commit_id\":\"$_1651_descendant\"}" \
+  | reviewer_loop_print_reviewed_head_from_json_lines | grep '^REVIEWED_HEAD=' | cut -d= -f2- || true)"
+run_test "1651_s13e_single_commit" "$_1651_descendant" "$_1651_head_out"
+_1651_head_count="$(printf '%s\n' \
+  "{\"commit_id\":\"$_1651_descendant\"}" \
+  "{\"commit_id\":\"$_1651_ancestor\"}" \
+  | reviewer_loop_print_reviewed_head_from_json_lines | grep -c '^REVIEWED_HEAD=' || true)"
+run_test "1651_s13e_two_commits_no_head" "0" "$_1651_head_count"
+
+# --- Scenario 13f: issue-comment-only / no-head adapters produce no record ---
+for _1651_plat in claude-code-action pr-agent; do
+  platform_result_records=(
+    "$(reviewer_loop_platform_result_record_json local-ai-reviewer clean "")"
+    "$(reviewer_loop_platform_result_record_json "$_1651_plat" needs_fixes "")"
+  )
+  platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}" "${_1651_plat}:")
+  platform_blocking_outputs=("${_1651_plat}"$'\036'"RESULT=needs_fixes"$'\n'"BLOCKING_COUNT=1"$'\n'"BLOCKING_1_PATH=a.ts"$'\n')
+  loop_head_sha="$_1651_descendant"
+  missed_finding_attribution_reports=""
+  missed_findings_json='[]'
+  reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1 >/dev/null
+  run_test "1651_s13f_${_1651_plat}_no_record" "0" \
+    "$(printf '%s\n' "$missed_findings_json" | jq 'length')"
+  run_contains "1651_s13f_${_1651_plat}_report" "could not be established" "$missed_finding_attribution_reports"
+done
+unset _1651_plat _1651_head_out _1651_head_count
+
 # --- Scenario 14: history entry fields ---
 pr_number=""
 current_run_id="1651-ledger"
