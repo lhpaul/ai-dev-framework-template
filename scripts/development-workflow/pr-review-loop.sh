@@ -591,7 +591,8 @@ Outputs stable key=value lines including:
                   Step 7 re-runs; it also breaks the platform iteration so later ready-phase platforms
                   do not run. When the ready-phase transition is about to start and any remaining
                   ready-phase platform is expensive, those expensive gates are preflighted BEFORE
-                  gh pr ready (vendors such as Codex may auto-start on mark-ready); the per-platform
+                  gh pr ready with peer scope earlier_buckets (same-bucket peers like bugbot are
+                  not required yet — they need ready state themselves); the full per-platform
                   gate still runs again immediately before run_platform_review. Deferrals are bounded
                   by PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
                   (default 3, head-scoped occurrence count); at the cap the loop escalates.
@@ -895,14 +896,20 @@ expensive_gate_lookup_peer_evidence() {
   printf '\n'
 }
 
-# expensive_gate_check_peers <expensive_platform>
+# expensive_gate_check_peers <expensive_platform> [peer_scope]
 #
 # Condition 2: every platform that precedes this expensive reviewer under
 # the reordered list (same-bucket non-expensive + every earlier bucket) must
 # have run with acceptable evidence. Prints empty on success, or
 # peer_reviewer_not_run / peer_reviewer_not_clean.
+#
+# peer_scope:
+#   full (default) — earlier buckets + same-bucket predecessors
+#   earlier_buckets — earlier buckets only (used by ready-phase preflight so
+#     same-bucket peers like bugbot are not required before gh pr ready)
 expensive_gate_check_peers() {
   local expensive_platform="$1"
+  local peer_scope="${2:-full}"
   local idx=0
   local expensive_idx=-1
   local platform peer_evidence peer_result peer_reason
@@ -926,6 +933,12 @@ expensive_gate_check_peers() {
   for platform in "${platforms[@]:-}"; do
     if [ "$idx" -ge "$expensive_idx" ]; then
       break
+    fi
+    if [ "$peer_scope" = "earlier_buckets" ] && is_phase_after_clean_platform "$platform"; then
+      # Ready-phase preflight: same-bucket peers have not run yet (and often
+      # cannot, because they themselves require gh pr ready).
+      idx=$((idx + 1))
+      continue
     fi
     # Peer set: every preceding platform (earlier buckets + same-bucket
     # non-expensive). Expensive members of earlier buckets are included;
@@ -1192,14 +1205,16 @@ expensive_gate_deferral_count() {
   printf '%s\n' "$count"
 }
 
-# expensive_reviewer_gate <pr_number> <platform> <head_sha>
+# expensive_reviewer_gate <pr_number> <platform> <head_sha> [peer_scope]
 #
 # Returns 0 to dispatch, 1 to defer/escalate. Emits EXPENSIVE_GATE_* keys.
 # Stops at the first unmet condition so the reason names a single cause.
+# peer_scope: full (default) | earlier_buckets (ready-phase preflight).
 expensive_reviewer_gate() {
   local pr_number_arg="$1"
   local platform="$2"
   local head_sha="$3"
+  local peer_scope="${4:-full}"
   local reason=""
   local deferrals=""
   local configured=""
@@ -1231,7 +1246,7 @@ expensive_reviewer_gate() {
   fi
 
   if [ -z "$reason" ]; then
-    peer_reason="$(expensive_gate_check_peers "$platform")"
+    peer_reason="$(expensive_gate_check_peers "$platform" "$peer_scope")"
     if [ -n "$peer_reason" ]; then
       reason="$peer_reason"
     fi
@@ -9417,10 +9432,12 @@ for index in "${!platforms[@]}"; do
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
       # Issue #1649: preflight expensive ready-phase gates BEFORE gh pr ready.
       # Codex (and similar) may auto-start when a draft is marked ready; running
-      # ensure_pr_ready first would spend that reviewer before local/peer/thread/
-      # baseline evidence is confirmed. Plan Path 2 still keeps the per-platform
-      # gate immediately before run_platform_review; this preflight only guards
-      # the ready transition when any remaining ready-phase platform is expensive.
+      # ensure_pr_ready first would spend that reviewer before local/thread/
+      # baseline evidence (and earlier-bucket peers) is confirmed. Peer scope is
+      # earlier_buckets only — same-bucket peers like bugbot require ready state
+      # themselves, so requiring them here would deadlock the ready transition.
+      # The full per-platform gate (including same-bucket peers) still runs
+      # immediately before run_platform_review after ready-phase peers complete.
       _eg_ready_preflight_failed=0
       for ((_eg_i = index; _eg_i < ${#platforms[@]}; _eg_i++)); do
         _eg_plat="${platforms[$_eg_i]}"
@@ -9431,7 +9448,7 @@ for index in "${!platforms[@]}"; do
           continue
         fi
         set +e
-        expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$_eg_plat" "$loop_head_sha")"
+        expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$_eg_plat" "$loop_head_sha" "earlier_buckets")"
         expensive_gate_status=$?
         set -e
         printf '%s\n' "$expensive_gate_output"

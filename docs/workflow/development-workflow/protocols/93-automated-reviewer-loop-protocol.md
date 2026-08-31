@@ -226,8 +226,11 @@ platform cannot call `gh pr ready`. When the ready-phase transition is about
 to start and any **remaining** ready-phase platform is expensive, the loop
 **preflights** those expensive gates **before** `ensure_pr_ready_for_ready_phase`
 / `gh pr ready`, because vendors such as Codex may auto-start a review when a
-draft is marked ready. The per-platform gate still runs again immediately
-before `run_platform_review`. Deferrals are bounded by a head-scoped
+draft is marked ready. That preflight uses peer scope `earlier_buckets` only
+(draft peers + local/thread/baseline checks) so same-bucket ready peers such as
+`bugbot` — which themselves require the PR to be ready — cannot deadlock the
+transition. The full per-platform gate (including same-bucket peers) still runs
+again immediately before `run_platform_review`. Deferrals are bounded by a head-scoped
 occurrence counter (`PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, default `3`) —
 the existing cycle caps cannot bound them because they unique-bucket
 `needs_fixes` by head+result. At the cap the loop escalates with
