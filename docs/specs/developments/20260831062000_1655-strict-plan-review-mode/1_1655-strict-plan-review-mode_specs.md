@@ -283,7 +283,7 @@ The order asks three questions about the change before either question about the
 
 **There is no row pairing `no spec readable` with no findings, and the omission is not an oversight.** A plan that names a spec which is not there, or names nothing at all, produces a `source_declaration` finding by definition of check 1, so that combination is unreachable. That is why rows 8 through 10 are three rather than four: `tracker brief` takes both the find and find-nothing branches, and `no spec readable` takes only one.
 
-**Rows 8, 9 and 10 have the same applied set and differ in what fired.** All three mean the source-dependent checks had nothing to compare against. Only row 8 is a defect in the plan, and `source_declaration` in the fired set is the whole of what says so.
+**Rows 8, 9 and 10 have the same applied set and differ in what fired.** All three mean the source-dependent checks had nothing to compare against. Only row 8 necessarily carries a defect in *how the plan declares its source*; row 10's findings come from the other applied checks and say nothing about the declaration, which is valid there. `source_declaration` in the fired set is the whole of what separates the two.
 
 **The count is empty, not zero, in rows 1 through 5.** `0` means *the applied checks ran and found nothing*, and it is the only thing distinguishing a clean plan from one the checks never examined. Writing `0` for the other rows would put those rounds into the denominator of any later rate as if they had been checked.
 
