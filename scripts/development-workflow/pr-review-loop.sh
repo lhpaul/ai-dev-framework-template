@@ -8178,13 +8178,13 @@ reviewer_loop_missed_finding_records() {
       continue
     fi
 
-    # Join head from reviewed_heads[] — no loop_head_sha fallback
+    # Join head from reviewed_heads[] — prefer the last entry for this platform
+    # so late-thread append wins over an earlier clean pass (#1651).
     reviewed_head=""
     if declare -p platform_reviewed_heads >/dev/null 2>&1; then
       for entry_name in "${platform_reviewed_heads[@]}"; do
         if [ "${entry_name%%:*}" = "$platform_name" ]; then
           reviewed_head="${entry_name#*:}"
-          break
         fi
       done
     fi
@@ -8195,7 +8195,8 @@ reviewer_loop_missed_finding_records() {
       continue
     fi
 
-    # Paths from companion output stored in parallel array if present
+    # Paths from companion output — prefer the last blob for this platform so
+    # late-thread synthesis wins over an earlier clean pass (#1651).
     blocking_count=0
     paths_text=""
     if declare -p platform_blocking_outputs >/dev/null 2>&1; then
@@ -8204,7 +8205,6 @@ reviewer_loop_missed_finding_records() {
           output_blob="${output_blob#*$'\036'}"
           blocking_count="$(kv_value_default BLOCKING_COUNT "$output_blob" 0)"
           paths_text="$(reviewer_loop_blocking_paths_from_output "$output_blob" "$blocking_count" | reviewer_loop_dedupe_paths)"
-          break
         fi
       done
     fi
