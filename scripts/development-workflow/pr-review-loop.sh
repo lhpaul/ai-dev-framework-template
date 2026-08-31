@@ -4857,6 +4857,78 @@ check_unreplied_rest_comments() {
   printf '%d\n' "${result:-0}"
 }
 
+# Newline-delimited JSON objects {path,line,body,commit_id} for unreplied
+# CodeRabbit REST root comments (outside-diff supplement). Exit 3 on API failure.
+_unreplied_rest_blocking_comment_json_lines() {
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
+
+  gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+    | jq -s --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
+        (
+          [.[][] | select(
+            .in_reply_to_id != null and
+            .user.login != $bot and
+            (.user.login | test("\\[bot\\]$") | not)
+          ) | .in_reply_to_id] | unique
+        ) as $human_replied_ids
+        | [.[][] | select(
+            .user.login == $bot and
+            .in_reply_to_id == null and
+            ((.body // "") | test("✅ Addressed") | not)
+          ) | select(
+            .id as $id |
+            ($human_replied_ids | index($id)) == null
+          ) | select(
+            .id as $id |
+            ($resolved_ids | index($id)) == null
+          ) | {
+              path: (.path // ""),
+              line: (.line // .original_line // 0),
+              body: (.body // ""),
+              commit_id: (.commit_id // "")
+            }]
+        | .[] | @json
+      ' 2>/dev/null || return 3
+}
+
+# Emit BLOCKING_<n>_PATH/LINE/BODY and REVIEWED_HEAD from unreplied REST comments.
+reviewer_loop_print_blocking_from_unreplied_rest_comments() {
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
+  local blocking_file idx=0 blocking_json path line body title
+
+  blocking_file="$(mktemp)"
+  if ! _unreplied_rest_blocking_comment_json_lines \
+      "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" >"$blocking_file"; then
+    rm -f "$blocking_file"
+    return 3
+  fi
+
+  while IFS= read -r blocking_json; do
+    [ -z "${blocking_json:-}" ] && continue
+    idx=$((idx + 1))
+    path="$(printf '%s\n' "$blocking_json" | jq -r '.path // ""')"
+    line="$(printf '%s\n' "$blocking_json" | jq -r '.line // 0')"
+    body="$(printf '%s\n' "$blocking_json" | jq -r '.body // ""')"
+    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    if [ -z "$title" ]; then
+      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+    fi
+    print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
+    print_kv "BLOCKING_${idx}_LINE" "$line"
+    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+  done < "$blocking_file"
+
+  reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_file"
+  rm -f "$blocking_file"
+  return 0
+}
+
 auto_reply_unreplied_rest_comments() {
   # Post a brief acknowledgement reply to each unreplied CodeRabbit REST review
   # comment that has no corresponding resolved GraphQL thread (i.e., outside-diff
@@ -5198,6 +5270,8 @@ coderabbit_thread_gate_clean() {
       # One or more replies failed; fall back to needs_fixes so the agent can
       # address the remaining comments manually.
       echo "WARN: auto-reply failed for one or more REST comments on PR #$pr_number — returning needs_fixes" >&2
+      reviewer_loop_print_blocking_from_unreplied_rest_comments \
+        "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
       print_kv PLATFORM "$platform"
@@ -5223,6 +5297,8 @@ coderabbit_thread_gate_clean() {
       # Re-check REST query failed — cannot confirm gate is clean; treat as
       # needs_fixes so the agent re-inspects rather than claiming false clean.
       echo "WARN: REST re-check failed (exit $recheck_st) after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      reviewer_loop_print_blocking_from_unreplied_rest_comments \
+        "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
       print_kv PLATFORM "$platform"
@@ -5238,6 +5314,8 @@ coderabbit_thread_gate_clean() {
     fi
     if [ "${recheck_raw:-0}" -gt 0 ]; then
       echo "WARN: ${recheck_raw} unreplied REST comment(s) remain after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      reviewer_loop_print_blocking_from_unreplied_rest_comments \
+        "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
       print_kv PLATFORM "$platform"
