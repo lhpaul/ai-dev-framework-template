@@ -76,13 +76,15 @@ Every objective stated in issue #1657 maps to acceptance criteria and use cases 
 
 | *n* | Behavior |
 | --- | --- |
-| Absent | A documented default window size is used, and the report states the size it used |
+| Absent | **Twenty** — the default — and the report states the size it used |
 | A positive whole number | That many of the most recent pull requests, or all of them when fewer exist |
 | `0`, negative, or not a whole number | The report refuses, names the value it was given, and produces no report |
 
 **Fewer pull requests than requested is not a refusal.** A repository with nine pull requests and a request for forty produces a report over nine, with requested reconciling against what was found rather than against what was asked — a window is a maximum, not a demand.
 
 **A malformed *n* is refused rather than defaulted.** Silently substituting the default would produce a report whose window the reader believes they chose, and every aggregate in it would be over a denominator they did not ask for.
+
+**Twenty has one source and no second one.** The value is stated here and in the report's own help output, and the **only** way to use a different window is to pass one. No configuration file, environment variable or flag sets it, because a window size that two readers of the same command could disagree about is a denominator that two readers of the same report could disagree about.
 
 **Postconditions**: Nothing changed.
 
@@ -280,7 +282,8 @@ A pull request excluded by rows 1-3 appears **only** in the exclusion accounting
 
 - [ ] **AC-1.** For a single pull request with a readable history, the report presents all seven measures listed in Statuses / Enum Values.
 - [ ] **AC-2.** The report supports a single pull request and a window of the most recent *n* pull requests, and produces the same per-pull-request values in both.
-- [ ] **AC-2a.** With no window size given, the report uses a documented default and states the size it used.
+- [ ] **AC-2a.** With no window size given, the report uses **twenty** and states the size it used.
+- [ ] **AC-2d.** Twenty has exactly one source: no configuration, environment variable or flag changes the default, and passing a window size is the only way to use a different one.
 - [ ] **AC-2b.** A window size that is `0`, negative, or not a whole number is refused: the report names the value it was given and produces no report.
 - [ ] **AC-2c.** A window larger than the number of pull requests that exist produces a report over the ones that exist, and is not a refusal. The requested count reconciles against what was found.
 - [ ] **AC-3.** Rounds equals the number of history entries recorded for the pull request.
