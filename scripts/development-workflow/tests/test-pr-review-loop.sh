@@ -16590,6 +16590,75 @@ unset _orig_cfg _orig_hc
 echo "=== Area 1649 complete ==="
 
 # ---------------------------------------------------------------------------
+# Area 1650: strict_spec ledger object (#1650 scenario 12)
+# ---------------------------------------------------------------------------
+echo "=== Area 1650: strict_spec ledger object ==="
+
+pr_number=""
+current_run_id="1650-ledger"
+unresolved_thread_count=0
+late_thread_count=0
+expensive_gate_last_result=""
+
+# Applied: state + count + checks present; reason absent
+strict_spec_recorded=1
+strict_spec_state="applied"
+strict_spec_count="3"
+strict_spec_checks="ac_consistency,gate_matrix"
+strict_spec_unknown_count=""
+strict_spec_reason=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1650_ledger_applied_state" "applied" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec.state')"
+run_test "1650_ledger_applied_count" "3" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec.count')"
+run_test "1650_ledger_applied_has_checks" "true" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("checks")')"
+run_test "1650_ledger_applied_no_reason" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("reason")')"
+
+# not_applicable: only state; count/checks/reason absent
+strict_spec_state="not_applicable"
+strict_spec_count=""
+strict_spec_checks=""
+strict_spec_unknown_count=""
+strict_spec_reason=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1650_ledger_na_state" "not_applicable" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec.state')"
+run_test "1650_ledger_na_no_count" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("count")')"
+run_test "1650_ledger_na_no_checks" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("checks")')"
+run_test "1650_ledger_na_no_reason" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("reason")')"
+
+# No local reviewer: object itself absent
+strict_spec_recorded=0
+strict_spec_state=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "bugbot" 0 0 0 "" 0 0 "")"
+run_test "1650_ledger_absent_object" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r 'has("strict_spec")')"
+
+# unavailable carries reason only
+strict_spec_recorded=1
+strict_spec_state="unavailable"
+strict_spec_reason="checklist_unreadable"
+strict_spec_count=""
+strict_spec_checks=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1650_ledger_unavail_reason" "checklist_unreadable" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec.reason')"
+run_test "1650_ledger_unavail_no_count" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("count")')"
+
+unset strict_spec_recorded strict_spec_state strict_spec_count strict_spec_checks
+unset strict_spec_unknown_count strict_spec_reason _entry current_run_id
+unset unresolved_thread_count late_thread_count pr_number
+
+echo "=== Area 1650 complete ==="
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

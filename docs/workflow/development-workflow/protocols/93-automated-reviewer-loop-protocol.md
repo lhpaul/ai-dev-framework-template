@@ -197,7 +197,11 @@ Conditions are evaluated in order and stop at the first unmet one:
    values must be the literal `1`. Missing, unexpected, or stale values defer
    (`local_reviewer_not_configured`, `local_evidence_missing`, or
    `local_evidence_stale`). Derived from in-loop state — never from the
-   `LOCAL_AI_*` stdout keys as environment variables.
+   `LOCAL_AI_*` stdout keys as environment variables. On `spec/*` branches the
+   local reviewer also runs a second, non-blocking strict-spec pass (see
+   [`integrations/local-ai-reviewer.md`](../integrations/local-ai-reviewer.md)
+   and [`strict-spec-checks.md`](../strict-spec-checks.md)); `STRICT_SPEC_*`
+   keys and the history `strict_spec` object never change the ordinary verdict.
 2. **Preceding peer evidence** — every platform that precedes this reviewer
    under the reordered list (same-bucket non-expensive peers plus every earlier
    bucket) has already run with acceptable evidence: `clean`, or `skipped`

@@ -80,6 +80,7 @@ The command runs under `sh -c` with these environment variables:
 - `BASE_BRANCH`
 - `HEAD_BRANCH`
 - `REVIEWED_HEAD`
+- `LOCAL_AI_REVIEWER_MODE` — `ordinary` (default) or `strict`
 
 The context bundle JSON uses `schema_version:
 local_ai_reviewer_context.v1` and includes:
@@ -93,6 +94,10 @@ local_ai_reviewer_context.v1` and includes:
 - `review_contract`
 - `graph_context`
 
+On a second, strict-mode invocation the companion script derives a copy of that
+bundle and adds `strict_spec_checks` (the checklist text). The ordinary-pass
+bundle file is never rewritten.
+
 Use `LOCAL_AI_REVIEWER_DISABLED=1` to intentionally skip the local platform
 with `RESULT=skipped` and `REASON=disabled_by_config`.
 
@@ -100,11 +105,61 @@ Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
 `--evidence-file` to `local-codex-reviewer.sh` to persist a local evidence
 artifact. The artifact uses `schema_version: local_ai_reviewer_evidence.v1`
 and records the reviewed head, graph context, result, reason, counts, changed
-files, and compact diff summary. Keep this artifact alongside ready-phase
+files, compact diff summary, and a `strict_spec` object that mirrors the
+`STRICT_SPEC_*` keys. Keep this artifact alongside ready-phase
 reviewer-loop evidence when measuring whether Bugbot or another ready-phase
 reviewer found net-new blockers. Relative evidence paths are resolved from the
 operator's original working directory before `--repo-root` changes the checkout
 directory.
+
+---
+
+## Strict Spec Contract Checks
+
+On `spec/*` branches, after the ordinary review completes, `local-ai-reviewer.sh`
+runs a second `LOCAL_AI_REVIEWER_COMMAND` invocation with
+`LOCAL_AI_REVIEWER_MODE=strict`. That pass reads
+`docs/workflow/development-workflow/strict-spec-checks.md` (eight closed-set
+identifiers) and must respond with:
+
+```json
+{
+  "mode": "strict_spec_checks",
+  "findings": [
+    {
+      "check": "ac_consistency",
+      "path": "docs/specs/.../1_..._specs.md",
+      "line": 42,
+      "body": "AC-A and AC-B cannot both hold"
+    }
+  ]
+}
+```
+
+`mode` must be exactly `strict_spec_checks`. Responses missing that marker, or
+with a non-array `findings` value, are recorded as `unavailable` /
+`strict_pass_failed` and do not change the ordinary verdict.
+
+Override prompts separately:
+
+- `LOCAL_CODEX_REVIEWER_PROMPT` — ordinary pass only
+- `LOCAL_CODEX_REVIEWER_STRICT_PROMPT` — strict pass only
+
+There is no second timeout setting. The strict pass uses whatever remains of
+`--timeout` / `LOCAL_AI_REVIEWER_TIMEOUT` after the ordinary pass.
+
+Companion output always includes `STRICT_SPEC_STATE`
+(`applied` | `not_applicable` | `unavailable`). When `applied`, also
+`STRICT_SPEC_COUNT` (may be `0`) and `STRICT_SPEC_CHECKS` (comma-separated
+identifiers that fired). When `unavailable`, also `STRICT_SPEC_REASON`
+(`stage_unresolved` | `checklist_unreadable` | `strict_pass_failed`). Unknown
+identifiers are reported as `STRICT_<n>_CHECK=unknown` and counted in
+`STRICT_SPEC_UNKNOWN_COUNT`; they never become blockers. Strict findings never
+change `RESULT` or `BLOCKING_<n>_*`.
+
+The reviewer-loop history entry includes a `strict_spec` object that mirrors
+those keys (absent fields are omitted, not null). The summary comment lists
+strict findings only when state is `applied` and the count is above zero.
 
 ---
 
