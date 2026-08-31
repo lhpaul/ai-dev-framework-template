@@ -81,11 +81,12 @@ becomes concrete. A count of one on a Refactor plan and a count of one on a
 Feature plan are not the same observation, and #1657 divides by the applied set
 to tell them apart. Proof P3.
 
-**Note what the script does not do here.** It cannot tell a Refactor plan from
-one whose declared spec is missing, and it does not try: it supplies the sibling
-spec when `git show` retrieves it and does not when it does not. Which of the
-spec's three source cases obtains is `source_declaration`'s answer, and step 8
-is where that is exercised.
+**Note what the script does not read here.** Coverage is decided by presence
+alone: the sibling spec is supplied when `git show` retrieves it and not when it
+does not, and the plan's own text is never consulted. Whether the plan's
+declaration is valid is `source_declaration`'s answer, on its own axis — a plan
+that declares nothing with its spec beside it has all seven applied **and** the
+finding. Step 8 is where that is exercised.
 
 ## Step 4: A finding for a check that was not applied is not counted
 
