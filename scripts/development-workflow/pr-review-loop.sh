@@ -2673,7 +2673,7 @@ run_bugbot_review() {
                 .state == "COMMENTED"
               )
             )
-          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
           | @json
         ' 2>/dev/null
   )"
@@ -3092,7 +3092,7 @@ run_bugbot_review() {
                         .state == "COMMENTED"
                       )
                     )
-                  | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+                  | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -3883,7 +3883,7 @@ run_devin_review() {
                 .state == "COMMENTED"
               )
             )
-          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
           | @json
         '
   )"
@@ -4185,7 +4185,8 @@ run_devin_review() {
             path: "",
             line: 0,
             body: (.body // "review without body"),
-            state: .state
+            state: .state,
+            commit_id: (.commit_id // .commitId // "")
           }
         | @json
       '
