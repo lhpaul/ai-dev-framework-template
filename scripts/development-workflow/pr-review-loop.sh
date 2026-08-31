@@ -10868,7 +10868,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
     _existing_comment_record="$(
       set -o pipefail
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | reviewer_loop_history_select_summary_record
+        | reviewer_loop_history_select_latest_summary_record
     )" \
       || {
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
