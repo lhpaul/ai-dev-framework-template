@@ -1858,6 +1858,7 @@ run_codex_github_review() {
 
   if [ "$unresolved_count" -gt 0 ]; then
     reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
+    reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
     print_kv RESULT needs_fixes
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
@@ -1930,6 +1931,9 @@ run_codex_github_review() {
         unresolved_count="$thread_check_output"
       fi
       [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
+      reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
 
       print_kv RESULT needs_fixes
       print_kv PLATFORM "$platform"
@@ -7884,14 +7888,14 @@ reviewer_loop_print_reviewed_head_from_json_lines() {
   printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
 }
 
-# Collect originalCommitOid values from bot threads that check_unresolved_threads
-# would count as unresolved in strict mode (not resolved, not outdated, not
-# self-marked "✅ Addressed"). Paginates like check_unresolved_threads.
-reviewer_loop_blocking_unresolved_thread_commit_oids() {
+# Collect strict-mode blocking bot threads as JSON [{path,line,body,commit},...].
+# Paginates like check_unresolved_threads. Exit 0 complete, 2 page cap, 3 GraphQL.
+_reviewer_loop_blocking_unresolved_bot_threads_json() {
   local pr_number="$1"
   local repo="$2"
   local graphql_bot_login="$3"
   local owner repo_name cursor has_next_page page max_pages result graphql_query nodes_fields
+  local records='[]' page_records
 
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
@@ -7901,7 +7905,7 @@ reviewer_loop_blocking_unresolved_thread_commit_oids() {
   page=0
   max_pages=10
 
-  nodes_fields='id isResolved isOutdated firstComment:comments(first:1){nodes{author{login}body originalCommit{oid}}}'
+  nodes_fields='id isResolved isOutdated path line firstComment:comments(first:1){nodes{author{login}body originalCommit{oid}}}'
   graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{'"$nodes_fields"'}}}}}'
 
   while [ "$has_next_page" = "true" ]; do
@@ -7927,20 +7931,80 @@ reviewer_loop_blocking_unresolved_thread_commit_oids() {
     has_next_page="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage')"
     cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty')"
 
-    printf '%s\n' "$result" | jq -r --arg bot "$graphql_bot_login" '
-      .reviewThreads.nodes[]
-      | select((.firstComment.nodes[0].author.login // "") == $bot)
-      | select(.isResolved != true)
-      | select((.isOutdated // false) != true)
-      | select((.firstComment.nodes[0].body // "") | contains("✅ Addressed") | not)
-      | .firstComment.nodes[0].originalCommit.oid // empty
-    '
+    page_records="$(printf '%s\n' "$result" | jq -c --arg bot "$graphql_bot_login" '
+      [.reviewThreads.nodes[]
+        | select((.firstComment.nodes[0].author.login // "") == $bot)
+        | select(.isResolved != true)
+        | select((.isOutdated // false) != true)
+        | select((.firstComment.nodes[0].body // "") | contains("✅ Addressed") | not)
+        | {
+            path: (.path // ""),
+            line: (.line // 0),
+            body: (.firstComment.nodes[0].body // ""),
+            commit: (.firstComment.nodes[0].originalCommit.oid // "")
+          }
+      ]')" || return 3
+    records="$(printf '%s\n%s\n' "$records" "$page_records" | jq -s 'add')"
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
       return 2
     fi
   done
 
+  printf '%s\n' "$records"
+  return 0
+}
+
+# Collect commit OIDs from strict-mode blocking bot threads.
+reviewer_loop_blocking_unresolved_thread_commit_oids() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local json st
+
+  set +e
+  json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)"
+  st=$?
+  set -e
+  if [ "$st" -ne 0 ]; then
+    return "$st"
+  fi
+
+  printf '%s\n' "$json" | jq -r '.[].commit // empty'
+  return 0
+}
+
+# Emit BLOCKING_<n>_PATH/LINE/BODY from strict-mode blocking bot threads.
+reviewer_loop_print_blocking_from_unresolved_bot_threads() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local json st idx=0 path line body title row
+
+  set +e
+  json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)"
+  st=$?
+  set -e
+  if [ "$st" -ne 0 ]; then
+    return "$st"
+  fi
+
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    idx=$((idx + 1))
+    path="$(printf '%s' "$row" | jq -r '.path // ""')"
+    line="$(printf '%s' "$row" | jq -r '.line // 0')"
+    body="$(printf '%s' "$row" | jq -r '.body // ""')"
+    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    if [ -z "$title" ]; then
+      title="$(printf '%.120s' "$body")"
+    fi
+    print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
+    print_kv "BLOCKING_${idx}_LINE" "$line"
+    print_kv "BLOCKING_${idx}_BODY" "$title"
+  done < <(printf '%s\n' "$json" | jq -c '.[]?')
   return 0
 }
 
