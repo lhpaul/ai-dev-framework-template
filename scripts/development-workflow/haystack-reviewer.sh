@@ -110,15 +110,12 @@ emit_reviewed_head_if_known() {
   printf 'REVIEWED_HEAD=%s\n' "$REVIEWED_HEAD_SHA"
 }
 
-# Populate REVIEWED_HEAD_SHA from Haystack check-run evidence or PR head when the
-# completed triage CLI path did not already establish it (#1651).
+# Populate REVIEWED_HEAD_SHA from Haystack check-run evidence when the completed
+# triage CLI path did not already establish it (#1651). Do not fall back to PR
+# head — attribution requires Haystack artifact evidence (AC-11 no-record path).
 haystack_ensure_reviewed_head_sha() {
   [ -n "${REVIEWED_HEAD_SHA:-}" ] && return 0
   fetch_haystack_check_run_json >/dev/null 2>&1 || true
-  if [ -z "${REVIEWED_HEAD_SHA:-}" ] && command -v gh >/dev/null 2>&1; then
-    REVIEWED_HEAD_SHA="$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha // empty' 2>/dev/null)" \
-      || REVIEWED_HEAD_SHA=""
-  fi
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
