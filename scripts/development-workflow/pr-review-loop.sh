@@ -575,6 +575,27 @@ Outputs stable key=value lines including:
                   RESULT=/REASON= are printed — exactly ONE RESULT= / REASON= pair is ever emitted per
                   invocation, so this REASON is safe to read with either a "first match" or "last
                   match" key=value parser.)
+  EXPENSIVE_REVIEWERS_REORDERED=1 (emitted once per run when expensive reviewers were moved last
+                  within their own phase bucket; never crosses the draft/ready boundary)
+  EXPENSIVE_GATE_PLATFORM / EXPENSIVE_GATE_RESULT / EXPENSIVE_GATE_REASON / EXPENSIVE_GATE_HEAD
+  EXPENSIVE_GATE_DEFERRALS / EXPENSIVE_GATE_MAX_DEFERRALS
+                  Emitted per expensive platform (currently codex-github) immediately before dispatch.
+                  RESULT is dispatched|deferred|forced|deferral_cap. Conditions are evaluated in order:
+                  (1) local-ai-reviewer configured and current-head clean evidence,
+                  (2) every preceding peer (same-bucket non-expensive + earlier buckets) has
+                  acceptable evidence (clean, or skipped with allow-listed reason),
+                  (3) zero unresolved non-outdated review threads on the same head,
+                  (4) non-empty non-reviewer baseline checks all green on the same head.
+                  Fail-closed on unreadable inputs (evidence_unavailable_*). A deferred outcome sets
+                  RESULT=needs_fixes REASON=expensive_gate_deferred so readiness is withheld and
+                  Step 7 re-runs; it also breaks the platform iteration so later ready-phase platforms
+                  do not run. Deferrals are bounded by PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
+                  (default 3, head-scoped occurrence count); at the cap the loop escalates.
+  EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable
+                  Emitted ONLY when EXPENSIVE_GATE_RESULT=deferral_cap — exhausted budget vs
+                  unreadable ledger. Absent otherwise.
+  REASON=expensive_gate_deferred (RESULT=needs_fixes; expensive reviewer held back)
+  REASON=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable (RESULT=escalate)
 
 Environment variables:
   POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
@@ -624,6 +645,13 @@ Environment variables:
                                      unset, each invocation is treated as its own isolated run for per-run-cap
                                      purposes (CYCLE_COUNT effectively stays 0) — the LIFETIME ceiling
                                      (TOTAL_CYCLE_COUNT/MAX_TOTAL_CYCLES) still enforces regardless.
+  PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS=<n>
+                                     Bound on head-scoped expensive-reviewer gate deferrals (default: 3).
+                                     Valid range 1–999999; invalid values WARN and fall back to 3.
+  PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1
+                                     Bypass the expensive-reviewer gate for manual escalation. The gate still
+                                     evaluates and emits EXPENSIVE_GATE_* with RESULT=forced and the reason it
+                                     would have deferred; justify use in the PR.
 EOF
 }
 
@@ -671,6 +699,617 @@ array_contains_value() {
 is_phase_after_clean_platform() {
   local candidate="$1"
   array_contains_value "$candidate" "${phase_after_clean_platforms[@]:-}"
+}
+
+# Expensive reviewers (issue #1649): platforms whose dispatch is gated on
+# current-head local-clean evidence, preceding peer evidence, resolved
+# review threads, and green non-reviewer baseline checks. Membership is a
+# property of the reviewer, not of repository config.
+EXPENSIVE_REVIEWER_PLATFORMS=(codex-github)
+EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS=(not_configured explicit-skip release_pr unsupported-platform)
+# Resolved once per run by expensive_gate_resolve_max_deferrals (default 3).
+expensive_gate_max_deferrals=""
+expensive_reviewers_reordered=0
+# Last gate outcome for summary/history surfaces (set by expensive_reviewer_gate).
+expensive_gate_last_platform=""
+expensive_gate_last_result=""
+expensive_gate_last_reason=""
+expensive_gate_last_head=""
+# Peer evidence collected during this invocation: "platform|result|reason".
+declare -a platform_peer_evidence=()
+
+is_expensive_reviewer_platform() {
+  array_contains_value "$1" "${EXPENSIVE_REVIEWER_PLATFORMS[@]:-}"
+}
+
+# reorder_expensive_reviewers_last
+#
+# Moves expensive reviewers to the end of their own phase bucket without
+# crossing the draft/ready boundary. Partitions platforms into non-phase
+# and phase_after_clean buckets using is_phase_after_clean_platform, then
+# within each bucket places non-expensive platforms first (preserving
+# relative order) and expensive platforms last. Sets
+# expensive_reviewers_reordered=1 when order changed. Called once after
+# platform list resolution, before iteration; the caller emits telemetry.
+reorder_expensive_reviewers_last() {
+  local platform
+  local -a non_phase_cheap=()
+  local -a non_phase_expensive=()
+  local -a phase_cheap=()
+  local -a phase_expensive=()
+  local -a reordered=()
+  local original_list=""
+  local new_list=""
+
+  expensive_reviewers_reordered=0
+  [ "${#platforms[@]}" -gt 0 ] || return 0
+
+  original_list="$(IFS=,; printf '%s' "${platforms[*]}")"
+
+  for platform in "${platforms[@]}"; do
+    if is_phase_after_clean_platform "$platform"; then
+      if is_expensive_reviewer_platform "$platform"; then
+        phase_expensive+=("$platform")
+      else
+        phase_cheap+=("$platform")
+      fi
+    else
+      if is_expensive_reviewer_platform "$platform"; then
+        non_phase_expensive+=("$platform")
+      else
+        non_phase_cheap+=("$platform")
+      fi
+    fi
+  done
+
+  reordered=()
+  [ "${#non_phase_cheap[@]}" -gt 0 ] && reordered+=("${non_phase_cheap[@]}")
+  [ "${#non_phase_expensive[@]}" -gt 0 ] && reordered+=("${non_phase_expensive[@]}")
+  [ "${#phase_cheap[@]}" -gt 0 ] && reordered+=("${phase_cheap[@]}")
+  [ "${#phase_expensive[@]}" -gt 0 ] && reordered+=("${phase_expensive[@]}")
+
+  new_list="$(IFS=,; printf '%s' "${reordered[*]}")"
+  if [ "$new_list" != "$original_list" ]; then
+    expensive_reviewers_reordered=1
+    platforms=("${reordered[@]}")
+  fi
+  return 0
+}
+
+# expensive_gate_resolve_max_deferrals
+#
+# Mirrors reviewer_loop_resolve_max_cycles: default 3, accept 1–999999,
+# WARN and fall back on anything else. Reads PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS.
+expensive_gate_resolve_max_deferrals() {
+  local configured="${PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS:-}"
+  local source="env"
+
+  if [ -z "$configured" ]; then
+    configured=3
+    source="default"
+  fi
+  if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "WARN: PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 3" >&2
+    configured=3
+  fi
+  printf '%s\n' "$configured"
+}
+
+# expensive_gate_local_ai_configured
+#
+# Returns 1 when local-ai-reviewer is in the resolved platforms list, else 0.
+# Derived from in-loop state — never from the LOCAL_AI_CONFIGURED env/stdout key.
+expensive_gate_local_ai_configured() {
+  local platform_name
+  for platform_name in "${platforms[@]:-}"; do
+    if [ "$platform_name" = "local-ai-reviewer" ]; then
+      printf '1\n'
+      return 0
+    fi
+  done
+  printf '0\n'
+}
+
+# expensive_gate_local_ai_head_current <head_sha>
+#
+# Applies reviewer_loop_head_evidence_classify to the local-ai-reviewer entry
+# of platform_reviewed_heads against <head_sha>. Prints 1 (current), 0
+# (not-current), or empty (not-reported / missing entry).
+expensive_gate_local_ai_head_current() {
+  local head_sha="${1:-}"
+  local entry platform_name reviewed_head classification state
+  local found=0
+
+  if ! declare -p platform_reviewed_heads >/dev/null 2>&1; then
+    printf '\n'
+    return 0
+  fi
+
+  for entry in "${platform_reviewed_heads[@]:-}"; do
+    platform_name="${entry%%:*}"
+    reviewed_head="${entry#*:}"
+    if [ "$platform_name" = "local-ai-reviewer" ]; then
+      found=1
+      classification="$(reviewer_loop_head_evidence_classify "$reviewed_head" "$head_sha")"
+      state="${classification%%|*}"
+      case "$state" in
+        current) printf '1\n' ;;
+        not-current) printf '0\n' ;;
+        *) printf '\n' ;;
+      esac
+      return 0
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    printf '\n'
+  fi
+}
+
+# expensive_gate_peer_evidence_acceptable <result> <reason>
+#
+# Acceptable when result is clean, or skipped with an allow-listed reason
+# AND reviewer_failed_label_required_for_result returns false for the pair.
+expensive_gate_peer_evidence_acceptable() {
+  local result="$1"
+  local reason="${2:-}"
+
+  case "$result" in
+    clean)
+      return 0
+      ;;
+    skipped)
+      if array_contains_value "$reason" "${EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS[@]}"; then
+        if ! reviewer_failed_label_required_for_result "$result" "$reason"; then
+          return 0
+        fi
+      fi
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# expensive_gate_lookup_peer_evidence <platform>
+#
+# Prints "result|reason" when the platform has run in this invocation,
+# or empty when it has not.
+expensive_gate_lookup_peer_evidence() {
+  local platform="$1"
+  local entry peer_name rest
+
+  for entry in "${platform_peer_evidence[@]:-}"; do
+    peer_name="${entry%%|*}"
+    rest="${entry#*|}"
+    if [ "$peer_name" = "$platform" ]; then
+      printf '%s\n' "$rest"
+      return 0
+    fi
+  done
+  printf '\n'
+}
+
+# expensive_gate_check_peers <expensive_platform>
+#
+# Condition 2: every platform that precedes this expensive reviewer under
+# the reordered list (same-bucket non-expensive + every earlier bucket) must
+# have run with acceptable evidence. Prints empty on success, or
+# peer_reviewer_not_run / peer_reviewer_not_clean.
+expensive_gate_check_peers() {
+  local expensive_platform="$1"
+  local idx=0
+  local expensive_idx=-1
+  local platform peer_evidence peer_result peer_reason
+  local -a peer_set=()
+
+  for platform in "${platforms[@]:-}"; do
+    if [ "$platform" = "$expensive_platform" ]; then
+      expensive_idx=$idx
+      break
+    fi
+    idx=$((idx + 1))
+  done
+
+  if [ "$expensive_idx" -lt 0 ]; then
+    # Platform not in list — defensive; treat as not-run peers.
+    printf 'peer_reviewer_not_run\n'
+    return 0
+  fi
+
+  idx=0
+  for platform in "${platforms[@]:-}"; do
+    if [ "$idx" -ge "$expensive_idx" ]; then
+      break
+    fi
+    # Peer set: every preceding platform (earlier buckets + same-bucket
+    # non-expensive). Expensive members of earlier buckets are included;
+    # same-bucket expensive peers that somehow precede us are also peers.
+    peer_set+=("$platform")
+    idx=$((idx + 1))
+  done
+
+  for platform in "${peer_set[@]:-}"; do
+    peer_evidence="$(expensive_gate_lookup_peer_evidence "$platform")"
+    if [ -z "$peer_evidence" ]; then
+      printf 'peer_reviewer_not_run\n'
+      return 0
+    fi
+    peer_result="${peer_evidence%%|*}"
+    peer_reason="${peer_evidence#*|}"
+    if [ "$peer_reason" = "$peer_result" ]; then
+      peer_reason=""
+    fi
+    if ! expensive_gate_peer_evidence_acceptable "$peer_result" "$peer_reason"; then
+      printf 'peer_reviewer_not_clean\n'
+      return 0
+    fi
+  done
+  printf '\n'
+}
+
+# expensive_gate_unresolved_threads_status <pr_number>
+#
+# Fetches review threads + live head. Prints "<status> <count_or_-> <head>"
+# where status is ok|unavailable. count is unresolved non-outdated threads.
+expensive_gate_unresolved_threads_status() {
+  local pr_number_arg="$1"
+  local repo=""
+  local owner name
+  local cursor=""
+  local has_next=1
+  local page=0
+  local max_pages=20
+  local unresolved=0
+  local head_sha=""
+  local result=""
+  local graphql_query
+
+  if [ -z "$pr_number_arg" ]; then
+    printf 'unavailable - \n'
+    return 0
+  fi
+
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    printf 'unavailable - \n'
+    return 0
+  fi
+  owner="${repo%%/*}"
+  name="${repo#*/}"
+
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){headRefOid reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{isResolved isOutdated}}}}}'
+
+  while [ "$has_next" = "1" ] || [ "$has_next" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      printf 'unavailable - \n'
+      return 0
+    fi
+    if [ -n "$cursor" ]; then
+      if ! result="$(
+        gh api graphql \
+          -f query="$graphql_query" \
+          -f owner="$owner" \
+          -f repo="$name" \
+          -F pr="$pr_number_arg" \
+          -f cursor="$cursor" \
+          --jq '.data.repository.pullRequest' 2>/dev/null
+      )"; then
+        printf 'unavailable - \n'
+        return 0
+      fi
+    else
+      if ! result="$(
+        gh api graphql \
+          -f query="$graphql_query" \
+          -f owner="$owner" \
+          -f repo="$name" \
+          -F pr="$pr_number_arg" \
+          --jq '.data.repository.pullRequest' 2>/dev/null
+      )"; then
+        printf 'unavailable - \n'
+        return 0
+      fi
+    fi
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+      printf 'unavailable - \n'
+      return 0
+    fi
+    if [ -z "$head_sha" ]; then
+      head_sha="$(printf '%s\n' "$result" | jq -r '.headRefOid // ""' 2>/dev/null)" || head_sha=""
+    fi
+    unresolved=$((unresolved + $(
+      printf '%s\n' "$result" | jq '
+        [.reviewThreads.nodes[]?
+         | select((.isResolved | not) and (.isOutdated | not))]
+        | length' 2>/dev/null || printf '0'
+    )))
+    has_next="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null)" || has_next="false"
+    cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty' 2>/dev/null)" || cursor=""
+    if [ "$has_next" != "true" ] && [ "$has_next" != "1" ]; then
+      break
+    fi
+    if [ -z "$cursor" ]; then
+      printf 'unavailable - \n'
+      return 0
+    fi
+  done
+
+  printf 'ok %s %s\n' "$unresolved" "$head_sha"
+}
+
+# expensive_gate_baseline_checks_status <pr_number> <expected_head>
+#
+# Snapshot of non-reviewer checks on the PR. Prints
+# "<state> <live_head>" where state is green|failed|pending|empty|unavailable.
+# Does NOT call pr-ci-loop.sh.
+expensive_gate_baseline_checks_status() {
+  local pr_number_arg="$1"
+  local payload=""
+  local live_head=""
+  local reviewer_names=""
+  local baseline_json=""
+  local state=""
+
+  if [ -z "$pr_number_arg" ]; then
+    printf 'unavailable \n'
+    return 0
+  fi
+
+  if ! payload="$(
+    gh pr view "$pr_number_arg" --json statusCheckRollup,headRefOid 2>/dev/null
+  )"; then
+    printf 'unavailable \n'
+    return 0
+  fi
+
+  live_head="$(printf '%s\n' "$payload" | jq -r '.headRefOid // ""' 2>/dev/null)" || live_head=""
+  reviewer_names="$(configured_reviewer_check_names_json "")" || reviewer_names='[]'
+
+  if ! baseline_json="$(
+    printf '%s\n' "$payload" | jq --argjson reviewer_names "$reviewer_names" '
+      [
+        (.statusCheckRollup // [])[]
+        | select(
+            (.name // .context // .workflowName // "unknown") as $check_name
+            | ($reviewer_names | index($check_name) | not)
+          )
+      ]
+    ' 2>/dev/null
+  )"; then
+    printf 'unavailable %s\n' "$live_head"
+    return 0
+  fi
+
+  state="$(
+    printf '%s\n' "$baseline_json" | jq -r '
+      if length == 0 then
+        "empty"
+      elif any(
+            ((.status // "") != "COMPLETED" and (.status // "") != "")
+            or ((.state // "") == "PENDING")
+            or ((.state // "") == "EXPECTED")
+          ) then
+        "pending"
+      elif any(
+            ((.conclusion // "") != "" and (.conclusion // "" | ascii_upcase) as $c
+              | ($c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL" and $c != "NONE"))
+            or ((.state // "" | ascii_upcase) as $s
+              | ($s == "FAILURE" or $s == "ERROR"))
+          ) then
+        "failed"
+      else
+        "green"
+      end
+    ' 2>/dev/null
+  )" || state="unavailable"
+
+  printf '%s %s\n' "${state:-unavailable}" "$live_head"
+}
+
+# expensive_gate_deferral_count <head_sha>
+#
+# Occurrence count of ledger entries whose expensive_gate.result is deferred
+# and expensive_gate.head equals <head_sha>. Returns 0 for absent ledger,
+# -1 for unreadable ledger (marker present but unparseable / wrong schema /
+# history_status != available).
+expensive_gate_deferral_count() {
+  local head_sha="${1:-}"
+  local pr_number_arg="${pr_number:-}"
+  local repo="" record="" body="" json="" count=""
+
+  if [ -z "$pr_number_arg" ]; then
+    # No PR context (harness unit tests may stub body via MOCK). Treat as absent.
+    if [ -n "${EXPENSIVE_GATE_MOCK_LEDGER_BODY+x}" ]; then
+      body="${EXPENSIVE_GATE_MOCK_LEDGER_BODY}"
+    else
+      printf '0\n'
+      return 0
+    fi
+  else
+    if [ -n "${EXPENSIVE_GATE_MOCK_LEDGER_BODY+x}" ]; then
+      body="${EXPENSIVE_GATE_MOCK_LEDGER_BODY}"
+    else
+      if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+        printf '-1\n'
+        return 0
+      fi
+      if ! record="$(
+          set -o pipefail
+          gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+            | reviewer_loop_history_select_latest_summary_record
+        )"; then
+        printf '-1\n'
+        return 0
+      fi
+      body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
+    fi
+  fi
+
+  if [ -z "$body" ]; then
+    printf '0\n'
+    return 0
+  fi
+
+  json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
+  if [ -z "$json" ]; then
+    if printf '%s\n' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+      printf '-1\n'
+    else
+      printf '0\n'
+    fi
+    return 0
+  fi
+
+  if ! printf '%s\n' "$json" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" '
+        .schema == $schema
+        and (.entries | type) == "array"
+        and ((.history_status // "available") == "available")
+      ' >/dev/null 2>&1; then
+    printf '-1\n'
+    return 0
+  fi
+
+  count="$(
+    printf '%s\n' "$json" | jq -r --arg head "$head_sha" '
+      [
+        .entries[]?
+        | select((.expensive_gate.result // "") == "deferred")
+        | select((.expensive_gate.head // "") == $head)
+      ] | length
+    ' 2>/dev/null
+  )" || count=""
+
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf '-1\n'
+    return 0
+  fi
+  printf '%s\n' "$count"
+}
+
+# expensive_reviewer_gate <pr_number> <platform> <head_sha>
+#
+# Returns 0 to dispatch, 1 to defer/escalate. Emits EXPENSIVE_GATE_* keys.
+# Stops at the first unmet condition so the reason names a single cause.
+expensive_reviewer_gate() {
+  local pr_number_arg="$1"
+  local platform="$2"
+  local head_sha="$3"
+  local reason=""
+  local deferrals=""
+  local configured=""
+  local head_current=""
+  local peer_reason=""
+  local threads_status="" threads_count="" threads_head=""
+  local checks_state="" checks_head=""
+  local gate_result=""
+  local escalation=""
+
+  expensive_gate_last_platform="$platform"
+  expensive_gate_last_head="$head_sha"
+  expensive_gate_last_reason=""
+  expensive_gate_last_result=""
+
+  configured="$(expensive_gate_local_ai_configured)"
+  head_current="$(expensive_gate_local_ai_head_current "$head_sha")"
+
+  if [ -z "$head_sha" ]; then
+    reason="evidence_unavailable_head"
+  elif [ "$configured" = "0" ]; then
+    reason="local_reviewer_not_configured"
+  elif [ "$configured" != "1" ]; then
+    reason="local_evidence_missing"
+  elif [ "$head_current" = "0" ]; then
+    reason="local_evidence_stale"
+  elif [ "$head_current" != "1" ]; then
+    reason="local_evidence_missing"
+  fi
+
+  if [ -z "$reason" ]; then
+    peer_reason="$(expensive_gate_check_peers "$platform")"
+    if [ -n "$peer_reason" ]; then
+      reason="$peer_reason"
+    fi
+  fi
+
+  if [ -z "$reason" ]; then
+    read -r threads_status threads_count threads_head < <(expensive_gate_unresolved_threads_status "$pr_number_arg") || true
+    if [ "${threads_status:-}" != "ok" ]; then
+      reason="evidence_unavailable_review_threads"
+    elif [ -z "${threads_head:-}" ] || [ "$threads_head" != "$head_sha" ]; then
+      reason="evidence_head_moved"
+    elif [ "${threads_count:-0}" -gt 0 ] 2>/dev/null; then
+      reason="unresolved_threads"
+    fi
+  fi
+
+  if [ -z "$reason" ]; then
+    read -r checks_state checks_head < <(expensive_gate_baseline_checks_status "$pr_number_arg" "$head_sha") || true
+    if [ -z "${checks_state:-}" ] || [ "$checks_state" = "unavailable" ]; then
+      reason="evidence_unavailable_checks"
+    elif [ -z "${checks_head:-}" ] || [ "$checks_head" != "$head_sha" ]; then
+      reason="evidence_head_moved"
+    else
+      case "$checks_state" in
+        green) : ;;
+        failed) reason="baseline_checks_not_green" ;;
+        pending) reason="baseline_checks_pending" ;;
+        empty) reason="baseline_checks_unobserved" ;;
+        *) reason="evidence_unavailable_checks" ;;
+      esac
+    fi
+  fi
+
+  deferrals="$(expensive_gate_deferral_count "$head_sha")"
+  if [ -z "${expensive_gate_max_deferrals:-}" ]; then
+    expensive_gate_max_deferrals="$(expensive_gate_resolve_max_deferrals)"
+  fi
+
+  print_kv EXPENSIVE_GATE_PLATFORM "$platform"
+  print_kv EXPENSIVE_GATE_HEAD "$head_sha"
+  print_kv EXPENSIVE_GATE_REASON "$reason"
+  print_kv EXPENSIVE_GATE_DEFERRALS "$deferrals"
+  print_kv EXPENSIVE_GATE_MAX_DEFERRALS "$expensive_gate_max_deferrals"
+
+  if [ -n "$reason" ]; then
+    if [ "${PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS:-0}" = "1" ]; then
+      gate_result="forced"
+      expensive_gate_last_result="$gate_result"
+      expensive_gate_last_reason="$reason"
+      print_kv EXPENSIVE_GATE_RESULT forced
+      return 0
+    fi
+    if [ "$deferrals" = "-1" ]; then
+      gate_result="deferral_cap"
+      escalation="expensive_gate_deferral_budget_unreadable"
+      expensive_gate_last_result="$gate_result"
+      expensive_gate_last_reason="$reason"
+      print_kv EXPENSIVE_GATE_RESULT deferral_cap
+      print_kv EXPENSIVE_GATE_ESCALATION "$escalation"
+      return 1
+    fi
+    if [ "$deferrals" -ge "$expensive_gate_max_deferrals" ] 2>/dev/null; then
+      gate_result="deferral_cap"
+      escalation="expensive_gate_deferral_cap"
+      expensive_gate_last_result="$gate_result"
+      expensive_gate_last_reason="$reason"
+      print_kv EXPENSIVE_GATE_RESULT deferral_cap
+      print_kv EXPENSIVE_GATE_ESCALATION "$escalation"
+      return 1
+    fi
+    gate_result="deferred"
+    expensive_gate_last_result="$gate_result"
+    expensive_gate_last_reason="$reason"
+    print_kv EXPENSIVE_GATE_RESULT deferred
+    return 1
+  fi
+
+  gate_result="dispatched"
+  expensive_gate_last_result="$gate_result"
+  expensive_gate_last_reason=""
+  print_kv EXPENSIVE_GATE_RESULT dispatched
+  return 0
 }
 
 filter_pre_after_clean_platforms() {
@@ -7089,6 +7728,10 @@ reviewer_loop_history_build_entry() {
     --arg smallFindingsPaths "${small_findings_paths:-}" \
     --arg classificationHead "${loop_head_sha:-}" \
     --argjson reviewedHeads "$reviewed_heads_json" \
+    --arg egPlatform "${expensive_gate_last_platform:-}" \
+    --arg egResult "${expensive_gate_last_result:-}" \
+    --arg egReason "${expensive_gate_last_reason:-}" \
+    --arg egHead "${expensive_gate_last_head:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -7115,7 +7758,12 @@ reviewer_loop_history_build_entry() {
       small_findings_rounds: $smallFindingsRounds,
       small_findings_required_rounds: $smallFindingsRequiredRounds,
       small_findings_paths: ($smallFindingsPaths | split("\n") | map(select(length > 0)))
-    }'
+    }
+    | if ($egResult | length) > 0 then
+        . + {expensive_gate: {platform: $egPlatform, result: $egResult, reason: $egReason, head: $egHead}}
+      else
+        .
+      end'
 }
 
 reviewer_loop_history_payload_from_existing() {
@@ -8535,6 +9183,10 @@ else
   filter_phase_after_clean_platforms
 fi
 
+# Issue #1649: move expensive reviewers last within each phase bucket so the
+# gate's peer precondition is reachable (never across the draft/ready boundary).
+reorder_expensive_reviewers_last
+
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
   cd "$repo_root" || exit 1
@@ -8650,6 +9302,7 @@ fi
 # otherwise keep going.
 max_cycles="$(reviewer_loop_resolve_max_cycles "$(workflow_config_review_max_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
 max_total_cycles="$(reviewer_loop_resolve_max_total_cycles "$(workflow_config_review_max_total_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
+expensive_gate_max_deferrals="$(expensive_gate_resolve_max_deferrals)"
 lifetime_cycle_count=-1
 cycle_count=-1
 if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
@@ -8692,6 +9345,12 @@ fi
 declare -a platform_result_tokens=()
 # Per-platform reviewed heads for head-evidence surfaces (issue #1648).
 declare -a platform_reviewed_heads=()
+# Peer evidence for the expensive-reviewer gate (issue #1649): "platform|result|reason".
+platform_peer_evidence=()
+expensive_gate_last_platform=""
+expensive_gate_last_result=""
+expensive_gate_last_reason=""
+expensive_gate_last_head=""
 # Per-platform review-policy status notes for the PR summary comment. Haystack
 # emits these from `pr-status`; other platforms normally leave this empty.
 declare -a platform_policy_status_notes=()
@@ -8717,6 +9376,7 @@ print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
 print_kv PLATFORM_COUNT "${#platforms[@]}"
 # So callers can verify config was respected (e.g. no greptile when only devin is in .ai-dev-workflow.yaml)
 print_kv PLATFORM_LIST "$(IFS=,; printf '%s' "${platforms[*]}")"
+[ "${expensive_reviewers_reordered:-0}" -eq 1 ] && print_kv EXPENSIVE_REVIEWERS_REORDERED 1
 print_kv DRAFT_GITHUB_ONLY "$pre_after_clean_only"
 print_kv PRE_AFTER_CLEAN_ONLY "$pre_after_clean_only"
 print_kv READY_PHASE_ENABLED "$phase_after_clean_enabled"
@@ -8786,6 +9446,44 @@ for index in "${!platforms[@]}"; do
     fi
   fi
 
+  # Issue #1649: expensive-reviewer gate — require current-head local clean,
+  # preceding peer evidence, resolved threads, and green baseline checks
+  # before dispatching. A defer sets needs_fixes and breaks so later platforms
+  # (including ready-phase) do not run.
+  if is_expensive_reviewer_platform "$platform_name"; then
+    set +e
+    expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")"
+    expensive_gate_status=$?
+    set -e
+    # Re-emit gate telemetry on the loop's stdout contract.
+    printf '%s\n' "$expensive_gate_output"
+    if [ "$expensive_gate_status" -ne 0 ]; then
+      last_platform="$platform_name"
+      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+        aggregate_result="escalate"
+        _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
+        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
+          aggregate_reason="expensive_gate_deferral_budget_unreadable"
+        else
+          aggregate_reason="expensive_gate_deferral_cap"
+        fi
+        unset _eg_escalation
+        aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
+        aggregate_status=2
+        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
+      else
+        aggregate_result="needs_fixes"
+        aggregate_reason="expensive_gate_deferred"
+        aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=expensive_gate_deferred\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        aggregate_status=1
+        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
+      fi
+      break
+    fi
+    # forced / dispatched continue to run_platform_review
+    unset expensive_gate_output expensive_gate_status
+  fi
+
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
   platform_status=$?
@@ -8797,6 +9495,8 @@ for index in "${!platforms[@]}"; do
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
   platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
   platform_reason="$(kv_value_default REASON "$platform_output" "")"
+  # Record peer evidence for subsequent expensive-reviewer gates in this run.
+  platform_peer_evidence+=("${platform_name}|${platform_result}|${platform_reason}")
   if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
     reviewer_failed_required=1
   fi
@@ -9016,6 +9716,9 @@ _post_review_summary() {
           # this cycle is not clean. Name the reason explicitly instead.
           result_line="needs_fixes (head_moved_during_run) — the clean verdict was for a HEAD the PR has since moved past; nothing to fix, re-run Step 7 for the current HEAD"
           ;;
+        expensive_gate_deferred)
+          result_line="needs_fixes (expensive_gate_deferred) — expensive reviewer held back until current-head evidence is complete; readiness withheld so Step 7 re-runs"
+          ;;
         *)
           result_line="${blocking} blocking finding(s) require fixes"
           ;;
@@ -9151,6 +9854,37 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
   fi
 
+  local expensive_gate_section=""
+  if [ -n "${expensive_gate_last_result:-}" ]; then
+    case "${expensive_gate_last_result}" in
+      deferred)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — deferred (${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`. The reviewer was not run; this loop result is \`needs_fixes\` so readiness is withheld and Step 7 will re-run."
+        ;;
+      deferral_cap)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — deferral cap reached (${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`. Escalating so a human can unblock."
+        ;;
+      forced)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — forced (would have deferred: ${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`."
+        ;;
+      dispatched)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — dispatched at head \`${expensive_gate_last_head}\`."
+        ;;
+      *)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — ${expensive_gate_last_result} (${expensive_gate_last_reason:-none}) at head \`${expensive_gate_last_head}\`."
+        ;;
+    esac
+  fi
+
   local phase_section=""
   if [ "$phase_enabled" -eq 1 ]; then
     local _phase_value_line
@@ -9198,7 +9932,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${head_evidence_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
+${small_findings_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
