@@ -15497,7 +15497,7 @@ run_test "p91_checklist_refuses_no_submitted_review" "yes" \
 # the Step 7 block clears POST_CLEAN_* before the loop runs and exports nothing
 # when the loop exits non-zero.
 run_test "p91_step7_clears_stale_settle_vars" "yes" \
-  "$(grep -q "grep -o '^POST_CLEAN_\[A-Z_\]\*'" "$_1574_p91" && echo yes || echo no)"
+  "$(grep -q "grep -oE '^(POST_CLEAN|LOCAL_AI)_\[A-Z_\]\*'" "$_1574_p91" && echo yes || echo no)"
 run_test "p91_step7_exports_only_on_zero_exit" "yes" \
   "$(grep -q 'Do not enter Step 8a on this run' "$_1574_p91" && echo yes || echo no)"
 # Protocol 91 carries no wait at all any more: the only sleep in 8a.1 was the
@@ -15538,7 +15538,9 @@ _1574_head="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 _1574_run_gate() {
   # $@ = VAR=value assignments; prints the exit status
   local status=0
-  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
+  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" \
+    LOCAL_AI_CONFIGURED=0 \
+    "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
   printf '%s' "$status"
 }
 run_test "gate_skipped_flag_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true)"
@@ -15551,6 +15553,9 @@ run_test "gate_no_thread_platforms_other_head_refused" "12" "$(_1574_run_gate PO
 run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
 run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
 run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_local_ai_unset_refused" "12" "$(_1574_run_gate LOCAL_AI_CONFIGURED= POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_local_ai_not_current_refused" "12" "$(_1574_run_gate LOCAL_AI_CONFIGURED=1 LOCAL_AI_HEAD_CURRENT=0 LOCAL_AI_REVIEWED_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_local_ai_current_passes" "0" "$(_1574_run_gate LOCAL_AI_CONFIGURED=1 LOCAL_AI_HEAD_CURRENT=1 LOCAL_AI_REVIEWED_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
 # A settled verdict is bound to one head: telemetry without a head, or for a
 # head the PR has moved past, is refused.
 run_test "gate_settled_without_head_binding_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1)"

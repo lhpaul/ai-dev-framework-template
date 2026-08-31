@@ -6975,7 +6975,7 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
     fi
   done
 
-  if [ "$local_ai_configured" -eq 1 ]; then
+  if [ "$local_ai_configured" -eq 1 ] && declare -p platform_reviewed_heads >/dev/null 2>&1; then
     for entry in "${platform_reviewed_heads[@]}"; do
       platform_name="${entry%%:*}"
       reviewed_head="${entry#*:}"
@@ -7051,7 +7051,11 @@ reviewer_loop_history_build_entry() {
   head_sha="$(reviewer_loop_history_current_head_sha)"
   recorded_at="$(reviewer_loop_history_recorded_at)"
   local reviewed_heads_json
-  reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  if declare -p platform_reviewed_heads >/dev/null 2>&1; then
+    reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  else
+    reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
+  fi
 
   # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
   # following the same convention already used in this function for

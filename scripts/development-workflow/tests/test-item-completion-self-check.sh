@@ -336,7 +336,9 @@ body() {
 
 bind_local_head_fixture() {
   local repo="$1"
-  export MOCK_GH_HEAD_OID="$(git -C "$repo" rev-parse HEAD)"
+  local head_oid
+  head_oid="$(git -C "$repo" rev-parse HEAD)"
+  export MOCK_GH_HEAD_OID="$head_oid"
   export MOCK_GH_PR_MODE="local_head_dynamic"
   export MOCK_GH_SUMMARY_MODE="local_head_dynamic"
 }
