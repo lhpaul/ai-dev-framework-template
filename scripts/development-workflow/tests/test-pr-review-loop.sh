@@ -298,8 +298,15 @@ case "$*" in
   # triggers the head-sha-unavailable escalation path.
   # When statusCheckRollup is also requested (#1649 expensive gate baseline helper),
   # return the combined payload from MOCK_GH_PR_VIEW_ROLLUP (full JSON object).
+  # Do not use ${VAR:-{...}} here: bash ends the expansion at the first `}` inside
+  # the default, so a set MOCK_GH_PR_VIEW_ROLLUP would be printed with a trailing
+  # literal `}` and become invalid JSON.
   *"statusCheckRollup"*)
-    printf '%s\n' "${MOCK_GH_PR_VIEW_ROLLUP:-{\"statusCheckRollup\":[],\"headRefOid\":\"${MOCK_GH_HEAD_SHA:-}\"}}"
+    if [ -n "${MOCK_GH_PR_VIEW_ROLLUP+x}" ]; then
+      printf '%s\n' "$MOCK_GH_PR_VIEW_ROLLUP"
+    else
+      printf '{"statusCheckRollup":[],"headRefOid":"%s"}\n' "${MOCK_GH_HEAD_SHA:-}"
+    fi
     exit "${MOCK_GH_EXIT:-0}"
     ;;
   *"headRefOid"*)
@@ -16400,8 +16407,13 @@ run_test "1649_s10_empty" "deferred|baseline_checks_unobserved" "$(_1649_checks_
 unset -f expensive_gate_baseline_checks_status
 HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
 expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
-# Earlier areas prepend their own mock dirs to PATH; pin the harness mock again.
+# Pin harness mock + clear command hash; earlier areas may leave a different gh
+# ahead on PATH or hashed from a temporary mock dir that was later removed.
 export PATH="$MOCK_BIN:$PATH"
+hash -r
+# Deterministic reviewer-check names so exclusion cases do not depend on the
+# live .ai-dev-workflow.yaml / local override contents in this checkout.
+configured_reviewer_check_names_json() { printf '["Cursor Bugbot"]\n'; }
 
 _1649_baseline_helper_row() {
   local rollup="$1"
@@ -16435,6 +16447,7 @@ run_test "1649_s10_real_unavailable" "unavailable" \
   "$(expensive_gate_baseline_checks_status 42 "$_1649_head" | awk '{print $1}')"
 export MOCK_GH_EXIT=0
 unset MOCK_GH_PR_VIEW_ROLLUP
+unset -f configured_reviewer_check_names_json
 # Restore stubs for remaining gate scenarios.
 expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "${MOCK_THREADS_HEAD:-$_1649_head}"; }
 expensive_gate_baseline_checks_status() {
