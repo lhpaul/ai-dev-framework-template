@@ -202,13 +202,92 @@ run_test "1649_s21_aggregate_needs_fixes" "needs_fixes" "$aggregate_result"
 run_contains "1649_s21_no_bugbot_in_ran" "local-ai-reviewer" \
   "$(IFS=,; printf '%s' "${_run_platform_called[*]}")"
 
-# Docs parity: both docs mention both escalation values
+# --- Scenario 23: ready-phase preflight — gate before gh pr ready ---
+# When the first ready-phase platform is non-expensive (bugbot) but a later
+# ready-phase platform is expensive (codex-github), a deferring expensive gate
+# must prevent ensure_pr_ready_for_ready_phase so auto-trigger cannot start.
+_ready_called=0
+ensure_pr_ready_for_ready_phase() { _ready_called=$((_ready_called + 1)); return 0; }
+_run_platform_called=()
+run_platform_review() { _run_platform_called+=("$1"); printf 'RESULT=clean\nREASON=\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'; return 0; }
+phase_after_clean_started=0
+phase_after_clean_enabled=1
+compare_mode=0
+compare_first_blocking_result=""
+platforms=(local-ai-reviewer bugbot codex-github)
+phase_after_clean_platforms=(bugbot codex-github)
+reorder_expensive_reviewers_last
+platform_peer_evidence=("local-ai-reviewer|clean|")
+platform_reviewed_heads=("local-ai-reviewer:$_other")
+expensive_gate_max_deferrals=3
+EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+loop_head_sha="$_head"
+pr_number=23
+aggregate_result="skipped"
+aggregate_reason=""
+aggregate_status=0
+platform_result_tokens=()
+# Mirror the production ready-phase entry + expensive preflight + per-platform gate.
+for index in "${!platforms[@]}"; do
+  platform_name="${platforms[$index]}"
+  if [ "$phase_after_clean_enabled" -eq 1 ] \
+      && [ "$phase_after_clean_started" -eq 0 ] \
+      && is_phase_after_clean_platform "$platform_name"; then
+    _eg_ready_preflight_failed=0
+    for ((_eg_i = index; _eg_i < ${#platforms[@]}; _eg_i++)); do
+      _eg_plat="${platforms[$_eg_i]}"
+      if ! is_phase_after_clean_platform "$_eg_plat"; then
+        continue
+      fi
+      if ! is_expensive_reviewer_platform "$_eg_plat"; then
+        continue
+      fi
+      if ! expensive_reviewer_gate "$pr_number" "$_eg_plat" "$loop_head_sha" >/dev/null; then
+        aggregate_result="needs_fixes"
+        aggregate_reason="expensive_gate_deferred"
+        _eg_ready_preflight_failed=1
+        break
+      fi
+    done
+    if [ "$_eg_ready_preflight_failed" -eq 1 ]; then
+      break
+    fi
+    ensure_pr_ready_for_ready_phase "$pr_number"
+    phase_after_clean_started=1
+  fi
+  if is_expensive_reviewer_platform "$platform_name"; then
+    if ! expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha" >/dev/null; then
+      aggregate_result="needs_fixes"
+      break
+    fi
+  fi
+  _run_platform_called+=("$platform_name")
+done
+run_test "1649_s23_ready_not_called" "0" "$_ready_called"
+run_test "1649_s23_aggregate_needs_fixes" "needs_fixes" "$aggregate_result"
+run_test "1649_s23_bugbot_not_run" "0" \
+  "$(printf '%s\n' "${_run_platform_called[@]:-}" | grep -c '^bugbot$' || true)"
+
+# Docs parity: both docs mention both escalation values + ready-phase preflight.
+# Grep files directly — do not $(cat) Protocol 93 into argv (ARG_MAX).
 _p93="$REPO_ROOT/docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md"
 _cg="$REPO_ROOT/docs/workflow/development-workflow/integrations/codex-github.md"
-run_contains "1649_docs_p93_cap" "expensive_gate_deferral_cap" "$(cat "$_p93")"
-run_contains "1649_docs_p93_unreadable" "expensive_gate_deferral_budget_unreadable" "$(cat "$_p93")"
-run_contains "1649_docs_cg_cap" "expensive_gate_deferral_cap" "$(cat "$_cg")"
-run_contains "1649_docs_cg_unreadable" "expensive_gate_deferral_budget_unreadable" "$(cat "$_cg")"
+_docs_has() {
+  local name="$1" needle="$2" file="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name — expected substring '${needle}' in ${file}"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+_docs_has "1649_s23_docs_p93_preflight" "preflight" "$_p93"
+_docs_has "1649_s23_docs_cg_preflight" "preflight" "$_cg"
+_docs_has "1649_docs_p93_cap" "expensive_gate_deferral_cap" "$_p93"
+_docs_has "1649_docs_p93_unreadable" "expensive_gate_deferral_budget_unreadable" "$_p93"
+_docs_has "1649_docs_cg_cap" "expensive_gate_deferral_cap" "$_cg"
+_docs_has "1649_docs_cg_unreadable" "expensive_gate_deferral_budget_unreadable" "$_cg"
 
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"

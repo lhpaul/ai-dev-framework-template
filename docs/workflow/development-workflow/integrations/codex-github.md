@@ -60,6 +60,11 @@ expensive reviewer behind a ready-phase platform.
 A defer sets the loop aggregate to `needs_fixes` /
 `REASON=expensive_gate_deferred` (readiness withheld; Step 7 re-runs) and
 breaks the platform iteration so later ready-phase platforms do not run.
+When `codex-github` is in the ready / `phase_after_clean` bucket, the loop
+preflights this gate for remaining ready-phase expensive platforms **before**
+`gh pr ready`, so an automatic Codex start on mark-ready cannot outrun the
+local/peer/thread/baseline checks. The gate still runs again immediately
+before `run_platform_review`.
 Deferrals are bounded by `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` (default
 `3`, head-scoped occurrence count). At the cap the loop escalates.
 `EXPENSIVE_GATE_ESCALATION` is emitted **only** when

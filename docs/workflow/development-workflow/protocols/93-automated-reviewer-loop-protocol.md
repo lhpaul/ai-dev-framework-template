@@ -222,7 +222,12 @@ Fail-closed on unreadable inputs (`evidence_unavailable_head`,
 A **deferred** outcome sets the loop aggregate to `needs_fixes` with
 `REASON=expensive_gate_deferred` so readiness is withheld and Step 7 re-runs;
 it also **breaks** the platform iteration immediately so a later ready-phase
-platform cannot call `gh pr ready`. Deferrals are bounded by a head-scoped
+platform cannot call `gh pr ready`. When the ready-phase transition is about
+to start and any **remaining** ready-phase platform is expensive, the loop
+**preflights** those expensive gates **before** `ensure_pr_ready_for_ready_phase`
+/ `gh pr ready`, because vendors such as Codex may auto-start a review when a
+draft is marked ready. The per-platform gate still runs again immediately
+before `run_platform_review`. Deferrals are bounded by a head-scoped
 occurrence counter (`PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, default `3`) —
 the existing cycle caps cannot bound them because they unique-bucket
 `needs_fixes` by head+result. At the cap the loop escalates with

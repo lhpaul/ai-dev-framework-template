@@ -9411,6 +9411,59 @@ for index in "${!platforms[@]}"; do
       && [ "$phase_after_clean_started" -eq 0 ] \
       && is_phase_after_clean_platform "$platform_name"; then
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      # Issue #1649: preflight expensive ready-phase gates BEFORE gh pr ready.
+      # Codex (and similar) may auto-start when a draft is marked ready; running
+      # ensure_pr_ready first would spend that reviewer before local/peer/thread/
+      # baseline evidence is confirmed. Plan Path 2 still keeps the per-platform
+      # gate immediately before run_platform_review; this preflight only guards
+      # the ready transition when any remaining ready-phase platform is expensive.
+      _eg_ready_preflight_failed=0
+      for ((_eg_i = index; _eg_i < ${#platforms[@]}; _eg_i++)); do
+        _eg_plat="${platforms[$_eg_i]}"
+        if ! is_phase_after_clean_platform "$_eg_plat"; then
+          continue
+        fi
+        if ! is_expensive_reviewer_platform "$_eg_plat"; then
+          continue
+        fi
+        set +e
+        expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$_eg_plat" "$loop_head_sha")"
+        expensive_gate_status=$?
+        set -e
+        printf '%s\n' "$expensive_gate_output"
+        if [ "$expensive_gate_status" -ne 0 ]; then
+          last_platform="$_eg_plat"
+          if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+            aggregate_result="escalate"
+            _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
+            if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
+              aggregate_reason="expensive_gate_deferral_budget_unreadable"
+            else
+              aggregate_reason="expensive_gate_deferral_cap"
+            fi
+            unset _eg_escalation
+            aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
+            aggregate_status=2
+            platform_result_tokens+=("${_eg_plat}:deferred (${expensive_gate_last_reason:-cap})")
+          else
+            aggregate_result="needs_fixes"
+            aggregate_reason="expensive_gate_deferred"
+            aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=expensive_gate_deferred\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+            aggregate_status=1
+            platform_result_tokens+=("${_eg_plat}:deferred (${expensive_gate_last_reason:-unknown})")
+          fi
+          _eg_ready_preflight_failed=1
+          unset expensive_gate_output expensive_gate_status
+          break
+        fi
+        unset expensive_gate_output expensive_gate_status
+      done
+      unset _eg_i _eg_plat
+      if [ "$_eg_ready_preflight_failed" -eq 1 ]; then
+        unset _eg_ready_preflight_failed
+        break
+      fi
+      unset _eg_ready_preflight_failed
       set +e
       ensure_pr_ready_for_ready_phase "$pr_number"
       ready_status=$?
