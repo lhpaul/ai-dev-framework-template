@@ -16075,6 +16075,51 @@ _1648_legacy_payload='{"schema":"reviewer_loop_history.v1","entries":[{"iteratio
 run_test "1648_legacy_payload_parses" "1" \
   "$(printf '%s\n' "$_1648_legacy_payload" | jq -e '.entries[0].reviewed_heads // [] | length >= 0' >/dev/null && echo 1 || echo 0)"
 
+# Check 0.6b gate (Protocol 91 lines 2758-2771) — planted-violation proof P2/P3
+check_066b_local_ai_head() {
+  if [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
+    return 12
+  elif [ "$LOCAL_AI_CONFIGURED" = "0" ]; then
+    return 0
+  elif [ "${LOCAL_AI_HEAD_CURRENT:-__unset__}" != "1" ]; then
+    return 12
+  else
+    return 0
+  fi
+}
+
+unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD 2>/dev/null || true
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_unset_configured" "12" "$_1648_check_rc"
+
+export LOCAL_AI_CONFIGURED=1
+export LOCAL_AI_HEAD_CURRENT=
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_missing_head_current" "12" "$_1648_check_rc"
+
+export LOCAL_AI_HEAD_CURRENT=0
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_not_current" "12" "$_1648_check_rc"
+
+export LOCAL_AI_HEAD_CURRENT=1
+export LOCAL_AI_REVIEWED_HEAD="$_sha_a"
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_current_pass" "0" "$_1648_check_rc"
+
+export LOCAL_AI_CONFIGURED=0
+unset LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD 2>/dev/null || true
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_not_configured_pass" "0" "$_1648_check_rc"
+
+unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD 2>/dev/null || true
+unset -f check_066b_local_ai_head 2>/dev/null || true
+unset _1648_check_rc
+
 _1648_carry_capture=$'POST_CLEAN_HEAD_SHA=abc\nLOCAL_AI_CONFIGURED=1\nLOCAL_AI_REVIEWED_HEAD=def0123456789012345678901234567890abcd\nLOCAL_AI_HEAD_CURRENT=1\n'
 _1648_carry_out="$(mktemp)"
 printf '%s\n' "$_1648_carry_capture" > "$_1648_carry_out"
@@ -16094,45 +16139,6 @@ done
 run_test "1648_carry_forward_clears" "empty" \
   "$([ -z "${LOCAL_AI_CONFIGURED:-}" ] && [ -z "${LOCAL_AI_HEAD_CURRENT:-}" ] && printf empty || printf present)"
 rm -f "$_1648_carry_out" "$settle_kv"
-
-# Check 0.6b gate (Protocol 91 lines 2758-2771) — planted-violation proof P2/P3
-check_066b_local_ai_head() {
-  if [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
-    return 12
-  elif [ "$LOCAL_AI_CONFIGURED" = "0" ]; then
-    return 0
-  elif [ "${LOCAL_AI_HEAD_CURRENT:-__unset__}" != "1" ]; then
-    return 12
-  else
-    return 0
-  fi
-}
-
-unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD
-check_066b_local_ai_head; _1648_check_rc=$?
-run_test "1648_check_066b_unset_configured" "12" "$_1648_check_rc"
-
-export LOCAL_AI_CONFIGURED=1
-export LOCAL_AI_HEAD_CURRENT=
-check_066b_local_ai_head; _1648_check_rc=$?
-run_test "1648_check_066b_missing_head_current" "12" "$_1648_check_rc"
-
-export LOCAL_AI_HEAD_CURRENT=0
-check_066b_local_ai_head; _1648_check_rc=$?
-run_test "1648_check_066b_not_current" "12" "$_1648_check_rc"
-
-export LOCAL_AI_HEAD_CURRENT=1
-export LOCAL_AI_REVIEWED_HEAD="$_sha_a"
-check_066b_local_ai_head; _1648_check_rc=$?
-run_test "1648_check_066b_current_pass" "0" "$_1648_check_rc"
-
-export LOCAL_AI_CONFIGURED=0
-unset LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD
-check_066b_local_ai_head; _1648_check_rc=$?
-run_test "1648_check_066b_not_configured_pass" "0" "$_1648_check_rc"
-
-unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD
-unset -f check_066b_local_ai_head _1648_check_rc
 
 unset _sha_a _sha_b _sha_a_upper _sha_abbrev _sha_39 _sha_41 _sha_non_hex _unknown_head
 unset _1648_render _1648_json _1648_legacy_payload _1648_carry_capture
