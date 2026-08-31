@@ -63,7 +63,7 @@ fixture written to today's schema.
 | **The existing counter conflates no-history with zero** | `sed -n '7341,7352p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_entries_count` returns `0 0 available` for an empty body **and** for a body with no marker, and its own comment block says so: *"a body with no history marker at all is the normal 'no prior reviewer-loop run' state … it is not an error condition"*. Correct for cycle counting; forbidden here |
 | It does distinguish the other two causes | Same range, plus `sed -n '7353,7370p'` | Marker present with no parseable block → `unavailable`; schema mismatch, non-array `entries`, or a persisted `history_status` that is not `available` → `unavailable`. **Two of the spec's three exclusion reasons already have code**; only `no_history` has to be split back out |
 | The payload's shape | `sed -n '7057,7075p' scripts/development-workflow/pr-review-loop.sh` | `{schema, pr_number, updated_at, history_status, history_unavailable_reason, entries}`. The unavailable stub carries `entries: []` — which is why a status check is required and an entry count is not sufficient |
-| The entry's fields today | `sed -n '6926,6950p' scripts/development-workflow/pr-review-loop.sh` | Thirteen top-level fields plus `phase_after_clean`: `iteration`, `recorded_at`, `head_sha`, `run_id`, `result`, `reason`, `platforms`, `blocking_count`, `suggestion_count`, `unresolved_thread_count`, `late_threads_found`, and the four `small_findings_*`. **Measures 1, 3 and 6 are computable from this alone**; measures 2, 4, 5 and 7 are not |
+| The entry's fields today | `sed -n '6926,6950p' scripts/development-workflow/pr-review-loop.sh \| grep -cE '^ {6}[a-z_]+:'` | **Seventeen** keys, sixteen scalar or array and one nested object: `iteration`, `recorded_at`, `head_sha`, `run_id`, `result`, `reason`, `platforms`, `blocking_count`, `suggestion_count`, `unresolved_thread_count`, `late_threads_found`, `phase_after_clean` (nested), and the five `small_findings_*`. **Measures 1, 3 and 6 are computable from this alone**; measures 2, 4, 5 and 7 are not |
 | `platforms` is a plain name list | `sed -n '6751,6756p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_platforms_json` splits a comma list and drops `none`. Measure 6 tests for `codex-github` in that array |
 | `blocking_count` is one number for the round | `sed -n '6932p' scripts/development-workflow/pr-review-loop.sh` | `blocking_count: $blockingCount` — the round's aggregate across reviewers. This is measure 3, and it is the reason the spec has no per-reviewer measure |
 | The producer is sourceable for tests | `sed -n '16,19p' scripts/development-workflow/pr-review-loop.sh` | `HARNESS_MODE=1` plus `BASH_SOURCE[0] != $0`. The new script uses the same guard so its functions are unit-testable |
@@ -264,6 +264,12 @@ Not applicable.
 1. One case per row of the spec's five-row matrix: no marker; marker with no
    parseable block; a payload whose `history_status` is `unavailable`; a
    readable payload missing a measure's field; and a readable complete payload.
+1a. **The two modes agree.** The same pull request reported with `--pr` and
+   inside a window produces **identical** per-pull-request values for all seven
+   measures and identical availability states. AC-2. Asserted by comparing the
+   two JSON outputs field for field, since a divergence would be invisible in
+   the text rendering and would make a window's aggregate inconsistent with the
+   rows a reader can check individually.
 2. The three exclusion reasons are distinguishable in the output, and each
    excluded pull request carries exactly one. AC-11.
 3. **A recorded `unavailable` payload carrying `entries: []` is excluded, not
@@ -289,6 +295,16 @@ Not applicable.
     AC-5a. A record describing three findings contributes one. AC-5b.
 11. Measure 3 is the sum of the rounds' aggregate blocking counts and is
     **not** attributed to any reviewer. AC-4a.
+11a. **Measure 6 counts exactly the rounds that dispatched `codex-github`.** A
+    fixture with five rounds, three of which list it in `platforms`, reads 3 —
+    asserted against both a round listing several reviewers including it and a
+    round listing others only, so neither a substring match nor a
+    presence-anywhere test passes. AC-6.
+11b. **Measure 7 reads the last round and no other.** A fixture whose earlier
+    rounds carry current-head evidence and whose **last** round does not
+    reports the last round's state, not an earlier one's; and a fixture where
+    only the last round carries it reports that state rather than
+    `not_recorded`. AC-7. Its `computed` value is a state, never a number.
 12. **No measure of what the local reviewer found appears anywhere** in either
     output format. AC-4b, asserted by absence over the rendered output and the
     JSON keys, since a measure nobody computes is invisible to a value
@@ -327,7 +343,7 @@ Not applicable.
 **Files**:
 
 - `scripts/development-workflow/tests/test-reviewer-effectiveness-report.sh` —
-  new, scenarios 1 through 20 and 22. Fixtures are comment bodies fed to the
+  new, scenarios 1 through 20 and 22, the lettered ones included. Fixtures are comment bodies fed to the
   real functions; `gh` is a recording stub so reads can be asserted and writes
   detected.
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 21,
@@ -460,11 +476,11 @@ direction nobody questions.
    scenarios 21 and 22.
 2. Add the script with its harness guard, argument parsing and window semantics.
    **Verify**: scenarios 15 and 16.
-3. Add the classifier. **Verify**: scenarios 1, 2, 3, 4, 5 and 18.
+3. Add the classifier. **Verify**: scenarios 1, 1a, 2, 3, 4, 5 and 18.
 4. Add the measures and their availability test. **Verify**: scenarios 6, 7, 8,
    10, 11 and 12.
 5. Add the aggregation and the strict-check section. **Verify**: scenarios 9,
-   13 and 14.
+   11a, 11b, 13 and 14.
 6. Add the rendering, text and JSON. **Verify**: scenarios 7, 17, 19 and 20.
 7. Update the README, the `--help` block and add the changelog fragment.
    **Verify**: runbook Step 8.

@@ -136,6 +136,28 @@ believes they chose, with every aggregate over a denominator they did not ask
 for. And aggregates of zero over an empty window are this report's own version
 of the error it exists to prevent.
 
+## Step 6a: The two modes agree, and two measures read what they claim
+
+**Maps to**: AC-2, AC-6, AC-7.
+
+1. Report one fixture pull request with `--pr`, then report it inside a window,
+   and compare the two JSON outputs field for field.
+2. Read measure 6 against a fixture with five rounds, three of which list
+   `codex-github` among several reviewers.
+3. Read measure 7 against two fixtures: one whose **earlier** rounds carry
+   current-head evidence and whose last round does not, and one where only the
+   last round carries it.
+
+**Expected result**: the two modes produce **identical** per-pull-request values
+and availability states. Measure 6 reads **3**. Measure 7 reports the **last**
+round's state in both fixtures — `not_recorded` in the first, the recorded state
+in the second — and never a number.
+
+A divergence between the modes would be invisible in the text rendering and
+would make a window's aggregate inconsistent with rows a reader can check one at
+a time. Measure 6's fixture mixes reviewers in one round deliberately, so
+neither a substring match nor a presence-anywhere test passes it.
+
 ## Step 7: Against this repository
 
 **Maps to**: AC-1, AC-8, AC-9, AC-17, AC-18.
