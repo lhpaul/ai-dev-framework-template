@@ -523,6 +523,15 @@ Outputs stable key=value lines including:
     configured or when the reviewer reported no head)
   LOCAL_AI_HEAD_CURRENT=1|0| (1 when local-ai-reviewer classification is current; 0 when not-current;
     empty when not-reported or when local-ai-reviewer is not configured — missing evidence is not a pass)
+  Reviewer-loop history ledger (reviewer_loop_history.v1, additive fields; schema string unchanged):
+    platform_results[] — per-platform normalized outcome + raw RESULT/REASON (no head; heads stay in
+      reviewed_heads[] from #1648). Used to select the local reviewer's most recent verdict.
+    missed_findings[] — one element per external platform that reported blocking findings this round
+      on an attributable commit: reviewer, reviewed_head, blocking_count, full deduped paths,
+      path_total, local_evidence_state, and classification (confirmed_miss|possible_miss|not_a_miss).
+      Observational only — never changes readiness, labels, or merge decisions. Summary shows one
+      ≤200-character line per record. When history is unappendable and a record was owed, the prior
+      history block is preserved and the summary reports the telemetry failure.
   RESULT=needs_fixes REASON=head_moved_during_run (the PR head changed while the reviewers ran, so
     the clean verdict describes a commit the PR has left; nothing to fix — re-run the loop for the
     current HEAD)
@@ -8036,6 +8045,9 @@ reviewer_loop_missed_finding_records() {
     idx=$((idx + 1))
   done
 
+  # Assign globals in the current shell. Callers that need attribution reports
+  # must invoke this function without command substitution ($(...)).
+  missed_findings_json="$records_json"
   printf '%s\n' "$records_json"
 }
 
@@ -8705,13 +8717,17 @@ reviewer_loop_history_append_to_summary() {
   reviewer_loop_history_last_unavailable_reason=""
   reviewer_loop_history_had_prior_block=0
 
-  if ! payload="$(reviewer_loop_history_payload_from_existing "$existing_body" "$@" 2>/dev/null)"; then
+  # Capture payload without losing append_safe globals: write to a temp file
+  # from the current shell, then read it back.
+  local _payload_tmp
+  _payload_tmp="$(mktemp)"
+  if ! reviewer_loop_history_payload_from_existing "$existing_body" "$@" >"$_payload_tmp" 2>/dev/null; then
     reviewer_loop_history_last_append_safe=0
     reviewer_loop_history_last_unavailable_reason="history_render_failed"
     if printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
       reviewer_loop_history_had_prior_block=1
     fi
-    payload="$(jq -n \
+    jq -n \
       --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
       --argjson prNumber "${pr_number:-0}" \
       --arg updatedAt "$(reviewer_loop_history_recorded_at)" \
@@ -8722,8 +8738,10 @@ reviewer_loop_history_append_to_summary() {
         history_status: "unavailable",
         history_unavailable_reason: "history_render_failed",
         entries: []
-      }')"
+      }' >"$_payload_tmp"
   fi
+  payload="$(cat "$_payload_tmp")"
+  rm -f "$_payload_tmp"
 
   # #1651 AC-7a: when history cannot be appended and a prior block exists,
   # leave that block byte-for-byte unchanged — do not re-render a stub over it.
@@ -10855,7 +10873,9 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   fi
 
   missed_finding_attribution_reports=""
-  missed_findings_json="$(reviewer_loop_missed_finding_records "$_prior_payload" "$_configured_platforms" "$_next_iteration")"
+  missed_findings_json='[]'
+  # Invoke in the current shell so attribution reports survive (no $(...)).
+  reviewer_loop_missed_finding_records "$_prior_payload" "$_configured_platforms" "$_next_iteration" >/dev/null
   _mf_count="$(printf '%s\n' "$missed_findings_json" | jq 'length' 2>/dev/null)" || _mf_count=0
   [[ "$_mf_count" =~ ^[0-9]+$ ]] || _mf_count=0
 
