@@ -7755,13 +7755,21 @@ reviewer_loop_platform_result_record_json() {
 
 # reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
 # configured_platforms is newline-delimited. Membership uses grep -Fxq here-string.
+# When the current invocation filters platforms (--platform), prior PR history can
+# still contain local-ai-reviewer verdicts; consult history before not_configured.
 reviewer_loop_local_latest_verdict() {
   local payload="${1:-}"
   local configured="${2:-}"
 
   if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
-    printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
-    return 0
+    if ! printf '%s' "$payload" | jq -e '
+        (.entries // [])[]
+        | (.platform_results // [])[]
+        | select(.platform == "local-ai-reviewer")
+      ' >/dev/null 2>&1; then
+      printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
+      return 0
+    fi
   fi
 
   printf '%s' "$payload" | jq -c '
@@ -9706,6 +9714,7 @@ compare_mode=0
 pre_after_clean_only=0
 review_lifecycle_duplicate_warnings_emitted=0
 declare -a platforms=()
+declare -a repo_review_platforms=()
 declare -a phase_after_clean_platforms=()
 phase_after_clean_filtered_out=""
 
@@ -10014,6 +10023,7 @@ if [ "${#platforms[@]}" -eq 0 ]; then
       line="$(trim "$line")"
       [ -n "$line" ] && platforms+=("$line")
     done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
+    repo_review_platforms=("${platforms[@]}")
   fi
 fi
 
@@ -10938,7 +10948,9 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
       _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
     fi
   fi
-  if declare -p platforms >/dev/null 2>&1 && [ "${#platforms[@]}" -gt 0 ]; then
+  if declare -p repo_review_platforms >/dev/null 2>&1 && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
+    _configured_platforms="$(printf '%s\n' "${repo_review_platforms[@]}")"
+  elif declare -p platforms >/dev/null 2>&1 && [ "${#platforms[@]}" -gt 0 ]; then
     _configured_platforms="$(printf '%s\n' "${platforms[@]}")"
   fi
   _next_iteration="$(printf '%s\n' "$_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _next_iteration=1

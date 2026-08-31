@@ -16754,6 +16754,15 @@ _1651_long="$(printf 'local-ai-reviewer\n'; for _i in $(seq 1 499); do printf 'o
 run_test "1651_s2c_long_list" "not_yet_run" \
   "$(reviewer_loop_local_latest_verdict "$_1651_empty" "$_1651_long" | jq -r '.outcome')"
 
+# --- Scenario 2d: filtered invocation must not hide prior local verdict ---
+_1651_hist="$(jq -nc --arg h "$_1651_descendant" '
+  {schema:"reviewer_loop_history.v1", entries:[
+    {iteration:1, platform_results:[{platform:"local-ai-reviewer",result:"clean",raw_result:"clean",raw_reason:""}],
+     reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$h,state:"current",reason:""}]}
+  ]}')"
+run_test "1651_s2d_filtered_invocation_uses_history" "clean" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_hist" $'bugbot\ncodex-github\n' | jq -r '.outcome')"
+
 # --- Scenario 2a: skipped/not_configured while list contains reviewer → unavailable ---
 _1651_hist="$(jq -nc --arg h "$_1651_descendant" '
   {schema:"reviewer_loop_history.v1", entries:[
