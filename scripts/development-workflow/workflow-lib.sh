@@ -476,6 +476,51 @@ print_kv() {
   printf '%s=%s\n' "$1" "$2"
 }
 
+# configured_reviewer_check_names_json [config_file]
+#
+# Returns a JSON array of GitHub check-run names owned by configured review
+# platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot). Shared by
+# pr-ci-loop.sh (to exclude reviewer checks from the baseline CI set) and
+# pr-review-loop.sh (expensive-reviewer gate baseline-check classification).
+# Relocated from pr-ci-loop.sh (#1649) with no behavior change.
+configured_reviewer_check_names_json() {
+  local config_file="${1:-}"
+  local platform=""
+  local -a names=()
+
+  if [ -z "$config_file" ]; then
+    config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  fi
+
+  if [ -f "$config_file" ]; then
+    while IFS= read -r platform; do
+      platform="$(printf '%s' "$platform" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -z "$platform" ] && continue
+      case "$platform" in
+        haystack)
+          names+=("${HAYSTACK_CHECK_NAME:-Haystack / Review}")
+          ;;
+        bugbot)
+          names+=("${BUGBOT_CHECK_NAME:-Cursor Bugbot}")
+          ;;
+      esac
+    done < <(
+      if [ "$config_file" = "$(workflow_config_file)" ]; then
+        WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file"
+      else
+        workflow_config_review_platforms "$config_file"
+      fi
+    )
+  fi
+
+  if [ "${#names[@]}" -eq 0 ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  printf '%s\n' "${names[@]}" | jq -R . | jq -s .
+}
+
 print_kv_escaped() {
   local value="$2"
   value="${value//\\/\\\\}"
