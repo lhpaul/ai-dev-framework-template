@@ -180,6 +180,81 @@ PR comments (including during the async grace-period poll) must be treated as
 unavailable and must not let a clean submitted review be accepted before the
 root comments are known. Fail closed, not open.
 
+#### Expensive reviewer gate (`codex-github`)
+
+Before dispatching an expensive reviewer (`codex-github` today),
+`pr-review-loop.sh` evaluates a dedicated pre-dispatch gate. Membership is a
+fixed property of the reviewer (`EXPENSIVE_REVIEWER_PLATFORMS`), not repository
+config. Expensive reviewers are reordered last **within their own phase
+bucket** (draft vs ready / `phase_after_clean`) so peer evidence is reachable;
+the reorder never crosses the draft/ready boundary.
+
+Conditions are evaluated in order and stop at the first unmet one:
+
+1. **Local current-head evidence** — `local-ai-reviewer` is in the resolved
+   platform list and its `platform_reviewed_heads` entry classifies as
+   `current` against `loop_head_sha`. Exact-match allow-list: both derived
+   values must be the literal `1`. Missing, unexpected, or stale values defer
+   (`local_reviewer_not_configured`, `local_evidence_missing`, or
+   `local_evidence_stale`). Derived from in-loop state — never from the
+   `LOCAL_AI_*` stdout keys as environment variables.
+2. **Preceding peer evidence** — every platform that precedes this reviewer
+   under the reordered list (same-bucket non-expensive peers plus every earlier
+   bucket) has already run with acceptable evidence: `clean`, or `skipped`
+   whose reason is a member of
+   `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`
+   (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`)
+   **and** `reviewer_failed_label_required_for_result` returns false. Peer set
+   is phase-scoped, not the whole list — a draft-phase expensive reviewer does
+   not wait on ready-phase peers.
+3. **Review threads** — zero unresolved, non-outdated review threads, bound to
+   the same `loop_head_sha` (else `evidence_head_moved` /
+   `evidence_unavailable_review_threads`).
+4. **Baseline checks** — the non-reviewer check set on `loop_head_sha` is
+   **non-empty** and every member is `SUCCESS`, `SKIPPED`, or `NEUTRAL`. An
+   empty set defers with `baseline_checks_unobserved` (vacuous-green is not
+   green). Reviewer-owned check names from
+   `configured_reviewer_check_names_json` are excluded.
+
+Fail-closed on unreadable inputs (`evidence_unavailable_head`,
+`evidence_unavailable_review_threads`, `evidence_unavailable_checks`).
+
+A **deferred** outcome sets the loop aggregate to `needs_fixes` with
+`REASON=expensive_gate_deferred` so readiness is withheld and Step 7 re-runs;
+it also **breaks** the platform iteration immediately so a later ready-phase
+platform cannot call `gh pr ready`. When the ready-phase transition is about
+to start and any **remaining** ready-phase platform is expensive, the loop
+**preflights** those expensive gates **before** `ensure_pr_ready_for_ready_phase`
+/ `gh pr ready`, because vendors such as Codex may auto-start a review when a
+draft is marked ready. That preflight uses peer scope `earlier_buckets` only
+(draft peers + local/thread/baseline checks) so same-bucket ready peers such as
+`bugbot` — which themselves require the PR to be ready — cannot deadlock the
+transition. The full per-platform gate (including same-bucket peers) still runs
+again immediately before `run_platform_review`. Deferrals are bounded by a head-scoped
+occurrence counter (`PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, default `3`) —
+the existing cycle caps cannot bound them because they unique-bucket
+`needs_fixes` by head+result. At the cap the loop escalates with
+`RESULT=escalate`. `EXPENSIVE_GATE_ESCALATION` is emitted **only** on a
+`deferral_cap` result and is one of:
+
+- `expensive_gate_deferral_cap` — budget exhausted for this head
+- `expensive_gate_deferral_budget_unreadable` — ledger marker present but
+  unreadable (`EXPENSIVE_GATE_DEFERRALS=-1`); an *absent* ledger is `0` and
+  defers normally
+
+`PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` bypasses the gate for manual
+escalation: the gate still evaluates and emits `EXPENSIVE_GATE_RESULT=forced`
+with the reason it would have deferred; justify use in the PR. Forced runs do
+not set the `needs_fixes` aggregate.
+
+Telemetry keys: `EXPENSIVE_GATE_PLATFORM`, `EXPENSIVE_GATE_RESULT`,
+`EXPENSIVE_GATE_REASON`, `EXPENSIVE_GATE_HEAD`, `EXPENSIVE_GATE_DEFERRALS`,
+`EXPENSIVE_GATE_MAX_DEFERRALS`, and (on `deferral_cap` only)
+`EXPENSIVE_GATE_ESCALATION`. The summary comment includes an
+`**Expensive reviewer gate:**` line; the `reviewer_loop_history.v1` entry
+carries an additive `expensive_gate` object (`platform`, `result`, `reason`,
+`head`).
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks

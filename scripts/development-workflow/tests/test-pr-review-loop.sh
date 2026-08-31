@@ -296,6 +296,19 @@ case "$*" in
   # gh pr view --json headRefOid — used by run_copilot_review to resolve head SHA.
   # Tests set MOCK_GH_HEAD_SHA to control the returned value; default empty string
   # triggers the head-sha-unavailable escalation path.
+  # When statusCheckRollup is also requested (#1649 expensive gate baseline helper),
+  # return the combined payload from MOCK_GH_PR_VIEW_ROLLUP (full JSON object).
+  # Do not use ${VAR:-{...}} here: bash ends the expansion at the first `}` inside
+  # the default, so a set MOCK_GH_PR_VIEW_ROLLUP would be printed with a trailing
+  # literal `}` and become invalid JSON.
+  *"statusCheckRollup"*)
+    if [ -n "${MOCK_GH_PR_VIEW_ROLLUP+x}" ]; then
+      printf '%s\n' "$MOCK_GH_PR_VIEW_ROLLUP"
+    else
+      printf '{"statusCheckRollup":[],"headRefOid":"%s"}\n' "${MOCK_GH_HEAD_SHA:-}"
+    fi
+    exit "${MOCK_GH_EXIT:-0}"
+    ;;
   *"headRefOid"*)
     printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
     exit "${MOCK_GH_EXIT:-0}"
@@ -16157,6 +16170,424 @@ rm -f "$_1648_carry_out" "$settle_kv"
 
 unset _sha_a _sha_b _sha_a_upper _sha_abbrev _sha_39 _sha_41 _sha_non_hex _unknown_head
 unset _1648_render _1648_json _1648_legacy_payload _1648_carry_capture
+
+# ---------------------------------------------------------------------------
+# Area 1649: expensive reviewer gate
+# Scenarios 1–14, 14b, 18, 19, 19b (composition/override live in
+# test-expensive-reviewer-gate.sh).
+# ---------------------------------------------------------------------------
+echo "=== Area 1649: expensive reviewer gate ==="
+
+_1649_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_1649_other="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+# --- Scenario 1: is_expensive_reviewer_platform ---
+run_test "1649_s1_matches_codex" "0" \
+  "$(is_expensive_reviewer_platform codex-github; printf '%s' $?)"
+run_test "1649_s1_rejects_local" "1" \
+  "$(is_expensive_reviewer_platform local-ai-reviewer; printf '%s' $?)"
+run_test "1649_s1_rejects_pr_agent" "1" \
+  "$(is_expensive_reviewer_platform pr-agent; printf '%s' $?)"
+run_test "1649_s1_rejects_bugbot" "1" \
+  "$(is_expensive_reviewer_platform bugbot; printf '%s' $?)"
+
+# --- Scenario 6 / 6b: reorder ---
+platforms=(codex-github pr-agent local-ai-reviewer)
+phase_after_clean_platforms=()
+expensive_reviewers_reordered=0
+reorder_expensive_reviewers_last
+run_test "1649_s6_moves_codex_last" "pr-agent,local-ai-reviewer,codex-github" \
+  "$(IFS=,; printf '%s' "${platforms[*]}")"
+run_test "1649_s6_flag_set" "1" "$expensive_reviewers_reordered"
+
+platforms=(pr-agent local-ai-reviewer codex-github)
+expensive_reviewers_reordered=0
+reorder_expensive_reviewers_last
+run_test "1649_s6_already_correct_untouched" "0" "$expensive_reviewers_reordered"
+
+platforms=(codex-github pr-agent local-ai-reviewer bugbot)
+phase_after_clean_platforms=(bugbot)
+expensive_reviewers_reordered=0
+reorder_expensive_reviewers_last
+run_test "1649_s6b_phase_bucket" "pr-agent,local-ai-reviewer,codex-github,bugbot" \
+  "$(IFS=,; printf '%s' "${platforms[*]}")"
+run_test "1649_s6b_codex_before_bugbot" "1" \
+  "$(printf '%s\n' "${platforms[@]}" | awk '/codex-github/{c=NR} /bugbot/{b=NR} END{print (c<b)?1:0}')"
+
+# --- Scenario 14b: resolve max deferrals ---
+unset PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
+run_test "1649_s14b_unset" "3" "$(expensive_gate_resolve_max_deferrals)"
+PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS=
+run_test "1649_s14b_empty" "3" "$(expensive_gate_resolve_max_deferrals)"
+PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS=1
+run_test "1649_s14b_one" "1" "$(expensive_gate_resolve_max_deferrals)"
+PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS=999999
+run_test "1649_s14b_max" "999999" "$(expensive_gate_resolve_max_deferrals)"
+for bad in 0 -1 1000000 abc 2.5 " 2 "; do
+  PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS="$bad"
+  _warn="$(expensive_gate_resolve_max_deferrals 2>&1 >/dev/null)" || true
+  _val="$(PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS="$bad" expensive_gate_resolve_max_deferrals 2>/dev/null)"
+  run_test "1649_s14b_reject_${bad// /ws}" "3" "$_val"
+  run_contains "1649_s14b_warn_${bad// /ws}" "WARN" "$_warn"
+done
+unset PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
+expensive_gate_max_deferrals="$(expensive_gate_resolve_max_deferrals)"
+
+# Shared stubs for gate evaluation (conditions 3–4 satisfied unless overridden).
+_1649_stub_green_evidence() {
+  expensive_gate_unresolved_threads_status() {
+    printf 'ok 0 %s\n' "${MOCK_THREADS_HEAD:-$_1649_head}"
+  }
+  expensive_gate_baseline_checks_status() {
+    printf '%s %s\n' "${MOCK_CHECKS_STATE:-green}" "${MOCK_CHECKS_HEAD:-$_1649_head}"
+  }
+}
+
+_1649_run_gate() {
+  local out rc=0
+  local pr="${1:-42}"
+  local platform="${2:-codex-github}"
+  # Allow explicit empty head (scenario 12); only default when unset.
+  local head="${3-$_1649_head}"
+  out="$(expensive_reviewer_gate "$pr" "$platform" "$head" 2>/dev/null)" || rc=$?
+  printf '%s\n---RC=%s\n' "$out" "$rc"
+}
+
+_1649_kv() {
+  local key="$1" blob="$2"
+  printf '%s\n' "$blob" | grep "^${key}=" | head -1 | cut -d= -f2-
+}
+
+# --- Scenario 2: all conditions met → dispatched ---
+_1649_stub_green_evidence
+platforms=(local-ai-reviewer pr-agent codex-github)
+phase_after_clean_platforms=()
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+expensive_gate_max_deferrals=3
+_out="$(_1649_run_gate)"
+run_test "1649_s2_dispatched" "dispatched" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+run_test "1649_s2_reason_empty" "" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+run_test "1649_s2_rc0" "0" "$(grep -E '^---RC=' <<<"$_out" | cut -d= -f2)"
+
+# --- Scenario 3: stale local evidence ---
+platform_reviewed_heads=("local-ai-reviewer:$_1649_other")
+_out="$(_1649_run_gate)"
+run_test "1649_s3_deferred" "deferred" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+run_test "1649_s3_stale" "local_evidence_stale" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+run_test "1649_s3_rc1" "1" "$(grep -E '^---RC=' <<<"$_out" | cut -d= -f2)"
+
+# --- Scenario 4: unexpected / absent local evidence values ---
+# Stub configured/head_current helpers directly for allow-list rows.
+_orig_cfg="$(declare -f expensive_gate_local_ai_configured)"
+_orig_hc="$(declare -f expensive_gate_local_ai_head_current)"
+_1649_stub_row() {
+  local cfg="$1" hc="$2"
+  expensive_gate_local_ai_configured() { printf '%s\n' "$cfg"; }
+  expensive_gate_local_ai_head_current() { printf '%s\n' "$hc"; }
+  platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+  platforms=(local-ai-reviewer pr-agent codex-github)
+  platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+  _out="$(_1649_run_gate)"
+  printf '%s\n' "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+}
+run_test "1649_s4_empty_cfg" "local_evidence_missing" "$(_1649_stub_row "" "1")"
+run_test "1649_s4_cfg_2" "local_evidence_missing" "$(_1649_stub_row "2" "1")"
+run_test "1649_s4_cfg_true" "local_evidence_missing" "$(_1649_stub_row "true" "1")"
+run_test "1649_s4_empty_hc" "local_evidence_missing" "$(_1649_stub_row "1" "")"
+run_test "1649_s4_hc_2" "local_evidence_missing" "$(_1649_stub_row "1" "2")"
+run_test "1649_s4_hc_yes" "local_evidence_missing" "$(_1649_stub_row "1" "yes")"
+eval "$_orig_cfg"
+eval "$_orig_hc"
+
+# --- Scenario 5: local reviewer not configured ---
+platforms=(pr-agent codex-github)
+platform_reviewed_heads=()
+platform_peer_evidence=("pr-agent|clean|")
+_out="$(_1649_run_gate)"
+run_test "1649_s5_not_configured" "local_reviewer_not_configured" \
+  "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+
+# Restore for peer scenarios
+platforms=(local-ai-reviewer pr-agent codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+
+# --- Scenario 7: peer set phase-scoped ---
+platforms=(local-ai-reviewer pr-agent codex-github bugbot)
+phase_after_clean_platforms=(bugbot)
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+# bugbot has not run — must still dispatch (not in peer set for draft codex)
+_out="$(_1649_run_gate)"
+run_test "1649_s7_draft_ignores_ready_peer" "dispatched" \
+  "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+
+# Ready-phase expensive waits on whole draft bucket
+platforms=(local-ai-reviewer pr-agent codex-github)
+phase_after_clean_platforms=(codex-github)
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+_out="$(_1649_run_gate)"
+run_test "1649_s7_ready_waits_draft" "dispatched" \
+  "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+
+# Suppressed reorder: peer not run
+platforms=(codex-github local-ai-reviewer pr-agent)
+phase_after_clean_platforms=()
+platform_peer_evidence=()
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+# Force configured=1 and head current via reviewed heads, but no peers ran
+# Condition 1 needs local-ai in platforms AND reviewed head — local-ai is in list
+# but hasn't "run" as peer yet; for condition 1 we only need membership + heads.
+# Peer set = empty (codex is first) → dispatched on empty peer set?
+# Actually peer set is empty when expensive is first → check_peers returns empty → OK for peers.
+# The plan says suppressed reorder so a same-bucket peer has not run → deferred peer_reviewer_not_run.
+# So we need: list order codex, pr-agent with pr-agent not in peer evidence... wait if codex is first,
+# peers before it are empty. The scenario means: after reorder would put codex last, but without
+# reorder codex is first and when we get to pr-agent later... Actually when gate runs for codex
+# at index 0, peer set is empty so peers pass. The "suppressed reorder" case needs:
+# platforms with pr-agent BEFORE codex in the list that the gate sees, but pr-agent not yet in
+# platform_peer_evidence — which can't happen in sequential iteration unless we call the gate
+# as if somehow out of order. The plan says: "Reorder suppressed so a same-bucket peer has not run"
+# So: list is [local-ai, pr-agent, codex] but peer evidence only has local-ai (pr-agent missing).
+platforms=(local-ai-reviewer pr-agent codex-github)
+platform_peer_evidence=("local-ai-reviewer|clean|")
+_out="$(_1649_run_gate)"
+run_test "1649_s7_peer_not_run" "peer_reviewer_not_run" \
+  "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+
+# --- Scenario 8: peer evidence acceptance ---
+_1649_peer_row() {
+  local result="$1" reason="$2"
+  platforms=(local-ai-reviewer pr-agent codex-github)
+  phase_after_clean_platforms=()
+  platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+  platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|${result}|${reason}")
+  _out="$(_1649_run_gate)"
+  printf '%s|%s\n' "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+}
+run_test "1649_s8_clean" "dispatched|" "$(_1649_peer_row clean "")"
+run_test "1649_s8_skip_not_configured" "dispatched|" "$(_1649_peer_row skipped not_configured)"
+run_test "1649_s8_skip_explicit" "dispatched|" "$(_1649_peer_row skipped explicit-skip)"
+run_test "1649_s8_skip_release" "dispatched|" "$(_1649_peer_row skipped release_pr)"
+run_test "1649_s8_skip_unsupported" "dispatched|" "$(_1649_peer_row skipped unsupported-platform)"
+run_test "1649_s8_skip_unavailable" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row skipped unavailable)"
+run_test "1649_s8_skip_timeout" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row skipped timeout)"
+run_test "1649_s8_skip_unauthorized" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row skipped unauthorized)"
+run_test "1649_s8_needs_fixes" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row needs_fixes "")"
+run_test "1649_s8_escalate" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row escalate "")"
+run_test "1649_s8_skip_unknown" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row skipped some_future_reason)"
+run_test "1649_s8_skip_empty" "deferred|peer_reviewer_not_clean" "$(_1649_peer_row skipped "")"
+
+# --- Scenario 9: unresolved threads ---
+platforms=(local-ai-reviewer pr-agent codex-github)
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+expensive_gate_unresolved_threads_status() { printf 'ok 1 %s\n' "$_1649_head"; }
+expensive_gate_baseline_checks_status() { printf 'green %s\n' "$_1649_head"; }
+_out="$(_1649_run_gate)"
+run_test "1649_s9_unresolved" "unresolved_threads" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+_out="$(_1649_run_gate)"
+run_test "1649_s9_outdated_ok" "dispatched" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+
+# --- Scenario 10: baseline checks ---
+_1649_checks_row() {
+  local state="$1"
+  expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+  expensive_gate_baseline_checks_status() { printf '%s %s\n' "$state" "$_1649_head"; }
+  _out="$(_1649_run_gate)"
+  printf '%s|%s\n' "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+}
+run_test "1649_s10_failed" "deferred|baseline_checks_not_green" "$(_1649_checks_row failed)"
+run_test "1649_s10_pending" "deferred|baseline_checks_pending" "$(_1649_checks_row pending)"
+run_test "1649_s10_green" "dispatched|" "$(_1649_checks_row green)"
+run_test "1649_s10_empty" "deferred|baseline_checks_unobserved" "$(_1649_checks_row empty)"
+
+# --- Scenario 10 real helper (no stub): parse rollup, exclude reviewer checks ---
+unset -f expensive_gate_baseline_checks_status
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+# Pin harness mock + clear command hash; earlier areas may leave a different gh
+# ahead on PATH or hashed from a temporary mock dir that was later removed.
+export PATH="$MOCK_BIN:$PATH"
+hash -r
+# Deterministic reviewer-check names so exclusion cases do not depend on the
+# live .ai-dev-workflow.yaml / local override contents in this checkout.
+configured_reviewer_check_names_json() { printf '["Cursor Bugbot"]\n'; }
+
+_1649_baseline_helper_row() {
+  local rollup="$1"
+  export MOCK_GH_PR_VIEW_ROLLUP="$rollup"
+  export MOCK_GH_EXIT=0
+  expensive_gate_baseline_checks_status 42 "$_1649_head"
+}
+
+_1649_green_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_fail_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_pending_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"IN_PROGRESS","conclusion":null},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_exclude_rollup='{"statusCheckRollup":[{"name":"Cursor Bugbot","status":"IN_PROGRESS","conclusion":null},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_empty_rollup='{"statusCheckRollup":[],"headRefOid":"'"$_1649_head"'"}'
+_1649_reviewer_only_rollup='{"statusCheckRollup":[{"name":"Cursor Bugbot","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+
+run_test "1649_s10_real_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_green_rollup")"
+run_test "1649_s10_real_failed" "failed $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_fail_rollup")"
+run_test "1649_s10_real_pending" "pending $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_pending_rollup")"
+# Pending reviewer-owned check + green non-reviewer → green (exclusion)
+run_test "1649_s10_real_exclude_reviewer" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_exclude_rollup")"
+run_test "1649_s10_real_empty" "empty $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_empty_rollup")"
+run_test "1649_s10_real_reviewer_only" "empty $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_reviewer_only_rollup")"
+# Stale failed duplicate + newer green same name → green (pr-ci-loop normalization)
+_1649_dup_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:00:00Z"},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T01:00:00Z"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1649_s10_real_dup_latest_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1649_dup_rollup")"
+export MOCK_GH_EXIT=1
+run_test "1649_s10_real_unavailable" "unavailable" \
+  "$(expensive_gate_baseline_checks_status 42 "$_1649_head" | awk '{print $1}')"
+export MOCK_GH_EXIT=0
+unset MOCK_GH_PR_VIEW_ROLLUP
+unset -f configured_reviewer_check_names_json
+# Restore stubs for remaining gate scenarios.
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "${MOCK_THREADS_HEAD:-$_1649_head}"; }
+expensive_gate_baseline_checks_status() {
+  printf '%s %s\n' "${MOCK_CHECKS_STATE:-green}" "${MOCK_CHECKS_HEAD:-$_1649_head}"
+}
+platforms=(local-ai-reviewer pr-agent codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_other"; }
+expensive_gate_baseline_checks_status() { printf 'green %s\n' "$_1649_head"; }
+_out="$(_1649_run_gate)"
+run_test "1649_s11_threads_head_moved" "evidence_head_moved" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+expensive_gate_baseline_checks_status() { printf 'green %s\n' "$_1649_other"; }
+_out="$(_1649_run_gate)"
+run_test "1649_s11_checks_head_moved" "evidence_head_moved" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+
+# --- Scenario 12: unreadable inputs ---
+_out="$(_1649_run_gate 42 codex-github "")"
+run_test "1649_s12_empty_head" "evidence_unavailable_head" "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+expensive_gate_unresolved_threads_status() { printf 'unavailable - \n'; }
+expensive_gate_baseline_checks_status() { printf 'green %s\n' "$_1649_head"; }
+_out="$(_1649_run_gate)"
+run_test "1649_s12_threads_fail" "evidence_unavailable_review_threads" \
+  "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+expensive_gate_baseline_checks_status() { printf 'unavailable \n'; }
+_out="$(_1649_run_gate)"
+run_test "1649_s12_checks_fail" "evidence_unavailable_checks" \
+  "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+
+# Restore green stubs
+_1649_stub_green_evidence
+platforms=(local-ai-reviewer pr-agent codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
+
+# --- Scenario 13 / 14: deferral cap + head-scoped ---
+_1649_ledger_entries() {
+  local n="$1" head="${2:-$_1649_head}"
+  local i
+  local _1649_json_entries="["
+  for i in $(seq 1 "$n"); do
+    [ "$i" -gt 1 ] && _1649_json_entries+=","
+    _1649_json_entries+="{\"result\":\"needs_fixes\",\"reason\":\"expensive_gate_deferred\",\"head_sha\":\"$head\",\"expensive_gate\":{\"platform\":\"codex-github\",\"result\":\"deferred\",\"reason\":\"baseline_checks_pending\",\"head\":\"$head\"}}"
+  done
+  _1649_json_entries+="]"
+  printf '%s\n' "<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"available\",\"entries\":${_1649_json_entries}}
+\`\`\`"
+}
+
+expensive_gate_max_deferrals=3
+# Force a defer reason (stale local) with 3 prior deferrals → cap
+platform_reviewed_heads=("local-ai-reviewer:$_1649_other")
+EXPENSIVE_GATE_MOCK_LEDGER_BODY="$(_1649_ledger_entries 3)"
+_out="$(_1649_run_gate)"
+run_test "1649_s13_cap" "deferral_cap" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+run_test "1649_s13_escalation" "expensive_gate_deferral_cap" \
+  "$(_1649_kv EXPENSIVE_GATE_ESCALATION "$_out")"
+run_test "1649_s13_reason_preserved" "local_evidence_stale" \
+  "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+
+EXPENSIVE_GATE_MOCK_LEDGER_BODY="$(_1649_ledger_entries 2)"
+_out="$(_1649_run_gate)"
+run_test "1649_s13_under_cap_defers" "deferred" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+
+# Scenario 14: deferrals on other head do not count
+EXPENSIVE_GATE_MOCK_LEDGER_BODY="$(_1649_ledger_entries 3 "$_1649_other")"
+_out="$(_1649_run_gate)"
+run_test "1649_s14_other_head_ignored" "deferred" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+run_test "1649_s14_deferrals_zero" "0" "$(_1649_kv EXPENSIVE_GATE_DEFERRALS "$_out")"
+
+# --- Scenario 18: legacy ledger without expensive_gate still parses ---
+_legacy_body='<!-- reviewer-loop-history:v1 -->
+```json
+{"schema":"reviewer_loop_history.v1","history_status":"available","entries":[{"iteration":1,"result":"clean","reason":"","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","platforms":[]}]}
+```'
+_legacy_payload="$(reviewer_loop_history_payload_from_existing "$_legacy_body" needs_fixes expensive_gate_deferred "codex-github" 0 0 0 "" 0 0 "")"
+run_test "1649_s18_legacy_parses" "available" \
+  "$(printf '%s\n' "$_legacy_payload" | jq -r '.history_status')"
+run_test "1649_s18_has_entries" "2" \
+  "$(printf '%s\n' "$_legacy_payload" | jq -r '.entries | length')"
+
+# --- Scenario 19: unreadable budget ---
+EXPENSIVE_GATE_MOCK_LEDGER_BODY="<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+{not-json
+\`\`\`"
+platform_reviewed_heads=("local-ai-reviewer:$_1649_other")
+_out="$(_1649_run_gate)"
+run_test "1649_s19_unreadable" "deferral_cap" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+run_test "1649_s19_escalation" "expensive_gate_deferral_budget_unreadable" \
+  "$(_1649_kv EXPENSIVE_GATE_ESCALATION "$_out")"
+run_test "1649_s19_deferrals_neg1" "-1" "$(_1649_kv EXPENSIVE_GATE_DEFERRALS "$_out")"
+
+# --- Scenario 19b: absent ledger → 0 ---
+unset EXPENSIVE_GATE_MOCK_LEDGER_BODY
+EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+_out="$(_1649_run_gate)"
+run_test "1649_s19b_absent_zero" "0" "$(_1649_kv EXPENSIVE_GATE_DEFERRALS "$_out")"
+run_test "1649_s19b_defers_normally" "deferred" "$(_1649_kv EXPENSIVE_GATE_RESULT "$_out")"
+
+# Build entry includes expensive_gate object
+expensive_gate_last_platform="codex-github"
+expensive_gate_last_result="deferred"
+expensive_gate_last_reason="local_evidence_stale"
+expensive_gate_last_head="$_1649_head"
+loop_head_sha="$_1649_head"
+pr_number=""
+current_run_id="test-run"
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+_entry="$(reviewer_loop_history_build_entry 1 needs_fixes expensive_gate_deferred "local-ai-reviewer,codex-github" 0 0 0 "" 0 0 "")"
+run_test "1649_history_has_gate" "deferred" \
+  "$(printf '%s\n' "$_entry" | jq -r '.expensive_gate.result')"
+run_test "1649_history_gate_reason" "local_evidence_stale" \
+  "$(printf '%s\n' "$_entry" | jq -r '.expensive_gate.reason')"
+
+# Cleanup stubs / state
+unset EXPENSIVE_GATE_MOCK_LEDGER_BODY
+unset -f expensive_gate_unresolved_threads_status expensive_gate_baseline_checks_status 2>/dev/null || true
+# Re-source would be heavy; leave defaults — later suites redefine if needed.
+expensive_gate_last_platform=""
+expensive_gate_last_result=""
+expensive_gate_last_reason=""
+expensive_gate_last_head=""
+platform_peer_evidence=()
+platform_reviewed_heads=()
+platforms=()
+phase_after_clean_platforms=()
+unset _1649_head _1649_other _out _entry _legacy_body _legacy_payload _warn _val
+unset _orig_cfg _orig_hc
+
+echo "=== Area 1649 complete ==="
 
 # ---------------------------------------------------------------------------
 # Summary
