@@ -7901,7 +7901,7 @@ reviewer_loop_blocking_unresolved_thread_commit_oids() {
   page=0
   max_pages=10
 
-  nodes_fields='id isResolved isOutdated originalCommitOid firstComment:comments(first:1){nodes{author{login}body}}'
+  nodes_fields='id isResolved isOutdated firstComment:comments(first:1){nodes{author{login}body originalCommit{oid}}}'
   graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{'"$nodes_fields"'}}}}}'
 
   while [ "$has_next_page" = "true" ]; do
@@ -7933,7 +7933,7 @@ reviewer_loop_blocking_unresolved_thread_commit_oids() {
       | select(.isResolved != true)
       | select((.isOutdated // false) != true)
       | select((.firstComment.nodes[0].body // "") | contains("✅ Addressed") | not)
-      | .originalCommitOid // empty
+      | .firstComment.nodes[0].originalCommit.oid // empty
     '
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
@@ -7950,10 +7950,16 @@ reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() {
   local pr_number="$1"
   local repo="$2"
   local graphql_bot_login="$3"
-  local commits
+  local commits st
 
+  set +e
   commits="$(reviewer_loop_blocking_unresolved_thread_commit_oids \
-    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null || true)"
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)"
+  st=$?
+  set -e
+  if [ "$st" -ne 0 ]; then
+    return 0
+  fi
 
   printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
 }
@@ -9986,45 +9992,46 @@ if [ "$_release_guard_fired" -eq 0 ]; then
 fi
 # --- End release PR early-exit guard ---
 
-if [ "${#platforms[@]}" -eq 0 ]; then
-  # Resolve config from the PR's target branch so platform coverage is
-  # consistent regardless of the operator's local checkout state (#756).
-  # Capture stderr separately: "Could not resolve" means PR not found (silent
-  # fallback); any other error is unexpected and warrants a diagnostic warning.
-  set +e
-  _pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
-  _pr_base_exit=$?
-  set -e
-  _pr_base=""
-  if [ "$_pr_base_exit" -eq 0 ]; then
-    _pr_base="$_pr_base_raw"
-  elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
-    printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
-      "$_pr_base_exit" "$_pr_base_raw" >&2
-  fi
-  if [ -n "$_pr_base" ]; then
-    if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
-      # Refresh the remote-tracking ref so git show reads the current target
-      # branch config, not a potentially stale cached ref (#777).
-      git fetch origin "$_pr_base" 2>/dev/null || true
-      if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
-        rm -f "$_PR_CONFIG_TMPFILE"
-        _PR_CONFIG_TMPFILE=""
-      fi
+# Resolve config from the PR's target branch so platform coverage is consistent
+# regardless of the operator's local checkout state (#756). Always snapshot
+# repo_review_platforms for missed-finding membership even when --platform
+# filters the invocation list.
+set +e
+_pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
+_pr_base_exit=$?
+set -e
+_pr_base=""
+if [ "$_pr_base_exit" -eq 0 ]; then
+  _pr_base="$_pr_base_raw"
+elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
+  printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
+    "$_pr_base_exit" "$_pr_base_raw" >&2
+fi
+if [ -n "$_pr_base" ]; then
+  if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
+    # Refresh the remote-tracking ref so git show reads the current target
+    # branch config, not a potentially stale cached ref (#777).
+    git fetch origin "$_pr_base" 2>/dev/null || true
+    if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
+      rm -f "$_PR_CONFIG_TMPFILE"
+      _PR_CONFIG_TMPFILE=""
     fi
   fi
-  config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
-  if [ -f "$config_file" ]; then
-    if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
-      review_lifecycle_duplicate_warnings_emitted=1
-    fi
-    while IFS= read -r line; do
-      line="$(trim "$line")"
-      [ -n "$line" ] && platforms+=("$line")
-    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
-    repo_review_platforms=("${platforms[@]}")
+fi
+config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
+if [ -f "$config_file" ]; then
+  if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
+    review_lifecycle_duplicate_warnings_emitted=1
   fi
+  while IFS= read -r line; do
+    line="$(trim "$line")"
+    [ -n "$line" ] && repo_review_platforms+=("$line")
+  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
+fi
+
+if [ "${#platforms[@]}" -eq 0 ] && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
+  platforms=("${repo_review_platforms[@]}")
 fi
 
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
