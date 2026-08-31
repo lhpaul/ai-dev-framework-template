@@ -7599,6 +7599,425 @@ reviewer_loop_blocking_paths_from_output() {
   done
 }
 
+# --- Missed-finding telemetry helpers (#1651) -------------------------------
+
+# reviewer_loop_commit_ancestry <clean_head> <reviewed_head>
+# Prints exactly one of: same | ancestor | descendant | unrelated | undecidable
+# Under set -e, every merge-base status is captured with || status=$?.
+reviewer_loop_commit_ancestry() {
+  local clean="${1:-}" reviewed="${2:-}" status
+
+  [ -n "$clean" ] && [ -n "$reviewed" ] || { printf 'undecidable\n'; return 0; }
+
+  # Existence BEFORE equality: two identical missing SHAs are undecidable, not same.
+  git cat-file -e "${clean}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
+  git cat-file -e "${reviewed}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
+
+  [ "$clean" = "$reviewed" ] && { printf 'same\n'; return 0; }
+
+  status=0
+  git merge-base --is-ancestor "$clean" "$reviewed" >/dev/null 2>&1 || status=$?
+  [ "$status" -eq 0 ] && { printf 'ancestor\n'; return 0; }
+  [ "$status" -ne 1 ] && { printf 'undecidable\n'; return 0; }
+
+  status=0
+  git merge-base --is-ancestor "$reviewed" "$clean" >/dev/null 2>&1 || status=$?
+  [ "$status" -eq 0 ] && { printf 'descendant\n'; return 0; }
+  [ "$status" -ne 1 ] && { printf 'undecidable\n'; return 0; }
+
+  printf 'unrelated\n'
+}
+
+# Normalize a companion-script RESULT/REASON pair into the stored platform_results
+# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|unknown
+reviewer_loop_normalize_platform_outcome() {
+  local raw_result="${1:-}"
+  local raw_reason="${2:-}"
+
+  case "$raw_result" in
+    clean) printf 'clean\n' ;;
+    needs_fixes) printf 'needs_fixes\n' ;;
+    skipped)
+      case "$raw_reason" in
+        unavailable) printf 'unavailable\n' ;;
+        not_configured) printf 'not_configured\n' ;;
+        *) printf 'skipped\n' ;;
+      esac
+      ;;
+    escalate) printf 'unavailable\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# Build one compact platform_results JSON object from raw RESULT/REASON.
+reviewer_loop_platform_result_record_json() {
+  local platform="${1:-}"
+  local raw_result="${2:-}"
+  local raw_reason="${3:-}"
+  local normalized
+
+  normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason")"
+  jq -nc \
+    --arg platform "$platform" \
+    --arg result "$normalized" \
+    --arg raw_result "$raw_result" \
+    --arg raw_reason "$raw_reason" \
+    '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason}'
+}
+
+# reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
+# configured_platforms is newline-delimited. Membership uses grep -Fxq here-string.
+reviewer_loop_local_latest_verdict() {
+  local payload="${1:-}"
+  local configured="${2:-}"
+
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
+    return 0
+  fi
+
+  printf '%s' "$payload" | jq -c '
+    (.entries // []) as $entries
+    | [ $entries[]
+        | . as $entry
+        | ((.platform_results // [])[]
+           | select(.platform == "local-ai-reviewer")
+           | {outcome: (.result // "unknown"),
+              head_sha: (
+                ($entry.reviewed_heads // [])
+                | map(select(.platform == "local-ai-reviewer"))
+                | first
+                | .reviewed_head // ""
+              ),
+              iteration: ($entry.iteration // 0)})
+      ]
+    | sort_by(.iteration)
+    | last
+    // (if ($entries | length) == 0
+        then {outcome: "not_yet_run", head_sha: "", iteration: 0}
+        else {outcome: "unknown",     head_sha: "", iteration: 0}
+        end)
+    | if .outcome == "not_configured" then .outcome = "unavailable" else . end'
+}
+
+# reviewer_loop_local_evidence_state <local_verdict_json> <reviewed_head>
+reviewer_loop_local_evidence_state() {
+  local verdict_json="${1:-}"
+  local reviewed_head="${2:-}"
+  local outcome head_sha ancestry
+
+  outcome="$(printf '%s' "$verdict_json" | jq -r '.outcome // "unknown"')"
+  head_sha="$(printf '%s' "$verdict_json" | jq -r '.head_sha // ""')"
+
+  case "$outcome" in
+    clean)
+      ancestry="$(reviewer_loop_commit_ancestry "$head_sha" "$reviewed_head")"
+      case "$ancestry" in
+        same) printf 'clean_same_commit\n' ;;
+        ancestor) printf 'clean_earlier_commit\n' ;;
+        descendant) printf 'clean_later_commit\n' ;;
+        unrelated) printf 'clean_unrelated_commit\n' ;;
+        *) printf 'unknown\n' ;;
+      esac
+      ;;
+    needs_fixes) printf 'not_clean\n' ;;
+    skipped) printf 'skipped\n' ;;
+    unavailable) printf 'unavailable\n' ;;
+    not_yet_run) printf 'not_yet_run\n' ;;
+    not_configured) printf 'not_configured\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# Map local evidence state to the three-value classification enum.
+reviewer_loop_missed_finding_classification() {
+  case "${1:-}" in
+    clean_same_commit) printf 'confirmed_miss\n' ;;
+    clean_earlier_commit) printf 'possible_miss\n' ;;
+    *) printf 'not_a_miss\n' ;;
+  esac
+}
+
+# Spec display labels for local evidence states.
+reviewer_loop_local_evidence_state_label() {
+  case "${1:-}" in
+    clean_same_commit) printf 'Clean, same commit\n' ;;
+    clean_earlier_commit) printf 'Clean, earlier commit\n' ;;
+    clean_later_commit) printf 'Clean, later commit\n' ;;
+    clean_unrelated_commit) printf 'Clean, unrelated commit\n' ;;
+    not_clean) printf 'Reported findings\n' ;;
+    skipped) printf 'Skipped\n' ;;
+    unavailable) printf 'Unavailable\n' ;;
+    not_yet_run) printf 'Not yet run\n' ;;
+    not_configured) printf 'Not configured\n' ;;
+    *) printf 'Unknown\n' ;;
+  esac
+}
+
+# De-duplicate paths preserving first-appearance order. stdin -> stdout.
+reviewer_loop_dedupe_paths() {
+  awk 'NF && !seen[$0]++ { print }'
+}
+
+# Join reviewed_head for a platform from reviewed_heads[] JSON array.
+reviewer_loop_reviewed_head_for_platform() {
+  local reviewed_heads_json="${1:-[]}"
+  local platform="${2:-}"
+
+  printf '%s' "$reviewed_heads_json" | jq -r --arg p "$platform" '
+    ([.[]? | select(.platform == $p) | .reviewed_head // ""] | first) // ""
+  '
+}
+
+# Emit REVIEWED_HEAD when stdin has exactly one unique non-empty commit line.
+reviewer_loop_print_reviewed_head_from_commits() {
+  local unique count sha
+  unique="$(grep -v '^$' | sort -u || true)"
+  count="$(printf '%s\n' "$unique" | grep -c . || true)"
+  [ "$count" -eq 1 ] || return 0
+  sha="$(printf '%s\n' "$unique" | head -n 1)"
+  [ -n "$sha" ] || return 0
+  print_kv REVIEWED_HEAD "$sha"
+}
+
+# Extract unique commit_id values from newline-delimited JSON objects on stdin
+# and print REVIEWED_HEAD when exactly one unique non-empty value exists.
+reviewer_loop_print_reviewed_head_from_json_lines() {
+  local commits
+  commits="$(jq -r '.commit_id // empty' 2>/dev/null | grep -v '^$' || true)"
+  printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
+}
+
+# Build missed_findings JSON array for the current round.
+# Args:
+#   $1 history_payload (persisted entries; may be empty object with entries:[])
+#   $2 configured_platforms (newline-delimited)
+#   $3 current_platform_results_json (array)
+#   $4 current_reviewed_heads_json (array, #1648 shape)
+#   $5 platform_outputs_json — array of {platform, blocking_count, output} for path extraction
+#      OR we pass paths via a parallel mechanism.
+# Simpler signature used by call site:
+# Globals read:
+#   platform_result_records[]  — JSON objects
+#   platform_reviewed_heads[]  — "name:sha"
+#   platform_blocking_outputs[] — optional "name<RS>output" (RS=\036) for path extraction
+#   missed_finding_attribution_failures — set by this function (newline messages)
+#
+# Returns JSON array on stdout. Also sets:
+#   missed_finding_records_json
+#   missed_finding_attribution_reports (human-readable lines)
+reviewer_loop_missed_finding_records() {
+  local history_payload="${1:-}"
+  local configured="${2:-}"
+  local iteration="${3:-0}"
+  local results_json heads_json composed_payload local_verdict
+  local platform_name normalized reviewed_head blocking_count paths_text path_total
+  local state classification record records_json="[]"
+  local entry_name entry_head output_blob paths_json
+  local -a path_lines=()
+
+  missed_finding_attribution_reports=""
+
+  results_json='[]'
+  if declare -p platform_result_records >/dev/null 2>&1 && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    results_json="$(printf '%s\n' "${platform_result_records[@]}" | jq -s -c '.')"
+  fi
+
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
+    heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  else
+    heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
+  fi
+
+  # Compose synthetic current-round entry into the payload before selecting.
+  composed_payload="$(printf '%s' "${history_payload:-{\}}" | jq -c \
+    --argjson iteration "$iteration" \
+    --argjson results "$results_json" \
+    --argjson heads "$heads_json" \
+    '
+      . as $root
+      | ($root.entries // []) as $entries
+      | $root
+      | .schema = (.schema // "reviewer_loop_history.v1")
+      | .entries = ($entries + [{
+          iteration: $iteration,
+          platform_results: $results,
+          reviewed_heads: $heads
+        }])
+    ')"
+
+  local_verdict="$(reviewer_loop_local_latest_verdict "$composed_payload" "$configured")"
+
+  # Walk platform_result_records for external platforms with blocking findings.
+  if ! declare -p platform_result_records >/dev/null 2>&1; then
+    printf '%s\n' "$records_json"
+    return 0
+  fi
+
+  local idx=0
+  for record in "${platform_result_records[@]}"; do
+    platform_name="$(printf '%s' "$record" | jq -r '.platform // ""')"
+    normalized="$(printf '%s' "$record" | jq -r '.result // ""')"
+    [ -n "$platform_name" ] || continue
+
+    # Exclusion 1: local reviewer cannot miss its own findings
+    if [ "$platform_name" = "local-ai-reviewer" ]; then
+      continue
+    fi
+
+    # Exclusion 2: only blocking findings qualify (needs_fixes)
+    if [ "$normalized" != "needs_fixes" ]; then
+      continue
+    fi
+
+    # Join head from reviewed_heads[] — no loop_head_sha fallback
+    reviewed_head=""
+    if declare -p platform_reviewed_heads >/dev/null 2>&1; then
+      for entry_name in "${platform_reviewed_heads[@]}"; do
+        if [ "${entry_name%%:*}" = "$platform_name" ]; then
+          reviewed_head="${entry_name#*:}"
+          break
+        fi
+      done
+    fi
+
+    # Exclusion 3: unattributable commit
+    if [ -z "$reviewed_head" ]; then
+      missed_finding_attribution_reports="${missed_finding_attribution_reports}${missed_finding_attribution_reports:+$'\n'}missed-finding attribution failed: ${platform_name} — reviewed commit could not be established (no REVIEWED_HEAD)"
+      continue
+    fi
+
+    # Paths from companion output stored in parallel array if present
+    blocking_count=0
+    paths_text=""
+    if declare -p platform_blocking_outputs >/dev/null 2>&1; then
+      for output_blob in "${platform_blocking_outputs[@]}"; do
+        if [ "${output_blob%%$'\036'*}" = "$platform_name" ]; then
+          output_blob="${output_blob#*$'\036'}"
+          blocking_count="$(kv_value_default BLOCKING_COUNT "$output_blob" 0)"
+          paths_text="$(reviewer_loop_blocking_paths_from_output "$output_blob" "$blocking_count" | reviewer_loop_dedupe_paths)"
+          break
+        fi
+      done
+    fi
+    [[ "$blocking_count" =~ ^[0-9]+$ ]] || blocking_count=0
+    # If blocking_count came from normalized needs_fixes but output missing, still count >=1
+    if [ "$blocking_count" -eq 0 ]; then
+      blocking_count=1
+    fi
+
+    path_total=0
+    if [ -n "$paths_text" ]; then
+      path_total="$(printf '%s\n' "$paths_text" | grep -c . || true)"
+    fi
+    paths_json="$(printf '%s\n' "$paths_text" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+
+    state="$(reviewer_loop_local_evidence_state "$local_verdict" "$reviewed_head")"
+    classification="$(reviewer_loop_missed_finding_classification "$state")"
+
+    record="$(jq -nc \
+      --arg reviewer "$platform_name" \
+      --arg reviewed_head "$reviewed_head" \
+      --argjson blocking_count "$blocking_count" \
+      --argjson paths "$paths_json" \
+      --argjson path_total "$path_total" \
+      --arg local_evidence_state "$state" \
+      --arg classification "$classification" \
+      '{
+        reviewer: $reviewer,
+        reviewed_head: $reviewed_head,
+        blocking_count: $blocking_count,
+        paths: $paths,
+        path_total: $path_total,
+        local_evidence_state: $local_evidence_state,
+        classification: $classification
+      }')"
+    records_json="$(jq -nc --argjson arr "$records_json" --argjson rec "$record" '$arr + [$rec]')"
+    idx=$((idx + 1))
+  done
+
+  printf '%s\n' "$records_json"
+}
+
+# Render one summary line (<=200 chars) for a missed-finding record JSON object.
+reviewer_loop_missed_finding_summary_line() {
+  local record_json="${1:-}"
+  local reviewer short_sha blocking path_total state classification label
+  local prefix suffix remainder_max budget named=0 path next_len rem rem_text line
+  local -a paths=()
+
+  reviewer="$(printf '%s' "$record_json" | jq -r '.reviewer // ""')"
+  short_sha="$(printf '%s' "$record_json" | jq -r '.reviewed_head // ""' | cut -c1-8)"
+  blocking="$(printf '%s' "$record_json" | jq -r '.blocking_count // 0')"
+  path_total="$(printf '%s' "$record_json" | jq -r '.path_total // 0')"
+  state="$(printf '%s' "$record_json" | jq -r '.local_evidence_state // "unknown"')"
+  classification="$(printf '%s' "$record_json" | jq -r '.classification // "not_a_miss"')"
+  label="$(reviewer_loop_local_evidence_state_label "$state")"
+
+  while IFS= read -r path; do
+    [ -n "$path" ] && paths+=("$path")
+  done < <(printf '%s' "$record_json" | jq -r '.paths[]? // empty')
+
+  prefix="missed-finding: ${reviewer} on ${short_sha} — ${blocking} blocking, ${path_total} files ("
+  suffix=") — local: ${label} [${classification}]"
+  remainder_max=", +${path_total} more"
+  budget=$((200 - ${#prefix} - ${#suffix} - ${#remainder_max}))
+  [ "$budget" -lt 0 ] && budget=0
+
+  named=0
+  local path_part=""
+  local i=0
+  while [ "$i" -lt "${#paths[@]}" ] && [ "$named" -lt 3 ]; do
+    path="${paths[$i]}"
+    if [ "$named" -eq 0 ]; then
+      next_len=${#path}
+    else
+      next_len=$((2 + ${#path}))  # ", "
+    fi
+    if [ "$next_len" -gt "$budget" ]; then
+      break
+    fi
+    if [ "$named" -eq 0 ]; then
+      path_part="$path"
+    else
+      path_part="${path_part}, ${path}"
+    fi
+    budget=$((budget - next_len))
+    named=$((named + 1))
+    i=$((i + 1))
+  done
+
+  rem=$((path_total - named))
+  rem_text=""
+  if [ "$rem" -gt 0 ]; then
+    rem_text=", +${rem} more"
+  fi
+
+  line="${prefix}${path_part}${rem_text}${suffix}"
+  # Hard safety: never exceed 200 even if arithmetic drifts
+  if [ "${#line}" -gt 200 ]; then
+    line="${line:0:200}"
+  fi
+  printf '%s\n' "$line"
+}
+
+# Render all missed-finding summary lines from a JSON array.
+reviewer_loop_missed_findings_summary_section() {
+  local records_json="${1:-[]}"
+  local record line section=""
+
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    line="$(reviewer_loop_missed_finding_summary_line "$record")"
+    section="${section}
+${line}"
+  done < <(printf '%s' "$records_json" | jq -c '.[]?' 2>/dev/null)
+
+  printf '%s' "$section"
+}
+
+
+
 reviewer_loop_all_paths_non_shipped() {
   local path
   local saw_path=0
@@ -7851,6 +8270,17 @@ reviewer_loop_history_build_entry() {
     reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
   fi
 
+  # platform_results / missed_findings (#1651): caller-set globals, same
+  # convention as unresolved_thread_count / current_run_id. Schema stays v1.
+  local platform_results_for_entry="${platform_results_json:-[]}"
+  local missed_findings_for_entry="${missed_findings_json:-[]}"
+  if ! printf '%s' "$platform_results_for_entry" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    platform_results_for_entry='[]'
+  fi
+  if ! printf '%s' "$missed_findings_for_entry" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    missed_findings_for_entry='[]'
+  fi
+
   # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
   # following the same convention already used in this function for
   # unresolved_thread_count/late_thread_count (set by the caller before
@@ -7883,6 +8313,8 @@ reviewer_loop_history_build_entry() {
     --arg smallFindingsPaths "${small_findings_paths:-}" \
     --arg classificationHead "${loop_head_sha:-}" \
     --argjson reviewedHeads "$reviewed_heads_json" \
+    --argjson platformResults "$platform_results_for_entry" \
+    --argjson missedFindings "$missed_findings_for_entry" \
     --arg egPlatform "${expensive_gate_last_platform:-}" \
     --arg egResult "${expensive_gate_last_result:-}" \
     --arg egReason "${expensive_gate_last_reason:-}" \
@@ -7899,6 +8331,8 @@ reviewer_loop_history_build_entry() {
       head_sha: $headSha,
       classification_head: $classificationHead,
       reviewed_heads: $reviewedHeads,
+      platform_results: $platformResults,
+      missed_findings: $missedFindings,
       run_id: $runId,
       result: $result,
       reason: $reason,
@@ -8013,6 +8447,10 @@ reviewer_loop_history_payload_from_existing() {
        | .history_unavailable_reason = ""
        | .entries = ((.entries // []) + [$entry])'
   else
+    # #1651 AC-7a: do not replace a prior history block with an empty stub.
+    # Signal unappendable state via globals; append_to_summary preserves the
+    # prior details block when one exists, and only writes the stub when there
+    # is no prior block at all.
     updated_at="$(reviewer_loop_history_recorded_at)"
     jq -n \
       --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
@@ -8028,6 +8466,15 @@ reviewer_loop_history_payload_from_existing() {
         history_unavailable_reason: $reason,
         entries: []
       }'
+  fi
+
+  # Expose append decision to the summary renderer (#1651).
+  reviewer_loop_history_last_append_safe="$append_safe"
+  reviewer_loop_history_last_unavailable_reason="$unavailable_reason"
+  if printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    reviewer_loop_history_had_prior_block=1
+  else
+    reviewer_loop_history_had_prior_block=0
   fi
 }
 
@@ -8152,8 +8599,18 @@ reviewer_loop_history_append_to_summary() {
   shift 2
   local payload
   local section
+  local prior_section=""
+
+  reviewer_loop_history_last_append_safe=1
+  reviewer_loop_history_last_unavailable_reason=""
+  reviewer_loop_history_had_prior_block=0
 
   if ! payload="$(reviewer_loop_history_payload_from_existing "$existing_body" "$@" 2>/dev/null)"; then
+    reviewer_loop_history_last_append_safe=0
+    reviewer_loop_history_last_unavailable_reason="history_render_failed"
+    if printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+      reviewer_loop_history_had_prior_block=1
+    fi
     payload="$(jq -n \
       --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
       --argjson prNumber "${pr_number:-0}" \
@@ -8167,6 +8624,29 @@ reviewer_loop_history_append_to_summary() {
         entries: []
       }')"
   fi
+
+  # #1651 AC-7a: when history cannot be appended and a prior block exists,
+  # leave that block byte-for-byte unchanged — do not re-render a stub over it.
+  if [ "${reviewer_loop_history_last_append_safe:-1}" -eq 0 ] \
+      && [ "${reviewer_loop_history_had_prior_block:-0}" -eq 1 ]; then
+    prior_section="$(printf '%s\n' "$existing_body" | awk '
+      /<details>/ { in_details=1 }
+      in_details { buf = buf $0 "\n" }
+      /<\/details>/ && in_details {
+        if (index(buf, "<!-- reviewer-loop-history:v1 -->") > 0) {
+          latest = buf
+        }
+        buf = ""
+        in_details = 0
+      }
+      END { printf "%s", latest }
+    ')"
+    if [ -n "$prior_section" ]; then
+      printf '%s\n\n%s\n' "$comment_body" "$prior_section"
+      return 0
+    fi
+  fi
+
   section="$(reviewer_loop_history_render_section "$payload")"
   printf '%s%s\n' "$comment_body" "$section"
 }
@@ -9530,6 +10010,14 @@ fi
 declare -a platform_result_tokens=()
 # Per-platform reviewed heads for head-evidence surfaces (issue #1648).
 declare -a platform_reviewed_heads=()
+# Per-platform raw outcomes for missed-finding telemetry (issue #1651).
+declare -a platform_result_records=()
+# Parallel platform outputs for path extraction when building missed_findings.
+declare -a platform_blocking_outputs=()
+missed_findings_json='[]'
+platform_results_json='[]'
+missed_finding_attribution_reports=""
+missed_finding_telemetry_failure=""
 # Peer evidence for the expensive-reviewer gate (issue #1649): "platform|result|reason".
 platform_peer_evidence=()
 expensive_gate_last_platform=""
@@ -9802,6 +10290,9 @@ for index in "${!platforms[@]}"; do
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
+  # #1651: persist raw RESULT/REASON (not display tokens) for platform_results.
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
+  platform_blocking_outputs+=("${platform_name}"$''"${platform_output}")
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
   if [ "$_policy_status_available" = "1" ]; then
@@ -10183,19 +10674,6 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
 **Unreviewed tail:** ${small_findings_paths_inline:-none}"
   fi
 
-  local comment_body
-  comment_body="$(cat <<EOF
-### Automated Reviewer Loop Summary
-
-**Result:** ${result_line}
-**Platforms:** ${platform_list:-none}${policy_status_section}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${regression_label_section}
-
-*Posted automatically by \`pr-review-loop.sh\`.*
-EOF
-)"
-
   # Errors in the comment-posting block must not change the script's exit code or
   # prevent key=value output from reaching the caller. Log warnings to stderr so
   # failures are visible in CI logs without being fatal.
@@ -10244,6 +10722,107 @@ EOF
       _existing_comment_body="$(printf '%s\n' "$_existing_comment_record" | jq -r '.body // ""' 2>/dev/null)" || _existing_comment_body=""
     fi
   fi
+
+  # #1651: derive missed-finding records BEFORE history writability (eligibility
+  # first). Compose the current round into the prior payload for AC-1.
+  local _prior_history_json=""
+  local _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+  local _configured_platforms=""
+  local _next_iteration=1
+  local _mf_count=0
+  local missed_findings_section=""
+  local missed_finding_telemetry_section=""
+  local _attr_line=""
+
+  _prior_history_json="$(printf '%s\n' "$_existing_comment_body" | reviewer_loop_history_extract_latest_json)"
+  if [ -n "$_prior_history_json" ]; then
+    if _prior_payload="$(printf '%s\n' "$_prior_history_json" | jq -c '.' 2>/dev/null)"; then
+      :
+    else
+      _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+    fi
+  fi
+  if declare -p platforms >/dev/null 2>&1 && [ "${#platforms[@]}" -gt 0 ]; then
+    _configured_platforms="$(printf '%s\n' "${platforms[@]}")"
+  fi
+  _next_iteration="$(printf '%s\n' "$_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _next_iteration=1
+  [[ "$_next_iteration" =~ ^[0-9]+$ ]] || _next_iteration=1
+
+  if declare -p platform_result_records >/dev/null 2>&1 && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    platform_results_json="$(printf '%s\n' "${platform_result_records[@]}" | jq -s -c '.')"
+  else
+    platform_results_json='[]'
+  fi
+
+  missed_finding_attribution_reports=""
+  missed_findings_json="$(reviewer_loop_missed_finding_records "$_prior_payload" "$_configured_platforms" "$_next_iteration")"
+  _mf_count="$(printf '%s\n' "$missed_findings_json" | jq 'length' 2>/dev/null)" || _mf_count=0
+  [[ "$_mf_count" =~ ^[0-9]+$ ]] || _mf_count=0
+
+  if [ "$_mf_count" -gt 0 ]; then
+    missed_findings_section="$(reviewer_loop_missed_findings_summary_section "$missed_findings_json")"
+  fi
+  local attribution_section=""
+  if [ -n "${missed_finding_attribution_reports:-}" ]; then
+    while IFS= read -r _attr_line; do
+      [ -n "$_attr_line" ] || continue
+      attribution_section="${attribution_section}
+${_attr_line}"
+    done <<< "$missed_finding_attribution_reports"
+  fi
+
+  # Probe writability with the same rules as payload_from_existing (AC-7a/7b).
+  # Eligibility already ran above; only report telemetry failure when records
+  # were owed (attributable external blockers) and history cannot be written.
+  local _hist_append_safe=1
+  local _hist_unavail_reason=""
+  if [ -n "$_prior_history_json" ]; then
+    if ! printf '%s\n' "$_prior_history_json" | jq -e '.' >/dev/null 2>&1; then
+      _hist_append_safe=0
+      _hist_unavail_reason="malformed_history"
+    elif ! printf '%s\n' "$_prior_payload" |
+        jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+          '.schema == $schema and (.entries | type) == "array"' >/dev/null 2>&1; then
+      _hist_append_safe=0
+      _hist_unavail_reason="unknown_schema"
+    elif [ "$(printf '%s\n' "$_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ]; then
+      _hist_append_safe=0
+      _hist_unavail_reason="$(printf '%s\n' "$_prior_payload" | jq -r '.history_unavailable_reason // "prior_unavailable"')"
+    fi
+  elif printf '%s\n' "$_existing_comment_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    _hist_append_safe=0
+    _hist_unavail_reason="missing_history_json"
+  fi
+  if [ "$_existing_read_failed" -eq 1 ] && [ "$_hist_append_safe" -eq 1 ]; then
+    # Read failed and fell back to an unavailable stub body — not appendable.
+    _hist_append_safe=0
+    _hist_unavail_reason="${_hist_unavail_reason:-comment_read_failed}"
+  fi
+
+  if [ "$_mf_count" -gt 0 ] && [ "$_hist_append_safe" -eq 0 ]; then
+    # Records were owed but history is unwritable — clear them so build_entry
+    # does not invent a write that append_to_summary will refuse, and report.
+    # Do not show the would-be miss lines: AC-7a requires no record and a
+    # telemetry-failure report, not a summary of data that was never stored.
+    # Attribution failures (AC-11) remain visible — nothing was owed for those.
+    missed_findings_json='[]'
+    missed_findings_section=""
+    missed_finding_telemetry_section="
+**Missed-finding telemetry:** could not be recorded this round (${_hist_unavail_reason:-unknown}). Existing reviewer-loop history was left unchanged."
+  fi
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}${policy_status_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${regression_label_section}
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
 
   comment_body="$(reviewer_loop_history_append_to_summary "$comment_body" "$_existing_comment_body" \
     "$result" "$reason" "$platform_list" "$blocking" "$suggestions" \
