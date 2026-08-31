@@ -104,6 +104,12 @@
 
 set -euo pipefail
 
+# Emit REVIEWED_HEAD when the check/PR head was established (#1651).
+emit_reviewed_head_if_known() {
+  [ -n "${REVIEWED_HEAD_SHA:-}" ] || return 0
+  printf 'REVIEWED_HEAD=%s\n' "$REVIEWED_HEAD_SHA"
+}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
@@ -141,6 +147,15 @@ TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-120}"
 POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
 PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
 CHECK_NAME="${HAYSTACK_CHECK_NAME:-Haystack / Review}"
+
+# #1651: reviewed head from the PR head the check-run query already uses.
+# Empty when unresolvable — fail closed (no REVIEWED_HEAD emitted).
+REVIEWED_HEAD_SHA=""
+if REVIEWED_HEAD_SHA="$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha // empty' 2>/dev/null)"; then
+  :
+else
+  REVIEWED_HEAD_SHA=""
+fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -283,6 +298,7 @@ emit_haystack_analysis_file_limit_skip_from_json() {
   title="$(printf '%s\n' "$check_json" | jq -r '.output.title // ""')"
 
   printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
   printf 'REASON=analysis_skipped_file_limit\n'
   printf 'DISPLAY_RESULT=skipped (analysis file limit)\n'
   printf 'BLOCKING_COUNT=0\n'
@@ -335,6 +351,7 @@ emit_haystack_check_run_result() {
 
   if [ "$status" != "completed" ] && [ "$status" != "COMPLETED" ]; then
     printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
     printf 'REASON=pending_check_run\n'
     printf 'BLOCKING_COUNT=0\n'
     printf 'SUGGESTION_COUNT=0\n'
@@ -368,6 +385,7 @@ EOF
   case "$conclusion" in
     success|SUCCESS|neutral|NEUTRAL|skipped|SKIPPED)
       printf 'RESULT=clean\n'
+emit_reviewed_head_if_known
       printf 'BLOCKING_COUNT=0\n'
       printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
       printf 'COMMENT_COUNT=%d\n' "$comment_count"
@@ -386,6 +404,7 @@ EOF
       fi
       if [ "$blocking_count" -gt 0 ]; then
         printf 'RESULT=needs_fixes\n'
+emit_reviewed_head_if_known
         printf 'BLOCKING_COUNT=%d\n' "$blocking_count"
         printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
         printf 'COMMENT_COUNT=%d\n' "$comment_count"
@@ -396,6 +415,7 @@ EOF
         return 1
       fi
       printf 'RESULT=clean\n'
+emit_reviewed_head_if_known
       printf 'BLOCKING_COUNT=0\n'
       printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
       printf 'COMMENT_COUNT=%d\n' "$comment_count"
@@ -407,6 +427,7 @@ EOF
       ;;
     *)
       printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
       printf 'REASON=check_run_%s\n' "${conclusion:-unknown}"
       printf 'BLOCKING_COUNT=0\n'
       printf 'SUGGESTION_COUNT=0\n'
@@ -439,6 +460,7 @@ if ! command -v haystack >/dev/null 2>&1; then
   fi
   echo "INFO: haystack CLI not found in PATH — skipping (UNAVAILABLE)" >&2
   printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
   printf 'REASON=unavailable\n'
   printf 'BLOCKING_COUNT=0\n'
   printf 'SUGGESTION_COUNT=0\n'
@@ -449,6 +471,7 @@ fi
 if ! command -v jq >/dev/null 2>&1; then
   echo "INFO: jq not found in PATH — skipping (UNAVAILABLE)" >&2
   printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
   printf 'REASON=unavailable\n'
   printf 'BLOCKING_COUNT=0\n'
   printf 'SUGGESTION_COUNT=0\n'
@@ -613,6 +636,7 @@ while true; do
       echo "INFO: haystack triage non-zero exit AND empty/invalid stdout — treating as UNAVAILABLE" >&2
       rm -f "$TRIAGE_STDERR"
       printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
       printf 'REASON=unavailable\n'
       printf 'BLOCKING_COUNT=0\n'
       printf 'SUGGESTION_COUNT=0\n'
@@ -630,6 +654,7 @@ while true; do
     echo "INFO: haystack triage returned empty output — treating as UNAVAILABLE" >&2
     rm -f "$TRIAGE_STDERR"
     printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
     printf 'REASON=unavailable\n'
     printf 'BLOCKING_COUNT=0\n'
     printf 'SUGGESTION_COUNT=0\n'
@@ -642,6 +667,7 @@ while true; do
     echo "INFO: haystack triage returned invalid JSON — treating as UNAVAILABLE" >&2
     rm -f "$TRIAGE_STDERR"
     printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
     printf 'REASON=unavailable\n'
     printf 'BLOCKING_COUNT=0\n'
     printf 'SUGGESTION_COUNT=0\n'
@@ -674,6 +700,7 @@ while true; do
       echo "INFO: haystack triage returned status=none (no analysis available for this PR) — treating as UNAVAILABLE" >&2
       rm -f "$TRIAGE_STDERR"
       printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
       printf 'REASON=unavailable\n'
       printf 'BLOCKING_COUNT=0\n'
       printf 'SUGGESTION_COUNT=0\n'
@@ -696,6 +723,7 @@ while true; do
         echo "INFO: haystack triage returned status=error with message=${_error_msg} — treating as ${_auth_reason} (not retrying)" >&2
         rm -f "$TRIAGE_STDERR"
         printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
         printf 'REASON=%s\n' "$_auth_reason"
         printf 'BLOCKING_COUNT=0\n'
         printf 'SUGGESTION_COUNT=0\n'
@@ -739,6 +767,7 @@ if [ "$TRIAGE_EXIT" -eq 124 ]; then
     :
   fi
   printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
   printf 'REASON=timeout\n'
   printf 'BLOCKING_COUNT=0\n'
   printf 'SUGGESTION_COUNT=0\n'
@@ -759,6 +788,7 @@ if [ "$TRIAGE_EXIT" -eq 200 ]; then
     :
   fi
   printf 'RESULT=skipped\n'
+emit_reviewed_head_if_known
   printf 'REASON=pending_timeout\n'
   printf 'BLOCKING_COUNT=0\n'
   printf 'SUGGESTION_COUNT=0\n'
@@ -939,6 +969,7 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
     else
       echo "ERROR: haystack pr-status field parse failed — failing closed" >&2
       printf 'RESULT=needs_fixes\n'
+emit_reviewed_head_if_known
       printf 'REASON=policy_status_parse_failed\n'
       printf 'BLOCKING_COUNT=1\n'
       printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
@@ -969,6 +1000,7 @@ fi
 
 if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'RESULT=needs_fixes\n'
+emit_reviewed_head_if_known
   printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
   printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
   printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
@@ -985,6 +1017,7 @@ if [ "$BLOCKING_COUNT" -gt 0 ]; then
 fi
 
 printf 'RESULT=clean\n'
+emit_reviewed_head_if_known
 printf 'BLOCKING_COUNT=0\n'
 printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
 printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
@@ -998,4 +1031,5 @@ printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
 [ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
 printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
 [ "$POLICY_REVIEW_REQUIRED" -eq 1 ] && printf 'DISPLAY_RESULT=needs-review: policy\n'
+emit_reviewed_head_if_known
 exit 0

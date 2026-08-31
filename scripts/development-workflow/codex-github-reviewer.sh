@@ -82,6 +82,12 @@
 
 set -euo pipefail
 
+# #1651: emit the commit this companion filtered reviews against.
+emit_reviewed_head_if_known() {
+  [ -n "${CURRENT_SHA_FULL:-}" ] || return 0
+  printf 'REVIEWED_HEAD=%s\n' "$CURRENT_SHA_FULL"
+}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
@@ -1504,6 +1510,7 @@ EOF
     echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
     echo "VERDICT: NEEDS_REVISION"
     echo "INFO: detected $unresolved_thread_count existing unresolved Codex review thread(s)"
+emit_reviewed_head_if_known
     exit 1
   fi
 
@@ -1537,6 +1544,7 @@ EOF
     echo "---BEGIN BOT RESPONSE---"
     echo "$response_display"
     echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
     exit 1
   elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$EXISTING_BOT_RESPONSE")"; then
     codex_return_usage_limit "$response_display"
@@ -1547,12 +1555,14 @@ EOF
     echo "---BEGIN BOT RESPONSE---"
     echo "$response_display"
     echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
     exit 0
   else
     echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
     echo "---BEGIN BOT RESPONSE---"
     echo "$response_display"
     echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
     exit 1
   fi
 }
@@ -1859,6 +1869,7 @@ while true; do
     codex_require_current_head
     echo "VERDICT: NEEDS_REVISION"
     echo "INFO: detected $INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after trigger"
+emit_reviewed_head_if_known
     exit 1
   fi
 
@@ -1925,6 +1936,7 @@ while true; do
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
       exit 1
     elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$BOT_RESPONSE_FULL")"; then
       # Quote-stripped before checking: unlike the environment-error
@@ -1957,6 +1969,7 @@ while true; do
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
       exit 0
     elif [ "$BOT_RESPONSE_SOURCE" != "review" ] && grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$BOT_RESPONSE_FULL"; then
       # Gated on non-terminal evidence (source != "review") — issue #1491's
@@ -1981,6 +1994,7 @@ while true; do
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
       exit 1
     fi
   fi
@@ -2072,6 +2086,7 @@ if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
   codex_require_current_head
   echo "VERDICT: NEEDS_REVISION"
   echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) during async grace period"
+emit_reviewed_head_if_known
   exit 1
 fi
 
@@ -2157,6 +2172,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
     exit 1
   elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$ASYNC_BOT_RESPONSE_FULL")"; then
     # Quote-stripped before checking — see the main-loop equivalent above
@@ -2178,6 +2194,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
     exit 0
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" != "review" ] && grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_BOT_RESPONSE_FULL"; then
     # Gated on non-terminal evidence — see the main-loop equivalent above
@@ -2193,6 +2210,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
       codex_require_current_head
       echo "VERDICT: NEEDS_REVISION"
       echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async acknowledgement"
+emit_reviewed_head_if_known
       exit 1
 	    fi
 	    ASYNC_FINAL_BOT_RESPONSE=""
@@ -2264,6 +2282,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
         exit 1
       elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$ASYNC_FINAL_BOT_RESPONSE_FULL")"; then
         # Quote-stripped before checking — see the main-loop equivalent
@@ -2285,6 +2304,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
         exit 0
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
         echo "INFO: final async Codex root comment is not SHA-pinned terminal evidence"
@@ -2304,6 +2324,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
         exit 1
       fi
     fi
@@ -2332,6 +2353,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
     exit 1
   fi
 fi
@@ -2348,6 +2370,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     codex_require_current_head
     echo "VERDICT: NEEDS_REVISION"
     echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async reaction"
+emit_reviewed_head_if_known
     exit 1
   fi
 
@@ -2419,6 +2442,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
       exit 1
     elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL")"; then
       # Quote-stripped before checking — see the main-loop equivalent
@@ -2440,6 +2464,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
       exit 0
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
       echo "INFO: final async reaction Codex root comment is not SHA-pinned terminal evidence"
@@ -2451,6 +2476,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
+emit_reviewed_head_if_known
       exit 1
     fi
   fi

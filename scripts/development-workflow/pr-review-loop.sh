@@ -1602,7 +1602,7 @@ run_greptile_review() {
         | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
             .[]
             | select(.user.login == $bot and .created_at > $since)
-            | { path, line: (.line // .original_line // 0), body: (.body // "") }
+            | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
             | @json
           '
     )"
@@ -1615,7 +1615,7 @@ run_greptile_review() {
                 .submitted_at > $since and
                 .state == "CHANGES_REQUESTED"
               )
-            | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+            | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
             | @json
           '
     )"
@@ -1659,6 +1659,7 @@ run_greptile_review() {
         print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
         index=$((index + 1))
       done < "$existing_blocking_file"
+      reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
       rm -f "$existing_blocking_file"
       return 1
     fi
@@ -1709,7 +1710,8 @@ run_greptile_review() {
         | {
             path,
             line: (.line // .original_line // 0),
-            body: (.body // "")
+            body: (.body // ""),
+            commit_id: (.commit_id // "")
           }
         | @json
       '
@@ -1727,7 +1729,8 @@ run_greptile_review() {
         | {
             path: "",
             line: 0,
-            body: (.body // "CHANGES_REQUESTED review without body")
+            body: (.body // "CHANGES_REQUESTED review without body"),
+            commit_id: (.commit_id // .commitId // "")
         }
         | @json
       '
@@ -1772,6 +1775,7 @@ run_greptile_review() {
       print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
+    reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
     rm -f "$blocking_lines_file"
     return 1
   fi
@@ -1786,6 +1790,11 @@ run_greptile_review() {
   print_kv COMMENT_COUNT "$comment_count"
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
+  # Clean path: unique commit_id across the comments/reviews just examined.
+  {
+    printf '%s\n' "$comments"
+    printf '%s\n' "$blocking_reviews"
+  } | reviewer_loop_print_reviewed_head_from_json_lines
   return 0
 }
 
@@ -1895,6 +1904,7 @@ run_codex_github_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
     1)
@@ -1920,6 +1930,7 @@ run_codex_github_review() {
       print_kv COMMENT_COUNT "$unresolved_count"
       print_kv BLOCKING_COUNT "$unresolved_count"
       print_kv SUGGESTION_COUNT 0
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 1
       ;;
     3)
@@ -2185,6 +2196,7 @@ run_copilot_review() {
     case "$review_state" in
       APPROVED)
         print_kv RESULT clean
+      [ -n "${current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${current_sha:-$head_sha}"
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -2218,6 +2230,7 @@ run_copilot_review() {
         # one blocking finding when the verdict is CHANGES_REQUESTED.
         [ "$_copilot_comment_count" -eq 0 ] && _copilot_comment_count=1
         print_kv RESULT needs_fixes
+      [ -n "${current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${current_sha:-$head_sha}"
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -2231,6 +2244,7 @@ run_copilot_review() {
       COMMENTED)
         # Non-blocking comment only — treat as clean.
         print_kv RESULT clean
+      [ -n "${current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${current_sha:-$head_sha}"
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -2632,7 +2646,7 @@ run_bugbot_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
           | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
-          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         ' 2>/dev/null
   )"
@@ -2776,6 +2790,7 @@ run_bugbot_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -2959,7 +2974,7 @@ run_bugbot_review() {
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
 	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
-	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -2998,6 +3013,7 @@ run_bugbot_review() {
           if [ "$blocking_count" -gt 0 ]; then
             # Check run said success but cursor[bot] posted blocking comments.
             print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
             print_kv PLATFORM "$platform"
             print_kv PR_NUMBER "$pr_number"
             print_kv BRANCH "$branch_name"
@@ -3025,6 +3041,7 @@ run_bugbot_review() {
 
           rm -f "$blocking_lines_file"
           print_kv RESULT clean
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -3048,7 +3065,7 @@ run_bugbot_review() {
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
 	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
-	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -3157,6 +3174,7 @@ run_bugbot_review() {
           fi
 
           print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -3197,6 +3215,7 @@ run_bugbot_review() {
 
           # Non-blocking informational outcome — clean, no real findings.
           print_kv RESULT clean
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -3396,6 +3415,7 @@ run_haystack_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
     1)
@@ -3413,6 +3433,7 @@ run_haystack_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 1
       ;;
     2)
@@ -3426,6 +3447,7 @@ run_haystack_review() {
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 2
       ;;
     *)
@@ -3445,6 +3467,7 @@ run_haystack_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
   esac
@@ -3511,6 +3534,7 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
     1)
@@ -3537,6 +3561,7 @@ run_coderabbit_cli_review() {
         print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
         print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
       done
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 1
       ;;
     2)
@@ -3554,6 +3579,7 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 2
       ;;
     *)
@@ -3571,6 +3597,7 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
   esac
@@ -3831,7 +3858,7 @@ run_devin_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
-          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
@@ -3894,6 +3921,13 @@ run_devin_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+    {
+      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+    } | reviewer_loop_print_reviewed_head_from_json_lines
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -3910,6 +3944,7 @@ run_devin_review() {
       print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
+    reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
     rm -f "$existing_blocking_file"
     return 1
   fi
@@ -4040,7 +4075,7 @@ run_devin_review() {
                     ((.body // "") | test("No Issues Found"; "i") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
-                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                 | @json
               '
         )"
@@ -4053,6 +4088,13 @@ run_devin_review() {
 
         if [ "$stale_count" -gt 0 ]; then
           print_kv RESULT needs_fixes
+    {
+      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+    } | reviewer_loop_print_reviewed_head_from_json_lines
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -4111,7 +4153,8 @@ run_devin_review() {
         | {
             path,
             line: (.line // .original_line // 0),
-            body: (.body // "")
+            body: (.body // ""),
+            commit_id: (.commit_id // "")
           }
         | @json
       '
@@ -4183,6 +4226,13 @@ run_devin_review() {
 
   if [ "$blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+    {
+      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+    } | reviewer_loop_print_reviewed_head_from_json_lines
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -4204,6 +4254,13 @@ run_devin_review() {
 
   rm -f "$blocking_lines_file"
   print_kv RESULT clean
+    {
+      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+    } | reviewer_loop_print_reviewed_head_from_json_lines
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
@@ -5841,7 +5898,7 @@ run_coderabbit_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
-          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
@@ -5854,7 +5911,7 @@ run_coderabbit_review() {
               .submitted_at > $since and
               .state == "CHANGES_REQUESTED"
             )
-          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
           | @json
         '
   )"
@@ -5882,6 +5939,13 @@ run_coderabbit_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -6268,6 +6332,13 @@ run_coderabbit_review() {
           if [ "$cr_early_gate_rc" -eq 0 ]; then
             echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
             print_kv RESULT clean
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
             print_kv REASON coderabbit_status_success_fallback
             print_kv PLATFORM "$platform"
             print_kv PR_NUMBER "$pr_number"
@@ -6375,6 +6446,13 @@ run_coderabbit_review() {
           if [ "$cr_success_gate_rc" -eq 0 ]; then
             echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
             print_kv RESULT clean
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
             print_kv REASON coderabbit_status_success_fallback
             print_kv PLATFORM "$platform"
             print_kv PR_NUMBER "$pr_number"
@@ -6421,7 +6499,7 @@ run_coderabbit_review() {
                     ((.body // "") | test("✅ Addressed") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
-                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                 | @json
               '
         )"
@@ -6439,6 +6517,13 @@ run_coderabbit_review() {
 
         if [ "$stale_blocking_count" -gt 0 ]; then
           print_kv RESULT needs_fixes
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -6616,7 +6701,8 @@ run_coderabbit_review() {
         | {
             path,
             line: (.line // .original_line // 0),
-            body: (.body // "")
+            body: (.body // ""),
+            commit_id: (.commit_id // "")
           }
         | @json
       '
@@ -6664,6 +6750,13 @@ run_coderabbit_review() {
 
   if [ "$blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -6692,6 +6785,13 @@ run_coderabbit_review() {
     return "$cr_phase3_gate_rc"
   fi
   print_kv RESULT clean
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
