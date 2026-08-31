@@ -193,7 +193,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       | 4 | Confirmed miss records | records with state `clean_same_commit` | as measure 2 |
       | 5 | Possible miss records | records with state `clean_earlier_commit` | as measure 2 |
       | 6 | `codex-github` invocations | rounds whose `platforms` contains it | no entry carries `platforms` |
-      | 7 | Final current-head evidence | the last entry's reviewed-head states | the last entry carries none |
+      | 7 | Final current-head evidence | the last entry's reviewed-head states | **the last entry** carries none — see the exemption below |
 
       **Availability is read with `has()`, never with `//`.** `// 0` and `// []`
       are the idiomatic defaults and both are silent failures here: they turn an
@@ -207,6 +207,20 @@ Not applicable — this repository ships workflow tooling, not a service.
       is present. The measure is over the rounds that have the field, and
       measure 1 is over all of them — so rounds and external blocking rounds can
       legitimately have different bases within one pull request.
+
+      **Measure 7 is exempt from that rule, and the exemption follows from what
+      it measures.** It reports whether the **final** verdict was made against
+      the current head, so its scope is the last entry and nothing else: its
+      availability is decided by whether **the last entry** carries the
+      reviewed-head states, and an earlier entry carrying them is not evidence
+      about the final round. A pull request whose earlier rounds have the states
+      and whose last round does not is `not_recorded` for measure 7 — under the
+      generic rule it would be `computed`, from a round that is not the one the
+      measure is about.
+
+      This is the only measure whose scope is a single entry, which is why the
+      exemption is one line rather than a second general rule. Scenario 11b
+      asserts both directions.
 
 - [ ] **Aggregate per measure, each with its own included count.** A pull
       request contributes to a measure's aggregate only when that measure is
@@ -264,6 +278,12 @@ Not applicable.
 1. One case per row of the spec's five-row matrix: no marker; marker with no
    parseable block; a payload whose `history_status` is `unavailable`; a
    readable payload missing a measure's field; and a readable complete payload.
+1b. **Rounds equals the number of recorded entries, exactly.** A payload with
+   five entries reports 5; one with a single entry reports 1; and an included
+   payload never reports `not_recorded` for this measure, since an included
+   payload has an array by definition. AC-3. Asserted against a payload whose
+   entries carry differing field sets, so the count is of entries and not of
+   entries that happen to look complete.
 1a. **The two modes agree.** The same pull request reported with `--pr` and
    inside a window produces **identical** per-pull-request values for all seven
    measures and identical availability states. AC-2. Asserted by comparing the
@@ -418,6 +438,14 @@ measure_available() {           # <payload> <field>
     [ .entries[]? | select(has($f)) ] | length > 0
   ' >/dev/null 2>&1
 }
+
+# Measure 7 only. Its scope is the final round, so an earlier entry carrying the
+# field is not evidence about the one the measure describes.
+measure7_available() {          # <payload> <field>
+  printf '%s\n' "$1" | jq -e --arg f "$2" '
+    (.entries | last) as $e | ($e != null) and ($e | has($f))
+  ' >/dev/null 2>&1
+}
 ```
 
 **`select(has($f))` rather than `select(.[$f] != null)`.** A field explicitly
@@ -476,7 +504,7 @@ direction nobody questions.
    scenarios 21 and 22.
 2. Add the script with its harness guard, argument parsing and window semantics.
    **Verify**: scenarios 15 and 16.
-3. Add the classifier. **Verify**: scenarios 1, 1a, 2, 3, 4, 5 and 18.
+3. Add the classifier. **Verify**: scenarios 1, 1a, 1b, 2, 3, 4, 5 and 18.
 4. Add the measures and their availability test. **Verify**: scenarios 6, 7, 8,
    10, 11 and 12.
 5. Add the aggregation and the strict-check section. **Verify**: scenarios 9,

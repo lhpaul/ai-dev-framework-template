@@ -59,6 +59,21 @@ telemetry that did not exist yet — and would put those pull requests into
 Check the rendering in both formats: `Not recorded` is a word in text and a
 state in JSON, never `0`, never an empty cell, never `null`.
 
+## Step 2a: Rounds is a count of entries
+
+**Maps to**: AC-3.
+
+1. Run against a fixture payload with **five** entries whose field sets differ —
+   some carrying telemetry, some not — and against one with a single entry.
+
+**Expected result**: rounds reads **5** and **1**. It is never `Not recorded`
+for an included pull request: an included payload has an entries array by
+definition, so this measure has no absence case.
+
+The fixture's entries differ on purpose. Rounds counts entries, not entries that
+happen to look complete, and a measure that filtered on field presence would
+under-report exactly the pull requests that span a producer shipping.
+
 ## Step 3: Absence and presence can coexist in one pull request
 
 **Maps to**: AC-13b, AC-14.
@@ -147,6 +162,11 @@ of the error it exists to prevent.
 3. Read measure 7 against two fixtures: one whose **earlier** rounds carry
    current-head evidence and whose last round does not, and one where only the
    last round carries it.
+
+**Measure 7 is the one measure exempt from the at-least-one-round availability
+rule**, because its scope is the final round. Under the generic rule the first
+fixture would report `computed` from a round that is not the one the measure
+describes.
 
 **Expected result**: the two modes produce **identical** per-pull-request values
 and availability states. Measure 6 reads **3**. Measure 7 reports the **last**
