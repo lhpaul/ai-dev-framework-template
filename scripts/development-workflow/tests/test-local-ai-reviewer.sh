@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Unit tests for local-ai-reviewer.sh.
 # covers: scripts/development-workflow/local-ai-reviewer.sh
+# shellcheck disable=SC2089,SC2090
 
 set -euo pipefail
 
@@ -441,9 +442,9 @@ run_test "s13d_shipped_ids_match_spec" "$(printf '%s\n' "$EXPECTED_IDS" | jq -c 
 
 # Scenario 9d: no second timeout setting
 run_test "s9d_no_strict_timeout_name" "yes" \
-  "$(rg -n 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' "$REVIEWER" >/dev/null && echo no || echo yes)"
+  "$(grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' "$REVIEWER" >/dev/null && echo no || echo yes)"
 run_test "s9d_help_no_second_timeout_knob" "yes" \
-  "$(bash "$REVIEWER" --help 2>&1 | rg -q 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' && echo no || echo yes)"
+  "$(bash "$REVIEWER" --help 2>&1 | grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' && echo no || echo yes)"
 
 # --- Matrix rows via full runs ---
 install_recording_two_pass_mock
@@ -892,9 +893,9 @@ run_test "s12_na_evidence_no_count" "false" "$(jq -r 'if .strict_spec | has("cou
 # Scenario 11a prompt overrides (codex preset source check)
 CODEX_CMD="$REPO_ROOT/scripts/development-workflow/local-codex-review-command.sh"
 run_test "s11a_codex_reads_mode" "yes" \
-  "$(rg -q 'LOCAL_AI_REVIEWER_MODE' "$CODEX_CMD" && echo yes || echo no)"
+  "$(grep -Fq 'LOCAL_AI_REVIEWER_MODE' "$CODEX_CMD" && echo yes || echo no)"
 run_test "s11a_codex_strict_prompt_override" "yes" \
-  "$(rg -q 'LOCAL_CODEX_REVIEWER_STRICT_PROMPT' "$CODEX_CMD" && echo yes || echo no)"
+  "$(grep -Fq 'LOCAL_CODEX_REVIEWER_STRICT_PROMPT' "$CODEX_CMD" && echo yes || echo no)"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
