@@ -16659,6 +16659,391 @@ unset unresolved_thread_count late_thread_count pr_number
 echo "=== Area 1650 complete ==="
 
 # ---------------------------------------------------------------------------
+# Area 1651: missed-finding telemetry
+# Scenarios 1–3, 6–16 (ancestry 4/5 live in test-reviewer-loop-commit-ancestry.sh)
+# ---------------------------------------------------------------------------
+echo "=== Area 1651: missed-finding telemetry ==="
+
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+
+# Fixed 40-hex SHAs — harness git is mocked and rejects real rev-parse.
+# Ancestry relationships are stubbed below for evidence-state cases; real
+# ancestry coverage lives in test-reviewer-loop-commit-ancestry.sh.
+_1651_descendant='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+_1651_ancestor='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+_1651_unrelated='cccccccccccccccccccccccccccccccccccccccc'
+
+# Stub ancestry so evidence-state tests do not depend on real git objects.
+_1651_real_ancestry="$(declare -f reviewer_loop_commit_ancestry)"
+reviewer_loop_commit_ancestry() {
+  local clean="${1:-}" reviewed="${2:-}"
+  [ -n "$clean" ] && [ -n "$reviewed" ] || { printf 'undecidable\n'; return 0; }
+  if [ "$clean" = "$reviewed" ]; then printf 'same\n'; return 0; fi
+  if [ "$clean" = "$_1651_ancestor" ] && [ "$reviewed" = "$_1651_descendant" ]; then
+    printf 'ancestor\n'; return 0
+  fi
+  if [ "$clean" = "$_1651_descendant" ] && [ "$reviewed" = "$_1651_ancestor" ]; then
+    printf 'descendant\n'; return 0
+  fi
+  if [ "$clean" = "$_1651_unrelated" ] || [ "$reviewed" = "$_1651_unrelated" ]; then
+    printf 'unrelated\n'; return 0
+  fi
+  printf 'undecidable\n'
+}
+
+_1651_cfg=$'local-ai-reviewer\ncodex-github\nbugbot\n'
+
+# --- Scenario 1 / AC-4a: most recent verdict, not most recent clean ---
+_1651_hist="$(jq -nc --arg a "$_1651_ancestor" --arg d "$_1651_descendant" '
+  {schema:"reviewer_loop_history.v1", entries:[
+    {iteration:2, platform_results:[{platform:"local-ai-reviewer",result:"clean",raw_result:"clean",raw_reason:""}],
+     reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$a,state:"current",reason:""}]},
+    {iteration:5, platform_results:[{platform:"local-ai-reviewer",result:"needs_fixes",raw_result:"needs_fixes",raw_reason:""}],
+     reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$d,state:"current",reason:""}]}
+  ]}')"
+_1651_v="$(reviewer_loop_local_latest_verdict "$_1651_hist" "$_1651_cfg")"
+run_test "1651_s1_recency_over_clean" "needs_fixes" \
+  "$(printf '%s\n' "$_1651_v" | jq -r '.outcome')"
+run_test "1651_s1_iteration_5" "5" \
+  "$(printf '%s\n' "$_1651_v" | jq -r '.iteration')"
+
+# --- Scenario 1a: current round wins (synthetic composition) ---
+platform_result_records=(
+  "$(reviewer_loop_platform_result_record_json local-ai-reviewer clean "")"
+  "$(reviewer_loop_platform_result_record_json codex-github needs_fixes "")"
+)
+platform_reviewed_heads=(
+  "local-ai-reviewer:${_1651_descendant}"
+  "codex-github:${_1651_descendant}"
+)
+platform_blocking_outputs=(
+  $'codex-github\036RESULT=needs_fixes\nBLOCKING_COUNT=2\nBLOCKING_1_PATH=a.ts\nBLOCKING_2_PATH=b.ts\n'
+)
+loop_head_sha="$_1651_descendant"
+# Prior history says needs_fixes; current round local is clean — AC-1 same-round case
+_1651_prior="$(jq -nc --arg h "$_1651_ancestor" '
+  {schema:"reviewer_loop_history.v1", entries:[
+    {iteration:1, platform_results:[{platform:"local-ai-reviewer",result:"needs_fixes",raw_result:"needs_fixes",raw_reason:""}],
+     reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$h,state:"current",reason:""}]}
+  ]}')"
+missed_finding_attribution_reports=""
+_1651_recs="$(reviewer_loop_missed_finding_records "$_1651_prior" "$_1651_cfg" 2)"
+run_test "1651_s1a_confirmed_miss" "confirmed_miss" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].classification')"
+run_test "1651_s1a_same_commit_state" "clean_same_commit" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].local_evidence_state')"
+
+# --- Scenario 1b: no prior entry — current round still used ---
+_1651_recs="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+run_test "1651_s1b_no_prior_confirmed" "confirmed_miss" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].classification')"
+
+# --- Scenario 2 / 2b: not_yet_run vs not_configured; whole-line membership ---
+_1651_empty='{"schema":"reviewer_loop_history.v1","entries":[]}'
+run_test "1651_s2_not_yet_run" "not_yet_run" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_empty" "$_1651_cfg" | jq -r '.outcome')"
+run_test "1651_s2_not_configured" "not_configured" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_empty" $'bugbot\ncodex-github\n' | jq -r '.outcome')"
+run_test "1651_s2b_substring_rejected" "not_configured" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_empty" $'local-ai-reviewer-v2\n' | jq -r '.outcome')"
+run_test "1651_s2b_sole_entry" "not_yet_run" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_empty" $'local-ai-reviewer\n' | jq -r '.outcome')"
+
+# --- Scenario 2c: long configured list with early match (here-string, not pipe) ---
+_1651_long="$(printf 'local-ai-reviewer\n'; for _i in $(seq 1 499); do printf 'other-%s\n' "$_i"; done)"
+run_test "1651_s2c_long_list" "not_yet_run" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_empty" "$_1651_long" | jq -r '.outcome')"
+
+# --- Scenario 2a: skipped/not_configured while list contains reviewer → unavailable ---
+_1651_hist="$(jq -nc --arg h "$_1651_descendant" '
+  {schema:"reviewer_loop_history.v1", entries:[
+    {iteration:1, platform_results:[{platform:"local-ai-reviewer",result:"not_configured",raw_result:"skipped",raw_reason:"not_configured"}],
+     reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$h,state:"current",reason:""}]}
+  ]}')"
+run_test "1651_s2a_list_wins" "unavailable" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_hist" "$_1651_cfg" | jq -r '.outcome')"
+
+# --- Scenario 3 / 3a: entries exist but no platform_results → unknown ---
+_1651_hist="$(jq -nc '{schema:"reviewer_loop_history.v1", entries:[{iteration:1, platforms:["local-ai-reviewer"], result:"clean"}]}')"
+run_test "1651_s3_no_platform_results" "unknown" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_hist" "$_1651_cfg" | jq -r '.outcome')"
+run_test "1651_s3a_ignore_aggregate_clean" "unknown" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_hist" "$_1651_cfg" | jq -r '.outcome')"
+
+# --- Scenario 3b: local platform_results, not aggregate ---
+_1651_hist="$(jq -nc --arg h "$_1651_descendant" '
+  {schema:"reviewer_loop_history.v1", entries:[
+    {iteration:1, result:"needs_fixes",
+     platform_results:[
+       {platform:"local-ai-reviewer",result:"clean",raw_result:"clean",raw_reason:""},
+       {platform:"codex-github",result:"needs_fixes",raw_result:"needs_fixes",raw_reason:""}
+     ],
+     reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$h,state:"current",reason:""}]}
+  ]}')"
+run_test "1651_s3b_local_not_aggregate" "clean" \
+  "$(reviewer_loop_local_latest_verdict "$_1651_hist" "$_1651_cfg" | jq -r '.outcome')"
+
+# --- Scenario 6: evidence-state mapping (normalized outcomes) ---
+_1651_verdict() { jq -nc --arg o "$1" --arg h "$2" '{outcome:$o, head_sha:$h, iteration:1}'; }
+run_test "1651_s6_same" "clean_same_commit" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict clean "$_1651_descendant")" "$_1651_descendant")"
+run_test "1651_s6_earlier" "clean_earlier_commit" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict clean "$_1651_ancestor")" "$_1651_descendant")"
+run_test "1651_s6_later" "clean_later_commit" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict clean "$_1651_descendant")" "$_1651_ancestor")"
+run_test "1651_s6_unrelated" "clean_unrelated_commit" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict clean "$_1651_unrelated")" "$_1651_descendant")"
+run_test "1651_s6_not_clean" "not_clean" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict needs_fixes "$_1651_descendant")" "$_1651_descendant")"
+run_test "1651_s6_skipped" "skipped" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict skipped "")" "$_1651_descendant")"
+run_test "1651_s6_unavailable" "unavailable" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict unavailable "")" "$_1651_descendant")"
+run_test "1651_s6_not_yet_run" "not_yet_run" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict not_yet_run "")" "$_1651_descendant")"
+run_test "1651_s6_not_configured" "not_configured" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict not_configured "")" "$_1651_descendant")"
+run_test "1651_s6_unknown_outcome" "unknown" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict weird "")" "$_1651_descendant")"
+run_test "1651_s6a_empty_local_head" "unknown" \
+  "$(reviewer_loop_local_evidence_state "$(_1651_verdict clean "")" "$_1651_descendant")"
+
+# --- Scenario 6b: normalization table ---
+run_test "1651_s6b_clean" "clean" "$(reviewer_loop_normalize_platform_outcome clean "")"
+run_test "1651_s6b_needs_fixes" "needs_fixes" "$(reviewer_loop_normalize_platform_outcome needs_fixes "")"
+run_test "1651_s6b_skipped_unavail" "unavailable" "$(reviewer_loop_normalize_platform_outcome skipped unavailable)"
+run_test "1651_s6b_skipped_not_cfg" "not_configured" "$(reviewer_loop_normalize_platform_outcome skipped not_configured)"
+run_test "1651_s6b_skipped_other" "skipped" "$(reviewer_loop_normalize_platform_outcome skipped deliberate)"
+run_test "1651_s6b_escalate" "unavailable" "$(reviewer_loop_normalize_platform_outcome escalate timeout)"
+run_test "1651_s6b_unknown" "unknown" "$(reviewer_loop_normalize_platform_outcome weird "")"
+_1651_rec="$(reviewer_loop_platform_result_record_json codex-github skipped unavailable)"
+run_test "1651_s6b_raw_retained" "skipped" "$(printf '%s\n' "$_1651_rec" | jq -r '.raw_result')"
+run_test "1651_s6b_raw_reason" "unavailable" "$(printf '%s\n' "$_1651_rec" | jq -r '.raw_reason')"
+run_test "1651_s6b_no_head_field" "false" "$(printf '%s\n' "$_1651_rec" | jq -r 'has("reviewed_head") or has("head")')"
+
+# --- Scenario 7: local reviewer findings produce no record ---
+platform_result_records=("$(reviewer_loop_platform_result_record_json local-ai-reviewer needs_fixes "")")
+platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}")
+platform_blocking_outputs=($'local-ai-reviewer\036RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=x.ts\n')
+_1651_recs="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+run_test "1651_s7_local_excluded" "0" "$(printf '%s\n' "$_1651_recs" | jq 'length')"
+
+# --- Scenario 8: advisory-only (non needs_fixes) produces no record ---
+platform_result_records=("$(reviewer_loop_platform_result_record_json codex-github clean "")")
+platform_reviewed_heads=("codex-github:${_1651_descendant}")
+platform_blocking_outputs=()
+_1651_recs="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+run_test "1651_s8_advisory_excluded" "0" "$(printf '%s\n' "$_1651_recs" | jq 'length')"
+
+# --- Scenario 9: not_clean still produces a denominator record ---
+platform_result_records=(
+  "$(reviewer_loop_platform_result_record_json local-ai-reviewer needs_fixes "")"
+  "$(reviewer_loop_platform_result_record_json codex-github needs_fixes "")"
+)
+platform_reviewed_heads=(
+  "local-ai-reviewer:${_1651_descendant}"
+  "codex-github:${_1651_descendant}"
+)
+platform_blocking_outputs=($'codex-github\036RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=a.ts\n')
+_1651_recs="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+run_test "1651_s9_denominator_not_clean" "not_a_miss" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].classification')"
+run_test "1651_s9_state_not_clean" "not_clean" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].local_evidence_state')"
+
+# --- Scenario 10: two rounds accumulate (builder called twice independently) ---
+platform_result_records=(
+  "$(reviewer_loop_platform_result_record_json local-ai-reviewer clean "")"
+  "$(reviewer_loop_platform_result_record_json codex-github needs_fixes "")"
+)
+platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}" "codex-github:${_1651_descendant}")
+platform_blocking_outputs=($'codex-github\036RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=a.ts\n')
+_1651_r1="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+_1651_r2="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 2)"
+run_test "1651_s10_two_records" "2" \
+  "$(jq -nc --argjson a "$_1651_r1" --argjson b "$_1651_r2" '$a + $b | length')"
+
+# --- Scenario 13a / 13a-i: path dedupe + full path list in record ---
+platform_result_records=(
+  "$(reviewer_loop_platform_result_record_json local-ai-reviewer clean "")"
+  "$(reviewer_loop_platform_result_record_json codex-github needs_fixes "")"
+)
+platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}" "codex-github:${_1651_descendant}")
+_1651_out=$'codex-github\036RESULT=needs_fixes\nBLOCKING_COUNT=8\n'
+for _i in 1 2 3 4 5 6 7 8; do
+  case "$_i" in
+    1|2|3) _p=a.ts ;;
+    4|5) _p=b.ts ;;
+    *) _p=c.ts ;;
+  esac
+  _1651_out="${_1651_out}BLOCKING_${_i}_PATH=${_p}"$'\n'
+done
+platform_blocking_outputs=("$_1651_out")
+_1651_recs="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+run_test "1651_s13a_path_total_deduped" "3" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].path_total')"
+run_test "1651_s13a_distinct_paths" "3" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[0].paths | unique | length')"
+
+# twelve-file record for 13a-i
+_1651_paths="$(jq -nc '[range(1;13) | "file-\(.).ts"]')"
+_1651_rec="$(jq -nc --arg h "$_1651_descendant" --argjson paths "$_1651_paths" '
+  {reviewer:"codex-github", reviewed_head:$h, blocking_count:12, paths:$paths, path_total:12,
+   local_evidence_state:"clean_same_commit", classification:"confirmed_miss"}')"
+run_test "1651_s13ai_record_holds_all" "12" \
+  "$(printf '%s\n' "$_1651_rec" | jq -r '.paths | length')"
+_1651_line="$(reviewer_loop_missed_finding_summary_line "$_1651_rec")"
+run_test "1651_s13_line_le_200" "1" "$([ "${#_1651_line}" -le 200 ] && echo 1 || echo 0)"
+run_contains "1651_s13c_iii_enum" "[confirmed_miss]" "$_1651_line"
+run_contains "1651_s13c_iii_label" "Clean, same commit" "$_1651_line"
+run_contains "1651_s13c_remainder" "+9 more" "$_1651_line"
+
+# zero-path long paths (budget derived)
+_1651_longpath="$(printf 'p%.0s' {1..90})"
+_1651_rec="$(jq -nc --arg h "$_1651_descendant" --arg p "$_1651_longpath" '
+  {reviewer:"codex-github", reviewed_head:$h, blocking_count:7, paths:[$p,$p,$p], path_total:12,
+   local_evidence_state:"clean_same_commit", classification:"confirmed_miss"}')"
+_1651_line="$(reviewer_loop_missed_finding_summary_line "$_1651_rec")"
+run_test "1651_s13_zero_path_le_200" "1" "$([ "${#_1651_line}" -le 200 ] && echo 1 || echo 0)"
+run_contains "1651_s13_zero_path_remainder" "+12 more" "$_1651_line"
+
+# --- Scenario 13c-ii: worst realistic line ---
+_1651_rec="$(jq -nc --arg h "$_1651_descendant" '
+  {reviewer:"claude-code-action", reviewed_head:$h, blocking_count:9999999, path_total:9999999,
+   paths:["short.ts","mid.ts","ok.ts"], local_evidence_state:"clean_earlier_commit",
+   classification:"possible_miss"}')"
+_1651_line="$(reviewer_loop_missed_finding_summary_line "$_1651_rec")"
+run_test "1651_s13cii_le_200" "1" "$([ "${#_1651_line}" -le 200 ] && echo 1 || echo 0)"
+run_contains "1651_s13cii_exact_counts" "9999999 blocking, 9999999 files" "$_1651_line"
+run_contains "1651_s13cii_possible" "[possible_miss]" "$_1651_line"
+
+# --- Scenario 13d: no REVIEWED_HEAD → no record even with loop_head_sha ---
+platform_result_records=(
+  "$(reviewer_loop_platform_result_record_json local-ai-reviewer clean "")"
+  "$(reviewer_loop_platform_result_record_json codex-github needs_fixes "")"
+)
+platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}" "codex-github:")
+platform_blocking_outputs=($'codex-github\036RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=a.ts\n')
+loop_head_sha="$_1651_descendant"
+missed_finding_attribution_reports=""
+missed_findings_json='[]'
+reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1 >/dev/null
+_1651_recs="$missed_findings_json"
+run_test "1651_s13d_no_record" "0" "$(printf '%s\n' "$_1651_recs" | jq 'length')"
+run_contains "1651_s13d_attribution_report" "could not be established" "$missed_finding_attribution_reports"
+
+# --- Scenario 14: history entry fields ---
+pr_number=""
+current_run_id="1651-ledger"
+unresolved_thread_count=0
+late_thread_count=0
+expensive_gate_last_result=""
+strict_spec_recorded=0
+platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}")
+platform_results_json="$(jq -nc '[{platform:"local-ai-reviewer",result:"clean",raw_result:"clean",raw_reason:""}]')"
+missed_findings_json='[]'
+loop_head_sha="$_1651_descendant"
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+for _field in iteration recorded_at head_sha classification_head reviewed_heads run_id result reason platforms \
+  blocking_count suggestion_count unresolved_thread_count late_threads_found phase_after_clean \
+  small_findings_only small_findings_stop small_findings_rounds small_findings_required_rounds \
+  small_findings_paths platform_results missed_findings; do
+  run_test "1651_s14_has_${_field}" "true" \
+    "$(printf '%s\n' "$_entry" | jq -r --arg f "$_field" 'has($f)')"
+done
+run_test "1651_s14a_no_head_in_platform_results" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.platform_results[0] | has("reviewed_head") or has("head")')"
+
+# --- Scenario 15: twenty records ≤ 4000 chars / 20 lines ---
+_1651_lines=""
+_1651_total=0
+for _i in $(seq 1 20); do
+  _1651_rec="$(jq -nc --arg h "$_1651_descendant" --arg r "codex-github" '
+    {reviewer:$r, reviewed_head:$h, blocking_count:99, path_total:12,
+     paths:["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.ts",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ts",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccc.ts"],
+     local_evidence_state:"clean_same_commit", classification:"confirmed_miss"}')"
+  _1651_line="$(reviewer_loop_missed_finding_summary_line "$_1651_rec")"
+  _1651_lines="${_1651_lines}${_1651_line}"$'\n'
+  _1651_total=$((_1651_total + ${#_1651_line}))
+done
+run_test "1651_s15_line_count" "20" "$(printf '%s' "$_1651_lines" | grep -c .)"
+run_test "1651_s15_char_budget" "1" "$([ "$_1651_total" -le 4000 ] && echo 1 || echo 0)"
+
+# --- Scenario 16 / 16a: classification enum ---
+run_test "1651_s16a_confirmed" "confirmed_miss" "$(reviewer_loop_missed_finding_classification clean_same_commit)"
+run_test "1651_s16a_possible" "possible_miss" "$(reviewer_loop_missed_finding_classification clean_earlier_commit)"
+for _st in clean_later_commit clean_unrelated_commit not_clean skipped unavailable not_yet_run not_configured unknown; do
+  run_test "1651_s16a_${_st}" "not_a_miss" "$(reviewer_loop_missed_finding_classification "$_st")"
+done
+
+# --- Scenario 16b: two platforms, different heads ---
+platform_result_records=(
+  "$(reviewer_loop_platform_result_record_json local-ai-reviewer clean "")"
+  "$(reviewer_loop_platform_result_record_json codex-github needs_fixes "")"
+  "$(reviewer_loop_platform_result_record_json bugbot needs_fixes "")"
+)
+platform_reviewed_heads=(
+  "local-ai-reviewer:${_1651_descendant}"
+  "codex-github:${_1651_descendant}"
+  "bugbot:${_1651_ancestor}"
+)
+platform_blocking_outputs=(
+  $'codex-github\036RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=a.ts\n'
+  $'bugbot\036RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=b.ts\n'
+)
+_1651_recs="$(reviewer_loop_missed_finding_records '{"schema":"reviewer_loop_history.v1","entries":[]}' "$_1651_cfg" 1)"
+run_test "1651_s16b_two_records" "2" "$(printf '%s\n' "$_1651_recs" | jq 'length')"
+run_test "1651_s16b_codex_head" "$_1651_descendant" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[] | select(.reviewer=="codex-github") | .reviewed_head')"
+run_test "1651_s16b_bugbot_head" "$_1651_ancestor" \
+  "$(printf '%s\n' "$_1651_recs" | jq -r '.[] | select(.reviewer=="bugbot") | .reviewed_head')"
+
+# --- Scenario 11: unappendable history preserves prior block ---
+_1651_prior_body="$(printf '%s\n' "<!-- reviewer-loop-history:v1 -->" '```json' '{"schema":"reviewer_loop_history.v1","history_status":"available","entries":[{"iteration":1,"result":"clean"}]}' '```')"
+# wrap as details for extract
+_1651_prior_full="$(printf '<details>\n<summary>Reviewer-loop history</summary>\n\n%s\n</details>\n' "$_1651_prior_body")"
+# Force malformed so append_safe=0 but marker present
+_1651_malformed="$(printf '%s\n' "### Automated Reviewer Loop Summary" "" "<details>" "<summary>x</summary>" "<!-- reviewer-loop-history:v1 -->" '```json' '{not-json' '```' "</details>")"
+reviewer_loop_history_last_append_safe=1
+# Invoke in the current shell so append_safe globals survive, then capture stdout.
+_1651_out_file="$(mktemp)"
+reviewer_loop_history_append_to_summary "### Automated Reviewer Loop Summary"$'\n'"body" "$_1651_malformed" clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "" >"$_1651_out_file"
+_1651_out="$(cat "$_1651_out_file")"
+rm -f "$_1651_out_file"
+run_test "1651_s11_append_safe_0" "0" "${reviewer_loop_history_last_append_safe}"
+run_contains "1651_s11_preserves_malformed" '{not-json' "$_1651_out"
+# Ensure stub with entries:[] is NOT written over it
+if printf '%s\n' "$_1651_out" | grep -Fq '"entries": []'; then
+  run_contains "1651_s11_malformed_still_present" '{not-json' "$_1651_out"
+else
+  run_test "1651_s11_no_empty_stub" "1" "1"
+fi
+
+# missing_history_json reason vocabulary
+_1651_missing_marker="$(printf '%s\n' "### Automated Reviewer Loop Summary" "<!-- reviewer-loop-history:v1 -->" "no json block")"
+reviewer_loop_history_payload_from_existing "$_1651_missing_marker" clean "" "x" 0 0 >/dev/null
+run_test "1651_s11a_missing_json_reason" "missing_history_json" \
+  "${reviewer_loop_history_last_unavailable_reason}"
+
+unset platform_result_records platform_reviewed_heads platform_blocking_outputs
+unset platform_results_json missed_findings_json loop_head_sha
+unset missed_finding_attribution_reports
+unset _1651_ancestor _1651_descendant _1651_unrelated _1651_cfg
+unset _1651_hist _1651_v _1651_recs _1651_rec _1651_line _1651_prior _1651_empty
+unset _1651_long _1651_out _1651_paths _1651_r1 _1651_r2
+unset _1651_lines _1651_total _1651_prior_body _1651_prior_full _1651_malformed
+unset _1651_missing_marker _entry _field _st _i _p
+unset -f _1651_verdict 2>/dev/null || true
+eval "$_1651_real_ancestry"
+unset _1651_real_ancestry
+unset pr_number current_run_id unresolved_thread_count late_thread_count
+unset expensive_gate_last_result strict_spec_recorded
+
+echo "=== Area 1651 complete ==="
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
