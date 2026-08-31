@@ -26,7 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for _cmd in awk bash cat dirname git grep jq mktemp perl rm sh sleep tr; do
+for _cmd in awk bash cat date dirname git grep jq mktemp perl rm sed sh sleep tr; do
   _cmd_path="$(command -v "$_cmd")"
   [ -n "$_cmd_path" ] || continue
   ln -sf "$_cmd_path" "$NO_GRAPH_BIN/$_cmd"
