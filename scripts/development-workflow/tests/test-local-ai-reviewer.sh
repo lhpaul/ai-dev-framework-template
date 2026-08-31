@@ -379,7 +379,7 @@ install_checklist_into_repo() {
   local src="$1"
   mkdir -p "$VALID_REPO_ROOT/docs/workflow/development-workflow"
   cp "$src" "$VALID_REPO_ROOT/docs/workflow/development-workflow/strict-spec-checks.md"
-  git -C "$VALID_REPO_ROOT" add docs/workflow/development-workflow/strict-spec-checks.md >/dev/null 2>&1 || true
+  git -C "$VALID_REPO_ROOT" add docs/workflow/development-workflow/strict-spec-checks.md >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - fixture add is best-effort for spec-stage tests
 }
 
 remove_checklist_from_repo() {
