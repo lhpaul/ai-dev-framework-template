@@ -1132,7 +1132,7 @@ expensive_gate_deferral_count() {
       body="${EXPENSIVE_GATE_MOCK_LEDGER_BODY}"
     else
       if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
-        printf '-1\n'
+        printf '%s\n' '-1'
         return 0
       fi
       if ! record="$(
@@ -1140,7 +1140,7 @@ expensive_gate_deferral_count() {
           gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
             | reviewer_loop_history_select_latest_summary_record
         )"; then
-        printf '-1\n'
+        printf '%s\n' '-1'
         return 0
       fi
       body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
@@ -1155,7 +1155,7 @@ expensive_gate_deferral_count() {
   json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
   if [ -z "$json" ]; then
     if printf '%s\n' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
-      printf '-1\n'
+      printf '%s\n' '-1'
     else
       printf '0\n'
     fi
@@ -1167,7 +1167,7 @@ expensive_gate_deferral_count() {
         and (.entries | type) == "array"
         and ((.history_status // "available") == "available")
       ' >/dev/null 2>&1; then
-    printf '-1\n'
+    printf '%s\n' '-1'
     return 0
   fi
 
@@ -1182,7 +1182,7 @@ expensive_gate_deferral_count() {
   )" || count=""
 
   if ! [[ "$count" =~ ^[0-9]+$ ]]; then
-    printf '-1\n'
+    printf '%s\n' '-1'
     return 0
   fi
   printf '%s\n' "$count"
