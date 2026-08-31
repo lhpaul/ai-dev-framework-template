@@ -16400,6 +16400,8 @@ run_test "1649_s10_empty" "deferred|baseline_checks_unobserved" "$(_1649_checks_
 unset -f expensive_gate_baseline_checks_status
 HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
 expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$_1649_head"; }
+# Earlier areas prepend their own mock dirs to PATH; pin the harness mock again.
+export PATH="$MOCK_BIN:$PATH"
 
 _1649_baseline_helper_row() {
   local rollup="$1"
