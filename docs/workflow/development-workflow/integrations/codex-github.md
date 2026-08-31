@@ -36,6 +36,45 @@ during the async grace-period poll — is treated as unavailable, not as
 absence of evidence, so it cannot be silently overridden by a clean
 submitted review.
 
+## Expensive reviewer gate
+
+`codex-github` is an expensive reviewer. Before `pr-review-loop.sh` dispatches
+it, the expensive-reviewer gate requires four current-head conditions,
+evaluated in order and stopping at the first unmet one:
+
+1. `local-ai-reviewer` is configured and has current-head clean evidence
+   (exact `1` on both derived keys; missing/stale/unexpected values defer)
+2. Every preceding peer under the reordered platform list (same-bucket
+   non-expensive peers plus earlier buckets) has acceptable evidence —
+   `clean`, or `skipped` with an allow-listed reason
+   (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`)
+   confirmed by `reviewer_failed_label_required_for_result` returning false
+3. Zero unresolved, non-outdated review threads on the same head
+4. Non-reviewer baseline checks are non-empty and all green on the same head
+   (empty set → `baseline_checks_unobserved`; reviewer-owned checks excluded)
+
+Expensive reviewers are reordered last **within their own phase bucket** so
+those peers can run first; the reorder never moves a draft-configured
+expensive reviewer behind a ready-phase platform.
+
+A defer sets the loop aggregate to `needs_fixes` /
+`REASON=expensive_gate_deferred` (readiness withheld; Step 7 re-runs) and
+breaks the platform iteration so later ready-phase platforms do not run.
+Deferrals are bounded by `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` (default
+`3`, head-scoped occurrence count). At the cap the loop escalates.
+`EXPENSIVE_GATE_ESCALATION` is emitted **only** when
+`EXPENSIVE_GATE_RESULT=deferral_cap` and is one of:
+
+- `expensive_gate_deferral_cap` — budget exhausted
+- `expensive_gate_deferral_budget_unreadable` — ledger unreadable
+  (`EXPENSIVE_GATE_DEFERRALS=-1`); an absent ledger is `0` and defers normally
+
+Override with `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` for a one-off run
+(justify in the PR). The gate still emits `EXPENSIVE_GATE_RESULT=forced` with
+the reason it would have deferred.
+
+See Protocol 93 § Expensive reviewer gate for the full normative contract.
+
 ## Verdict Classification
 
 `APPROVED` requires the response — the **entire, untruncated** body,
