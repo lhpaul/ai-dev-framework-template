@@ -7876,40 +7876,76 @@ reviewer_loop_print_reviewed_head_from_json_lines() {
   printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
 }
 
-# Fetch PR review comments and reviews for a bot login and emit REVIEWED_HEAD when
-# exactly one unique commit_id is present in those artifacts.
-reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() {
+# Collect originalCommitOid values from bot threads that check_unresolved_threads
+# would count as unresolved in strict mode (not resolved, not outdated, not
+# self-marked "✅ Addressed"). Paginates like check_unresolved_threads.
+reviewer_loop_blocking_unresolved_thread_commit_oids() {
   local pr_number="$1"
   local repo="$2"
   local graphql_bot_login="$3"
-  local owner repo_name commits
+  local owner repo_name cursor has_next_page page max_pages result graphql_query nodes_fields
 
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
-  commits="$(
-    gh api graphql \
-      -f query='query($owner:String!,$repo:String!,$pr:Int!){
-        repository(owner:$owner,name:$repo){
-          pullRequest(number:$pr){
-            reviewThreads(first:100){
-              nodes{
-                isResolved
-                originalCommitOid
-                comments(first:1){nodes{author{login}}}
-              }
-            }
-          }
-        }
-      }' \
-      -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
-      --jq --arg bot "$graphql_bot_login" '
-        [.data.repository.pullRequest.reviewThreads.nodes[]
-          | select(.isResolved == false)
-          | select((.comments.nodes[0].author.login // "") == $bot)
-          | .originalCommitOid // empty
-        ] | unique | .[]' 2>/dev/null || true
-  )"
+  cursor=""
+  has_next_page="true"
+  page=0
+  max_pages=10
+
+  nodes_fields='id isResolved isOutdated originalCommitOid firstComment:comments(first:1){nodes{author{login}body}}'
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{'"$nodes_fields"'}}}}}'
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      return 2
+    fi
+
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest' 2>/dev/null)" \
+        || return 3
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest' 2>/dev/null)" \
+        || return 3
+    fi
+
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty')"
+
+    printf '%s\n' "$result" | jq -r --arg bot "$graphql_bot_login" '
+      .reviewThreads.nodes[]
+      | select((.firstComment.nodes[0].author.login // "") == $bot)
+      | select(.isResolved != true)
+      | select((.isOutdated // false) != true)
+      | select((.firstComment.nodes[0].body // "") | contains("✅ Addressed") | not)
+      | .originalCommitOid // empty
+    '
+
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      return 2
+    fi
+  done
+
+  return 0
+}
+
+# Emit REVIEWED_HEAD when strict-mode blocking threads for a bot login share
+# exactly one unique originalCommitOid.
+reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local commits
+
+  commits="$(reviewer_loop_blocking_unresolved_thread_commit_oids \
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null || true)"
 
   printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
 }
@@ -8393,7 +8429,7 @@ reviewer_loop_history_build_entry() {
   head_sha="$(reviewer_loop_history_current_head_sha)"
   recorded_at="$(reviewer_loop_history_recorded_at)"
   local reviewed_heads_json
-  if declare -p platform_reviewed_heads >/dev/null 2>&1; then
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
     reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
   else
     reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
@@ -10869,7 +10905,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
     _existing_comment_record="$(
       set -o pipefail
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | reviewer_loop_history_select_latest_summary_record
+        | reviewer_loop_history_select_summary_record
     )" \
       || {
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
