@@ -8028,6 +8028,68 @@ reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() {
   printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
 }
 
+# When post-clean settle finds late unresolved threads after an otherwise-clean
+# platform pass, synthesize platform_result_records + blocking outputs so
+# missed-finding telemetry can still run in _post_review_summary (AC-1/AC-10).
+reviewer_loop_append_late_thread_missed_findings() {
+  local pr_number="$1"
+  local repo="$2"
+  local platform_name bot_login graphql_bot_login count json head output_blob
+  local idx=0 row path line body title
+
+  for platform_name in "${platforms[@]:-}"; do
+    bot_login="$(bot_login_for_platform "$platform_name")"
+    graphql_bot_login="${bot_login%\[bot\]}"
+    [ -n "$graphql_bot_login" ] || continue
+
+    set +e
+    count="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
+    set -e
+    [ "${count:-0}" -gt 0 ] 2>/dev/null || continue
+
+    if ! declare -p platform_result_records >/dev/null 2>&1; then
+      declare -a platform_result_records=()
+    fi
+    platform_result_records+=("$(reviewer_loop_platform_result_record_json \
+      "$platform_name" needs_fixes late_review_threads)")
+
+    json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
+      "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)" || continue
+
+    head="$(printf '%s\n' "$json" | jq -r '
+      [.[].commit // empty | select(length > 0)] | unique
+      | if length == 1 then .[0] else empty end' 2>/dev/null)" || head=""
+    if [ -n "$head" ]; then
+      if ! declare -p platform_reviewed_heads >/dev/null 2>&1; then
+        declare -a platform_reviewed_heads=()
+      fi
+      platform_reviewed_heads+=("${platform_name}:${head}")
+    fi
+
+    output_blob="RESULT=needs_fixes"$'\n'"BLOCKING_COUNT=${count}"$'\n'
+    idx=0
+    while IFS= read -r row; do
+      [ -n "$row" ] || continue
+      idx=$((idx + 1))
+      path="$(printf '%s' "$row" | jq -r '.path // ""')"
+      line="$(printf '%s' "$row" | jq -r '.line // 0')"
+      body="$(printf '%s' "$row" | jq -r '.body // ""')"
+      title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+      if [ -z "$title" ]; then
+        title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+      fi
+      output_blob="${output_blob}BLOCKING_${idx}_PATH=${path:-unknown}"$'\n'
+      output_blob="${output_blob}BLOCKING_${idx}_LINE=${line}"$'\n'
+      output_blob="${output_blob}BLOCKING_${idx}_BODY=${title}"$'\n'
+    done < <(printf '%s\n' "$json" | jq -c '.[]?' 2>/dev/null)
+
+    if ! declare -p platform_blocking_outputs >/dev/null 2>&1; then
+      declare -a platform_blocking_outputs=()
+    fi
+    platform_blocking_outputs+=("${platform_name}"$'\036'"${output_blob}")
+  done
+}
+
 # Build missed_findings JSON array for the current round.
 # Args:
 #   $1 history_payload (persisted entries; may be empty object with entries:[])
@@ -11490,6 +11552,7 @@ if [ "$aggregate_result" = "clean" ] \
       echo "INFO: post-clean settle — found $late_thread_count late unresolved thread(s) after ${settle_elapsed}s; switching to needs_fixes" >&2
       aggregate_result="needs_fixes"
       aggregate_reason="late_review_threads"
+      reviewer_loop_append_late_thread_missed_findings "$pr_number" "$settle_repo"
       if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
         phase_after_clean_net_new_blocker=1
         phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-late_review_threads}"
