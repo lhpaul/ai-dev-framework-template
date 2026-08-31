@@ -10974,11 +10974,10 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   # (append_safe=0 for a persisted "unavailable" history_status) — so the
   # WRITE below can succeed (posting the stub) while this cycle's entry is
   # still never actually recorded. A later "clean" cycle's OWN posting-time
-  # read can then recover an OLDER available snapshot via reviewer_loop_
-  # history_select_summary_record's deliberate render-continuity fallback
-  # and patch over the stub, permanently losing this cycle's dispatch from
-  # both cap counters (found in review of PR #1507). Treat a failed READ
-  # here the same as a failed WRITE for fail-closed purposes.
+  # history_select_summary_record's deliberate render-continuity fallback is used
+  # ONLY for missed-finding derivation input (_mf_prior_payload), never for the
+  # comment id/body chosen for update-in-place — mixing newest id with an older
+  # substituted body would patch over unappendable latest history (AC-7a).
   local _existing_read_failed=0
   _repo="$(repo_slug 2>/dev/null)" \
     || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
@@ -10986,7 +10985,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
     _existing_comment_record="$(
       set -o pipefail
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | reviewer_loop_history_select_summary_record
+        | reviewer_loop_history_select_latest_summary_record
     )" \
       || {
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
@@ -11004,6 +11003,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   # first). Compose the current round into the prior payload for AC-1.
   local _prior_history_json=""
   local _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+  local _mf_prior_payload=""
   local _configured_platforms=""
   local _next_iteration=1
   local _mf_count=0
@@ -11017,6 +11017,29 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
       :
     else
       _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+    fi
+  fi
+  _mf_prior_payload="$_prior_payload"
+  if [ "$(printf '%s\n' "$_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ] \
+      || { [ -z "$_prior_history_json" ] \
+           && printf '%s\n' "$_existing_comment_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; }; then
+    local _mf_fallback_record="" _mf_fallback_body="" _mf_fallback_json=""
+    if [ -n "$_repo" ]; then
+      _mf_fallback_record="$(
+        set -o pipefail
+        gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+          | reviewer_loop_history_select_summary_record
+      )" || _mf_fallback_record=""
+      if [ -n "$_mf_fallback_record" ]; then
+        _mf_fallback_body="$(printf '%s\n' "$_mf_fallback_record" | jq -r '.body // ""' 2>/dev/null)" || _mf_fallback_body=""
+        _mf_fallback_json="$(printf '%s\n' "$_mf_fallback_body" | reviewer_loop_history_extract_latest_json 2>/dev/null)" || _mf_fallback_json=""
+        if [ -n "$_mf_fallback_json" ] \
+            && printf '%s\n' "$_mf_fallback_json" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+              '.schema == $schema and (.entries | type) == "array" and (.history_status // "available") == "available"' \
+              >/dev/null 2>&1; then
+          _mf_prior_payload="$(printf '%s\n' "$_mf_fallback_json" | jq -c '.' 2>/dev/null)" || _mf_prior_payload="$_prior_payload"
+        fi
+      fi
     fi
   fi
   if declare -p repo_review_platforms >/dev/null 2>&1 && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
@@ -11036,7 +11059,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   missed_finding_attribution_reports=""
   missed_findings_json='[]'
   # Invoke in the current shell so attribution reports survive (no $(...)).
-  reviewer_loop_missed_finding_records "$_prior_payload" "$_configured_platforms" "$_next_iteration" >/dev/null
+  reviewer_loop_missed_finding_records "$_mf_prior_payload" "$_configured_platforms" "$_next_iteration" >/dev/null
   _mf_count="$(printf '%s\n' "$missed_findings_json" | jq 'length' 2>/dev/null)" || _mf_count=0
   [[ "$_mf_count" =~ ^[0-9]+$ ]] || _mf_count=0
 
