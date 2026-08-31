@@ -589,7 +589,11 @@ Outputs stable key=value lines including:
                   Fail-closed on unreadable inputs (evidence_unavailable_*). A deferred outcome sets
                   RESULT=needs_fixes REASON=expensive_gate_deferred so readiness is withheld and
                   Step 7 re-runs; it also breaks the platform iteration so later ready-phase platforms
-                  do not run. Deferrals are bounded by PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
+                  do not run. When the ready-phase transition is about to start and any remaining
+                  ready-phase platform is expensive, those expensive gates are preflighted BEFORE
+                  gh pr ready (vendors such as Codex may auto-start on mark-ready); the per-platform
+                  gate still runs again immediately before run_platform_review. Deferrals are bounded
+                  by PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
                   (default 3, head-scoped occurrence count); at the cap the loop escalates.
   EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable
                   Emitted ONLY when EXPENSIVE_GATE_RESULT=deferral_cap — exhausted budget vs

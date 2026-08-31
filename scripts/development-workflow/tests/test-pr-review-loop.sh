@@ -16338,7 +16338,7 @@ platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
 # Force configured=1 and head current via reviewed heads, but no peers ran
 # Condition 1 needs local-ai in platforms AND reviewed head — local-ai is in list
 # but hasn't "run" as peer yet; for condition 1 we only need membership + heads.
-# Peer set = empty (codex is first) → dispatched on empty peer set? 
+# Peer set = empty (codex is first) → dispatched on empty peer set?
 # Actually peer set is empty when expensive is first → check_peers returns empty → OK for peers.
 # The plan says suppressed reorder so a same-bucket peer has not run → deferred peer_reviewer_not_run.
 # So we need: list order codex, pr-agent with pr-agent not in peer evidence... wait if codex is first,
