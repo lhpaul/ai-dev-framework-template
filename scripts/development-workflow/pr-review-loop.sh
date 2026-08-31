@@ -517,6 +517,12 @@ Outputs stable key=value lines including:
   POST_CLEAN_HEAD_SHA=<sha> (the PR head this run reviewed, read BEFORE any reviewer was dispatched and
     emitted on every clean path; Protocol 91 Check 0.6 refuses the verdict when the live head differs —
     a push after Step 7 voids it — issue #1574)
+  LOCAL_AI_CONFIGURED=0|1 (1 when local-ai-reviewer is in the resolved platform list — the applicability
+    signal; an absent key means telemetry never reached the consumer and is fail-closed)
+  LOCAL_AI_REVIEWED_HEAD=<sha> (the reviewed head reported by local-ai-reviewer; empty when not
+    configured or when the reviewer reported no head)
+  LOCAL_AI_HEAD_CURRENT=1|0| (1 when local-ai-reviewer classification is current; 0 when not-current;
+    empty when not-reported or when local-ai-reviewer is not configured — missing evidence is not a pass)
   RESULT=needs_fixes REASON=head_moved_during_run (the PR head changed while the reviewers ran, so
     the clean verdict describes a commit the PR has left; nothing to fix — re-run the loop for the
     current HEAD)
@@ -6840,6 +6846,158 @@ reviewer_loop_small_findings_prior_consecutive_count() {
   ' 2>/dev/null || printf '0\n'
 }
 
+reviewer_loop_head_evidence_full_sha() {
+  local value="$1"
+
+  case "$value" in
+    ''|*[!0-9a-fA-F]*) return 1 ;;
+  esac
+  [ "${#value}" -eq 40 ]
+}
+
+reviewer_loop_head_evidence_classify() {
+  local reviewed="$1"
+  local current="$2"
+
+  if [ -z "$reviewed" ]; then
+    printf 'not-reported\n'
+    return 0
+  fi
+  if ! reviewer_loop_head_evidence_full_sha "$reviewed"; then
+    printf 'not-current|unverifiable_reviewed_head\n'
+    return 0
+  fi
+  if ! reviewer_loop_head_evidence_full_sha "$current"; then
+    printf 'not-current|unverifiable_current_head\n'
+    return 0
+  fi
+
+  reviewed="$(printf '%s' "$reviewed" | tr 'A-F' 'a-f')"
+  current="$(printf '%s' "$current" | tr 'A-F' 'a-f')"
+
+  if [ "$reviewed" = "$current" ]; then
+    printf 'current\n'
+  else
+    printf 'not-current|head_mismatch\n'
+  fi
+}
+
+reviewer_loop_head_evidence_render() {
+  local current_head="$1"
+  shift
+  local entry platform_name reviewed_head classification state reason line
+
+  printf '**Head evidence:** current PR head `%s`\n' "$current_head"
+  [ "$#" -gt 0 ] || return 0
+
+  for entry in "$@"; do
+    platform_name="${entry%%:*}"
+    reviewed_head="${entry#*:}"
+    classification="$(reviewer_loop_head_evidence_classify "$reviewed_head" "$current_head")"
+    state="${classification%%|*}"
+    reason="${classification#*|}"
+    if [ "$reason" = "$state" ]; then
+      reason=""
+    fi
+    case "$state" in
+      current)
+        if [ -n "$reviewed_head" ]; then
+          line="- ${platform_name}: reviewed \`${reviewed_head}\` — current"
+        else
+          line="- ${platform_name}: not-reported"
+        fi
+        ;;
+      not-reported)
+        line="- ${platform_name}: not-reported"
+        ;;
+      not-current)
+        if [ -n "$reviewed_head" ]; then
+          line="- ${platform_name}: reviewed \`${reviewed_head}\` — not-current (${reason})"
+        else
+          line="- ${platform_name}: not-reported"
+        fi
+        ;;
+      *)
+        line="- ${platform_name}: ${state}"
+        ;;
+    esac
+    printf '%s\n' "$line"
+  done
+}
+
+reviewer_loop_head_evidence_json() {
+  local current_head="$1"
+  shift
+  local entry platform_name reviewed_head classification state reason
+  local -a jq_parts=()
+  local idx=0
+
+  for entry in "$@"; do
+    platform_name="${entry%%:*}"
+    reviewed_head="${entry#*:}"
+    classification="$(reviewer_loop_head_evidence_classify "$reviewed_head" "$current_head")"
+    state="${classification%%|*}"
+    reason="${classification#*|}"
+    if [ "$reason" = "$state" ]; then
+      reason=""
+    fi
+    jq_parts+=("--arg" "p${idx}" "$platform_name" "--arg" "rh${idx}" "$reviewed_head" "--arg" "st${idx}" "$state" "--arg" "rs${idx}" "$reason")
+    idx=$((idx + 1))
+  done
+
+  if [ "$idx" -eq 0 ]; then
+    printf '[]'
+    return 0
+  fi
+
+  local jq_prog='['
+  local i=0
+  while [ "$i" -lt "$idx" ]; do
+    [ "$i" -gt 0 ] && jq_prog+=','
+    jq_prog+="{platform: \$p${i}, reviewed_head: \$rh${i}, state: \$st${i}, reason: \$rs${i}}"
+    i=$((i + 1))
+  done
+  jq_prog+=']'
+
+  jq -n "${jq_parts[@]}" "$jq_prog"
+}
+
+reviewer_loop_emit_local_ai_head_evidence_keys() {
+  local local_ai_configured=0
+  local local_ai_reviewed_head=""
+  local local_ai_head_current=""
+  local entry platform_name reviewed_head classification state
+
+  for platform_name in "${platforms[@]}"; do
+    if [ "$platform_name" = "local-ai-reviewer" ]; then
+      local_ai_configured=1
+      break
+    fi
+  done
+
+  if [ "$local_ai_configured" -eq 1 ] && declare -p platform_reviewed_heads >/dev/null 2>&1; then
+    for entry in "${platform_reviewed_heads[@]}"; do
+      platform_name="${entry%%:*}"
+      reviewed_head="${entry#*:}"
+      if [ "$platform_name" = "local-ai-reviewer" ]; then
+        local_ai_reviewed_head="$reviewed_head"
+        classification="$(reviewer_loop_head_evidence_classify "$reviewed_head" "$loop_head_sha")"
+        state="${classification%%|*}"
+        case "$state" in
+          current) local_ai_head_current=1 ;;
+          not-current) local_ai_head_current=0 ;;
+          not-reported) local_ai_head_current="" ;;
+        esac
+        break
+      fi
+    done
+  fi
+
+  print_kv LOCAL_AI_CONFIGURED "$local_ai_configured"
+  print_kv LOCAL_AI_REVIEWED_HEAD "$local_ai_reviewed_head"
+  print_kv LOCAL_AI_HEAD_CURRENT "$local_ai_head_current"
+}
+
 reviewer_loop_history_current_head_sha() {
   local head_sha=""
   [ -n "${pr_number:-}" ] || return 0
@@ -6892,6 +7050,12 @@ reviewer_loop_history_build_entry() {
   platforms_json="$(reviewer_loop_history_platforms_json "$platform_list")" || platforms_json='[]'
   head_sha="$(reviewer_loop_history_current_head_sha)"
   recorded_at="$(reviewer_loop_history_recorded_at)"
+  local reviewed_heads_json
+  if declare -p platform_reviewed_heads >/dev/null 2>&1; then
+    reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  else
+    reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
+  fi
 
   # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
   # following the same convention already used in this function for
@@ -6923,10 +7087,14 @@ reviewer_loop_history_build_entry() {
     --argjson smallFindingsRounds "${small_findings_rounds:-0}" \
     --argjson smallFindingsRequiredRounds "${small_findings_required_rounds:-0}" \
     --arg smallFindingsPaths "${small_findings_paths:-}" \
+    --arg classificationHead "${loop_head_sha:-}" \
+    --argjson reviewedHeads "$reviewed_heads_json" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
       head_sha: $headSha,
+      classification_head: $classificationHead,
+      reviewed_heads: $reviewedHeads,
       run_id: $runId,
       result: $result,
       reason: $reason,
@@ -8522,6 +8690,8 @@ fi
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
+# Per-platform reviewed heads for head-evidence surfaces (issue #1648).
+declare -a platform_reviewed_heads=()
 # Per-platform review-policy status notes for the PR summary comment. Haystack
 # emits these from `pr-status`; other platforms normally leave this empty.
 declare -a platform_policy_status_notes=()
@@ -8671,6 +8841,9 @@ for index in "${!platforms[@]}"; do
     esac
   fi
   platform_result_tokens+=("${platform_name}:${_prt_disp}")
+  _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
+  platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
+  unset _reviewed_head
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
   if [ "$_policy_status_available" = "1" ]; then
@@ -8970,6 +9143,14 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
     fi
   fi
 
+  local head_evidence_section=""
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 \
+      && { [ "${#platform_reviewed_heads[@]}" -gt 0 ] || [ -n "${loop_head_sha:-}" ]; }; then
+    head_evidence_section="
+
+$(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  fi
+
   local phase_section=""
   if [ "$phase_enabled" -eq 1 ]; then
     local _phase_value_line
@@ -9017,7 +9198,7 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
+${small_findings_section}${head_evidence_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -9146,6 +9327,7 @@ if [ -z "$last_platform" ]; then
   print_kv UNRESOLVED_THREAD_COUNT 0
   _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
   sync_reviewer_failed_label "$pr_number" 0
+  reviewer_loop_emit_local_ai_head_evidence_keys
   exit 0
 fi
 
@@ -9691,6 +9873,8 @@ if [ -n "$aggregate_output" ]; then
   review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
+
+reviewer_loop_emit_local_ai_head_evidence_keys
 
 # _post_review_summary has already run above (using the pre-correction
 # aggregate_result as its own "result"/"reason" arguments intentionally —

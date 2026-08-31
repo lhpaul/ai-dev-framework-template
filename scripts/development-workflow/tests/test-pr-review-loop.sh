@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # test-pr-review-loop.sh — Self-contained test harness for pr-review-loop.sh.
+# covers: scripts/development-workflow/pr-review-loop.sh
+# covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 #
 # Exercises five highest-risk logic areas:
 #   1. normalize_platform_verdict (verdict normalization / mapping)
@@ -388,6 +390,19 @@ run_test() {
     PASS_COUNT=$(( PASS_COUNT + 1 ))
   else
     echo "FAIL: $name — expected '${expected}', got '${actual}'"
+    FAIL_COUNT=$(( FAIL_COUNT + 1 ))
+  fi
+}
+
+run_contains() {
+  local name="$1"
+  local needle="$2"
+  local haystack="$3"
+  if printf '%s\n' "$haystack" | grep -Fq -- "$needle"; then
+    echo "PASS: $name"
+    PASS_COUNT=$(( PASS_COUNT + 1 ))
+  else
+    echo "FAIL: $name — expected substring '${needle}'"
     FAIL_COUNT=$(( FAIL_COUNT + 1 ))
   fi
 }
@@ -15482,7 +15497,7 @@ run_test "p91_checklist_refuses_no_submitted_review" "yes" \
 # the Step 7 block clears POST_CLEAN_* before the loop runs and exports nothing
 # when the loop exits non-zero.
 run_test "p91_step7_clears_stale_settle_vars" "yes" \
-  "$(grep -q "grep -o '^POST_CLEAN_\[A-Z_\]\*'" "$_1574_p91" && echo yes || echo no)"
+  "$(grep -q "grep -oE '^(POST_CLEAN|LOCAL_AI)_\[A-Z_\]\*'" "$_1574_p91" && echo yes || echo no)"
 run_test "p91_step7_exports_only_on_zero_exit" "yes" \
   "$(grep -q 'Do not enter Step 8a on this run' "$_1574_p91" && echo yes || echo no)"
 # Protocol 91 carries no wait at all any more: the only sleep in 8a.1 was the
@@ -15523,7 +15538,9 @@ _1574_head="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 _1574_run_gate() {
   # $@ = VAR=value assignments; prints the exit status
   local status=0
-  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
+  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" \
+    LOCAL_AI_CONFIGURED=0 \
+    "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
   printf '%s' "$status"
 }
 run_test "gate_skipped_flag_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true)"
@@ -15536,6 +15553,10 @@ run_test "gate_no_thread_platforms_other_head_refused" "12" "$(_1574_run_gate PO
 run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
 run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
 run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_skipped_no_platforms_unset_local_ai_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true LOCAL_AI_CONFIGURED=)"
+run_test "gate_local_ai_unset_refused" "12" "$(_1574_run_gate LOCAL_AI_CONFIGURED= POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_local_ai_not_current_refused" "12" "$(_1574_run_gate LOCAL_AI_CONFIGURED=1 LOCAL_AI_HEAD_CURRENT=0 LOCAL_AI_REVIEWED_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+run_test "gate_local_ai_current_passes" "0" "$(_1574_run_gate LOCAL_AI_CONFIGURED=1 LOCAL_AI_HEAD_CURRENT=1 LOCAL_AI_REVIEWED_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
 # A settled verdict is bound to one head: telemetry without a head, or for a
 # head the PR has moved past, is refused.
 run_test "gate_settled_without_head_binding_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1)"
@@ -16004,6 +16025,138 @@ unset _1579_E2E_CALL_LOG2 _1579_E2E_LIVE_CREATED _1579_e2e_mock_dir2 _1579_e2e_c
 
 unset -f _1579_ago _1579_ago_s _1579_state _1579_live
 unset _1579_window _1579_nowindow _1579_real_parser _1579_loop_src _1579_rl_branch
+
+# ---------------------------------------------------------------------------
+echo "=== Area 1648: reviewer-loop current-head evidence ==="
+
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+
+_sha_a='82d2f3a844a6c0c417f5c55e8a01eebdf343de45'
+_sha_b='29c0e9d2541a85c0e335052de42599f485d51a67'
+_sha_a_upper='82D2F3A844A6C0C417F5C55E8A01EEBDF343DE45'
+_sha_abbrev='82d2f3a'
+_sha_39='82d2f3a844a6c0c417f5c55e8a01eebdf343de4'
+_sha_41="${_sha_a}0"
+_sha_non_hex='82d2f3a844a6c0c417f5c55e8a01eebdf343de4g'
+_unknown_head='unknown-1756330000-4821-19342'
+
+run_test "1648_classify_same_sha_current" "current" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_a" "$_sha_a")"
+run_test "1648_classify_case_insensitive_current" "current" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_a_upper" "$_sha_a")"
+run_test "1648_classify_mismatch" "not-current|head_mismatch" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_a" "$_sha_b")"
+run_test "1648_classify_abbreviation" "not-current|unverifiable_reviewed_head" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_abbrev" "$_sha_a")"
+run_test "1648_classify_39_char" "not-current|unverifiable_reviewed_head" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_39" "$_sha_a")"
+run_test "1648_classify_41_char" "not-current|unverifiable_reviewed_head" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_41" "$_sha_a")"
+run_test "1648_classify_non_hex" "not-current|unverifiable_reviewed_head" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_non_hex" "$_sha_a")"
+run_test "1648_classify_empty_reviewed" "not-reported" \
+  "$(reviewer_loop_head_evidence_classify "" "$_sha_a")"
+run_test "1648_classify_empty_current" "not-current|unverifiable_current_head" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_a" "")"
+run_test "1648_classify_unknown_placeholder" "not-current|unverifiable_current_head" \
+  "$(reviewer_loop_head_evidence_classify "$_sha_a" "$_unknown_head")"
+
+run_test "1648_full_sha_accepts_40" "0" "$(reviewer_loop_head_evidence_full_sha "$_sha_a"; printf '%s' $?)"
+run_test "1648_full_sha_rejects_39" "1" "$(reviewer_loop_head_evidence_full_sha "$_sha_39"; printf '%s' $?)"
+run_test "1648_full_sha_rejects_41" "1" "$(reviewer_loop_head_evidence_full_sha "$_sha_41"; printf '%s' $?)"
+run_test "1648_full_sha_rejects_abbrev" "1" "$(reviewer_loop_head_evidence_full_sha "$_sha_abbrev"; printf '%s' $?)"
+run_test "1648_full_sha_rejects_non_hex" "1" "$(reviewer_loop_head_evidence_full_sha "$_sha_non_hex"; printf '%s' $?)"
+run_test "1648_full_sha_rejects_empty" "1" "$(reviewer_loop_head_evidence_full_sha ""; printf '%s' $?)"
+
+_1648_render="$(reviewer_loop_head_evidence_render "$_sha_a" "local-ai-reviewer:$_sha_a" "pr-agent:$_sha_b")"
+run_contains "1648_render_has_head_evidence_block" "**Head evidence:**" "$_1648_render"
+run_contains "1648_render_current_row" "local-ai-reviewer: reviewed \`${_sha_a}\` — current" "$_1648_render"
+run_contains "1648_render_mismatch_row" "pr-agent: reviewed \`${_sha_b}\` — not-current (head_mismatch)" "$_1648_render"
+
+_1648_json="$(reviewer_loop_head_evidence_json "$_sha_a" "local-ai-reviewer:$_sha_a")"
+run_test "1648_json_state_current" "current" \
+  "$(printf '%s\n' "$_1648_json" | jq -r '.[0].state')"
+
+_1648_legacy_payload='{"schema":"reviewer_loop_history.v1","entries":[{"iteration":1,"head_sha":"abc","result":"clean"}]}'
+run_test "1648_legacy_payload_parses" "1" \
+  "$(printf '%s\n' "$_1648_legacy_payload" | jq -e '.entries[0].reviewed_heads // [] | length >= 0' >/dev/null && echo 1 || echo 0)"
+
+# Check 0.6b gate (Protocol 91 lines 2758-2771) — planted-violation proof P2/P3
+check_066b_local_ai_head() {
+  if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]; then
+    return 0
+  elif [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
+    return 12
+  elif [ "$LOCAL_AI_CONFIGURED" = "0" ]; then
+    return 0
+  elif [ "${LOCAL_AI_HEAD_CURRENT:-__unset__}" != "1" ]; then
+    return 12
+  else
+    return 0
+  fi
+}
+
+unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD REVIEWER_LOOP_SKIPPED_NO_PLATFORMS 2>/dev/null || true
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_unset_configured" "12" "$_1648_check_rc"
+
+export REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true
+unset LOCAL_AI_CONFIGURED
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_skipped_no_platforms_pass" "0" "$_1648_check_rc"
+unset REVIEWER_LOOP_SKIPPED_NO_PLATFORMS
+
+export LOCAL_AI_CONFIGURED=1
+export LOCAL_AI_HEAD_CURRENT=
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_missing_head_current" "12" "$_1648_check_rc"
+
+export LOCAL_AI_HEAD_CURRENT=0
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_not_current" "12" "$_1648_check_rc"
+
+export LOCAL_AI_HEAD_CURRENT=1
+export LOCAL_AI_REVIEWED_HEAD="$_sha_a"
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_current_pass" "0" "$_1648_check_rc"
+
+export LOCAL_AI_CONFIGURED=0
+unset LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD 2>/dev/null || true
+_1648_check_rc=0
+check_066b_local_ai_head || _1648_check_rc=$?
+run_test "1648_check_066b_not_configured_pass" "0" "$_1648_check_rc"
+
+unset LOCAL_AI_CONFIGURED LOCAL_AI_HEAD_CURRENT LOCAL_AI_REVIEWED_HEAD 2>/dev/null || true
+unset -f check_066b_local_ai_head 2>/dev/null || true
+unset _1648_check_rc
+
+_1648_carry_capture=$'POST_CLEAN_HEAD_SHA=abc\nLOCAL_AI_CONFIGURED=1\nLOCAL_AI_REVIEWED_HEAD=def0123456789012345678901234567890abcd\nLOCAL_AI_HEAD_CURRENT=1\n'
+_1648_carry_out="$(mktemp)"
+printf '%s\n' "$_1648_carry_capture" > "$_1648_carry_out"
+for settle_var in $(env | grep -oE '^(POST_CLEAN|LOCAL_AI)_[A-Z_]*' || true); do
+  unset "$settle_var"
+done
+settle_kv="$(mktemp)"
+grep -E '^(POST_CLEAN|LOCAL_AI)_[A-Z_]+=[A-Za-z0-9:_-]*$' "$_1648_carry_out" > "$settle_kv" || true
+while IFS='=' read -r key value; do
+  export "$key=$value"
+done < "$settle_kv"
+run_test "1648_carry_forward_configured" "1" "${LOCAL_AI_CONFIGURED:-}"
+run_test "1648_carry_forward_head_current" "1" "${LOCAL_AI_HEAD_CURRENT:-}"
+for settle_var in $(env | grep -oE '^(POST_CLEAN|LOCAL_AI)_[A-Z_]*' || true); do
+  unset "$settle_var"
+done
+run_test "1648_carry_forward_clears" "empty" \
+  "$([ -z "${LOCAL_AI_CONFIGURED:-}" ] && [ -z "${LOCAL_AI_HEAD_CURRENT:-}" ] && printf empty || printf present)"
+rm -f "$_1648_carry_out" "$settle_kv"
+
+unset _sha_a _sha_b _sha_a_upper _sha_abbrev _sha_39 _sha_41 _sha_non_hex _unknown_head
+unset _1648_render _1648_json _1648_legacy_payload _1648_carry_capture
 
 # ---------------------------------------------------------------------------
 # Summary

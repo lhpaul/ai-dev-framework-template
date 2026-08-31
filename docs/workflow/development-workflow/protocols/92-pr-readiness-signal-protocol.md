@@ -88,6 +88,17 @@ Apply this label when **all** of the following are true:
       only the adjacency re-query, timed by `POST_CLEAN_SETTLED_AT`. The loop's
       `--help` lists the per-platform defaults; the protocols do not repeat
       them.
+- [ ] **When Step 7 returned `clean` and `local-ai-reviewer` is in the resolved
+      platform list**, the reviewer loop reported `LOCAL_AI_HEAD_CURRENT=1`.
+      Applicability is read from `LOCAL_AI_CONFIGURED`: `0` means the platform
+      is not configured and this condition does not apply; when Step 7 was
+      skipped because no review platforms are configured
+      (`REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`), this condition does not
+      apply either; an unset `LOCAL_AI_CONFIGURED` in any other case means the
+      loop's telemetry never reached the checklist and is itself blocking. Both
+      `LOCAL_AI_HEAD_CURRENT=0` and an empty `LOCAL_AI_HEAD_CURRENT` when
+      `LOCAL_AI_CONFIGURED=1` block the label — missing evidence is not a pass.
+      Re-run Step 7 on the live head before applying `ready-for-human-review`.
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 - [ ] For `spec/*` and `implementation-plan/*` PRs,

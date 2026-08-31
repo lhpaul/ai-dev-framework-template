@@ -90,6 +90,26 @@ JSON
 {"number":17,"baseRefName":"develop","headRefName":"feature/1202-self-check","headRefOid":"0000000000000000000000000000000000000000","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"files":[{"path":"docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],"statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],"comments":[{"body":"Automated Reviewer Loop Summary\n\nResult: clean"}]}
 JSON
       ;;
+    local_head_live)
+      cat <<'JSON'
+{"number":17,"baseRefName":"develop","headRefName":"feature/1202-self-check","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"files":[{"path":"docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],"statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],"comments":[{"body":"Automated Reviewer Loop Summary\n\nResult: clean"}]}
+JSON
+      ;;
+    local_head_dynamic)
+      jq -n \
+        --arg headOid "${MOCK_GH_HEAD_OID:?MOCK_GH_HEAD_OID must be set for local_head_dynamic}" \
+        '{
+          number: 17,
+          baseRefName: "develop",
+          headRefName: "feature/1202-self-check",
+          headRefOid: $headOid,
+          isDraft: false,
+          labels: [{name: "ready-for-human-review"}],
+          files: [{path: "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],
+          statusCheckRollup: [{name: "ci", status: "COMPLETED", conclusion: "SUCCESS"}],
+          comments: [{body: "Automated Reviewer Loop Summary\n\nResult: clean"}]
+        }'
+      ;;
     invalid_json)
       printf '{not json]\n'
       ;;
@@ -126,9 +146,52 @@ JSON
 JSON
       ;;
     bold_clean_summary)
+      _history_json="$(jq -nc --arg headOid "${MOCK_GH_HEAD_OID:?MOCK_GH_HEAD_OID must be set for bold_clean_summary}" \
+        '{schema:"reviewer_loop_history.v1",entries:[{iteration:1,reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$headOid,state:"current",reason:""}]}]}')"
+      _body_text="### Automated Reviewer Loop Summary
+
+**Result:** clean — no blocking feedback
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+${_history_json}
+\`\`\`"
+      jq -n --arg body "$_body_text" \
+        '{body:$body, created_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'
+      ;;
+    local_head_verified)
       cat <<'JSON'
-{"body":"### Automated Reviewer Loop Summary\n\n**Result:** clean — no blocking feedback","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+{"body":"Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"reviewer_loop_history.v1\",\"entries\":[{\"iteration\":1,\"reviewed_heads\":[{\"platform\":\"local-ai-reviewer\",\"reviewed_head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state\":\"current\",\"reason\":\"\"}]}]}\n```","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
 JSON
+      ;;
+    local_head_stale)
+      cat <<'JSON'
+{"body":"Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"reviewer_loop_history.v1\",\"entries\":[{\"iteration\":1,\"reviewed_heads\":[{\"platform\":\"local-ai-reviewer\",\"reviewed_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"state\":\"not-current\",\"reason\":\"head_mismatch\"}]}]}\n```","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+JSON
+      ;;
+    local_head_pre_field)
+      cat <<'JSON'
+{"body":"Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"reviewer_loop_history.v1\",\"entries\":[{\"iteration\":1,\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"result\":\"clean\"}]}\n```","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+JSON
+      ;;
+    local_head_unreadable)
+      cat <<'JSON'
+{"body":"Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{not-json","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+JSON
+      ;;
+    local_head_dynamic)
+      _history_json="$(jq -nc --arg headOid "${MOCK_GH_HEAD_OID:?MOCK_GH_HEAD_OID must be set for local_head_dynamic}" \
+        '{schema:"reviewer_loop_history.v1",entries:[{iteration:1,reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$headOid,state:"current",reason:""}]}]}')"
+      _body_text="Automated Reviewer Loop Summary
+
+Result: clean
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+${_history_json}
+\`\`\`"
+      jq -n --arg body "$_body_text" \
+        '{body:$body, created_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'
       ;;
     *)
       cat <<'JSON'
@@ -271,6 +334,15 @@ body() {
   tail -n +2 <<< "$1"
 }
 
+bind_local_head_fixture() {
+  local repo="$1"
+  local head_oid
+  head_oid="$(git -C "$repo" rev-parse HEAD)"
+  export MOCK_GH_HEAD_OID="$head_oid"
+  export MOCK_GH_PR_MODE="local_head_dynamic"
+  export MOCK_GH_SUMMARY_MODE="local_head_dynamic"
+}
+
 make_repo() {
   local name="$1"
   local repo="$TMP_ROOT/$name/repo"
@@ -290,6 +362,7 @@ echo ""
 echo "=== item completion self-check ==="
 
 repo="$(make_repo happy)"
+bind_local_head_fixture "$repo"
 gh_log="$TMP_ROOT/target-repo-gh.log"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 export WORKFLOW_TARGET_GITHUB_REPO="example/product-repo"
@@ -306,7 +379,7 @@ out="$(self_check_output \
   --forbid-label needs-fixes \
   --require-review-summary true \
   --expected-tracker-status "Development in Review")"
-unset WORKFLOW_TARGET_GITHUB_REPO MOCK_GH_LOG
+unset WORKFLOW_TARGET_GITHUB_REPO MOCK_GH_LOG MOCK_GH_HEAD_OID MOCK_GH_PR_MODE MOCK_GH_SUMMARY_MODE
 run_test "happy_exit_zero" "0" "$(status_code "$out")"
 run_contains "happy_heading" "## Ground-Truth Completion Verification" "$(body "$out")"
 run_contains "happy_result" "- Result: verified" "$(body "$out")"
@@ -688,6 +761,7 @@ run_test "stale_non_clean_summary_exit_one" "1" "$(status_code "$out")"
 run_contains "stale_non_clean_summary_discrepancy" "| pull_request.review_summary | discrepancy | summary present but not clean/skipped |" "$(body "$out")"
 
 repo="$(make_repo bold-clean-summary)"
+bind_local_head_fixture "$repo"
 export MOCK_GH_SUMMARY_MODE=bold_clean_summary
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
@@ -699,7 +773,7 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-summary true)"
-unset MOCK_GH_SUMMARY_MODE
+unset MOCK_GH_SUMMARY_MODE MOCK_GH_PR_MODE MOCK_GH_HEAD_OID
 run_test "bold_clean_summary_exit_zero" "0" "$(status_code "$out")"
 run_contains "bold_clean_summary_verified" "| pull_request.review_summary | verified | clean_or_skipped |" "$(body "$out")"
 
@@ -718,6 +792,127 @@ out="$(self_check_output \
 unset MOCK_GH_SUMMARY_MODE
 run_test "optional_summary_fetch_failed_exit_zero" "0" "$(status_code "$out")"
 run_contains "optional_summary_fetch_failed_optional" "| pull_request.review_summary | unavailable_optional |" "$(body "$out")"
+
+local_ai_config="$TMP_ROOT/local-ai-workflow.yaml"
+cat > "$local_ai_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - local-ai-reviewer
+  on_ready:
+    github: []
+YAML
+
+no_bugbot_config="$TMP_ROOT/no-bugbot-workflow.yaml"
+cat > "$no_bugbot_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - pr-agent
+  on_ready:
+    github: []
+YAML
+
+repo="$(make_repo local-head-verified)"
+bind_local_head_fixture "$repo"
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false)"
+run_test "local_head_verified_exit_zero" "0" "$(status_code "$out")"
+run_contains "local_head_verified_row" "| pull_request.local_reviewer_head | verified |" "$(body "$out")"
+
+repo="$(make_repo local-head-stale)"
+export MOCK_GH_PR_MODE=local_head_live
+export MOCK_GH_SUMMARY_MODE=local_head_stale
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false)"
+run_test "local_head_stale_exit_one" "1" "$(status_code "$out")"
+run_contains "local_head_stale_discrepancy" "| pull_request.local_reviewer_head | discrepancy |" "$(body "$out")"
+
+repo="$(make_repo local-head-pre-field)"
+export MOCK_GH_PR_MODE=local_head_live
+export MOCK_GH_SUMMARY_MODE=local_head_pre_field
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false)"
+run_test "local_head_pre_field_exit_one" "1" "$(status_code "$out")"
+run_contains "local_head_pre_field_unavailable" "| pull_request.local_reviewer_head | unavailable_required | pre-field ledger entry |" "$(body "$out")"
+
+repo="$(make_repo local-head-unreadable)"
+export MOCK_GH_PR_MODE=local_head_live
+export MOCK_GH_SUMMARY_MODE=local_head_unreadable
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false)"
+run_test "local_head_unreadable_exit_one" "1" "$(status_code "$out")"
+run_contains "local_head_unreadable_unavailable" "| pull_request.local_reviewer_head | unavailable_required | ledger unreadable |" "$(body "$out")"
+
+repo="$(make_repo local-head-not-configured)"
+export MOCK_GH_PR_MODE=local_head_live
+export MOCK_GH_SUMMARY_MODE=local_head_verified
+export AI_DEV_WORKFLOW_CONFIG_FILE="$no_bugbot_config"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false)"
+run_contains "local_head_not_configured_optional" "| pull_request.local_reviewer_head | unavailable_optional | local-ai-reviewer not configured |" "$(body "$out")"
+
+repo="$(make_repo local-head-not-required)"
+export MOCK_GH_PR_MODE=local_head_live
+export MOCK_GH_SUMMARY_MODE=local_head_stale
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary false \
+  --require-ci-green false)"
+run_contains "local_head_not_required_optional" "| pull_request.local_reviewer_head | unavailable_optional | not claimed |" "$(body "$out")"
+unset MOCK_GH_PR_MODE MOCK_GH_SUMMARY_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 
 repo="$(make_repo unconfigured-reviewer-check-failure)"
 no_bugbot_config="$TMP_ROOT/no-bugbot-workflow.yaml"
@@ -761,6 +956,7 @@ run_test "non_clean_summary_optional_exit_zero" "0" "$(status_code "$out")"
 run_contains "non_clean_summary_observed" "| pull_request.review_summary | verified | non_clean_summary_observed |" "$(body "$out")"
 
 repo="$(make_repo addressed-thread)"
+bind_local_head_fixture "$repo"
 export MOCK_GH_THREAD_MODE=addressed
 export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
@@ -773,11 +969,12 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE MOCK_GH_HEAD_OID MOCK_GH_PR_MODE MOCK_GH_SUMMARY_MODE
 run_test "addressed_thread_exit_zero" "0" "$(status_code "$out")"
 run_contains "addressed_thread_verified" "| pull_request.review_threads | verified | unresolved=0 |" "$(body "$out")"
 
 repo="$(make_repo human-thread)"
+bind_local_head_fixture "$repo"
 export MOCK_GH_THREAD_MODE=human
 export BUGBOT_BOT_LOGIN=cursor
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
@@ -790,7 +987,7 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE BUGBOT_BOT_LOGIN
+unset MOCK_GH_THREAD_MODE BUGBOT_BOT_LOGIN MOCK_GH_HEAD_OID MOCK_GH_PR_MODE MOCK_GH_SUMMARY_MODE
 run_test "human_thread_exit_zero" "0" "$(status_code "$out")"
 run_contains "human_thread_ignored" "| pull_request.review_threads | verified | unresolved=0 |" "$(body "$out")"
 
