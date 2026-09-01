@@ -503,6 +503,9 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
   LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable
+    (head_moved_during_pass: live PR head != loop_head_sha on a proceed path,
+    including not_required/no_local_reviewer when no pass ran, and after a
+    clean pass; aggregate REASON remains head_moved_during_run)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
   POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
     compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell

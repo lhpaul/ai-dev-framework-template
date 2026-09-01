@@ -324,7 +324,7 @@ local reviewer still owes a pass when evidence is stale.
 | `no_evidence` | Configured local reviewer has not reported on this head |
 | `no_local_reviewer` | Repository has no local reviewer configured; gate proceeds |
 | `failed_for_head` | A prior pass failed on this head; refusing without dispatch |
-| `head_moved_during_pass` | Pass returned clean but PR head moved before the gate |
+| `head_moved_during_pass` | Live PR head does not match `loop_head_sha` on a proceed path. This includes a clean second pass whose head then moved, and also `not_required` / `no_local_reviewer` paths that never dispatched a pass because the live-head re-read failed the equality test. The cycle still uses aggregate `REASON=head_moved_during_run`. |
 | `local_pass_unavailable` | Pass skipped, escalated, unparseable, or clean without current-head `REVIEWED_HEAD` evidence |
 
 After a pass returns `RESULT=clean`, the guard verifies the pass output's
@@ -332,8 +332,11 @@ After a pass returns `RESULT=clean`, the guard verifies the pass output's
 `reviewer_loop_head_evidence_classify`) before proceeding; missing or stale head
 evidence maps to `local_pass_unavailable`. The check reads the just-dispatched
 pass output, not the first `platform_reviewed_heads` entry from earlier in the
-same invocation. A follow-up `gh pr view` head re-read must succeed and match
-`loop_head_sha`; an empty or unreadable snapshot maps to `local_pass_unavailable`.
+same invocation. Every proceed path — including `not_required` and
+`no_local_reviewer`, which do not dispatch a pass — then re-reads the live PR
+head with `gh pr view` and compares it to `loop_head_sha`. An empty or
+unreadable snapshot maps to `local_pass_unavailable`; a mismatch maps to
+`head_moved_during_pass` with aggregate `REASON=head_moved_during_run`.
 
 Telemetry: `LOCAL_SECOND_PASS=0|1` and `LOCAL_SECOND_PASS_REASON=<reason>`.
 When a pass fails on an unchanged head, the ledger entry records
