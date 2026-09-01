@@ -1064,6 +1064,149 @@ run_test "1653_s14_evidence_stage" "implementation" "$(jq -r '.review_stage.stag
 run_test "1653_s14_evidence_source" "branch+files" "$(jq -r '.review_stage.source' "$EVIDENCE_FILE")"
 run_test "1653_s14_evidence_schema" "local_ai_reviewer_evidence.v1" "$(jq -r '.schema_version' "$EVIDENCE_FILE")"
 
+# ---------------------------------------------------------------------------
+# #1654 — review doctrine supply
+# ---------------------------------------------------------------------------
+
+_1654_doctrine_root="$(mktemp -d)"
+_1654_install_doctrine() {
+  local root="$1"
+  local src="$2"
+  mkdir -p "$root/docs/workflow/development-workflow"
+  cp "$src" "$root/docs/workflow/development-workflow/review-doctrine.md"
+}
+
+_1654_run_supply() {
+  local root="$1"
+  (cd "$root" && reviewer_doctrine_supply)
+}
+
+_1654_independent_version() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print substr($1,1,12)}'
+  else
+    shasum -a 256 "$file" | awk '{print substr($1,1,12)}'
+  fi
+}
+
+# Scenario 1: four states, all four values
+_1654_install_doctrine "$_1654_doctrine_root" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+_1654_supplied="$(_1654_run_supply "$_1654_doctrine_root")"
+run_test "1654_s1_supplied_state" "supplied" "$(printf '%s\n' "$_1654_supplied" | jq -r '.state')"
+run_test "1654_s1_supplied_count" "5" "$(printf '%s\n' "$_1654_supplied" | jq -r '.pattern_count')"
+run_test "1654_s1_supplied_version_len" "12" "$(printf '%s\n' "$_1654_supplied" | jq -r '.version | length')"
+run_test "1654_s1_supplied_text_nonempty" "true" "$(printf '%s\n' "$_1654_supplied" | jq -r '.text | length > 0')"
+
+_1654_absent_root="$(mktemp -d)"
+_1654_absent="$(_1654_run_supply "$_1654_absent_root")"
+run_test "1654_s1_absent_state" "absent" "$(printf '%s\n' "$_1654_absent" | jq -r '.state')"
+run_test "1654_s1_absent_count" "0" "$(printf '%s\n' "$_1654_absent" | jq -r '.pattern_count')"
+run_test "1654_s1_absent_version" "" "$(printf '%s\n' "$_1654_absent" | jq -r '.version')"
+
+_1654_unreadable_root="$(mktemp -d)"
+mkdir -p "$_1654_unreadable_root/docs/workflow/development-workflow"
+printf 'secret\n' > "$_1654_unreadable_root/docs/workflow/development-workflow/review-doctrine.md"
+chmod 000 "$_1654_unreadable_root/docs/workflow/development-workflow/review-doctrine.md"
+_1654_unreadable="$(_1654_run_supply "$_1654_unreadable_root")"
+chmod 644 "$_1654_unreadable_root/docs/workflow/development-workflow/review-doctrine.md"
+run_test "1654_s1_unreadable_state" "unreadable" "$(printf '%s\n' "$_1654_unreadable" | jq -r '.state')"
+
+_1654_oversized_root="$(mktemp -d)"
+_1654_oversized_file="$_1654_oversized_root/docs/workflow/development-workflow/review-doctrine.md"
+mkdir -p "$(dirname "$_1654_oversized_file")"
+python3 - <<'PY' "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md" "$_1654_oversized_file"
+import pathlib, sys
+body = pathlib.Path(sys.argv[1]).read_bytes()
+while len(body) <= 12000:
+    body += b"x"
+pathlib.Path(sys.argv[2]).write_bytes(body[:12001])
+PY
+_1654_oversized="$(_1654_run_supply "$_1654_oversized_root")"
+run_test "1654_s2_oversized_state" "oversized" "$(printf '%s\n' "$_1654_oversized" | jq -r '.state')"
+run_test "1654_s2_oversized_text_empty" "" "$(printf '%s\n' "$_1654_oversized" | jq -r '.text')"
+run_test "1654_s2_oversized_version_present" "true" "$(printf '%s\n' "$_1654_oversized" | jq -r '.version | length > 0')"
+
+# Scenario 4: empty catalogue
+_1654_empty_root="$(mktemp -d)"
+_1654_install_doctrine "$_1654_empty_root" "$REPO_ROOT/scripts/development-workflow/tests/fixtures/review-doctrine/empty.md"
+_1654_empty="$(_1654_run_supply "$_1654_empty_root")"
+run_test "1654_s4_empty_supplied" "supplied" "$(printf '%s\n' "$_1654_empty" | jq -r '.state')"
+run_test "1654_s4_empty_count" "0" "$(printf '%s\n' "$_1654_empty" | jq -r '.pattern_count')"
+
+# Scenario 5: version hash
+_1654_expected_version="$(_1654_independent_version "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md")"
+run_test "1654_s5_version_matches_file" "$_1654_expected_version" "$(printf '%s\n' "$_1654_supplied" | jq -r '.version')"
+
+# Scenario 7/7a: bundle fields and byte-identical text
+reset_mocks
+BUNDLE_DUMP="$(mktemp)"
+cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+if [ -n "${MOCK_BUNDLE_DUMP:-}" ]; then
+  cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+fi
+printf '%s\n' '{"result":"clean","findings":[]}'
+MOCK_REVIEWER
+chmod +x "$MOCK_BIN/local-reviewer-mock"
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+MOCK_PR_HEAD_BRANCH="feature/1654-codex-patterns-to-local-doctrine"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export LOCAL_AI_REVIEWER_COMMAND MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+_1654_install_doctrine "$VALID_REPO_ROOT" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+for _1654_field in schema_version pr_number owner repo base_branch head_branch reviewed_head changed_files pr_body diff_name_status diff_stat review_contract graph_context review_stage review_stage_source review_checklists review_doctrine review_doctrine_state review_doctrine_pattern_count review_doctrine_version; do
+  run_test "1654_s7_field_${_1654_field}" "yes" "$(jq -e "has(\"${_1654_field}\")" "$BUNDLE_DUMP" >/dev/null && echo yes || echo no)"
+done
+run_test "1654_s7a_bytes_match" "0" "$(cmp -s "$VALID_REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md" <(jq -r '.review_doctrine' "$BUNDLE_DUMP") && echo 0 || echo 1)"
+run_test "1654_s8_state_kv" "REVIEW_DOCTRINE_STATE=supplied" "$(line_for REVIEW_DOCTRINE_STATE)"
+run_test "1654_s8_count_kv" "REVIEW_DOCTRINE_PATTERN_COUNT=5" "$(line_for REVIEW_DOCTRINE_PATTERN_COUNT)"
+run_test "1654_s8_no_text_kv" "0" "$(grep -c '^REVIEW_DOCTRINE=' "$OUTPUT_FILE" 2>/dev/null || true)"
+_1654_emit_out="$(bash -c 'HARNESS_MODE=1 source "$1"; emit_prefixed_platform_output 1 "$(cat "$2")"' bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$OUTPUT_FILE")"
+run_test "1654_s8_platform_state" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_STATE=' || true)"
+run_test "1654_s8_platform_count" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_PATTERN_COUNT=' || true)"
+run_test "1654_s8_platform_version" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_VERSION=' || true)"
+run_test "1654_s8_no_fabricated" "0" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_[^=]*Shape' || true)"
+rm -f "$BUNDLE_DUMP"
+
+# Scenario 8a: evidence object
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
+MOCK_PR_HEAD_BRANCH="feature/1654-codex-patterns-to-local-doctrine"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+set_mock_stdout '{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA MOCK_LOCAL_REVIEWER_STDOUT
+_1654_install_doctrine "$VALID_REPO_ROOT" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "1654_s8a_evidence_state" "supplied" "$(jq -r '.review_doctrine.state' "$EVIDENCE_FILE")"
+run_test "1654_s8a_evidence_count_type" "number" "$(jq -r '.review_doctrine.pattern_count | type' "$EVIDENCE_FILE")"
+run_test "1654_s8a_evidence_version_type" "string" "$(jq -r '.review_doctrine.version | type' "$EVIDENCE_FILE")"
+
+# Scenario 9: every stage gets doctrine
+for _1654_branch in spec/foo implementation-plan/foo feature/foo refactor/foo fix/foo hotfix/foo main develop; do
+  reset_mocks
+  BUNDLE_DUMP="$(mktemp)"
+  cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+printf '%s\n' '{"result":"clean","findings":[]}'
+MOCK_REVIEWER
+  chmod +x "$MOCK_BIN/local-reviewer-mock"
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+  MOCK_PR_HEAD_BRANCH="$_1654_branch"
+  MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+  export LOCAL_AI_REVIEWER_COMMAND MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+  _1654_install_doctrine "$VALID_REPO_ROOT" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+  run_test "1654_s9_${_1654_branch//\//_}_state" "supplied" "$(jq -r '.review_doctrine_state' "$BUNDLE_DUMP")"
+  rm -f "$BUNDLE_DUMP"
+done
+
+rm -rf "$_1654_doctrine_root" "$_1654_absent_root" "$_1654_unreadable_root" "$_1654_oversized_root" "$_1654_empty_root"
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
   exit 1
