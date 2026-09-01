@@ -17960,6 +17960,34 @@ run_test "1656_s4_guard_proceed" "0" "$_st"
 run_test "1656_s4_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
 run_test "1656_s4_guard_reason" "not_required" "$local_second_pass_reason"
 
+# not_required must still re-read the live head before proceeding to ready-phase
+_1656_moved_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+_1656_stub_pr_head="$_1656_moved_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4a_not_required_head_moved" "1" "$_st"
+run_test "1656_s4a_not_required_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4a_not_required_reason" "head_moved_during_pass" "$local_second_pass_reason"
+run_test "1656_s4a_not_required_aggregate" "head_moved_during_run" "$aggregate_reason"
+
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+_1656_stub_pr_head="UNAVAILABLE"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4b_not_required_unread_head" "1" "$_st"
+run_test "1656_s4b_not_required_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4b_not_required_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+
+_1656_reset_guard_globals
+repo_review_platforms=(codex-github)
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+_1656_stub_pr_head="$_1656_moved_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4c_no_local_head_moved" "1" "$_st"
+run_test "1656_s4c_no_local_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4c_no_local_reason" "head_moved_during_pass" "$local_second_pass_reason"
+
 # Scenario 8c: failed head refusal — no dispatch, escalate (P1/P9 restored)
 _1656_reset_guard_globals
 _1656_guard_hist_payload="$_1656_guard_hist_failed"

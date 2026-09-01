@@ -39,6 +39,9 @@ PASS: 1656_s13_guard_noop
 PASS: 1656_s13_guard_no_dispatch
 PASS: 1656_s4_guard_proceed
 PASS: 1656_s4_guard_no_dispatch
+PASS: 1656_s4a_not_required_head_moved
+PASS: 1656_s4b_not_required_unread_head
+PASS: 1656_s4c_no_local_head_moved
 PASS: 1656_s5b_output_head_current
 PASS: 1656_s5a_extraction_byte_identical
 PASS: 1656_s5a_no_second_pass_keys
@@ -66,9 +69,9 @@ current PR head unless a test path is given.
 
 ## P1 — per-head dispatch cap (loop/cost)
 
-- **Production**: `:8363-8371` (`failed_for_head` refusal without dispatch); ledger write at `:8430`
-- **Plant**: omit `:8430` on a failed pass so `:8363` cannot refuse on the next invocation
-- **Fail when planted**: second invocation reaches `:8376` (`run_platform_review`) instead of `:8363`
+- **Production**: `:8401-8409` (`failed_for_head` refusal without dispatch); ledger write at `:8451`
+- **Plant**: omit `:8451` on a failed pass so `:8401` cannot refuse on the next invocation
+- **Fail when planted**: second invocation reaches `:8414` (`run_platform_review`) instead of `:8401`
 - **Pass restored**: `1656_s8c_failed_head_count`, `1656_s8c_guard_refuse`, `1656_s8c_guard_no_dispatch` (demonstrated above)
 
 ## P2 — silent history must not read as satisfied (fail-open)
@@ -80,50 +83,50 @@ current PR head unless a test path is given.
 
 ## P3 — pass must not increment caps (loop/cost)
 
-- **Production**: `:8374-8445` (guard dispatch and refusal; no `cycle_count` / `lifetime_cycle_count` mutation)
-- **Plant**: add `cycle_count=$((cycle_count + 1))` at `:8374`
-- **Fail when planted**: `1656_s9_dispatch_cycle_count` (`:17973-17974`) reads `3` instead of `2`
+- **Production**: `:8412-8465` (guard dispatch and refusal; no `cycle_count` / `lifetime_cycle_count` mutation)
+- **Plant**: add `cycle_count=$((cycle_count + 1))` at `:8412`
+- **Fail when planted**: `1656_s9_dispatch_cycle_count` (`:18102`) reads `3` instead of `2`
 - **Pass restored**: `1656_s9_dispatch_cycle_count`, `1656_s10_refuse_cycle_count`
 
 ## P4 — ready gate after pass result (fail-open)
 
-- **Production**: `:11768` (`reviewer_loop_second_local_pass_before_ready_gate` before ready transition)
-- **Plant**: call `ensure_pr_ready_for_ready_phase` before `:8426-8445` gate handling
-- **Fail when planted**: `1656_s7_phase_not_started` (`:17903`) would read `1`
+- **Production**: `:11789` (`reviewer_loop_second_local_pass_before_ready_gate` before ready transition)
+- **Plant**: call `ensure_pr_ready_for_ready_phase` before `:8445-8465` gate handling
+- **Fail when planted**: `1656_s7_phase_not_started` (`:18031`) would read `1`
 - **Pass restored**: all `1656_s7*_phase_not_started` assert `0`
 
 ## P5 — no ready-phase → no guard (loop/cost)
 
-- **Production**: `:8337-8338` (`phase_after_clean_enabled` early `return 0`)
-- **Plant**: delete `:8337-8339`
-- **Fail when planted**: `1656_s13_guard_no_dispatch` (`:18100-18101`) reads `>0`
+- **Production**: `:8372-8373` (`phase_after_clean_enabled` early `return 0`)
+- **Plant**: delete `:8372-8374`
+- **Fail when planted**: `1656_s13_guard_no_dispatch` (`:18129`) reads `>0`
 - **Pass restored**: `1656_s13_guard_noop`, `1656_s13_guard_no_dispatch`
 
 ## P6 — failed pass must refuse, not suppress only (fail-open)
 
-- **Production**: `:8363-8371` (`failed_for_head` escalate refusal without dispatch)
-- **Plant**: set `local_second_pass=0` at `:8364` without `:8366-8371` aggregate refusal
-- **Fail when planted**: `1656_s8c_guard_escalate` (`:17969`) does not read `escalate`
+- **Production**: `:8401-8409` (`failed_for_head` escalate refusal without dispatch)
+- **Plant**: set `local_second_pass=0` at `:8402` without `:8404-8409` aggregate refusal
+- **Fail when planted**: `1656_s8c_guard_escalate` (`:17997`) does not read `escalate`
 - **Pass restored**: `1656_s8c_guard_refuse`, `1656_s8c_guard_escalate`, `1656_s8c_guard_failed_reason`
 
 ## P7 — compose current round before selector (fail-open)
 
-- **Production**: `:8345` (`reviewer_loop_compose_current_round_payload`) feeding `:8346`
-- **Plant**: pass `_sl_prior_payload` directly to `:8346` (drop `:8345`)
+- **Production**: `:8380` (`reviewer_loop_compose_current_round_payload`) feeding `:8381`
+- **Plant**: pass `_sl_prior_payload` directly to `:8381` (drop `:8380`)
 - **Fail when planted**: `1656_s4_guard_no_dispatch` (`:17960`) reads `>0`
 - **Pass restored**: `1656_s4_guard_proceed`, `1656_s4_guard_no_dispatch`, `1656_s5b_output_head_current`
 
 ## P8 — shared processor extraction (integration)
 
-- **Production**: `:8451-8528` (`reviewer_loop_process_platform_output`)
+- **Production**: `:8472-8667` (`reviewer_loop_process_platform_output`)
 - **Plant**: inline duplicate parser omitting `PLATFORM_*` keys
 - **Fail when planted**: `1656_s5a_extraction_byte_identical` (`:17775`) diverges
 - **Pass restored**: `1656_s5a_extraction_byte_identical`, `1656_s5a_no_second_pass_keys`, `1656_s5a_platform_result`
 
 ## P9 — failed head in ledger, not shell (integration)
 
-- **Production**: `:8430` (`local_second_pass_failed_head_record="$loop_head_sha"`) read back at `:8363`
-- **Plant**: in-memory flag instead of `:8430` ledger write
+- **Production**: `:8451` (`local_second_pass_failed_head_record="$loop_head_sha"`) read back at `:8401`
+- **Plant**: in-memory flag instead of `:8451` ledger write
 - **Fail when planted**: `1656_s8c_guard_no_dispatch` fails on second invocation
 - **Pass restored**: `1656_s8c_guard_refuse`, `1656_s8c_failed_head_count` (`:17726-17727`)
 
@@ -136,35 +139,35 @@ current PR head unless a test path is given.
 
 ## P11 — repo configured list, not invocation filter (fail-open)
 
-- **Production**: `:8344` (`reviewer_loop_repo_configured_platforms`) passed to `:8346`
-- **Plant**: pass invocation `platforms[]` to `:8346` instead of `:8344` output
+- **Production**: `:8379` (`reviewer_loop_repo_configured_platforms`) passed to `:8381`
+- **Plant**: pass invocation `platforms[]` to `:8381` instead of `:8379` output
 - **Fail when planted**: `1656_s2b_repo_configured` (`:17741-17742`) reads `no_local_reviewer`
 - **Pass restored**: `1656_s2b_repo_configured`, `1656_s2c_local_ai_configured`
 
 ## P12 — failed pass refusal is `escalate` (loop/cost)
 
-- **Production**: `:8366-8367` (`aggregate_result=escalate`, `aggregate_reason=failed_for_head`)
-- **Plant**: map `:8363-8371` refusal to `needs_fixes`
+- **Production**: `:8404-8405` (`aggregate_result=escalate`, `aggregate_reason=failed_for_head`)
+- **Plant**: map `:8401-8409` refusal to `needs_fixes`
 - **Fail when planted**: lifetime/per-run caps stall (`1656_s10_refuse_*`)
 - **Pass restored**: `1656_s8c_guard_escalate`, `1656_s10_refuse_cycle_count`, `1656_s10_refuse_lifetime_count`
 
-## P13 — head re-read after clean pass (fail-open)
+## P13 — head re-read before every proceed path (fail-open)
 
-- **Production**: `:8403-8414` (`gh pr view` head equality after clean pass)
-- **Plant**: skip `:8402-8421` re-read block
-- **Fail when planted**: `1656_s3a_guard_blocked` (`:18051`) returns `0`
-- **Pass restored**: `1656_s3a_guard_blocked`, `1656_s3d_guard_unavailable`, `1656_s3c_guard_no_reviewed_head`
+- **Production**: `:8331-8357` (`reviewer_loop_second_local_pass_confirm_live_head`); called for `not_required` / `no_local_reviewer` at `:8384-8388` and after a clean pass at `:8439-8441`
+- **Plant**: skip `:8384-8388` and return 0 on `not_required` without the live-head re-read
+- **Fail when planted**: `1656_s4a_not_required_head_moved` (`:17969`) returns `0`
+- **Pass restored**: `1656_s4a_not_required_head_moved`, `1656_s4b_not_required_unread_head`, `1656_s4c_no_local_head_moved`, `1656_s3a_guard_blocked`, `1656_s3d_guard_unavailable`
 
 ## P14 — reuse `head_moved_during_run` (integration)
 
-- **Production**: `:8417` (`aggregate_reason=head_moved_during_run`)
-- **Plant**: mint a new reason token at `:8417`
-- **Fail when planted**: `1656_s3a_aggregate_reason` (`:18054`) diverges
-- **Pass restored**: `1656_s3a_aggregate_reason`, `1656_s3a_guard_reason=head_moved_during_pass`
+- **Production**: `:8351` (`aggregate_reason=head_moved_during_run`)
+- **Plant**: mint a new reason token at `:8351`
+- **Fail when planted**: `1656_s3a_aggregate_reason` (`:18082`) diverges
+- **Pass restored**: `1656_s3a_aggregate_reason`, `1656_s3a_guard_reason=head_moved_during_pass`, `1656_s4a_not_required_aggregate`
 
 ## P15 — non-clean pass must override processor skip semantics (fail-open)
 
-- **Production**: `:8428` (`local_second_pass_reason=local_pass_unavailable` on escalate)
-- **Plant**: skip `:8427-8428` and let skipped processor result proceed
-- **Fail when planted**: `1656_s7a_guard_unavailable` (`:17989-17992`) reads `not_required`
-- **Pass restored**: `1656_s7a_guard_unavailable`, `1656_s7b_guard_unavailable`, `1656_s7d_guard_unavailable`, `1656_s7c_guard_telemetry` (`:18023`)
+- **Production**: `:8448-8449` (`local_second_pass_reason=local_pass_unavailable` on escalate)
+- **Plant**: skip `:8448-8449` and let skipped processor result proceed
+- **Fail when planted**: `1656_s7a_guard_unavailable` (`:18019`) reads `not_required`
+- **Pass restored**: `1656_s7a_guard_unavailable`, `1656_s7b_guard_unavailable`, `1656_s7d_guard_unavailable`, `1656_s7c_guard_telemetry` (`:18051`)
