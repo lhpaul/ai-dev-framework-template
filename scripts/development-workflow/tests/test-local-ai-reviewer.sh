@@ -1541,6 +1541,74 @@ run_test "1655_s9_whole_document" "$_full_text" "$_s9_text"
 rm -f "$BUNDLE_DUMP"
 rm -rf "$PLAN_REPO"
 
+# Scenario 10: two changed plan documents supplied with per-document sources (AC-13)
+PLAN_REPO="$(mktemp -d)"
+PLAN_DEV_A="docs/specs/developments/20260831062000_1655-strict-plan-review-mode"
+PLAN_DEV_B="docs/specs/developments/20260831062001_1655-other"
+PLAN_DOC_A="$PLAN_DEV_A/2_1655-strict-plan-review-mode_implementation-plan.md"
+PLAN_SPEC_A="$PLAN_DEV_A/1_1655-strict-plan-review-mode_specs.md"
+PLAN_DOC_B="$PLAN_DEV_B/2_1655-other_implementation-plan.md"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_A" "$PLAN_REPO/$PLAN_DEV_B"
+printf '# Plan A\n\nSibling spec present.\n' > "$PLAN_REPO/$PLAN_DOC_A"
+printf '# Spec A\n\n- [ ] AC-1.\n' > "$PLAN_REPO/$PLAN_SPEC_A"
+printf '# Plan B\n\nNo sibling spec.\n' > "$PLAN_REPO/$PLAN_DOC_B"
+git -C "$PLAN_REPO" add "$PLAN_DOC_A" "$PLAN_SPEC_A" "$PLAN_DOC_B"
+git -C "$PLAN_REPO" commit -q -m "two plans"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+BUNDLE_DUMP="$(mktemp)"
+cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+if [ -n "${MOCK_BUNDLE_DUMP:-}" ] && [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+fi
+if [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  printf '%s\n' '{"mode":"strict_plan_checks","findings":[]}'
+else
+  printf '%s\n' '{"result":"clean","findings":[]}'
+fi
+MOCK_REVIEWER
+chmod +x "$MOCK_BIN/local-reviewer-mock"
+cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-s10","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\n%s\nREVIEW.md\n' "$PLAN_DOC_A" "$PLAN_DOC_B"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-s10"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s10_two_documents" "2" "$(jq -r '.strict_plan_documents | length' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_a_path" "$PLAN_DOC_A" "$(jq -r '.strict_plan_documents[0].path' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_b_path" "$PLAN_DOC_B" "$(jq -r '.strict_plan_documents[1].path' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_a_has_source" "true" "$(jq -r '.strict_plan_documents[0].has_source' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_b_has_source" "false" "$(jq -r '.strict_plan_documents[1].has_source' "$BUNDLE_DUMP")"
+run_test "1655_s10_one_source" "1" "$(jq -r '.strict_plan_sources | length' "$BUNDLE_DUMP")"
+run_test "1655_s10_source_plan_a" "$PLAN_DOC_A" "$(jq -r '.strict_plan_sources[0].plan_path' "$BUNDLE_DUMP")"
+rm -f "$BUNDLE_DUMP"
+rm -rf "$PLAN_REPO"
+
 # Scenario 11: git show failure → unavailable, one invocation
 PLAN_REPO="$(mktemp -d)"
 git -C "$PLAN_REPO" init -q
@@ -1654,6 +1722,26 @@ run_test "1655_s14d_extract_refused" "1" "$(
     extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/missing-source-last.md"'" >/dev/null && echo 0 || echo 1
   '
 )"
+run_test "1655_s14e_extract_refused" "1" "$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/invalid-source-value.md"'" >/dev/null && echo 0 || echo 1
+  '
+)"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/invalid-source-value.md"
+install_plan_gh_mock "$PLAN_DOC"
+install_plan_artifacts 1
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-14e"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_plan_review
+run_test "1655_s14e_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s14e_reason" "STRICT_PLAN_REASON=checklist_unreadable" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s14e_no_count" "no" "$(key_present STRICT_PLAN_COUNT)"
 reset_mocks
 install_recording_two_pass_mock
 install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/compensating-duplicate-source.md"
