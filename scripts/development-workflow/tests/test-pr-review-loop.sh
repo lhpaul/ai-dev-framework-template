@@ -17895,6 +17895,24 @@ run_test "1656_s3a_guard_reason" "head_moved_during_pass" "$local_second_pass_re
 run_test "1656_s3a_aggregate_reason" "head_moved_during_run" "$aggregate_reason"
 run_test "1656_s3a_phase_not_started" "0" "$phase_after_clean_started"
 
+# Scenarios 9/10 (P3): second pass must not increment cycle counters
+_1656_reset_guard_globals
+cycle_count=2
+lifetime_cycle_count=5
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="clean"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s9_dispatch_cycle_count" "2" "$cycle_count"
+run_test "1656_s9_dispatch_lifetime_count" "5" "$lifetime_cycle_count"
+_1656_reset_guard_globals
+cycle_count=4
+lifetime_cycle_count=7
+_1656_guard_hist_payload="$_1656_guard_hist_failed"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s10_refuse_cycle_count" "4" "$cycle_count"
+run_test "1656_s10_refuse_lifetime_count" "7" "$lifetime_cycle_count"
+unset cycle_count lifetime_cycle_count
+
 # Scenario 13: no ready-phase — guard no-op
 _1656_reset_guard_globals
 phase_after_clean_enabled=0
