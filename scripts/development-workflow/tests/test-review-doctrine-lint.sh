@@ -95,7 +95,13 @@ run_test "s15b_linter_rejects_oversized" "1" "$(lint_exit "$_boundary_fail")"
 rm -rf "$_boundary_dir"
 
 # Scenario 15: single bound definition
-_assign_count="$(rg -l 'REVIEW_DOCTRINE_MAX_BYTES=' scripts --glob '*.sh' 2>/dev/null | rg -v '/tests/' | wc -l | tr -d ' ')"
+_assign_count=0
+while IFS= read -r _assign_file; do
+  case "$_assign_file" in
+    */tests/*) continue ;;
+    *) _assign_count=$((_assign_count + 1)) ;;
+  esac
+done < <(grep -rl 'REVIEW_DOCTRINE_MAX_BYTES=' scripts 2>/dev/null || true)
 run_test "s15_single_assignment" "1" "$_assign_count"
 run_test "s15_linter_uses_constant" "yes" "$(grep -Fq '$REVIEW_DOCTRINE_MAX_BYTES' "$LINTER" && echo yes || echo no)"
 run_test "s15_linter_no_literal_gt" "no" "$(grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' "$LINTER" && echo yes || echo no)"

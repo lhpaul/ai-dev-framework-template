@@ -4,7 +4,9 @@ set -euo pipefail
 
 # The review doctrine's maximum size, in bytes as `wc -c` measures them.
 # AC-12: one source of truth, read by both the linter and the reviewer.
-readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+if ! declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
+  readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+fi
 
 workflow_script_dir() {
   if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
