@@ -8302,6 +8302,8 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_output" "$_sl_status" 0
   _sl_pass_result="$reviewer_loop_last_platform_result"
   _sl_pass_reason="$reviewer_loop_last_platform_reason"
+  _sl_pass_output="$reviewer_loop_last_platform_output"
+  _sl_pass_status="$reviewer_loop_last_platform_status"
   local_second_pass_result="$_sl_pass_result"
 
   if [ "$_sl_pass_result" = "clean" ]; then
@@ -8352,10 +8354,10 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   if [ "$_sl_gate_result" = "needs_fixes" ]; then
     aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
       "${_sl_gate_reason:-}" \
-      "$(kv_value_default COMMENT_COUNT "$_sl_output" 0)" \
-      "$(kv_value_default BLOCKING_COUNT "$_sl_output" 0)" \
-      "$(kv_value_default SUGGESTION_COUNT "$_sl_output" 0)")"
-    aggregate_status=1
+      "$(kv_value_default COMMENT_COUNT "$_sl_pass_output" 0)" \
+      "$(kv_value_default BLOCKING_COUNT "$_sl_pass_output" 0)" \
+      "$(kv_value_default SUGGESTION_COUNT "$_sl_pass_output" 0)")"
+    aggregate_status="$_sl_pass_status"
   else
     aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${_sl_gate_reason:-local_pass_unavailable}")"
     aggregate_status=2
