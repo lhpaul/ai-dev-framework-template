@@ -67,19 +67,25 @@ PASS: 1656_s3d_no_failed_head_record
 Line numbers refer to `scripts/development-workflow/pr-review-loop.sh` at the
 current PR head unless a test path is given.
 
+Recorded fail-under-plant on 2026-09-01 against that restored harness
+(`bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1656`).
+Each plant was applied to production, the area-1656 run captured, then the
+file was restored. A proof whose plant cannot change a test's answer is not
+included here as a recorded fail.
+
 ## P1 — per-head dispatch cap (loop/cost)
 
-- **Production**: `:8401-8409` (`failed_for_head` refusal without dispatch); ledger write at `:8451`
-- **Plant**: omit `:8451` on a failed pass so `:8401` cannot refuse on the next invocation
-- **Fail when planted**: second invocation reaches `:8414` (`run_platform_review`) instead of `:8401`
-- **Pass restored**: `1656_s8c_failed_head_count`, `1656_s8c_guard_refuse`, `1656_s8c_guard_no_dispatch` (demonstrated above)
+- **Production**: `:8451` (`local_second_pass_failed_head_record="$loop_head_sha"`); refusal at `:8401-8409`
+- **Plant**: `:8451` → `local_second_pass_failed_head_record=""`
+- **Fail run**: `FAIL: 1656_s7_guard_failed_head — expected 'ffffffffffffffffffffffffffffffffffffffff', got ''`
+- **Pass restored**: `PASS: 1656_s7_guard_failed_head`, `PASS: 1656_s8c_guard_refuse`
 
 ## P2 — silent history must not read as satisfied (fail-open)
 
 - **Production**: `:8299` (`not_yet_run|unknown) printf 'no_evidence'`)
-- **Plant**: `test-pr-review-loop.sh:17795-17812` (`_1656_pv_plant_p2_pass_required` maps unknown → `not_required`)
-- **Fail when planted**: `1656_pv_P2_plant` (`:17825-17826`) returns `not_required`; `1656_pv_P2_plant_differs` (`:17829-17831`) stays `different`
-- **Pass restored**: `1656_pv_P2_correct`, `1656_s5_no_evidence` (`:17827-17828`, `:17682`)
+- **Plant**: `:8299` → `printf 'not_required'`
+- **Fail run**: `FAIL: 1656_s5_no_evidence — expected 'no_evidence', got 'not_required'`; `FAIL: 1656_pv_P2_correct — expected 'no_evidence', got 'not_required'`; `FAIL: 1656_pv_P2_plant_differs — expected 'different', got 'same'`
+- **Pass restored**: `PASS: 1656_s5_no_evidence`, `PASS: 1656_pv_P2_correct`, `PASS: 1656_pv_P2_plant_differs`
 
 ## P3 — pass must not increment caps (loop/cost)
 
@@ -154,20 +160,20 @@ current PR head unless a test path is given.
 ## P13 — head re-read before every proceed path (fail-open)
 
 - **Production**: `:8331-8357` (`reviewer_loop_second_local_pass_confirm_live_head`); called for `not_required` / `no_local_reviewer` at `:8384-8388` and after a clean pass at `:8439-8441`
-- **Plant**: skip `:8384-8388` and return 0 on `not_required` without the live-head re-read
-- **Fail when planted**: `1656_s4a_not_required_head_moved` (`:17969`) returns `0`
-- **Pass restored**: `1656_s4a_not_required_head_moved`, `1656_s4b_not_required_unread_head`, `1656_s4c_no_local_head_moved`, `1656_s3a_guard_blocked`, `1656_s3d_guard_unavailable`
+- **Plant**: `:8384-8388` → `return 0` on `not_required` / `no_local_reviewer` without the live-head re-read
+- **Fail run**: `FAIL: 1656_s4a_not_required_head_moved — expected '1', got '0'`; `FAIL: 1656_s4b_not_required_unread_head — expected '1', got '0'`; `FAIL: 1656_s4c_no_local_head_moved — expected '1', got '0'`
+- **Pass restored**: `PASS: 1656_s4a_not_required_head_moved`, `PASS: 1656_s4b_not_required_unread_head`, `PASS: 1656_s4c_no_local_head_moved`
 
 ## P14 — reuse `head_moved_during_run` (integration)
 
 - **Production**: `:8351` (`aggregate_reason=head_moved_during_run`)
-- **Plant**: mint a new reason token at `:8351`
-- **Fail when planted**: `1656_s3a_aggregate_reason` (`:18082`) diverges
-- **Pass restored**: `1656_s3a_aggregate_reason`, `1656_s3a_guard_reason=head_moved_during_pass`, `1656_s4a_not_required_aggregate`
+- **Plant**: `:8351` → `aggregate_reason="head_moved_during_second_pass"`
+- **Fail run**: `FAIL: 1656_s4a_not_required_aggregate — expected 'head_moved_during_run', got 'head_moved_during_second_pass'`; `FAIL: 1656_s3a_aggregate_reason — expected 'head_moved_during_run', got 'head_moved_during_second_pass'`
+- **Pass restored**: `PASS: 1656_s4a_not_required_aggregate`, `PASS: 1656_s3a_aggregate_reason`
 
 ## P15 — non-clean pass must override processor skip semantics (fail-open)
 
 - **Production**: `:8448-8449` (`local_second_pass_reason=local_pass_unavailable` on escalate)
-- **Plant**: skip `:8448-8449` and let skipped processor result proceed
-- **Fail when planted**: `1656_s7a_guard_unavailable` (`:18019`) reads `not_required`
-- **Pass restored**: `1656_s7a_guard_unavailable`, `1656_s7b_guard_unavailable`, `1656_s7d_guard_unavailable`, `1656_s7c_guard_telemetry` (`:18051`)
+- **Plant**: skip assigning `local_pass_unavailable` when `_sl_gate_result=escalate`
+- **Fail run**: `FAIL: 1656_s7a_guard_unavailable — expected 'local_pass_unavailable', got 'no_evidence'`; `FAIL: 1656_s7b_guard_unavailable — expected 'local_pass_unavailable', got 'no_evidence'`; `FAIL: 1656_s7c_guard_telemetry — expected 'local_pass_unavailable', got 'no_evidence'`; `FAIL: 1656_s7d_guard_unavailable — expected 'local_pass_unavailable', got 'no_evidence'`
+- **Pass restored**: `PASS: 1656_s7a_guard_unavailable`, `PASS: 1656_s7b_guard_unavailable`, `PASS: 1656_s7c_guard_telemetry`, `PASS: 1656_s7d_guard_unavailable`
