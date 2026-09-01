@@ -282,8 +282,9 @@ rer_strict_checks_json() {
       ) | .pr] | unique;
 
     [pr_entries[] | .strict_spec.checks[]? // empty] as $spec_checks
-    | [pr_entries[] | .strict_plan.checks[]? // empty] as $plan_checks
-    | ($spec_checks + $plan_checks | unique) as $all_checks
+    | [pr_entries[] | .strict_plan.applied[]? // empty] as $plan_applied_checks
+    | [pr_entries[] | .strict_plan.checks[]? // empty] as $plan_fired_checks
+    | ($spec_checks + $plan_applied_checks + $plan_fired_checks | unique) as $all_checks
     | if ($all_checks | length) == 0 then
         null
       else
@@ -296,8 +297,7 @@ rer_strict_checks_json() {
                   fired: (spec_fired_prs($c) | length),
                   applied: (spec_applied_prs | length)
                 }]
-            + [($plan_checks | unique[]) as $c
-              | select(($spec_checks | index($c)) | not)
+            + [($plan_applied_checks | unique[]) as $c
               | {
                   check: $c,
                   kind: "plan",
