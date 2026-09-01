@@ -8395,7 +8395,6 @@ reviewer_loop_second_local_pass_before_ready_gate() {
       aggregate_reason="local_pass_unavailable"
       aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
       aggregate_status=2
-      local_second_pass_failed_head_record="$loop_head_sha"
       last_platform="local-ai-reviewer"
       return 1
     fi
@@ -8407,7 +8406,6 @@ reviewer_loop_second_local_pass_before_ready_gate() {
       aggregate_reason="local_pass_unavailable"
       aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
       aggregate_status=2
-      local_second_pass_failed_head_record="$loop_head_sha"
       last_platform="local-ai-reviewer"
       return 1
     fi

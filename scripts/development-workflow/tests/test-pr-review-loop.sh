@@ -18061,6 +18061,7 @@ _1656_stub_pr_head="UNAVAILABLE"
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1656_s3d_guard_blocked" "1" "$_st"
 run_test "1656_s3d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s3d_no_failed_head_record" "" "$local_second_pass_failed_head_record"
 run_test "1656_s3d_phase_not_started" "0" "$phase_after_clean_started"
 
 # Scenarios 9/10 (P3): second pass must not increment cycle counters
