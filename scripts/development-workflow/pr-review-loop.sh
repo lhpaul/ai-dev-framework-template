@@ -7724,8 +7724,27 @@ reviewer_loop_history_platforms_json() {
     jq -R -s -c 'split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(length > 0 and . != "none"))'
 }
 
+# Tier 1 fail-closed guard (#1652): a blocking finding on a normative document
+# is never small, whatever its wording. Consulted from
+# reviewer_loop_path_is_non_shipped_artifact before the existing patterns so
+# normative paths are excluded from the non-shipped (small-findings) set.
+reviewer_loop_path_is_normative_document() {
+  case "${1:-}" in
+    REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
+      return 0 ;;
+    docs/workflow/*|docs/best-practices/*|docs/specs/developments/*|docs/testing/workflow/*|docs/project/*)
+      return 0 ;;
+  esac
+  return 1
+}
+
 reviewer_loop_path_is_non_shipped_artifact() {
   local path="${1:-}"
+
+  # Normative documents are never treated as small-finding (non-shipped) paths.
+  if reviewer_loop_path_is_normative_document "$path"; then
+    return 1
+  fi
 
   case "$path" in
     ""|docs/*|test/*|tests/*|fixtures/*|fixture/*|__fixtures__/*|__tests__/*|*.md|*.mdx|test-*|*.snap)
@@ -7738,6 +7757,44 @@ reviewer_loop_path_is_non_shipped_artifact() {
       return 0
       ;;
   esac
+
+  return 1
+}
+
+# Tier 2 escalation (#1652): allow-list of contract-bearing surfaces as ordered
+# (identity, pattern) pairs. Prints the matched surface identity and returns
+# success; prints nothing and returns failure on no match. First match in table
+# order wins. Every pattern is a phrase or qualified form — bare common words
+# (gate, scope, state, status, proof, parse, contract) are deliberately absent.
+# Separators are literal, never the regex wildcard ".".
+REVIEWER_LOOP_CONTRACT_SURFACES=(
+  'acceptance_criteria|acceptance criterion|acceptance criteria|AC-[0-9]+'
+  'decision_gates_and_matrices|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating'
+  'parser_and_input_behavior|parser|regex|input surface|word boundary'
+  'scope_and_coverage|out of scope|in scope|scope creep|coverage matrix|brief objective'
+  'fail_closed_semantics|fail-closed|fail closed|allow-list|deny-list|vacuous'
+  'state_and_status_models|state machine|state table|evidence state|valid transition|status label|status transition'
+  'telemetry_and_contracts|telemetry|stdout key|key=value contract|output contract'
+  'proof_obligations|planted-violation|planted violation|proof obligation'
+)
+
+# Case-insensitive word-boundary match via POSIX ERE character classes — never
+# \b (GNU/PCRE only; BSD grep on stock macOS does not recognise it).
+reviewer_loop_finding_touches_contract_surface() {
+  local body="${1:-}"
+  local entry identity pattern
+
+  [ -n "${body//[[:space:]]/}" ] || return 1
+
+  for entry in "${REVIEWER_LOOP_CONTRACT_SURFACES[@]}"; do
+    identity="${entry%%|*}"
+    pattern="${entry#*|}"
+    if printf '%s' "$body" \
+      | grep -Eqi "(^|[^[:alnum:]_])(${pattern})([^[:alnum:]_]|\$)"; then
+      printf '%s\n' "$identity"
+      return 0
+    fi
+  done
 
   return 1
 }
@@ -7766,6 +7823,42 @@ reviewer_loop_blocking_paths_from_output() {
     path="$(kv_value_default "BLOCKING_${index}_PATH" "$output" "")"
     [ -n "$path" ] && printf '%s\n' "$path"
   done
+}
+
+# Emit one compact JSON finding object per blocking finding (#1652).
+# Platform is a third argument from the caller's platform_name — reviewer
+# output carries no per-finding platform key. Does not skip empty paths:
+# all_findings_are_small fail-closes on them. Bodies are stored as received;
+# newline-sequence normalisation happens only at match time.
+reviewer_loop_blocking_findings_from_output() {
+  local output="${1:-}"
+  local blocking_count="${2:-0}"
+  local platform="${3:-}"
+  local index path body
+
+  [[ "$blocking_count" =~ ^[0-9]+$ ]] || blocking_count=0
+  [ "$blocking_count" -gt 0 ] || return 0
+
+  for index in $(seq 1 "$blocking_count"); do
+    path="$(kv_value_default "BLOCKING_${index}_PATH" "$output" "")"
+    body="$(kv_value_default "BLOCKING_${index}_BODY" "$output" "")"
+    jq -c -n \
+      --arg path "$path" \
+      --arg platform "$platform" \
+      --arg body "$body" \
+      '{path: $path, platform: $platform, body: $body}'
+  done
+}
+
+# Normalise a finding body for contract-surface matching only (#1652).
+# local-ai-reviewer emits real newlines as the two-character sequence \n
+# without escaping pre-existing backslashes — lossy and not reversible.
+# Replacing \n with a space restores word boundaries for matching without
+# claiming to decode. Never used for storage.
+reviewer_loop_normalize_finding_body_for_match() {
+  local body="${1:-}"
+  # Replace every literal two-character sequence \n with a space.
+  printf '%s' "${body//\\n/ }"
 }
 
 # --- Missed-finding telemetry helpers (#1651) -------------------------------
@@ -8412,45 +8505,328 @@ ${line}"
 
 
 
-reviewer_loop_all_paths_non_shipped() {
-  local path
-  local saw_path=0
+# Classify whether every finding record is "small" (#1652).
+# Reads newline-delimited JSON objects {path,platform,body} from stdin.
+# Fail-closed: empty array → failure; any empty/absent path → failure.
+# A finding is non-small when it is on a normative document, has a shipped
+# path, or touches a contract surface (after body normalisation for matching).
+reviewer_loop_all_findings_are_small() {
+  local line path body normalized
+  local -a lines=()
 
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    saw_path=1
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    lines+=("$line")
+  done
+
+  [ "${#lines[@]}" -gt 0 ] || return 1
+
+  for line in "${lines[@]}"; do
+    path="$(printf '%s' "$line" | jq -r '.path // empty' 2>/dev/null)" || path=""
+    body="$(printf '%s' "$line" | jq -r '.body // empty' 2>/dev/null)" || body=""
+    [ -n "$path" ] || return 1
+    if reviewer_loop_path_is_normative_document "$path"; then
+      return 1
+    fi
     if ! reviewer_loop_path_is_non_shipped_artifact "$path"; then
+      return 1
+    fi
+    normalized="$(reviewer_loop_normalize_finding_body_for_match "$body")"
+    if reviewer_loop_finding_touches_contract_surface "$normalized" >/dev/null; then
       return 1
     fi
   done
 
-  [ "$saw_path" -eq 1 ]
+  return 0
 }
 
+# Thin path-only wrapper kept for existing harness callers (#1652). Converts
+# newline-delimited paths into cosmetic finding records and delegates to
+# reviewer_loop_all_findings_are_small. Outside this change set, no production
+# caller remains — the main loop uses the findings array directly.
+reviewer_loop_all_paths_non_shipped() {
+  local path
+  local -a findings=()
+  local record
+
+  while IFS= read -r path || [ -n "$path" ]; do
+    [ -n "$path" ] || continue
+    record="$(jq -c -n --arg path "$path" --arg platform "" --arg body "" \
+      '{path: $path, platform: $platform, body: $body}')" || return 1
+    findings+=("$record")
+  done
+
+  [ "${#findings[@]}" -gt 0 ] || return 1
+  printf '%s\n' "${findings[@]}" | reviewer_loop_all_findings_are_small
+}
+
+# Analyse finding records for content causes and summary detail (#1652).
+# Reads newline-delimited JSON findings from stdin.
+# Prints one compact JSON object:
+#   {"blocked_by":"shipped_path|contract_surface|",
+#    "shipped_paths":[...],"contract_surfaces":[...],"all_small":true|false}
+# Within the content group, shipped_path outranks contract_surface.
+reviewer_loop_small_findings_content_analysis() {
+  local line path body normalized surface
+  local -a lines=() shipped_paths=() surfaces=()
+  local has_shipped=0 has_contract=0 has_empty_path=0 all_small=1
+  local blocked_by="" shipped_json surfaces_json
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    lines+=("$line")
+  done
+
+  if [ "${#lines[@]}" -eq 0 ]; then
+    jq -c -n '{blocked_by:"", shipped_paths:[], contract_surfaces:[], all_small:false}'
+    return 0
+  fi
+
+  for line in "${lines[@]}"; do
+    path="$(printf '%s' "$line" | jq -r '.path // empty' 2>/dev/null)" || path=""
+    body="$(printf '%s' "$line" | jq -r '.body // empty' 2>/dev/null)" || body=""
+    if [ -z "$path" ]; then
+      has_empty_path=1
+      all_small=0
+      continue
+    fi
+    if reviewer_loop_path_is_normative_document "$path" \
+        || ! reviewer_loop_path_is_non_shipped_artifact "$path"; then
+      has_shipped=1
+      all_small=0
+      shipped_paths+=("$path")
+      continue
+    fi
+    normalized="$(reviewer_loop_normalize_finding_body_for_match "$body")"
+    surface=""
+    if surface="$(reviewer_loop_finding_touches_contract_surface "$normalized")"; then
+      has_contract=1
+      all_small=0
+      surfaces+=("$surface")
+    fi
+  done
+
+  if [ "$has_empty_path" -eq 1 ]; then
+    # Unlocatable blockers cannot be classified small; no single blocked_by
+    # value applies (not in the four-value set). Leave blocked_by empty.
+    blocked_by=""
+  elif [ "$has_shipped" -eq 1 ]; then
+    blocked_by="shipped_path"
+  elif [ "$has_contract" -eq 1 ]; then
+    blocked_by="contract_surface"
+  fi
+
+  if [ "${#shipped_paths[@]}" -gt 0 ]; then
+    shipped_json="$(printf '%s\n' "${shipped_paths[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')"
+  else
+    shipped_json='[]'
+  fi
+  if [ "${#surfaces[@]}" -gt 0 ]; then
+    surfaces_json="$(printf '%s\n' "${surfaces[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')"
+  else
+    surfaces_json='[]'
+  fi
+
+  jq -c -n \
+    --arg blocked_by "$blocked_by" \
+    --argjson shipped_paths "$shipped_json" \
+    --argjson contract_surfaces "$surfaces_json" \
+    --argjson all_small "$all_small" \
+    '{
+      blocked_by: $blocked_by,
+      shipped_paths: $shipped_paths,
+      contract_surfaces: $contract_surfaces,
+      all_small: ($all_small == 1)
+    }'
+}
+
+# True when a head is absent, empty, synthetic unknown-*, or not a full SHA.
+reviewer_loop_head_is_unknown_or_invalid() {
+  local head="${1:-}"
+  [ -n "$head" ] || return 0
+  case "$head" in
+    unknown-*) return 0 ;;
+  esac
+  if reviewer_loop_head_evidence_full_sha "$head"; then
+    return 1
+  fi
+  return 0
+}
+
+# Count consecutive prior small-findings rounds on the current head (#1652).
+# Args: <summary_body> <current_loop_head_sha>
+# Emits one compact JSON object: {"count":N,"stop_reason":"..."}.
+# stop_reason is one of: exhausted | not_small | stale_head | head_unknown.
+# Malformed caller parse should treat missing/invalid output as count 0 /
+# head_unknown (see reviewer_loop_parse_small_findings_count).
 reviewer_loop_small_findings_prior_consecutive_count() {
   local body="${1:-}"
+  local current_head="${2:-}"
   local json
+  local count=0
+  local stop_reason="exhausted"
+  local entries_json entry classification_head contributing_json
+  local platform reviewed_head idx total contrib_stop
 
   json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
-  [ -n "$json" ] || { printf '0\n'; return 0; }
+  if [ -z "$json" ]; then
+    jq -c -n --argjson count 0 --arg stop_reason "head_unknown" \
+      '{count: $count, stop_reason: $stop_reason}'
+    return 0
+  fi
 
-  printf '%s\n' "$json" | jq -r '
-    if .schema != "reviewer_loop_history.v1"
-      or ((.history_status // "available") != "available")
-      or ((.entries | type) != "array")
-    then
-      0
-    else
-      reduce ((.entries // []) | reverse[]) as $entry (
-        {count: 0, active: true};
-        if .active and (($entry.small_findings_only // false) == true) then
-          .count += 1
-        else
-          .active = false
-        end
-      ) | .count
-    end
-  ' 2>/dev/null || printf '0\n'
+  if ! printf '%s\n' "$json" | jq -e '
+      .schema == "reviewer_loop_history.v1"
+      and ((.history_status // "available") == "available")
+      and ((.entries | type) == "array")
+    ' >/dev/null 2>&1; then
+    jq -c -n --argjson count 0 --arg stop_reason "head_unknown" \
+      '{count: $count, stop_reason: $stop_reason}'
+    return 0
+  fi
+
+  entries_json="$(printf '%s\n' "$json" | jq -c '[(.entries // []) | reverse[]]' 2>/dev/null)" || entries_json='[]'
+  total="$(printf '%s' "$entries_json" | jq -r 'length' 2>/dev/null)" || total=0
+  [[ "$total" =~ ^[0-9]+$ ]] || total=0
+
+  idx=0
+  while [ "$idx" -lt "$total" ]; do
+    entry="$(printf '%s' "$entries_json" | jq -c --argjson i "$idx" '.[$i]' 2>/dev/null)" || entry=""
+    [ -n "$entry" ] || break
+
+    if [ "$(printf '%s' "$entry" | jq -r '.small_findings_only // false')" != "true" ]; then
+      stop_reason="not_small"
+      break
+    fi
+
+    classification_head="$(printf '%s' "$entry" | jq -r '.classification_head // empty' 2>/dev/null)" || classification_head=""
+    if reviewer_loop_head_is_unknown_or_invalid "$classification_head"; then
+      stop_reason="head_unknown"
+      break
+    fi
+    # Compare case-insensitively like head_evidence_classify.
+    if [ "$(printf '%s' "$classification_head" | tr 'A-F' 'a-f')" != "$(printf '%s' "$current_head" | tr 'A-F' 'a-f')" ]; then
+      stop_reason="stale_head"
+      break
+    fi
+
+    contributing_json="$(printf '%s' "$entry" | jq -c '.contributing_platforms // empty' 2>/dev/null)" || contributing_json=""
+    if [ -z "$contributing_json" ] || [ "$contributing_json" = "null" ] \
+        || [ "$(printf '%s' "$contributing_json" | jq -r 'if type == "array" then length else 0 end')" = "0" ]; then
+      stop_reason="head_unknown"
+      break
+    fi
+
+    # Check every contributing platform's reviewed_heads entry.
+    contrib_stop=""
+    while IFS= read -r platform; do
+      [ -n "$platform" ] || continue
+      reviewed_head="$(printf '%s' "$entry" | jq -r --arg p "$platform" '
+        ([.reviewed_heads // [] | .[]? | select(.platform == $p) | .reviewed_head // ""] | first) // ""
+      ' 2>/dev/null)" || reviewed_head=""
+      if reviewer_loop_head_is_unknown_or_invalid "$reviewed_head"; then
+        contrib_stop="head_unknown"
+        break
+      fi
+      if [ "$(printf '%s' "$reviewed_head" | tr 'A-F' 'a-f')" != "$(printf '%s' "$classification_head" | tr 'A-F' 'a-f')" ]; then
+        contrib_stop="stale_head"
+        break
+      fi
+    done < <(printf '%s' "$contributing_json" | jq -r '.[]?' 2>/dev/null)
+
+    if [ -n "$contrib_stop" ]; then
+      stop_reason="$contrib_stop"
+      break
+    fi
+
+    count=$((count + 1))
+    idx=$((idx + 1))
+  done
+
+  jq -c -n --argjson count "$count" --arg stop_reason "$stop_reason" \
+    '{count: $count, stop_reason: $stop_reason}'
+}
+
+# Parse counter JSON fail-closed (#1652). Prints "count stop_reason".
+# Malformed / missing / out-of-domain → "0 head_unknown".
+reviewer_loop_parse_small_findings_count() {
+  local raw="${1:-}"
+  local count stop_reason
+
+  count="$(printf '%s' "$raw" | jq -r '.count // empty' 2>/dev/null)" || count=""
+  stop_reason="$(printf '%s' "$raw" | jq -r '.stop_reason // empty' 2>/dev/null)" || stop_reason=""
+
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf '0 head_unknown\n'
+    return 0
+  fi
+  case "$stop_reason" in
+    exhausted|not_small|stale_head|head_unknown) ;;
+    *)
+      printf '0 head_unknown\n'
+      return 0
+      ;;
+  esac
+  printf '%s %s\n' "$count" "$stop_reason"
+}
+
+# Check current-round contributing platforms against loop_head_sha (#1652).
+# Args: current_head, then optional "platform:sha" entries (platform_reviewed_heads).
+# Reads contributing platform names from stdin (one per line).
+# Prints one compact JSON object:
+#   {"status":"ok|stale_head|head_unknown","blocked_by":"...",
+#    "details":["stale_head:plat",...]}
+# Within the currency group, stale_head outranks head_unknown for blocked_by;
+# details lists every currency cause present for the summary line.
+reviewer_loop_current_round_heads_ok() {
+  local current_head="${1:-}"
+  shift
+  local -a reviewed_entries=("$@")
+  local platform reviewed_head entry found
+  local -a details=()
+  local has_stale=0 has_unknown=0
+  local blocked_by="" status="ok" details_json
+
+  while IFS= read -r platform || [ -n "$platform" ]; do
+    [ -n "$platform" ] || continue
+    found=0
+    reviewed_head=""
+    for entry in "${reviewed_entries[@]:-}"; do
+      if [ "${entry%%:*}" = "$platform" ]; then
+        reviewed_head="${entry#*:}"
+        found=1
+      fi
+    done
+    if [ "$found" -eq 0 ] || reviewer_loop_head_is_unknown_or_invalid "$reviewed_head"; then
+      has_unknown=1
+      details+=("head_unknown:${platform}")
+      continue
+    fi
+    if [ "$(printf '%s' "$reviewed_head" | tr 'A-F' 'a-f')" != "$(printf '%s' "$current_head" | tr 'A-F' 'a-f')" ]; then
+      has_stale=1
+      details+=("stale_head:${platform}")
+    fi
+  done
+
+  if [ "$has_stale" -eq 1 ]; then
+    blocked_by="stale_head"
+    status="stale_head"
+  elif [ "$has_unknown" -eq 1 ]; then
+    blocked_by="head_unknown"
+    status="head_unknown"
+  fi
+
+  if [ "${#details[@]}" -gt 0 ]; then
+    details_json="$(printf '%s\n' "${details[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+  else
+    details_json='[]'
+  fi
+
+  jq -c -n \
+    --arg status "$status" \
+    --arg blocked_by "$blocked_by" \
+    --argjson details "$details_json" \
+    '{status: $status, blocked_by: $blocked_by, details: $details}'
 }
 
 reviewer_loop_head_evidence_full_sha() {
@@ -8675,6 +9051,19 @@ reviewer_loop_history_build_entry() {
     missed_findings_for_entry='[]'
   fi
 
+  # contributing_platforms (#1652): platforms that produced a counted blocking
+  # finding this round. Derived from aggregate_blocking_findings; empty when
+  # none. Prior ledger entries without this field fail closed in the
+  # small-findings counter.
+  local contributing_platforms_json='[]'
+  if declare -p aggregate_blocking_findings >/dev/null 2>&1 \
+      && [ "${#aggregate_blocking_findings[@]}" -gt 0 ]; then
+    contributing_platforms_json="$(
+      printf '%s\n' "${aggregate_blocking_findings[@]}" \
+        | jq -s -c '[.[].platform // empty | select(length > 0)] | unique'
+    )" || contributing_platforms_json='[]'
+  fi
+
   # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
   # following the same convention already used in this function for
   # unresolved_thread_count/late_thread_count (set by the caller before
@@ -8707,6 +9096,7 @@ reviewer_loop_history_build_entry() {
     --arg smallFindingsPaths "${small_findings_paths:-}" \
     --arg classificationHead "${loop_head_sha:-}" \
     --argjson reviewedHeads "$reviewed_heads_json" \
+    --argjson contributingPlatforms "$contributing_platforms_json" \
     --argjson platformResults "$platform_results_for_entry" \
     --argjson missedFindings "$missed_findings_for_entry" \
     --arg egPlatform "${expensive_gate_last_platform:-}" \
@@ -8725,6 +9115,7 @@ reviewer_loop_history_build_entry() {
       head_sha: $headSha,
       classification_head: $classificationHead,
       reviewed_heads: $reviewedHeads,
+      contributing_platforms: $contributingPlatforms,
       platform_results: $platformResults,
       missed_findings: $missedFindings,
       run_id: $runId,
@@ -10419,8 +10810,15 @@ small_findings_stop=0
 small_findings_rounds=0
 small_findings_paths=""
 small_findings_paths_inline=""
+small_findings_blocked_by=""
+small_findings_shipped_detail=""
+small_findings_surfaces_detail=""
+small_findings_currency_detail=""
 declare -a compare_verdicts=()
 declare -a aggregate_blocking_paths=()
+# Parallel to aggregate_blocking_paths: one JSON finding record per blocking
+# finding, never deduplicated (#1652).
+declare -a aggregate_blocking_findings=()
 # The head this run reviews, captured BEFORE any reviewer is dispatched
 # (issue #1574). Every verdict below describes this commit; the settle emits it
 # as POST_CLEAN_HEAD_SHA, and the head-move guard after the settle turns a
@@ -10679,6 +11077,10 @@ for index in "${!platforms[@]}"; do
     [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
   done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
   unset _blocking_path
+  while IFS= read -r _blocking_finding; do
+    [ -n "$_blocking_finding" ] && aggregate_blocking_findings+=("$_blocking_finding")
+  done < <(reviewer_loop_blocking_findings_from_output "$platform_output" "$platform_blocking_count" "$platform_name")
+  unset _blocking_finding
   if [ -n "$platform_advisory_labels" ]; then
     if [ -n "$aggregate_advisory_labels" ]; then
       aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
@@ -10877,7 +11279,7 @@ _post_review_summary() {
   case "$result" in
     clean)
       if [ "${small_findings_stop:-0}" -eq 1 ]; then
-        result_line="clean (small-findings stop) — non-shipped tail recorded for human merge audit"
+        result_line="clean (small-findings stop) — small non-shipped tail on current head recorded for human merge audit"
       elif [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
         result_line="clean — no blocking findings"
       else
@@ -11098,8 +11500,25 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   local small_findings_section=""
   if [ "${small_findings_stop:-0}" -eq 1 ]; then
     small_findings_section="
-**Small-findings stop:** ${small_findings_rounds:-0}/${small_findings_required_rounds:-0} consecutive review rounds contained only non-shipped-artifact findings, and the strict review-thread audit reported zero unresolved threads. Exact-head tests and CI still gate readiness after this review result.
+**Small-findings stop:** ${small_findings_rounds:-0}/${small_findings_required_rounds:-0} consecutive review rounds contained only small non-shipped-artifact findings on the current head, and the strict review-thread audit reported zero unresolved threads. Exact-head tests and CI still gate readiness after this review result.
 **Unreviewed tail:** ${small_findings_paths_inline:-none}"
+  elif [ -n "${small_findings_blocked_by:-}" ] || [ "${small_findings_only:-0}" -eq 1 ]; then
+    # Name every collected cause so precedence on SMALL_FINDINGS_BLOCKED_BY
+    # does not hide co-occurring causes within the reached group (#1652).
+    local _sf_cause_bits=""
+    [ -n "${small_findings_shipped_detail:-}" ] && _sf_cause_bits="${_sf_cause_bits} shipped_paths=${small_findings_shipped_detail};"
+    [ -n "${small_findings_surfaces_detail:-}" ] && _sf_cause_bits="${_sf_cause_bits} contract_surfaces=${small_findings_surfaces_detail};"
+    [ -n "${small_findings_currency_detail:-}" ] && _sf_cause_bits="${_sf_cause_bits} currency=${small_findings_currency_detail};"
+    if [ -n "${small_findings_blocked_by:-}" ]; then
+      small_findings_section="
+**Small-findings:** terminal rule blocked by \`${small_findings_blocked_by}\`.${_sf_cause_bits:+ Causes:}${_sf_cause_bits}
+**Candidate tail:** ${small_findings_paths_inline:-none}"
+    elif [ "${small_findings_only:-0}" -eq 1 ]; then
+      small_findings_section="
+**Small-findings:** ${small_findings_rounds:-0}/${small_findings_required_rounds:-0} consecutive small rounds so far (threshold not reached; not a blocking cause).
+**Candidate tail:** ${small_findings_paths_inline:-none}"
+    fi
+    unset _sf_cause_bits
   fi
 
   # Errors in the comment-posting block must not change the script's exit code or
@@ -11419,12 +11838,20 @@ done
 
 if [ "$aggregate_result" = "needs_fixes" ] \
     && [ "$total_blocking_count" -gt 0 ] \
-    && [ "${#aggregate_blocking_paths[@]}" -gt 0 ]; then
+    && [ "${#aggregate_blocking_findings[@]}" -gt 0 ]; then
   small_findings_paths="$(printf '%s\n' "${aggregate_blocking_paths[@]}" | sort -u)"
-  if printf '%s\n' "$small_findings_paths" | reviewer_loop_all_paths_non_shipped; then
+  _sf_content_json="$(printf '%s\n' "${aggregate_blocking_findings[@]}" | reviewer_loop_small_findings_content_analysis)"
+  if [ "$(printf '%s' "$_sf_content_json" | jq -r '.all_small // false')" = "true" ]; then
     small_findings_only=1
     small_findings_paths_inline="$(printf '%s\n' "$small_findings_paths" | awk 'BEGIN { sep = "" } { printf "%s%s", sep, $0; sep = ", " } END { printf "\n" }')"
+  else
+    # Content causes: set SMALL_FINDINGS_BLOCKED_BY by within-group precedence.
+    # Currency causes are unreachable when findings are not all small.
+    small_findings_blocked_by="$(printf '%s' "$_sf_content_json" | jq -r '.blocked_by // empty')"
+    small_findings_shipped_detail="$(printf '%s' "$_sf_content_json" | jq -r '.shipped_paths // [] | join(", ")')"
+    small_findings_surfaces_detail="$(printf '%s' "$_sf_content_json" | jq -r '.contract_surfaces // [] | join(", ")')"
   fi
+  unset _sf_content_json
 fi
 
 if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
@@ -11495,17 +11922,59 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
       && [ "$unresolved_thread_count" -eq 0 ] \
       && [ "$small_findings_only" -eq 1 ]; then
     reviewer_loop_latest_summary_body="$(reviewer_loop_fetch_latest_summary_body "$pr_number")"
-    small_findings_prior_count="$(reviewer_loop_small_findings_prior_consecutive_count "$reviewer_loop_latest_summary_body")"
+    _sf_count_json="$(reviewer_loop_small_findings_prior_consecutive_count "$reviewer_loop_latest_summary_body" "${loop_head_sha:-}")"
+    read -r small_findings_prior_count _sf_prior_stop < <(reviewer_loop_parse_small_findings_count "$_sf_count_json")
     [[ "${small_findings_prior_count:-}" =~ ^[0-9]+$ ]] || small_findings_prior_count=0
+    _sf_prior_stop="${_sf_prior_stop:-head_unknown}"
+
+    # Current-round head check for every contributing platform (#1652).
+    _sf_contributors="$(
+      printf '%s\n' "${aggregate_blocking_findings[@]}" \
+        | jq -r '.platform // empty' 2>/dev/null \
+        | awk 'NF && !seen[$0]++'
+    )"
+    if [ -n "$_sf_contributors" ]; then
+      _sf_current_json="$(
+        printf '%s\n' "$_sf_contributors" \
+          | reviewer_loop_current_round_heads_ok "${loop_head_sha:-}" "${platform_reviewed_heads[@]:-}"
+      )"
+    else
+      _sf_current_json='{"status":"head_unknown","blocked_by":"head_unknown","details":["head_unknown:"]}'
+    fi
+    _sf_current_currency="$(printf '%s' "$_sf_current_json" | jq -r '.blocked_by // empty')"
+    _sf_currency_detail_list="$(printf '%s' "$_sf_current_json" | jq -r '.details // [] | join(", ")')"
+
     small_findings_rounds=$((small_findings_prior_count + 1))
-    if [ "$small_findings_rounds" -ge "$small_findings_required_rounds" ]; then
+
+    if [ -n "$_sf_current_currency" ]; then
+      # Current round is not on loop_head_sha for every contributor.
+      # Within-group precedence already applied inside current_round_heads_ok.
+      small_findings_blocked_by="$_sf_current_currency"
+      if [ "$_sf_current_currency" = "head_unknown" ] && [ "$_sf_prior_stop" = "stale_head" ]; then
+        small_findings_blocked_by="stale_head"
+      fi
+      small_findings_currency_detail="$_sf_currency_detail_list"
+      if [ "$_sf_prior_stop" = "stale_head" ] || [ "$_sf_prior_stop" = "head_unknown" ]; then
+        if [[ "$small_findings_currency_detail" != *"$_sf_prior_stop"* ]]; then
+          small_findings_currency_detail="${small_findings_currency_detail}; prior:${_sf_prior_stop}"
+        fi
+      fi
+    elif [ "$small_findings_rounds" -ge "$small_findings_required_rounds" ]; then
       aggregate_result="clean"
       aggregate_reason="small_findings_terminal"
       aggregate_status=0
       small_findings_stop=1
-      echo "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched non-shipped artifacts; strict thread audit found zero unresolved threads" >&2
+      small_findings_blocked_by=""
+      echo "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched small non-shipped findings on the current head; strict thread audit found zero unresolved threads" >&2
+    elif [ "$_sf_prior_stop" = "stale_head" ] || [ "$_sf_prior_stop" = "head_unknown" ]; then
+      # Short of the threshold because a prior round failed the head check.
+      small_findings_blocked_by="$_sf_prior_stop"
+      small_findings_currency_detail="prior:${_sf_prior_stop}"
     fi
+    # exhausted / not_small with insufficient rounds: leave blocked_by empty.
     unset reviewer_loop_latest_summary_body small_findings_prior_count
+    unset _sf_count_json _sf_prior_stop _sf_contributors _sf_current_json
+    unset _sf_current_currency _sf_currency_detail_list
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
@@ -11754,6 +12223,7 @@ print_kv SMALL_FINDINGS_STOP "$small_findings_stop"
 print_kv SMALL_FINDINGS_ROUNDS "$small_findings_rounds"
 print_kv SMALL_FINDINGS_REQUIRED_ROUNDS "$small_findings_required_rounds"
 [ -n "$small_findings_paths_inline" ] && print_kv SMALL_FINDINGS_PATHS "$small_findings_paths_inline"
+[ -n "${small_findings_blocked_by:-}" ] && print_kv SMALL_FINDINGS_BLOCKED_BY "$small_findings_blocked_by"
 print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
 print_kv READY_PHASE_STARTED "$phase_after_clean_started"
 if [ "$phase_after_clean_enabled" -eq 1 ]; then
