@@ -1670,8 +1670,8 @@ run_test "1655_s14c_reason" "STRICT_PLAN_REASON=checklist_unreadable" "$(line_fo
 run_test "1655_s14c_no_count" "no" "$(key_present STRICT_PLAN_COUNT)"
 
 # Scenarios 20/21: planted-violation fail/pass pairs per strict plan check (harness)
-STRICT_PLAN_POSITIVES="$SCRIPT_DIR/fixtures/strict-plan-plans"
-STRICT_PLAN_POSITIVES_PASS="$SCRIPT_DIR/fixtures/strict-plan-plans-pass"
+STRICT_PLAN_POSITIVES="$FIXTURES/strict-plan-plans"
+STRICT_PLAN_POSITIVES_PASS="$FIXTURES/strict-plan-plans-pass"
 
 run_planted_plan_fixture_review() {
   local fixture_name="$1"
@@ -1743,7 +1743,7 @@ for _entry in "${_planted_checks[@]}"; do
   _fail_json='{"mode":"strict_plan_checks","findings":[{"check":"'"$_check"'","path":"docs/specs/developments/strict-fixture-'"$_check"'/2_'"$_check"'_implementation-plan.md","line":'"$_line"',"body":"planted violation"}]}'
   run_planted_plan_fixture_review "$_check" fail "$_fail_json"
   run_test "1655_s20_${_check}_fail" "STRICT_1_CHECK=${_check}" "$(line_for STRICT_1_CHECK)"
-  run_test "1655_s20_${_check}_fail_line" "${_line}" "$(line_for STRICT_1_LINE)"
+  run_test "1655_s20_${_check}_fail_line" "STRICT_1_LINE=${_line}" "$(line_for STRICT_1_LINE)"
   _pass_json='{"mode":"strict_plan_checks","findings":[]}'
   run_planted_plan_fixture_review "$_check" pass "$_pass_json"
   _checks_line="$(line_for STRICT_PLAN_CHECKS 2>/dev/null || true)"
