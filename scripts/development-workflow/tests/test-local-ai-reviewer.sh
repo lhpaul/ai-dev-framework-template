@@ -1495,7 +1495,7 @@ git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
 git -C "$PLAN_REPO" commit -q -m "long plan"
 mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
 cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
-_full_len="$(git -C "$PLAN_REPO" show "HEAD:$PLAN_DOC" | wc -c | tr -d ' ')"
+_full_len="$(git -C "$PLAN_REPO" show "HEAD:$PLAN_DOC" | jq -Rs 'length')"
 reset_mocks
 BUNDLE_DUMP="$(mktemp)"
 cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
