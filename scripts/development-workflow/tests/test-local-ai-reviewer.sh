@@ -1562,6 +1562,34 @@ EXTRACTED_PLAN_IDS="$(
 )"
 run_test "1655_s14b_shipped_ids" "$(printf '%s\n' "$EXPECTED_PLAN_IDS" | jq -c 'sort')" "$EXTRACTED_PLAN_IDS"
 
+# Scenario 14c/14d: malformed Source metadata refused
+run_test "1655_s14c_extract_refused" "1" "$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/compensating-duplicate-source.md"'" >/dev/null && echo 0 || echo 1
+  '
+)"
+run_test "1655_s14d_extract_refused" "1" "$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/missing-source-last.md"'" >/dev/null && echo 0 || echo 1
+  '
+)"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/compensating-duplicate-source.md"
+install_plan_gh_mock "$PLAN_DOC"
+install_plan_artifacts 1
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-14c"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_plan_review
+run_test "1655_s14c_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s14c_reason" "STRICT_PLAN_REASON=checklist_unreadable" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s14c_no_count" "no" "$(key_present STRICT_PLAN_COUNT)"
+
 # Scenario 16: evidence includes strict_plan on every local reviewer round
 reset_mocks
 install_recording_two_pass_mock
