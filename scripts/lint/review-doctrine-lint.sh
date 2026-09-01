@@ -58,6 +58,7 @@ check_entry_well_formed() {
   local entry_text="$1"
   local name="$2"
   local shape_count example_count detect_count
+  local shape_line example_line detect_line
 
   shape_count="$(printf '%s\n' "$entry_text" | grep -c '^\*\*Shape\*\*:' || true)"
   example_count="$(printf '%s\n' "$entry_text" | grep -c '^\*\*Example\*\*:' || true)"
@@ -65,6 +66,14 @@ check_entry_well_formed() {
 
   if [ "$shape_count" -ne 1 ] || [ "$example_count" -ne 1 ] || [ "$detect_count" -ne 1 ]; then
     report_fail "review-doctrine well-formedness FAILED: entry \"$name\" must have exactly one **Shape**:, one **Example**: and one **Detect**: (found shape=$shape_count example=$example_count detect=$detect_count)"
+    return 1
+  fi
+
+  shape_line="$(printf '%s\n' "$entry_text" | grep -n '^\*\*Shape\*\*:' | head -1 | cut -d: -f1)"
+  example_line="$(printf '%s\n' "$entry_text" | grep -n '^\*\*Example\*\*:' | head -1 | cut -d: -f1)"
+  detect_line="$(printf '%s\n' "$entry_text" | grep -n '^\*\*Detect\*\*:' | head -1 | cut -d: -f1)"
+  if [ "$shape_line" -gt "$example_line" ] || [ "$example_line" -gt "$detect_line" ]; then
+    report_fail "review-doctrine well-formedness FAILED: entry \"$name\" must order **Shape**:, **Example**:, **Detect**: (found shape@$shape_line example@$example_line detect@$detect_line)"
     return 1
   fi
   return 0
