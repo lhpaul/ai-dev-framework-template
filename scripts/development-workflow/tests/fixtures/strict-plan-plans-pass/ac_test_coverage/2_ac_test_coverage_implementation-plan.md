@@ -8,4 +8,4 @@
 
 ## Tests
 
-- AC-1: assert implementation emits STRICT_PLAN_APPLIED (fails if absent).
+- AC-1: run `bash scripts/development-workflow/tests/test-local-ai-reviewer.sh`; non-zero exit when any #1655 scenario fails (fails if AC-1 unmet).

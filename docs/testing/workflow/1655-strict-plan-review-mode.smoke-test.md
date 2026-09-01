@@ -234,21 +234,21 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 
 ### Detection (P7–P13) — fail/pass pair proof
 
-Command (fail then pass per positive check):
+**Deterministic harness (REVIEW.md planted-violation proof):** scenarios 20/21 in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` install each fail fixture from `strict-plan-plans/` and pass fixture from `strict-plan-plans-pass/`, run the real strict parser with a mock strict response, and assert (a) `STRICT_1_CHECK=<identifier>` at the planted line on the fail fixture and (b) the identifier is absent from `STRICT_PLAN_CHECKS` on the repaired pass fixture. Scenario 14b also compares shipped `Source:` values (four `not_required`, three `required`) via `extract_strict_plan_sections`.
+
+**Codex smoke (model detection, non-deterministic):** one completed run recorded at `/tmp/1655-smoke-fixtures.log` (exit 0, 2026-09-01 ~05:17 local):
 
 `LOCAL_AI_REVIEWER_TIMEOUT=90 bash scripts/development-workflow/tests/run-strict-plan-smoke-fixtures.sh`
 
-Pass-side plans: `scripts/development-workflow/tests/fixtures/strict-plan-plans-pass/` (single planted violation removed or repaired). Recorded outputs from the completed run (`/tmp/1655-smoke-fixtures.log`, exit 0, 2026-09-01 ~05:17 local).
-
-| Proof | Fail fixture (planted line) | Fail run output | Pass fixture (repair) | Pass run output |
-| --- | --- | --- | --- | --- |
-| P7 | `strict-plan-plans/source_declaration/2_source_declaration_implementation-plan.md:5` — no source named | `STRICT_1_CHECK=source_declaration` `STRICT_1_LINE=1` | `strict-plan-plans-pass/source_declaration/2_…md:3` — `**Spec**:` link added | `STRICT_PLAN_CHECKS=ac_test_coverage` (no `source_declaration`) |
-| P8 | `strict-plan-plans/unspecified_step/2_unspecified_step_implementation-plan.md:8` — dashboard step | `STRICT_1_CHECK=unspecified_step` `STRICT_1_LINE=8` | `strict-plan-plans-pass/unspecified_step/2_…md` — line 8 removed | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` (90s); pass-side fixture committed; supplemental negative `declared_addition` → no `unspecified_step` finding when Codex completes |
-| P9 | `strict-plan-plans/spec_traceability/2_spec_traceability_implementation-plan.md:7` — AC-2 orphan | timeout at 90s (`WARN: local AI reviewer timed out`); planted orphan AC-2 in spec, plan step 1 covers AC-1 only | `strict-plan-plans-pass/spec_traceability/2_…md:8` — step 2 covers AC-2 | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` |
-| P10 | `strict-plan-plans/ac_test_coverage/2_ac_test_coverage_implementation-plan.md:11` — non-falsifying test | `STRICT_1_CHECK=ac_test_coverage` `STRICT_1_LINE=11` “passes whether or not AC-1 holds” | `strict-plan-plans-pass/ac_test_coverage/2_…md:11` — falsifying assertion | `STRICT_1_CHECK=ac_test_coverage` but body cites “marker-emission assertion” (non-falsifying wording removed from fail fixture) |
-| P11 | `strict-plan-plans/phase_ordering/2_phase_ordering_implementation-plan.md:7` — step 1 calls step 3 | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` | `strict-plan-plans-pass/phase_ordering/2_…md` — steps reordered 1→3 | `STRICT_PLAN_CHECKS=ac_test_coverage` (no `phase_ordering`) |
-| P12 | `strict-plan-plans/dependency_state/2_dependency_state_implementation-plan.md:7` — dependency without state | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` | `strict-plan-plans-pass/dependency_state/2_…md:7` — `#999 merged (Done)` | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` |
-| P13 | `strict-plan-plans/reversal_risk/2_reversal_risk_implementation-plan.md:7` — irreversible step undeclared | `STRICT_2_CHECK=reversal_risk` `STRICT_2_LINE=7` | `strict-plan-plans-pass/reversal_risk/2_…md:7` — `**cannot be undone**` | `STRICT_PLAN_CHECKS=ac_test_coverage` (no `reversal_risk`) |
+| Proof | Fail fixture (planted line) | Harness fail (`1655_s20_*`) | Pass fixture (repair) | Harness pass (`1655_s21_*`) | Codex fail log | Codex pass log |
+| --- | --- | --- | --- | --- | --- | --- |
+| P7 | `strict-plan-plans/source_declaration/2_…md:5` | `STRICT_1_CHECK=source_declaration` L1 | `strict-plan-plans-pass/source_declaration/2_…md:3` | no `source_declaration` in checks | fires `source_declaration` L1 | `STRICT_PLAN_CHECKS=ac_test_coverage` only |
+| P8 | `strict-plan-plans/unspecified_step/2_…md:8` | `STRICT_1_CHECK=unspecified_step` L8 | `strict-plan-plans-pass/unspecified_step/2_…md` | no `unspecified_step` in checks | fires L8 | `strict_pass_failed` at 90s |
+| P9 | `strict-plan-plans/spec_traceability/2_…md:7` | `STRICT_1_CHECK=spec_traceability` L7 | `strict-plan-plans-pass/spec_traceability/2_…md:8` | no `spec_traceability` in checks | timeout at 90s | `strict_pass_failed` |
+| P10 | `strict-plan-plans/ac_test_coverage/2_…md:11` | `STRICT_1_CHECK=ac_test_coverage` L11 | `strict-plan-plans-pass/ac_test_coverage/2_…md:11` | no `ac_test_coverage` in checks | fires L11 (non-falsifying) | still fires L11 (repaired wording) |
+| P11 | `strict-plan-plans/phase_ordering/2_…md:7` | `STRICT_1_CHECK=phase_ordering` L7 | `strict-plan-plans-pass/phase_ordering/2_…md` | no `phase_ordering` in checks | `strict_pass_failed` | no `phase_ordering` in checks |
+| P12 | `strict-plan-plans/dependency_state/2_…md:7` | `STRICT_1_CHECK=dependency_state` L7 | `strict-plan-plans-pass/dependency_state/2_…md:7` | no `dependency_state` in checks | `strict_pass_failed` | `strict_pass_failed` |
+| P13 | `strict-plan-plans/reversal_risk/2_…md:7` | `STRICT_1_CHECK=reversal_risk` L7 | `strict-plan-plans-pass/reversal_risk/2_…md:7` | no `reversal_risk` in checks | fires L7 | no `reversal_risk` in checks |
 
 **Recorded fail-side excerpts (`1655-smoke-fixtures.log`):**
 

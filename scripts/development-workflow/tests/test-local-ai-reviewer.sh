@@ -1632,6 +1632,15 @@ EXTRACTED_PLAN_IDS="$(
 )"
 run_test "1655_s14b_shipped_ids" "$(printf '%s\n' "$EXPECTED_PLAN_IDS" | jq -c 'sort')" "$EXTRACTED_PLAN_IDS"
 
+EXPECTED_PLAN_SOURCES='[{"id":"ac_test_coverage","source":"required"},{"id":"dependency_state","source":"not_required"},{"id":"phase_ordering","source":"not_required"},{"id":"reversal_risk","source":"not_required"},{"id":"source_declaration","source":"not_required"},{"id":"spec_traceability","source":"required"},{"id":"unspecified_step","source":"required"}]'
+EXTRACTED_PLAN_SOURCES="$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$SHIPPED_PLAN_CHECKLIST"'"
+  ' | jq -c 'sort_by(.id)'
+)"
+run_test "1655_s14b_shipped_sources" "$EXPECTED_PLAN_SOURCES" "$EXTRACTED_PLAN_SOURCES"
+
 # Scenario 14c/14d: malformed Source metadata refused
 run_test "1655_s14c_extract_refused" "1" "$(
   HARNESS_MODE=1 bash -c '
@@ -1659,6 +1668,92 @@ run_plan_review
 run_test "1655_s14c_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
 run_test "1655_s14c_reason" "STRICT_PLAN_REASON=checklist_unreadable" "$(line_for STRICT_PLAN_REASON)"
 run_test "1655_s14c_no_count" "no" "$(key_present STRICT_PLAN_COUNT)"
+
+# Scenarios 20/21: planted-violation fail/pass pairs per strict plan check (harness)
+STRICT_PLAN_POSITIVES="$SCRIPT_DIR/fixtures/strict-plan-plans"
+STRICT_PLAN_POSITIVES_PASS="$SCRIPT_DIR/fixtures/strict-plan-plans-pass"
+
+run_planted_plan_fixture_review() {
+  local fixture_name="$1"
+  local variant="$2"
+  local strict_json="$3"
+  local fixture_root dev_dir plan_file
+  case "$variant" in
+    fail) fixture_root="$STRICT_PLAN_POSITIVES" ;;
+    pass) fixture_root="$STRICT_PLAN_POSITIVES_PASS" ;;
+    *) return 1 ;;
+  esac
+  dev_dir="docs/specs/developments/strict-fixture-${fixture_name}"
+  plan_file="$dev_dir/2_${fixture_name}_implementation-plan.md"
+  PLAN_REPO="$(mktemp -d)"
+  git -C "$PLAN_REPO" init -q
+  git -C "$PLAN_REPO" config user.email "test@example.com"
+  git -C "$PLAN_REPO" config user.name "Test User"
+  printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+  git -C "$PLAN_REPO" add REVIEW.md
+  git -C "$PLAN_REPO" commit -q -m "fixture"
+  git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+  mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+  cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+  mkdir -p "$PLAN_REPO/$dev_dir"
+  cp "$fixture_root/$fixture_name/"*.md "$PLAN_REPO/$dev_dir/"
+  git -C "$PLAN_REPO" add -A
+  git -C "$PLAN_REPO" commit -q -m "planted $fixture_name $variant"
+  reset_mocks
+  install_recording_two_pass_mock
+  cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-planted-${fixture_name}","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\nREVIEW.md\n' "$plan_file"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+  chmod +x "$MOCK_BIN/gh"
+  MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+  MOCK_STRICT_STDOUT="$strict_json"
+  export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+  MOCK_PR_HEAD_BRANCH="implementation-plan/1655-planted-${fixture_name}"
+  MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+  export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  export LOCAL_AI_REVIEWER_COMMAND
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+  rm -rf "$PLAN_REPO"
+}
+
+_planted_checks=(
+  "source_declaration:1"
+  "unspecified_step:8"
+  "spec_traceability:7"
+  "ac_test_coverage:11"
+  "phase_ordering:7"
+  "dependency_state:7"
+  "reversal_risk:7"
+)
+for _entry in "${_planted_checks[@]}"; do
+  _check="${_entry%%:*}"
+  _line="${_entry##*:}"
+  _fail_json='{"mode":"strict_plan_checks","findings":[{"check":"'"$_check"'","path":"docs/specs/developments/strict-fixture-'"$_check"'/2_'"$_check"'_implementation-plan.md","line":'"$_line"',"body":"planted violation"}]}'
+  run_planted_plan_fixture_review "$_check" fail "$_fail_json"
+  run_test "1655_s20_${_check}_fail" "STRICT_1_CHECK=${_check}" "$(line_for STRICT_1_CHECK)"
+  run_test "1655_s20_${_check}_fail_line" "${_line}" "$(line_for STRICT_1_LINE)"
+  _pass_json='{"mode":"strict_plan_checks","findings":[]}'
+  run_planted_plan_fixture_review "$_check" pass "$_pass_json"
+  _checks_line="$(line_for STRICT_PLAN_CHECKS 2>/dev/null || true)"
+  if printf '%s' "$_checks_line" | grep -q "$_check"; then
+    _has_check=yes
+  else
+    _has_check=no
+  fi
+  run_test "1655_s21_${_check}_pass" "no" "$_has_check"
+done
 
 # Scenario 16: evidence includes strict_plan on every local reviewer round
 reset_mocks

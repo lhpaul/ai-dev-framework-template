@@ -84,6 +84,11 @@ MOCK
 positives=(source_declaration unspecified_step spec_traceability ac_test_coverage phase_ordering dependency_state reversal_risk)
 negatives=(declared_addition irreversible_declared all_falsifying_tests refactor_brief)
 
+if [ -n "${SMOKE_FIXTURE_ONLY:-}" ]; then
+  positives=("$SMOKE_FIXTURE_ONLY")
+  negatives=()
+fi
+
 echo "Running strict-plan smoke fixtures (timeout ${TIMEOUT}s each)"
 for n in "${positives[@]}"; do
   run_fixture "$n" fail
