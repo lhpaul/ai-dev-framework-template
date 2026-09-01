@@ -444,7 +444,7 @@ rer_build_report() {
     '{
       repo: $repo,
       accounting: {requested:$requested, included:$included, excluded:$excluded},
-      rows: $rows,
+      rows: [$rows[] | del(._payload)],
       exclusions: [$rows[] | select(.state != "included") | {pr, reason: .exclusion_reason}],
       aggregates: $aggregates
     }
