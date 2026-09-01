@@ -17628,10 +17628,10 @@ _1656_unrelated="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 _1656_cfg=$'local-ai-reviewer\ncodex-github'
 
 _1656_hist_clean_same() {
-  jq -nc --arg head "$_1656_head" --argjson iter "${1:-1}" '{
+  jq -nc --arg head "$_1656_head" '{
     schema: "reviewer_loop_history.v1",
     entries: [{
-      iteration: $iter,
+      iteration: 1,
       platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
       reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
     }]
