@@ -28,7 +28,9 @@ Environment:
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
                                     HEAD_BRANCH, REVIEWED_HEAD,
                                     REVIEW_STAGE, REVIEW_STAGE_SOURCE,
-                                    REVIEW_CHECKLISTS, and
+                                    REVIEW_CHECKLISTS, REVIEW_DOCTRINE_STATE,
+                                    REVIEW_DOCTRINE_PATTERN_COUNT,
+                                    REVIEW_DOCTRINE_VERSION, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
                                     Do not apply the bundled Codex preset default.
@@ -382,6 +384,65 @@ reviewer_resolve_review_stage() {
   printf '%s\n%s\n%s\n' "$stage" "$source" "$checklists"
 }
 
+# ---------------------------------------------------------------------------
+# Review doctrine supply (#1654)
+# ---------------------------------------------------------------------------
+
+reviewer_doctrine_version() {
+  local snapshot="$1"
+  local digest_cmd=""
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest_cmd="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then
+    digest_cmd="shasum -a 256"
+  else
+    return 1
+  fi
+
+  local full_hash
+  full_hash="$($digest_cmd "$snapshot" 2>/dev/null | awk '{print $1}')" || return 1
+  [ -n "$full_hash" ] || return 1
+  printf '%s\n' "${full_hash:0:12}"
+}
+
+reviewer_doctrine_supply() {
+  local path="docs/workflow/development-workflow/review-doctrine.md"
+  local snapshot bytes version count status
+  local unreadable='{"state":"unreadable","text":"","pattern_count":0,"version":""}'
+
+  [ -f "$path" ] || { printf '{"state":"absent","text":"","pattern_count":0,"version":""}\n'; return 0; }
+
+  snapshot="$(mktemp)" || { printf '%s\n' "$unreadable"; return 0; }
+  cp "$path" "$snapshot" 2>/dev/null || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  bytes="$(wc -c <"$snapshot" 2>/dev/null)" || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+  bytes="${bytes//[[:space:]]/}"
+  [ -n "$bytes" ] || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  version="$(reviewer_doctrine_version "$snapshot")" || {
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  if [ "$bytes" -gt "$REVIEW_DOCTRINE_MAX_BYTES" ]; then
+    rm -f "$snapshot"
+    jq -n --arg v "$version" '{state:"oversized", text:"", pattern_count:0, version:$v}'
+    return 0
+  fi
+
+  status=0
+  count="$(grep -c '^### ' "$snapshot" 2>/dev/null)" || status=$?
+  if [ "$status" -eq 1 ]; then
+    count=0
+  elif [ "$status" -ne 0 ]; then
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0
+  fi
+
+  jq -n --rawfile t "$snapshot" --arg v "$version" --argjson c "${count:-0}" \
+    '{state:"supplied", text:$t, pattern_count:$c, version:$v}' 2>/dev/null || {
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+  rm -f "$snapshot"
+}
+
 # Effective harness mode: only when HARNESS_MODE=1 AND the script is sourced.
 _HARNESS_MODE_EFFECTIVE=0
 if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
@@ -562,6 +623,12 @@ else
   review_checklists_json="[]"
 fi
 
+doctrine_supply_json="$(reviewer_doctrine_supply)"
+review_doctrine_state="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.state // "unreadable"')"
+review_doctrine_text="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.text // ""')"
+review_doctrine_pattern_count="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.pattern_count // 0')"
+review_doctrine_version="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.version // ""')"
+
 graph_strategy="${LOCAL_AI_REVIEWER_GRAPH_STRATEGY:-none}"
 graph_context="none"
 case "$graph_strategy" in
@@ -606,6 +673,10 @@ jq -n \
   --arg diff_stat "$diff_stat" \
   --arg review_stage "$review_stage" \
   --arg review_stage_source "$review_stage_source" \
+  --arg review_doctrine "$review_doctrine_text" \
+  --arg review_doctrine_state "$review_doctrine_state" \
+  --argjson review_doctrine_pattern_count "$review_doctrine_pattern_count" \
+  --arg review_doctrine_version "$review_doctrine_version" \
   --argjson changed_files "$changed_files_json" \
   --argjson review_checklists "$review_checklists_json" \
   '{
@@ -624,7 +695,11 @@ jq -n \
     graph_context: $graph_context,
     review_stage: $review_stage,
     review_stage_source: $review_stage_source,
-    review_checklists: $review_checklists
+    review_checklists: $review_checklists,
+    review_doctrine: $review_doctrine,
+    review_doctrine_state: $review_doctrine_state,
+    review_doctrine_pattern_count: $review_doctrine_pattern_count,
+    review_doctrine_version: $review_doctrine_version
   }' >"$context_file"
 
 print_kv BASE_BRANCH "$BASE_BRANCH"
@@ -634,6 +709,9 @@ print_kv GRAPH_CONTEXT "$graph_context"
 print_kv REVIEW_STAGE "$review_stage"
 print_kv REVIEW_STAGE_SOURCE "$review_stage_source"
 [ -n "$review_checklists_csv" ] && print_kv REVIEW_CHECKLISTS "$review_checklists_csv"
+print_kv REVIEW_DOCTRINE_STATE "$review_doctrine_state"
+print_kv REVIEW_DOCTRINE_PATTERN_COUNT "$review_doctrine_pattern_count"
+print_kv REVIEW_DOCTRINE_VERSION "$review_doctrine_version"
 
 # Strict-spec state (always emitted after a completed ordinary parse).
 strict_spec_state=""
@@ -666,6 +744,9 @@ REVIEWED_HEAD="$HEAD_SHA" \
 REVIEW_STAGE="$review_stage" \
 REVIEW_STAGE_SOURCE="$review_stage_source" \
 REVIEW_CHECKLISTS="$review_checklists_csv" \
+REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
+REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
   run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
 command_exit=$?
 set -e
@@ -843,6 +924,9 @@ case "$strict_stage" in
           REVIEW_STAGE="$review_stage" \
           REVIEW_STAGE_SOURCE="$review_stage_source" \
           REVIEW_CHECKLISTS="$review_checklists_csv" \
+          REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
+          REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+          REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
             run_with_timeout "$remaining" "$strict_stdout_file" "$strict_stderr_file" \
               sh -c "$LOCAL_AI_REVIEWER_COMMAND"
           strict_exit=$?
@@ -926,6 +1010,9 @@ write_evidence_file() {
     --arg review_stage "$review_stage" \
     --arg review_stage_source "$review_stage_source" \
     --arg review_checklists "$review_checklists_csv" \
+    --arg review_doctrine_state "$review_doctrine_state" \
+    --argjson review_doctrine_pattern_count "$review_doctrine_pattern_count" \
+    --arg review_doctrine_version "$review_doctrine_version" \
     --argjson changed_files "$changed_files_json" \
     --argjson comment_count "$final_comment_count" \
     --argjson blocking_count "$final_blocking_count" \
@@ -957,6 +1044,11 @@ write_evidence_file() {
         stage: $review_stage,
         source: $review_stage_source,
         checklists: ($review_checklists | if . == "" then [] else (split(",") | map(select(length > 0))) end)
+      },
+      review_doctrine: {
+        state: $review_doctrine_state,
+        pattern_count: $review_doctrine_pattern_count,
+        version: $review_doctrine_version
       },
       strict_spec: $strict_spec
     }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; then

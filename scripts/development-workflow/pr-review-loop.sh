@@ -3673,6 +3673,17 @@ emit_local_ai_review_stage_keys() {
   [ -n "$checklists" ] && print_kv REVIEW_CHECKLISTS "$checklists"
 }
 
+emit_local_ai_review_doctrine_keys() {
+  local script_output="$1"
+  local state pattern_count version
+  state="$(kv_value_default REVIEW_DOCTRINE_STATE "$script_output" "")"
+  pattern_count="$(kv_value_default REVIEW_DOCTRINE_PATTERN_COUNT "$script_output" "")"
+  version="$(kv_value_default REVIEW_DOCTRINE_VERSION "$script_output" "")"
+  [ -n "$state" ] && print_kv REVIEW_DOCTRINE_STATE "$state"
+  [ -n "$pattern_count" ] && print_kv REVIEW_DOCTRINE_PATTERN_COUNT "$pattern_count"
+  [ -n "$version" ] && print_kv REVIEW_DOCTRINE_VERSION "$version"
+}
+
 # Capture STRICT_SPEC_* into globals for reviewer_loop_history_build_entry.
 # Present object vs absent object is gated by strict_spec_recorded.
 capture_strict_spec_globals_from_output() {
@@ -3773,6 +3784,7 @@ run_local_ai_reviewer_review() {
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
       emit_local_ai_review_stage_keys "$script_output"
+      emit_local_ai_review_doctrine_keys "$script_output"
       return 0
       ;;
     1)
@@ -3803,6 +3815,7 @@ run_local_ai_reviewer_review() {
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
       emit_local_ai_review_stage_keys "$script_output"
+      emit_local_ai_review_doctrine_keys "$script_output"
       return 1
       ;;
     2)
@@ -3824,6 +3837,7 @@ run_local_ai_reviewer_review() {
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
       emit_local_ai_review_stage_keys "$script_output"
+      emit_local_ai_review_doctrine_keys "$script_output"
       return 2
       ;;
     *)
@@ -3845,6 +3859,7 @@ run_local_ai_reviewer_review() {
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
       emit_local_ai_review_stage_keys "$script_output"
+      emit_local_ai_review_doctrine_keys "$script_output"
       return 0
       ;;
   esac
