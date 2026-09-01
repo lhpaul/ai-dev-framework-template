@@ -17702,6 +17702,14 @@ platforms=(codex-github)
 run_test "1656_s2b_repo_configured" "no_evidence" \
   "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$(reviewer_loop_repo_configured_platforms)")"
 
+# Guard validates pass-output REVIEWED_HEAD, not the first platform_reviewed_heads entry
+_1656_fresh_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+run_test "1656_s5b_output_head_current" "current" \
+  "$(reviewer_loop_head_evidence_classify "$_1656_fresh_head" "$_1656_fresh_head" | cut -d'|' -f1)"
+run_test "1656_s5b_stale_head_not_current" "not-current" \
+  "$(reviewer_loop_head_evidence_classify "dddddddddddddddddddddddddddddddddddddddd" "$_1656_fresh_head" | cut -d'|' -f1)"
+unset _1656_fresh_head
+
 # --- Guard integration (extracted function) ---
 _1656_guard_head="ffffffffffffffffffffffffffffffffffffffff"
 _1656_guard_hist_clean="$(jq -nc --arg head "$_1656_guard_head" '{

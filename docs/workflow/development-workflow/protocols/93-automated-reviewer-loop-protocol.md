@@ -327,9 +327,12 @@ local reviewer still owes a pass when evidence is stale.
 | `head_moved_during_pass` | Pass returned clean but PR head moved before the gate |
 | `local_pass_unavailable` | Pass skipped, escalated, unparseable, or clean without current-head `REVIEWED_HEAD` evidence |
 
-After a pass returns `RESULT=clean`, the guard verifies `REVIEWED_HEAD` classifies
-as current on `loop_head_sha` (via `expensive_gate_local_ai_head_current`) before
-proceeding; missing or stale head evidence maps to `local_pass_unavailable`.
+After a pass returns `RESULT=clean`, the guard verifies the pass output's
+`REVIEWED_HEAD` classifies as current on `loop_head_sha` (via
+`reviewer_loop_head_evidence_classify`) before proceeding; missing or stale head
+evidence maps to `local_pass_unavailable`. The check reads the just-dispatched
+pass output, not the first `platform_reviewed_heads` entry from earlier in the
+same invocation.
 
 Telemetry: `LOCAL_SECOND_PASS=0|1` and `LOCAL_SECOND_PASS_REASON=<reason>`.
 When a pass fails on an unchanged head, the ledger entry records

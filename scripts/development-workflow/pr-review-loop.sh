@@ -8229,7 +8229,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   local pr_number_arg="${1:-}"
   local _sl_prior_payload _sl_next_iteration _sl_configured _sl_composed _sl_required
   local _sl_output _sl_status _sl_platform_index _sl_pass_result _sl_pass_reason
-  local _sl_gate_result _sl_gate_reason _sl_head_now _sl_head_current
+  local _sl_gate_result _sl_gate_reason _sl_head_now _sl_reviewed_head _sl_head_state
 
   local_second_pass_reason="not_required"
   if [ "$phase_after_clean_enabled" -ne 1 ]; then
@@ -8272,8 +8272,10 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   local_second_pass_result="$_sl_pass_result"
 
   if [ "$_sl_pass_result" = "clean" ]; then
-    _sl_head_current="$(expensive_gate_local_ai_head_current "$loop_head_sha")"
-    if [ "$_sl_head_current" != "1" ]; then
+    _sl_reviewed_head="$(kv_value_default REVIEWED_HEAD "$_sl_output" "")"
+    _sl_head_state="$(reviewer_loop_head_evidence_classify "$_sl_reviewed_head" "$loop_head_sha")"
+    _sl_head_state="${_sl_head_state%%|*}"
+    if [ "$_sl_head_state" != "current" ]; then
       local_second_pass_reason="local_pass_unavailable"
       aggregate_result="escalate"
       aggregate_reason="local_pass_unavailable"
