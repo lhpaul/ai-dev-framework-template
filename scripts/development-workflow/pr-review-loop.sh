@@ -8220,6 +8220,94 @@ reviewer_loop_second_local_pass_gate_result() {
   esac
 }
 
+# reviewer_loop_second_local_pass_before_ready_gate <pr_number>
+#
+# Runs the #1656 guard immediately before ensure_pr_ready_for_ready_phase.
+# Returns 0 to proceed to the ready gate, 1 when the platform loop must break
+# (aggregate_result already set).
+reviewer_loop_second_local_pass_before_ready_gate() {
+  local pr_number_arg="${1:-}"
+  local _sl_prior_payload _sl_next_iteration _sl_configured _sl_composed _sl_required
+  local _sl_output _sl_status _sl_platform_index _sl_pass_result _sl_pass_reason
+  local _sl_gate_result _sl_gate_reason _sl_head_now
+
+  local_second_pass_reason="not_required"
+  if [ "$phase_after_clean_enabled" -ne 1 ]; then
+    return 0
+  fi
+
+  _sl_prior_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+  _sl_next_iteration="$(printf '%s\n' "$_sl_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _sl_next_iteration=1
+  [[ "$_sl_next_iteration" =~ ^[0-9]+$ ]] || _sl_next_iteration=1
+  _sl_configured="$(reviewer_loop_repo_configured_platforms)"
+  _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
+  _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
+  local_second_pass_reason="$_sl_required"
+
+  if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
+    return 0
+  fi
+
+  if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
+    local_second_pass=0
+    local_second_pass_reason="failed_for_head"
+    aggregate_result="escalate"
+    aggregate_reason="failed_for_head"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=failed_for_head\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
+  fi
+
+  local_second_pass=1
+  set +e
+  _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$poll_interval" "$max_wait")"
+  _sl_status=$?
+  set -e
+  _sl_platform_index=$((${#platforms[@]} + 1))
+  reviewer_loop_platform_loop_should_break=0
+  reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_output" "$_sl_status" 0
+  _sl_pass_result="$reviewer_loop_last_platform_result"
+  _sl_pass_reason="$reviewer_loop_last_platform_reason"
+  local_second_pass_result="$_sl_pass_result"
+
+  if [ "$_sl_pass_result" = "clean" ]; then
+    _sl_head_now=""
+    _sl_head_now="$(gh pr view "$pr_number_arg" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || _sl_head_now=""
+    if [ -n "$loop_head_sha" ] && [ -n "$_sl_head_now" ] && [ "$_sl_head_now" != "$loop_head_sha" ]; then
+      local_second_pass_reason="head_moved_during_pass"
+      aggregate_result="needs_fixes"
+      aggregate_reason="head_moved_during_run"
+      aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=head_moved_during_run\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+      aggregate_status=1
+      last_platform="local-ai-reviewer"
+      return 1
+    fi
+    return 0
+  fi
+
+  IFS=$'\t' read -r _sl_gate_result _sl_gate_reason < <(reviewer_loop_second_local_pass_gate_result "$_sl_pass_result" "$_sl_pass_reason")
+  aggregate_result="$_sl_gate_result"
+  aggregate_reason="$_sl_gate_reason"
+  if [ "$_sl_gate_result" = "escalate" ] && [ "$_sl_gate_reason" = "local_pass_unavailable" ]; then
+    local_second_pass_reason="local_pass_unavailable"
+  fi
+  local_second_pass_failed_head_record="$loop_head_sha"
+  if [ "$_sl_gate_result" = "needs_fixes" ]; then
+    aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
+      "${_sl_gate_reason:-}" \
+      "$(kv_value_default COMMENT_COUNT "$_sl_output" 0)" \
+      "$(kv_value_default BLOCKING_COUNT "$_sl_output" 0)" \
+      "$(kv_value_default SUGGESTION_COUNT "$_sl_output" 0)")"
+    aggregate_status=1
+  else
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${_sl_gate_reason:-local_pass_unavailable}")"
+    aggregate_status=2
+  fi
+  last_platform="local-ai-reviewer"
+  return 1
+}
+
 # reviewer_loop_process_platform_output <platform_name> <platform_index> <output> <status> [update_aggregate]
 #
 # Shared post-dispatch processor for the platform loop and the second local pass
@@ -11611,81 +11699,11 @@ for index in "${!platforms[@]}"; do
         break
       fi
       unset _eg_ready_preflight_failed
-      # Issue #1656: second local pass before ready-phase gate — produce current-head
-      # local clean evidence when a fix landed; refuse when a prior pass failed on
-      # this head; re-dispatch at most once per head across invocations.
-      local_second_pass_reason="not_required"
-      if [ "$phase_after_clean_enabled" -eq 1 ]; then
-        _sl_prior_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number")"
-        _sl_next_iteration="$(printf '%s\n' "$_sl_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _sl_next_iteration=1
-        [[ "$_sl_next_iteration" =~ ^[0-9]+$ ]] || _sl_next_iteration=1
-        _sl_configured="$(reviewer_loop_repo_configured_platforms)"
-        _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
-        _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
-        local_second_pass_reason="$_sl_required"
-
-        if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
-          :
-        elif [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
-          local_second_pass=0
-          local_second_pass_reason="failed_for_head"
-          aggregate_result="escalate"
-          aggregate_reason="failed_for_head"
-          aggregate_output="$(printf 'RESULT=escalate\nREASON=failed_for_head\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
-          aggregate_status=2
-          last_platform="local-ai-reviewer"
-          break
-        else
-          local_second_pass=1
-          set +e
-          _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
-          _sl_status=$?
-          set -e
-          _sl_platform_index=$((${#platforms[@]} + 1))
-          reviewer_loop_platform_loop_should_break=0
-          reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_output" "$_sl_status" 0
-          _sl_pass_result="$reviewer_loop_last_platform_result"
-          _sl_pass_reason="$reviewer_loop_last_platform_reason"
-          local_second_pass_result="$_sl_pass_result"
-
-          if [ "$_sl_pass_result" = "clean" ]; then
-            _sl_head_now=""
-            _sl_head_now="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || _sl_head_now=""
-            if [ -n "$loop_head_sha" ] && [ -n "$_sl_head_now" ] && [ "$_sl_head_now" != "$loop_head_sha" ]; then
-              local_second_pass_reason="head_moved_during_pass"
-              aggregate_result="needs_fixes"
-              aggregate_reason="head_moved_during_run"
-              aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=head_moved_during_run\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
-              aggregate_status=1
-              last_platform="local-ai-reviewer"
-              break
-            fi
-          else
-            IFS=$'\t' read -r _sl_gate_result _sl_gate_reason < <(reviewer_loop_second_local_pass_gate_result "$_sl_pass_result" "$_sl_pass_reason")
-            aggregate_result="$_sl_gate_result"
-            aggregate_reason="$_sl_gate_reason"
-            if [ "$_sl_gate_result" = "escalate" ] && [ "$_sl_gate_reason" = "local_pass_unavailable" ]; then
-              local_second_pass_reason="local_pass_unavailable"
-            fi
-            local_second_pass_failed_head_record="$loop_head_sha"
-            if [ "$_sl_gate_result" = "needs_fixes" ]; then
-              aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
-                "${_sl_gate_reason:-}" \
-                "$(kv_value_default COMMENT_COUNT "$_sl_output" 0)" \
-                "$(kv_value_default BLOCKING_COUNT "$_sl_output" 0)" \
-                "$(kv_value_default SUGGESTION_COUNT "$_sl_output" 0)")"
-              aggregate_status=1
-            else
-              aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${_sl_gate_reason:-local_pass_unavailable}")"
-              aggregate_status=2
-            fi
-            last_platform="local-ai-reviewer"
-            break
-          fi
-          unset _sl_output _sl_status _sl_platform_index _sl_pass_result _sl_pass_reason
-          unset _sl_gate_result _sl_gate_reason _sl_head_now
-        fi
-        unset _sl_prior_payload _sl_next_iteration _sl_configured _sl_composed _sl_required
+      # Issue #1656: second local pass before ready-phase gate.
+      if reviewer_loop_second_local_pass_before_ready_gate "$pr_number"; then
+        :
+      else
+        break
       fi
       set +e
       ensure_pr_ready_for_ready_phase "$pr_number"

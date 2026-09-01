@@ -17702,6 +17702,123 @@ platforms=(codex-github)
 run_test "1656_s2b_repo_configured" "no_evidence" \
   "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$(reviewer_loop_repo_configured_platforms)")"
 
+# --- Guard integration (extracted function) ---
+_1656_guard_head="ffffffffffffffffffffffffffffffffffffffff"
+_1656_guard_hist_clean="$(jq -nc --arg head "$_1656_guard_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
+  }]
+}')"
+_1656_guard_hist_failed="$(jq -nc --arg head "$_1656_guard_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{iteration: 1, local_second_pass_failed_head: $head, result: "escalate"}]
+}')"
+
+reviewer_loop_prior_history_payload_from_pr() {
+  if [ -n "${_1656_guard_hist_payload:-}" ]; then
+    printf '%s\n' "$_1656_guard_hist_payload"
+  else
+    printf '%s\n' '{"schema":"reviewer_loop_history.v1","entries":[]}'
+  fi
+}
+
+_1656_run_platform_review_calls=0
+run_platform_review() {
+  _1656_run_platform_review_calls=$((_1656_run_platform_review_calls + 1))
+  case "${_1656_stub_pass_result:-clean}" in
+    clean) printf 'RESULT=clean\nREVIEWED_HEAD=%s\n' "${loop_head_sha:-}" ;;
+    skipped) printf 'RESULT=skipped\nREASON=unavailable\n' ;;
+    needs_fixes) printf 'RESULT=needs_fixes\nREASON=blocking\nBLOCKING_COUNT=1\n' ;;
+    *) printf 'RESULT=escalate\nREASON=unknown\n' ;;
+  esac
+  return 0
+}
+
+gh() {
+  if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+    printf '{"headRefOid":"%s"}\n' "${loop_head_sha:-}"
+    return 0
+  fi
+  command gh "$@"
+}
+
+_1656_reset_guard_globals() {
+  phase_after_clean_enabled=1
+  phase_after_clean_started=0
+  local_second_pass=0
+  local_second_pass_reason="not_required"
+  local_second_pass_result=""
+  local_second_pass_failed_head_record=""
+  loop_head_sha="$_1656_guard_head"
+  branch_name="refactor/1656-second-local-pass"
+  pr_number=1693
+  poll_interval=1
+  max_wait=10
+  platforms=(local-ai-reviewer codex-github)
+  repo_review_platforms=(local-ai-reviewer codex-github)
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_peer_evidence=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_result="clean"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  compare_mode=0
+  compare_first_blocking_result=""
+  _1656_run_platform_review_calls=0
+  _1656_stub_pass_result="clean"
+}
+
+# Scenario 4 / not_required: clean on loop_head_sha — no dispatch
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4_guard_proceed" "0" "$_st"
+run_test "1656_s4_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4_guard_reason" "not_required" "$local_second_pass_reason"
+
+# Scenario 8c: failed head refusal — no dispatch, escalate
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_failed"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s8c_guard_refuse" "1" "$_st"
+run_test "1656_s8c_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s8c_guard_escalate" "escalate" "$aggregate_result"
+run_test "1656_s8c_guard_failed_reason" "failed_for_head" "$aggregate_reason"
+run_test "1656_s8c_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 7a: skipped pass — escalate, phase not started
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="skipped"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7a_guard_blocked" "1" "$_st"
+run_test "1656_s7a_guard_dispatch" "1" "$local_second_pass"
+run_test "1656_s7a_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7a_guard_escalate_reason" "local_pass_unavailable" "$aggregate_reason"
+run_test "1656_s7a_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 13: no ready-phase — guard no-op
+_1656_reset_guard_globals
+phase_after_clean_enabled=0
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s13_guard_noop" "0" "$_st"
+run_test "1656_s13_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+
+unset _1656_guard_head _1656_guard_hist_clean _1656_guard_hist_failed _1656_guard_hist_payload
+unset _1656_run_platform_review_calls _1656_stub_pass_result _st
+unset -f reviewer_loop_prior_history_payload_from_pr run_platform_review gh 2>/dev/null || true
+
 unset _1656_head _1656_ancestor _1656_unrelated _1656_cfg _1656_failed_hist
 unset repo_review_platforms platforms
 unset -f _1656_hist_clean_same _1656_hist_clean_ancestor _1656_hist_needs_fixes _1656_hist_no_local 2>/dev/null || true
