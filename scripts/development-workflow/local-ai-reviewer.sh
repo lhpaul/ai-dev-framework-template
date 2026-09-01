@@ -213,7 +213,7 @@ strict_entry_reports_na_reason() {
 strict_plan_source_path_for_plan() {
   local plan_path="$1"
   if [[ "$plan_path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]]; then
-    printf '%s\n' "$plan_path" | sed 's|/2_|/1_|; s|_implementation-plan|_specs|'
+    printf '%s\n' "$plan_path" | sed 's|/2_|/1_|; s|_implementation-plan\(\.doc\)\?\.md$|_specs\1.md|'
   fi
 }
 
