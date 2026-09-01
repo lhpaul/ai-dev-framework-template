@@ -6824,13 +6824,7 @@ run_coderabbit_review() {
 
   if [ "$blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
-      {
-        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
-        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
-        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
-        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
-        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
-      } | reviewer_loop_print_reviewed_head_from_json_lines
+    reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
