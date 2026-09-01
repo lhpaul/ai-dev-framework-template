@@ -3662,6 +3662,17 @@ emit_local_ai_strict_spec_keys() {
   done <<< "$script_output"
 }
 
+emit_local_ai_review_stage_keys() {
+  local script_output="$1"
+  local stage source checklists
+  stage="$(kv_value_default REVIEW_STAGE "$script_output" "")"
+  source="$(kv_value_default REVIEW_STAGE_SOURCE "$script_output" "")"
+  checklists="$(kv_value_default REVIEW_CHECKLISTS "$script_output" "")"
+  [ -n "$stage" ] && print_kv REVIEW_STAGE "$stage"
+  [ -n "$source" ] && print_kv REVIEW_STAGE_SOURCE "$source"
+  [ -n "$checklists" ] && print_kv REVIEW_CHECKLISTS "$checklists"
+}
+
 # Capture STRICT_SPEC_* into globals for reviewer_loop_history_build_entry.
 # Present object vs absent object is gated by strict_spec_recorded.
 capture_strict_spec_globals_from_output() {
@@ -3761,6 +3772,7 @@ run_local_ai_reviewer_review() {
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
+      emit_local_ai_review_stage_keys "$script_output"
       return 0
       ;;
     1)
@@ -3790,6 +3802,7 @@ run_local_ai_reviewer_review() {
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
+      emit_local_ai_review_stage_keys "$script_output"
       return 1
       ;;
     2)
@@ -3810,6 +3823,7 @@ run_local_ai_reviewer_review() {
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
+      emit_local_ai_review_stage_keys "$script_output"
       return 2
       ;;
     *)
@@ -3830,6 +3844,7 @@ run_local_ai_reviewer_review() {
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       emit_local_ai_strict_spec_keys "$script_output"
+      emit_local_ai_review_stage_keys "$script_output"
       return 0
       ;;
   esac

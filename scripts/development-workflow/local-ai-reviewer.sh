@@ -26,7 +26,9 @@ Environment:
                                     unless LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
-                                    HEAD_BRANCH, REVIEWED_HEAD, and
+                                    HEAD_BRANCH, REVIEWED_HEAD,
+                                    REVIEW_STAGE, REVIEW_STAGE_SOURCE,
+                                    REVIEW_CHECKLISTS, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
                                     Do not apply the bundled Codex preset default.
@@ -310,6 +312,76 @@ emit_strict_spec_output() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Stage-specific review checklist selection (#1653)
+# ---------------------------------------------------------------------------
+
+# Branch tier. Literal prefixes, never a regex: `specification/foo` must not
+# match `spec/*`.
+reviewer_stage_for_branch() {
+  case "${1:-}" in
+    spec/*) printf 'spec\n' ;;
+    implementation-plan/*) printf 'plan\n' ;;
+    feature/*|refactor/*|fix/*|hotfix/*) printf 'implementation\n' ;;
+    *) printf 'default\n' ;;
+  esac
+}
+
+# File tier. Reads newline-delimited paths on stdin — NOT the JSON array.
+# NOTE: this list is not #1652's reviewer_loop_path_is_normative_document and
+# must not be merged with it — that one decides whether a finding may be
+# cleared as cosmetic, this one decides which checklist applies.
+reviewer_changed_files_touch_workflow_policy() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
+        return 0 ;;
+      docs/workflow/*|docs/best-practices/*|scripts/development-workflow/*)
+        return 0 ;;
+      .claude/*|.cursor/*|.codex/*|.agents/*)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Decode the compact JSON array into newline-delimited paths, buffered.
+reviewer_decode_changed_files() {
+  local decoded
+  if ! decoded="$(printf '%s' "${1:-}" | jq -r '.[]?' 2>/dev/null)"; then
+    echo "WARN: could not decode changed_files_json; workflow-policy checklist not applied" >&2
+    decoded=""
+  fi
+  printf '%s\n' "$decoded"
+}
+
+# The merge. The file tier only ever appends, and never runs for `default`.
+reviewer_resolve_review_stage() {
+  local head_branch="$1" changed_files_json="$2"
+  local stage checklists source
+
+  stage="$(reviewer_stage_for_branch "$head_branch")"
+  case "$stage" in
+    spec) checklists="Spec Review Checklist" ;;
+    plan) checklists="Plan Review Checklist" ;;
+    implementation) checklists="Code Review Checklist" ;;
+    default) checklists="" ;;
+  esac
+
+  source="branch"
+  if [ -z "$checklists" ]; then
+    source="none"
+  elif reviewer_changed_files_touch_workflow_policy \
+    <<< "$(reviewer_decode_changed_files "$changed_files_json")"; then
+    checklists="${checklists},Workflow Policy Review Checklist"
+    source="branch+files"
+  fi
+
+  printf '%s\n%s\n%s\n' "$stage" "$source" "$checklists"
+}
+
 # Effective harness mode: only when HARNESS_MODE=1 AND the script is sourced.
 _HARNESS_MODE_EFFECTIVE=0
 if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
@@ -480,6 +552,16 @@ if [ ! -f REVIEW.md ]; then
   exit 2
 fi
 
+review_stage_resolved="$(reviewer_resolve_review_stage "$HEAD_BRANCH" "$changed_files_json")"
+review_stage="$(printf '%s\n' "$review_stage_resolved" | sed -n '1p')"
+review_stage_source="$(printf '%s\n' "$review_stage_resolved" | sed -n '2p')"
+review_checklists_csv="$(printf '%s\n' "$review_stage_resolved" | sed -n '3p')"
+if [ -n "$review_checklists_csv" ]; then
+  review_checklists_json="$(jq -n --arg csv "$review_checklists_csv" '$csv | split(",") | map(select(length > 0))')"
+else
+  review_checklists_json="[]"
+fi
+
 graph_strategy="${LOCAL_AI_REVIEWER_GRAPH_STRATEGY:-none}"
 graph_context="none"
 case "$graph_strategy" in
@@ -522,7 +604,10 @@ jq -n \
   --arg pr_body "$PR_BODY" \
   --arg diff_name_status "$diff_name_status" \
   --arg diff_stat "$diff_stat" \
+  --arg review_stage "$review_stage" \
+  --arg review_stage_source "$review_stage_source" \
   --argjson changed_files "$changed_files_json" \
+  --argjson review_checklists "$review_checklists_json" \
   '{
     schema_version: "local_ai_reviewer_context.v1",
     pr_number: ($pr_number | tonumber),
@@ -536,13 +621,19 @@ jq -n \
     diff_name_status: $diff_name_status,
     diff_stat: $diff_stat,
     review_contract: "REVIEW.md",
-    graph_context: $graph_context
+    graph_context: $graph_context,
+    review_stage: $review_stage,
+    review_stage_source: $review_stage_source,
+    review_checklists: $review_checklists
   }' >"$context_file"
 
 print_kv BASE_BRANCH "$BASE_BRANCH"
 [ -n "$HEAD_BRANCH" ] && print_kv HEAD_BRANCH "$HEAD_BRANCH"
 print_kv REVIEWED_HEAD "$HEAD_SHA"
 print_kv GRAPH_CONTEXT "$graph_context"
+print_kv REVIEW_STAGE "$review_stage"
+print_kv REVIEW_STAGE_SOURCE "$review_stage_source"
+[ -n "$review_checklists_csv" ] && print_kv REVIEW_CHECKLISTS "$review_checklists_csv"
 
 # Strict-spec state (always emitted after a completed ordinary parse).
 strict_spec_state=""
@@ -572,6 +663,9 @@ REPO="$REPO" \
 BASE_BRANCH="$BASE_BRANCH" \
 HEAD_BRANCH="$HEAD_BRANCH" \
 REVIEWED_HEAD="$HEAD_SHA" \
+REVIEW_STAGE="$review_stage" \
+REVIEW_STAGE_SOURCE="$review_stage_source" \
+REVIEW_CHECKLISTS="$review_checklists_csv" \
   run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
 command_exit=$?
 set -e
@@ -746,6 +840,9 @@ case "$strict_stage" in
           BASE_BRANCH="$BASE_BRANCH" \
           HEAD_BRANCH="$HEAD_BRANCH" \
           REVIEWED_HEAD="$HEAD_SHA" \
+          REVIEW_STAGE="$review_stage" \
+          REVIEW_STAGE_SOURCE="$review_stage_source" \
+          REVIEW_CHECKLISTS="$review_checklists_csv" \
             run_with_timeout "$remaining" "$strict_stdout_file" "$strict_stderr_file" \
               sh -c "$LOCAL_AI_REVIEWER_COMMAND"
           strict_exit=$?
@@ -826,6 +923,9 @@ write_evidence_file() {
     --arg pr_body "$PR_BODY" \
     --arg diff_name_status "$diff_name_status" \
     --arg diff_stat "$diff_stat" \
+    --arg review_stage "$review_stage" \
+    --arg review_stage_source "$review_stage_source" \
+    --arg review_checklists "$review_checklists_csv" \
     --argjson changed_files "$changed_files_json" \
     --argjson comment_count "$final_comment_count" \
     --argjson blocking_count "$final_blocking_count" \
@@ -852,6 +952,11 @@ write_evidence_file() {
         pr_body: ($pr_body[0:20000]),
         diff_name_status: $diff_name_status,
         diff_stat: $diff_stat
+      },
+      review_stage: {
+        stage: $review_stage,
+        source: $review_stage_source,
+        checklists: ($review_checklists | if . == "" then [] else (split(",") | map(select(length > 0))) end)
       },
       strict_spec: $strict_spec
     }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; then

@@ -897,6 +897,173 @@ run_test "s11a_codex_reads_mode" "yes" \
 run_test "s11a_codex_strict_prompt_override" "yes" \
   "$(grep -Fq 'LOCAL_CODEX_REVIEWER_STRICT_PROMPT' "$CODEX_CMD" && echo yes || echo no)"
 
+# ---------------------------------------------------------------------------
+# #1653 — stage-specific checklist selection
+# ---------------------------------------------------------------------------
+
+source_reviewer_functions() {
+  # shellcheck source=scripts/development-workflow/local-ai-reviewer.sh
+  HARNESS_MODE=1 source "$REVIEWER"
+}
+
+source_reviewer_functions
+run_test "1653_s0_sourced_branch_fn" "function" "$(type -t reviewer_stage_for_branch)"
+run_test "1653_s0_sourced_policy_fn" "function" "$(type -t reviewer_changed_files_touch_workflow_policy)"
+run_test "1653_s0_sourced_resolve_fn" "function" "$(type -t reviewer_resolve_review_stage)"
+set +e
+HARNESS_MODE=1 "$REVIEWER" >/dev/null 2>&1
+_1653_harness_exit=$?
+set -e
+run_test "1653_s0_direct_harness_exits_2" "2" "$_1653_harness_exit"
+
+run_test "1653_s1_spec" "spec" "$(reviewer_stage_for_branch 'spec/foo')"
+run_test "1653_s1_plan" "plan" "$(reviewer_stage_for_branch 'implementation-plan/foo')"
+run_test "1653_s1_feature" "implementation" "$(reviewer_stage_for_branch 'feature/foo')"
+run_test "1653_s1_refactor" "implementation" "$(reviewer_stage_for_branch 'refactor/foo')"
+run_test "1653_s1_fix" "implementation" "$(reviewer_stage_for_branch 'fix/foo')"
+run_test "1653_s1_hotfix" "implementation" "$(reviewer_stage_for_branch 'hotfix/foo')"
+
+run_test "1653_s2_empty" "default" "$(reviewer_stage_for_branch '')"
+run_test "1653_s2_main" "default" "$(reviewer_stage_for_branch 'main')"
+run_test "1653_s2_develop" "default" "$(reviewer_stage_for_branch 'develop')"
+run_test "1653_s2_integration" "default" "$(reviewer_stage_for_branch 'develop-internal-reviewer-effectiveness')"
+run_test "1653_s2_specification" "default" "$(reviewer_stage_for_branch 'specification/foo')"
+
+_1653_policy_ok() {
+  printf '%s\n' "$1" | reviewer_changed_files_touch_workflow_policy >/dev/null
+}
+run_test "1653_s3_review_md" "yes" "$(_1653_policy_ok 'REVIEW.md' && echo yes || echo no)"
+run_test "1653_s3_agents_md" "yes" "$(_1653_policy_ok 'AGENTS.md' && echo yes || echo no)"
+run_test "1653_s3_claude_md" "yes" "$(_1653_policy_ok 'CLAUDE.md' && echo yes || echo no)"
+run_test "1653_s3_gemini_md" "yes" "$(_1653_policy_ok 'GEMINI.md' && echo yes || echo no)"
+run_test "1653_s3_llm_rules_md" "yes" "$(_1653_policy_ok 'LLM_RULES.md' && echo yes || echo no)"
+run_test "1653_s3_workflow_yaml" "yes" "$(_1653_policy_ok '.ai-dev-workflow.yaml' && echo yes || echo no)"
+run_test "1653_s3_docs_workflow" "yes" "$(_1653_policy_ok 'docs/workflow/foo.md' && echo yes || echo no)"
+run_test "1653_s3_docs_best_practices" "yes" "$(_1653_policy_ok 'docs/best-practices/1-general.md' && echo yes || echo no)"
+run_test "1653_s3_scripts_dev_workflow" "yes" "$(_1653_policy_ok 'scripts/development-workflow/local-ai-reviewer.sh' && echo yes || echo no)"
+run_test "1653_s3_claude_agents" "yes" "$(_1653_policy_ok '.claude/agents/code-reviewer.md' && echo yes || echo no)"
+run_test "1653_s3_cursor_agents" "yes" "$(_1653_policy_ok '.cursor/agents/code-reviewer.md' && echo yes || echo no)"
+run_test "1653_s3_codex_skills" "yes" "$(_1653_policy_ok '.codex/skills/workflow-code-reviewer/SKILL.md' && echo yes || echo no)"
+run_test "1653_s3_agents_skills" "yes" "$(_1653_policy_ok '.agents/skills/x/SKILL.md' && echo yes || echo no)"
+
+run_test "1653_s3_neg_spec" "no" "$(_1653_policy_ok 'docs/specs/developments/x/1_x_specs.md' && echo yes || echo no)"
+run_test "1653_s3_neg_project" "no" "$(_1653_policy_ok 'docs/project/1-business-domain.md' && echo yes || echo no)"
+run_test "1653_s3_neg_ci" "no" "$(_1653_policy_ok '.github/workflows/ci.yml' && echo yes || echo no)"
+run_test "1653_s3_neg_src" "no" "$(_1653_policy_ok 'src/app/main.ts' && echo yes || echo no)"
+
+run_test "1653_s4_mixed_yes" "yes" "$(printf 'src/app/main.ts\nREVIEW.md\n' | reviewer_changed_files_touch_workflow_policy >/dev/null && echo yes || echo no)"
+run_test "1653_s4_none_no" "no" "$(printf 'src/app/main.ts\ndocs/project/x.md\n' | reviewer_changed_files_touch_workflow_policy >/dev/null && echo yes || echo no)"
+run_test "1653_s5_empty_no" "no" "$(printf '' | reviewer_changed_files_touch_workflow_policy >/dev/null && echo yes || echo no)"
+
+_1653_parse_resolve() {
+  local branch="$1" json="$2"
+  reviewer_resolve_review_stage "$branch" "$json"
+}
+
+_1653_s5a_out="$(_1653_parse_resolve 'refactor/foo' '["REVIEW.md","src/app/main.ts"]')"
+run_test "1653_s5a_stage" "implementation" "$(printf '%s\n' "$_1653_s5a_out" | sed -n '1p')"
+run_test "1653_s5a_source" "branch+files" "$(printf '%s\n' "$_1653_s5a_out" | sed -n '2p')"
+run_test "1653_s5a_lists" "Code Review Checklist,Workflow Policy Review Checklist" "$(printf '%s\n' "$_1653_s5a_out" | sed -n '3p')"
+
+_1653_s5a_empty="$(_1653_parse_resolve 'refactor/foo' '[]')"
+run_test "1653_s5a_empty_source" "branch" "$(printf '%s\n' "$_1653_s5a_empty" | sed -n '2p')"
+run_test "1653_s5a_empty_no_policy" "Code Review Checklist" "$(printf '%s\n' "$_1653_s5a_empty" | sed -n '3p')"
+
+_1653_s5a_blank="$(_1653_parse_resolve 'refactor/foo' '""')"
+run_test "1653_s5a_blank_source" "branch" "$(printf '%s\n' "$_1653_s5a_blank" | sed -n '2p')"
+run_test "1653_s5a_blank_no_policy" "Code Review Checklist" "$(printf '%s\n' "$_1653_s5a_blank" | sed -n '3p')"
+
+_1653_pipe_max=2097152
+if [ -r /proc/sys/fs/pipe-max-size ]; then
+  _1653_pipe_max="$(cat /proc/sys/fs/pipe-max-size)"
+fi
+_1653_target=$((_1653_pipe_max * 2))
+if [ "$_1653_target" -lt 2097152 ]; then
+  _1653_target=2097152
+fi
+_1653_paths=(REVIEW.md)
+_1653_i=0
+_1653_chunk=500
+while [ "$(printf '%s\n' "${_1653_paths[@]}" | wc -c | tr -d ' ')" -le "$_1653_target" ]; do
+  for ((j=0; j<_1653_chunk; j++)); do
+    _1653_paths+=("docs/specs/developments/filler-$(printf '%05d' "$((_1653_i + j))")/1_x.md")
+  done
+  _1653_i=$((_1653_i + _1653_chunk))
+  _1653_chunk=$((_1653_chunk * 2))
+done
+_1653_big_json="$(printf '%s\n' "${_1653_paths[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+_1653_s5b_out="$(_1653_parse_resolve 'refactor/foo' "$_1653_big_json")"
+run_test "1653_s5b_policy_added" "branch+files" "$(printf '%s\n' "$_1653_s5b_out" | sed -n '2p')"
+
+_1653_merge_case() {
+  local branch="$1" json="$2" exp_stage="$3" exp_source="$4" exp_lists="$5"
+  local out stage source lists
+  out="$(reviewer_resolve_review_stage "$branch" "$json")"
+  stage="$(printf '%s\n' "$out" | sed -n '1p')"
+  source="$(printf '%s\n' "$out" | sed -n '2p')"
+  lists="$(printf '%s\n' "$out" | sed -n '3p')"
+  run_test "1653_s6_${branch//\//_}_stage" "$exp_stage" "$stage"
+  run_test "1653_s6_${branch//\//_}_source" "$exp_source" "$source"
+  run_test "1653_s6_${branch//\//_}_lists" "$exp_lists" "$lists"
+}
+
+_1653_merge_case 'spec/foo' '["src/app/main.ts"]' 'spec' 'branch' 'Spec Review Checklist'
+_1653_merge_case 'spec/foo' '["REVIEW.md"]' 'spec' 'branch+files' 'Spec Review Checklist,Workflow Policy Review Checklist'
+_1653_merge_case 'implementation-plan/foo' '["src/app/main.ts"]' 'plan' 'branch' 'Plan Review Checklist'
+_1653_merge_case 'implementation-plan/foo' '["REVIEW.md"]' 'plan' 'branch+files' 'Plan Review Checklist,Workflow Policy Review Checklist'
+_1653_merge_case 'refactor/foo' '["src/app/main.ts"]' 'implementation' 'branch' 'Code Review Checklist'
+_1653_merge_case 'refactor/foo' '["REVIEW.md"]' 'implementation' 'branch+files' 'Code Review Checklist,Workflow Policy Review Checklist'
+_1653_merge_case 'main' '["src/app/main.ts"]' 'default' 'none' ''
+_1653_merge_case 'main' '["REVIEW.md"]' 'default' 'none' ''
+
+for _1653_heading in \
+  'Spec Review Checklist' \
+  'Plan Review Checklist' \
+  'Code Review Checklist' \
+  'Workflow Policy Review Checklist'; do
+  run_test "1653_s9_heading_${_1653_heading// /_}" "yes" \
+    "$(grep -Fq "## ${_1653_heading}" "$REPO_ROOT/REVIEW.md" && echo yes || echo no)"
+done
+
+reset_mocks
+BUNDLE_DUMP="$(mktemp)"
+cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+if [ -n "${MOCK_BUNDLE_DUMP:-}" ]; then
+  cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+fi
+printf '%s\n' '{"result":"clean","findings":[]}'
+MOCK_REVIEWER
+chmod +x "$MOCK_BIN/local-reviewer-mock"
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+MOCK_PR_HEAD_BRANCH="refactor/1653-split-reviewer-prompts-by-stage"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export LOCAL_AI_REVIEWER_COMMAND MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "1653_s12_bundle_stage" "implementation" "$(jq -r '.review_stage' "$BUNDLE_DUMP")"
+run_test "1653_s12_bundle_source" "branch+files" "$(jq -r '.review_stage_source' "$BUNDLE_DUMP")"
+run_test "1653_s12_bundle_schema" "local_ai_reviewer_context.v1" "$(jq -r '.schema_version' "$BUNDLE_DUMP")"
+for _1653_field in schema_version pr_number owner repo base_branch head_branch reviewed_head changed_files pr_body diff_name_status diff_stat review_contract graph_context review_stage review_stage_source review_checklists; do
+  run_test "1653_s12_field_${_1653_field}" "yes" "$(jq -e "has(\"${_1653_field}\")" "$BUNDLE_DUMP" >/dev/null && echo yes || echo no)"
+done
+run_test "1653_out_review_stage" "REVIEW_STAGE=implementation" "$(line_for REVIEW_STAGE)"
+run_test "1653_out_review_source" "REVIEW_STAGE_SOURCE=branch+files" "$(line_for REVIEW_STAGE_SOURCE)"
+run_test "1653_out_review_lists" "REVIEW_CHECKLISTS=Code Review Checklist,Workflow Policy Review Checklist" "$(line_for REVIEW_CHECKLISTS)"
+rm -f "$BUNDLE_DUMP"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
+MOCK_PR_HEAD_BRANCH="refactor/1653-split-reviewer-prompts-by-stage"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+set_mock_stdout '{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "1653_s14_evidence_stage" "implementation" "$(jq -r '.review_stage.stage' "$EVIDENCE_FILE")"
+run_test "1653_s14_evidence_source" "branch+files" "$(jq -r '.review_stage.source' "$EVIDENCE_FILE")"
+run_test "1653_s14_evidence_schema" "local_ai_reviewer_evidence.v1" "$(jq -r '.schema_version' "$EVIDENCE_FILE")"
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
   exit 1

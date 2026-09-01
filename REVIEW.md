@@ -380,6 +380,34 @@ Typical `important` issues:
 
 ---
 
+## Workflow Policy Review Checklist
+
+For changes to the documents and scripts that define how the workflow itself
+behaves — `REVIEW.md`, the root agent instruction files, `.ai-dev-workflow.yaml`,
+`docs/workflow/**`, `docs/best-practices/**`, `scripts/development-workflow/**`,
+and the per-tool instruction trees `.claude/**`, `.cursor/**`, `.codex/**`, and
+`.agents/**` — apply this checklist in addition to the stage checklist the
+branch implies.
+
+1. Does every stated count match what the document actually contains, by
+   extraction rather than by reading?
+2. Does every gate name its inputs, its decision for each combination of
+   them, and its behavior when an input is missing or malformed?
+3. Does a rule asserted as fail-closed have a path that reaches the
+   permissive branch — an allow-list stated as a deny-list, an empty set
+   treated as satisfied, an absent value treated as a match?
+4. Does every new or modified check carry a planted-violation proof at a
+   concrete file and line, and can the plant actually change the check's
+   answer? A proof whose plant is masked by an earlier rule is not a
+   proof.
+5. Does the change alter a `key=value` contract, a JSON schema version, or
+   a stdout surface another script parses, and if so is every consumer
+   named?
+6. Do the protocol document, the integration document and the `--help`
+   output describe the same behavior as the code?
+
+---
+
 ## Tool Guidance
 
 ### Claude Code

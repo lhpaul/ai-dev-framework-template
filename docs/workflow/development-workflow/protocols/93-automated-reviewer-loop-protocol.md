@@ -227,6 +227,10 @@ Conditions are evaluated in order and stop at the first unmet one:
    [`integrations/local-ai-reviewer.md`](../integrations/local-ai-reviewer.md)
    and [`strict-spec-checks.md`](../strict-spec-checks.md)); `STRICT_SPEC_*`
    keys and the history `strict_spec` object never change the ordinary verdict.
+   The local reviewer also emits `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, and
+   `REVIEW_CHECKLISTS` on stdout; `pr-review-loop.sh` forwards them into loop
+   summaries as `PLATFORM_<n>_REVIEW_STAGE`, `PLATFORM_<n>_REVIEW_STAGE_SOURCE`,
+   and `PLATFORM_<n>_REVIEW_CHECKLISTS`.
 2. **Preceding peer evidence** — every platform that precedes this reviewer
    under the reordered list (same-bucket non-expensive peers plus every earlier
    bucket) has already run with acceptable evidence: `clean`, or `skipped`
