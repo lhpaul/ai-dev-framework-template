@@ -17680,6 +17680,8 @@ run_test "1656_s5_no_evidence" "no_evidence" \
   "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")"
 run_test "1656_s6_no_local_reviewer" "no_local_reviewer" \
   "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")"
+run_test "1656_s6b_no_local_reviewer_ignores_history" "no_local_reviewer" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_clean_same)" "$_1656_head" "codex-github")"
 
 _1656_failed_hist="$(jq -nc --arg head "$_1656_head" '{
   schema: "reviewer_loop_history.v1",

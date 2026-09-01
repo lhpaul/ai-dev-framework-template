@@ -8211,6 +8211,13 @@ reviewer_loop_local_pass_required() {
   local payload="${1:-}" head="${2:-}" configured="${3:-}"
   local verdict outcome verdict_head
 
+  # Honor the repository configured list before #1651's selector: history can still
+  # name local-ai-reviewer even when this repository no longer configures it.
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf 'no_local_reviewer\n'
+    return 0
+  fi
+
   verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
   outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
   verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
