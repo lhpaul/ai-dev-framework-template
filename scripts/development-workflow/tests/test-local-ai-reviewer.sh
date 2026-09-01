@@ -1112,6 +1112,48 @@ _1654_unreadable="$(_1654_run_supply "$_1654_unreadable_root")"
 chmod 644 "$_1654_unreadable_root/docs/workflow/development-workflow/review-doctrine.md"
 run_test "1654_s1_unreadable_state" "unreadable" "$(printf '%s\n' "$_1654_unreadable" | jq -r '.state')"
 
+# Scenario 1a: grep exit >1 is unreadable (distinct from exit 1 → count 0 supplied)
+_1654_grep_err_bin="$(mktemp -d)"
+cat > "$_1654_grep_err_bin/grep" <<'GREP_STUB'
+#!/usr/bin/env bash
+if [[ "$*" == *'-c '^###\ '* ]]; then exit 2; fi
+exec /usr/bin/grep "$@"
+GREP_STUB
+chmod +x "$_1654_grep_err_bin/grep"
+_1654_grep_err_root="$(mktemp -d)"
+_1654_install_doctrine "$_1654_grep_err_root" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+_1654_grep_err_out="$(cd "$_1654_grep_err_root" && PATH="$_1654_grep_err_bin:$PATH" reviewer_doctrine_supply)"
+run_test "1654_s1a_grep_error_unreadable" "unreadable" "$(printf '%s\n' "$_1654_grep_err_out" | jq -r '.state')"
+
+# Scenario 1a: cp failure while catalogue present → unreadable
+_1654_cp_fail_bin="$(mktemp -d)"
+cat > "$_1654_cp_fail_bin/cp" <<'CP_STUB'
+#!/usr/bin/env bash
+if [[ "$1" == *review-doctrine.md ]]; then exit 1; fi
+exec /bin/cp "$@"
+CP_STUB
+chmod +x "$_1654_cp_fail_bin/cp"
+_1654_cp_fail_root="$(mktemp -d)"
+_1654_install_doctrine "$_1654_cp_fail_root" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+_1654_cp_fail_out="$(cd "$_1654_cp_fail_root" && PATH="$_1654_cp_fail_bin:/usr/bin:/bin" reviewer_doctrine_supply)"
+run_test "1654_s1a_cp_fail_unreadable" "unreadable" "$(printf '%s\n' "$_1654_cp_fail_out" | jq -r '.state')"
+
+# Scenario 1b: returned version is hash of returned text (same snapshot)
+_1654_text_hash="$(printf '%s\n' "$_1654_supplied" | jq -j -r '.text' | if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | awk '{print substr($1,1,12)}')"
+run_test "1654_s1b_version_matches_text" "$_1654_text_hash" "$(printf '%s\n' "$_1654_supplied" | jq -r '.version')"
+
+# Scenario 6: no digest command → unreadable, not supplied with empty version
+_1654_no_digest_root="$(mktemp -d)"
+_1654_install_doctrine "$_1654_no_digest_root" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
+_1654_no_digest_path="$(mktemp -d)"
+for _1654_tool in awk bash cat cp date dirname grep jq mktemp perl rm sed sh sleep tr wc; do
+  _1654_p="$(command -v "$_1654_tool" 2>/dev/null || true)"
+  [ -n "$_1654_p" ] && ln -sf "$_1654_p" "$_1654_no_digest_path/$_1654_tool"
+done
+_1654_no_digest_out="$(cd "$_1654_no_digest_root" && PATH="$_1654_no_digest_path" reviewer_doctrine_supply)"
+run_test "1654_s6_no_digest_state" "unreadable" "$(printf '%s\n' "$_1654_no_digest_out" | jq -r '.state')"
+run_test "1654_s6_no_digest_version_empty" "" "$(printf '%s\n' "$_1654_no_digest_out" | jq -r '.version')"
+
 _1654_oversized_root="$(mktemp -d)"
 _1654_oversized_file="$_1654_oversized_root/docs/workflow/development-workflow/review-doctrine.md"
 mkdir -p "$(dirname "$_1654_oversized_file")"
@@ -1205,7 +1247,7 @@ MOCK_REVIEWER
   rm -f "$BUNDLE_DUMP"
 done
 
-rm -rf "$_1654_doctrine_root" "$_1654_absent_root" "$_1654_unreadable_root" "$_1654_oversized_root" "$_1654_empty_root"
+rm -rf "$_1654_doctrine_root" "$_1654_absent_root" "$_1654_unreadable_root" "$_1654_oversized_root" "$_1654_empty_root" "$_1654_grep_err_bin" "$_1654_grep_err_root" "$_1654_cp_fail_bin" "$_1654_cp_fail_root" "$_1654_no_digest_root" "$_1654_no_digest_path"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"

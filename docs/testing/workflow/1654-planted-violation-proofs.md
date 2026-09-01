@@ -57,7 +57,8 @@ empty string instead of failing when neither `sha256sum` nor `shasum` exists.
 **Fail**: with `PATH` stripped of digest tools, supply returns `supplied` and empty
 `version` instead of `unreadable`.
 
-**Pass (canonical)**: digest absence yields `unreadable` (plan scenario 6).
+**Pass (canonical)**: `test-local-ai-reviewer.sh` → PASS `1654_s6_no_digest_state` and
+`1654_s6_no_digest_version_empty`.
 
 ## P6 — doctrine text in key=value output
 
@@ -106,8 +107,8 @@ bytes when trailing newline mishandled).
 **Fail**: file removed after `[ -r ]` aborts reviewer under `set -e` instead of
 reporting `unreadable`.
 
-**Pass (canonical per-operation handlers)**: PASS `1654_s1_unreadable_state` with
-chmod 000 fixture.
+**Pass (canonical per-operation handlers)**: PASS `1654_s1_unreadable_state`,
+`1654_s1a_grep_error_unreadable`, and `1654_s1a_cp_fail_unreadable`.
 
 ## P11 — multi-read race (version ≠ text bytes)
 
@@ -117,8 +118,8 @@ separate reads of the live file instead of one snapshot.
 **Fail**: rewrite catalogue after snapshot; returned `version` is hash of different
 bytes than `text` (plan scenario 1b).
 
-**Pass (canonical single snapshot)**: all four values from one `cp` in
-`reviewer_doctrine_supply`.
+**Pass (canonical single snapshot)**: PASS `1654_s1b_version_matches_text`; all four
+values from one `cp` in `reviewer_doctrine_supply`.
 
 ## P12 — `grep -c … || true` on pattern count
 
@@ -128,8 +129,8 @@ exit 1 and exit >1.
 **Fail**: unreadable grep error reports `supplied` with `pattern_count=0` instead
 of `unreadable`.
 
-**Pass (canonical status branch)**: grep exit 1 → count 0 + `supplied`; exit >1 →
-`unreadable`.
+**Pass (canonical status branch)**: PASS `1654_s1a_grep_error_unreadable`; grep exit 1
+→ count 0 + `supplied`; exit >1 → `unreadable`.
 
 ## P13 — evidence file without review_doctrine object
 
@@ -157,6 +158,6 @@ output still passes.
 ```bash
 bash scripts/lint/review-doctrine-lint.sh
 bash scripts/development-workflow/tests/test-review-doctrine-lint.sh   # 25 passed
-bash scripts/development-workflow/tests/test-local-ai-reviewer.sh      # 283 passed
+bash scripts/development-workflow/tests/test-local-ai-reviewer.sh      # 288 passed
 shellcheck --severity=warning scripts/lint/review-doctrine-lint.sh
 ```
