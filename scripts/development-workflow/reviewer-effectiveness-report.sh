@@ -223,11 +223,11 @@ rer_aggregate_measure() {
   printf '%s\n' "$rows_json" | jq -c --arg f "$field" '
     [.[] | select(.state == "included") | .measures[$f]
       | select(.availability == "computed")] as $vals
-    | {
+    | if ($vals | length) == 0 then empty else {
         measure: $f,
         included: ($vals | length),
         total: ([$vals[] | .value | if type == "number" then . else 0 end] | add // 0)
-      }
+      } end
   '
 }
 
@@ -237,11 +237,11 @@ rer_aggregate_state_measure() {
   printf '%s\n' "$rows_json" | jq -c --arg f "$field" '
     [.[] | select(.state == "included") | .measures[$f]
       | select(.availability == "computed")] as $vals
-    | {
+    | if ($vals | length) == 0 then empty else {
         measure: $f,
         included: ($vals | length),
         values: [$vals[] | .value]
-      }
+      } end
   '
 }
 
@@ -418,9 +418,11 @@ rer_build_report() {
 
   if [ "$included" -gt 0 ]; then
     for measure in rounds external_blocking_rounds blocking_findings confirmed_miss_records possible_miss_records codex_github_invocations; do
-      aggregates+=("$(rer_aggregate_measure "$rows_json" "$measure")")
+      agg="$(rer_aggregate_measure "$rows_json" "$measure")"
+      [ -n "$agg" ] && aggregates+=("$agg")
     done
-    aggregates+=("$(rer_aggregate_state_measure "$rows_json" "final_current_head_evidence")")
+    agg="$(rer_aggregate_state_measure "$rows_json" "final_current_head_evidence")"
+    [ -n "$agg" ] && aggregates+=("$agg")
   fi
 
   strict_checks="$(rer_strict_checks_json "$rows_json")"

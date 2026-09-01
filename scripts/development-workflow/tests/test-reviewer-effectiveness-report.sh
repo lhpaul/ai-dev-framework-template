@@ -139,6 +139,10 @@ today_text="$(PATH="$TMP_DIR:$PATH" HARNESS_MODE=0 "$SCRIPT" --pr 201 --repo exa
 assert_not_contains "$today_text" 'External blocking rounds: 0' 'not_recorded not rendered as zero'
 assert_contains "$today_text" 'External blocking rounds: Not recorded' 'not_recorded rendered as word'
 
+today_json_out="$(PATH="$TMP_DIR:$PATH" HARNESS_MODE=0 "$SCRIPT" --pr 201 --repo example/repo --json 2>/dev/null)"
+assert_jq "$today_json_out" '[.aggregates[] | select(.measure == "external_blocking_rounds")] | length' '0' 'omit aggregate for not_recorded measure'
+assert_jq "$today_json_out" '[.aggregates[] | select(.measure == "rounds")] | length' '1' 'include aggregate for computed measure'
+
 # --- end-to-end with recording gh stub ---
 cat > "$TMP_DIR/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
