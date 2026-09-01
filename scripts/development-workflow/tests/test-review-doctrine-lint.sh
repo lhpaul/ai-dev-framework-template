@@ -98,7 +98,9 @@ _assign_count="$(rg -l 'REVIEW_DOCTRINE_MAX_BYTES=' scripts --glob '*.sh' 2>/dev
 run_test "s15_single_assignment" "1" "$_assign_count"
 run_test "s15_linter_uses_constant" "yes" "$(grep -Fq '$REVIEW_DOCTRINE_MAX_BYTES' "$LINTER" && echo yes || echo no)"
 run_test "s15_linter_no_literal_gt" "no" "$(grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' "$LINTER" && echo yes || echo no)"
-run_test "s15_reviewer_uses_constant" "yes" "$(grep -Fq '$REVIEW_DOCTRINE_MAX_BYTES' "$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh" && echo yes || echo no)"
+_reviewer_supply_fn="$(sed -n '/^reviewer_doctrine_supply(/,/^}/p' "$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh")"
+run_test "s15_reviewer_uses_constant" "yes" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Fq '$REVIEW_DOCTRINE_MAX_BYTES' && echo yes || echo no)"
+run_test "s15_reviewer_no_literal_gt" "no" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' && echo yes || echo no)"
 
 # Scenario 16: shipped catalogue
 run_test "s16_shipped_passes_linter" "0" "$(lint_exit "$CATALOGUE")"
