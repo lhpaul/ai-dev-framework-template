@@ -8390,7 +8390,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   IFS=$'\t' read -r _sl_gate_result _sl_gate_reason < <(reviewer_loop_second_local_pass_gate_result "$_sl_pass_result" "$_sl_pass_reason")
   aggregate_result="$_sl_gate_result"
   aggregate_reason="$_sl_gate_reason"
-  if [ "$_sl_gate_result" = "escalate" ] && [ "$_sl_gate_reason" = "local_pass_unavailable" ]; then
+  if [ "$_sl_gate_result" = "escalate" ]; then
     local_second_pass_reason="local_pass_unavailable"
   fi
   local_second_pass_failed_head_record="$loop_head_sha"

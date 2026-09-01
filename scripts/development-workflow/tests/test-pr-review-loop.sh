@@ -17908,6 +17908,7 @@ reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1656_s7c_guard_blocked" "1" "$_st"
 run_test "1656_s7c_guard_escalate" "escalate" "$aggregate_result"
 run_test "1656_s7c_guard_timeout" "timeout" "$aggregate_reason"
+run_test "1656_s7c_guard_telemetry" "local_pass_unavailable" "$local_second_pass_reason"
 run_test "1656_s7c_phase_not_started" "0" "$phase_after_clean_started"
 
 # Unparseable pass output — unavailable escalation (P15 / scenario 7b shape)
