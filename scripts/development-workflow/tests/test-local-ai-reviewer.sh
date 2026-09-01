@@ -1413,6 +1413,7 @@ run_test "1655_s17_applied_all7" "STRICT_PLAN_APPLIED=source_declaration,unspeci
 run_test "1655_s17_drop_source_on_nospec" "STRICT_PLAN_COUNT=1" "$(line_for STRICT_PLAN_COUNT)"
 run_test "1655_s17_kept_phase_ordering" "STRICT_PLAN_CHECKS=phase_ordering" "$(line_for STRICT_PLAN_CHECKS)"
 run_test "1655_s17_unknown_from_drop" "STRICT_PLAN_UNKNOWN_COUNT=1" "$(line_for STRICT_PLAN_UNKNOWN_COUNT)"
+run_test "1655_s17_unknown_detail" "STRICT_2_CHECK=unknown" "$(line_for STRICT_2_CHECK)"
 rm -rf "$PLAN_REPO"
 
 # Scenario 7a: coverage follows spec presence, not plan declaration

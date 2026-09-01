@@ -384,16 +384,22 @@ filter_strict_plan_parsed_response() {
     ($sections | map(select(.source == "required") | .id)) as $required
     | ($sources | map(.plan_path)) as $with_source
     | .findings as $all
-    | ($all | map(select(
+    | ($all | map(
         . as $f
-        | ($required | index($f.check)) == null
-        or ($with_source | index($f.path)) != null
-      ))) as $kept
-    | ($all | length - ($kept | length)) as $dropped
+        | if ($required | index($f.check)) != null
+            and ($with_source | index($f.path)) == null
+            and ($f.check != "unknown") then
+            $f + {check: "unknown"}
+          else
+            $f
+          end
+      )) as $kept
+    | ($kept | map(select(.check != "unknown")) | length) as $named_count
+    | ($kept | map(select(.check == "unknown")) | length) as $unknown_named
     | . + {
-        count: ($kept | map(select(.check != "unknown")) | length),
+        count: $named_count,
         checks: ($kept | map(select(.check != "unknown") | .check) | unique | join(",")),
-        unknown_count: ((.unknown_count // 0) + $dropped),
+        unknown_count: ((.unknown_count // 0) + $unknown_named),
         findings: $kept
       }
   ' 2>/dev/null
