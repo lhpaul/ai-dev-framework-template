@@ -968,15 +968,19 @@ expensive_gate_peer_evidence_acceptable() {
 expensive_gate_lookup_peer_evidence() {
   local platform="$1"
   local entry peer_name rest
+  local last_rest=""
 
   for entry in "${platform_peer_evidence[@]:-}"; do
     peer_name="${entry%%|*}"
     rest="${entry#*|}"
     if [ "$peer_name" = "$platform" ]; then
-      printf '%s\n' "$rest"
-      return 0
+      last_rest="$rest"
     fi
   done
+  if [ -n "$last_rest" ]; then
+    printf '%s\n' "$last_rest"
+    return 0
+  fi
   printf '\n'
 }
 
@@ -8057,7 +8061,8 @@ reviewer_loop_platform_result_record_json() {
 # replaces stale first-pass evidence instead of appending beside it.
 reviewer_loop_replace_current_round_platform_record() {
   local platform_name="${1:-}"
-  local entry record kept_heads=() kept_records=()
+  local entry record kept_heads=() kept_records=() kept_peer=() kept_tokens=()
+  local blocking_name blocking_rest kept_blocking=()
 
   [ -n "$platform_name" ] || return 0
 
@@ -8068,7 +8073,7 @@ reviewer_loop_replace_current_round_platform_record() {
         kept_heads+=("$entry")
       fi
     done
-    platform_reviewed_heads=("${kept_heads[@]}")
+    platform_reviewed_heads=("${kept_heads[@]+"${kept_heads[@]}"}")
   fi
 
   if declare -p platform_result_records >/dev/null 2>&1 \
@@ -8078,7 +8083,38 @@ reviewer_loop_replace_current_round_platform_record() {
         kept_records+=("$record")
       fi
     done
-    platform_result_records=("${kept_records[@]}")
+    platform_result_records=("${kept_records[@]+"${kept_records[@]}"}")
+  fi
+
+  if declare -p platform_peer_evidence >/dev/null 2>&1 \
+      && [ "${#platform_peer_evidence[@]}" -gt 0 ]; then
+    for entry in "${platform_peer_evidence[@]}"; do
+      if [ "${entry%%|*}" != "$platform_name" ]; then
+        kept_peer+=("$entry")
+      fi
+    done
+    platform_peer_evidence=("${kept_peer[@]+"${kept_peer[@]}"}")
+  fi
+
+  if declare -p platform_result_tokens >/dev/null 2>&1 \
+      && [ "${#platform_result_tokens[@]}" -gt 0 ]; then
+    for entry in "${platform_result_tokens[@]}"; do
+      if [ "${entry%%:*}" != "$platform_name" ]; then
+        kept_tokens+=("$entry")
+      fi
+    done
+    platform_result_tokens=("${kept_tokens[@]+"${kept_tokens[@]}"}")
+  fi
+
+  if declare -p platform_blocking_outputs >/dev/null 2>&1 \
+      && [ "${#platform_blocking_outputs[@]}" -gt 0 ]; then
+    for entry in "${platform_blocking_outputs[@]}"; do
+      blocking_name="${entry%%$'\036'*}"
+      if [ "$blocking_name" != "$platform_name" ]; then
+        kept_blocking+=("$entry")
+      fi
+    done
+    platform_blocking_outputs=("${kept_blocking[@]+"${kept_blocking[@]}"}")
   fi
 }
 

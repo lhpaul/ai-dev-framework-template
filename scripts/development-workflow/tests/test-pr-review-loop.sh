@@ -17710,7 +17710,15 @@ loop_head_sha="${_1656_fresh_head}"
 platform_reviewed_heads=("local-ai-reviewer:${_1656_stale_head}" "local-ai-reviewer:${_1656_fresh_head}")
 run_test "1656_s6d_expensive_gate_latest_head" "1" \
   "$(expensive_gate_local_ai_head_current "$_1656_fresh_head")"
-unset _1656_stale_head _1656_fresh_head platform_reviewed_heads platform_result_records _sl_clean_out loop_head_sha total_comment_count total_blocking_count total_suggestion_count platform_peer_evidence aggregate_blocking_paths aggregate_blocking_findings
+platform_peer_evidence=("local-ai-reviewer|skipped|unavailable" "local-ai-reviewer|clean|")
+run_test "1656_s6e_peer_evidence_latest" "clean|" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+platform_peer_evidence=("local-ai-reviewer|skipped|unavailable")
+reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
+platform_peer_evidence+=("local-ai-reviewer|clean|")
+run_test "1656_s6e_peer_replace_latest" "clean|" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+unset _1656_stale_head _1656_fresh_head platform_reviewed_heads platform_result_records _sl_clean_out loop_head_sha total_comment_count total_blocking_count total_suggestion_count platform_peer_evidence aggregate_blocking_paths aggregate_blocking_findings compare_mode compare_verdicts
 
 _1656_failed_hist="$(jq -nc --arg head "$_1656_head" '{
   schema: "reviewer_loop_history.v1",
