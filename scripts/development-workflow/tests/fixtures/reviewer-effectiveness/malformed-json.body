@@ -1,0 +1,10 @@
+### Automated Reviewer Loop Summary
+
+Marker present but JSON block is malformed.
+
+<!-- reviewer-loop-history:v1 -->
+```json
+{ this is not valid json
+```
+
+*Posted automatically by `pr-review-loop.sh`.*

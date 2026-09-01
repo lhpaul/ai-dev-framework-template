@@ -3399,3 +3399,59 @@ workflow_is_plan_document_path() {
   local path="$1"
   [[ "$path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]]
 }
+
+# ---------------------------------------------------------------------------
+# Reviewer-loop history comment format (#1657 — shared producer/reader)
+# ---------------------------------------------------------------------------
+
+# Shared with pr-review-loop.sh and reviewer-effectiveness-report.sh (#1657).
+# shellcheck disable=SC2034
+REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
+REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
+
+reviewer_loop_history_extract_latest_json() {
+  awk -v marker="$REVIEWER_LOOP_HISTORY_MARKER" '
+    index($0, marker) > 0 {
+      seen_marker = 1
+      in_json = 0
+      block = ""
+      next
+    }
+    seen_marker && $0 ~ /^```json[[:space:]]*$/ {
+      in_json = 1
+      block = ""
+      next
+    }
+    in_json && $0 ~ /^```[[:space:]]*$/ {
+      latest = block
+      in_json = 0
+      seen_marker = 0
+      next
+    }
+    in_json {
+      block = block $0 "\n"
+    }
+    END {
+      printf "%s", latest
+    }
+  '
+}
+
+reviewer_loop_history_select_latest_summary_record() {
+  jq -rs '
+    (add // []) as $all
+    | [
+        $all[]
+        | select(
+            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+          )
+      ]
+    | sort_by(.created_at)
+    | last
+    | {
+        id: (.id // ""),
+        body: (.body // "")
+      }
+  '
+}

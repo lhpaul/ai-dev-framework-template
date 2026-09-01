@@ -3520,7 +3520,6 @@ unset _post_summary_call_line _print_result_line
 # max_total_cycles enforcement functions must stay callable from the
 # harness after future refactors move code around.
 for _mc_fn in reviewer_loop_resolve_run_id reviewer_loop_history_entries_count \
-    reviewer_loop_history_select_latest_summary_record \
     reviewer_loop_resolve_max_cycles reviewer_loop_resolve_max_total_cycles \
     reviewer_loop_cap_exceeded reviewer_loop_cycle_count_unavailable_should_escalate \
     reviewer_loop_persist_failure_should_escalate \
@@ -3537,6 +3536,18 @@ for _mc_fn in reviewer_loop_resolve_run_id reviewer_loop_history_entries_count \
     run_test "cycles_fn_defined_before_harness_return_${_mc_fn}" "yes" "yes"
   else
     run_test "cycles_fn_defined_before_harness_return_${_mc_fn}" "yes" "no"
+  fi
+done
+# #1657 moved the history selector to workflow-lib.sh; keep a source-order check here.
+for _mc_fn in reviewer_loop_history_select_latest_summary_record \
+    reviewer_loop_history_extract_latest_json; do
+  _mc_fn_line="$(grep -n "^${_mc_fn}()" \
+    "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" 2>/dev/null \
+    | head -1 | cut -d: -f1)"
+  if [ -n "$_mc_fn_line" ]; then
+    run_test "history_fn_defined_in_workflow_lib_${_mc_fn}" "yes" "yes"
+  else
+    run_test "history_fn_defined_in_workflow_lib_${_mc_fn}" "yes" "no"
   fi
 done
 unset _mc_fn _mc_fn_line _mc_harness_return_line
