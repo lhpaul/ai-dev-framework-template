@@ -1,0 +1,50 @@
+{
+  "schema": "reviewer_loop_history.v1",
+  "pr_number": 300,
+  "updated_at": "2026-08-01T00:00:00Z",
+  "history_status": "available",
+  "entries": [
+    {
+      "iteration": 1,
+      "platforms": ["local-ai-reviewer"],
+      "blocking_count": 1
+    },
+    {
+      "iteration": 2,
+      "platforms": ["local-ai-reviewer"],
+      "blocking_count": 0
+    },
+    {
+      "iteration": 3,
+      "platforms": ["local-ai-reviewer", "codex-github"],
+      "blocking_count": 2,
+      "missed_findings": [
+        {
+          "reviewer": "coderabbit",
+          "local_evidence_state": "clean_same_commit"
+        }
+      ]
+    },
+    {
+      "iteration": 4,
+      "platforms": ["local-ai-reviewer"],
+      "blocking_count": 0,
+      "missed_findings": [
+        {
+          "reviewer": "coderabbit",
+          "local_evidence_state": "clean_earlier_commit"
+        }
+      ],
+      "reviewed_heads": [
+        {"platform": "local-ai-reviewer", "reviewed_head": "aaa", "state": "current", "reason": ""}
+      ]
+    },
+    {
+      "iteration": 5,
+      "platforms": ["local-ai-reviewer"],
+      "blocking_count": 0,
+      "missed_findings": [],
+      "reviewed_heads": []
+    }
+  ]
+}

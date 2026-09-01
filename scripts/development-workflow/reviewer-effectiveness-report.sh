@@ -35,6 +35,18 @@ Options:
 
 The default window size is ${RER_DEFAULT_WINDOW}. No configuration file or
 environment variable changes it; pass --window to use a different size.
+
+Measures (per included pull request):
+  1. Rounds
+  2. External blocking rounds
+  3. Blocking findings
+  4. Confirmed miss records
+  5. Possible miss records
+  6. codex-github invocations
+  7. Final current-head evidence (state)
+
+Exclusion reasons: no_history, unparseable_history, history_unavailable.
+Per-measure absence is reported as not_recorded, never as zero.
 USAGE
 }
 

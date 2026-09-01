@@ -85,6 +85,22 @@ assert_jq "$strict" '.checks[] | select(.check=="spec-ac-1") | .fired' '1' 'spec
 assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .fired' '1' 'plan check fired once per PR'
 assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .applied' '1' 'plan check applied denominator'
 
+# --- partial telemetry: mixed field availability and measure 7 last entry ---
+partial_json="$(wrap_body "$FIXTURE_DIR/partial-telemetry.json" | reviewer_loop_history_extract_latest_json)"
+partial_measures="$(rer_compute_measures_json "$partial_json")"
+assert_jq "$partial_measures" '.rounds.value' '5' 'partial rounds counts all entries'
+assert_jq "$partial_measures" '.external_blocking_rounds.value' '2' 'partial external rounds from rounds with records'
+assert_jq "$partial_measures" '.confirmed_miss_records.value' '1' 'partial confirmed from later rounds'
+assert_jq "$partial_measures" '.possible_miss_records.value' '1' 'partial possible from later rounds'
+assert_jq "$partial_measures" '.final_current_head_evidence.availability' 'computed' 'measure7 available from last entry field'
+assert_jq "$partial_measures" '.final_current_head_evidence.value' 'not-reported' 'measure7 reads last entry only'
+
+partial_row="$(jq -nc --argjson pr 300 --arg state included --argjson measures "$partial_measures" --argjson payload "$partial_json" \
+  '{pr:$pr, state:$state, measures:$measures, _payload:$payload}')"
+partial_rows_json="$(printf '%s\n' "$partial_row" | jq -s '.')"
+assert_jq "$(rer_aggregate_measure "$partial_rows_json" "external_blocking_rounds")" '.included' '1' 'partial aggregate denominator for telemetry measure'
+assert_jq "$(rer_aggregate_measure "$partial_rows_json" "rounds")" '.included' '1' 'partial aggregate denominator for rounds'
+
 # --- AC-2: --pr and window row equivalence (mock gh for PR 200) ---
 cat > "$TMP_DIR/gh" <<'MOCK_EQUIV'
 #!/usr/bin/env bash
