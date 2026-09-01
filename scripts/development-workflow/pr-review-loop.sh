@@ -502,7 +502,7 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
-  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|reviewed_head_not_current|local_pass_unavailable
+  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
   POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
     compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
@@ -8274,7 +8274,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   if [ "$_sl_pass_result" = "clean" ]; then
     _sl_head_current="$(expensive_gate_local_ai_head_current "$loop_head_sha")"
     if [ "$_sl_head_current" != "1" ]; then
-      local_second_pass_reason="reviewed_head_not_current"
+      local_second_pass_reason="local_pass_unavailable"
       aggregate_result="escalate"
       aggregate_reason="local_pass_unavailable"
       aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"

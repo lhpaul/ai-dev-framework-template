@@ -17814,7 +17814,7 @@ _1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
 _1656_stub_pass_result="clean_no_head"
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1656_s3c_guard_no_reviewed_head" "1" "$_st"
-run_test "1656_s3c_guard_reason" "reviewed_head_not_current" "$local_second_pass_reason"
+run_test "1656_s3c_guard_reason" "local_pass_unavailable" "$local_second_pass_reason"
 run_test "1656_s3c_guard_unavailable" "local_pass_unavailable" "$aggregate_reason"
 run_test "1656_s3c_phase_not_started" "0" "$phase_after_clean_started"
 
