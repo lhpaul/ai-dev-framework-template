@@ -8207,17 +8207,16 @@ reviewer_loop_local_pass_required() {
 }
 
 # reviewer_loop_second_local_pass_gate_result <pass_result> <pass_reason>
-# Maps a second local pass outcome to aggregate result/reason for gate refusal.
-# Prints two lines: result and reason (may be empty reason).
+# Prints tab-separated: aggregate_result<TAB>aggregate_reason
 reviewer_loop_second_local_pass_gate_result() {
   local pass_result="${1:-}" pass_reason="${2:-}"
 
   case "$pass_result" in
-    clean) printf 'proceed\n\n' ;;
-    needs_fixes) printf 'needs_fixes\n%s\n' "${pass_reason:-}" ;;
-    escalate) printf 'escalate\n%s\n' "${pass_reason:-}" ;;
+    clean) printf 'proceed\t\n' ;;
+    needs_fixes) printf 'needs_fixes\t%s\n' "${pass_reason:-}" ;;
+    escalate) printf 'escalate\t%s\n' "${pass_reason:-}" ;;
     skipped|needs_rerun|*)
-      printf 'escalate\nlocal_pass_unavailable\n' ;;
+      printf 'escalate\tlocal_pass_unavailable\n' ;;
   esac
 }
 
@@ -11634,10 +11633,6 @@ for index in "${!platforms[@]}"; do
           aggregate_reason="failed_for_head"
           aggregate_output="$(printf 'RESULT=escalate\nREASON=failed_for_head\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
           aggregate_status=2
-          phase_after_clean_started=1
-          phase_after_clean_gate_result="local_pass_refused"
-          phase_after_clean_net_new_blocker=1
-          phase_after_clean_blocking_platform="local-ai-reviewer"
           last_platform="local-ai-reviewer"
           break
         else
@@ -11662,17 +11657,16 @@ for index in "${!platforms[@]}"; do
               aggregate_reason="head_moved_during_run"
               aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=head_moved_during_run\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
               aggregate_status=1
-              phase_after_clean_started=1
-              phase_after_clean_gate_result="head_moved"
-              phase_after_clean_net_new_blocker=1
-              phase_after_clean_blocking_platform="local-ai-reviewer"
               last_platform="local-ai-reviewer"
               break
             fi
           else
-            read -r _sl_gate_result _sl_gate_reason < <(reviewer_loop_second_local_pass_gate_result "$_sl_pass_result" "$_sl_pass_reason")
+            IFS=$'\t' read -r _sl_gate_result _sl_gate_reason < <(reviewer_loop_second_local_pass_gate_result "$_sl_pass_result" "$_sl_pass_reason")
             aggregate_result="$_sl_gate_result"
             aggregate_reason="$_sl_gate_reason"
+            if [ "$_sl_gate_result" = "escalate" ] && [ "$_sl_gate_reason" = "local_pass_unavailable" ]; then
+              local_second_pass_reason="local_pass_unavailable"
+            fi
             local_second_pass_failed_head_record="$loop_head_sha"
             if [ "$_sl_gate_result" = "needs_fixes" ]; then
               aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
@@ -11685,10 +11679,6 @@ for index in "${!platforms[@]}"; do
               aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${_sl_gate_reason:-local_pass_unavailable}")"
               aggregate_status=2
             fi
-            phase_after_clean_started=1
-            phase_after_clean_gate_result="local_pass_failed"
-            phase_after_clean_net_new_blocker=1
-            phase_after_clean_blocking_platform="local-ai-reviewer"
             last_platform="local-ai-reviewer"
             break
           fi

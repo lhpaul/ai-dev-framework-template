@@ -17689,11 +17689,13 @@ run_test "1656_s8c_failed_head_count" "1" \
   "$(reviewer_loop_local_second_pass_failed_for_head "$_1656_failed_hist" "$_1656_head")"
 
 run_test "1656_s7_gate_needs_fixes" "needs_fixes" \
-  "$(reviewer_loop_second_local_pass_gate_result needs_fixes blocking | head -n 1)"
+  "$(reviewer_loop_second_local_pass_gate_result needs_fixes blocking | cut -f1)"
+run_test "1656_s7_gate_needs_fixes_reason" "blocking" \
+  "$(reviewer_loop_second_local_pass_gate_result needs_fixes blocking | cut -f2)"
 run_test "1656_s7_gate_skipped" "escalate" \
-  "$(reviewer_loop_second_local_pass_gate_result skipped unavailable | head -n 1)"
+  "$(reviewer_loop_second_local_pass_gate_result skipped unavailable | cut -f1)"
 run_test "1656_s7_gate_skipped_reason" "local_pass_unavailable" \
-  "$(reviewer_loop_second_local_pass_gate_result skipped unavailable | tail -n 1)"
+  "$(reviewer_loop_second_local_pass_gate_result skipped unavailable | cut -f2)"
 
 repo_review_platforms=(local-ai-reviewer codex-github)
 platforms=(codex-github)
