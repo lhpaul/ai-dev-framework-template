@@ -2407,6 +2407,8 @@ run_test "cycles_entries_count_no_marker" "0 0 available" \
   "$(reviewer_loop_history_entries_count "$_mc_no_marker_body" "run-x")"
 
 run_test "small_findings_docs_path_non_shipped" "yes" \
+  "$(reviewer_loop_path_is_non_shipped_artifact "docs/other/example.md" && echo yes || echo no)"
+run_test "small_findings_workflow_path_normative_not_non_shipped" "no" \
   "$(reviewer_loop_path_is_non_shipped_artifact "docs/workflow/example.md" && echo yes || echo no)"
 run_test "small_findings_tests_path_non_shipped" "yes" \
   "$(reviewer_loop_path_is_non_shipped_artifact "scripts/development-workflow/tests/test-pr-review-loop.sh" && echo yes || echo no)"
@@ -2429,12 +2431,17 @@ run_test "small_findings_paths_from_output" "docs/a.md tests/b.sh" "$(
   reviewer_loop_blocking_paths_from_output "$_sf_paths_output" 2 | tr '\n' ' ' | sed 's/[[:space:]]$//'
 )"
 
-_sf_history_payload="$(jq -n '{
+_sf_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_sf_history_payload="$(jq -n --arg h "$_sf_head" '{
   schema: "reviewer_loop_history.v1",
   history_status: "available",
   entries: [
-    {iteration: 1, result: "needs_fixes", small_findings_only: true},
-    {iteration: 2, result: "needs_fixes", small_findings_only: true}
+    {iteration: 1, result: "needs_fixes", small_findings_only: true,
+     classification_head: $h, contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]},
+    {iteration: 2, result: "needs_fixes", small_findings_only: true,
+     classification_head: $h, contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}
   ]
 }')"
 _sf_history_body="### Automated Reviewer Loop Summary
@@ -2443,16 +2450,22 @@ _sf_history_body="### Automated Reviewer Loop Summary
 \`\`\`json
 $(printf '%s\n' "$_sf_history_payload" | jq '.')
 \`\`\`"
-run_test "small_findings_prior_consecutive_counts_tail" "2" \
-  "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_body")"
+run_test "small_findings_prior_consecutive_counts_tail" "2 exhausted" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_body" "$_sf_head")")"
 
-_sf_history_interrupted_payload="$(jq -n '{
+_sf_history_interrupted_payload="$(jq -n --arg h "$_sf_head" '{
   schema: "reviewer_loop_history.v1",
   history_status: "available",
   entries: [
-    {iteration: 1, result: "needs_fixes", small_findings_only: true},
-    {iteration: 2, result: "needs_fixes", small_findings_only: false},
-    {iteration: 3, result: "needs_fixes", small_findings_only: true}
+    {iteration: 1, result: "needs_fixes", small_findings_only: true,
+     classification_head: $h, contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]},
+    {iteration: 2, result: "needs_fixes", small_findings_only: false,
+     classification_head: $h, contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]},
+    {iteration: 3, result: "needs_fixes", small_findings_only: true,
+     classification_head: $h, contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}
   ]
 }')"
 _sf_history_interrupted_body="### Automated Reviewer Loop Summary
@@ -2461,8 +2474,8 @@ _sf_history_interrupted_body="### Automated Reviewer Loop Summary
 \`\`\`json
 $(printf '%s\n' "$_sf_history_interrupted_payload" | jq '.')
 \`\`\`"
-run_test "small_findings_prior_consecutive_stops_at_non_tail" "1" \
-  "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_interrupted_body")"
+run_test "small_findings_prior_consecutive_stops_at_non_tail" "1 not_small" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_interrupted_body" "$_sf_head")")"
 run_test "small_findings_main_branch_requires_zero_thread_audit" "yes" \
   "$(
     _sf_loop_src="$(cat "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
@@ -2474,6 +2487,427 @@ run_test "small_findings_main_branch_requires_zero_thread_audit" "yes" \
   )"
 unset _sf_paths_output _sf_history_payload _sf_history_body
 unset _sf_history_interrupted_payload _sf_history_interrupted_body _sf_loop_src
+# _sf_head kept for #1652 scenario block below
+
+# ===========================================================================
+# #1652 small-finding terminal policy scenarios (1-11, 14 + sub-scenarios)
+# ===========================================================================
+_sf_other="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+_sf_finding() {
+  jq -cn --arg path "$1" --arg platform "${2:-local-ai-reviewer}" --arg body "${3:-}" \
+    '{path: $path, platform: $platform, body: $body}'
+}
+_sf_ledger() {
+  printf '%s\n' "### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$1" | jq '.')
+\`\`\`"
+}
+_sf_is_small() {
+  if printf '%s\n' "$@" | reviewer_loop_all_findings_are_small; then echo yes; else echo no; fi
+}
+
+# --- Scenario 1: normative document patterns ---
+for _p in \
+  "REVIEW.md" "AGENTS.md" "CLAUDE.md" "GEMINI.md" "LLM_RULES.md" ".ai-dev-workflow.yaml" \
+  "docs/workflow/protocols/x.md" "docs/best-practices/1-general.md" \
+  "docs/specs/developments/x/1_x_specs.md" "docs/testing/workflow/x.smoke-test.md" \
+  "docs/project/1-business-domain.md"; do
+  run_test "1652_s1_normative_${_p//\//_}" "yes" \
+    "$(reviewer_loop_path_is_normative_document "$_p" && echo yes || echo no)"
+done
+for _p in "tests/fixtures/x.json" "__snapshots__/x.snap" "CHANGELOG.md" "scripts/development-workflow/pr-review-loop.sh"; do
+  run_test "1652_s1_reject_${_p//\//_}" "no" \
+    "$(reviewer_loop_path_is_normative_document "$_p" && echo yes || echo no)"
+done
+
+# --- Scenario 2: normative path never small ---
+_sf_spec="docs/specs/developments/x/1_x_specs.md"
+run_test "1652_s2_matrix_body" "no" \
+  "$(_sf_is_small "$(_sf_finding "$_sf_spec" local-ai-reviewer "the decision matrix is wrong")")"
+run_test "1652_s2_trailing_whitespace" "no" \
+  "$(_sf_is_small "$(_sf_finding "$_sf_spec" local-ai-reviewer "trailing whitespace")")"
+run_test "1652_s2_no_listed_term" "no" \
+  "$(_sf_is_small "$(_sf_finding "$_sf_spec" local-ai-reviewer "required error handling is missing")")"
+
+# --- Scenario 3: non-normative non-shipped CHANGELOG ---
+run_test "1652_s3_changelog_cosmetic_small" "yes" \
+  "$(_sf_is_small "$(_sf_finding "CHANGELOG.md" local-ai-reviewer "trailing whitespace")")"
+run_test "1652_s3_changelog_contract_not_small" "no" \
+  "$(_sf_is_small "$(_sf_finding "CHANGELOG.md" local-ai-reviewer "the decision matrix is wrong")")"
+
+# --- Scenario 4: contract-surface table ---
+run_test "1652_s4_acceptance" "acceptance_criteria" \
+  "$(reviewer_loop_finding_touches_contract_surface "missing acceptance criteria here")"
+run_test "1652_s4_decision" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "broken decision gate")"
+run_test "1652_s4_parser" "parser_and_input_behavior" \
+  "$(reviewer_loop_finding_touches_contract_surface "parser mishandles input")"
+run_test "1652_s4_scope" "scope_and_coverage" \
+  "$(reviewer_loop_finding_touches_contract_surface "this is out of scope")"
+run_test "1652_s4_fail_closed" "fail_closed_semantics" \
+  "$(reviewer_loop_finding_touches_contract_surface "not fail-closed")"
+run_test "1652_s4_state" "state_and_status_models" \
+  "$(reviewer_loop_finding_touches_contract_surface "invalid state machine transition")"
+run_test "1652_s4_telemetry" "telemetry_and_contracts" \
+  "$(reviewer_loop_finding_touches_contract_surface "stdout key missing")"
+run_test "1652_s4_proof" "proof_obligations" \
+  "$(reviewer_loop_finding_touches_contract_surface "missing proof obligation")"
+run_test "1652_s4_reject_typo" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "typo in heading" || echo NONE)"
+run_test "1652_s4_reject_trailing" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "trailing whitespace" || echo NONE)"
+run_test "1652_s4_reject_caps" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "heading capitalisation" || echo NONE)"
+
+# --- Scenario 4a: portable boundaries (POSIX, not \b) ---
+run_test "1652_s4a_decision_gate_matches" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "a decision gate failed")"
+run_test "1652_s4a_delegates_no_match" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "the agent delegates work" || echo NONE)"
+
+# --- Scenario 4b: multi-digit AC identifiers ---
+for _ac in "AC-1" "AC-9" "AC-10" "AC-147"; do
+  run_test "1652_s4b_${_ac}" "acceptance_criteria" \
+    "$(reviewer_loop_finding_touches_contract_surface "criterion ${_ac} unmet")"
+done
+run_test "1652_s4b_AC_alone" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "see AC- alone" || echo NONE)"
+
+# --- Scenario 5: contract on CHANGELOG is not small ---
+run_test "1652_s5_changelog_contract" "no" \
+  "$(_sf_is_small "$(_sf_finding "CHANGELOG.md" x "touches a decision matrix")")"
+
+# --- Scenario 6: cosmetic on CHANGELOG is small ---
+run_test "1652_s6_changelog_cosmetic" "yes" \
+  "$(_sf_is_small "$(_sf_finding "CHANGELOG.md" x "trailing whitespace")")"
+
+# --- Scenario 6a: bare common words still small ---
+for _pair in \
+  "state|the heading state is inconsistent" \
+  "scope|a typo in the scope section" \
+  "status|the status column is misaligned" \
+  "gate|the gate heading needs a capital" \
+  "proof|fix the proof reading typo" \
+  "parse|parse is misspelled here" \
+  "contract|the contract section has a trailing space"; do
+  _word="${_pair%%|*}"
+  _body="${_pair#*|}"
+  run_test "1652_s6a_bare_${_word}" "NONE" \
+    "$(reviewer_loop_finding_touches_contract_surface "$_body" || echo NONE)"
+  run_test "1652_s6a_small_${_word}" "yes" \
+    "$(_sf_is_small "$(_sf_finding "CHANGELOG.md" x "$_body")")"
+done
+
+# --- Scenario 7: all_findings_are_small mixed ---
+_sf_a="$(_sf_finding "CHANGELOG.md" a "trailing whitespace")"
+_sf_b="$(_sf_finding "tests/x.sh" b "typo")"
+_sf_c="$(_sf_finding "CHANGELOG.md" c "decision matrix wrong")"
+run_test "1652_s7_all_small" "yes" "$(_sf_is_small "$_sf_a" "$_sf_b")"
+run_test "1652_s7_one_not_small" "no" "$(_sf_is_small "$_sf_a" "$_sf_b" "$_sf_c")"
+
+# --- Scenario 7f: empty array / empty path fail-closed ---
+run_test "1652_s7f_empty_array" "no" \
+  "$(printf '' | reviewer_loop_all_findings_are_small && echo yes || echo no)"
+run_test "1652_s7f_empty_path" "no" \
+  "$(_sf_is_small "$(_sf_finding "" x "trailing whitespace")" "$_sf_a")"
+
+# --- Scenario 7a: same path, cosmetic + contract — not deduped ---
+_sf_same_cosmetic="$(_sf_finding "CHANGELOG.md" a "trailing whitespace")"
+_sf_same_contract="$(_sf_finding "CHANGELOG.md" a "decision matrix wrong")"
+run_test "1652_s7a_pairing_survives" "no" \
+  "$(_sf_is_small "$_sf_same_cosmetic" "$_sf_same_contract")"
+
+# --- Scenario 7b / 7b-i: \n normalisation ---
+_sf_nl_body='some prose\ndecision matrix is wrong'
+run_test "1652_s7b_normalized_match" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "$(reviewer_loop_normalize_finding_body_for_match "$_sf_nl_body")")"
+run_test "1652_s7b_raw_would_miss" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "$_sf_nl_body" || echo NONE)"
+run_test "1652_s7bi_same_either_way" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "$(reviewer_loop_normalize_finding_body_for_match "$_sf_nl_body")")"
+
+# --- Scenario 7d: hostile characters in JSON fields ---
+_sf_tab_path=$'docs/notes/x.md\textra'
+_sf_tab_body=$'decision matrix\there'
+_sf_quote_body='says "decision matrix" clearly'
+_sf_bs_body='path\\decision matrix ok'
+run_test "1652_s7d_tab_path" "no" \
+  "$(_sf_is_small "$(_sf_finding "$_sf_tab_path" x "decision matrix wrong")")"
+# Prove the path survived JSON round-trip (still contains a tab) and classification
+# used the body contract term (blocked_by=contract_surface, not shipped_path).
+run_test "1652_s7d_tab_path_intact_fields" "contract_surface" \
+  "$(printf '%s\n' "$(_sf_finding "$_sf_tab_path" x "decision matrix wrong")" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+run_test "1652_s7d_tab_path_has_tab" "yes" \
+  "$(printf '%s' "$(_sf_finding "$_sf_tab_path" x "x")" | jq -r '.path' | grep -Fq $'\t' && echo yes || echo no)"
+run_test "1652_s7d_tab_body" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "$(reviewer_loop_normalize_finding_body_for_match "$_sf_tab_body")")"
+run_test "1652_s7d_quote_body" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "$_sf_quote_body")"
+run_test "1652_s7d_backslash_body" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "$_sf_bs_body")"
+
+# --- Scenario 7c: platform attribution in content analysis ---
+_sf_plat="$(_sf_finding "CHANGELOG.md" "coderabbit" "decision matrix wrong")"
+run_test "1652_s7c_platform_on_record" "coderabbit" \
+  "$(printf '%s' "$_sf_plat" | jq -r '.platform')"
+run_test "1652_s7c_not_small" "no" "$(_sf_is_small "$_sf_plat")"
+
+# --- Scenario 7e: stored body is raw, not normalised ---
+_sf_raw_out="$(reviewer_loop_blocking_findings_from_output \
+  $'RESULT=needs_fixes\nBLOCKING_COUNT=1\nBLOCKING_1_PATH=CHANGELOG.md\nBLOCKING_1_BODY=some prose\\ndecision matrix is wrong' \
+  1 local-ai-reviewer)"
+run_test "1652_s7e_raw_body_preserved" "some prose\\ndecision matrix is wrong" \
+  "$(printf '%s' "$_sf_raw_out" | jq -r '.body')"
+
+# --- Scenario 8: prior count stops at stale head ---
+_sf_s8_payload="$(jq -n --arg h "$_sf_head" --arg o "$_sf_other" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [
+    {iteration: 1, small_findings_only: true, classification_head: $o,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $o, state: "current", reason: ""}]},
+    {iteration: 2, small_findings_only: true, classification_head: $o,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $o, state: "current", reason: ""}]},
+    {iteration: 3, small_findings_only: true, classification_head: $h,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}
+  ]
+}')"
+run_test "1652_s8_stale_stops_count" "1 stale_head" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8_payload")" "$_sf_head")")"
+
+# --- Scenario 8a: current-round head check ---
+run_test "1652_s8a_both_current" "ok" \
+  "$(printf '%s\n' "coderabbit" "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" \
+      "coderabbit:$_sf_head" "local-ai-reviewer:$_sf_head" | jq -r '.status')"
+run_test "1652_s8a_one_stale" "stale_head" \
+  "$(printf '%s\n' "coderabbit" "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" \
+      "coderabbit:$_sf_other" "local-ai-reviewer:$_sf_head" | jq -r '.blocked_by')"
+run_test "1652_s8a_one_unknown" "head_unknown" \
+  "$(printf '%s\n' "coderabbit" "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" \
+      "local-ai-reviewer:$_sf_head" | jq -r '.blocked_by')"
+run_test "1652_s8a_both_stale" "stale_head" \
+  "$(printf '%s\n' "coderabbit" "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" \
+      "coderabbit:$_sf_other" "local-ai-reviewer:$_sf_other" | jq -r '.blocked_by')"
+
+# --- Scenario 8b: contributing platforms only ---
+_sf_s8b_ok="$(jq -n --arg h "$_sf_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, classification_head: $h,
+    contributing_platforms: ["local-ai-reviewer", "coderabbit"],
+    reviewed_heads: [
+      {platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""},
+      {platform: "coderabbit", reviewed_head: $h, state: "current", reason: ""},
+      {platform: "pr-agent", reviewed_head: "", state: "not-reported", reason: ""}
+    ]}]
+}')"
+run_test "1652_s8b_both_current" "1 exhausted" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8b_ok")" "$_sf_head")")"
+_sf_s8b_stale="$(jq -n --arg h "$_sf_head" --arg o "$_sf_other" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, classification_head: $h,
+    contributing_platforms: ["local-ai-reviewer", "coderabbit"],
+    reviewed_heads: [
+      {platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""},
+      {platform: "coderabbit", reviewed_head: $o, state: "not-current", reason: "head_mismatch"}
+    ]}]
+}')"
+run_test "1652_s8b_one_stale" "0 stale_head" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8b_stale")" "$_sf_head")")"
+_sf_s8b_noncontrib="$(jq -n --arg h "$_sf_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, classification_head: $h,
+    contributing_platforms: ["local-ai-reviewer"],
+    reviewed_heads: [
+      {platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""},
+      {platform: "coderabbit", reviewed_head: "", state: "not-reported", reason: ""}
+    ]}]
+}')"
+run_test "1652_s8b_noncontributor_ignored" "1 exhausted" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8b_noncontrib")" "$_sf_head")")"
+_sf_s8b_absent="$(jq -n --arg h "$_sf_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, classification_head: $h,
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}]
+}')"
+run_test "1652_s8b_absent_contributing" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8b_absent")" "$_sf_head")")"
+
+# --- Scenario 8c: classification_head, never head_sha ---
+_sf_s8c_stale_class="$(jq -n --arg h "$_sf_head" --arg o "$_sf_other" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, head_sha: $h, classification_head: $o,
+    contributing_platforms: ["local-ai-reviewer"],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $o, state: "current", reason: ""}]}]
+}')"
+run_test "1652_s8c_ignores_head_sha_match" "0 stale_head" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8c_stale_class")" "$_sf_head")")"
+_sf_s8c_ok_class="$(jq -n --arg h "$_sf_head" --arg o "$_sf_other" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, head_sha: $o, classification_head: $h,
+    contributing_platforms: ["local-ai-reviewer"],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}]
+}')"
+run_test "1652_s8c_uses_classification_head" "1 exhausted" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8c_ok_class")" "$_sf_head")")"
+
+# --- Scenario 9: unknown heads ---
+_sf_s9_absent="$(jq -n '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true,
+    contributing_platforms: ["local-ai-reviewer"],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", state: "current", reason: ""}]}]
+}')"
+run_test "1652_s9_absent_classification" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s9_absent")" "$_sf_head")")"
+_sf_s9_empty="$(jq -n --arg h "$_sf_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, classification_head: "",
+    contributing_platforms: ["local-ai-reviewer"],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}]
+}')"
+run_test "1652_s9_empty_classification" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s9_empty")" "$_sf_head")")"
+_sf_s9_placeholder="$(jq -n --arg h "$_sf_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [{iteration: 1, small_findings_only: true, classification_head: "unknown-123-1-2",
+    contributing_platforms: ["local-ai-reviewer"],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}]
+}')"
+run_test "1652_s9_placeholder" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s9_placeholder")" "$_sf_head")")"
+
+# --- Scenario 9a: stop reasons closed set ---
+run_test "1652_s9a_exhausted" "exhausted" \
+  "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8b_ok")" "$_sf_head" | jq -r '.stop_reason')"
+_sf_s9a_interrupted="$(jq -n --arg h "$_sf_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [
+    {iteration: 1, small_findings_only: true, classification_head: $h,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]},
+    {iteration: 2, small_findings_only: false, classification_head: $h,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]},
+    {iteration: 3, small_findings_only: true, classification_head: $h,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h, state: "current", reason: ""}]}
+  ]
+}')"
+run_test "1652_s9a_not_small" "not_small" \
+  "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s9a_interrupted")" "$_sf_head" | jq -r '.stop_reason')"
+run_test "1652_s9a_stale" "stale_head" \
+  "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s8_payload")" "$_sf_head" | jq -r '.stop_reason')"
+run_test "1652_s9a_unknown" "head_unknown" \
+  "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s9_placeholder")" "$_sf_head" | jq -r '.stop_reason')"
+
+# --- Scenario 9b: malformed counter output fail-closed ---
+run_test "1652_s9b_malformed" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count 'not-json')"
+run_test "1652_s9b_missing_field" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count '{"count":2}')"
+run_test "1652_s9b_bad_reason" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count '{"count":2,"stop_reason":"nope"}')"
+
+# --- Scenario 10a: within-group precedence ---
+_sf_shipped="$(_sf_finding "scripts/development-workflow/pr-review-loop.sh" a "decision matrix")"
+_sf_contract="$(_sf_finding "CHANGELOG.md" b "decision matrix")"
+run_test "1652_s10a_content_shipped_wins" "shipped_path" \
+  "$(printf '%s\n' "$_sf_shipped" "$_sf_contract" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+run_test "1652_s10a_content_names_both" "yes" \
+  "$(
+    j="$(printf '%s\n' "$_sf_shipped" "$_sf_contract" | reviewer_loop_small_findings_content_analysis)"
+    sp="$(printf '%s' "$j" | jq -r '.shipped_paths | length')"
+    cs="$(printf '%s' "$j" | jq -r '.contract_surfaces | length')"
+    if [ "$sp" -ge 1 ] && [ "$cs" -ge 1 ]; then echo yes; else echo "sp=$sp cs=$cs"; fi
+  )"
+run_test "1652_s10a_currency_stale_wins" "stale_head" \
+  "$(printf '%s\n' "coderabbit" "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" \
+      "coderabbit:$_sf_other" | jq -r '.blocked_by')"
+run_test "1652_s10a_currency_names_both" "yes" \
+  "$(
+    j="$(printf '%s\n' "coderabbit" "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" \
+      "coderabbit:$_sf_other")"
+    d="$(printf '%s' "$j" | jq -r '.details | join("|")')"
+    if [[ "$d" == *stale_head:coderabbit* ]] && [[ "$d" == *head_unknown:local-ai-reviewer* ]]; then echo yes; else echo "$d"; fi
+  )"
+# Groups mutually exclusive: contract finding means currency never evaluated for blocked_by key
+run_test "1652_s10a_groups_exclusive" "contract_surface" \
+  "$(printf '%s\n' "$_sf_contract" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+
+# --- Scenario 10b: surface identity print ---
+run_test "1652_s10b_identity" "fail_closed_semantics" \
+  "$(reviewer_loop_finding_touches_contract_surface "must be fail-closed")"
+run_test "1652_s10b_no_match_silent" "" \
+  "$(reviewer_loop_finding_touches_contract_surface "trailing whitespace" || true)"
+run_test "1652_s10b_first_wins" "acceptance_criteria" \
+  "$(reviewer_loop_finding_touches_contract_surface "acceptance criteria and decision matrix both mentioned")"
+
+# --- Scenario 11: BLOCKED_BY values via content analysis / counter ---
+run_test "1652_s11_shipped_path" "shipped_path" \
+  "$(printf '%s\n' "$_sf_shipped" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+run_test "1652_s11_contract_surface" "contract_surface" \
+  "$(printf '%s\n' "$_sf_contract" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+run_test "1652_s11_stale_head" "stale_head" \
+  "$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" "local-ai-reviewer:$_sf_other" | jq -r '.blocked_by')"
+run_test "1652_s11_head_unknown" "head_unknown" \
+  "$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" | jq -r '.blocked_by')"
+run_test "1652_s11_head_unknown_when_current_missing" "head_unknown" \
+  "$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "" "local-ai-reviewer:$_sf_head" | jq -r '.blocked_by')"
+run_test "1652_s11_empty_when_small" "" \
+  "$(printf '%s\n' "$_sf_a" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+
+# --- Scenario 14: pre-change ledger without contributing_platforms / head ---
+_sf_s14="$(jq -n '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [
+    {iteration: 1, small_findings_only: true},
+    {iteration: 2, small_findings_only: true}
+  ]
+}')"
+run_test "1652_s14_prechange_ends_run" "0 head_unknown" \
+  "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s14")" "$_sf_head")")"
+
+# Parser-risk addendum (plan § Parser-risk addendum — one case per edge)
+run_test "1652_parser_delegates_not_gate" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "the handler delegates to another module" || echo NONE)"
+run_test "1652_parser_microscope" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "look into the microscope carefully" || echo NONE)"
+run_test "1652_parser_failXclosed" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "failXclosed is wrong" || echo NONE)"
+run_test "1652_parser_allow_list_unhyphenated" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "the allow list is incomplete" || echo NONE)"
+run_test "1652_parser_empty_body" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "" || echo NONE)"
+run_test "1652_parser_whitespace_only_body" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "   " || echo NONE)"
+run_test "1652_parser_case_insensitive" "fail_closed_semantics" \
+  "$(reviewer_loop_finding_touches_contract_surface "FAIL-CLOSED required")"
+run_test "1652_parser_acceptance_criteria_title_case" "acceptance_criteria" \
+  "$(reviewer_loop_finding_touches_contract_surface "Acceptance Criteria AC-3 is missing")"
+run_test "1652_parser_code_fence_quoted_term" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface $'```\ndecision gate\n``` is wrong in the spec')"
+run_test "1652_parser_listed_phrase_in_url" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "see https://example.com/decision gate section for details")"
+run_test "1652_parser_bare_word_in_url" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "see https://example.com/scope/section for context" || echo NONE)"
+run_test "1652_parser_quoted_negation_still_matches" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "this is not a decision gate but the matrix row is wrong")"
+run_test "1652_parser_multiline_term_on_last_line" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface $'first line is cosmetic\ndecision matrix row is inconsistent')"
+
+unset _sf_head _sf_other _sf_finding _sf_ledger _sf_is_small
+unset _sf_spec _sf_a _sf_b _sf_c _sf_same_cosmetic _sf_same_contract _sf_nl_body
+unset _sf_tab_path _sf_tab_body _sf_quote_body _sf_bs_body _sf_plat _sf_raw_out
+unset _sf_s8_payload _sf_s8b_ok _sf_s8b_stale _sf_s8b_noncontrib _sf_s8b_absent
+unset _sf_s8c_stale_class _sf_s8c_ok_class _sf_s9_absent _sf_s9_empty _sf_s9_placeholder
+unset _sf_shipped _sf_contract _sf_s14 _sf_s9a_interrupted _p _ac _pair _word _body
+
+
 
 _mc_marker_no_json_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\nNo fenced JSON block here.'
 run_test "cycles_entries_count_marker_no_json" "-1 -1 unavailable" \

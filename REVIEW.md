@@ -25,6 +25,10 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 
 When a review references mirrored agent docs, compare the live repository surface map before treating the finding as blocking. A `Rules violation` that only points at tool-specific front matter differences or an absent `.cursor/skills` tree is advisory only; a real mismatch between mirrored workflow bodies is actionable.
 
+### Small-finding terminal policy
+
+A **blocking** finding on a normative document (spec, plan, protocol, `REVIEW.md`, best-practices, project docs, or the agent guidance files) is never classified as small, whatever its wording. On other non-shipped documentation paths, a finding that touches a contract surface (acceptance criteria, decision gates/matrices, fail-closed semantics, and related allow-listed phrases) is escalated to non-small; a cosmetic blocking finding may still terminate the small-findings tail. The terminal rule requires both its prior counted rounds and the round being decided to be on the current PR head. When the rule does not fire for a content or currency cause, `SMALL_FINDINGS_BLOCKED_BY` reports one of `shipped_path`, `contract_surface`, `stale_head`, or `head_unknown` (within-group precedence: `shipped_path` over `contract_surface`, `stale_head` over `head_unknown`). Full detail lives in Protocol 93's small-finding terminal policy section.
+
 ### Fix vs. Report
 
 Fix directly when:
