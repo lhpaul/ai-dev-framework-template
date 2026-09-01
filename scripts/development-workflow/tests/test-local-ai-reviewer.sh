@@ -396,6 +396,8 @@ if [ -n "${MOCK_RECORD_FILE:-}" ]; then
     if [ -n "${CONTEXT_BUNDLE_PATH:-}" ] && [ -f "${CONTEXT_BUNDLE_PATH}" ]; then
       printf 'bundle_keys=%s\n' "$(jq -r 'keys | join(",")' "$CONTEXT_BUNDLE_PATH")"
       printf 'has_strict_spec_checks=%s\n' "$(jq -r 'has("strict_spec_checks")' "$CONTEXT_BUNDLE_PATH")"
+      printf 'has_strict_plan_checks=%s\n' "$(jq -r 'has("strict_plan_checks")' "$CONTEXT_BUNDLE_PATH")"
+      printf 'has_strict_plan_documents=%s\n' "$(jq -r 'has("strict_plan_documents")' "$CONTEXT_BUNDLE_PATH")"
     fi
   } >> "$MOCK_RECORD_FILE"
 fi
@@ -1252,6 +1254,188 @@ MOCK_REVIEWER
 done
 
 rm -rf "$_1654_doctrine_root" "$_1654_absent_root" "$_1654_unreadable_root" "$_1654_oversized_root" "$_1654_empty_root" "$_1654_grep_err_bin" "$_1654_grep_err_root" "$_1654_cp_fail_bin" "$_1654_cp_fail_root" "$_1654_no_digest_root" "$_1654_no_digest_path"
+
+# ---------------------------------------------------------------------------
+# Strict plan contract checks (#1655) — scenarios 1, 7, 13, 15
+# ---------------------------------------------------------------------------
+
+PLAN_CHECKLIST_FIXTURES="$FIXTURES/strict-plan-checks"
+SHIPPED_PLAN_CHECKLIST="$REPO_ROOT/docs/workflow/development-workflow/strict-plan-checks.md"
+PLAN_DEV_DIR="docs/specs/developments/20260831062000_1655-strict-plan-review-mode"
+PLAN_DOC="$PLAN_DEV_DIR/2_1655-strict-plan-review-mode_implementation-plan.md"
+PLAN_SPEC="$PLAN_DEV_DIR/1_1655-strict-plan-review-mode_specs.md"
+
+install_plan_checklist_into_repo() {
+  local src="$1"
+  mkdir -p "$VALID_REPO_ROOT/docs/workflow/development-workflow"
+  cp "$src" "$VALID_REPO_ROOT/docs/workflow/development-workflow/strict-plan-checks.md"
+  git -C "$VALID_REPO_ROOT" add docs/workflow/development-workflow/strict-plan-checks.md >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+}
+
+install_plan_artifacts() {
+  local with_spec="${1:-1}"
+  mkdir -p "$VALID_REPO_ROOT/$PLAN_DEV_DIR"
+  cp "$REPO_ROOT/$PLAN_DOC" "$VALID_REPO_ROOT/$PLAN_DOC" 2>/dev/null || \
+    printf '# Plan\n\n**Spec**: [spec](./1_1655-strict-plan-review-mode_specs.md)\n' > "$VALID_REPO_ROOT/$PLAN_DOC"
+  if [ "$with_spec" = "1" ]; then
+    cp "$REPO_ROOT/$PLAN_SPEC" "$VALID_REPO_ROOT/$PLAN_SPEC" 2>/dev/null || \
+      printf '# Spec\n\n- [ ] AC-1. Example\n' > "$VALID_REPO_ROOT/$PLAN_SPEC"
+    git -C "$VALID_REPO_ROOT" add "$PLAN_DOC" "$PLAN_SPEC" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+  else
+    rm -f "$VALID_REPO_ROOT/$PLAN_SPEC"
+    git -C "$VALID_REPO_ROOT" rm -f "$PLAN_SPEC" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+    git -C "$VALID_REPO_ROOT" add "$PLAN_DOC" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+  fi
+  git -C "$VALID_REPO_ROOT" commit -m "test: plan artifacts" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+}
+
+install_plan_gh_mock() {
+  local changed_path="$1"
+  local head_branch="${MOCK_PR_HEAD_BRANCH:-implementation-plan/1655-test}"
+  cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"$head_branch","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\nREVIEW.md\n' "$changed_path"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+  chmod +x "$MOCK_BIN/gh"
+}
+
+run_plan_review() {
+  MOCK_PR_HEAD_BRANCH="${MOCK_PR_HEAD_BRANCH:-implementation-plan/1655-test}"
+  MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+  export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  export LOCAL_AI_REVIEWER_COMMAND
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT" "$@"
+}
+
+# Scenario 15: spec stage — spec applied, plan not_applicable stage_not_plan
+reset_mocks
+install_recording_two_pass_mock
+install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/well-formed.md"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+run_spec_review
+run_test "1655_s15_spec_applied" "STRICT_SPEC_STATE=applied" "$(line_for STRICT_SPEC_STATE)"
+run_test "1655_s15_plan_na" "STRICT_PLAN_STATE=not_applicable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s15_plan_reason" "STRICT_PLAN_REASON=stage_not_plan" "$(line_for STRICT_PLAN_REASON)"
+
+# Scenario 7: partial applied set without source spec (fresh repo — no spec at HEAD)
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+printf '# Plan\n' > "$PLAN_REPO/$PLAN_DOC"
+git -C "$PLAN_REPO" add "$PLAN_DOC"
+git -C "$PLAN_REPO" commit -q -m "plan-only"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-no-spec"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s7_partial_applied" "STRICT_PLAN_APPLIED=source_declaration,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+rm -rf "$PLAN_REPO"
+
+# Scenario 15 reverse: plan stage (fresh repo with spec sibling at HEAD)
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+cp "$REPO_ROOT/$PLAN_DOC" "$PLAN_REPO/$PLAN_DOC"
+cp "$REPO_ROOT/$PLAN_SPEC" "$PLAN_REPO/$PLAN_SPEC"
+git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
+git -C "$PLAN_REPO" commit -q -m "plan-with-spec"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+cp "$CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-spec-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_RECORD_FILE="$(mktemp)"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-test"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s15_plan_applied" "STRICT_PLAN_STATE=applied" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s15_spec_na" "STRICT_SPEC_STATE=not_applicable" "$(line_for STRICT_SPEC_STATE)"
+run_test "1655_s15_no_spec_reason" "no" "$(key_present STRICT_SPEC_REASON)"
+run_test "1655_s15_plan_applied_set7" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s15_bundle_has_plan_docs" "true" "$(awk -F= '/^has_strict_plan_documents=/{print $2}' "$MOCK_RECORD_FILE" | tail -1)"
+rm -f "$MOCK_RECORD_FILE"
+rm -rf "$PLAN_REPO"
+
+# Scenario 13: runbook-only plan stage PR
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/well-formed.md"
+install_plan_gh_mock "docs/testing/workflow/1655-strict-plan-review-mode.smoke-test.md"
+MOCK_RECORD_FILE="$(mktemp)"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT
+run_plan_review
+run_test "1655_s13_runbook_only" "STRICT_PLAN_STATE=not_applicable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s13_reason" "STRICT_PLAN_REASON=no_plan_document_changed" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s13_one_invocation" "1" "$(grep -c '^mode=' "$MOCK_RECORD_FILE" || true)"
+rm -f "$MOCK_RECORD_FILE"
+
+# Scenario 14b: shipped plan identifiers
+EXPECTED_PLAN_IDS='["source_declaration","unspecified_step","spec_traceability","ac_test_coverage","phase_ordering","dependency_state","reversal_risk"]'
+EXTRACTED_PLAN_IDS="$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_checklist_known_checks "'"$SHIPPED_PLAN_CHECKLIST"'"
+  ' | jq -c 'sort'
+)"
+run_test "1655_s14b_shipped_ids" "$(printf '%s\n' "$EXPECTED_PLAN_IDS" | jq -c 'sort')" "$EXTRACTED_PLAN_IDS"
+
+# Scenario 16: evidence includes strict_plan on every local reviewer round
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/well-formed.md"
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="feature/test"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "1655_s16_evidence_has_plan" "true" "$(jq -r 'has("strict_plan")' "$EVIDENCE_FILE")"
+run_test "1655_s16_evidence_plan_state" "not_applicable" "$(jq -r '.strict_plan.state' "$EVIDENCE_FILE")"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"

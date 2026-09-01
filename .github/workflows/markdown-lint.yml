@@ -13,6 +13,7 @@ on:
       - 'docs/specs/developments/**'
       - 'docs/testing/workflow/**'
       - 'docs/workflow/development-workflow/strict-spec-checks.md'
+      - 'docs/workflow/development-workflow/strict-plan-checks.md'
       - 'changelog.d/**'
       - 'CHANGELOG.md'
       - '.markdownlint.jsonc'
