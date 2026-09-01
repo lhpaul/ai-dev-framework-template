@@ -17960,7 +17960,7 @@ run_test "1656_s4_guard_proceed" "0" "$_st"
 run_test "1656_s4_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
 run_test "1656_s4_guard_reason" "not_required" "$local_second_pass_reason"
 
-# Scenario 8c: failed head refusal — no dispatch, escalate
+# Scenario 8c: failed head refusal — no dispatch, escalate (P1/P9 restored)
 _1656_reset_guard_globals
 _1656_guard_hist_payload="$_1656_guard_hist_failed"
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?

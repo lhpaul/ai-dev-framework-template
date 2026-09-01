@@ -10,15 +10,32 @@
 bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1656
 ```
 
+**Demonstrated output** (2026-09-01, current PR head):
+
+```text
+PASS: 1656_s8c_failed_head_count
+PASS: 1656_s8c_guard_refuse
+PASS: 1656_s8c_guard_no_dispatch
+PASS: 1656_pv_P2_plant
+PASS: 1656_pv_P2_correct
+PASS: 1656_pv_P2_plant_differs
+PASS: 1656_pv_P10_plant
+PASS: 1656_pv_P10_correct
+PASS: 1656_pv_P10_plant_differs
+PASS: 1656_s5a_extraction_byte_identical
+PASS: 1656_s7a_guard_unavailable
+PASS: 1656_s3d_no_failed_head_record
+```
+
 Line numbers refer to `scripts/development-workflow/pr-review-loop.sh` at the
 current PR head unless a test path is given.
 
 ## P1 — per-head dispatch cap (loop/cost)
 
-- **Production**: `:8363` (`reviewer_loop_local_second_pass_failed_for_head` refusal) through `:8371` (`return 1` without dispatch)
-- **Plant**: skip `:8430` (`local_second_pass_failed_head_record="$loop_head_sha"`) so the next invocation cannot refuse at `:8363`
-- **Fail when planted**: second loop invocation dispatches again at `:8376`
-- **Pass restored**: `1656_s8c_guard_refuse`, `1656_s8c_guard_no_dispatch` (`test-pr-review-loop.sh:17967-17968`)
+- **Production**: `:8363-8371` (`failed_for_head` refusal without dispatch); ledger write at `:8430`
+- **Plant**: omit `:8430` on a failed pass so `:8363` cannot refuse on the next invocation
+- **Fail when planted**: second invocation reaches `:8376` (`run_platform_review`) instead of `:8363`
+- **Pass restored**: `1656_s8c_failed_head_count`, `1656_s8c_guard_refuse`, `1656_s8c_guard_no_dispatch` (demonstrated above)
 
 ## P2 — silent history must not read as satisfied (fail-open)
 
