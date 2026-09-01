@@ -8159,9 +8159,27 @@ reviewer_loop_compose_current_round_payload() {
 # reviewer_loop_prior_history_payload_from_pr <pr_number>
 reviewer_loop_prior_history_payload_from_pr() {
   local pr_number_arg="${1:-}"
-  local body="" json="" payload=""
+  local repo="" record="" body="" json="" payload=""
 
-  body="$(reviewer_loop_fetch_latest_summary_body "$pr_number_arg")"
+  if [ -z "$pr_number_arg" ]; then
+    printf '%s\n' '{"schema":"reviewer_loop_history.v1","entries":[]}'
+    return 0
+  fi
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    jq -nc --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      '{schema: $schema, history_status: "unavailable", history_unavailable_reason: "repo_unavailable", entries: []}'
+    return 0
+  fi
+  if ! record="$(
+    set -o pipefail
+    gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+      | reviewer_loop_history_select_latest_summary_record
+  )"; then
+    jq -nc --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      '{schema: $schema, history_status: "unavailable", history_unavailable_reason: "comment_fetch_failed", entries: []}'
+    return 0
+  fi
+  body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
   json="$(printf '%s' "$body" | reviewer_loop_history_extract_latest_json)"
   if [ -n "$json" ] \
       && payload="$(printf '%s' "$json" | jq -c '.' 2>/dev/null)" \
