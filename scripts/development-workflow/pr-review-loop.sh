@@ -1920,6 +1920,7 @@ run_codex_github_review() {
       ;;
     1)
       unresolved_count=0
+      local actual_unresolved_count=0
       # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
       # reporting and must reflect true resolution state, not the provisional
       # reply relaxation used to decide whether to trigger the review above.
@@ -1929,11 +1930,21 @@ run_codex_github_review() {
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
         unresolved_count="$thread_check_output"
+        actual_unresolved_count="$unresolved_count"
       fi
       [ "$unresolved_count" -eq 0 ] && unresolved_count=1
 
       reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
       reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
+
+      # Companion script REVIEWED_HEAD is artifact-derived on terminal safe-fail
+      # paths with no unresolved threads; do not fall back when threads exist
+      # (multi-commit thread heads must stay unattributable per AC-11).
+      if [ "$actual_unresolved_count" -eq 0 ]; then
+        local companion_reviewed_head
+        companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+        [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+      fi
 
       print_kv RESULT needs_fixes
       print_kv PLATFORM "$platform"
@@ -6013,13 +6024,7 @@ run_coderabbit_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
-      {
-        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
-        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
-        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
-        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
-        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
-      } | reviewer_loop_print_reviewed_head_from_json_lines
+    reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
