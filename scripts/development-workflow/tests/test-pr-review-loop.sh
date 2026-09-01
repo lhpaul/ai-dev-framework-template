@@ -17826,6 +17826,17 @@ run_test "1656_s8c_guard_escalate" "escalate" "$aggregate_result"
 run_test "1656_s8c_guard_failed_reason" "failed_for_head" "$aggregate_reason"
 run_test "1656_s8c_phase_not_started" "0" "$phase_after_clean_started"
 
+# Prior ledger unavailable — close gate before dispatch (P9 / cross-invocation)
+_1656_guard_hist_unavail='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}'
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_unavail"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s8d_guard_unavail_blocked" "1" "$_st"
+run_test "1656_s8d_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s8d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s8d_phase_not_started" "0" "$phase_after_clean_started"
+unset _1656_guard_hist_unavail
+
 # Scenario 7a: skipped pass — escalate, phase not started
 _1656_reset_guard_globals
 _1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'

@@ -8170,6 +8170,11 @@ reviewer_loop_prior_history_payload_from_pr() {
     printf '%s\n' "$payload"
     return 0
   fi
+  if printf '%s' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    jq -nc --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      '{schema: $schema, history_status: "unavailable", history_unavailable_reason: "prior_unavailable", entries: []}'
+    return 0
+  fi
   printf '%s\n' '{"schema":"reviewer_loop_history.v1","entries":[]}'
 }
 
@@ -8246,6 +8251,16 @@ reviewer_loop_second_local_pass_before_ready_gate() {
 
   if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
     return 0
+  fi
+
+  if [ "$(printf '%s' "$_sl_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ]; then
+    local_second_pass_reason="local_pass_unavailable"
+    aggregate_result="escalate"
+    aggregate_reason="local_pass_unavailable"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
   fi
 
   if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
