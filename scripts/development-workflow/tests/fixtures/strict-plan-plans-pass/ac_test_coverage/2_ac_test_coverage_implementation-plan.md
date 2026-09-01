@@ -8,4 +8,4 @@
 
 ## Tests
 
-- AC-1: run `bash scripts/development-workflow/tests/test-local-ai-reviewer.sh`; non-zero exit when any #1655 scenario fails (fails if AC-1 unmet).
+- Scenario 1: run `bash scripts/development-workflow/tests/test-local-ai-reviewer.sh`; exits non-zero when any #1655 scenario fails (passes only when AC-1 holds).

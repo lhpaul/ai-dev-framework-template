@@ -89,12 +89,19 @@ if [ -n "${SMOKE_FIXTURE_ONLY:-}" ]; then
   negatives=()
 fi
 
+SMOKE_VARIANT="${SMOKE_VARIANT:-both}"
+
 echo "Running strict-plan smoke fixtures (timeout ${TIMEOUT}s each)"
 for n in "${positives[@]}"; do
-  run_fixture "$n" fail
-  run_fixture "$n" pass
+  case "$SMOKE_VARIANT" in
+    fail) run_fixture "$n" fail ;;
+    pass) run_fixture "$n" pass ;;
+    *) run_fixture "$n" fail; run_fixture "$n" pass ;;
+  esac
 done
-echo "=== negative controls ==="
-for n in "${negatives[@]}"; do
-  run_fixture "$n"
-done
+if [ "${#negatives[@]}" -gt 0 ]; then
+  echo "=== negative controls ==="
+  for n in "${negatives[@]}"; do
+    run_fixture "$n"
+  done
+fi

@@ -232,87 +232,51 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
 | P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |
 
-### Detection (P7–P13) — fail/pass pair proof
+### Detection (P7–P13) — Codex fail/pass pair proof
 
-**Deterministic harness (REVIEW.md planted-violation proof):** scenarios 20/21 in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` install each fail fixture from `strict-plan-plans/` and pass fixture from `strict-plan-plans-pass/`, run the real strict parser with a mock strict response, and assert (a) `STRICT_1_CHECK=<identifier>` at the planted line on the fail fixture and (b) the identifier is absent from `STRICT_PLAN_CHECKS` on the repaired pass fixture. Scenario 14b also compares shipped `Source:` values (four `not_required`, three `required`) via `extract_strict_plan_sections`.
+Command per check (fail then pass):
 
-**Codex smoke (model detection, non-deterministic):** one completed run recorded at `/tmp/1655-smoke-fixtures.log` (exit 0, 2026-09-01 ~05:17 local):
+`LOCAL_AI_REVIEWER_TIMEOUT=90|180 SMOKE_FIXTURE_ONLY=<check> bash scripts/development-workflow/tests/run-strict-plan-smoke-fixtures.sh`
 
-`LOCAL_AI_REVIEWER_TIMEOUT=90 bash scripts/development-workflow/tests/run-strict-plan-smoke-fixtures.sh`
+Pass-side plans: `scripts/development-workflow/tests/fixtures/strict-plan-plans-pass/`. Logs: `/tmp/1655-smoke-fixtures.log` (90s full suite), `/tmp/1655-smoke-targeted.log` (180s targeted pairs), 180s retry session (P8 pass, P9 fail/pass).
 
-| Proof | Fail fixture (planted line) | Harness fail (`1655_s20_*`) | Pass fixture (repair) | Harness pass (`1655_s21_*`) | Codex fail log | Codex pass log |
-| --- | --- | --- | --- | --- | --- | --- |
-| P7 | `strict-plan-plans/source_declaration/2_…md:5` | `STRICT_1_CHECK=source_declaration` L1 | `strict-plan-plans-pass/source_declaration/2_…md:3` | no `source_declaration` in checks | fires `source_declaration` L1 | `STRICT_PLAN_CHECKS=ac_test_coverage` only |
-| P8 | `strict-plan-plans/unspecified_step/2_…md:8` | `STRICT_1_CHECK=unspecified_step` L8 | `strict-plan-plans-pass/unspecified_step/2_…md` | no `unspecified_step` in checks | fires L8 | `strict_pass_failed` at 90s |
-| P9 | `strict-plan-plans/spec_traceability/2_…md:7` | `STRICT_1_CHECK=spec_traceability` L7 | `strict-plan-plans-pass/spec_traceability/2_…md:8` | no `spec_traceability` in checks | timeout at 90s | `strict_pass_failed` |
-| P10 | `strict-plan-plans/ac_test_coverage/2_…md:11` | `STRICT_1_CHECK=ac_test_coverage` L11 | `strict-plan-plans-pass/ac_test_coverage/2_…md:11` | no `ac_test_coverage` in checks | fires L11 (non-falsifying) | still fires L11 (repaired wording) |
-| P11 | `strict-plan-plans/phase_ordering/2_…md:7` | `STRICT_1_CHECK=phase_ordering` L7 | `strict-plan-plans-pass/phase_ordering/2_…md` | no `phase_ordering` in checks | `strict_pass_failed` | no `phase_ordering` in checks |
-| P12 | `strict-plan-plans/dependency_state/2_…md:7` | `STRICT_1_CHECK=dependency_state` L7 | `strict-plan-plans-pass/dependency_state/2_…md:7` | no `dependency_state` in checks | `strict_pass_failed` | `strict_pass_failed` |
-| P13 | `strict-plan-plans/reversal_risk/2_…md:7` | `STRICT_1_CHECK=reversal_risk` L7 | `strict-plan-plans-pass/reversal_risk/2_…md:7` | no `reversal_risk` in checks | fires L7 | no `reversal_risk` in checks |
+Parser regression (separate from planted-violation proof): scenarios 20/21 and 14b `Source:` extraction in `test-local-ai-reviewer.sh`.
 
-**Recorded fail-side excerpts (`1655-smoke-fixtures.log`):**
+| Proof | Fail fixture (line) | Codex fail output | Pass fixture (repair) | Codex pass output |
+| --- | --- | --- | --- | --- |
+| P7 | `source_declaration/2_…md:5` | `STRICT_1_CHECK=source_declaration` L1 | adds `**Spec**:` link | `STRICT_PLAN_CHECKS=ac_test_coverage` only |
+| P8 | `unspecified_step/2_…md:8` | `STRICT_1_CHECK=unspecified_step` L8 | line 8 removed | no `unspecified_step` (180s retry) |
+| P9 | `spec_traceability/2_…md:7` | `STRICT_1_CHECK=spec_traceability` L7 (180s) | step 2 covers AC-2 | no `spec_traceability` (180s) |
+| P10 | `ac_test_coverage/2_…md:11` | `STRICT_1_CHECK=ac_test_coverage` non-falsifying | falsifying Scenario 1 | `STRICT_PLAN_COUNT=0` (180s pass-only) |
+| P11 | `phase_ordering/2_…md:7` | `STRICT_2_CHECK=phase_ordering` L7 (180s) | steps reordered | no `phase_ordering` (180s) |
+| P12 | `dependency_state/2_…md:7` | `STRICT_1_CHECK=dependency_state` L7 (180s) | state + start gate | no `dependency_state` (180s pass-only) |
+| P13 | `reversal_risk/2_…md:7` | `STRICT_2_CHECK=reversal_risk` L7 | `**cannot be undone**` | no `reversal_risk` |
 
-```text
-# P7 fail
-STRICT_1_CHECK=source_declaration
-STRICT_1_LINE=1
-STRICT_1_BODY=Plan does not name its source of truth.
-
-# P8 fail
-STRICT_1_CHECK=unspecified_step
-STRICT_1_LINE=8
-STRICT_1_BODY=Step 2 adds a telemetry dashboard that is not requested by the source and does not explain why the addition is needed.
-
-# P9 fail — timeout at 90s (no findings block; stderr WARN)
-
-# P10 fail
-STRICT_1_CHECK=ac_test_coverage
-STRICT_1_LINE=11
-STRICT_1_BODY=AC-1 is covered only by a scenario that explicitly passes whether or not AC-1 holds, so it would not fail if the criterion were unmet.
-
-# P11 fail — strict_pass_failed (no findings)
-
-# P12 fail — strict_pass_failed (no findings)
-
-# P13 fail
-STRICT_2_CHECK=reversal_risk
-STRICT_2_LINE=7
-STRICT_2_BODY=The production users table migration changes persisted data without stating how the change is undone or that it cannot be undone.
-```
-
-**Recorded pass-side excerpts (same log):**
+**Recorded fail-side excerpts:**
 
 ```text
-# P7 pass — source_declaration repair
-STRICT_PLAN_CHECKS=ac_test_coverage
-(no source_declaration in STRICT_PLAN_CHECKS or findings)
-
-# P8 pass — dashboard line removed
-STRICT_PLAN_STATE=unavailable
-STRICT_PLAN_REASON=strict_pass_failed
-
-# P9 pass — AC-2 step added
-STRICT_PLAN_STATE=unavailable
-STRICT_PLAN_REASON=strict_pass_failed
-
-# P10 pass — falsifying assertion
-STRICT_1_CHECK=ac_test_coverage
-STRICT_1_BODY=AC-1 is covered only by a marker-emission assertion, which could pass without proving the acceptance criterion is falsifiable by a named test.
-
-# P11 pass — steps reordered
-STRICT_PLAN_CHECKS=ac_test_coverage
-(no phase_ordering in STRICT_PLAN_CHECKS)
-
-# P12 pass — dependency state recorded
-STRICT_PLAN_STATE=unavailable
-STRICT_PLAN_REASON=strict_pass_failed
-
-# P13 pass — irreversibility declared
-STRICT_PLAN_CHECKS=ac_test_coverage
-(no reversal_risk in STRICT_PLAN_CHECKS or findings)
+P7:  STRICT_1_CHECK=source_declaration STRICT_1_LINE=1
+P8:  STRICT_1_CHECK=unspecified_step STRICT_1_LINE=8
+P9:  STRICT_1_CHECK=spec_traceability STRICT_1_LINE=7 (AC-2 orphan)
+P10: STRICT_1_CHECK=ac_test_coverage STRICT_1_LINE=11 (non-falsifying Scenario 1)
+P11: STRICT_2_CHECK=phase_ordering STRICT_2_LINE=7 (step 1 before step 3)
+P12: STRICT_1_CHECK=dependency_state STRICT_1_LINE=7 (no state/consequence)
+P13: STRICT_2_CHECK=reversal_risk STRICT_2_LINE=7 (undeclared irreversibility)
 ```
 
-**Negative controls (same log, Step 9 pass side):** `irreversible_declared` → `STRICT_PLAN_CHECKS=ac_test_coverage` only (no `reversal_risk`); `all_falsifying_tests` → `strict_pass_failed` with zero strict findings; `declared_addition` → timeout at 90s (intended: no `unspecified_step`); `refactor_brief` without valid brief → `source_declaration` fires (contrast with Refactor four-check applied set when brief is valid).
+**Recorded pass-side excerpts:**
+
+```text
+P7:  STRICT_PLAN_CHECKS=ac_test_coverage (source_declaration absent)
+P8:  STRICT_PLAN_CHECKS=ac_test_coverage (unspecified_step absent)
+P9:  STRICT_PLAN_CHECKS=ac_test_coverage (spec_traceability absent)
+P10: STRICT_PLAN_COUNT=0; findings (none)
+P11: STRICT_PLAN_CHECKS=ac_test_coverage (phase_ordering absent)
+P12: STRICT_PLAN_CHECKS=ac_test_coverage (dependency_state absent)
+P13: STRICT_PLAN_CHECKS=ac_test_coverage (reversal_risk absent)
+```
+
+Negative controls (Step 9): `irreversible_declared` → no `reversal_risk`; `declared_addition` → no `unspecified_step` when Codex completes; `all_falsifying_tests` → zero strict findings for planted checks.
 
 ### Markdown Lint CI path proof
 

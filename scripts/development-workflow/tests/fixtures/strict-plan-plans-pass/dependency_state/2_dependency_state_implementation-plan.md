@@ -4,7 +4,7 @@
 
 ## Dependencies
 
-- #999 merged (Done).
+- #999 merged (Done). If #999 is not merged when implementation starts, stop and unblock #999 before step 1.
 
 ## Steps
 
