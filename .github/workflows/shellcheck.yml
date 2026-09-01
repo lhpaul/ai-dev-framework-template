@@ -51,6 +51,9 @@ jobs:
           printf '  %s\n' "${shell_files[@]}"
           shellcheck --severity=warning "${shell_files[@]}"
 
+      - name: Run ShellCheck on review doctrine linter
+        run: shellcheck --severity=warning scripts/lint/review-doctrine-lint.sh
+
       - name: Run workflow shell guard lint tests
         run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 
