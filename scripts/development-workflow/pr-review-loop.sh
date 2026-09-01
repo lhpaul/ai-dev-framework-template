@@ -11630,6 +11630,12 @@ for index in "${!platforms[@]}"; do
       && [ "$phase_after_clean_started" -eq 0 ] \
       && is_phase_after_clean_platform "$platform_name"; then
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      # Issue #1656: second local pass before expensive preflight and gh pr ready.
+      if reviewer_loop_second_local_pass_before_ready_gate "$pr_number"; then
+        :
+      else
+        break
+      fi
       # Issue #1649: preflight expensive ready-phase gates BEFORE gh pr ready.
       # Codex (and similar) may auto-start when a draft is marked ready; running
       # ensure_pr_ready first would spend that reviewer before local/thread/
@@ -11699,12 +11705,6 @@ for index in "${!platforms[@]}"; do
         break
       fi
       unset _eg_ready_preflight_failed
-      # Issue #1656: second local pass before ready-phase gate.
-      if reviewer_loop_second_local_pass_before_ready_gate "$pr_number"; then
-        :
-      else
-        break
-      fi
       set +e
       ensure_pr_ready_for_ready_phase "$pr_number"
       ready_status=$?
