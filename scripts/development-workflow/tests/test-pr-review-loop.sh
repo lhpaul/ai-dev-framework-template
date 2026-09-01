@@ -17761,13 +17761,19 @@ run_platform_review() {
 
 gh() {
   if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+    local _gh_head=""
     if [ "${_1656_stub_pr_head:-}" = "UNAVAILABLE" ]; then
       return 1
     fi
     if [ -n "${_1656_stub_pr_head:-}" ]; then
-      printf '{"headRefOid":"%s"}\n' "$_1656_stub_pr_head"
+      _gh_head="$_1656_stub_pr_head"
     else
-      printf '{"headRefOid":"%s"}\n' "${loop_head_sha:-}"
+      _gh_head="${loop_head_sha:-}"
+    fi
+    if [[ "$*" == *"--jq"* ]]; then
+      printf '%s\n' "$_gh_head"
+    else
+      printf '{"headRefOid":"%s"}\n' "$_gh_head"
     fi
     return 0
   fi
@@ -17927,6 +17933,16 @@ _1656_stub_pass_result="clean"
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1656_s9_dispatch_cycle_count" "2" "$cycle_count"
 run_test "1656_s9_dispatch_lifetime_count" "5" "$lifetime_cycle_count"
+
+# Dispatched clean success path proceeds when gh --jq returns raw head SHA
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="clean"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s5_guard_clean_proceed" "0" "$_st"
+run_test "1656_s5_guard_clean_dispatch" "1" "$local_second_pass"
+run_test "1656_s5_guard_clean_reason" "no_evidence" "$local_second_pass_reason"
+
 _1656_reset_guard_globals
 cycle_count=4
 lifetime_cycle_count=7
