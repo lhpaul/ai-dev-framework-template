@@ -8287,7 +8287,17 @@ reviewer_loop_second_local_pass_before_ready_gate() {
     fi
     _sl_head_now=""
     _sl_head_now="$(gh pr view "$pr_number_arg" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || _sl_head_now=""
-    if [ -n "$loop_head_sha" ] && [ -n "$_sl_head_now" ] && [ "$_sl_head_now" != "$loop_head_sha" ]; then
+    if [ -z "$_sl_head_now" ]; then
+      local_second_pass_reason="local_pass_unavailable"
+      aggregate_result="escalate"
+      aggregate_reason="local_pass_unavailable"
+      aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+      aggregate_status=2
+      local_second_pass_failed_head_record="$loop_head_sha"
+      last_platform="local-ai-reviewer"
+      return 1
+    fi
+    if [ -n "$loop_head_sha" ] && [ "$_sl_head_now" != "$loop_head_sha" ]; then
       local_second_pass_reason="head_moved_during_pass"
       aggregate_result="needs_fixes"
       aggregate_reason="head_moved_during_run"

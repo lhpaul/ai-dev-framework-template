@@ -17761,6 +17761,9 @@ run_platform_review() {
 
 gh() {
   if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+    if [ "${_1656_stub_pr_head:-}" = "UNAVAILABLE" ]; then
+      return 1
+    fi
     if [ -n "${_1656_stub_pr_head:-}" ]; then
       printf '{"headRefOid":"%s"}\n' "$_1656_stub_pr_head"
     else
@@ -17894,6 +17897,15 @@ run_test "1656_s3a_guard_dispatch" "1" "$local_second_pass"
 run_test "1656_s3a_guard_reason" "head_moved_during_pass" "$local_second_pass_reason"
 run_test "1656_s3a_aggregate_reason" "head_moved_during_run" "$aggregate_reason"
 run_test "1656_s3a_phase_not_started" "0" "$phase_after_clean_started"
+
+# gh head re-read unavailable after clean pass — must not proceed
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pr_head="UNAVAILABLE"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s3d_guard_blocked" "1" "$_st"
+run_test "1656_s3d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s3d_phase_not_started" "0" "$phase_after_clean_started"
 
 # Scenarios 9/10 (P3): second pass must not increment cycle counters
 _1656_reset_guard_globals
