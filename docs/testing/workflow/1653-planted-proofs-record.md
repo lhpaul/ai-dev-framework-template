@@ -46,8 +46,8 @@ shows the failing assertion/output, then the passing restore.
 
 ## P7 — newline-separated REVIEW_CHECKLISTS evidence
 
-- **Plant location:** `scripts/development-workflow/local-ai-reviewer.sh:588-590`
-  (emit multiline value)
+- **Plant location:** `scripts/development-workflow/local-ai-reviewer.sh:633-636`
+  (emit multiline `REVIEW_CHECKLISTS` value)
 - **Fail run:** `FAIL: 1653_s13_no_fabricated_key - expected '0', got '1'`
 - **Pass run:** `PASS: 1653_s13_no_fabricated_key` (`test-pr-review-loop.sh --area 1653`)
 
