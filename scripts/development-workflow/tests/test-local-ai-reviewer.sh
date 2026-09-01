@@ -1210,6 +1210,10 @@ run_test "1654_s8_platform_state" "1" "$(printf '%s\n' "$_1654_emit_out" | grep 
 run_test "1654_s8_platform_count" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_PATTERN_COUNT=' || true)"
 run_test "1654_s8_platform_version" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_VERSION=' || true)"
 run_test "1654_s8_no_fabricated" "0" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_[^=]*Shape' || true)"
+_1654_absent_kv="$(printf '%s\n' 'RESULT=clean' 'REVIEW_DOCTRINE_STATE=absent' 'REVIEW_DOCTRINE_PATTERN_COUNT=0' 'REVIEW_DOCTRINE_VERSION=')"
+_1654_absent_emit="$(bash -c 'HARNESS_MODE=1 source "$1"; emit_local_ai_review_doctrine_keys "$2"' bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_1654_absent_kv")"
+run_test "1654_s8_absent_forwards_version" "REVIEW_DOCTRINE_VERSION=" "$(printf '%s\n' "$_1654_absent_emit" | grep '^REVIEW_DOCTRINE_VERSION=' || true)"
+run_test "1654_s8_absent_forwards_count" "REVIEW_DOCTRINE_PATTERN_COUNT=0" "$(printf '%s\n' "$_1654_absent_emit" | grep '^REVIEW_DOCTRINE_PATTERN_COUNT=' || true)"
 rm -f "$BUNDLE_DUMP"
 
 # Scenario 8a: evidence object

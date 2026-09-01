@@ -3676,12 +3676,15 @@ emit_local_ai_review_stage_keys() {
 emit_local_ai_review_doctrine_keys() {
   local script_output="$1"
   local state pattern_count version
+  if ! grep -q '^REVIEW_DOCTRINE_STATE=' <<< "$script_output"; then
+    return 0
+  fi
   state="$(kv_value_default REVIEW_DOCTRINE_STATE "$script_output" "")"
-  pattern_count="$(kv_value_default REVIEW_DOCTRINE_PATTERN_COUNT "$script_output" "")"
+  pattern_count="$(kv_value_default REVIEW_DOCTRINE_PATTERN_COUNT "$script_output" "0")"
   version="$(kv_value_default REVIEW_DOCTRINE_VERSION "$script_output" "")"
-  [ -n "$state" ] && print_kv REVIEW_DOCTRINE_STATE "$state"
-  [ -n "$pattern_count" ] && print_kv REVIEW_DOCTRINE_PATTERN_COUNT "$pattern_count"
-  [ -n "$version" ] && print_kv REVIEW_DOCTRINE_VERSION "$version"
+  print_kv REVIEW_DOCTRINE_STATE "$state"
+  print_kv REVIEW_DOCTRINE_PATTERN_COUNT "$pattern_count"
+  print_kv REVIEW_DOCTRINE_VERSION "$version"
 }
 
 # Capture STRICT_SPEC_* into globals for reviewer_loop_history_build_entry.
