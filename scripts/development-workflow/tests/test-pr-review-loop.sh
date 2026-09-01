@@ -17619,6 +17619,9 @@ echo "=== Area 1653 complete ==="
 # ---------------------------------------------------------------------------
 echo "=== Area 1656: second local pass ==="
 
+compare_mode=0
+compare_verdicts=()
+
 _1656_head="cccccccccccccccccccccccccccccccccccccccc"
 _1656_ancestor="dddddddddddddddddddddddddddddddddddddddd"
 _1656_unrelated="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -17696,6 +17699,8 @@ run_test "1656_s6c_replace_records" "1" \
 total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
+compare_mode=0
+compare_verdicts=()
 declare -a platform_peer_evidence=() aggregate_blocking_paths=() aggregate_blocking_findings=()
 _sl_clean_out=$'RESULT=clean\nREVIEWED_HEAD='"${_1656_fresh_head}"$'\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'
 reviewer_loop_process_platform_output "local-ai-reviewer" 99 "$_sl_clean_out" 0 0
@@ -17727,6 +17732,105 @@ repo_review_platforms=(local-ai-reviewer codex-github)
 platforms=(codex-github)
 run_test "1656_s2b_repo_configured" "no_evidence" \
   "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$(reviewer_loop_repo_configured_platforms)")"
+
+# Scenario 5a / P8: shared processor key=value output is stable and omits second-pass keys
+_1656_s5a_clean_out=$'RESULT=clean\nREVIEWED_HEAD='"$_1656_head"$'\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\nREASON=\n'
+_1656_s5a_reset_processing_globals() {
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  compare_mode=0
+  compare_verdicts=()
+  platform_peer_evidence=()
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  aggregate_result="clean"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  loop_head_sha="$_1656_head"
+}
+_1656_s5a_capture_output() {
+  _1656_s5a_reset_processing_globals
+  {
+    reviewer_loop_process_platform_output "local-ai-reviewer" 1 "$_1656_s5a_clean_out" 0 1
+  } 2>/dev/null
+}
+_1656_s5a_first="$(_1656_s5a_capture_output)"
+_1656_s5a_second="$(_1656_s5a_capture_output)"
+run_test "1656_s5a_extraction_byte_identical" "$_1656_s5a_first" "$_1656_s5a_second"
+run_test "1656_s5a_no_second_pass_keys" "0" \
+  "$(printf '%s' "$_1656_s5a_first" | grep -Ec '^(LOCAL_SECOND_PASS|LOCAL_SECOND_PASS_REASON)=' || true)"
+run_test "1656_s5a_platform_result" "clean" \
+  "$(printf '%s' "$_1656_s5a_first" | awk -F= '/^PLATFORM_1_RESULT=/{print $2; exit}')"
+unset _1656_s5a_clean_out _1656_s5a_first _1656_s5a_second
+unset -f _1656_s5a_reset_processing_globals _1656_s5a_capture_output 2>/dev/null || true
+
+# Planted-violation proofs (REVIEW.md): wrong helpers live only in this harness.
+_1656_pv_plant_p2_pass_required() {
+  local payload="${1:-}" head="${2:-}" configured="${3:-}"
+  local verdict outcome verdict_head
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf 'no_local_reviewer\n'; return 0
+  fi
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
+  case "$outcome" in
+    not_configured) printf 'no_local_reviewer\n'; return 0 ;;
+    not_yet_run|unknown) printf 'not_required\n'; return 0 ;;
+    clean) ;;
+    *) printf 'prior_findings\n'; return 0 ;;
+  esac
+  if [ -n "$head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'not_required\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+_1656_pv_plant_p10_pass_required() {
+  local payload="${1:-}" head="${2:-}" configured="${3:-}"
+  local verdict outcome verdict_head
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf 'no_evidence\n'; return 0
+  fi
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
+  case "$outcome" in
+    not_configured|not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    clean) ;;
+    *) printf 'prior_findings\n'; return 0 ;;
+  esac
+  if [ -n "$head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'not_required\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+run_test "1656_pv_P2_plant" "not_required" \
+  "$(_1656_pv_plant_p2_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_pv_P2_correct" "no_evidence" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_pv_P2_plant_differs" "different" \
+  "$( [ "$(_1656_pv_plant_p2_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")" \
+      != "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")" ] \
+     && echo different || echo same)"
+run_test "1656_pv_P10_plant" "no_evidence" \
+  "$(_1656_pv_plant_p10_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")"
+run_test "1656_pv_P10_correct" "no_local_reviewer" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")"
+run_test "1656_pv_P10_plant_differs" "different" \
+  "$( [ "$(_1656_pv_plant_p10_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")" \
+      != "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")" ] \
+     && echo different || echo same)"
+unset -f _1656_pv_plant_p2_pass_required _1656_pv_plant_p10_pass_required 2>/dev/null || true
 
 # Guard validates pass-output REVIEWED_HEAD, not the first platform_reviewed_heads entry
 _1656_fresh_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
