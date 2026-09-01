@@ -17751,6 +17751,9 @@ run_platform_review() {
     clean_no_head) printf 'RESULT=clean\n' ;;
     skipped) printf 'RESULT=skipped\nREASON=unavailable\n' ;;
     needs_fixes) printf 'RESULT=needs_fixes\nREASON=blocking\nBLOCKING_COUNT=1\n' ;;
+    needs_rerun) printf 'RESULT=needs_rerun\nREASON=stale_verdict\n' ;;
+    escalate_pass) printf 'RESULT=escalate\nREASON=timeout\n' ;;
+    unparseable) printf 'not-key=value-garbage\n' ;;
     *) printf 'RESULT=escalate\nREASON=unknown\n' ;;
   esac
   return 0
@@ -17830,6 +17833,45 @@ run_test "1656_s7a_guard_dispatch" "1" "$local_second_pass"
 run_test "1656_s7a_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
 run_test "1656_s7a_guard_escalate_reason" "local_pass_unavailable" "$aggregate_reason"
 run_test "1656_s7a_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 7: needs_fixes pass — gate closed, failed head recorded, phase not started
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="needs_fixes"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7_guard_blocked" "1" "$_st"
+run_test "1656_s7_guard_needs_fixes" "needs_fixes" "$aggregate_result"
+run_test "1656_s7_guard_failed_head" "$_1656_guard_head" "$local_second_pass_failed_head_record"
+run_test "1656_s7_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 7b: needs_rerun pass — unavailable escalation, phase not started
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="needs_rerun"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7b_guard_blocked" "1" "$_st"
+run_test "1656_s7b_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7b_guard_escalate" "escalate" "$aggregate_result"
+run_test "1656_s7b_phase_not_started" "0" "$phase_after_clean_started"
+
+# Escalate pass — unavailable escalation through shared processor mapping
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="escalate_pass"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7c_guard_blocked" "1" "$_st"
+run_test "1656_s7c_guard_escalate" "escalate" "$aggregate_result"
+run_test "1656_s7c_guard_timeout" "timeout" "$aggregate_reason"
+run_test "1656_s7c_phase_not_started" "0" "$phase_after_clean_started"
+
+# Unparseable pass output — unavailable escalation (P15 / scenario 7b shape)
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="unparseable"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7d_guard_blocked" "1" "$_st"
+run_test "1656_s7d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7d_phase_not_started" "0" "$phase_after_clean_started"
 
 # Clean pass without REVIEWED_HEAD — must not proceed (current-head evidence contract)
 _1656_reset_guard_globals
