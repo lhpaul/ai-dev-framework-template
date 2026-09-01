@@ -1,0 +1,80 @@
+{
+  "schema": "reviewer_loop_history.v1",
+  "pr_number": 200,
+  "updated_at": "2026-08-01T00:00:00Z",
+  "history_status": "available",
+  "entries": [
+    {
+      "iteration": 1,
+      "platforms": ["local-ai-reviewer", "codex-github"],
+      "blocking_count": 1,
+      "missed_findings": [
+        {
+          "reviewer": "coderabbit",
+          "local_evidence_state": "clean_same_commit",
+          "classification": "confirmed_miss"
+        }
+      ],
+      "reviewed_heads": [
+        {"platform": "local-ai-reviewer", "reviewed_head": "abc", "state": "current", "reason": ""}
+      ],
+      "strict_spec": {"state": "applied", "count": 1, "checks": ["spec-ac-1"]},
+      "strict_plan": {"state": "applied", "count": 1, "checks": ["plan-ac-1"], "applied": ["plan-ac-1"]}
+    },
+    {
+      "iteration": 2,
+      "platforms": ["coderabbit"],
+      "blocking_count": 2,
+      "missed_findings": [
+        {
+          "reviewer": "coderabbit",
+          "local_evidence_state": "clean_earlier_commit",
+          "classification": "possible_miss"
+        },
+        {
+          "reviewer": "codex-github",
+          "local_evidence_state": "not_clean",
+          "classification": "not_a_miss"
+        }
+      ],
+      "reviewed_heads": [
+        {"platform": "coderabbit", "reviewed_head": "def", "state": "not-current", "reason": "head_mismatch"}
+      ],
+      "strict_spec": {"state": "applied", "count": 1, "checks": ["spec-ac-1"]},
+      "strict_plan": {"state": "applied", "count": 0, "checks": [], "applied": ["plan-ac-1"]}
+    },
+    {
+      "iteration": 3,
+      "platforms": ["local-ai-reviewer"],
+      "blocking_count": 0,
+      "missed_findings": [
+        {
+          "reviewer": "coderabbit",
+          "local_evidence_state": "clean_same_commit",
+          "classification": "confirmed_miss"
+        }
+      ],
+      "reviewed_heads": [
+        {"platform": "local-ai-reviewer", "reviewed_head": "fff", "state": "current", "reason": ""}
+      ]
+    },
+    {
+      "iteration": 4,
+      "platforms": ["codex-github"],
+      "blocking_count": 3,
+      "missed_findings": [
+        {
+          "reviewer": "codex-github",
+          "local_evidence_state": "clean_same_commit",
+          "blocking_count": 3,
+          "classification": "confirmed_miss"
+        }
+      ],
+      "reviewed_heads": [
+        {"platform": "codex-github", "reviewed_head": "fff", "state": "current", "reason": ""}
+      ],
+      "strict_spec": {"state": "applied", "count": 1, "checks": ["spec-ac-1"]},
+      "strict_plan": {"state": "applied", "count": 1, "checks": ["plan-ac-1"], "applied": ["plan-ac-1"]}
+    }
+  ]
+}

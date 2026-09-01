@@ -1,0 +1,8 @@
+### Automated Reviewer Loop Summary
+
+Summary without parseable history block.
+
+<!-- reviewer-loop-history:v1 -->
+This comment has the marker but no fenced JSON block.
+
+*Posted automatically by `pr-review-loop.sh`.*

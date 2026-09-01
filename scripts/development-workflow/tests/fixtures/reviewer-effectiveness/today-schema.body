@@ -1,0 +1,35 @@
+### Automated Reviewer Loop Summary
+
+Some summary text.
+
+<!-- reviewer-loop-history:v1 -->
+```json
+{
+  "schema": "reviewer_loop_history.v1",
+  "pr_number": 100,
+  "updated_at": "2026-08-01T00:00:00Z",
+  "history_status": "available",
+  "entries": [
+    {
+      "iteration": 1,
+      "platforms": ["local-ai-reviewer", "codex-github"],
+      "blocking_count": 2,
+      "suggestion_count": 0
+    },
+    {
+      "iteration": 2,
+      "platforms": ["local-ai-reviewer"],
+      "blocking_count": 0,
+      "suggestion_count": 1
+    },
+    {
+      "iteration": 3,
+      "platforms": ["codex-github"],
+      "blocking_count": 1,
+      "suggestion_count": 0
+    }
+  ]
+}
+```
+
+*Posted automatically by `pr-review-loop.sh`.*

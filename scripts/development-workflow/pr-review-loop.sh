@@ -7817,37 +7817,6 @@ codex_github_defaults_should_apply() {
   array_contains_value "codex-github" "${platforms[@]:-}"
 }
 
-REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
-REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
-
-reviewer_loop_history_extract_latest_json() {
-  awk -v marker="$REVIEWER_LOOP_HISTORY_MARKER" '
-    index($0, marker) > 0 {
-      seen_marker = 1
-      in_json = 0
-      block = ""
-      next
-    }
-    seen_marker && $0 ~ /^```json[[:space:]]*$/ {
-      in_json = 1
-      block = ""
-      next
-    }
-    in_json && $0 ~ /^```[[:space:]]*$/ {
-      latest = block
-      in_json = 0
-      seen_marker = 0
-      next
-    }
-    in_json {
-      block = block $0 "\n"
-    }
-    END {
-      printf "%s", latest
-    }
-  '
-}
-
 reviewer_loop_history_platforms_json() {
   local platform_list="${1:-}"
 
@@ -10226,27 +10195,6 @@ reviewer_loop_history_select_summary_record() {
 # logic while masking the fact that the newest ledger state is actually
 # unreadable — defeating the fail-closed guarantee in reviewer_loop_
 # cycle_count_unavailable_should_escalate (found in review of PR #1507).
-# Counting must always see the newest ledger's true status, even when that
-# status is "unavailable".
-reviewer_loop_history_select_latest_summary_record() {
-  jq -rs '
-    (add // []) as $all
-    | [
-        $all[]
-        | select(
-            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-          )
-      ]
-    | sort_by(.created_at)
-    | last
-    | {
-        id: (.id // ""),
-        body: (.body // "")
-      }
-  '
-}
-
 reviewer_loop_history_extract_preserved_section() {
   local existing_body="$1"
   local prior=""
