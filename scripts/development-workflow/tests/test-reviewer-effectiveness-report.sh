@@ -42,6 +42,7 @@ wrap_body() {
 # --- classifier scenarios ---
 assert_eq "$(rer_classify_payload "$(cat "$FIXTURE_DIR/no-marker.body")")" "no_history" "scenario 1 no marker"
 assert_eq "$(rer_classify_payload "$(cat "$FIXTURE_DIR/unparseable.body")")" "unparseable_history" "scenario 2 unparseable"
+assert_eq "$(rer_classify_payload "$(cat "$FIXTURE_DIR/malformed-json.body")")" "unparseable_history" "malformed json is unparseable not unavailable"
 assert_eq "$(rer_classify_payload "$(wrap_body "$FIXTURE_DIR/unavailable.json")")" "history_unavailable" "scenario 3 unavailable"
 assert_eq "$(rer_classify_payload "$(wrap_body "$FIXTURE_DIR/today-schema.json")")" "included" "today schema included"
 

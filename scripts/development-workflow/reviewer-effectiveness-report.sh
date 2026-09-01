@@ -66,6 +66,10 @@ rer_classify_payload() {
     printf 'unparseable_history\n'
     return 0
   fi
+  if ! printf '%s\n' "$json" | jq -e . >/dev/null 2>&1; then
+    printf 'unparseable_history\n'
+    return 0
+  fi
   if ! printf '%s\n' "$json" | jq -e --arg s "$REVIEWER_LOOP_HISTORY_SCHEMA" '
         .schema == $s and (.entries | type) == "array"
         and ((.history_status // "available") == "available")' >/dev/null 2>&1; then
