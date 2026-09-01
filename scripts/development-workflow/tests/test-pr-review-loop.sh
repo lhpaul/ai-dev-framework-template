@@ -18102,7 +18102,10 @@ run_test "1656_s13_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
 
 unset _1656_guard_head _1656_guard_hist_clean _1656_guard_hist_failed _1656_guard_hist_payload
 unset _1656_run_platform_review_calls _1656_stub_pass_result _1656_stub_pr_head _1656_moved_head _st
-unset -f reviewer_loop_prior_history_payload_from_pr run_platform_review gh 2>/dev/null || true
+unset -f reviewer_loop_prior_history_payload_from_pr run_platform_review 2>/dev/null || true
+if declare -F gh >/dev/null 2>&1; then
+  unset -f gh
+fi
 
 unset _1656_head _1656_ancestor _1656_unrelated _1656_cfg _1656_failed_hist
 unset repo_review_platforms platforms
