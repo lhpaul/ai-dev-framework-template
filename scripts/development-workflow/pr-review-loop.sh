@@ -903,6 +903,7 @@ expensive_gate_local_ai_head_current() {
   local head_sha="${1:-}"
   local entry platform_name reviewed_head classification state
   local found=0
+  local last_reviewed_head=""
 
   if ! declare -p platform_reviewed_heads >/dev/null 2>&1; then
     printf '\n'
@@ -914,16 +915,20 @@ expensive_gate_local_ai_head_current() {
     reviewed_head="${entry#*:}"
     if [ "$platform_name" = "local-ai-reviewer" ]; then
       found=1
-      classification="$(reviewer_loop_head_evidence_classify "$reviewed_head" "$head_sha")"
-      state="${classification%%|*}"
-      case "$state" in
-        current) printf '1\n' ;;
-        not-current) printf '0\n' ;;
-        *) printf '\n' ;;
-      esac
-      return 0
+      last_reviewed_head="$reviewed_head"
     fi
   done
+
+  if [ "$found" -eq 1 ]; then
+    classification="$(reviewer_loop_head_evidence_classify "$last_reviewed_head" "$head_sha")"
+    state="${classification%%|*}"
+    case "$state" in
+      current) printf '1\n' ;;
+      not-current) printf '0\n' ;;
+      *) printf '\n' ;;
+    esac
+    return 0
+  fi
 
   if [ "$found" -eq 0 ]; then
     printf '\n'
@@ -8046,6 +8051,37 @@ reviewer_loop_platform_result_record_json() {
     '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason}'
 }
 
+# reviewer_loop_replace_current_round_platform_record <platform_name>
+#
+# Drop prior current-round records for one platform so a second local pass (#1656)
+# replaces stale first-pass evidence instead of appending beside it.
+reviewer_loop_replace_current_round_platform_record() {
+  local platform_name="${1:-}"
+  local entry record kept_heads=() kept_records=()
+
+  [ -n "$platform_name" ] || return 0
+
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 \
+      && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
+    for entry in "${platform_reviewed_heads[@]}"; do
+      if [ "${entry%%:*}" != "$platform_name" ]; then
+        kept_heads+=("$entry")
+      fi
+    done
+    platform_reviewed_heads=("${kept_heads[@]}")
+  fi
+
+  if declare -p platform_result_records >/dev/null 2>&1 \
+      && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    for record in "${platform_result_records[@]}"; do
+      if [ "$(printf '%s' "$record" | jq -r '.platform // ""')" != "$platform_name" ]; then
+        kept_records+=("$record")
+      fi
+    done
+    platform_result_records=("${kept_records[@]}")
+  fi
+}
+
 # reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
 # configured_platforms is newline-delimited. Membership uses grep -Fxq here-string.
 # When the current invocation filters platforms (--platform), prior PR history can
@@ -8075,7 +8111,7 @@ reviewer_loop_local_latest_verdict() {
               head_sha: (
                 ($entry.reviewed_heads // [])
                 | map(select(.platform == "local-ai-reviewer"))
-                | first
+                | last
                 | .reviewed_head // ""
               ),
               iteration: ($entry.iteration // 0)})
@@ -8451,6 +8487,9 @@ reviewer_loop_process_platform_output() {
   fi
   platform_result_tokens+=("${platform_name}:${_prt_disp}")
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    reviewer_loop_replace_current_round_platform_record "$platform_name"
+  fi
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
   platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")

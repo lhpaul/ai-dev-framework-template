@@ -17683,6 +17683,30 @@ run_test "1656_s6_no_local_reviewer" "no_local_reviewer" \
 run_test "1656_s6b_no_local_reviewer_ignores_history" "no_local_reviewer" \
   "$(reviewer_loop_local_pass_required "$(_1656_hist_clean_same)" "$_1656_head" "codex-github")"
 
+_1656_stale_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_1656_fresh_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+platform_reviewed_heads=("local-ai-reviewer:${_1656_stale_head}" "codex-github:${_1656_head}")
+platform_result_records=("$(reviewer_loop_platform_result_record_json local-ai-reviewer needs_fixes blocking)" \
+  "$(reviewer_loop_platform_result_record_json codex-github clean "")")
+reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
+run_test "1656_s6c_replace_heads" "codex-github:${_1656_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]}")"
+run_test "1656_s6c_replace_records" "1" \
+  "$(printf '%s\n' "${platform_result_records[@]}" | jq -s 'map(.platform) | length')"
+total_comment_count=0
+total_blocking_count=0
+total_suggestion_count=0
+declare -a platform_peer_evidence=() aggregate_blocking_paths=() aggregate_blocking_findings=()
+_sl_clean_out=$'RESULT=clean\nREVIEWED_HEAD='"${_1656_fresh_head}"$'\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'
+reviewer_loop_process_platform_output "local-ai-reviewer" 99 "$_sl_clean_out" 0 0
+run_test "1656_s6c_latest_local_head" "${_1656_fresh_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]}" | awk -F: '/^local-ai-reviewer:/{h=$2} END{print h}')"
+loop_head_sha="${_1656_fresh_head}"
+platform_reviewed_heads=("local-ai-reviewer:${_1656_stale_head}" "local-ai-reviewer:${_1656_fresh_head}")
+run_test "1656_s6d_expensive_gate_latest_head" "1" \
+  "$(expensive_gate_local_ai_head_current "$_1656_fresh_head")"
+unset _1656_stale_head _1656_fresh_head platform_reviewed_heads platform_result_records _sl_clean_out loop_head_sha total_comment_count total_blocking_count total_suggestion_count platform_peer_evidence aggregate_blocking_paths aggregate_blocking_findings
+
 _1656_failed_hist="$(jq -nc --arg head "$_1656_head" '{
   schema: "reviewer_loop_history.v1",
   entries: [{iteration: 1, local_second_pass_failed_head: $head, result: "escalate", reason: "local_pass_unavailable"}]
