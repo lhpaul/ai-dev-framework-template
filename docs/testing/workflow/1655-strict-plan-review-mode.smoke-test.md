@@ -225,6 +225,7 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | Proof | Pass scenario | Concrete check |
 | --- | --- | --- |
 | P1 | 1655_s8_git_show_text | `strict_git_show_at_head` returns committed bytes |
+| P2 | 1655_s9_whole_document | supplied `text` length equals full plan at HEAD, not diff size |
 | P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set7 | `STRICT_PLAN_APPLIED` present |
 | P3a | 1655_s7a_all_seven | all seven when spec sibling present despite Refactor declaration |
 | P4 | 1655_s17_unknown_detail | `STRICT_1_CHECK=unknown` for out-of-applied source-dependent finding |

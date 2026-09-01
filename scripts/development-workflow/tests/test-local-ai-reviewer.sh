@@ -1472,6 +1472,75 @@ _s8_text="$(
 run_test "1655_s8_git_show_text" "COMMITTED-PLAN-TEXT" "$_s8_text"
 rm -rf "$PLAN_REPO"
 
+# Scenario 9 / P2: amendment PR supplies whole plan document, not diff hunks
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+python3 - <<'PY' "$PLAN_REPO/$PLAN_DOC"
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+body = "# Plan\n\n**Spec**: [spec](./1_1655-strict-plan-review-mode_specs.md)\n\n"
+body += "".join(f"## Step {i}\n\nDo work item {i}.\n\n" for i in range(1, 121))
+path.write_text(body)
+PY
+printf '# Spec\n\n- [ ] AC-1.\n' > "$PLAN_REPO/$PLAN_SPEC"
+git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
+git -C "$PLAN_REPO" commit -q -m "long plan"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+_full_len="$(git -C "$PLAN_REPO" show "HEAD:$PLAN_DOC" | wc -c | tr -d ' ')"
+reset_mocks
+BUNDLE_DUMP="$(mktemp)"
+cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+if [ -n "${MOCK_BUNDLE_DUMP:-}" ] && [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+fi
+if [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  printf '%s\n' '{"mode":"strict_plan_checks","findings":[]}'
+else
+  printf '%s\n' '{"result":"clean","findings":[]}'
+fi
+MOCK_REVIEWER
+chmod +x "$MOCK_BIN/local-reviewer-mock"
+cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-s9","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\nREVIEW.md\n' "$PLAN_DOC"
+    exit 0
+    ;;
+  *"pr diff 123"*)
+    printf 'M\t%s\n' "$PLAN_DOC"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-s9"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+_s9_len="$(jq -r '.strict_plan_documents[0].text | length' "$BUNDLE_DUMP")"
+run_test "1655_s9_whole_document" "$_full_len" "$_s9_len"
+rm -f "$BUNDLE_DUMP"
+rm -rf "$PLAN_REPO"
+
 # Scenario 11: git show failure → unavailable, one invocation
 PLAN_REPO="$(mktemp -d)"
 git -C "$PLAN_REPO" init -q
