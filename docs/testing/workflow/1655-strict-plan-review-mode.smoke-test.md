@@ -246,6 +246,8 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | P12 | `.../dependency_state/2_dependency_state_implementation-plan.md` | 7 | `dependency_state` |
 | P13 | `.../reversal_risk/2_reversal_risk_implementation-plan.md` | 7 | `reversal_risk` |
 
+**Pass-after-removal (P7–P13 pair)**: negative fixtures demonstrate the pass side for checks with dedicated negative controls (`declared_addition` → no `unspecified_step`; `irreversible_declared` → no `reversal_risk`; `all_falsifying_tests` → zero strict findings). For positives, re-run after removing the single planted violation — e.g. `unspecified_step` fixture without the dashboard step (line 8) produces no `unspecified_step` finding on a second Codex pass.
+
 ### Markdown Lint CI path proof
 
 Planted MD009 trailing space at
