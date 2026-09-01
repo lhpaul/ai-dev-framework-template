@@ -212,8 +212,17 @@ strict_entry_reports_na_reason() {
 
 strict_plan_source_path_for_plan() {
   local plan_path="$1"
+  local spec_path
   if [[ "$plan_path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]]; then
-    printf '%s\n' "$plan_path" | sed 's|/2_|/1_|; s|_implementation-plan\(\.doc\)\?\.md$|_specs\1.md|'
+    spec_path="${plan_path/\/2_/\/1_}"
+    case "$spec_path" in
+      *_implementation-plan.doc.md)
+        printf '%s\n' "${spec_path/_implementation-plan.doc.md/_specs.doc.md}"
+        ;;
+      *_implementation-plan.md)
+        printf '%s\n' "${spec_path/_implementation-plan.md/_specs.md}"
+        ;;
+    esac
   fi
 }
 
