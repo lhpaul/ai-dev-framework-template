@@ -332,7 +332,8 @@ After a pass returns `RESULT=clean`, the guard verifies the pass output's
 `reviewer_loop_head_evidence_classify`) before proceeding; missing or stale head
 evidence maps to `local_pass_unavailable`. The check reads the just-dispatched
 pass output, not the first `platform_reviewed_heads` entry from earlier in the
-same invocation.
+same invocation. A follow-up `gh pr view` head re-read must succeed and match
+`loop_head_sha`; an empty or unreadable snapshot maps to `local_pass_unavailable`.
 
 Telemetry: `LOCAL_SECOND_PASS=0|1` and `LOCAL_SECOND_PASS_REASON=<reason>`.
 When a pass fails on an unchanged head, the ledger entry records
