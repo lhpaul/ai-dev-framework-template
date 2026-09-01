@@ -1495,7 +1495,7 @@ git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
 git -C "$PLAN_REPO" commit -q -m "long plan"
 mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
 cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
-_full_len="$(git -C "$PLAN_REPO" show "HEAD:$PLAN_DOC" | jq -Rs 'length')"
+_full_text="$(git -C "$PLAN_REPO" show "HEAD:$PLAN_DOC")"
 reset_mocks
 BUNDLE_DUMP="$(mktemp)"
 cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
@@ -1536,8 +1536,8 @@ export MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 export LOCAL_AI_REVIEWER_COMMAND
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
-_s9_len="$(jq -r '.strict_plan_documents[0].text | length' "$BUNDLE_DUMP")"
-run_test "1655_s9_whole_document" "$_full_len" "$_s9_len"
+_s9_text="$(jq -j -r '.strict_plan_documents[0].text' "$BUNDLE_DUMP")"
+run_test "1655_s9_whole_document" "$_full_text" "$_s9_text"
 rm -f "$BUNDLE_DUMP"
 rm -rf "$PLAN_REPO"
 
