@@ -131,9 +131,11 @@ names selected sections in its default prompt when `REVIEW_CHECKLISTS` is
 non-empty. `LOCAL_CODEX_REVIEWER_PROMPT` overrides the built prompt entirely
 and does not receive the stage sentence.
 
-On a second, strict-mode invocation the companion script derives a copy of that
-bundle and adds `strict_spec_checks` (the checklist text). The ordinary-pass
-bundle file is never rewritten.
+On a second, strict-mode invocation the companion script may dispatch **at most
+one** strict checklist pass per review via a two-entry registry (`spec` and
+`plan`). Each entry always reports its own `STRICT_<entry>_*` keys; only the
+entry matching the resolved stage dispatches a second `LOCAL_AI_REVIEWER_COMMAND`
+call. The ordinary-pass bundle file is never rewritten.
 
 Use `LOCAL_AI_REVIEWER_DISABLED=1` to intentionally skip the local platform
 with `RESULT=skipped` and `REASON=disabled_by_config`.
@@ -143,9 +145,10 @@ Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
 artifact. The artifact uses `schema_version: local_ai_reviewer_evidence.v1`
 and records the reviewed head, graph context, result, reason, counts, changed
 files, compact diff summary, a `review_stage` object (stage, source,
-checklists), a `review_doctrine` object (state, pattern_count, version), and a
-`strict_spec` object that mirrors the
-`STRICT_SPEC_*` keys. Keep this artifact alongside ready-phase
+checklists), a `review_doctrine` object (state, pattern_count, version), a
+`strict_spec` object that mirrors the `STRICT_SPEC_*` keys, and a `strict_plan`
+object that mirrors the `STRICT_PLAN_*` keys (including `applied` when state is
+`applied`). Keep this artifact alongside ready-phase
 reviewer-loop evidence when measuring whether Bugbot or another ready-phase
 reviewer found net-new blockers. Relative evidence paths are resolved from the
 operator's original working directory before `--repo-root` changes the checkout
@@ -199,6 +202,74 @@ change `RESULT` or `BLOCKING_<n>_*`.
 The reviewer-loop history entry includes a `strict_spec` object that mirrors
 those keys (absent fields are omitted, not null). The summary comment lists
 strict findings only when state is `applied` and the count is above zero.
+
+---
+
+## Strict Plan Contract Checks
+
+On `implementation-plan/*` branches, after the ordinary review completes, the
+plan registry entry may run a second `LOCAL_AI_REVIEWER_COMMAND` invocation
+with `LOCAL_AI_REVIEWER_MODE=strict` when the pull request changes at least one
+implementation-plan document. That pass reads
+`docs/workflow/development-workflow/strict-plan-checks.md` (seven closed-set
+identifiers with per-check `Source:` metadata) and must respond with:
+
+```json
+{
+  "mode": "strict_plan_checks",
+  "findings": [
+    {
+      "check": "phase_ordering",
+      "path": "docs/specs/.../2_..._implementation-plan.md",
+      "line": 42,
+      "body": "Step 3 consumes output from step 5"
+    }
+  ]
+}
+```
+
+`mode` must be exactly `strict_plan_checks`. The strict pass receives the full
+text of each changed plan document at the reviewed head via `git show`, plus
+each sibling `1_*_specs.md` when present — never from the working tree or from
+diff hunks alone.
+
+**Applied set semantics**: checks marked `Source: not required` always apply.
+Checks marked `Source: required` apply only when an approved spec is present in
+that plan's development directory (presence alone — not what the plan declares).
+When no spec is present, the applied set is exactly
+`source_declaration`, `phase_ordering`, `dependency_state`, and `reversal_risk`.
+When a spec is present for at least one changed plan, all seven identifiers are
+admitted at review level; findings on a plan document without a sibling spec for
+source-dependent checks are filtered and counted in `STRICT_PLAN_UNKNOWN_COUNT`.
+
+Companion output always includes `STRICT_PLAN_STATE`
+(`applied` | `not_applicable` | `unavailable`). When `applied`, also
+`STRICT_PLAN_COUNT` (may be `0`), `STRICT_PLAN_CHECKS` (comma-separated
+identifiers that fired), and `STRICT_PLAN_APPLIED` (comma-separated identifiers
+that were applied — never empty in `applied`). When `not_applicable` or
+`unavailable`, also `STRICT_PLAN_REASON`:
+
+| Reason | State |
+| --- | --- |
+| `stage_not_plan` | `not_applicable` |
+| `no_plan_document_changed` | `not_applicable` |
+| `stage_unresolved` | `unavailable` |
+| `checklist_unreadable` | `unavailable` |
+| `strict_pass_failed` | `unavailable` |
+
+Unknown identifiers and source-dependent findings on documents without a source
+are reported as `STRICT_<n>_CHECK=unknown` and counted in
+`STRICT_PLAN_UNKNOWN_COUNT`; they never become blockers. Strict findings never
+change `RESULT` or `BLOCKING_<n>_*`.
+
+The spec registry entry and plan registry entry report independently on every
+review (`STRICT_SPEC_*` and `STRICT_PLAN_*`). At most one entry reaches
+`applied` per review (AC-24, AC-25).
+
+The reviewer-loop history entry includes a `strict_plan` object that mirrors
+those keys plus an `applied` array when state is `applied`. The summary comment
+lists strict plan findings only when state is `applied` and the count is above
+zero, and includes the applied set in that section.
 
 ---
 

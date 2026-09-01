@@ -128,7 +128,7 @@ path_allowed_for_stage() {
       [[ "$path" =~ ^docs/specs/developments/.+/1_.+_specs(\.doc)?\.md$ ]]
       ;;
     plan)
-      [[ "$path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]] ||
+      workflow_is_plan_document_path "$path" ||
         [[ "$path" =~ ^docs/testing/.+\.smoke-test\.md$ ]]
       ;;
     *)

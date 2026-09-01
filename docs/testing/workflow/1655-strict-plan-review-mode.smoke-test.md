@@ -215,3 +215,73 @@ Also confirm here that the `--help` block, the integration document and Protocol
 93 describe the same six keys, three states and five reasons the implementation
 emits, and that `docs/workflow/**` is in `markdown-lint.yml`'s `paths` filter —
 a checklist-only change is unlinted until it is.
+
+## Recorded proof results (PR #1691)
+
+### Machinery (P1–P6, P3a)
+
+Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
+
+| Proof | Pass scenario | Concrete check |
+| --- | --- | --- |
+| P1 | 1655_s8_git_show_text | `strict_git_show_at_head` returns committed bytes |
+| P2 | 1655_s9_whole_document | supplied `text` length equals full plan at HEAD, not diff size |
+| P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set7 | `STRICT_PLAN_APPLIED` present |
+| P3a | 1655_s7a_all_seven | all seven when spec sibling present despite Refactor declaration |
+| P4 | 1655_s17_unknown_detail | `STRICT_1_CHECK=unknown` for out-of-applied source-dependent finding |
+| P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
+| P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |
+
+### Detection (P7–P13) — Codex fail/pass pair proof
+
+Command per check (fail then pass):
+
+`LOCAL_AI_REVIEWER_TIMEOUT=90|180 SMOKE_FIXTURE_ONLY=<check> bash scripts/development-workflow/tests/run-strict-plan-smoke-fixtures.sh`
+
+Pass-side plans: `scripts/development-workflow/tests/fixtures/strict-plan-plans-pass/`. Logs: `/tmp/1655-smoke-fixtures.log` (90s full suite), `/tmp/1655-smoke-targeted.log` (180s targeted pairs), 180s retry session (P8 pass, P9 fail/pass).
+
+Parser regression (separate from planted-violation proof): scenarios 20/21 and 14b `Source:` extraction in `test-local-ai-reviewer.sh`.
+
+| Proof | Fail fixture (line) | Codex fail output | Pass fixture (repair) | Codex pass output |
+| --- | --- | --- | --- | --- |
+| P7 | `source_declaration/2_…md:5` | `STRICT_1_CHECK=source_declaration` L1 | adds `**Spec**:` link | `STRICT_PLAN_CHECKS=ac_test_coverage` only |
+| P8 | `unspecified_step/2_…md:8` | `STRICT_1_CHECK=unspecified_step` L8 | line 8 removed | no `unspecified_step` (180s retry) |
+| P9 | `spec_traceability/2_…md:7` | `STRICT_1_CHECK=spec_traceability` L7 (180s) | step 2 covers AC-2 | no `spec_traceability` (180s) |
+| P10 | `ac_test_coverage/2_…md:11` | `STRICT_1_CHECK=ac_test_coverage` non-falsifying | falsifying Scenario 1 | `STRICT_PLAN_COUNT=0` (180s pass-only) |
+| P11 | `phase_ordering/2_…md:7` | `STRICT_2_CHECK=phase_ordering` L7 (180s) | steps reordered | no `phase_ordering` (180s) |
+| P12 | `dependency_state/2_…md:7` | `STRICT_1_CHECK=dependency_state` L7 (180s) | state + start gate | no `dependency_state` (180s pass-only) |
+| P13 | `reversal_risk/2_…md:7` | `STRICT_2_CHECK=reversal_risk` L7 | `**cannot be undone**` | no `reversal_risk` |
+
+**Recorded fail-side excerpts:**
+
+```text
+P7:  STRICT_1_CHECK=source_declaration STRICT_1_LINE=1
+P8:  STRICT_1_CHECK=unspecified_step STRICT_1_LINE=8
+P9:  STRICT_1_CHECK=spec_traceability STRICT_1_LINE=7 (AC-2 orphan)
+P10: STRICT_1_CHECK=ac_test_coverage STRICT_1_LINE=11 (non-falsifying Scenario 1)
+P11: STRICT_2_CHECK=phase_ordering STRICT_2_LINE=7 (step 1 before step 3)
+P12: STRICT_1_CHECK=dependency_state STRICT_1_LINE=7 (no state/consequence)
+P13: STRICT_2_CHECK=reversal_risk STRICT_2_LINE=7 (undeclared irreversibility)
+```
+
+**Recorded pass-side excerpts:**
+
+```text
+P7:  STRICT_PLAN_CHECKS=ac_test_coverage (source_declaration absent)
+P8:  STRICT_PLAN_CHECKS=ac_test_coverage (unspecified_step absent)
+P9:  STRICT_PLAN_CHECKS=ac_test_coverage (spec_traceability absent)
+P10: STRICT_PLAN_COUNT=0; findings (none)
+P11: STRICT_PLAN_CHECKS=ac_test_coverage (phase_ordering absent)
+P12: STRICT_PLAN_CHECKS=ac_test_coverage (dependency_state absent)
+P13: STRICT_PLAN_CHECKS=ac_test_coverage (reversal_risk absent)
+```
+
+Negative controls (Step 9): `irreversible_declared` → no `reversal_risk`; `declared_addition` → no `unspecified_step` when Codex completes; `all_falsifying_tests` → zero strict findings for planted checks.
+
+### Markdown Lint CI path proof
+
+Planted MD009 trailing space at
+`docs/workflow/development-workflow/integrations/local-ai-reviewer-proof.tmp.md:3:26`
+→ `markdownlint-cli2` exit 1 (`MD009/no-trailing-spaces`). Removing the trailing
+space → 0 errors, exit 0. Workflow lints `docs/workflow/**/*.md` when `paths`
+includes `docs/workflow/**`.

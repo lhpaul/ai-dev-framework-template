@@ -396,6 +396,8 @@ if [ -n "${MOCK_RECORD_FILE:-}" ]; then
     if [ -n "${CONTEXT_BUNDLE_PATH:-}" ] && [ -f "${CONTEXT_BUNDLE_PATH}" ]; then
       printf 'bundle_keys=%s\n' "$(jq -r 'keys | join(",")' "$CONTEXT_BUNDLE_PATH")"
       printf 'has_strict_spec_checks=%s\n' "$(jq -r 'has("strict_spec_checks")' "$CONTEXT_BUNDLE_PATH")"
+      printf 'has_strict_plan_checks=%s\n' "$(jq -r 'has("strict_plan_checks")' "$CONTEXT_BUNDLE_PATH")"
+      printf 'has_strict_plan_documents=%s\n' "$(jq -r 'has("strict_plan_documents")' "$CONTEXT_BUNDLE_PATH")"
     fi
   } >> "$MOCK_RECORD_FILE"
 fi
@@ -1252,6 +1254,608 @@ MOCK_REVIEWER
 done
 
 rm -rf "$_1654_doctrine_root" "$_1654_absent_root" "$_1654_unreadable_root" "$_1654_oversized_root" "$_1654_empty_root" "$_1654_grep_err_bin" "$_1654_grep_err_root" "$_1654_cp_fail_bin" "$_1654_cp_fail_root" "$_1654_no_digest_root" "$_1654_no_digest_path"
+
+# ---------------------------------------------------------------------------
+# Strict plan contract checks (#1655) — scenarios 1, 7, 13, 15
+# ---------------------------------------------------------------------------
+
+PLAN_CHECKLIST_FIXTURES="$FIXTURES/strict-plan-checks"
+SHIPPED_PLAN_CHECKLIST="$REPO_ROOT/docs/workflow/development-workflow/strict-plan-checks.md"
+PLAN_DEV_DIR="docs/specs/developments/20260831062000_1655-strict-plan-review-mode"
+PLAN_DOC="$PLAN_DEV_DIR/2_1655-strict-plan-review-mode_implementation-plan.md"
+PLAN_SPEC="$PLAN_DEV_DIR/1_1655-strict-plan-review-mode_specs.md"
+
+install_plan_checklist_into_repo() {
+  local src="$1"
+  mkdir -p "$VALID_REPO_ROOT/docs/workflow/development-workflow"
+  cp "$src" "$VALID_REPO_ROOT/docs/workflow/development-workflow/strict-plan-checks.md"
+  git -C "$VALID_REPO_ROOT" add docs/workflow/development-workflow/strict-plan-checks.md >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+}
+
+install_plan_artifacts() {
+  local with_spec="${1:-1}"
+  mkdir -p "$VALID_REPO_ROOT/$PLAN_DEV_DIR"
+  cp "$REPO_ROOT/$PLAN_DOC" "$VALID_REPO_ROOT/$PLAN_DOC" 2>/dev/null || \
+    printf '# Plan\n\n**Spec**: [spec](./1_1655-strict-plan-review-mode_specs.md)\n' > "$VALID_REPO_ROOT/$PLAN_DOC"
+  if [ "$with_spec" = "1" ]; then
+    cp "$REPO_ROOT/$PLAN_SPEC" "$VALID_REPO_ROOT/$PLAN_SPEC" 2>/dev/null || \
+      printf '# Spec\n\n- [ ] AC-1. Example\n' > "$VALID_REPO_ROOT/$PLAN_SPEC"
+    git -C "$VALID_REPO_ROOT" add "$PLAN_DOC" "$PLAN_SPEC" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+  else
+    rm -f "$VALID_REPO_ROOT/$PLAN_SPEC"
+    git -C "$VALID_REPO_ROOT" rm -f "$PLAN_SPEC" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+    git -C "$VALID_REPO_ROOT" add "$PLAN_DOC" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+  fi
+  git -C "$VALID_REPO_ROOT" commit -m "test: plan artifacts" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001
+}
+
+install_plan_gh_mock() {
+  local changed_path="$1"
+  local head_branch="${MOCK_PR_HEAD_BRANCH:-implementation-plan/1655-test}"
+  cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"$head_branch","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\nREVIEW.md\n' "$changed_path"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+  chmod +x "$MOCK_BIN/gh"
+}
+
+run_plan_review() {
+  MOCK_PR_HEAD_BRANCH="${MOCK_PR_HEAD_BRANCH:-implementation-plan/1655-test}"
+  MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+  export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  export LOCAL_AI_REVIEWER_COMMAND
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+}
+
+# Scenario 15: spec stage — spec applied, plan not_applicable stage_not_plan
+reset_mocks
+install_recording_two_pass_mock
+install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/well-formed.md"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+run_spec_review
+run_test "1655_s15_spec_applied" "STRICT_SPEC_STATE=applied" "$(line_for STRICT_SPEC_STATE)"
+run_test "1655_s15_plan_na" "STRICT_PLAN_STATE=not_applicable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s15_plan_reason" "STRICT_PLAN_REASON=stage_not_plan" "$(line_for STRICT_PLAN_REASON)"
+
+# Scenario 7: partial applied set without source spec (fresh repo — no spec at HEAD)
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+printf '# Plan\n' > "$PLAN_REPO/$PLAN_DOC"
+git -C "$PLAN_REPO" add "$PLAN_DOC"
+git -C "$PLAN_REPO" commit -q -m "plan-only"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-no-spec"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s7_partial_applied" "STRICT_PLAN_APPLIED=source_declaration,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+rm -rf "$PLAN_REPO"
+
+# Scenario 17: mixed plans — source-dependent finding on no-spec plan is dropped
+PLAN_REPO="$(mktemp -d)"
+PLAN_DEV_A="docs/specs/developments/20260831062000_1655-strict-plan-review-mode"
+PLAN_DEV_B="docs/specs/developments/20260831062001_1655-other"
+PLAN_DOC_A="$PLAN_DEV_A/2_1655-strict-plan-review-mode_implementation-plan.md"
+PLAN_SPEC_A="$PLAN_DEV_A/1_1655-strict-plan-review-mode_specs.md"
+PLAN_DOC_B="$PLAN_DEV_B/2_1655-other_implementation-plan.md"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_A" "$PLAN_REPO/$PLAN_DEV_B"
+printf '# Plan A\n' > "$PLAN_REPO/$PLAN_DOC_A"
+printf '# Spec A\n' > "$PLAN_REPO/$PLAN_SPEC_A"
+printf '# Plan B\n' > "$PLAN_REPO/$PLAN_DOC_B"
+git -C "$PLAN_REPO" add "$PLAN_DOC_A" "$PLAN_SPEC_A" "$PLAN_DOC_B"
+git -C "$PLAN_REPO" commit -q -m "mixed plans"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-mixed","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\n%s\nREVIEW.md\n' "$PLAN_DOC_A" "$PLAN_DOC_B"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[{"check":"unspecified_step","path":"'"$PLAN_DOC_B"'","line":1,"body":"should drop"},{"check":"phase_ordering","path":"'"$PLAN_DOC_B"'","line":2,"body":"should keep"}]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-mixed"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s17_applied_all7" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s17_drop_source_on_nospec" "STRICT_PLAN_COUNT=1" "$(line_for STRICT_PLAN_COUNT)"
+run_test "1655_s17_kept_phase_ordering" "STRICT_PLAN_CHECKS=phase_ordering" "$(line_for STRICT_PLAN_CHECKS)"
+run_test "1655_s17_unknown_from_drop" "STRICT_PLAN_UNKNOWN_COUNT=1" "$(line_for STRICT_PLAN_UNKNOWN_COUNT)"
+run_test "1655_s17_unknown_detail" "STRICT_1_CHECK=unknown" "$(line_for STRICT_1_CHECK)"
+rm -rf "$PLAN_REPO"
+
+# Scenario 7a: coverage follows spec presence, not plan declaration
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+printf '# Plan\n\n**Source of truth**: None — Refactor item.\n' > "$PLAN_REPO/$PLAN_DOC"
+printf '# Spec\n\n- [ ] AC-1.\n' > "$PLAN_REPO/$PLAN_SPEC"
+git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
+git -C "$PLAN_REPO" commit -q -m "declares refactor but spec present"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-7a"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s7a_all_seven" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+rm -rf "$PLAN_REPO"
+
+# Scenario 8: plan text comes from reviewed head via git show
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+printf 'COMMITTED-PLAN-TEXT\n' > "$PLAN_REPO/$PLAN_DOC"
+git -C "$PLAN_REPO" add "$PLAN_DOC"
+git -C "$PLAN_REPO" commit -q -m "plan committed"
+printf 'WORKTREE-ONLY-TEXT\n' > "$PLAN_REPO/$PLAN_DOC"
+_s8_head="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+_s8_text="$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    REPO_ROOT="'"$PLAN_REPO"'"
+    HEAD_SHA="'"$_s8_head"'"
+    strict_git_show_at_head "'"$PLAN_DOC"'"
+  '
+)"
+run_test "1655_s8_git_show_text" "COMMITTED-PLAN-TEXT" "$_s8_text"
+rm -rf "$PLAN_REPO"
+
+# Scenario 9 / P2: amendment PR supplies whole plan document, not diff hunks
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+python3 - <<'PY' "$PLAN_REPO/$PLAN_DOC"
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+body = "# Plan\n\n**Spec**: [spec](./1_1655-strict-plan-review-mode_specs.md)\n\n"
+body += "".join(f"## Step {i}\n\nDo work item {i}.\n\n" for i in range(1, 121))
+path.write_text(body)
+PY
+printf '# Spec\n\n- [ ] AC-1.\n' > "$PLAN_REPO/$PLAN_SPEC"
+git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
+git -C "$PLAN_REPO" commit -q -m "long plan"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+_full_text="$(git -C "$PLAN_REPO" show "HEAD:$PLAN_DOC")"
+reset_mocks
+BUNDLE_DUMP="$(mktemp)"
+cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+if [ -n "${MOCK_BUNDLE_DUMP:-}" ] && [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+fi
+if [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  printf '%s\n' '{"mode":"strict_plan_checks","findings":[]}'
+else
+  printf '%s\n' '{"result":"clean","findings":[]}'
+fi
+MOCK_REVIEWER
+chmod +x "$MOCK_BIN/local-reviewer-mock"
+cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-s9","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\nREVIEW.md\n' "$PLAN_DOC"
+    exit 0
+    ;;
+  *"pr diff 123"*)
+    printf 'M\t%s\n' "$PLAN_DOC"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-s9"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+_s9_text="$(jq -j -r '.strict_plan_documents[0].text' "$BUNDLE_DUMP")"
+run_test "1655_s9_whole_document" "$_full_text" "$_s9_text"
+rm -f "$BUNDLE_DUMP"
+rm -rf "$PLAN_REPO"
+
+# Scenario 10: two changed plan documents supplied with per-document sources (AC-13)
+PLAN_REPO="$(mktemp -d)"
+PLAN_DEV_A="docs/specs/developments/20260831062000_1655-strict-plan-review-mode"
+PLAN_DEV_B="docs/specs/developments/20260831062001_1655-other"
+PLAN_DOC_A="$PLAN_DEV_A/2_1655-strict-plan-review-mode_implementation-plan.md"
+PLAN_SPEC_A="$PLAN_DEV_A/1_1655-strict-plan-review-mode_specs.md"
+PLAN_DOC_B="$PLAN_DEV_B/2_1655-other_implementation-plan.md"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_A" "$PLAN_REPO/$PLAN_DEV_B"
+printf '# Plan A\n\nSibling spec present.\n' > "$PLAN_REPO/$PLAN_DOC_A"
+printf '# Spec A\n\n- [ ] AC-1.\n' > "$PLAN_REPO/$PLAN_SPEC_A"
+printf '# Plan B\n\nNo sibling spec.\n' > "$PLAN_REPO/$PLAN_DOC_B"
+git -C "$PLAN_REPO" add "$PLAN_DOC_A" "$PLAN_SPEC_A" "$PLAN_DOC_B"
+git -C "$PLAN_REPO" commit -q -m "two plans"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+BUNDLE_DUMP="$(mktemp)"
+cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
+#!/usr/bin/env bash
+if [ -n "${MOCK_BUNDLE_DUMP:-}" ] && [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  cp "$CONTEXT_BUNDLE_PATH" "$MOCK_BUNDLE_DUMP"
+fi
+if [ "${LOCAL_AI_REVIEWER_MODE:-ordinary}" = "strict" ]; then
+  printf '%s\n' '{"mode":"strict_plan_checks","findings":[]}'
+else
+  printf '%s\n' '{"result":"clean","findings":[]}'
+fi
+MOCK_REVIEWER
+chmod +x "$MOCK_BIN/local-reviewer-mock"
+cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-s10","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\n%s\nREVIEW.md\n' "$PLAN_DOC_A" "$PLAN_DOC_B"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+MOCK_BUNDLE_DUMP="$BUNDLE_DUMP"
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-s10"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_BUNDLE_DUMP MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s10_two_documents" "2" "$(jq -r '.strict_plan_documents | length' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_a_path" "$PLAN_DOC_A" "$(jq -r '.strict_plan_documents[0].path' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_b_path" "$PLAN_DOC_B" "$(jq -r '.strict_plan_documents[1].path' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_a_has_source" "true" "$(jq -r '.strict_plan_documents[0].has_source' "$BUNDLE_DUMP")"
+run_test "1655_s10_doc_b_has_source" "false" "$(jq -r '.strict_plan_documents[1].has_source' "$BUNDLE_DUMP")"
+run_test "1655_s10_one_source" "1" "$(jq -r '.strict_plan_sources | length' "$BUNDLE_DUMP")"
+run_test "1655_s10_source_plan_a" "$PLAN_DOC_A" "$(jq -r '.strict_plan_sources[0].plan_path' "$BUNDLE_DUMP")"
+rm -f "$BUNDLE_DUMP"
+rm -rf "$PLAN_REPO"
+
+# Scenario 11: git show failure → unavailable, one invocation
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_RECORD_FILE="$(mktemp)"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-s11"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s11_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s11_reason" "STRICT_PLAN_REASON=strict_pass_failed" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s11_one_invocation" "1" "$(grep -c '^mode=' "$MOCK_RECORD_FILE" || true)"
+rm -f "$MOCK_RECORD_FILE"
+rm -rf "$PLAN_REPO"
+
+# Scenario 15 reverse: plan stage (fresh repo with spec sibling at HEAD)
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+cp "$REPO_ROOT/$PLAN_DOC" "$PLAN_REPO/$PLAN_DOC"
+cp "$REPO_ROOT/$PLAN_SPEC" "$PLAN_REPO/$PLAN_SPEC"
+git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
+git -C "$PLAN_REPO" commit -q -m "plan-with-spec"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+cp "$CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-spec-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_RECORD_FILE="$(mktemp)"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-test"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s15_plan_applied" "STRICT_PLAN_STATE=applied" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s15_spec_na" "STRICT_SPEC_STATE=not_applicable" "$(line_for STRICT_SPEC_STATE)"
+run_test "1655_s15_no_spec_reason" "no" "$(key_present STRICT_SPEC_REASON)"
+run_test "1655_s15_plan_applied_set7" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s15_bundle_has_plan_docs" "true" "$(awk -F= '/^has_strict_plan_documents=/{print $2}' "$MOCK_RECORD_FILE" | tail -1)"
+rm -f "$MOCK_RECORD_FILE"
+rm -rf "$PLAN_REPO"
+
+# Scenario 13: runbook-only plan stage PR
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/well-formed.md"
+install_plan_gh_mock "docs/testing/workflow/1655-strict-plan-review-mode.smoke-test.md"
+MOCK_RECORD_FILE="$(mktemp)"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT
+run_plan_review
+run_test "1655_s13_runbook_only" "STRICT_PLAN_STATE=not_applicable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s13_reason" "STRICT_PLAN_REASON=no_plan_document_changed" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s13_one_invocation" "1" "$(grep -c '^mode=' "$MOCK_RECORD_FILE" || true)"
+rm -f "$MOCK_RECORD_FILE"
+
+# Scenario 14b: shipped plan identifiers
+EXPECTED_PLAN_IDS='["source_declaration","unspecified_step","spec_traceability","ac_test_coverage","phase_ordering","dependency_state","reversal_risk"]'
+EXTRACTED_PLAN_IDS="$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_checklist_known_checks "'"$SHIPPED_PLAN_CHECKLIST"'"
+  ' | jq -c 'sort'
+)"
+run_test "1655_s14b_shipped_ids" "$(printf '%s\n' "$EXPECTED_PLAN_IDS" | jq -c 'sort')" "$EXTRACTED_PLAN_IDS"
+
+EXPECTED_PLAN_SOURCES='[{"id":"ac_test_coverage","source":"required"},{"id":"dependency_state","source":"not_required"},{"id":"phase_ordering","source":"not_required"},{"id":"reversal_risk","source":"not_required"},{"id":"source_declaration","source":"not_required"},{"id":"spec_traceability","source":"required"},{"id":"unspecified_step","source":"required"}]'
+EXTRACTED_PLAN_SOURCES="$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$SHIPPED_PLAN_CHECKLIST"'"
+  ' | jq -c 'sort_by(.id)'
+)"
+run_test "1655_s14b_shipped_sources" "$EXPECTED_PLAN_SOURCES" "$EXTRACTED_PLAN_SOURCES"
+
+# Scenario 14c/14d: malformed Source metadata refused
+run_test "1655_s14c_extract_refused" "1" "$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/compensating-duplicate-source.md"'" >/dev/null && echo 0 || echo 1
+  '
+)"
+run_test "1655_s14d_extract_refused" "1" "$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/missing-source-last.md"'" >/dev/null && echo 0 || echo 1
+  '
+)"
+run_test "1655_s14e_extract_refused" "1" "$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    extract_strict_plan_sections "'"$PLAN_CHECKLIST_FIXTURES/invalid-source-value.md"'" >/dev/null && echo 0 || echo 1
+  '
+)"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/invalid-source-value.md"
+install_plan_gh_mock "$PLAN_DOC"
+install_plan_artifacts 1
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-14e"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_plan_review
+run_test "1655_s14e_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s14e_reason" "STRICT_PLAN_REASON=checklist_unreadable" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s14e_no_count" "no" "$(key_present STRICT_PLAN_COUNT)"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/compensating-duplicate-source.md"
+install_plan_gh_mock "$PLAN_DOC"
+install_plan_artifacts 1
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-14c"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_plan_review
+run_test "1655_s14c_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s14c_reason" "STRICT_PLAN_REASON=checklist_unreadable" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s14c_no_count" "no" "$(key_present STRICT_PLAN_COUNT)"
+
+# Scenarios 20/21: planted-violation fail/pass pairs per strict plan check (harness)
+STRICT_PLAN_POSITIVES="$FIXTURES/strict-plan-plans"
+STRICT_PLAN_POSITIVES_PASS="$FIXTURES/strict-plan-plans-pass"
+
+run_planted_plan_fixture_review() {
+  local fixture_name="$1"
+  local variant="$2"
+  local strict_json="$3"
+  local fixture_root dev_dir plan_file
+  case "$variant" in
+    fail) fixture_root="$STRICT_PLAN_POSITIVES" ;;
+    pass) fixture_root="$STRICT_PLAN_POSITIVES_PASS" ;;
+    *) return 1 ;;
+  esac
+  dev_dir="docs/specs/developments/strict-fixture-${fixture_name}"
+  plan_file="$dev_dir/2_${fixture_name}_implementation-plan.md"
+  PLAN_REPO="$(mktemp -d)"
+  git -C "$PLAN_REPO" init -q
+  git -C "$PLAN_REPO" config user.email "test@example.com"
+  git -C "$PLAN_REPO" config user.name "Test User"
+  printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+  git -C "$PLAN_REPO" add REVIEW.md
+  git -C "$PLAN_REPO" commit -q -m "fixture"
+  git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+  mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+  cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+  mkdir -p "$PLAN_REPO/$dev_dir"
+  cp "$fixture_root/$fixture_name/"*.md "$PLAN_REPO/$dev_dir/"
+  git -C "$PLAN_REPO" add -A
+  git -C "$PLAN_REPO" commit -q -m "planted $fixture_name $variant"
+  reset_mocks
+  install_recording_two_pass_mock
+  cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-planted-${fixture_name}","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\nREVIEW.md\n' "$plan_file"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+  chmod +x "$MOCK_BIN/gh"
+  MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+  MOCK_STRICT_STDOUT="$strict_json"
+  export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+  MOCK_PR_HEAD_BRANCH="implementation-plan/1655-planted-${fixture_name}"
+  MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+  export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  export LOCAL_AI_REVIEWER_COMMAND
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+  rm -rf "$PLAN_REPO"
+}
+
+_planted_checks=(
+  "source_declaration:1"
+  "unspecified_step:8"
+  "spec_traceability:7"
+  "ac_test_coverage:11"
+  "phase_ordering:7"
+  "dependency_state:7"
+  "reversal_risk:7"
+)
+for _entry in "${_planted_checks[@]}"; do
+  _check="${_entry%%:*}"
+  _line="${_entry##*:}"
+  _fail_json='{"mode":"strict_plan_checks","findings":[{"check":"'"$_check"'","path":"docs/specs/developments/strict-fixture-'"$_check"'/2_'"$_check"'_implementation-plan.md","line":'"$_line"',"body":"planted violation"}]}'
+  run_planted_plan_fixture_review "$_check" fail "$_fail_json"
+  run_test "1655_s20_${_check}_fail" "STRICT_1_CHECK=${_check}" "$(line_for STRICT_1_CHECK)"
+  run_test "1655_s20_${_check}_fail_line" "STRICT_1_LINE=${_line}" "$(line_for STRICT_1_LINE)"
+  _pass_json='{"mode":"strict_plan_checks","findings":[]}'
+  run_planted_plan_fixture_review "$_check" pass "$_pass_json"
+  _checks_line="$(line_for STRICT_PLAN_CHECKS 2>/dev/null || true)"
+  if printf '%s' "$_checks_line" | grep -q "$_check"; then
+    _has_check=yes
+  else
+    _has_check=no
+  fi
+  run_test "1655_s21_${_check}_pass" "no" "$_has_check"
+done
+
+# Scenario 16: evidence includes strict_plan on every local reviewer round
+reset_mocks
+install_recording_two_pass_mock
+install_plan_checklist_into_repo "$PLAN_CHECKLIST_FIXTURES/well-formed.md"
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="feature/test"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "1655_s16_evidence_has_plan" "true" "$(jq -r 'has("strict_plan")' "$EVIDENCE_FILE")"
+run_test "1655_s16_evidence_plan_state" "not_applicable" "$(jq -r '.strict_plan.state' "$EVIDENCE_FILE")"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"

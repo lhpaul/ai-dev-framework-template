@@ -17093,6 +17093,76 @@ unset unresolved_thread_count late_thread_count pr_number
 echo "=== Area 1650 complete ==="
 
 # ---------------------------------------------------------------------------
+# Area 1655: strict_plan ledger object (#1655 scenario 16)
+# ---------------------------------------------------------------------------
+echo "=== Area 1655: strict_plan ledger object ==="
+
+pr_number=""
+current_run_id="1655-ledger"
+unresolved_thread_count=0
+late_thread_count=0
+expensive_gate_last_result=""
+
+strict_plan_recorded=1
+strict_plan_state="applied"
+strict_plan_count="2"
+strict_plan_checks="phase_ordering,dependency_state"
+strict_plan_applied="source_declaration,phase_ordering,dependency_state,reversal_risk"
+strict_plan_unknown_count=""
+strict_plan_reason=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1655_ledger_applied_state" "applied" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan.state')"
+run_test "1655_ledger_applied_count" "2" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan.count')"
+run_test "1655_ledger_applied_checks" "true" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan | has("checks")')"
+run_test "1655_ledger_applied_applied" "true" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan | has("applied")')"
+run_test "1655_ledger_applied_no_reason" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan | has("reason")')"
+
+strict_plan_state="not_applicable"
+strict_plan_count=""
+strict_plan_checks=""
+strict_plan_applied=""
+strict_plan_unknown_count=""
+strict_plan_reason="stage_not_plan"
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1655_ledger_na_state" "not_applicable" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan.state')"
+run_test "1655_ledger_na_reason" "stage_not_plan" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan.reason')"
+run_test "1655_ledger_na_no_count" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan | has("count")')"
+run_test "1655_ledger_na_no_applied" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan | has("applied")')"
+
+strict_plan_recorded=0
+strict_plan_state=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "bugbot" 0 0 0 "" 0 0 "")"
+run_test "1655_ledger_absent_object" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r 'has("strict_plan")')"
+
+strict_plan_recorded=1
+strict_plan_state="unavailable"
+strict_plan_reason="checklist_unreadable"
+strict_plan_count=""
+strict_plan_checks=""
+strict_plan_applied=""
+_entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1655_ledger_unavail_reason" "checklist_unreadable" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan.reason')"
+run_test "1655_ledger_unavail_no_count" "false" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_plan | has("count")')"
+
+unset strict_plan_recorded strict_plan_state strict_plan_count strict_plan_checks
+unset strict_plan_applied strict_plan_unknown_count strict_plan_reason _entry
+unset current_run_id unresolved_thread_count late_thread_count pr_number
+
+echo "=== Area 1655 complete ==="
+
+# ---------------------------------------------------------------------------
 # Area 1651: missed-finding telemetry
 # Scenarios 1–3, 6–16 (ancestry 4/5 live in test-reviewer-loop-commit-ancestry.sh)
 # ---------------------------------------------------------------------------
