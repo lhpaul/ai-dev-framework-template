@@ -523,6 +523,15 @@ Outputs stable key=value lines including:
     configured or when the reviewer reported no head)
   LOCAL_AI_HEAD_CURRENT=1|0| (1 when local-ai-reviewer classification is current; 0 when not-current;
     empty when not-reported or when local-ai-reviewer is not configured — missing evidence is not a pass)
+  Reviewer-loop history ledger (reviewer_loop_history.v1, additive fields; schema string unchanged):
+    platform_results[] — per-platform normalized outcome + raw RESULT/REASON (no head; heads stay in
+      reviewed_heads[] from #1648). Used to select the local reviewer's most recent verdict.
+    missed_findings[] — one element per external platform that reported blocking findings this round
+      on an attributable commit: reviewer, reviewed_head, blocking_count, full deduped paths,
+      path_total, local_evidence_state, and classification (confirmed_miss|possible_miss|not_a_miss).
+      Observational only — never changes readiness, labels, or merge decisions. Summary shows one
+      ≤200-character line per record. When history is unappendable and a record was owed, the prior
+      history block is preserved and the summary reports the telemetry failure.
   RESULT=needs_fixes REASON=head_moved_during_run (the PR head changed while the reviewers ran, so
     the clean verdict describes a commit the PR has left; nothing to fix — re-run the loop for the
     current HEAD)
@@ -1602,7 +1611,7 @@ run_greptile_review() {
         | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
             .[]
             | select(.user.login == $bot and .created_at > $since)
-            | { path, line: (.line // .original_line // 0), body: (.body // "") }
+            | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
             | @json
           '
     )"
@@ -1615,7 +1624,7 @@ run_greptile_review() {
                 .submitted_at > $since and
                 .state == "CHANGES_REQUESTED"
               )
-            | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+            | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
             | @json
           '
     )"
@@ -1659,6 +1668,7 @@ run_greptile_review() {
         print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
         index=$((index + 1))
       done < "$existing_blocking_file"
+      reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
       rm -f "$existing_blocking_file"
       return 1
     fi
@@ -1709,7 +1719,8 @@ run_greptile_review() {
         | {
             path,
             line: (.line // .original_line // 0),
-            body: (.body // "")
+            body: (.body // ""),
+            commit_id: (.commit_id // "")
           }
         | @json
       '
@@ -1727,7 +1738,8 @@ run_greptile_review() {
         | {
             path: "",
             line: 0,
-            body: (.body // "CHANGES_REQUESTED review without body")
+            body: (.body // "CHANGES_REQUESTED review without body"),
+            commit_id: (.commit_id // .commitId // "")
         }
         | @json
       '
@@ -1772,6 +1784,7 @@ run_greptile_review() {
       print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
+    reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
     rm -f "$blocking_lines_file"
     return 1
   fi
@@ -1786,6 +1799,11 @@ run_greptile_review() {
   print_kv COMMENT_COUNT "$comment_count"
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
+  # Clean path: unique commit_id across the comments/reviews just examined.
+  {
+    printf '%s\n' "$comments"
+    printf '%s\n' "$blocking_reviews"
+  } | reviewer_loop_print_reviewed_head_from_json_lines
   return 0
 }
 
@@ -1839,6 +1857,8 @@ run_codex_github_review() {
   fi
 
   if [ "$unresolved_count" -gt 0 ]; then
+    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
+    reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
     print_kv RESULT needs_fixes
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
@@ -1895,10 +1915,12 @@ run_codex_github_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
     1)
       unresolved_count=0
+      local actual_unresolved_count=0
       # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
       # reporting and must reflect true resolution state, not the provisional
       # reply relaxation used to decide whether to trigger the review above.
@@ -1908,8 +1930,22 @@ run_codex_github_review() {
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
         unresolved_count="$thread_check_output"
+        actual_unresolved_count="$unresolved_count"
       fi
       [ "$unresolved_count" -eq 0 ] && unresolved_count=1
+
+      reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
+      reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
+
+      # Companion script REVIEWED_HEAD is artifact-derived on terminal safe-fail
+      # paths with no unresolved threads; do not fall back when threads exist
+      # (multi-commit thread heads must stay unattributable per AC-11) or when
+      # the thread audit could not be completed.
+      if [ "$thread_check_status" -eq 0 ] && [ "$actual_unresolved_count" -eq 0 ]; then
+        local companion_reviewed_head
+        companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+        [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+      fi
 
       print_kv RESULT needs_fixes
       print_kv PLATFORM "$platform"
@@ -2185,6 +2221,7 @@ run_copilot_review() {
     case "$review_state" in
       APPROVED)
         print_kv RESULT clean
+      [ -n "${current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${current_sha:-$head_sha}"
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -2218,6 +2255,7 @@ run_copilot_review() {
         # one blocking finding when the verdict is CHANGES_REQUESTED.
         [ "$_copilot_comment_count" -eq 0 ] && _copilot_comment_count=1
         print_kv RESULT needs_fixes
+      [ -n "${current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${current_sha:-$head_sha}"
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -2231,6 +2269,7 @@ run_copilot_review() {
       COMMENTED)
         # Non-blocking comment only — treat as clean.
         print_kv RESULT clean
+      [ -n "${current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${current_sha:-$head_sha}"
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -2632,7 +2671,7 @@ run_bugbot_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
           | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
-          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         ' 2>/dev/null
   )"
@@ -2650,7 +2689,7 @@ run_bugbot_review() {
                 .state == "COMMENTED"
               )
             )
-          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
           | @json
         ' 2>/dev/null
   )"
@@ -2776,6 +2815,7 @@ run_bugbot_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -2959,7 +2999,7 @@ run_bugbot_review() {
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
 	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
-	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -2998,6 +3038,7 @@ run_bugbot_review() {
           if [ "$blocking_count" -gt 0 ]; then
             # Check run said success but cursor[bot] posted blocking comments.
             print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
             print_kv PLATFORM "$platform"
             print_kv PR_NUMBER "$pr_number"
             print_kv BRANCH "$branch_name"
@@ -3025,6 +3066,7 @@ run_bugbot_review() {
 
           rm -f "$blocking_lines_file"
           print_kv RESULT clean
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -3048,7 +3090,7 @@ run_bugbot_review() {
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
 	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
-	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -3066,7 +3108,7 @@ run_bugbot_review() {
                         .state == "COMMENTED"
                       )
                     )
-                  | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+                  | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -3157,6 +3199,7 @@ run_bugbot_review() {
           fi
 
           print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -3197,6 +3240,7 @@ run_bugbot_review() {
 
           # Non-blocking informational outcome — clean, no real findings.
           print_kv RESULT clean
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -3396,6 +3440,7 @@ run_haystack_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
     1)
@@ -3413,6 +3458,7 @@ run_haystack_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 1
       ;;
     2)
@@ -3426,6 +3472,7 @@ run_haystack_review() {
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 2
       ;;
     *)
@@ -3445,6 +3492,7 @@ run_haystack_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
   esac
@@ -3511,6 +3559,7 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
     1)
@@ -3537,6 +3586,7 @@ run_coderabbit_cli_review() {
         print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
         print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
       done
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 1
       ;;
     2)
@@ -3554,6 +3604,7 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 2
       ;;
     *)
@@ -3571,6 +3622,7 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       return 0
       ;;
   esac
@@ -3831,7 +3883,7 @@ run_devin_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
-          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
@@ -3847,7 +3899,7 @@ run_devin_review() {
                 .state == "COMMENTED"
               )
             )
-          | { path: "", line: 0, body: (.body // "review without body"), state: .state }
+          | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
           | @json
         '
   )"
@@ -3910,6 +3962,7 @@ run_devin_review() {
       print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
+    reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
     rm -f "$existing_blocking_file"
     return 1
   fi
@@ -4040,7 +4093,7 @@ run_devin_review() {
                     ((.body // "") | test("No Issues Found"; "i") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
-                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                 | @json
               '
         )"
@@ -4069,6 +4122,7 @@ run_devin_review() {
             print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
+          reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
           rm -f "$stale_file"
           return 1
         fi
@@ -4111,7 +4165,8 @@ run_devin_review() {
         | {
             path,
             line: (.line // .original_line // 0),
-            body: (.body // "")
+            body: (.body // ""),
+            commit_id: (.commit_id // "")
           }
         | @json
       '
@@ -4133,7 +4188,8 @@ run_devin_review() {
             path: "",
             line: 0,
             body: (.body // "review without body"),
-            state: .state
+            state: .state,
+            commit_id: (.commit_id // .commitId // "")
           }
         | @json
       '
@@ -4198,12 +4254,20 @@ run_devin_review() {
       print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
+    reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
     rm -f "$blocking_lines_file"
     return 1
   fi
 
   rm -f "$blocking_lines_file"
   print_kv RESULT clean
+    {
+      [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+      [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+      [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+      [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+      [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+    } | reviewer_loop_print_reviewed_head_from_json_lines
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
@@ -4805,6 +4869,78 @@ check_unreplied_rest_comments() {
   printf '%d\n' "${result:-0}"
 }
 
+# Newline-delimited JSON objects {path,line,body,commit_id} for unreplied
+# CodeRabbit REST root comments (outside-diff supplement). Exit 3 on API failure.
+_unreplied_rest_blocking_comment_json_lines() {
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
+
+  gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+    | jq -rs --arg bot "$bot_login" --argjson resolved_ids "$resolved_ids_json" '
+        (
+          [.[][] | select(
+            .in_reply_to_id != null and
+            .user.login != $bot and
+            (.user.login | test("\\[bot\\]$") | not)
+          ) | .in_reply_to_id] | unique
+        ) as $human_replied_ids
+        | [.[][] | select(
+            .user.login == $bot and
+            .in_reply_to_id == null and
+            ((.body // "") | test("✅ Addressed") | not)
+          ) | select(
+            .id as $id |
+            ($human_replied_ids | index($id)) == null
+          ) | select(
+            .id as $id |
+            ($resolved_ids | index($id)) == null
+          ) | {
+              path: (.path // ""),
+              line: (.line // .original_line // 0),
+              body: (.body // ""),
+              commit_id: (.commit_id // "")
+            }]
+        | .[] | @json
+      ' 2>/dev/null || return 3
+}
+
+# Emit BLOCKING_<n>_PATH/LINE/BODY and REVIEWED_HEAD from unreplied REST comments.
+reviewer_loop_print_blocking_from_unreplied_rest_comments() {
+  local pr_number="$1"
+  local repo="$2"
+  local bot_login="$3"
+  local resolved_ids_json="${4:-[]}"
+  local blocking_file idx=0 blocking_json path line body title
+
+  blocking_file="$(mktemp)"
+  if ! _unreplied_rest_blocking_comment_json_lines \
+      "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" >"$blocking_file"; then
+    rm -f "$blocking_file"
+    return 3
+  fi
+
+  while IFS= read -r blocking_json; do
+    [ -z "${blocking_json:-}" ] && continue
+    idx=$((idx + 1))
+    path="$(printf '%s\n' "$blocking_json" | jq -r '.path // ""')"
+    line="$(printf '%s\n' "$blocking_json" | jq -r '.line // 0')"
+    body="$(printf '%s\n' "$blocking_json" | jq -r '.body // ""')"
+    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    if [ -z "$title" ]; then
+      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+    fi
+    print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
+    print_kv "BLOCKING_${idx}_LINE" "$line"
+    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+  done < "$blocking_file"
+
+  reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_file"
+  rm -f "$blocking_file"
+  return 0
+}
+
 auto_reply_unreplied_rest_comments() {
   # Post a brief acknowledgement reply to each unreplied CodeRabbit REST review
   # comment that has no corresponding resolved GraphQL thread (i.e., outside-diff
@@ -5091,6 +5227,7 @@ coderabbit_thread_gate_clean() {
   done
 
   if [ "${out:-0}" -gt 0 ]; then
+    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
     print_kv RESULT needs_fixes
     print_kv REASON coderabbit_unresolved_review_threads
     print_kv PLATFORM "$platform"
@@ -5145,6 +5282,8 @@ coderabbit_thread_gate_clean() {
       # One or more replies failed; fall back to needs_fixes so the agent can
       # address the remaining comments manually.
       echo "WARN: auto-reply failed for one or more REST comments on PR #$pr_number — returning needs_fixes" >&2
+      reviewer_loop_print_blocking_from_unreplied_rest_comments \
+        "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
       print_kv PLATFORM "$platform"
@@ -5170,6 +5309,8 @@ coderabbit_thread_gate_clean() {
       # Re-check REST query failed — cannot confirm gate is clean; treat as
       # needs_fixes so the agent re-inspects rather than claiming false clean.
       echo "WARN: REST re-check failed (exit $recheck_st) after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      reviewer_loop_print_blocking_from_unreplied_rest_comments \
+        "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
       print_kv PLATFORM "$platform"
@@ -5185,6 +5326,8 @@ coderabbit_thread_gate_clean() {
     fi
     if [ "${recheck_raw:-0}" -gt 0 ]; then
       echo "WARN: ${recheck_raw} unreplied REST comment(s) remain after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      reviewer_loop_print_blocking_from_unreplied_rest_comments \
+        "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
       print_kv REASON coderabbit_unreplied_rest_comments
       print_kv PLATFORM "$platform"
@@ -5841,7 +5984,7 @@ run_coderabbit_review() {
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
-          | { path, line: (.line // .original_line // 0), body: (.body // "") }
+          | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
@@ -5854,7 +5997,7 @@ run_coderabbit_review() {
               .submitted_at > $since and
               .state == "CHANGES_REQUESTED"
             )
-          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body") }
+          | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
           | @json
         '
   )"
@@ -5882,6 +6025,7 @@ run_coderabbit_review() {
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+    reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -6268,6 +6412,13 @@ run_coderabbit_review() {
           if [ "$cr_early_gate_rc" -eq 0 ]; then
             echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
             print_kv RESULT clean
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
             print_kv REASON coderabbit_status_success_fallback
             print_kv PLATFORM "$platform"
             print_kv PR_NUMBER "$pr_number"
@@ -6375,6 +6526,13 @@ run_coderabbit_review() {
           if [ "$cr_success_gate_rc" -eq 0 ]; then
             echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
             print_kv RESULT clean
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
             print_kv REASON coderabbit_status_success_fallback
             print_kv PLATFORM "$platform"
             print_kv PR_NUMBER "$pr_number"
@@ -6421,7 +6579,7 @@ run_coderabbit_review() {
                     ((.body // "") | test("✅ Addressed") | not) and
                     (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
                   )
-                | { path, line: (.line // .original_line // 0), body: (.body // "") }
+                | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                 | @json
               '
         )"
@@ -6457,6 +6615,7 @@ run_coderabbit_review() {
             print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
+          reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
           rm -f "$stale_file"
           return 1
         fi
@@ -6616,7 +6775,8 @@ run_coderabbit_review() {
         | {
             path,
             line: (.line // .original_line // 0),
-            body: (.body // "")
+            body: (.body // ""),
+            commit_id: (.commit_id // "")
           }
         | @json
       '
@@ -6634,7 +6794,8 @@ run_coderabbit_review() {
         | {
             path: "",
             line: 0,
-            body: (.body // "CHANGES_REQUESTED review without body")
+            body: (.body // "CHANGES_REQUESTED review without body"),
+            commit_id: (.commit_id // .commitId // "")
           }
         | @json
       '
@@ -6664,6 +6825,7 @@ run_coderabbit_review() {
 
   if [ "$blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
+    reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
     print_kv PLATFORM "$platform"
     print_kv PR_NUMBER "$pr_number"
     print_kv BRANCH "$branch_name"
@@ -6692,6 +6854,13 @@ run_coderabbit_review() {
     return "$cr_phase3_gate_rc"
   fi
   print_kv RESULT clean
+      {
+        [ -n "${comments:-}" ] && printf '%s\n' "$comments"
+        [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
+        [ -n "${blocking_reviews:-}" ] && printf '%s\n' "$blocking_reviews"
+        [ -n "${existing_reviews:-}" ] && printf '%s\n' "$existing_reviews"
+        [ -n "${reviews:-}" ] && printf '%s\n' "$reviews"
+      } | reviewer_loop_print_reviewed_head_from_json_lines
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
@@ -7599,6 +7768,650 @@ reviewer_loop_blocking_paths_from_output() {
   done
 }
 
+# --- Missed-finding telemetry helpers (#1651) -------------------------------
+
+# reviewer_loop_commit_ancestry <clean_head> <reviewed_head>
+# Prints exactly one of: same | ancestor | descendant | unrelated | undecidable
+# Under set -e, every merge-base status is captured with || status=$?.
+reviewer_loop_commit_ancestry() {
+  local clean="${1:-}" reviewed="${2:-}" status
+
+  [ -n "$clean" ] && [ -n "$reviewed" ] || { printf 'undecidable\n'; return 0; }
+
+  # Existence BEFORE equality: two identical missing SHAs are undecidable, not same.
+  git cat-file -e "${clean}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
+  git cat-file -e "${reviewed}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
+
+  [ "$clean" = "$reviewed" ] && { printf 'same\n'; return 0; }
+
+  status=0
+  git merge-base --is-ancestor "$clean" "$reviewed" >/dev/null 2>&1 || status=$?
+  [ "$status" -eq 0 ] && { printf 'ancestor\n'; return 0; }
+  [ "$status" -ne 1 ] && { printf 'undecidable\n'; return 0; }
+
+  status=0
+  git merge-base --is-ancestor "$reviewed" "$clean" >/dev/null 2>&1 || status=$?
+  [ "$status" -eq 0 ] && { printf 'descendant\n'; return 0; }
+  [ "$status" -ne 1 ] && { printf 'undecidable\n'; return 0; }
+
+  printf 'unrelated\n'
+}
+
+# Normalize a companion-script RESULT/REASON pair into the stored platform_results
+# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|unknown
+reviewer_loop_normalize_platform_outcome() {
+  local raw_result="${1:-}"
+  local raw_reason="${2:-}"
+
+  case "$raw_result" in
+    clean) printf 'clean\n' ;;
+    needs_fixes) printf 'needs_fixes\n' ;;
+    skipped)
+      case "$raw_reason" in
+        unavailable) printf 'unavailable\n' ;;
+        not_configured) printf 'not_configured\n' ;;
+        *) printf 'skipped\n' ;;
+      esac
+      ;;
+    escalate) printf 'unavailable\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# Build one compact platform_results JSON object from raw RESULT/REASON.
+reviewer_loop_platform_result_record_json() {
+  local platform="${1:-}"
+  local raw_result="${2:-}"
+  local raw_reason="${3:-}"
+  local normalized
+
+  normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason")"
+  jq -nc \
+    --arg platform "$platform" \
+    --arg result "$normalized" \
+    --arg raw_result "$raw_result" \
+    --arg raw_reason "$raw_reason" \
+    '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason}'
+}
+
+# reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
+# configured_platforms is newline-delimited. Membership uses grep -Fxq here-string.
+# When the current invocation filters platforms (--platform), prior PR history can
+# still contain local-ai-reviewer verdicts; consult history before not_configured.
+reviewer_loop_local_latest_verdict() {
+  local payload="${1:-}"
+  local configured="${2:-}"
+
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    if ! printf '%s' "$payload" | jq -e '
+        (.entries // [])[]
+        | (.platform_results // [])[]
+        | select(.platform == "local-ai-reviewer")
+      ' >/dev/null 2>&1; then
+      printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
+      return 0
+    fi
+  fi
+
+  printf '%s' "$payload" | jq -c '
+    (.entries // []) as $entries
+    | [ $entries[]
+        | . as $entry
+        | ((.platform_results // [])[]
+           | select(.platform == "local-ai-reviewer")
+           | {outcome: (.result // "unknown"),
+              head_sha: (
+                ($entry.reviewed_heads // [])
+                | map(select(.platform == "local-ai-reviewer"))
+                | first
+                | .reviewed_head // ""
+              ),
+              iteration: ($entry.iteration // 0)})
+      ] as $local_verdicts
+    | if ($local_verdicts | length) > 0 then
+        ($local_verdicts | sort_by(.iteration) | last)
+      elif [ $entries[]
+          | select(
+              ((.platforms // []) | index("local-ai-reviewer")) != null
+              or any(.reviewed_heads[]?; .platform == "local-ai-reviewer")
+            )
+        ] | length > 0 then
+        {outcome: "unknown", head_sha: "", iteration: 0}
+      else
+        {outcome: "not_yet_run", head_sha: "", iteration: 0}
+      end
+    | if .outcome == "not_configured" then .outcome = "unavailable" else . end'
+}
+
+# reviewer_loop_local_evidence_state <local_verdict_json> <reviewed_head>
+reviewer_loop_local_evidence_state() {
+  local verdict_json="${1:-}"
+  local reviewed_head="${2:-}"
+  local outcome head_sha ancestry
+
+  outcome="$(printf '%s' "$verdict_json" | jq -r '.outcome // "unknown"')"
+  head_sha="$(printf '%s' "$verdict_json" | jq -r '.head_sha // ""')"
+
+  case "$outcome" in
+    clean)
+      ancestry="$(reviewer_loop_commit_ancestry "$head_sha" "$reviewed_head")"
+      case "$ancestry" in
+        same) printf 'clean_same_commit\n' ;;
+        ancestor) printf 'clean_earlier_commit\n' ;;
+        descendant) printf 'clean_later_commit\n' ;;
+        unrelated) printf 'clean_unrelated_commit\n' ;;
+        *) printf 'unknown\n' ;;
+      esac
+      ;;
+    needs_fixes) printf 'not_clean\n' ;;
+    skipped) printf 'skipped\n' ;;
+    unavailable) printf 'unavailable\n' ;;
+    not_yet_run) printf 'not_yet_run\n' ;;
+    not_configured) printf 'not_configured\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# Map local evidence state to the three-value classification enum.
+reviewer_loop_missed_finding_classification() {
+  case "${1:-}" in
+    clean_same_commit) printf 'confirmed_miss\n' ;;
+    clean_earlier_commit) printf 'possible_miss\n' ;;
+    *) printf 'not_a_miss\n' ;;
+  esac
+}
+
+# Spec display labels for local evidence states.
+reviewer_loop_local_evidence_state_label() {
+  case "${1:-}" in
+    clean_same_commit) printf 'Clean, same commit\n' ;;
+    clean_earlier_commit) printf 'Clean, earlier commit\n' ;;
+    clean_later_commit) printf 'Clean, later commit\n' ;;
+    clean_unrelated_commit) printf 'Clean, unrelated commit\n' ;;
+    not_clean) printf 'Reported findings\n' ;;
+    skipped) printf 'Skipped\n' ;;
+    unavailable) printf 'Unavailable\n' ;;
+    not_yet_run) printf 'Not yet run\n' ;;
+    not_configured) printf 'Not configured\n' ;;
+    *) printf 'Unknown\n' ;;
+  esac
+}
+
+# De-duplicate paths preserving first-appearance order. stdin -> stdout.
+reviewer_loop_dedupe_paths() {
+  awk 'NF && !seen[$0]++ { print }'
+}
+
+# Join reviewed_head for a platform from reviewed_heads[] JSON array.
+reviewer_loop_reviewed_head_for_platform() {
+  local reviewed_heads_json="${1:-[]}"
+  local platform="${2:-}"
+
+  printf '%s' "$reviewed_heads_json" | jq -r --arg p "$platform" '
+    ([.[]? | select(.platform == $p) | .reviewed_head // ""] | first) // ""
+  '
+}
+
+# Emit REVIEWED_HEAD when stdin has exactly one unique non-empty commit line.
+reviewer_loop_print_reviewed_head_from_commits() {
+  local unique count sha
+  unique="$(grep -v '^$' | sort -u || true)"
+  count="$(printf '%s\n' "$unique" | grep -c . || true)"
+  [ "$count" -eq 1 ] || return 0
+  sha="$(printf '%s\n' "$unique" | head -n 1)"
+  [ -n "$sha" ] || return 0
+  print_kv REVIEWED_HEAD "$sha"
+}
+
+# Extract unique commit_id values from newline-delimited JSON objects on stdin
+# and print REVIEWED_HEAD when exactly one unique non-empty value exists.
+reviewer_loop_print_reviewed_head_from_json_lines() {
+  local commits
+  commits="$(jq -r '.commit_id // empty' 2>/dev/null | grep -v '^$' || true)"
+  printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
+}
+
+# Collect strict-mode blocking bot threads as JSON [{path,line,body,commit},...].
+# Paginates like check_unresolved_threads. Exit 0 complete, 2 page cap, 3 GraphQL.
+_reviewer_loop_blocking_unresolved_bot_threads_json() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local owner repo_name cursor has_next_page page max_pages result graphql_query nodes_fields
+  local records='[]' page_records
+
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  cursor=""
+  has_next_page="true"
+  page=0
+  max_pages=10
+
+  nodes_fields='id isResolved isOutdated path line firstComment:comments(first:1){nodes{author{login}body originalCommit{oid}}}'
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{'"$nodes_fields"'}}}}}'
+
+  while [ "$has_next_page" = "true" ]; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      return 2
+    fi
+
+    if [ -n "$cursor" ]; then
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
+        --jq '.data.repository.pullRequest' 2>/dev/null)" \
+        || return 3
+    else
+      result="$(gh api graphql \
+        -f query="$graphql_query" \
+        -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
+        --jq '.data.repository.pullRequest' 2>/dev/null)" \
+        || return 3
+    fi
+
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty')"
+
+    page_records="$(printf '%s\n' "$result" | jq -c --arg bot "$graphql_bot_login" '
+      [.reviewThreads.nodes[]
+        | select((.firstComment.nodes[0].author.login // "") == $bot)
+        | select(.isResolved != true)
+        | select((.isOutdated // false) != true)
+        | select((.firstComment.nodes[0].body // "") | contains("✅ Addressed") | not)
+        | {
+            path: (.path // ""),
+            line: (.line // 0),
+            body: (.firstComment.nodes[0].body // ""),
+            commit: (.firstComment.nodes[0].originalCommit.oid // "")
+          }
+      ]')" || return 3
+    records="$(printf '%s\n%s\n' "$records" "$page_records" | jq -s 'add')"
+
+    if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
+      return 2
+    fi
+  done
+
+  printf '%s\n' "$records"
+  return 0
+}
+
+# Collect commit OIDs from strict-mode blocking bot threads.
+reviewer_loop_blocking_unresolved_thread_commit_oids() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local json st
+
+  set +e
+  json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)"
+  st=$?
+  set -e
+  if [ "$st" -ne 0 ]; then
+    return "$st"
+  fi
+
+  printf '%s\n' "$json" | jq -r '.[].commit // empty'
+  return 0
+}
+
+# Emit BLOCKING_<n>_PATH/LINE/BODY from strict-mode blocking bot threads.
+reviewer_loop_print_blocking_from_unresolved_bot_threads() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local json st idx=0 path line body title row
+
+  set +e
+  json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)"
+  st=$?
+  set -e
+  if [ "$st" -ne 0 ]; then
+    return "$st"
+  fi
+
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    idx=$((idx + 1))
+    path="$(printf '%s' "$row" | jq -r '.path // ""')"
+    line="$(printf '%s' "$row" | jq -r '.line // 0')"
+    body="$(printf '%s' "$row" | jq -r '.body // ""')"
+    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    if [ -z "$title" ]; then
+      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+    fi
+    print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
+    print_kv "BLOCKING_${idx}_LINE" "$line"
+    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+  done < <(printf '%s\n' "$json" | jq -c '.[]?')
+  return 0
+}
+
+# Emit REVIEWED_HEAD when strict-mode blocking threads for a bot login share
+# exactly one unique originalCommitOid.
+reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() {
+  local pr_number="$1"
+  local repo="$2"
+  local graphql_bot_login="$3"
+  local commits st
+
+  set +e
+  commits="$(reviewer_loop_blocking_unresolved_thread_commit_oids \
+    "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)"
+  st=$?
+  set -e
+  if [ "$st" -ne 0 ]; then
+    return 0
+  fi
+
+  printf '%s\n' "$commits" | reviewer_loop_print_reviewed_head_from_commits
+}
+
+# When post-clean settle finds late unresolved threads after an otherwise-clean
+# platform pass, synthesize platform_result_records + blocking outputs so
+# missed-finding telemetry can still run in _post_review_summary (AC-1/AC-10).
+reviewer_loop_append_late_thread_missed_findings() {
+  local pr_number="$1"
+  local repo="$2"
+  local platform_name bot_login graphql_bot_login count json head output_blob
+  local idx=0 row path line body title
+
+  for platform_name in "${platforms[@]:-}"; do
+    bot_login="$(bot_login_for_platform "$platform_name")"
+    graphql_bot_login="${bot_login%\[bot\]}"
+    [ -n "$graphql_bot_login" ] || continue
+
+    set +e
+    count="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
+    set -e
+    [ "${count:-0}" -gt 0 ] 2>/dev/null || continue
+
+    if ! declare -p platform_result_records >/dev/null 2>&1; then
+      declare -a platform_result_records=()
+    fi
+    platform_result_records+=("$(reviewer_loop_platform_result_record_json \
+      "$platform_name" needs_fixes late_review_threads)")
+
+    json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
+      "$pr_number" "$repo" "$graphql_bot_login" 2>/dev/null)" || continue
+
+    head="$(printf '%s\n' "$json" | jq -r '
+      [.[].commit // empty | select(length > 0)] | unique
+      | if length == 1 then .[0] else empty end' 2>/dev/null)" || head=""
+    if [ -n "$head" ]; then
+      if ! declare -p platform_reviewed_heads >/dev/null 2>&1; then
+        declare -a platform_reviewed_heads=()
+      fi
+      platform_reviewed_heads+=("${platform_name}:${head}")
+    fi
+
+    output_blob="RESULT=needs_fixes"$'\n'"BLOCKING_COUNT=${count}"$'\n'
+    idx=0
+    while IFS= read -r row; do
+      [ -n "$row" ] || continue
+      idx=$((idx + 1))
+      path="$(printf '%s' "$row" | jq -r '.path // ""')"
+      line="$(printf '%s' "$row" | jq -r '.line // 0')"
+      body="$(printf '%s' "$row" | jq -r '.body // ""')"
+      title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+      if [ -z "$title" ]; then
+        title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+      fi
+      output_blob="${output_blob}BLOCKING_${idx}_PATH=${path:-unknown}"$'\n'
+      output_blob="${output_blob}BLOCKING_${idx}_LINE=${line}"$'\n'
+      output_blob="${output_blob}BLOCKING_${idx}_BODY=${title}"$'\n'
+    done < <(printf '%s\n' "$json" | jq -c '.[]?' 2>/dev/null)
+
+    if ! declare -p platform_blocking_outputs >/dev/null 2>&1; then
+      declare -a platform_blocking_outputs=()
+    fi
+    platform_blocking_outputs+=("${platform_name}"$'\036'"${output_blob}")
+  done
+}
+
+# Build missed_findings JSON array for the current round.
+# Args:
+#   $1 history_payload (persisted entries; may be empty object with entries:[])
+#   $2 configured_platforms (newline-delimited)
+#   $3 current_platform_results_json (array)
+#   $4 current_reviewed_heads_json (array, #1648 shape)
+#   $5 platform_outputs_json — array of {platform, blocking_count, output} for path extraction
+#      OR we pass paths via a parallel mechanism.
+# Simpler signature used by call site:
+# Globals read:
+#   platform_result_records[]  — JSON objects
+#   platform_reviewed_heads[]  — "name:sha"
+#   platform_blocking_outputs[] — optional "name<RS>output" (RS=\036) for path extraction
+#   missed_finding_attribution_failures — set by this function (newline messages)
+#
+# Returns JSON array on stdout. Also sets:
+#   missed_finding_records_json
+#   missed_finding_attribution_reports (human-readable lines)
+reviewer_loop_missed_finding_records() {
+  local history_payload="${1:-}"
+  local configured="${2:-}"
+  local iteration="${3:-0}"
+  local results_json heads_json composed_payload local_verdict
+  local platform_name normalized reviewed_head blocking_count paths_text path_total
+  local state classification record records_json="[]"
+  local entry_name output_blob paths_json
+
+  missed_finding_attribution_reports=""
+
+  results_json='[]'
+  if declare -p platform_result_records >/dev/null 2>&1 && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    results_json="$(printf '%s\n' "${platform_result_records[@]}" | jq -s -c '.')"
+  fi
+
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
+    heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  else
+    heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
+  fi
+
+  # Compose synthetic current-round entry into the payload before selecting.
+  composed_payload="$(printf '%s' "${history_payload:-{\}}" | jq -c \
+    --argjson iteration "$iteration" \
+    --argjson results "$results_json" \
+    --argjson heads "$heads_json" \
+    '
+      . as $root
+      | ($root.entries // []) as $entries
+      | $root
+      | .schema = (.schema // "reviewer_loop_history.v1")
+      | .entries = ($entries + [{
+          iteration: $iteration,
+          platform_results: $results,
+          reviewed_heads: $heads
+        }])
+    ')"
+
+  local_verdict="$(reviewer_loop_local_latest_verdict "$composed_payload" "$configured")"
+
+  # Walk platform_result_records for external platforms with blocking findings.
+  if ! declare -p platform_result_records >/dev/null 2>&1; then
+    printf '%s\n' "$records_json"
+    return 0
+  fi
+
+  local idx=0
+  for record in "${platform_result_records[@]}"; do
+    platform_name="$(printf '%s' "$record" | jq -r '.platform // ""')"
+    normalized="$(printf '%s' "$record" | jq -r '.result // ""')"
+    [ -n "$platform_name" ] || continue
+
+    # Exclusion 1: local reviewer cannot miss its own findings
+    if [ "$platform_name" = "local-ai-reviewer" ]; then
+      continue
+    fi
+
+    # Exclusion 2: only blocking findings qualify (needs_fixes)
+    if [ "$normalized" != "needs_fixes" ]; then
+      continue
+    fi
+
+    # Join head from reviewed_heads[] — prefer the last entry for this platform
+    # so late-thread append wins over an earlier clean pass (#1651).
+    reviewed_head=""
+    if declare -p platform_reviewed_heads >/dev/null 2>&1; then
+      for entry_name in "${platform_reviewed_heads[@]}"; do
+        if [ "${entry_name%%:*}" = "$platform_name" ]; then
+          reviewed_head="${entry_name#*:}"
+        fi
+      done
+    fi
+
+    # Exclusion 3: unattributable commit
+    if [ -z "$reviewed_head" ]; then
+      missed_finding_attribution_reports="${missed_finding_attribution_reports}${missed_finding_attribution_reports:+$'\n'}missed-finding attribution failed: ${platform_name} — reviewed commit could not be established (no REVIEWED_HEAD)"
+      continue
+    fi
+
+    # Paths from companion output — prefer the last blob for this platform so
+    # late-thread synthesis wins over an earlier clean pass (#1651).
+    blocking_count=0
+    paths_text=""
+    if declare -p platform_blocking_outputs >/dev/null 2>&1; then
+      for output_blob in "${platform_blocking_outputs[@]}"; do
+        if [ "${output_blob%%$'\036'*}" = "$platform_name" ]; then
+          output_blob="${output_blob#*$'\036'}"
+          blocking_count="$(kv_value_default BLOCKING_COUNT "$output_blob" 0)"
+          paths_text="$(reviewer_loop_blocking_paths_from_output "$output_blob" "$blocking_count" | reviewer_loop_dedupe_paths)"
+        fi
+      done
+    fi
+    [[ "$blocking_count" =~ ^[0-9]+$ ]] || blocking_count=0
+    # If blocking_count came from normalized needs_fixes but output missing, still count >=1
+    if [ "$blocking_count" -eq 0 ]; then
+      blocking_count=1
+    fi
+
+    path_total=0
+    if [ -n "$paths_text" ]; then
+      path_total="$(printf '%s\n' "$paths_text" | grep -c . || true)"
+    fi
+    paths_json="$(printf '%s\n' "$paths_text" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+
+    state="$(reviewer_loop_local_evidence_state "$local_verdict" "$reviewed_head")"
+    classification="$(reviewer_loop_missed_finding_classification "$state")"
+
+    record="$(jq -nc \
+      --arg reviewer "$platform_name" \
+      --arg reviewed_head "$reviewed_head" \
+      --argjson blocking_count "$blocking_count" \
+      --argjson paths "$paths_json" \
+      --argjson path_total "$path_total" \
+      --arg local_evidence_state "$state" \
+      --arg classification "$classification" \
+      '{
+        reviewer: $reviewer,
+        reviewed_head: $reviewed_head,
+        blocking_count: $blocking_count,
+        paths: $paths,
+        path_total: $path_total,
+        local_evidence_state: $local_evidence_state,
+        classification: $classification
+      }')"
+    records_json="$(jq -nc --argjson arr "$records_json" --argjson rec "$record" '$arr + [$rec]')"
+    idx=$((idx + 1))
+  done
+
+  # Assign globals in the current shell. Callers that need attribution reports
+  # must invoke this function without command substitution ($(...)).
+  missed_findings_json="$records_json"
+  printf '%s\n' "$records_json"
+}
+
+# Collect all missed-finding records persisted in a history payload.
+reviewer_loop_missed_findings_from_history_payload() {
+  local payload="${1:-}"
+  printf '%s' "$payload" | jq -c '[(.entries // [])[] | (.missed_findings // [])[]]' 2>/dev/null \
+    || printf '[]\n'
+}
+
+# Render one summary line (<=200 chars) for a missed-finding record JSON object.
+reviewer_loop_missed_finding_summary_line() {
+  local record_json="${1:-}"
+  local reviewer short_sha blocking path_total state classification label
+  local prefix suffix remainder_max budget named=0 path next_len rem rem_text line
+  local -a paths=()
+
+  reviewer="$(printf '%s' "$record_json" | jq -r '.reviewer // ""')"
+  short_sha="$(printf '%s' "$record_json" | jq -r '.reviewed_head // ""' | cut -c1-8)"
+  blocking="$(printf '%s' "$record_json" | jq -r '.blocking_count // 0')"
+  path_total="$(printf '%s' "$record_json" | jq -r '.path_total // 0')"
+  state="$(printf '%s' "$record_json" | jq -r '.local_evidence_state // "unknown"')"
+  classification="$(printf '%s' "$record_json" | jq -r '.classification // "not_a_miss"')"
+  label="$(reviewer_loop_local_evidence_state_label "$state")"
+
+  while IFS= read -r path; do
+    [ -n "$path" ] && paths+=("$path")
+  done < <(printf '%s' "$record_json" | jq -r '.paths[]? // empty')
+
+  prefix="missed-finding: ${reviewer} on ${short_sha} — ${blocking} blocking, ${path_total} files ("
+  suffix=") — local: ${label} [${classification}]"
+  remainder_max=", +${path_total} more"
+  budget=$((200 - ${#prefix} - ${#suffix} - ${#remainder_max}))
+  [ "$budget" -lt 0 ] && budget=0
+
+  named=0
+  local path_part=""
+  local i=0
+  while [ "$i" -lt "${#paths[@]}" ] && [ "$named" -lt 3 ]; do
+    path="${paths[$i]}"
+    if [ "$named" -eq 0 ]; then
+      next_len=${#path}
+    else
+      next_len=$((2 + ${#path}))  # ", "
+    fi
+    if [ "$next_len" -gt "$budget" ]; then
+      break
+    fi
+    if [ "$named" -eq 0 ]; then
+      path_part="$path"
+    else
+      path_part="${path_part}, ${path}"
+    fi
+    budget=$((budget - next_len))
+    named=$((named + 1))
+    i=$((i + 1))
+  done
+
+  rem=$((path_total - named))
+  rem_text=""
+  if [ "$rem" -gt 0 ]; then
+    rem_text=", +${rem} more"
+  fi
+
+  line="${prefix}${path_part}${rem_text}${suffix}"
+  # Hard safety: never exceed 200 even if arithmetic drifts
+  if [ "${#line}" -gt 200 ]; then
+    line="${line:0:200}"
+  fi
+  printf '%s\n' "$line"
+}
+
+# Render all missed-finding summary lines from a JSON array.
+reviewer_loop_missed_findings_summary_section() {
+  local records_json="${1:-[]}"
+  local record line section=""
+
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    line="$(reviewer_loop_missed_finding_summary_line "$record")"
+    section="${section}
+${line}"
+  done < <(printf '%s' "$records_json" | jq -c '.[]?' 2>/dev/null)
+
+  printf '%s' "$section"
+}
+
+
+
 reviewer_loop_all_paths_non_shipped() {
   local path
   local saw_path=0
@@ -7845,10 +8658,21 @@ reviewer_loop_history_build_entry() {
   head_sha="$(reviewer_loop_history_current_head_sha)"
   recorded_at="$(reviewer_loop_history_recorded_at)"
   local reviewed_heads_json
-  if declare -p platform_reviewed_heads >/dev/null 2>&1; then
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
     reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
   else
     reviewed_heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
+  fi
+
+  # platform_results / missed_findings (#1651): caller-set globals, same
+  # convention as unresolved_thread_count / current_run_id. Schema stays v1.
+  local platform_results_for_entry="${platform_results_json:-[]}"
+  local missed_findings_for_entry="${missed_findings_json:-[]}"
+  if ! printf '%s' "$platform_results_for_entry" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    platform_results_for_entry='[]'
+  fi
+  if ! printf '%s' "$missed_findings_for_entry" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    missed_findings_for_entry='[]'
   fi
 
   # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
@@ -7883,6 +8707,8 @@ reviewer_loop_history_build_entry() {
     --arg smallFindingsPaths "${small_findings_paths:-}" \
     --arg classificationHead "${loop_head_sha:-}" \
     --argjson reviewedHeads "$reviewed_heads_json" \
+    --argjson platformResults "$platform_results_for_entry" \
+    --argjson missedFindings "$missed_findings_for_entry" \
     --arg egPlatform "${expensive_gate_last_platform:-}" \
     --arg egResult "${expensive_gate_last_result:-}" \
     --arg egReason "${expensive_gate_last_reason:-}" \
@@ -7899,6 +8725,8 @@ reviewer_loop_history_build_entry() {
       head_sha: $headSha,
       classification_head: $classificationHead,
       reviewed_heads: $reviewedHeads,
+      platform_results: $platformResults,
+      missed_findings: $missedFindings,
       run_id: $runId,
       result: $result,
       reason: $reason,
@@ -8013,6 +8841,10 @@ reviewer_loop_history_payload_from_existing() {
        | .history_unavailable_reason = ""
        | .entries = ((.entries // []) + [$entry])'
   else
+    # #1651 AC-7a: do not replace a prior history block with an empty stub.
+    # Signal unappendable state via globals; append_to_summary preserves the
+    # prior details block when one exists, and only writes the stub when there
+    # is no prior block at all.
     updated_at="$(reviewer_loop_history_recorded_at)"
     jq -n \
       --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
@@ -8028,6 +8860,15 @@ reviewer_loop_history_payload_from_existing() {
         history_unavailable_reason: $reason,
         entries: []
       }'
+  fi
+
+  # Expose append decision to the summary renderer (#1651).
+  reviewer_loop_history_last_append_safe="$append_safe"
+  reviewer_loop_history_last_unavailable_reason="$unavailable_reason"
+  if printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    reviewer_loop_history_had_prior_block=1
+  else
+    reviewer_loop_history_had_prior_block=0
   fi
 }
 
@@ -8146,27 +8987,92 @@ reviewer_loop_history_select_latest_summary_record() {
   '
 }
 
+reviewer_loop_history_extract_preserved_section() {
+  local existing_body="$1"
+  local prior=""
+
+  prior="$(printf '%s\n' "$existing_body" | awk '
+    /<details>/ { in_details=1 }
+    in_details { buf = buf $0 "\n" }
+    /<\/details>/ && in_details {
+      if (index(buf, "<!-- reviewer-loop-history:v1 -->") > 0) {
+        latest = buf
+      }
+      buf = ""
+      in_details = 0
+    }
+    END { printf "%s", latest }
+  ')"
+  if [ -n "$prior" ]; then
+    printf '%s' "$prior"
+    return 0
+  fi
+
+  if ! printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    return 1
+  fi
+
+  # Marker-only blocks (e.g. unavailable stub) have no <details> wrapper.
+  printf '%s\n' "$existing_body" | awk -v marker="$REVIEWER_LOOP_HISTORY_MARKER" '
+    index($0, marker) { in_block=1 }
+    in_block {
+      print
+      if ($0 ~ /^```json/) { in_fence=1; next }
+      if (in_fence && $0 ~ /^```[[:space:]]*$/) { exit }
+    }
+  '
+}
+
 reviewer_loop_history_append_to_summary() {
   local comment_body="$1"
   local existing_body="${2:-}"
   shift 2
   local payload
   local section
+  local prior_section=""
 
-  if ! payload="$(reviewer_loop_history_payload_from_existing "$existing_body" "$@" 2>/dev/null)"; then
-    payload="$(jq -n \
+  reviewer_loop_history_last_append_safe=1
+  reviewer_loop_history_last_unavailable_reason=""
+  reviewer_loop_history_had_prior_block=0
+
+  # Capture payload without losing append_safe globals: write to a temp file
+  # from the current shell, then read it back.
+  local _payload_tmp
+  _payload_tmp="$(mktemp)"
+  if ! reviewer_loop_history_payload_from_existing "$existing_body" "$@" >"$_payload_tmp" 2>/dev/null; then
+    reviewer_loop_history_last_append_safe=0
+    reviewer_loop_history_last_unavailable_reason="history_render_failed"
+    if printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+      reviewer_loop_history_had_prior_block=1
+    fi
+    jq -n \
       --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
       --argjson prNumber "${pr_number:-0}" \
       --arg updatedAt "$(reviewer_loop_history_recorded_at)" \
+      --arg reason "${reviewer_loop_history_last_unavailable_reason:-history_render_failed}" \
       '{
         schema: $schema,
         pr_number: $prNumber,
         updated_at: $updatedAt,
         history_status: "unavailable",
-        history_unavailable_reason: "history_render_failed",
+        history_unavailable_reason: $reason,
         entries: []
-      }')"
+      }' >"$_payload_tmp"
   fi
+  payload="$(cat "$_payload_tmp")"
+  rm -f "$_payload_tmp"
+
+  # #1651 AC-7a: when history cannot be appended and a prior block exists,
+  # leave that block byte-for-byte unchanged — do not re-render a stub over it.
+  if [ "${reviewer_loop_history_last_append_safe:-1}" -eq 0 ] \
+      && [ "${reviewer_loop_history_had_prior_block:-0}" -eq 1 ]; then
+    prior_section="$(reviewer_loop_history_extract_preserved_section "$existing_body")"
+    if [ -n "$prior_section" ]; then
+      printf '%s\n\n%s\n' "$comment_body" "$prior_section"
+      return 0
+    fi
+  fi
+
   section="$(reviewer_loop_history_render_section "$payload")"
   printf '%s%s\n' "$comment_body" "$section"
 }
@@ -9030,6 +9936,7 @@ compare_mode=0
 pre_after_clean_only=0
 review_lifecycle_duplicate_warnings_emitted=0
 declare -a platforms=()
+declare -a repo_review_platforms=()
 declare -a phase_after_clean_platforms=()
 phase_after_clean_filtered_out=""
 
@@ -9301,44 +10208,46 @@ if [ "$_release_guard_fired" -eq 0 ]; then
 fi
 # --- End release PR early-exit guard ---
 
-if [ "${#platforms[@]}" -eq 0 ]; then
-  # Resolve config from the PR's target branch so platform coverage is
-  # consistent regardless of the operator's local checkout state (#756).
-  # Capture stderr separately: "Could not resolve" means PR not found (silent
-  # fallback); any other error is unexpected and warrants a diagnostic warning.
-  set +e
-  _pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
-  _pr_base_exit=$?
-  set -e
-  _pr_base=""
-  if [ "$_pr_base_exit" -eq 0 ]; then
-    _pr_base="$_pr_base_raw"
-  elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
-    printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
-      "$_pr_base_exit" "$_pr_base_raw" >&2
-  fi
-  if [ -n "$_pr_base" ]; then
-    if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
-      # Refresh the remote-tracking ref so git show reads the current target
-      # branch config, not a potentially stale cached ref (#777).
-      git fetch origin "$_pr_base" 2>/dev/null || true
-      if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
-        rm -f "$_PR_CONFIG_TMPFILE"
-        _PR_CONFIG_TMPFILE=""
-      fi
+# Resolve config from the PR's target branch so platform coverage is consistent
+# regardless of the operator's local checkout state (#756). Always snapshot
+# repo_review_platforms for missed-finding membership even when --platform
+# filters the invocation list.
+set +e
+_pr_base_raw="$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName' 2>&1)"
+_pr_base_exit=$?
+set -e
+_pr_base=""
+if [ "$_pr_base_exit" -eq 0 ]; then
+  _pr_base="$_pr_base_raw"
+elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
+  printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
+    "$_pr_base_exit" "$_pr_base_raw" >&2
+fi
+if [ -n "$_pr_base" ]; then
+  if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
+    # Refresh the remote-tracking ref so git show reads the current target
+    # branch config, not a potentially stale cached ref (#777).
+    git fetch origin "$_pr_base" 2>/dev/null || true  # workflow-shell-guard: allow SH001 - best-effort refresh of remote base ref for config read
+    if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
+      rm -f "$_PR_CONFIG_TMPFILE"
+      _PR_CONFIG_TMPFILE=""
     fi
   fi
-  config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
-  if [ -f "$config_file" ]; then
-    if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
-      review_lifecycle_duplicate_warnings_emitted=1
-    fi
-    while IFS= read -r line; do
-      line="$(trim "$line")"
-      [ -n "$line" ] && platforms+=("$line")
-    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
+fi
+config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
+if [ -f "$config_file" ]; then
+  if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
+    review_lifecycle_duplicate_warnings_emitted=1
   fi
+  while IFS= read -r line; do
+    line="$(trim "$line")"
+    [ -n "$line" ] && repo_review_platforms+=("$line")
+  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
+fi
+
+if [ "${#platforms[@]}" -eq 0 ] && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
+  platforms=("${repo_review_platforms[@]}")
 fi
 
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
@@ -9530,6 +10439,13 @@ fi
 declare -a platform_result_tokens=()
 # Per-platform reviewed heads for head-evidence surfaces (issue #1648).
 declare -a platform_reviewed_heads=()
+# Per-platform raw outcomes for missed-finding telemetry (issue #1651).
+declare -a platform_result_records=()
+# Parallel platform outputs for path extraction when building missed_findings.
+declare -a platform_blocking_outputs=()
+missed_findings_json='[]'
+platform_results_json='[]'
+missed_finding_attribution_reports=""
 # Peer evidence for the expensive-reviewer gate (issue #1649): "platform|result|reason".
 platform_peer_evidence=()
 expensive_gate_last_platform=""
@@ -9802,6 +10718,9 @@ for index in "${!platforms[@]}"; do
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
+  # #1651: persist raw RESULT/REASON (not display tokens) for platform_results.
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
+  platform_blocking_outputs+=("${platform_name}"$''"${platform_output}")
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
   if [ "$_policy_status_available" = "1" ]; then
@@ -10183,19 +11102,6 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
 **Unreviewed tail:** ${small_findings_paths_inline:-none}"
   fi
 
-  local comment_body
-  comment_body="$(cat <<EOF
-### Automated Reviewer Loop Summary
-
-**Result:** ${result_line}
-**Platforms:** ${platform_list:-none}${policy_status_section}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${regression_label_section}
-
-*Posted automatically by \`pr-review-loop.sh\`.*
-EOF
-)"
-
   # Errors in the comment-posting block must not change the script's exit code or
   # prevent key=value output from reaching the caller. Log warnings to stderr so
   # failures are visible in CI logs without being fatal.
@@ -10219,11 +11125,10 @@ EOF
   # (append_safe=0 for a persisted "unavailable" history_status) — so the
   # WRITE below can succeed (posting the stub) while this cycle's entry is
   # still never actually recorded. A later "clean" cycle's OWN posting-time
-  # read can then recover an OLDER available snapshot via reviewer_loop_
-  # history_select_summary_record's deliberate render-continuity fallback
-  # and patch over the stub, permanently losing this cycle's dispatch from
-  # both cap counters (found in review of PR #1507). Treat a failed READ
-  # here the same as a failed WRITE for fail-closed purposes.
+  # history_select_summary_record's deliberate render-continuity fallback is used
+  # ONLY for missed-finding derivation input (_mf_prior_payload), never for the
+  # comment id/body chosen for update-in-place — mixing newest id with an older
+  # substituted body would patch over unappendable latest history (AC-7a).
   local _existing_read_failed=0
   _repo="$(repo_slug 2>/dev/null)" \
     || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
@@ -10231,7 +11136,7 @@ EOF
     _existing_comment_record="$(
       set -o pipefail
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | reviewer_loop_history_select_summary_record
+        | reviewer_loop_history_select_latest_summary_record
     )" \
       || {
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
@@ -10244,6 +11149,145 @@ EOF
       _existing_comment_body="$(printf '%s\n' "$_existing_comment_record" | jq -r '.body // ""' 2>/dev/null)" || _existing_comment_body=""
     fi
   fi
+
+  # #1651: derive missed-finding records BEFORE history writability (eligibility
+  # first). Compose the current round into the prior payload for AC-1.
+  local _prior_history_json=""
+  local _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+  local _mf_prior_payload=""
+  local _configured_platforms=""
+  local _next_iteration=1
+  local _mf_count=0
+  local missed_findings_section=""
+  local missed_finding_telemetry_section=""
+  local _attr_line=""
+
+  _prior_history_json="$(printf '%s\n' "$_existing_comment_body" | reviewer_loop_history_extract_latest_json)"
+  if [ -n "$_prior_history_json" ]; then
+    if _prior_payload="$(printf '%s\n' "$_prior_history_json" | jq -c '.' 2>/dev/null)"; then
+      :
+    else
+      _prior_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+    fi
+  fi
+  _mf_prior_payload="$_prior_payload"
+  if [ "$(printf '%s\n' "$_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ] \
+      || { [ -z "$_prior_history_json" ] \
+           && printf '%s\n' "$_existing_comment_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; }; then
+    local _mf_fallback_record="" _mf_fallback_body="" _mf_fallback_json=""
+    if [ -n "$_repo" ]; then
+      _mf_fallback_record="$(
+        set -o pipefail
+        gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+          | reviewer_loop_history_select_summary_record
+      )" || _mf_fallback_record=""
+      if [ -n "$_mf_fallback_record" ]; then
+        _mf_fallback_body="$(printf '%s\n' "$_mf_fallback_record" | jq -r '.body // ""' 2>/dev/null)" || _mf_fallback_body=""
+        _mf_fallback_json="$(printf '%s\n' "$_mf_fallback_body" | reviewer_loop_history_extract_latest_json 2>/dev/null)" || _mf_fallback_json=""
+        if [ -n "$_mf_fallback_json" ] \
+            && printf '%s\n' "$_mf_fallback_json" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+              '.schema == $schema and (.entries | type) == "array" and (.history_status // "available") == "available"' \
+              >/dev/null 2>&1; then
+          _mf_prior_payload="$(printf '%s\n' "$_mf_fallback_json" | jq -c '.' 2>/dev/null)" || _mf_prior_payload="$_prior_payload"
+        fi
+      fi
+    fi
+  fi
+  if declare -p repo_review_platforms >/dev/null 2>&1 && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
+    _configured_platforms="$(printf '%s\n' "${repo_review_platforms[@]}")"
+  elif declare -p platforms >/dev/null 2>&1 && [ "${#platforms[@]}" -gt 0 ]; then
+    _configured_platforms="$(printf '%s\n' "${platforms[@]}")"
+  fi
+  _next_iteration="$(printf '%s\n' "$_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _next_iteration=1
+  [[ "$_next_iteration" =~ ^[0-9]+$ ]] || _next_iteration=1
+
+  if declare -p platform_result_records >/dev/null 2>&1 && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    platform_results_json="$(printf '%s\n' "${platform_result_records[@]}" | jq -s -c '.')"
+  else
+    platform_results_json='[]'
+  fi
+
+  missed_finding_attribution_reports=""
+  missed_findings_json='[]'
+  # Invoke in the current shell so attribution reports survive (no $(...)).
+  reviewer_loop_missed_finding_records "$_mf_prior_payload" "$_configured_platforms" "$_next_iteration" >/dev/null
+  _mf_count="$(printf '%s\n' "$missed_findings_json" | jq 'length' 2>/dev/null)" || _mf_count=0
+  [[ "$_mf_count" =~ ^[0-9]+$ ]] || _mf_count=0
+
+  local attribution_section=""
+  if [ -n "${missed_finding_attribution_reports:-}" ]; then
+    while IFS= read -r _attr_line; do
+      [ -n "$_attr_line" ] || continue
+      attribution_section="${attribution_section}
+${_attr_line}"
+    done <<< "$missed_finding_attribution_reports"
+  fi
+
+  # Probe writability with the same rules as payload_from_existing (AC-7a/7b).
+  # Eligibility already ran above; only report telemetry failure when records
+  # were owed (attributable external blockers) and history cannot be written.
+  local _hist_append_safe=1
+  local _hist_unavail_reason=""
+  if [ -n "$_prior_history_json" ]; then
+    if ! printf '%s\n' "$_prior_history_json" | jq -e '.' >/dev/null 2>&1; then
+      _hist_append_safe=0
+      _hist_unavail_reason="malformed_history"
+    elif ! printf '%s\n' "$_prior_payload" |
+        jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+          '.schema == $schema and (.entries | type) == "array"' >/dev/null 2>&1; then
+      _hist_append_safe=0
+      _hist_unavail_reason="unknown_schema"
+    elif [ "$(printf '%s\n' "$_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ]; then
+      _hist_append_safe=0
+      _hist_unavail_reason="$(printf '%s\n' "$_prior_payload" | jq -r '.history_unavailable_reason // "prior_unavailable"')"
+    fi
+  elif printf '%s\n' "$_existing_comment_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    _hist_append_safe=0
+    _hist_unavail_reason="missing_history_json"
+  fi
+  if [ "$_existing_read_failed" -eq 1 ] && [ "$_hist_append_safe" -eq 1 ]; then
+    # Read failed and fell back to an unavailable stub body — not appendable.
+    _hist_append_safe=0
+    _hist_unavail_reason="${_hist_unavail_reason:-comment_read_failed}"
+  fi
+
+  if [ "$_mf_count" -gt 0 ] && [ "$_hist_append_safe" -eq 0 ]; then
+    # Records were owed but history is unwritable — clear them so build_entry
+    # does not invent a write that append_to_summary will refuse, and report.
+    # Do not show the would-be miss lines: AC-7a requires no record and a
+    # telemetry-failure report, not a summary of data that was never stored.
+    # Attribution failures (AC-11) remain visible — nothing was owed for those.
+    missed_findings_json='[]'
+    missed_findings_section=""
+    missed_finding_telemetry_section="
+**Missed-finding telemetry:** could not be recorded this round (${_hist_unavail_reason:-unknown}). Existing reviewer-loop history was left unchanged."
+  fi
+
+  local _display_missed_findings_json='[]'
+  _display_missed_findings_json="$(reviewer_loop_missed_findings_from_history_payload "$_prior_payload")"
+  if [ "$_mf_count" -gt 0 ] && [ "$_hist_append_safe" -eq 1 ]; then
+    _display_missed_findings_json="$(jq -s 'add' \
+      <(printf '%s\n' "$_display_missed_findings_json") \
+      <(printf '%s\n' "$missed_findings_json"))"
+  fi
+  if [ "$(printf '%s\n' "$_display_missed_findings_json" | jq 'length' 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    missed_findings_section="$(reviewer_loop_missed_findings_summary_section "$_display_missed_findings_json")"
+  else
+    missed_findings_section=""
+  fi
+
+  local comment_body
+  comment_body="$(cat <<EOF
+### Automated Reviewer Loop Summary
+
+**Result:** ${result_line}
+**Platforms:** ${platform_list:-none}${policy_status_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${regression_label_section}
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+)"
 
   comment_body="$(reviewer_loop_history_append_to_summary "$comment_body" "$_existing_comment_body" \
     "$result" "$reason" "$platform_list" "$blocking" "$suggestions" \
@@ -10590,6 +11634,7 @@ if [ "$aggregate_result" = "clean" ] \
       echo "INFO: post-clean settle — found $late_thread_count late unresolved thread(s) after ${settle_elapsed}s; switching to needs_fixes" >&2
       aggregate_result="needs_fixes"
       aggregate_reason="late_review_threads"
+      reviewer_loop_append_late_thread_missed_findings "$pr_number" "$settle_repo"
       if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
         phase_after_clean_net_new_blocker=1
         phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-late_review_threads}"

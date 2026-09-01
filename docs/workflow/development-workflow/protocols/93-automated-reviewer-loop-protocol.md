@@ -180,6 +180,31 @@ PR comments (including during the async grace-period poll) must be treated as
 unavailable and must not let a clean submitted review be accepted before the
 root comments are known. Fail closed, not open.
 
+#### Missed-finding telemetry (`missed_findings`)
+
+When an **external** reviewer reports **blocking** findings on an attributable
+commit, `pr-review-loop.sh` writes a `missed_findings[]` element into that
+round's `reviewer_loop_history.v1` entry (schema string unchanged). Each
+element records the external reviewer, the reviewed commit (joined from
+`reviewed_heads[]`, never from `loop_head_sha`), the blocking count, every
+distinct finding path, the local evidence state, and a three-value
+`classification`: `confirmed_miss` (`clean_same_commit`), `possible_miss`
+(`clean_earlier_commit`), or `not_a_miss` (every other state, including
+`unknown`).
+
+The local evidence state is derived from the local reviewer's **most recent**
+verdict (not its most recent *clean* verdict), using per-platform
+`platform_results` plus `reviewed_heads[]`. The current round is composed as a
+synthetic entry before selection so a same-round local clean + external block
+is visible. Records accumulate; they never change readiness, labels, or merge
+decisions.
+
+Summary lines are one per record, at most 200 characters, with at most three
+named paths and an always-stated file total. When history cannot be appended
+to and a record was owed, the prior history block is left byte-for-byte
+unchanged and the summary reports the telemetry failure; when no record was
+owed, an unwritable history produces no telemetry-failure report.
+
 #### Expensive reviewer gate (`codex-github`)
 
 Before dispatching an expensive reviewer (`codex-github` today),
