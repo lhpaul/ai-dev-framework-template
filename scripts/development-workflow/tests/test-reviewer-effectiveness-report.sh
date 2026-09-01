@@ -219,10 +219,11 @@ if grep -E ' (post|create|edit|delete|patch) ' "$TMP_DIR/gh.log" >/dev/null 2>&1
 fi
 pass 'read-only gh invocations'
 
-# AC-2d: no alternate default window config in script/help
-if rg -n 'RER_DEFAULT_WINDOW|default window' "$SCRIPT" >/dev/null \
-  && rg -n 'WINDOW|DEFAULT.*20' "$SCRIPT" | rg -v 'RER_DEFAULT_WINDOW=20' >/dev/null 2>&1; then
-  : # only RER_DEFAULT_WINDOW constant allowed
+# AC-2d: no alternate default window configuration in script/help
+extra_window_defaults="$(rg -n 'DEFAULT_WINDOW|default window|RER_.*WINDOW' "$SCRIPT" "$ROOT_DIR/scripts/development-workflow/README.md" 2>/dev/null \
+  | rg -v 'RER_DEFAULT_WINDOW=20|default window size is 20|default: \$\{RER_DEFAULT_WINDOW\}|Window: .*pull requests|default \*\*20\*\*|default window and that nothing' || true)"
+if [ -n "$extra_window_defaults" ]; then
+  fail "found alternate default-window sources:${extra_window_defaults}"
 fi
 pass 'default window source'
 

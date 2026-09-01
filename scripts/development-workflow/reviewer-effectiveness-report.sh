@@ -225,8 +225,15 @@ rer_validate_window() {
 rer_list_recent_prs() {
   local repo_slug="$1"
   local limit="$2"
-  gh pr list --repo "$repo_slug" --state all --limit "$limit" \
-    --json number | jq -r 'sort_by(.number) | reverse | .[].number' 2>/dev/null
+  local pr_json=""
+
+  if ! pr_json="$(gh pr list --repo "$repo_slug" --state all --limit "$limit" --json number 2>/dev/null)"; then
+    return 1
+  fi
+  if ! printf '%s\n' "$pr_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    return 1
+  fi
+  printf '%s\n' "$pr_json" | jq -r 'sort_by(.number) | reverse | .[].number'
 }
 
 rer_aggregate_measure() {
@@ -526,7 +533,7 @@ rer_main() {
     window_used="$window"
     while IFS= read -r n; do
       [ -n "$n" ] && prs+=("$n")
-    done < <(rer_list_recent_prs "$repo_slug" "$window")
+    done < <(rer_list_recent_prs "$repo_slug" "$window") || rer_fail "failed to list recent pull requests for ${repo_slug}"
     if [ "${#prs[@]}" -eq 0 ]; then
       rer_fail "no pull requests found in ${repo_slug}"
     fi
