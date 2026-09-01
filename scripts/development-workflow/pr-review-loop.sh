@@ -8470,6 +8470,9 @@ reviewer_loop_process_platform_output() {
   platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
   platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
   platform_reason="$(kv_value_default REASON "$platform_output" "")"
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    reviewer_loop_replace_current_round_platform_record "$platform_name"
+  fi
   platform_peer_evidence+=("${platform_name}|${platform_result}|${platform_reason}")
   if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
     reviewer_failed_required=1
@@ -8523,9 +8526,6 @@ reviewer_loop_process_platform_output() {
   fi
   platform_result_tokens+=("${platform_name}:${_prt_disp}")
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
-  if [ "$platform_name" = "local-ai-reviewer" ]; then
-    reviewer_loop_replace_current_round_platform_record "$platform_name"
-  fi
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
   platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
