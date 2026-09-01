@@ -57,6 +57,9 @@ jobs:
           if [ -f docs/workflow/development-workflow/strict-spec-checks.md ]; then
             md_files+=("docs/workflow/development-workflow/strict-spec-checks.md")
           fi
+          if [ -f docs/workflow/development-workflow/strict-plan-checks.md ]; then
+            md_files+=("docs/workflow/development-workflow/strict-plan-checks.md")
+          fi
           if [ "${#md_files[@]}" -eq 0 ]; then
             echo "No target markdown files found — skipping lint."
             echo "found_files=false" >> "$GITHUB_OUTPUT"
@@ -74,7 +77,8 @@ jobs:
             "docs/testing/workflow/**/*.md" \
             "changelog.d/**/*.md" \
             "CHANGELOG.md" \
-            "docs/workflow/development-workflow/strict-spec-checks.md"
+            "docs/workflow/development-workflow/strict-spec-checks.md" \
+            "docs/workflow/development-workflow/strict-plan-checks.md"
 
       - name: Run heuristic lint checks (GLOB001, COUNT001)
         if: steps.collect.outputs.found_files == 'true'
@@ -87,6 +91,9 @@ jobs:
           fi
           if [ -f docs/workflow/development-workflow/strict-spec-checks.md ]; then
             md_files+=("docs/workflow/development-workflow/strict-spec-checks.md")
+          fi
+          if [ -f docs/workflow/development-workflow/strict-plan-checks.md ]; then
+            md_files+=("docs/workflow/development-workflow/strict-plan-checks.md")
           fi
           python3 scripts/lint/markdown-heuristic-lint.py "${md_files[@]}"
 

@@ -1361,6 +1361,60 @@ run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
 run_test "1655_s7_partial_applied" "STRICT_PLAN_APPLIED=source_declaration,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
 rm -rf "$PLAN_REPO"
 
+# Scenario 17: mixed plans — source-dependent finding on no-spec plan is dropped
+PLAN_REPO="$(mktemp -d)"
+PLAN_DEV_A="docs/specs/developments/20260831062000_1655-strict-plan-review-mode"
+PLAN_DEV_B="docs/specs/developments/20260831062001_1655-other"
+PLAN_DOC_A="$PLAN_DEV_A/2_1655-strict-plan-review-mode_implementation-plan.md"
+PLAN_SPEC_A="$PLAN_DEV_A/1_1655-strict-plan-review-mode_specs.md"
+PLAN_DOC_B="$PLAN_DEV_B/2_1655-other_implementation-plan.md"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_A" "$PLAN_REPO/$PLAN_DEV_B"
+printf '# Plan A\n' > "$PLAN_REPO/$PLAN_DOC_A"
+printf '# Spec A\n' > "$PLAN_REPO/$PLAN_SPEC_A"
+printf '# Plan B\n' > "$PLAN_REPO/$PLAN_DOC_B"
+git -C "$PLAN_REPO" add "$PLAN_DOC_A" "$PLAN_SPEC_A" "$PLAN_DOC_B"
+git -C "$PLAN_REPO" commit -q -m "mixed plans"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+cat > "$MOCK_BIN/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"implementation-plan/1655-mixed","headRefOid":"%s"}\n' "\${MOCK_PR_HEAD_SHA}"
+    exit 0
+    ;;
+  *"pr diff 123"*"--name-only"*)
+    printf '%s\n%s\nREVIEW.md\n' "$PLAN_DOC_A" "$PLAN_DOC_B"
+    exit 0
+    ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_BIN/gh"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[{"check":"unspecified_step","path":"'"$PLAN_DOC_B"'","line":1,"body":"should drop"},{"check":"phase_ordering","path":"'"$PLAN_DOC_B"'","line":2,"body":"should keep"}]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-mixed"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s17_applied_all7" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s17_drop_source_on_nospec" "STRICT_PLAN_COUNT=1" "$(line_for STRICT_PLAN_COUNT)"
+run_test "1655_s17_kept_phase_ordering" "STRICT_PLAN_CHECKS=phase_ordering" "$(line_for STRICT_PLAN_CHECKS)"
+run_test "1655_s17_unknown_from_drop" "STRICT_PLAN_UNKNOWN_COUNT=1" "$(line_for STRICT_PLAN_UNKNOWN_COUNT)"
+rm -rf "$PLAN_REPO"
+
 # Scenario 15 reverse: plan stage (fresh repo with spec sibling at HEAD)
 PLAN_REPO="$(mktemp -d)"
 git -C "$PLAN_REPO" init -q

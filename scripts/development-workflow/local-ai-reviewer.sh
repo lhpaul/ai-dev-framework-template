@@ -371,6 +371,34 @@ parse_strict_plan_response() {
   parse_strict_checks_response "$1" "$2" "strict_plan_checks"
 }
 
+# Drop source-dependent findings reported against plan documents that have no
+# sibling spec at the reviewed head. Review-level admission may include those
+# checks when any changed plan has a source; each document still gets only the
+# checks that apply to it (AC-13 / AC-19a).
+filter_strict_plan_parsed_response() {
+  local parsed="$1"
+  local sections_json="$2"
+  local sources_json="$3"
+
+  printf '%s\n' "$parsed" | jq -c --argjson sections "$sections_json" --argjson sources "$sources_json" '
+    ($sections | map(select(.source == "required") | .id)) as $required
+    | ($sources | map(.plan_path)) as $with_source
+    | .findings as $all
+    | ($all | map(select(
+        . as $f
+        | ($required | index($f.check)) == null
+        or ($with_source | index($f.path)) != null
+      ))) as $kept
+    | ($all | length - ($kept | length)) as $dropped
+    | . + {
+        count: ($kept | map(select(.check != "unknown")) | length),
+        checks: ($kept | map(select(.check != "unknown") | .check) | unique | join(",")),
+        unknown_count: ((.unknown_count // 0) + $dropped),
+        findings: $kept
+      }
+  ' 2>/dev/null
+}
+
 emit_strict_entry_output() {
   local prefix="$1"
   local state="$2"
@@ -434,29 +462,36 @@ strict_git_show_at_head() {
 strict_build_plan_bundle_extras() {
   local plan_paths="$1"
   local sections_json="$2"
-  local have_source=0
+  local any_source=0
   local documents_json="[]"
   local sources_json="[]"
-  local plan_path source_path text
+  local plan_path source_path text doc_has_source
 
   while IFS= read -r plan_path; do
     [ -n "$plan_path" ] || continue
     if ! text="$(strict_git_show_at_head "$plan_path")"; then
       return 1
     fi
-    documents_json="$(jq -n --argjson docs "$documents_json" --arg path "$plan_path" --arg text "$text" \
-      '$docs + [{path:$path, text:$text}]')"
+    doc_has_source=false
     source_path="$(strict_plan_source_path_for_plan "$plan_path")"
     if [ -n "$source_path" ] && text="$(strict_git_show_at_head "$source_path")"; then
-      have_source=1
+      any_source=1
+      doc_has_source=true
       sources_json="$(jq -n --argjson srcs "$sources_json" --arg plan_path "$plan_path" \
         --arg source_path "$source_path" --arg text "$text" \
         '$srcs + [{plan_path:$plan_path, source_path:$source_path, text:$text}]')"
+      if ! text="$(strict_git_show_at_head "$plan_path")"; then
+        return 1
+      fi
     fi
+    documents_json="$(jq -n --argjson docs "$documents_json" --arg path "$plan_path" --arg text "$text" \
+      --argjson has_source "$doc_has_source" \
+      '$docs + [{path:$path, text:$text, has_source:$has_source}]')"
   done <<< "$plan_paths"
 
-  strict_plan_applied_set="$(printf '%s\n' "$sections_json" | jq -r --arg have_source "$have_source" '
-    map(select(($have_source == "1") or .source == "not_required") | .id) | join(",")
+  strict_plan_sections_json="$sections_json"
+  strict_plan_applied_set="$(printf '%s\n' "$sections_json" | jq -r --arg any_source "$any_source" '
+    map(select(($any_source == "1") or .source == "not_required") | .id) | join(",")
   ')"
   strict_plan_admission_checks_json="$(printf '%s\n' "$strict_plan_applied_set" | jq -R 'split(",") | map(select(length > 0))')"
 
@@ -611,6 +646,20 @@ strict_run_registry_entry() {
         checks="$(printf '%s\n' "$dispatch_out" | sed -n '4p')"
         unknown_count="$(printf '%s\n' "$dispatch_out" | sed -n '5p')"
         findings_json="$(printf '%s\n' "$dispatch_out" | sed -n '6p')"
+        if [ "$state" = "applied" ] && [ -n "$strict_plan_sections_json" ]; then
+          strict_parsed="$(jq -nc \
+            --argjson count "${count:-0}" \
+            --arg checks "${checks:-}" \
+            --argjson unknown_count "${unknown_count:-0}" \
+            --argjson findings "${findings_json:-[]}" \
+            '{count:$count, checks:$checks, unknown_count:$unknown_count, findings:$findings}')"
+          if strict_parsed="$(filter_strict_plan_parsed_response "$strict_parsed" "$strict_plan_sections_json" "$strict_plan_sources_json")"; then
+            count="$(printf '%s\n' "$strict_parsed" | jq -r '.count')"
+            checks="$(printf '%s\n' "$strict_parsed" | jq -r '.checks')"
+            unknown_count="$(printf '%s\n' "$strict_parsed" | jq -r '.unknown_count')"
+            findings_json="$(printf '%s\n' "$strict_parsed" | jq -c '.findings')"
+          fi
+        fi
       fi
     fi
   elif [ "$entry" = "spec" ]; then
@@ -1075,6 +1124,7 @@ strict_plan_reason=""
 strict_plan_findings_json="[]"
 strict_plan_applied_set=""
 strict_plan_admission_checks_json="[]"
+strict_plan_sections_json="[]"
 strict_plan_documents_json="[]"
 strict_plan_sources_json="[]"
 
