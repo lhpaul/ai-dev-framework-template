@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# The review doctrine's maximum size, in bytes as `wc -c` measures them.
+# AC-12: one source of truth, read by both the linter and the reviewer.
+readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+
 workflow_script_dir() {
   if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     printf 'ERROR: BASH_SOURCE[0] is unset — source workflow-lib.sh from a Bash script or via:\n  bash -c "source scripts/development-workflow/workflow-lib.sh"\n' >&2
