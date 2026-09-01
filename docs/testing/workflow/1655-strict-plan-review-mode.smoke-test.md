@@ -215,3 +215,40 @@ Also confirm here that the `--help` block, the integration document and Protocol
 93 describe the same six keys, three states and five reasons the implementation
 emits, and that `docs/workflow/**` is in `markdown-lint.yml`'s `paths` filter —
 a checklist-only change is unlinted until it is.
+
+## Recorded proof results (PR #1691)
+
+### Machinery (P1–P6, P3a)
+
+Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
+
+| Proof | Pass scenario | Concrete check |
+| --- | --- | --- |
+| P1 | 1655_s8_git_show_text | `strict_git_show_at_head` returns committed bytes |
+| P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set7 | `STRICT_PLAN_APPLIED` present |
+| P3a | 1655_s7a_all_seven | all seven when spec sibling present despite Refactor declaration |
+| P4 | 1655_s17_unknown_detail | `STRICT_1_CHECK=unknown` for out-of-applied source-dependent finding |
+| P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
+| P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |
+
+### Detection (P7–P13) — smoke command output
+
+`LOCAL_AI_REVIEWER_TIMEOUT=90 bash scripts/development-workflow/tests/run-strict-plan-smoke-fixtures.sh`
+
+| Proof | Fixture plan path | Planted line | Check fired |
+| --- | --- | --- | --- |
+| P7 | `scripts/.../strict-plan-plans/source_declaration/2_source_declaration_implementation-plan.md` | 1 | `source_declaration` |
+| P8 | `.../unspecified_step/2_unspecified_step_implementation-plan.md` | 8 | `unspecified_step` |
+| P9 | `.../spec_traceability/2_spec_traceability_implementation-plan.md` | 5 | `spec_traceability` |
+| P10 | `.../ac_test_coverage/2_ac_test_coverage_implementation-plan.md` | 11 | `ac_test_coverage` |
+| P11 | `.../phase_ordering/2_phase_ordering_implementation-plan.md` | 7 | `phase_ordering` |
+| P12 | `.../dependency_state/2_dependency_state_implementation-plan.md` | 7 | `dependency_state` |
+| P13 | `.../reversal_risk/2_reversal_risk_implementation-plan.md` | 7 | `reversal_risk` |
+
+### Markdown Lint CI path proof
+
+Planted MD009 trailing space at
+`docs/workflow/development-workflow/integrations/local-ai-reviewer-proof.tmp.md:3:26`
+→ `markdownlint-cli2` exit 1 (`MD009/no-trailing-spaces`). Removing the trailing
+space → 0 errors, exit 0. Workflow lints `docs/workflow/**/*.md` when `paths`
+includes `docs/workflow/**`.
