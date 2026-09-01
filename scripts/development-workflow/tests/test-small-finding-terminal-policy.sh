@@ -47,6 +47,14 @@ $(printf '%s\n' "$payload" | jq '.')
 \`\`\`"
 }
 
+_evaluate_terminal() {
+  local ledger_body="$1"
+  local findings="$2"
+  printf '%s\n' "$findings" \
+    | reviewer_loop_evaluate_small_findings_terminal \
+        "$ledger_body" "$_head" 2 0 "local-ai-reviewer:$_head"
+}
+
 _entry() {
   local iter="$1" path="$2" body="$3"
   jq -n --argjson iter "$iter" --arg h "$_head" --arg path "$path" --arg body "$body" '{
@@ -82,6 +90,24 @@ run_test "1652_s12_normative_cosmetic_still_not_small" "no" \
 # Content analysis reports shipped_path (normative excluded from non-shipped).
 run_test "1652_s12_blocked_by_shipped_path" "shipped_path" \
   "$(printf '%s\n' "$_s12_f1" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
+# Production terminal branch: normative contract findings must not reach clean.
+_s12_ledger="$(_ledger_body "$(jq -n --arg h "$_head" '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [
+    {iteration: 1, small_findings_only: true, classification_head: $h,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h}]},
+    {iteration: 2, small_findings_only: true, classification_head: $h,
+     contributing_platforms: ["local-ai-reviewer"],
+     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $h}]}
+  ]
+}')")"
+run_test "1652_s12_terminal_result_needs_fixes" "needs_fixes" \
+  "$(_evaluate_terminal "$_s12_ledger" "$_s12_f1" | jq -r '.result')"
+run_test "1652_s12_terminal_stop_not_set" "false" \
+  "$(_evaluate_terminal "$_s12_ledger" "$_s12_f1" | jq -r '.small_findings_stop')"
+run_test "1652_s12_terminal_blocked_by" "shipped_path" \
+  "$(_evaluate_terminal "$_s12_ledger" "$_s12_f1" | jq -r '.small_findings_blocked_by')"
 
 # --- Scenario 12a: tier-2 isolation on CHANGELOG.md with #1661 bodies ---
 _s12a_f1="$(_finding "CHANGELOG.md" "local-ai-reviewer" "fail-closed semantics broken on deny-list")"
@@ -107,6 +133,12 @@ _s12a_payload="$(jq -n --arg h "$_head" '{
 }')"
 _s12a_all_small="$(printf '%s\n' "$_s12a_f1" "$_s12a_f2" | reviewer_loop_all_findings_are_small && echo 1 || echo 0)"
 run_test "1652_s12a_terminal_cannot_fire" "0" "$_s12a_all_small"
+run_test "1652_s12a_terminal_result_needs_fixes" "needs_fixes" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s12a_f1" | jq -r '.result')"
+run_test "1652_s12a_terminal_reason_empty" "" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s12a_f1" | jq -r '.reason')"
+run_test "1652_s12a_terminal_blocked_by_contract" "contract_surface" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s12a_f1" | jq -r '.small_findings_blocked_by')"
 
 # --- Scenario 13: cosmetic counter-case on same CHANGELOG.md path ---
 _s13_f1="$(_finding "CHANGELOG.md" "local-ai-reviewer" "trailing whitespace on bullet")"
@@ -122,6 +154,15 @@ run_test "1652_s13_prior_count_ready" "2 exhausted" "$_s13_count"
 # Current-round heads OK for the cosmetic contributor.
 _s13_heads="$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_head" "local-ai-reviewer:$_head")"
 run_test "1652_s13_current_heads_ok" "ok" "$(printf '%s' "$_s13_heads" | jq -r '.status')"
+# Production terminal branch: cosmetic CHANGELOG tail with sufficient prior rounds fires clean.
+run_test "1652_s13_terminal_result_clean" "clean" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s13_f1" | jq -r '.result')"
+run_test "1652_s13_terminal_reason" "small_findings_terminal" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s13_f1" | jq -r '.reason')"
+run_test "1652_s13_terminal_stop_set" "true" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s13_f1" | jq -r '.small_findings_stop')"
+run_test "1652_s13_terminal_blocked_by_empty" "" \
+  "$(_evaluate_terminal "$(_ledger_body "$_s12a_payload")" "$_s13_f1" | jq -r '.small_findings_blocked_by')"
 # Pairing with 12a: same path/head/shape, only bodies differ → opposite outcome.
 run_test "1652_s13_opposite_of_12a" "yes" \
   "$(

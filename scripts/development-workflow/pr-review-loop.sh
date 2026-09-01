@@ -8854,6 +8854,133 @@ reviewer_loop_current_round_heads_ok() {
     '{status: $status, blocked_by: $blocked_by, details: $details}'
 }
 
+# Evaluate the production small-findings terminal decision (#1652).
+# Args: <summary_body> <loop_head_sha> <required_rounds> <unresolved_thread_count>
+#       then optional platform:reviewed_head entries; finding JSON records on stdin.
+# Prints one compact JSON object:
+#   {result, reason, small_findings_only, small_findings_stop, small_findings_rounds,
+#    small_findings_blocked_by, currency_detail}
+reviewer_loop_evaluate_small_findings_terminal() {
+  local summary_body="${1:-}"
+  local loop_head_sha="${2:-}"
+  local required_rounds="${3:-2}"
+  local unresolved_thread_count="${4:-0}"
+  shift 4 2>/dev/null || true
+  local -a platform_reviewed_heads=("$@")
+  local -a aggregate_blocking_findings=()
+  local line aggregate_result="needs_fixes" aggregate_reason=""
+  local small_findings_only=0 small_findings_stop=0 small_findings_rounds=0
+  local small_findings_blocked_by=""
+  local small_findings_prior_count=0
+  local currency_detail=""
+  local _sf_content_json _sf_count_json _sf_prior_stop _sf_contributors
+  local _sf_current_json _sf_current_currency _sf_currency_detail_list=""
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    aggregate_blocking_findings+=("$line")
+  done
+
+  if [ "${#aggregate_blocking_findings[@]}" -eq 0 ]; then
+    jq -c -n \
+      --arg result "needs_fixes" --arg reason "" \
+      --argjson small_findings_only 0 --argjson small_findings_stop 0 \
+      --argjson small_findings_rounds 0 --arg small_findings_blocked_by "" \
+      '{result: $result, reason: $reason, small_findings_only: ($small_findings_only == 1),
+        small_findings_stop: ($small_findings_stop == 1), small_findings_rounds: $small_findings_rounds,
+        small_findings_blocked_by: $small_findings_blocked_by}'
+    return 0
+  fi
+
+  _sf_content_json="$(printf '%s\n' "${aggregate_blocking_findings[@]}" | reviewer_loop_small_findings_content_analysis)"
+  if [ "$(printf '%s' "$_sf_content_json" | jq -r '.all_small // false')" = "true" ]; then
+    small_findings_only=1
+  else
+    small_findings_blocked_by="$(printf '%s' "$_sf_content_json" | jq -r '.blocked_by // empty')"
+    jq -c -n \
+      --arg result "$aggregate_result" --arg reason "$aggregate_reason" \
+      --argjson small_findings_only "$small_findings_only" \
+      --argjson small_findings_stop "$small_findings_stop" \
+      --argjson small_findings_rounds "$small_findings_rounds" \
+      --arg small_findings_blocked_by "$small_findings_blocked_by" \
+      '{result: $result, reason: $reason, small_findings_only: ($small_findings_only == 1),
+        small_findings_stop: ($small_findings_stop == 1), small_findings_rounds: $small_findings_rounds,
+        small_findings_blocked_by: $small_findings_blocked_by}'
+    return 0
+  fi
+
+  if [ "$unresolved_thread_count" -gt 0 ]; then
+    aggregate_result="needs_fixes"
+    aggregate_reason="unresolved_review_threads"
+    jq -c -n \
+      --arg result "$aggregate_result" --arg reason "$aggregate_reason" \
+      --argjson small_findings_only "$small_findings_only" \
+      --argjson small_findings_stop 0 \
+      --argjson small_findings_rounds 0 \
+      --arg small_findings_blocked_by "" \
+      '{result: $result, reason: $reason, small_findings_only: ($small_findings_only == 1),
+        small_findings_stop: ($small_findings_stop == 1), small_findings_rounds: $small_findings_rounds,
+        small_findings_blocked_by: $small_findings_blocked_by}'
+    return 0
+  fi
+
+  _sf_count_json="$(reviewer_loop_small_findings_prior_consecutive_count "$summary_body" "$loop_head_sha")"
+  read -r small_findings_prior_count _sf_prior_stop < <(reviewer_loop_parse_small_findings_count "$_sf_count_json")
+  [[ "${small_findings_prior_count:-}" =~ ^[0-9]+$ ]] || small_findings_prior_count=0
+  _sf_prior_stop="${_sf_prior_stop:-head_unknown}"
+
+  _sf_contributors="$(
+    printf '%s\n' "${aggregate_blocking_findings[@]}" \
+      | jq -r '.platform // empty' 2>/dev/null \
+      | awk 'NF && !seen[$0]++'
+  )"
+  if [ -n "$_sf_contributors" ]; then
+    _sf_current_json="$(
+      printf '%s\n' "$_sf_contributors" \
+        | reviewer_loop_current_round_heads_ok "$loop_head_sha" "${platform_reviewed_heads[@]:-}"
+    )"
+  else
+    _sf_current_json='{"status":"head_unknown","blocked_by":"head_unknown","details":["head_unknown:"]}'
+  fi
+  _sf_current_currency="$(printf '%s' "$_sf_current_json" | jq -r '.blocked_by // empty')"
+  _sf_currency_detail_list="$(printf '%s' "$_sf_current_json" | jq -r '.details // [] | join(", ")')"
+
+  small_findings_rounds=$((small_findings_prior_count + 1))
+
+  if [ -n "$_sf_current_currency" ]; then
+    small_findings_blocked_by="$_sf_current_currency"
+    if [ "$_sf_current_currency" = "head_unknown" ] && [ "$_sf_prior_stop" = "stale_head" ]; then
+      small_findings_blocked_by="stale_head"
+    fi
+    currency_detail="$_sf_currency_detail_list"
+    if [ "$_sf_prior_stop" = "stale_head" ] || [ "$_sf_prior_stop" = "head_unknown" ]; then
+      if [[ "$currency_detail" != *"$_sf_prior_stop"* ]]; then
+        currency_detail="${currency_detail}; prior:${_sf_prior_stop}"
+      fi
+    fi
+  elif [ "$small_findings_rounds" -ge "$required_rounds" ]; then
+    aggregate_result="clean"
+    aggregate_reason="small_findings_terminal"
+    small_findings_stop=1
+    small_findings_blocked_by=""
+  elif [ "$_sf_prior_stop" = "stale_head" ] || [ "$_sf_prior_stop" = "head_unknown" ]; then
+    small_findings_blocked_by="$_sf_prior_stop"
+    currency_detail="prior:${_sf_prior_stop}"
+  fi
+
+  jq -c -n \
+    --arg result "$aggregate_result" \
+    --arg reason "$aggregate_reason" \
+    --argjson small_findings_only "$small_findings_only" \
+    --argjson small_findings_stop "$small_findings_stop" \
+    --argjson small_findings_rounds "$small_findings_rounds" \
+    --arg small_findings_blocked_by "$small_findings_blocked_by" \
+    --arg currency_detail "$currency_detail" \
+    '{result: $result, reason: $reason, small_findings_only: ($small_findings_only == 1),
+      small_findings_stop: ($small_findings_stop == 1), small_findings_rounds: $small_findings_rounds,
+      small_findings_blocked_by: $small_findings_blocked_by, currency_detail: $currency_detail}'
+}
+
 reviewer_loop_head_evidence_full_sha() {
   local value="$1"
 
@@ -11947,59 +12074,26 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
       && [ "$unresolved_thread_count" -eq 0 ] \
       && [ "$small_findings_only" -eq 1 ]; then
     reviewer_loop_latest_summary_body="$(reviewer_loop_fetch_latest_summary_body "$pr_number")"
-    _sf_count_json="$(reviewer_loop_small_findings_prior_consecutive_count "$reviewer_loop_latest_summary_body" "${loop_head_sha:-}")"
-    read -r small_findings_prior_count _sf_prior_stop < <(reviewer_loop_parse_small_findings_count "$_sf_count_json")
-    [[ "${small_findings_prior_count:-}" =~ ^[0-9]+$ ]] || small_findings_prior_count=0
-    _sf_prior_stop="${_sf_prior_stop:-head_unknown}"
-
-    # Current-round head check for every contributing platform (#1652).
-    _sf_contributors="$(
+    _sf_terminal_json="$(
       printf '%s\n' "${aggregate_blocking_findings[@]}" \
-        | jq -r '.platform // empty' 2>/dev/null \
-        | awk 'NF && !seen[$0]++'
+        | reviewer_loop_evaluate_small_findings_terminal \
+            "$reviewer_loop_latest_summary_body" \
+            "${loop_head_sha:-}" \
+            "$small_findings_required_rounds" \
+            "$unresolved_thread_count" \
+            "${platform_reviewed_heads[@]:-}"
     )"
-    if [ -n "$_sf_contributors" ]; then
-      _sf_current_json="$(
-        printf '%s\n' "$_sf_contributors" \
-          | reviewer_loop_current_round_heads_ok "${loop_head_sha:-}" "${platform_reviewed_heads[@]:-}"
-      )"
-    else
-      _sf_current_json='{"status":"head_unknown","blocked_by":"head_unknown","details":["head_unknown:"]}'
-    fi
-    _sf_current_currency="$(printf '%s' "$_sf_current_json" | jq -r '.blocked_by // empty')"
-    _sf_currency_detail_list="$(printf '%s' "$_sf_current_json" | jq -r '.details // [] | join(", ")')"
-
-    small_findings_rounds=$((small_findings_prior_count + 1))
-
-    if [ -n "$_sf_current_currency" ]; then
-      # Current round is not on loop_head_sha for every contributor.
-      # Within-group precedence already applied inside current_round_heads_ok.
-      small_findings_blocked_by="$_sf_current_currency"
-      if [ "$_sf_current_currency" = "head_unknown" ] && [ "$_sf_prior_stop" = "stale_head" ]; then
-        small_findings_blocked_by="stale_head"
-      fi
-      small_findings_currency_detail="$_sf_currency_detail_list"
-      if [ "$_sf_prior_stop" = "stale_head" ] || [ "$_sf_prior_stop" = "head_unknown" ]; then
-        if [[ "$small_findings_currency_detail" != *"$_sf_prior_stop"* ]]; then
-          small_findings_currency_detail="${small_findings_currency_detail}; prior:${_sf_prior_stop}"
-        fi
-      fi
-    elif [ "$small_findings_rounds" -ge "$small_findings_required_rounds" ]; then
-      aggregate_result="clean"
-      aggregate_reason="small_findings_terminal"
+    aggregate_result="$(printf '%s' "$_sf_terminal_json" | jq -r '.result // "needs_fixes"')"
+    aggregate_reason="$(printf '%s' "$_sf_terminal_json" | jq -r '.reason // empty')"
+    small_findings_rounds="$(printf '%s' "$_sf_terminal_json" | jq -r '.small_findings_rounds // 0')"
+    small_findings_blocked_by="$(printf '%s' "$_sf_terminal_json" | jq -r '.small_findings_blocked_by // empty')"
+    small_findings_currency_detail="$(printf '%s' "$_sf_terminal_json" | jq -r '.currency_detail // empty')"
+    if [ "$(printf '%s' "$_sf_terminal_json" | jq -r '.small_findings_stop // false')" = "true" ]; then
       aggregate_status=0
       small_findings_stop=1
-      small_findings_blocked_by=""
       echo "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched small non-shipped findings on the current head; strict thread audit found zero unresolved threads" >&2
-    elif [ "$_sf_prior_stop" = "stale_head" ] || [ "$_sf_prior_stop" = "head_unknown" ]; then
-      # Short of the threshold because a prior round failed the head check.
-      small_findings_blocked_by="$_sf_prior_stop"
-      small_findings_currency_detail="prior:${_sf_prior_stop}"
     fi
-    # exhausted / not_small with insufficient rounds: leave blocked_by empty.
-    unset reviewer_loop_latest_summary_body small_findings_prior_count
-    unset _sf_count_json _sf_prior_stop _sf_contributors _sf_current_json
-    unset _sf_current_currency _sf_currency_detail_list
+    unset reviewer_loop_latest_summary_body _sf_terminal_json
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
