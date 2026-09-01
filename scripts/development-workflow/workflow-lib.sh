@@ -4,7 +4,12 @@ set -euo pipefail
 
 # The review doctrine's maximum size, in bytes as `wc -c` measures them.
 # AC-12: one source of truth, read by both the linter and the reviewer.
-if ! declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
+if declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
+  if [[ "$(declare -p REVIEW_DOCTRINE_MAX_BYTES 2>/dev/null || true)" != *"-r"* ]]; then
+    unset REVIEW_DOCTRINE_MAX_BYTES
+    readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+  fi
+else
   readonly REVIEW_DOCTRINE_MAX_BYTES=12000
 fi
 
