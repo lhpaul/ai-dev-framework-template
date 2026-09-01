@@ -502,7 +502,7 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
-  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable
+  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|reviewed_head_not_current|local_pass_unavailable
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
   POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
     compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
@@ -8229,7 +8229,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   local pr_number_arg="${1:-}"
   local _sl_prior_payload _sl_next_iteration _sl_configured _sl_composed _sl_required
   local _sl_output _sl_status _sl_platform_index _sl_pass_result _sl_pass_reason
-  local _sl_gate_result _sl_gate_reason _sl_head_now
+  local _sl_gate_result _sl_gate_reason _sl_head_now _sl_head_current
 
   local_second_pass_reason="not_required"
   if [ "$phase_after_clean_enabled" -ne 1 ]; then
@@ -8272,6 +8272,17 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   local_second_pass_result="$_sl_pass_result"
 
   if [ "$_sl_pass_result" = "clean" ]; then
+    _sl_head_current="$(expensive_gate_local_ai_head_current "$loop_head_sha")"
+    if [ "$_sl_head_current" != "1" ]; then
+      local_second_pass_reason="reviewed_head_not_current"
+      aggregate_result="escalate"
+      aggregate_reason="local_pass_unavailable"
+      aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+      aggregate_status=2
+      local_second_pass_failed_head_record="$loop_head_sha"
+      last_platform="local-ai-reviewer"
+      return 1
+    fi
     _sl_head_now=""
     _sl_head_now="$(gh pr view "$pr_number_arg" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || _sl_head_now=""
     if [ -n "$loop_head_sha" ] && [ -n "$_sl_head_now" ] && [ "$_sl_head_now" != "$loop_head_sha" ]; then
