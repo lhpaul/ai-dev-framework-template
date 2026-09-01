@@ -17740,7 +17740,11 @@ run_platform_review() {
 
 gh() {
   if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
-    printf '{"headRefOid":"%s"}\n' "${loop_head_sha:-}"
+    if [ -n "${_1656_stub_pr_head:-}" ]; then
+      printf '{"headRefOid":"%s"}\n' "$_1656_stub_pr_head"
+    else
+      printf '{"headRefOid":"%s"}\n' "${loop_head_sha:-}"
+    fi
     return 0
   fi
   command gh "$@"
@@ -17777,6 +17781,7 @@ _1656_reset_guard_globals() {
   compare_first_blocking_result=""
   _1656_run_platform_review_calls=0
   _1656_stub_pass_result="clean"
+  _1656_stub_pr_head=""
 }
 
 # Scenario 4 / not_required: clean on loop_head_sha — no dispatch
@@ -17818,6 +17823,18 @@ run_test "1656_s3c_guard_reason" "local_pass_unavailable" "$local_second_pass_re
 run_test "1656_s3c_guard_unavailable" "local_pass_unavailable" "$aggregate_reason"
 run_test "1656_s3c_phase_not_started" "0" "$phase_after_clean_started"
 
+# Scenario 3a: head moves during clean pass — needs_fixes, head_moved_during_run
+_1656_moved_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pr_head="$_1656_moved_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s3a_guard_blocked" "1" "$_st"
+run_test "1656_s3a_guard_dispatch" "1" "$local_second_pass"
+run_test "1656_s3a_guard_reason" "head_moved_during_pass" "$local_second_pass_reason"
+run_test "1656_s3a_aggregate_reason" "head_moved_during_run" "$aggregate_reason"
+run_test "1656_s3a_phase_not_started" "0" "$phase_after_clean_started"
+
 # Scenario 13: no ready-phase — guard no-op
 _1656_reset_guard_globals
 phase_after_clean_enabled=0
@@ -17827,7 +17844,7 @@ run_test "1656_s13_guard_noop" "0" "$_st"
 run_test "1656_s13_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
 
 unset _1656_guard_head _1656_guard_hist_clean _1656_guard_hist_failed _1656_guard_hist_payload
-unset _1656_run_platform_review_calls _1656_stub_pass_result _st
+unset _1656_run_platform_review_calls _1656_stub_pass_result _1656_stub_pr_head _1656_moved_head _st
 unset -f reviewer_loop_prior_history_payload_from_pr run_platform_review gh 2>/dev/null || true
 
 unset _1656_head _1656_ancestor _1656_unrelated _1656_cfg _1656_failed_hist
