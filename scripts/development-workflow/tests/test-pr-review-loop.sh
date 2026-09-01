@@ -2872,7 +2872,9 @@ _sf_s14="$(jq -n '{
 run_test "1652_s14_prechange_ends_run" "0 head_unknown" \
   "$(reviewer_loop_parse_small_findings_count "$(reviewer_loop_small_findings_prior_consecutive_count "$(_sf_ledger "$_sf_s14")" "$_sf_head")")"
 
-# Parser-risk addendum negatives
+# Parser-risk addendum (plan § Parser-risk addendum — one case per edge)
+run_test "1652_parser_delegates_not_gate" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "the handler delegates to another module" || echo NONE)"
 run_test "1652_parser_microscope" "NONE" \
   "$(reviewer_loop_finding_touches_contract_surface "look into the microscope carefully" || echo NONE)"
 run_test "1652_parser_failXclosed" "NONE" \
@@ -2881,8 +2883,22 @@ run_test "1652_parser_allow_list_unhyphenated" "NONE" \
   "$(reviewer_loop_finding_touches_contract_surface "the allow list is incomplete" || echo NONE)"
 run_test "1652_parser_empty_body" "NONE" \
   "$(reviewer_loop_finding_touches_contract_surface "" || echo NONE)"
+run_test "1652_parser_whitespace_only_body" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "   " || echo NONE)"
 run_test "1652_parser_case_insensitive" "fail_closed_semantics" \
   "$(reviewer_loop_finding_touches_contract_surface "FAIL-CLOSED required")"
+run_test "1652_parser_acceptance_criteria_title_case" "acceptance_criteria" \
+  "$(reviewer_loop_finding_touches_contract_surface "Acceptance Criteria AC-3 is missing")"
+run_test "1652_parser_code_fence_quoted_term" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface $'```\ndecision gate\n``` is wrong in the spec')"
+run_test "1652_parser_listed_phrase_in_url" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "see https://example.com/decision gate section for details")"
+run_test "1652_parser_bare_word_in_url" "NONE" \
+  "$(reviewer_loop_finding_touches_contract_surface "see https://example.com/scope/section for context" || echo NONE)"
+run_test "1652_parser_quoted_negation_still_matches" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface "this is not a decision gate but the matrix row is wrong")"
+run_test "1652_parser_multiline_term_on_last_line" "decision_gates_and_matrices" \
+  "$(reviewer_loop_finding_touches_contract_surface $'first line is cosmetic\ndecision matrix row is inconsistent')"
 
 unset _sf_head _sf_other _sf_finding _sf_ledger _sf_is_small
 unset _sf_spec _sf_a _sf_b _sf_c _sf_same_cosmetic _sf_same_contract _sf_nl_body
