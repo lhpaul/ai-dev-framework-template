@@ -10227,7 +10227,7 @@ if [ -n "$_pr_base" ]; then
   if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
     # Refresh the remote-tracking ref so git show reads the current target
     # branch config, not a potentially stale cached ref (#777).
-    git fetch origin "$_pr_base" 2>/dev/null || true
+    git fetch origin "$_pr_base" 2>/dev/null || true  # workflow-shell-guard: allow SH001 - best-effort refresh of remote base ref for config read
     if ! git show "origin/${_pr_base}:.ai-dev-workflow.yaml" > "$_PR_CONFIG_TMPFILE" 2>/dev/null; then
       rm -f "$_PR_CONFIG_TMPFILE"
       _PR_CONFIG_TMPFILE=""
