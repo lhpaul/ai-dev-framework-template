@@ -9631,12 +9631,9 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
   local local_ai_head_current=""
   local entry platform_name reviewed_head classification state
 
-  for platform_name in "${platforms[@]}"; do
-    if [ "$platform_name" = "local-ai-reviewer" ]; then
-      local_ai_configured=1
-      break
-    fi
-  done
+  if [ "$(expensive_gate_local_ai_configured)" = "1" ]; then
+    local_ai_configured=1
+  fi
 
   if [ "$local_ai_configured" -eq 1 ] && declare -p platform_reviewed_heads >/dev/null 2>&1; then
     for entry in "${platform_reviewed_heads[@]}"; do
@@ -9651,7 +9648,6 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
           not-current) local_ai_head_current=0 ;;
           not-reported) local_ai_head_current="" ;;
         esac
-        break
       fi
     done
   fi

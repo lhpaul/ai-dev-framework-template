@@ -17710,6 +17710,16 @@ run_test "1656_s5b_stale_head_not_current" "not-current" \
   "$(reviewer_loop_head_evidence_classify "dddddddddddddddddddddddddddddddddddddddd" "$_1656_fresh_head" | cut -d'|' -f1)"
 unset _1656_fresh_head
 
+# LOCAL_AI_* keys follow repository config, not invocation-filtered platforms[]
+platforms=(codex-github)
+repo_review_platforms=(local-ai-reviewer codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$_1656_head")
+loop_head_sha="$_1656_head"
+_1656_local_ai_keys="$(reviewer_loop_emit_local_ai_head_evidence_keys 2>/dev/null)"
+run_test "1656_s2c_local_ai_configured" "1" "$(printf '%s\n' "$_1656_local_ai_keys" | awk -F= '/^LOCAL_AI_CONFIGURED=/{print $2; exit}')"
+run_test "1656_s2c_local_ai_head_current" "1" "$(printf '%s\n' "$_1656_local_ai_keys" | awk -F= '/^LOCAL_AI_HEAD_CURRENT=/{print $2; exit}')"
+unset platforms repo_review_platforms platform_reviewed_heads loop_head_sha _1656_local_ai_keys
+
 # --- Guard integration (extracted function) ---
 _1656_guard_head="ffffffffffffffffffffffffffffffffffffffff"
 _1656_guard_hist_clean="$(jq -nc --arg head "$_1656_guard_head" '{
