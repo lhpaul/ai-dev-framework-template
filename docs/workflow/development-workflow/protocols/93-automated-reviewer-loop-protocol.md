@@ -298,6 +298,44 @@ Telemetry keys: `EXPENSIVE_GATE_PLATFORM`, `EXPENSIVE_GATE_RESULT`,
 carries an additive `expensive_gate` object (`platform`, `result`, `reason`,
 `head`).
 
+### Second local pass before the ready-phase gate (#1656)
+
+Immediately before `ensure_pr_ready_for_ready_phase`, when ready-phase platforms
+are configured, the loop evaluates whether the local reviewer's most recent
+verdict is **clean on `loop_head_sha`**. When it is not — because the head moved
+after a fix, prior findings remain, or the invocation omitted a configured local
+reviewer — the loop dispatches `local-ai-reviewer` **once** and requires that
+pass to be clean before converting the PR to ready or dispatching ready-phase
+reviewers. This is a **re-dispatch**, complementary to the expensive-reviewer
+gate's refusal when evidence is missing for other reasons.
+
+The condition reads the repository's configured platform list
+(`reviewer_loop_repo_configured_platforms`), not the invocation-filtered
+`platforms[]` array, so an explicit `--platform` run that omits a configured
+local reviewer still owes a pass when evidence is stale.
+
+**Reasons** (`LOCAL_SECOND_PASS_REASON`, always emitted):
+
+| Reason | Meaning |
+| --- | --- |
+| `not_required` | Current-head clean evidence exists; no pass ran |
+| `head_changed` | Verdict is clean on an older commit |
+| `prior_findings` | Verdict is not clean |
+| `no_evidence` | Configured local reviewer has not reported on this head |
+| `no_local_reviewer` | Repository has no local reviewer configured; gate proceeds |
+| `failed_for_head` | A prior pass failed on this head; refusing without dispatch |
+| `head_moved_during_pass` | Pass returned clean but PR head moved before the gate |
+| `local_pass_unavailable` | Pass skipped, escalated, or unparseable |
+
+Telemetry: `LOCAL_SECOND_PASS=0|1` and `LOCAL_SECOND_PASS_REASON=<reason>`.
+When a pass fails on an unchanged head, the ledger entry records
+`local_second_pass_failed_head`. The summary comment includes
+`**Second local pass:** second local pass: <reason> → <result>` when a pass ran.
+
+The pass does not increment `CYCLE_COUNT` or `TOTAL_CYCLE_COUNT`. A failed pass
+on an unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` on
+the next cycle (cross-invocation), without relying on cycle caps.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks
