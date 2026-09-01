@@ -3390,3 +3390,12 @@ _workflow_lowti_candidate_keys_json() {
   fi
   printf '%s\n' "${keys[@]}" | jq -R . | jq -sc .
 }
+
+# workflow_is_plan_document_path <path>
+#
+# True when path is an implementation-plan document under docs/specs/developments/.
+# Shared by check-documentation-stage-alignment.sh and local-ai-reviewer.sh (#1655).
+workflow_is_plan_document_path() {
+  local path="$1"
+  [[ "$path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]]
+}

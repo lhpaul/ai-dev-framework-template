@@ -15,7 +15,12 @@ mode="${LOCAL_AI_REVIEWER_MODE:-ordinary}"
 if [ "$mode" = "strict" ]; then
   prompt="${LOCAL_CODEX_REVIEWER_STRICT_PROMPT:-}"
   if [ -z "$prompt" ]; then
-    prompt="Apply the strict spec contract checks from the JSON context at ${CONTEXT_BUNDLE_PATH:?} (field strict_spec_checks). Inspect the specification under review against origin/${BASE_BRANCH:-develop}...HEAD. Return only a compact JSON object with fields: mode (must be the string strict_spec_checks), findings array. Each finding must include check (one of the checklist identifiers), path, line, and body (or message). Do not return a review verdict, result, severity, or clear_in_scope. If no strict check fires, return {\"mode\":\"strict_spec_checks\",\"findings\":[]}."
+    if [ -n "${CONTEXT_BUNDLE_PATH:-}" ] && [ -f "${CONTEXT_BUNDLE_PATH}" ] \
+        && jq -e 'has("strict_plan_checks")' "$CONTEXT_BUNDLE_PATH" >/dev/null 2>&1; then
+      prompt="Apply the strict plan contract checks from the JSON context at ${CONTEXT_BUNDLE_PATH:?} (field strict_plan_checks). Use strict_plan_documents and strict_plan_sources for the full plan and spec text at the reviewed head. Return only a compact JSON object with fields: mode (must be the string strict_plan_checks), findings array. Each finding must include check (one of the applied checklist identifiers), path (the plan document under review), line, and body (or message). Do not return a review verdict, result, severity, or clear_in_scope. If no strict check fires, return {\"mode\":\"strict_plan_checks\",\"findings\":[]}."
+    else
+      prompt="Apply the strict spec contract checks from the JSON context at ${CONTEXT_BUNDLE_PATH:?} (field strict_spec_checks). Inspect the specification under review against origin/${BASE_BRANCH:-develop}...HEAD. Return only a compact JSON object with fields: mode (must be the string strict_spec_checks), findings array. Each finding must include check (one of the checklist identifiers), path, line, and body (or message). Do not return a review verdict, result, severity, or clear_in_scope. If no strict check fires, return {\"mode\":\"strict_spec_checks\",\"findings\":[]}."
+    fi
   fi
 else
   prompt="${LOCAL_CODEX_REVIEWER_PROMPT:-}"

@@ -754,6 +754,15 @@ strict_spec_checks=""
 strict_spec_unknown_count=""
 strict_spec_reason=""
 strict_spec_summary_section=""
+# Strict-plan ledger globals (#1655)
+strict_plan_recorded=0
+strict_plan_state=""
+strict_plan_count=""
+strict_plan_checks=""
+strict_plan_applied=""
+strict_plan_unknown_count=""
+strict_plan_reason=""
+strict_plan_summary_section=""
 # Peer evidence collected during this invocation: "platform|result|reason".
 declare -a platform_peer_evidence=()
 
@@ -3644,7 +3653,7 @@ run_coderabbit_cli_review() {
   esac
 }
 
-# Forward STRICT_* keys from local-ai-reviewer.sh output unchanged.
+# Forward STRICT_SPEC_* and STRICT_PLAN_* keys from local-ai-reviewer.sh output unchanged.
 emit_local_ai_strict_spec_keys() {
   local script_output="$1"
   local line key
@@ -3653,6 +3662,9 @@ emit_local_ai_strict_spec_keys() {
     key="${line%%=*}"
     case "$key" in
       STRICT_SPEC_STATE|STRICT_SPEC_COUNT|STRICT_SPEC_CHECKS|STRICT_SPEC_UNKNOWN_COUNT|STRICT_SPEC_REASON)
+        print_kv "$key" "${line#*=}"
+        ;;
+      STRICT_PLAN_STATE|STRICT_PLAN_COUNT|STRICT_PLAN_CHECKS|STRICT_PLAN_APPLIED|STRICT_PLAN_UNKNOWN_COUNT|STRICT_PLAN_REASON)
         print_kv "$key" "${line#*=}"
         ;;
       STRICT_[0-9]*_CHECK|STRICT_[0-9]*_PATH|STRICT_[0-9]*_LINE|STRICT_[0-9]*_BODY)
@@ -3717,6 +3729,41 @@ capture_strict_spec_globals_from_output() {
       line="$(kv_value_default "STRICT_${idx}_LINE" "$script_output" "")"
       body="$(kv_value_default "STRICT_${idx}_BODY" "$script_output" "")"
       strict_spec_summary_section="${strict_spec_summary_section}
+- \`${check}\` ${path}:${line} — ${body}"
+      idx=$((idx + 1))
+    done
+  fi
+}
+
+capture_strict_plan_globals_from_output() {
+  local script_output="$1"
+  local state
+  local idx
+  local check path line body
+  state="$(kv_value_default STRICT_PLAN_STATE "$script_output" "")"
+  if [ -z "$state" ]; then
+    return 0
+  fi
+  strict_plan_recorded=1
+  strict_plan_state="$state"
+  strict_plan_count="$(kv_value_default STRICT_PLAN_COUNT "$script_output" "")"
+  strict_plan_checks="$(kv_value_default STRICT_PLAN_CHECKS "$script_output" "")"
+  strict_plan_applied="$(kv_value_default STRICT_PLAN_APPLIED "$script_output" "")"
+  strict_plan_unknown_count="$(kv_value_default STRICT_PLAN_UNKNOWN_COUNT "$script_output" "")"
+  strict_plan_reason="$(kv_value_default STRICT_PLAN_REASON "$script_output" "")"
+  strict_plan_summary_section=""
+  if [ "$state" = "applied" ] && [ -n "$strict_plan_count" ] && [ "$strict_plan_count" -gt 0 ]; then
+    strict_plan_summary_section="
+
+**Strict plan findings (non-blocking):** applied checks: \`${strict_plan_applied:-}\`"
+    idx=1
+    while true; do
+      check="$(kv_value_default "STRICT_${idx}_CHECK" "$script_output" "")"
+      [ -z "$check" ] && break
+      path="$(kv_value_default "STRICT_${idx}_PATH" "$script_output" "")"
+      line="$(kv_value_default "STRICT_${idx}_LINE" "$script_output" "")"
+      body="$(kv_value_default "STRICT_${idx}_BODY" "$script_output" "")"
+      strict_plan_summary_section="${strict_plan_summary_section}
 - \`${check}\` ${path}:${line} — ${body}"
       idx=$((idx + 1))
     done
@@ -9294,6 +9341,13 @@ reviewer_loop_history_build_entry() {
     --arg strictChecks "${strict_spec_checks:-}" \
     --arg strictUnknown "${strict_spec_unknown_count:-}" \
     --arg strictReason "${strict_spec_reason:-}" \
+    --argjson strictPlanRecorded "${strict_plan_recorded:-0}" \
+    --arg strictPlanState "${strict_plan_state:-}" \
+    --arg strictPlanCount "${strict_plan_count:-}" \
+    --arg strictPlanChecks "${strict_plan_checks:-}" \
+    --arg strictPlanApplied "${strict_plan_applied:-}" \
+    --arg strictPlanUnknown "${strict_plan_unknown_count:-}" \
+    --arg strictPlanReason "${strict_plan_reason:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -9345,6 +9399,31 @@ reviewer_loop_history_build_entry() {
                   end
               elif $strictState == "unavailable" then
                 . + { reason: $strictReason }
+              else
+                .
+              end
+          )
+        }
+      else
+        .
+      end
+    | if $strictPlanRecorded == 1 then
+        . + {
+          strict_plan: (
+            { state: $strictPlanState }
+            | if $strictPlanState == "applied" then
+                . + {
+                  count: ($strictPlanCount | tonumber),
+                  checks: ($strictPlanChecks | if . == "" then [] else (split(",") | map(select(length > 0))) end),
+                  applied: ($strictPlanApplied | if . == "" then [] else (split(",") | map(select(length > 0))) end)
+                }
+                | if ($strictPlanUnknown | length) > 0 then
+                    . + { unknown_count: ($strictPlanUnknown | tonumber) }
+                  else
+                    .
+                  end
+              elif ($strictPlanState == "unavailable" or $strictPlanState == "not_applicable") then
+                . + { reason: $strictPlanReason }
               else
                 .
               end
@@ -11280,6 +11359,7 @@ for index in "${!platforms[@]}"; do
   emit_prefixed_platform_output "$platform_index" "$platform_output"
   if [ "$platform_name" = "local-ai-reviewer" ]; then
     capture_strict_spec_globals_from_output "$platform_output"
+    capture_strict_plan_globals_from_output "$platform_output"
   fi
   # Record a human-readable display token for the PR summary comment.
   _prt_reason="$platform_reason"
@@ -11887,7 +11967,7 @@ ${_attr_line}"
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${regression_label_section}
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
