@@ -134,7 +134,7 @@ of `unreadable`.
 
 ## P13 — evidence file without review_doctrine object
 
-**Plant**: `local-ai-reviewer.sh:1034-1040` (`write_evidence_file`) — omit
+**Plant**: `local-ai-reviewer.sh:1044-1048` (`write_evidence_file`) — omit
 `review_doctrine` object from evidence JSON.
 
 **Fail**: `test-local-ai-reviewer.sh` → FAIL `1654_s8a_evidence_state` while kv
