@@ -501,6 +501,11 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
+  LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
+  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable
+    (head_moved_during_pass: live PR head != loop_head_sha on a proceed path,
+    including not_required/no_local_reviewer when no pass ran, and after a
+    clean pass; aggregate REASON remains head_moved_during_run)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
   POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
     compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
@@ -858,16 +863,37 @@ expensive_gate_resolve_max_deferrals() {
 
 # expensive_gate_local_ai_configured
 #
-# Returns 1 when local-ai-reviewer is in the resolved platforms list, else 0.
-# Derived from in-loop state — never from the LOCAL_AI_CONFIGURED env/stdout key.
+# Returns 1 when local-ai-reviewer is configured for the repository (from the
+# repository's configured platform list, not invocation-filtered platforms[]),
+# else 0 (#1656 / #1649 composition).
 expensive_gate_local_ai_configured() {
-  local platform_name
-  for platform_name in "${platforms[@]:-}"; do
-    if [ "$platform_name" = "local-ai-reviewer" ]; then
-      printf '1\n'
-      return 0
-    fi
-  done
+  local configured_line
+  if declare -p repo_review_platforms >/dev/null 2>&1 \
+      && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
+    for configured_line in "${repo_review_platforms[@]}"; do
+      configured_line="$(trim "$configured_line")"
+      if [ "$configured_line" = "local-ai-reviewer" ]; then
+        printf '1\n'
+        return 0
+      fi
+    done
+  elif declare -p platforms >/dev/null 2>&1; then
+    # Harness fallback when repo_review_platforms was not populated.
+    for configured_line in "${platforms[@]:-}"; do
+      if [ "$configured_line" = "local-ai-reviewer" ]; then
+        printf '1\n'
+        return 0
+      fi
+    done
+  else
+    while IFS= read -r configured_line; do
+      configured_line="$(trim "$configured_line")"
+      if [ "$configured_line" = "local-ai-reviewer" ]; then
+        printf '1\n'
+        return 0
+      fi
+    done < <(reviewer_loop_repo_configured_platforms)
+  fi
   printf '0\n'
 }
 
@@ -880,6 +906,7 @@ expensive_gate_local_ai_head_current() {
   local head_sha="${1:-}"
   local entry platform_name reviewed_head classification state
   local found=0
+  local last_reviewed_head=""
 
   if ! declare -p platform_reviewed_heads >/dev/null 2>&1; then
     printf '\n'
@@ -891,16 +918,20 @@ expensive_gate_local_ai_head_current() {
     reviewed_head="${entry#*:}"
     if [ "$platform_name" = "local-ai-reviewer" ]; then
       found=1
-      classification="$(reviewer_loop_head_evidence_classify "$reviewed_head" "$head_sha")"
-      state="${classification%%|*}"
-      case "$state" in
-        current) printf '1\n' ;;
-        not-current) printf '0\n' ;;
-        *) printf '\n' ;;
-      esac
-      return 0
+      last_reviewed_head="$reviewed_head"
     fi
   done
+
+  if [ "$found" -eq 1 ]; then
+    classification="$(reviewer_loop_head_evidence_classify "$last_reviewed_head" "$head_sha")"
+    state="${classification%%|*}"
+    case "$state" in
+      current) printf '1\n' ;;
+      not-current) printf '0\n' ;;
+      *) printf '\n' ;;
+    esac
+    return 0
+  fi
 
   if [ "$found" -eq 0 ]; then
     printf '\n'
@@ -940,15 +971,19 @@ expensive_gate_peer_evidence_acceptable() {
 expensive_gate_lookup_peer_evidence() {
   local platform="$1"
   local entry peer_name rest
+  local last_rest=""
 
   for entry in "${platform_peer_evidence[@]:-}"; do
     peer_name="${entry%%|*}"
     rest="${entry#*|}"
     if [ "$peer_name" = "$platform" ]; then
-      printf '%s\n' "$rest"
-      return 0
+      last_rest="$rest"
     fi
   done
+  if [ -n "$last_rest" ]; then
+    printf '%s\n' "$last_rest"
+    return 0
+  fi
   printf '\n'
 }
 
@@ -8023,6 +8058,69 @@ reviewer_loop_platform_result_record_json() {
     '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason}'
 }
 
+# reviewer_loop_replace_current_round_platform_record <platform_name>
+#
+# Drop prior current-round records for one platform so a second local pass (#1656)
+# replaces stale first-pass evidence instead of appending beside it.
+reviewer_loop_replace_current_round_platform_record() {
+  local platform_name="${1:-}"
+  local entry record kept_heads=() kept_records=() kept_peer=() kept_tokens=()
+  local blocking_name kept_blocking=()
+
+  [ -n "$platform_name" ] || return 0
+
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 \
+      && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
+    for entry in "${platform_reviewed_heads[@]}"; do
+      if [ "${entry%%:*}" != "$platform_name" ]; then
+        kept_heads+=("$entry")
+      fi
+    done
+    platform_reviewed_heads=("${kept_heads[@]+"${kept_heads[@]}"}")
+  fi
+
+  if declare -p platform_result_records >/dev/null 2>&1 \
+      && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    for record in "${platform_result_records[@]}"; do
+      if [ "$(printf '%s' "$record" | jq -r '.platform // ""')" != "$platform_name" ]; then
+        kept_records+=("$record")
+      fi
+    done
+    platform_result_records=("${kept_records[@]+"${kept_records[@]}"}")
+  fi
+
+  if declare -p platform_peer_evidence >/dev/null 2>&1 \
+      && [ "${#platform_peer_evidence[@]}" -gt 0 ]; then
+    for entry in "${platform_peer_evidence[@]}"; do
+      if [ "${entry%%|*}" != "$platform_name" ]; then
+        kept_peer+=("$entry")
+      fi
+    done
+    platform_peer_evidence=("${kept_peer[@]+"${kept_peer[@]}"}")
+  fi
+
+  if declare -p platform_result_tokens >/dev/null 2>&1 \
+      && [ "${#platform_result_tokens[@]}" -gt 0 ]; then
+    for entry in "${platform_result_tokens[@]}"; do
+      if [ "${entry%%:*}" != "$platform_name" ]; then
+        kept_tokens+=("$entry")
+      fi
+    done
+    platform_result_tokens=("${kept_tokens[@]+"${kept_tokens[@]}"}")
+  fi
+
+  if declare -p platform_blocking_outputs >/dev/null 2>&1 \
+      && [ "${#platform_blocking_outputs[@]}" -gt 0 ]; then
+    for entry in "${platform_blocking_outputs[@]}"; do
+      blocking_name="${entry%%$'\036'*}"
+      if [ "$blocking_name" != "$platform_name" ]; then
+        kept_blocking+=("$entry")
+      fi
+    done
+    platform_blocking_outputs=("${kept_blocking[@]+"${kept_blocking[@]}"}")
+  fi
+}
+
 # reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
 # configured_platforms is newline-delimited. Membership uses grep -Fxq here-string.
 # When the current invocation filters platforms (--platform), prior PR history can
@@ -8052,7 +8150,7 @@ reviewer_loop_local_latest_verdict() {
               head_sha: (
                 ($entry.reviewed_heads // [])
                 | map(select(.platform == "local-ai-reviewer"))
-                | first
+                | last
                 | .reviewed_head // ""
               ),
               iteration: ($entry.iteration // 0)})
@@ -8070,6 +8168,505 @@ reviewer_loop_local_latest_verdict() {
         {outcome: "not_yet_run", head_sha: "", iteration: 0}
       end
     | if .outcome == "not_configured" then .outcome = "unavailable" else . end'
+}
+
+# reviewer_loop_repo_configured_platforms
+#
+# Newline-delimited repository-configured review.on_draft.runner platforms,
+# resolved unconditionally from the workflow config — never from the
+# invocation-filtered platforms[] array (#1656).
+reviewer_loop_repo_configured_platforms() {
+  local line
+  if declare -p repo_review_platforms >/dev/null 2>&1 \
+      && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
+    for line in "${repo_review_platforms[@]}"; do
+      line="$(trim "$line")"
+      [ -n "$line" ] && printf '%s\n' "$line"
+    done
+    return 0
+  fi
+  local cfg="${config_file:-$(workflow_config_file)}"
+  if [ ! -f "$cfg" ]; then
+    return 0
+  fi
+  while IFS= read -r line; do
+    line="$(trim "$line")"
+    [ -n "$line" ] && printf '%s\n' "$line"
+  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$cfg")
+}
+
+# reviewer_loop_compose_current_round_payload <history_payload> <iteration>
+reviewer_loop_compose_current_round_payload() {
+  local history_payload="${1:-{\}}"
+  local iteration="${2:-0}"
+  local results_json heads_json
+
+  results_json='[]'
+  if declare -p platform_result_records >/dev/null 2>&1 \
+      && [ "${#platform_result_records[@]}" -gt 0 ]; then
+    results_json="$(printf '%s\n' "${platform_result_records[@]}" | jq -s -c '.')"
+  fi
+
+  if declare -p platform_reviewed_heads >/dev/null 2>&1 \
+      && [ "${#platform_reviewed_heads[@]}" -gt 0 ]; then
+    heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
+  else
+    heads_json="$(reviewer_loop_head_evidence_json "${loop_head_sha:-}")"
+  fi
+
+  printf '%s' "${history_payload:-{\}}" | jq -c \
+    --argjson iteration "$iteration" \
+    --argjson results "$results_json" \
+    --argjson heads "$heads_json" \
+    '
+      . as $root
+      | ($root.entries // []) as $entries
+      | $root
+      | .schema = (.schema // "reviewer_loop_history.v1")
+      | .entries = ($entries + [{
+          iteration: $iteration,
+          platform_results: $results,
+          reviewed_heads: $heads
+        }])
+    '
+}
+
+# reviewer_loop_prior_history_payload_from_pr <pr_number>
+reviewer_loop_prior_history_payload_from_pr() {
+  local pr_number_arg="${1:-}"
+  local repo="" record="" body="" json="" payload=""
+
+  if [ -z "$pr_number_arg" ]; then
+    printf '%s\n' '{"schema":"reviewer_loop_history.v1","entries":[]}'
+    return 0
+  fi
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    jq -nc --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      '{schema: $schema, history_status: "unavailable", history_unavailable_reason: "repo_unavailable", entries: []}'
+    return 0
+  fi
+  if ! record="$(
+    set -o pipefail
+    gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+      | reviewer_loop_history_select_latest_summary_record
+  )"; then
+    jq -nc --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      '{schema: $schema, history_status: "unavailable", history_unavailable_reason: "comment_fetch_failed", entries: []}'
+    return 0
+  fi
+  body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  json="$(printf '%s' "$body" | reviewer_loop_history_extract_latest_json)"
+  if [ -n "$json" ] \
+      && payload="$(printf '%s' "$json" | jq -c '.' 2>/dev/null)" \
+      && printf '%s' "$payload" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+        '.schema == $schema and ((.entries | type) == "array")' >/dev/null 2>&1; then
+    printf '%s\n' "$payload"
+    return 0
+  fi
+  if printf '%s' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    jq -nc --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      '{schema: $schema, history_status: "unavailable", history_unavailable_reason: "prior_unavailable", entries: []}'
+    return 0
+  fi
+  printf '%s\n' '{"schema":"reviewer_loop_history.v1","entries":[]}'
+}
+
+# reviewer_loop_local_second_pass_failed_for_head <history_payload> <head_sha>
+reviewer_loop_local_second_pass_failed_for_head() {
+  local payload="${1:-}" head="${2:-}"
+  printf '%s' "$payload" | jq -r --arg head "$head" '
+    [(.entries // [])[]
+      | select((.local_second_pass_failed_head // "") == $head)
+    ] | length
+  '
+}
+
+# reviewer_loop_local_pass_required <history_payload> <loop_head_sha> <configured_platforms>
+reviewer_loop_local_pass_required() {
+  local payload="${1:-}" head="${2:-}" configured="${3:-}"
+  local verdict outcome verdict_head
+
+  # Honor the repository configured list before #1651's selector: history can still
+  # name local-ai-reviewer even when this repository no longer configures it.
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf 'no_local_reviewer\n'
+    return 0
+  fi
+
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
+
+  case "$outcome" in
+    not_configured) printf 'no_local_reviewer\n'; return 0 ;;
+    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    clean) ;;
+    *) printf 'prior_findings\n'; return 0 ;;
+  esac
+
+  if [ -n "$head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'not_required\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+
+# reviewer_loop_second_local_pass_gate_result <pass_result> <pass_reason>
+# Prints tab-separated: aggregate_result<TAB>aggregate_reason
+reviewer_loop_second_local_pass_gate_result() {
+  local pass_result="${1:-}" pass_reason="${2:-}"
+
+  case "$pass_result" in
+    clean) printf 'proceed\t\n' ;;
+    needs_fixes) printf 'needs_fixes\t%s\n' "${pass_reason:-}" ;;
+    escalate) printf 'escalate\t%s\n' "${pass_reason:-}" ;;
+    skipped|needs_rerun|*)
+      printf 'escalate\tlocal_pass_unavailable\n' ;;
+  esac
+}
+
+# reviewer_loop_second_local_pass_confirm_live_head <pr_number>
+#
+# Re-reads the live PR head and compares it to loop_head_sha before any
+# proceed-to-ready path. Fail closed on an unreadable head or a mismatch so
+# ready-phase reviewers cannot start on a commit with no local evidence.
+# Returns 0 when the live head matches; 1 after setting aggregate_* on failure.
+reviewer_loop_second_local_pass_confirm_live_head() {
+  local pr_number_arg="${1:-}"
+  local _sl_head_now="" _sl_gh_st=0
+
+  set +e
+  _sl_head_now="$(gh pr view "$pr_number_arg" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+  _sl_gh_st=$?
+  set -e
+  if [ "$_sl_gh_st" -ne 0 ] || [ -z "$_sl_head_now" ]; then
+    local_second_pass_reason="local_pass_unavailable"
+    aggregate_result="escalate"
+    aggregate_reason="local_pass_unavailable"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
+  fi
+  if [ -n "$loop_head_sha" ] && [ "$_sl_head_now" != "$loop_head_sha" ]; then
+    local_second_pass_reason="head_moved_during_pass"
+    aggregate_result="needs_fixes"
+    aggregate_reason="head_moved_during_run"
+    aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=head_moved_during_run\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=1
+    last_platform="local-ai-reviewer"
+    return 1
+  fi
+  return 0
+}
+
+# reviewer_loop_second_local_pass_before_ready_gate <pr_number>
+#
+# Runs the #1656 guard immediately before ensure_pr_ready_for_ready_phase.
+# Returns 0 to proceed to the ready gate, 1 when the platform loop must break
+# (aggregate_result already set).
+reviewer_loop_second_local_pass_before_ready_gate() {
+  local pr_number_arg="${1:-}"
+  local _sl_prior_payload _sl_next_iteration _sl_configured _sl_composed _sl_required
+  local _sl_output _sl_status _sl_platform_index _sl_pass_result _sl_pass_reason
+  local _sl_gate_result _sl_gate_reason _sl_reviewed_head _sl_head_state
+
+  local_second_pass_reason="not_required"
+  if [ "$phase_after_clean_enabled" -ne 1 ]; then
+    return 0
+  fi
+
+  _sl_prior_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+  _sl_next_iteration="$(printf '%s\n' "$_sl_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _sl_next_iteration=1
+  [[ "$_sl_next_iteration" =~ ^[0-9]+$ ]] || _sl_next_iteration=1
+  _sl_configured="$(reviewer_loop_repo_configured_platforms)"
+  _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
+  _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
+  local_second_pass_reason="$_sl_required"
+
+  if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
+    if reviewer_loop_second_local_pass_confirm_live_head "$pr_number_arg"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if [ "$(printf '%s' "$_sl_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ]; then
+    local_second_pass_reason="local_pass_unavailable"
+    aggregate_result="escalate"
+    aggregate_reason="local_pass_unavailable"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
+  fi
+
+  if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
+    local_second_pass=0
+    local_second_pass_reason="failed_for_head"
+    aggregate_result="escalate"
+    aggregate_reason="failed_for_head"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=failed_for_head\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
+  fi
+
+  local_second_pass=1
+  set +e
+  _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$poll_interval" "$max_wait")"
+  _sl_status=$?
+  set -e
+  _sl_platform_index=$((${#platforms[@]} + 1))
+  reviewer_loop_platform_loop_should_break=0
+  reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_output" "$_sl_status" 0
+  _sl_pass_result="$reviewer_loop_last_platform_result"
+  _sl_pass_reason="$reviewer_loop_last_platform_reason"
+  _sl_pass_output="$reviewer_loop_last_platform_output"
+  _sl_pass_status="$reviewer_loop_last_platform_status"
+  local_second_pass_result="$_sl_pass_result"
+
+  if [ "$_sl_pass_result" = "clean" ]; then
+    _sl_reviewed_head="$(kv_value_default REVIEWED_HEAD "$_sl_output" "")"
+    _sl_head_state="$(reviewer_loop_head_evidence_classify "$_sl_reviewed_head" "$loop_head_sha")"
+    _sl_head_state="${_sl_head_state%%|*}"
+    if [ "$_sl_head_state" != "current" ]; then
+      local_second_pass_reason="local_pass_unavailable"
+      aggregate_result="escalate"
+      aggregate_reason="local_pass_unavailable"
+      aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+      aggregate_status=2
+      last_platform="local-ai-reviewer"
+      return 1
+    fi
+    if ! reviewer_loop_second_local_pass_confirm_live_head "$pr_number_arg"; then
+      return 1
+    fi
+    return 0
+  fi
+
+  IFS=$'\t' read -r _sl_gate_result _sl_gate_reason < <(reviewer_loop_second_local_pass_gate_result "$_sl_pass_result" "$_sl_pass_reason")
+  aggregate_result="$_sl_gate_result"
+  aggregate_reason="$_sl_gate_reason"
+  if [ "$_sl_gate_result" = "escalate" ]; then
+    local_second_pass_reason="local_pass_unavailable"
+  fi
+  local_second_pass_failed_head_record="$loop_head_sha"
+  if [ "$_sl_gate_result" = "needs_fixes" ]; then
+    aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
+      "${_sl_gate_reason:-}" \
+      "$(kv_value_default COMMENT_COUNT "$_sl_pass_output" 0)" \
+      "$(kv_value_default BLOCKING_COUNT "$_sl_pass_output" 0)" \
+      "$(kv_value_default SUGGESTION_COUNT "$_sl_pass_output" 0)")"
+    aggregate_status="$_sl_pass_status"
+  else
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${_sl_gate_reason:-local_pass_unavailable}")"
+    aggregate_status=2
+  fi
+  last_platform="local-ai-reviewer"
+  return 1
+}
+
+# reviewer_loop_process_platform_output <platform_name> <platform_index> <output> <status> [update_aggregate]
+#
+# Shared post-dispatch processor for the platform loop and the second local pass
+# guard (#1656). When update_aggregate is 0, only records telemetry without
+# touching aggregate_* (guard reads pass result separately).
+reviewer_loop_process_platform_output() {
+  local platform_name="$1"
+  local platform_index="$2"
+  local platform_output="$3"
+  local platform_status="$4"
+  local update_aggregate="${5:-1}"
+  local platform_result platform_comment_count platform_blocking_count
+  local platform_suggestion_count platform_advisory_labels platform_reason
+  local _prt_reason _prt_display_override _prt_disp _reviewed_head
+  local _policy_status_available _policy_bucket _policy_needs_human
+  local _policy_disposition _policy_verdict _policy_analysis_status
+  local _policy_rating _policy_has_reviewer _policy_note
+  local _blocking_path _blocking_finding
+
+  platform_result="$(kv_value_default RESULT "$platform_output" skipped)"
+  platform_comment_count="$(kv_value_default COMMENT_COUNT "$platform_output" 0)"
+  platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
+  platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
+  platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
+  platform_reason="$(kv_value_default REASON "$platform_output" "")"
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    reviewer_loop_replace_current_round_platform_record "$platform_name"
+  fi
+  platform_peer_evidence+=("${platform_name}|${platform_result}|${platform_reason}")
+  if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
+    reviewer_failed_required=1
+  fi
+
+  total_comment_count=$((total_comment_count + platform_comment_count))
+  total_blocking_count=$((total_blocking_count + platform_blocking_count))
+  total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+  while IFS= read -r _blocking_path; do
+    [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
+  done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
+  unset _blocking_path
+  while IFS= read -r _blocking_finding; do
+    [ -n "$_blocking_finding" ] && aggregate_blocking_findings+=("$_blocking_finding")
+  done < <(reviewer_loop_blocking_findings_from_output "$platform_output" "$platform_blocking_count" "$platform_name")
+  unset _blocking_finding
+  if [ -n "$platform_advisory_labels" ]; then
+    if [ -n "$aggregate_advisory_labels" ]; then
+      aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
+    else
+      aggregate_advisory_labels="$platform_advisory_labels"
+    fi
+  fi
+  last_platform="$platform_name"
+
+  print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
+  print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
+  emit_prefixed_platform_output "$platform_index" "$platform_output"
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    capture_strict_spec_globals_from_output "$platform_output"
+    capture_strict_plan_globals_from_output "$platform_output"
+  fi
+  _prt_reason="$platform_reason"
+  _prt_display_override="$(kv_value_default DISPLAY_RESULT "$platform_output" "")"
+  if [ -n "$_prt_display_override" ]; then
+    _prt_disp="$_prt_display_override"
+  else
+    case "$platform_result" in
+      clean)      _prt_disp="clean" ;;
+      skipped)
+        if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
+          _prt_disp="unavailable"
+        else
+          _prt_disp="skipped"
+        fi
+        ;;
+      escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
+      needs_fixes) _prt_disp="needs_fixes" ;;
+      *)           _prt_disp="$platform_result" ;;
+    esac
+  fi
+  platform_result_tokens+=("${platform_name}:${_prt_disp}")
+  _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
+  platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
+  unset _reviewed_head
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
+  platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
+
+  _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
+  if [ "$_policy_status_available" = "1" ]; then
+    _policy_bucket="$(kv_value_default POLICY_BUCKET "$platform_output" "")"
+    _policy_needs_human="$(kv_value_default POLICY_NEEDS_HUMAN "$platform_output" "")"
+    _policy_disposition="$(kv_value_default POLICY_DISPOSITION "$platform_output" "")"
+    _policy_verdict="$(kv_value_default POLICY_VERDICT "$platform_output" "")"
+    _policy_analysis_status="$(kv_value_default POLICY_ANALYSIS_STATUS "$platform_output" "")"
+    _policy_rating="$(kv_value_default POLICY_RATING "$platform_output" "")"
+    _policy_has_reviewer="$(kv_value_default POLICY_HAS_REVIEWER "$platform_output" "")"
+    _policy_note="${platform_name}:"
+    [ -n "$_policy_bucket" ] && _policy_note="${_policy_note} bucket=${_policy_bucket};"
+    [ -n "$_policy_needs_human" ] && _policy_note="${_policy_note} needsHumanReview=${_policy_needs_human};"
+    [ -n "$_policy_disposition" ] && _policy_note="${_policy_note} disposition=${_policy_disposition};"
+    [ -n "$_policy_verdict" ] && _policy_note="${_policy_note} verdict=${_policy_verdict};"
+    [ -n "$_policy_analysis_status" ] && _policy_note="${_policy_note} analysisStatus=${_policy_analysis_status};"
+    [ -n "$_policy_rating" ] && _policy_note="${_policy_note} rating=${_policy_rating};"
+    [ -n "$_policy_has_reviewer" ] && _policy_note="${_policy_note} hasReviewer=${_policy_has_reviewer};"
+    platform_policy_status_notes+=("$_policy_note")
+  fi
+  unset _prt_reason _prt_display_override _prt_disp
+  unset _policy_status_available _policy_bucket _policy_needs_human
+  unset _policy_disposition _policy_verdict _policy_analysis_status
+  unset _policy_rating _policy_has_reviewer _policy_note
+
+  if [ "$compare_mode" -eq 1 ]; then
+    compare_verdicts+=("$platform_name" "$(normalize_platform_verdict "$platform_result" "$platform_output")")
+  fi
+
+  reviewer_loop_last_platform_result="$platform_result"
+  reviewer_loop_last_platform_reason="$platform_reason"
+  reviewer_loop_last_platform_output="$platform_output"
+  reviewer_loop_last_platform_status="$platform_status"
+
+  [ "$update_aggregate" -eq 1 ] || return 0
+
+  case "$platform_result" in
+    clean)
+      aggregate_result="clean"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      ;;
+    skipped)
+      if [ "$aggregate_result" = "skipped" ]; then
+        aggregate_output="$platform_output"
+        aggregate_status=$platform_status
+      fi
+      aggregate_result="clean"
+      ;;
+    waiting_on_reviewer)
+      aggregate_result="$platform_result"
+      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        reviewer_loop_platform_loop_should_break=1
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
+      ;;
+    needs_fixes|escalate)
+      if [ "$phase_after_clean_enabled" -eq 1 ] \
+          && [ "$phase_after_clean_started" -eq 1 ] \
+          && is_phase_after_clean_platform "$platform_name"; then
+        phase_after_clean_net_new_blocker=1
+        phase_after_clean_blocking_platform="$platform_name"
+      fi
+      aggregate_result="$platform_result"
+      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        reviewer_loop_platform_loop_should_break=1
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
+      ;;
+    needs_rerun)
+      aggregate_result="needs_rerun"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        reviewer_loop_platform_loop_should_break=1
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="needs_rerun"
+        compare_first_blocking_reason=""
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
+      ;;
+    *)
+      aggregate_result="escalate"
+      aggregate_reason="unknown-platform-result"
+      aggregate_output="$platform_output"
+      aggregate_status=2
+      if [ "$compare_mode" -eq 0 ]; then
+        reviewer_loop_platform_loop_should_break=1
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="escalate"
+        compare_first_blocking_reason="unknown-platform-result"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=2
+      fi
+      ;;
+  esac
 }
 
 # reviewer_loop_local_evidence_state <local_verdict_json> <reviewed_head>
@@ -9183,12 +9780,9 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
   local local_ai_head_current=""
   local entry platform_name reviewed_head classification state
 
-  for platform_name in "${platforms[@]}"; do
-    if [ "$platform_name" = "local-ai-reviewer" ]; then
-      local_ai_configured=1
-      break
-    fi
-  done
+  if [ "$(expensive_gate_local_ai_configured)" = "1" ]; then
+    local_ai_configured=1
+  fi
 
   if [ "$local_ai_configured" -eq 1 ] && declare -p platform_reviewed_heads >/dev/null 2>&1; then
     for entry in "${platform_reviewed_heads[@]}"; do
@@ -9203,7 +9797,6 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
           not-current) local_ai_head_current=0 ;;
           not-reported) local_ai_head_current="" ;;
         esac
-        break
       fi
     done
   fi
@@ -9348,6 +9941,9 @@ reviewer_loop_history_build_entry() {
     --arg strictPlanApplied "${strict_plan_applied:-}" \
     --arg strictPlanUnknown "${strict_plan_unknown_count:-}" \
     --arg strictPlanReason "${strict_plan_reason:-}" \
+    --argjson localSecondPass "${local_second_pass:-0}" \
+    --arg localSecondPassReason "${local_second_pass_reason:-not_required}" \
+    --arg localSecondPassFailedHead "${local_second_pass_failed_head_record:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -9429,6 +10025,15 @@ reviewer_loop_history_build_entry() {
               end
           )
         }
+      else
+        .
+      end
+    | . + {
+        local_second_pass: ($localSecondPass == 1),
+        local_second_pass_reason: $localSecondPassReason
+      }
+    | if ($localSecondPassFailedHead | length) > 0 then
+        . + {local_second_pass_failed_head: $localSecondPassFailedHead}
       else
         .
       end'
@@ -11129,6 +11734,15 @@ phase_after_clean_net_new_blocker=0
 phase_after_clean_blocking_platform=""
 phase_after_clean_gate_result="not_started"
 phase_after_clean_skip_reason=""
+local_second_pass=0
+local_second_pass_reason="not_required"
+local_second_pass_result=""
+local_second_pass_failed_head_record=""
+reviewer_loop_platform_loop_should_break=0
+reviewer_loop_last_platform_result=""
+reviewer_loop_last_platform_reason=""
+reviewer_loop_last_platform_output=""
+reviewer_loop_last_platform_status=0
 if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
   phase_after_clean_enabled=1
 fi
@@ -11174,6 +11788,12 @@ for index in "${!platforms[@]}"; do
       && [ "$phase_after_clean_started" -eq 0 ] \
       && is_phase_after_clean_platform "$platform_name"; then
     if [ "$compare_mode" -eq 0 ] || [ -z "$compare_first_blocking_result" ]; then
+      # Issue #1656: second local pass before expensive preflight and gh pr ready.
+      if reviewer_loop_second_local_pass_before_ready_gate "$pr_number"; then
+        :
+      else
+        break
+      fi
       # Issue #1649: preflight expensive ready-phase gates BEFORE gh pr ready.
       # Codex (and similar) may auto-start when a draft is marked ready; running
       # ensure_pr_ready first would spend that reviewer before local/thread/
@@ -11322,193 +11942,11 @@ for index in "${!platforms[@]}"; do
   platform_status=$?
   set -e
 
-  platform_result="$(kv_value_default RESULT "$platform_output" skipped)"
-  platform_comment_count="$(kv_value_default COMMENT_COUNT "$platform_output" 0)"
-  platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
-  platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
-  platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
-  platform_reason="$(kv_value_default REASON "$platform_output" "")"
-  # Record peer evidence for subsequent expensive-reviewer gates in this run.
-  platform_peer_evidence+=("${platform_name}|${platform_result}|${platform_reason}")
-  if reviewer_failed_label_required_for_result "$platform_result" "$platform_reason"; then
-    reviewer_failed_required=1
+  reviewer_loop_platform_loop_should_break=0
+  reviewer_loop_process_platform_output "$platform_name" "$platform_index" "$platform_output" "$platform_status" 1
+  if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
+    break
   fi
-
-  total_comment_count=$((total_comment_count + platform_comment_count))
-  total_blocking_count=$((total_blocking_count + platform_blocking_count))
-  total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
-  while IFS= read -r _blocking_path; do
-    [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
-  done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
-  unset _blocking_path
-  while IFS= read -r _blocking_finding; do
-    [ -n "$_blocking_finding" ] && aggregate_blocking_findings+=("$_blocking_finding")
-  done < <(reviewer_loop_blocking_findings_from_output "$platform_output" "$platform_blocking_count" "$platform_name")
-  unset _blocking_finding
-  if [ -n "$platform_advisory_labels" ]; then
-    if [ -n "$aggregate_advisory_labels" ]; then
-      aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
-    else
-      aggregate_advisory_labels="$platform_advisory_labels"
-    fi
-  fi
-  last_platform="$platform_name"
-
-  print_kv "PLATFORM_${platform_index}_NAME" "$platform_name"
-  print_kv "PLATFORM_${platform_index}_RESULT" "$platform_result"
-  emit_prefixed_platform_output "$platform_index" "$platform_output"
-  if [ "$platform_name" = "local-ai-reviewer" ]; then
-    capture_strict_spec_globals_from_output "$platform_output"
-    capture_strict_plan_globals_from_output "$platform_output"
-  fi
-  # Record a human-readable display token for the PR summary comment.
-  _prt_reason="$platform_reason"
-  _prt_display_override="$(kv_value_default DISPLAY_RESULT "$platform_output" "")"
-  if [ -n "$_prt_display_override" ]; then
-    _prt_disp="$_prt_display_override"
-  else
-    case "$platform_result" in
-      clean)      _prt_disp="clean" ;;
-      skipped)
-        if [ "$_prt_reason" = "unavailable" ] || [ "$_prt_reason" = "not_configured" ]; then
-          _prt_disp="unavailable"
-        else
-          _prt_disp="skipped"
-        fi
-        ;;
-      escalate)   _prt_disp="escalated (${_prt_reason:-unknown})" ;;
-      needs_fixes) _prt_disp="needs_fixes" ;;
-      *)           _prt_disp="$platform_result" ;;
-    esac
-  fi
-  platform_result_tokens+=("${platform_name}:${_prt_disp}")
-  _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
-  platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
-  unset _reviewed_head
-  # #1651: persist raw RESULT/REASON (not display tokens) for platform_results.
-  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
-  platform_blocking_outputs+=("${platform_name}"$''"${platform_output}")
-
-  _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
-  if [ "$_policy_status_available" = "1" ]; then
-    _policy_bucket="$(kv_value_default POLICY_BUCKET "$platform_output" "")"
-    _policy_needs_human="$(kv_value_default POLICY_NEEDS_HUMAN "$platform_output" "")"
-    _policy_disposition="$(kv_value_default POLICY_DISPOSITION "$platform_output" "")"
-    _policy_verdict="$(kv_value_default POLICY_VERDICT "$platform_output" "")"
-    _policy_analysis_status="$(kv_value_default POLICY_ANALYSIS_STATUS "$platform_output" "")"
-    _policy_rating="$(kv_value_default POLICY_RATING "$platform_output" "")"
-    _policy_has_reviewer="$(kv_value_default POLICY_HAS_REVIEWER "$platform_output" "")"
-    _policy_note="${platform_name}:"
-    [ -n "$_policy_bucket" ] && _policy_note="${_policy_note} bucket=${_policy_bucket};"
-    [ -n "$_policy_needs_human" ] && _policy_note="${_policy_note} needsHumanReview=${_policy_needs_human};"
-    [ -n "$_policy_disposition" ] && _policy_note="${_policy_note} disposition=${_policy_disposition};"
-    [ -n "$_policy_verdict" ] && _policy_note="${_policy_note} verdict=${_policy_verdict};"
-    [ -n "$_policy_analysis_status" ] && _policy_note="${_policy_note} analysisStatus=${_policy_analysis_status};"
-    [ -n "$_policy_rating" ] && _policy_note="${_policy_note} rating=${_policy_rating};"
-    [ -n "$_policy_has_reviewer" ] && _policy_note="${_policy_note} hasReviewer=${_policy_has_reviewer};"
-    platform_policy_status_notes+=("$_policy_note")
-  fi
-  unset _prt_reason _prt_display_override _prt_disp
-  unset _policy_status_available _policy_bucket _policy_needs_human
-  unset _policy_disposition _policy_verdict _policy_analysis_status
-  unset _policy_rating _policy_has_reviewer _policy_note
-
-  # In compare mode, record a normalized verdict for each platform before
-  # deciding whether to break. The normalized verdict captures clean / blocking /
-  # advisory / timed out / unavailable regardless of the raw result token.
-  if [ "$compare_mode" -eq 1 ]; then
-    compare_verdicts+=("$platform_name" "$(normalize_platform_verdict "$platform_result" "$platform_output")")
-  fi
-
-  case "$platform_result" in
-    clean)
-      aggregate_result="clean"
-      aggregate_output="$platform_output"
-      aggregate_status=$platform_status
-      ;;
-    skipped)
-      # Per pr-review-platform.md: aggregate is "clean" when every reviewer is clean or skipped
-      # Only overwrite aggregate_output when we haven't seen a clean platform (preserve REVIEW_COMMENT_ID)
-      if [ "$aggregate_result" = "skipped" ]; then
-        aggregate_output="$platform_output"
-        aggregate_status=$platform_status
-      fi
-      aggregate_result="clean"
-      ;;
-    waiting_on_reviewer)
-      aggregate_result="$platform_result"
-      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
-      aggregate_output="$platform_output"
-      aggregate_status=$platform_status
-      if [ "$compare_mode" -eq 0 ]; then
-        break
-      fi
-      if [ -z "$compare_first_blocking_result" ]; then
-        compare_first_blocking_result="$platform_result"
-        compare_first_blocking_reason="$aggregate_reason"
-        compare_first_blocking_output="$platform_output"
-        compare_first_blocking_status=$platform_status
-      fi
-      ;;
-    needs_fixes|escalate)
-      if [ "$phase_after_clean_enabled" -eq 1 ] \
-          && [ "$phase_after_clean_started" -eq 1 ] \
-          && is_phase_after_clean_platform "$platform_name"; then
-        phase_after_clean_net_new_blocker=1
-        phase_after_clean_blocking_platform="$platform_name"
-      fi
-      aggregate_result="$platform_result"
-      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
-      aggregate_output="$platform_output"
-      aggregate_status=$platform_status
-      if [ "$compare_mode" -eq 0 ]; then
-        # Normal mode: short-circuit on first blocking platform.
-        break
-      fi
-      # Compare mode: capture the first blocking state so later clean platforms
-      # cannot overwrite the aggregate. Only the first blocking platform governs.
-      if [ -z "$compare_first_blocking_result" ]; then
-        compare_first_blocking_result="$platform_result"
-        compare_first_blocking_reason="$aggregate_reason"
-        compare_first_blocking_output="$platform_output"
-        compare_first_blocking_status=$platform_status
-      fi
-      ;;
-    needs_rerun)
-      # PR-Agent "Possible Issue" evaluation: a fix was pushed; re-run the loop.
-      # Propagate as needs_rerun (exit 3) so orchestrator callers distinguish
-      # this from needs_fixes (fixer dispatch) and re-invoke on the new HEAD.
-      aggregate_result="needs_rerun"
-      aggregate_output="$platform_output"
-      aggregate_status=$platform_status
-      if [ "$compare_mode" -eq 0 ]; then
-        break
-      fi
-      # Compare mode: record verdict and continue to remaining platforms.
-      if [ -z "$compare_first_blocking_result" ]; then
-        compare_first_blocking_result="needs_rerun"
-        compare_first_blocking_reason=""
-        compare_first_blocking_output="$platform_output"
-        compare_first_blocking_status=$platform_status
-      fi
-      ;;
-    *)
-      aggregate_result="escalate"
-      aggregate_reason="unknown-platform-result"
-      aggregate_output="$platform_output"
-      aggregate_status=2
-      if [ "$compare_mode" -eq 0 ]; then
-        break
-      fi
-      # Compare mode: capture first blocking state (unknown result treated as blocking).
-      if [ -z "$compare_first_blocking_result" ]; then
-        compare_first_blocking_result="escalate"
-        compare_first_blocking_reason="unknown-platform-result"
-        compare_first_blocking_output="$platform_output"
-        compare_first_blocking_status=2
-      fi
-      ;;
-  esac
 done
 
 # --- Automated Reviewer Loop Summary comment ---
@@ -11727,6 +12165,13 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
 **Expensive reviewer gate:** ${expensive_gate_last_platform} — ${expensive_gate_last_result} (${expensive_gate_last_reason:-none}) at head \`${expensive_gate_last_head}\`."
         ;;
     esac
+  fi
+
+  local second_local_pass_section=""
+  if [ "${local_second_pass:-0}" -eq 1 ] && [ -n "${local_second_pass_result:-}" ]; then
+    second_local_pass_section="
+
+**Second local pass:** second local pass: ${local_second_pass_reason:-unknown} → ${local_second_pass_result}"
   fi
 
   local phase_section=""
@@ -11967,7 +12412,7 @@ ${_attr_line}"
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${second_local_pass_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -12038,6 +12483,8 @@ EOF
 }
 
 if [ -z "$last_platform" ]; then
+  print_kv LOCAL_SECOND_PASS 0
+  print_kv LOCAL_SECOND_PASS_REASON not_required
   print_kv RESULT skipped
   print_kv REASON not_configured
   print_kv PLATFORM ""
@@ -12601,6 +13048,8 @@ if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_rea
 fi
 sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
+print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
+print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"
 print_kv RESULT "$aggregate_result"
 print_kv PLATFORM "$last_platform"
 [ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"

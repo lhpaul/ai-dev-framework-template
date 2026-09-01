@@ -16683,6 +16683,9 @@ _1649_run_gate() {
   local platform="${2:-codex-github}"
   # Allow explicit empty head (scenario 12); only default when unset.
   local head="${3-$_1649_head}"
+  if [ "${_1649_preserve_repo_platforms:-0}" -eq 0 ]; then
+    repo_review_platforms=("${platforms[@]}")
+  fi
   out="$(expensive_reviewer_gate "$pr" "$platform" "$head" 2>/dev/null)" || rc=$?
   printf '%s\n---RC=%s\n' "$out" "$rc"
 }
@@ -16695,6 +16698,7 @@ _1649_kv() {
 # --- Scenario 2: all conditions met → dispatched ---
 _1649_stub_green_evidence
 platforms=(local-ai-reviewer pr-agent codex-github)
+repo_review_platforms=(local-ai-reviewer pr-agent codex-github)
 phase_after_clean_platforms=()
 platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
 platform_peer_evidence=("local-ai-reviewer|clean|" "pr-agent|clean|")
@@ -16736,12 +16740,15 @@ eval "$_orig_cfg"
 eval "$_orig_hc"
 
 # --- Scenario 5: local reviewer not configured ---
+_1649_preserve_repo_platforms=1
 platforms=(pr-agent codex-github)
+repo_review_platforms=(pr-agent codex-github)
 platform_reviewed_heads=()
 platform_peer_evidence=("pr-agent|clean|")
 _out="$(_1649_run_gate)"
 run_test "1649_s5_not_configured" "local_reviewer_not_configured" \
   "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+unset _1649_preserve_repo_platforms
 
 # Restore for peer scenarios
 platforms=(local-ai-reviewer pr-agent codex-github)
@@ -17606,6 +17613,533 @@ run_test "1653_s13_no_fabricated_key" "0" \
   "$(printf '%s\n' "$_1653_platform_out" | grep -c '^PLATFORM_1_Workflow Policy Review Checklist=' || true)"
 
 echo "=== Area 1653 complete ==="
+
+# ---------------------------------------------------------------------------
+# Area 1656 — second local pass before ready-phase gate
+# ---------------------------------------------------------------------------
+echo "=== Area 1656: second local pass ==="
+
+compare_mode=0
+compare_verdicts=()
+
+_1656_head="cccccccccccccccccccccccccccccccccccccccc"
+_1656_ancestor="dddddddddddddddddddddddddddddddddddddddd"
+_1656_unrelated="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+_1656_cfg=$'local-ai-reviewer\ncodex-github'
+
+_1656_hist_clean_same() {
+  jq -nc --arg head "$_1656_head" '{
+    schema: "reviewer_loop_history.v1",
+    entries: [{
+      iteration: 1,
+      platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
+      reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
+    }]
+  }'
+}
+
+_1656_hist_clean_ancestor() {
+  jq -nc --arg head "$_1656_ancestor" --arg loop "$_1656_head" '{
+    schema: "reviewer_loop_history.v1",
+    entries: [{
+      iteration: 1,
+      platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
+      reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
+    }]
+  }'
+}
+
+_1656_hist_needs_fixes() {
+  jq -nc --arg head "$_1656_head" '{
+    schema: "reviewer_loop_history.v1",
+    entries: [{
+      iteration: 1,
+      platform_results: [{platform: "local-ai-reviewer", result: "needs_fixes", raw_result: "needs_fixes", raw_reason: ""}],
+      reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
+    }]
+  }'
+}
+
+_1656_hist_no_local() {
+  jq -nc '{
+    schema: "reviewer_loop_history.v1",
+    entries: [{
+      iteration: 1,
+      platform_results: [{platform: "codex-github", result: "clean", raw_result: "clean", raw_reason: ""}],
+      reviewed_heads: [{platform: "codex-github", reviewed_head: "ffffffffffffffffffffffffffffffffffffffff", classification: "current"}]
+    }]
+  }'
+}
+
+run_test "1656_s1_not_required" "not_required" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_clean_same)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_s2_head_changed_ancestor" "head_changed" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_clean_ancestor)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_s3_head_changed_unrelated" "head_changed" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_clean_same | jq --arg u "$_1656_unrelated" '.entries[0].reviewed_heads[0].reviewed_head = $u')" "$_1656_head" "$_1656_cfg")"
+run_test "1656_s4_prior_findings" "prior_findings" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_needs_fixes)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_s5_no_evidence" "no_evidence" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_s6_no_local_reviewer" "no_local_reviewer" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")"
+run_test "1656_s6b_no_local_reviewer_ignores_history" "no_local_reviewer" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_clean_same)" "$_1656_head" "codex-github")"
+
+_1656_stale_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_1656_fresh_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+platform_reviewed_heads=("local-ai-reviewer:${_1656_stale_head}" "codex-github:${_1656_head}")
+platform_result_records=("$(reviewer_loop_platform_result_record_json local-ai-reviewer needs_fixes blocking)" \
+  "$(reviewer_loop_platform_result_record_json codex-github clean "")")
+reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
+run_test "1656_s6c_replace_heads" "codex-github:${_1656_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]}")"
+run_test "1656_s6c_replace_records" "1" \
+  "$(printf '%s\n' "${platform_result_records[@]}" | jq -s 'map(.platform) | length')"
+total_comment_count=0
+total_blocking_count=0
+total_suggestion_count=0
+compare_mode=0
+compare_verdicts=()
+declare -a platform_peer_evidence=() aggregate_blocking_paths=() aggregate_blocking_findings=()
+_sl_clean_out=$'RESULT=clean\nREVIEWED_HEAD='"${_1656_fresh_head}"$'\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'
+reviewer_loop_process_platform_output "local-ai-reviewer" 99 "$_sl_clean_out" 0 0
+run_test "1656_s6c_latest_local_head" "${_1656_fresh_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]}" | awk -F: '/^local-ai-reviewer:/{h=$2} END{print h}')"
+loop_head_sha="${_1656_fresh_head}"
+platform_reviewed_heads=("local-ai-reviewer:${_1656_stale_head}" "local-ai-reviewer:${_1656_fresh_head}")
+run_test "1656_s6d_expensive_gate_latest_head" "1" \
+  "$(expensive_gate_local_ai_head_current "$_1656_fresh_head")"
+platform_peer_evidence=("local-ai-reviewer|skipped|unavailable" "local-ai-reviewer|clean|")
+run_test "1656_s6e_peer_evidence_latest" "clean|" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+platform_peer_evidence=("local-ai-reviewer|skipped|unavailable")
+reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
+platform_peer_evidence+=("local-ai-reviewer|clean|")
+run_test "1656_s6e_peer_replace_latest" "clean|" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+unset _1656_stale_head _1656_fresh_head platform_reviewed_heads platform_result_records _sl_clean_out loop_head_sha total_comment_count total_blocking_count total_suggestion_count platform_peer_evidence aggregate_blocking_paths aggregate_blocking_findings compare_mode compare_verdicts
+
+_1656_failed_hist="$(jq -nc --arg head "$_1656_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{iteration: 1, local_second_pass_failed_head: $head, result: "escalate", reason: "local_pass_unavailable"}]
+}')"
+run_test "1656_s8c_failed_head_count" "1" \
+  "$(reviewer_loop_local_second_pass_failed_for_head "$_1656_failed_hist" "$_1656_head")"
+
+run_test "1656_s7_gate_needs_fixes" "needs_fixes" \
+  "$(reviewer_loop_second_local_pass_gate_result needs_fixes blocking | cut -f1)"
+run_test "1656_s7_gate_needs_fixes_reason" "blocking" \
+  "$(reviewer_loop_second_local_pass_gate_result needs_fixes blocking | cut -f2)"
+run_test "1656_s7_gate_skipped" "escalate" \
+  "$(reviewer_loop_second_local_pass_gate_result skipped unavailable | cut -f1)"
+run_test "1656_s7_gate_skipped_reason" "local_pass_unavailable" \
+  "$(reviewer_loop_second_local_pass_gate_result skipped unavailable | cut -f2)"
+
+repo_review_platforms=(local-ai-reviewer codex-github)
+platforms=(codex-github)
+run_test "1656_s2b_repo_configured" "no_evidence" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$(reviewer_loop_repo_configured_platforms)")"
+
+# Scenario 5a / P8: shared processor key=value output is stable and omits second-pass keys
+_1656_s5a_clean_out=$'RESULT=clean\nREVIEWED_HEAD='"$_1656_head"$'\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\nREASON=\n'
+_1656_s5a_reset_processing_globals() {
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  compare_mode=0
+  compare_verdicts=()
+  platform_peer_evidence=()
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  aggregate_result="clean"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  loop_head_sha="$_1656_head"
+}
+_1656_s5a_capture_output() {
+  _1656_s5a_reset_processing_globals
+  {
+    reviewer_loop_process_platform_output "local-ai-reviewer" 1 "$_1656_s5a_clean_out" 0 1
+  } 2>/dev/null
+}
+_1656_s5a_first="$(_1656_s5a_capture_output)"
+_1656_s5a_second="$(_1656_s5a_capture_output)"
+run_test "1656_s5a_extraction_byte_identical" "$_1656_s5a_first" "$_1656_s5a_second"
+run_test "1656_s5a_no_second_pass_keys" "0" \
+  "$(printf '%s' "$_1656_s5a_first" | grep -Ec '^(LOCAL_SECOND_PASS|LOCAL_SECOND_PASS_REASON)=' || true)"
+run_test "1656_s5a_platform_result" "clean" \
+  "$(printf '%s' "$_1656_s5a_first" | awk -F= '/^PLATFORM_1_RESULT=/{print $2; exit}')"
+unset _1656_s5a_clean_out _1656_s5a_first _1656_s5a_second
+unset -f _1656_s5a_reset_processing_globals _1656_s5a_capture_output 2>/dev/null || true
+
+# Planted-violation proofs (REVIEW.md): wrong helpers live only in this harness.
+_1656_pv_plant_p2_pass_required() {
+  local payload="${1:-}" head="${2:-}" configured="${3:-}"
+  local verdict outcome verdict_head
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf 'no_local_reviewer\n'; return 0
+  fi
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
+  case "$outcome" in
+    not_configured) printf 'no_local_reviewer\n'; return 0 ;;
+    not_yet_run|unknown) printf 'not_required\n'; return 0 ;;
+    clean) ;;
+    *) printf 'prior_findings\n'; return 0 ;;
+  esac
+  if [ -n "$head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'not_required\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+_1656_pv_plant_p10_pass_required() {
+  local payload="${1:-}" head="${2:-}" configured="${3:-}"
+  local verdict outcome verdict_head
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
+    printf 'no_evidence\n'; return 0
+  fi
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
+  case "$outcome" in
+    not_configured|not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    clean) ;;
+    *) printf 'prior_findings\n'; return 0 ;;
+  esac
+  if [ -n "$head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'not_required\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+run_test "1656_pv_P2_plant" "not_required" \
+  "$(_1656_pv_plant_p2_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_pv_P2_correct" "no_evidence" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")"
+run_test "1656_pv_P2_plant_differs" "different" \
+  "$( [ "$(_1656_pv_plant_p2_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")" \
+      != "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "$_1656_cfg")" ] \
+     && echo different || echo same)"
+run_test "1656_pv_P10_plant" "no_evidence" \
+  "$(_1656_pv_plant_p10_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")"
+run_test "1656_pv_P10_correct" "no_local_reviewer" \
+  "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")"
+run_test "1656_pv_P10_plant_differs" "different" \
+  "$( [ "$(_1656_pv_plant_p10_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")" \
+      != "$(reviewer_loop_local_pass_required "$(_1656_hist_no_local)" "$_1656_head" "codex-github")" ] \
+     && echo different || echo same)"
+unset -f _1656_pv_plant_p2_pass_required _1656_pv_plant_p10_pass_required 2>/dev/null || true
+
+# Guard validates pass-output REVIEWED_HEAD, not the first platform_reviewed_heads entry
+_1656_fresh_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+run_test "1656_s5b_output_head_current" "current" \
+  "$(reviewer_loop_head_evidence_classify "$_1656_fresh_head" "$_1656_fresh_head" | cut -d'|' -f1)"
+run_test "1656_s5b_stale_head_not_current" "not-current" \
+  "$(reviewer_loop_head_evidence_classify "dddddddddddddddddddddddddddddddddddddddd" "$_1656_fresh_head" | cut -d'|' -f1)"
+unset _1656_fresh_head
+
+# LOCAL_AI_* keys follow repository config, not invocation-filtered platforms[]
+platforms=(codex-github)
+repo_review_platforms=(local-ai-reviewer codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$_1656_head")
+loop_head_sha="$_1656_head"
+_1656_local_ai_keys="$(reviewer_loop_emit_local_ai_head_evidence_keys 2>/dev/null)"
+run_test "1656_s2c_local_ai_configured" "1" "$(printf '%s\n' "$_1656_local_ai_keys" | awk -F= '/^LOCAL_AI_CONFIGURED=/{print $2; exit}')"
+run_test "1656_s2c_local_ai_head_current" "1" "$(printf '%s\n' "$_1656_local_ai_keys" | awk -F= '/^LOCAL_AI_HEAD_CURRENT=/{print $2; exit}')"
+unset platforms repo_review_platforms platform_reviewed_heads loop_head_sha _1656_local_ai_keys
+
+# --- Guard integration (extracted function) ---
+_1656_guard_head="ffffffffffffffffffffffffffffffffffffffff"
+_1656_guard_hist_clean="$(jq -nc --arg head "$_1656_guard_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
+  }]
+}')"
+_1656_guard_hist_failed="$(jq -nc --arg head "$_1656_guard_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{iteration: 1, local_second_pass_failed_head: $head, result: "escalate"}]
+}')"
+
+reviewer_loop_prior_history_payload_from_pr() {
+  if [ -n "${_1656_guard_hist_payload:-}" ]; then
+    printf '%s\n' "$_1656_guard_hist_payload"
+  else
+    printf '%s\n' '{"schema":"reviewer_loop_history.v1","entries":[]}'
+  fi
+}
+
+_1656_run_platform_review_calls=0
+run_platform_review() {
+  _1656_run_platform_review_calls=$((_1656_run_platform_review_calls + 1))
+  case "${_1656_stub_pass_result:-clean}" in
+    clean) printf 'RESULT=clean\nREVIEWED_HEAD=%s\n' "${loop_head_sha:-}" ;;
+    clean_no_head) printf 'RESULT=clean\n' ;;
+    skipped) printf 'RESULT=skipped\nREASON=unavailable\n' ;;
+    needs_fixes) printf 'RESULT=needs_fixes\nREASON=blocking\nBLOCKING_COUNT=1\n' ;;
+    needs_rerun) printf 'RESULT=needs_rerun\nREASON=stale_verdict\n' ;;
+    escalate_pass) printf 'RESULT=escalate\nREASON=timeout\n' ;;
+    unparseable) printf 'not-key=value-garbage\n' ;;
+    *) printf 'RESULT=escalate\nREASON=unknown\n' ;;
+  esac
+  return 0
+}
+
+gh() {
+  if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+    local _gh_head=""
+    if [ "${_1656_stub_pr_head:-}" = "UNAVAILABLE" ]; then
+      return 1
+    fi
+    if [ -n "${_1656_stub_pr_head:-}" ]; then
+      _gh_head="$_1656_stub_pr_head"
+    else
+      _gh_head="${loop_head_sha:-}"
+    fi
+    if [[ "$*" == *"--jq"* ]]; then
+      printf '%s\n' "$_gh_head"
+    else
+      printf '{"headRefOid":"%s"}\n' "$_gh_head"
+    fi
+    return 0
+  fi
+  command gh "$@"
+}
+
+_1656_reset_guard_globals() {
+  phase_after_clean_enabled=1
+  phase_after_clean_started=0
+  local_second_pass=0
+  local_second_pass_reason="not_required"
+  local_second_pass_result=""
+  local_second_pass_failed_head_record=""
+  loop_head_sha="$_1656_guard_head"
+  branch_name="refactor/1656-second-local-pass"
+  pr_number=1693
+  poll_interval=1
+  max_wait=10
+  platforms=(local-ai-reviewer codex-github)
+  repo_review_platforms=(local-ai-reviewer codex-github)
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_peer_evidence=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_result="clean"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  compare_mode=0
+  compare_first_blocking_result=""
+  _1656_run_platform_review_calls=0
+  _1656_stub_pass_result="clean"
+  _1656_stub_pr_head=""
+}
+
+# Scenario 4 / not_required: clean on loop_head_sha — no dispatch
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4_guard_proceed" "0" "$_st"
+run_test "1656_s4_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4_guard_reason" "not_required" "$local_second_pass_reason"
+
+# not_required must still re-read the live head before proceeding to ready-phase
+_1656_moved_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+_1656_stub_pr_head="$_1656_moved_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4a_not_required_head_moved" "1" "$_st"
+run_test "1656_s4a_not_required_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4a_not_required_reason" "head_moved_during_pass" "$local_second_pass_reason"
+run_test "1656_s4a_not_required_aggregate" "head_moved_during_run" "$aggregate_reason"
+
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+_1656_stub_pr_head="UNAVAILABLE"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4b_not_required_unread_head" "1" "$_st"
+run_test "1656_s4b_not_required_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4b_not_required_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+
+_1656_reset_guard_globals
+repo_review_platforms=(codex-github)
+_1656_guard_hist_payload="$_1656_guard_hist_clean"
+_1656_stub_pr_head="$_1656_moved_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s4c_no_local_head_moved" "1" "$_st"
+run_test "1656_s4c_no_local_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s4c_no_local_reason" "head_moved_during_pass" "$local_second_pass_reason"
+
+# Scenario 8c: failed head refusal — no dispatch, escalate (P1/P9 restored)
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_failed"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s8c_guard_refuse" "1" "$_st"
+run_test "1656_s8c_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s8c_guard_escalate" "escalate" "$aggregate_result"
+run_test "1656_s8c_guard_failed_reason" "failed_for_head" "$aggregate_reason"
+run_test "1656_s8c_phase_not_started" "0" "$phase_after_clean_started"
+
+# Prior ledger unavailable — close gate before dispatch (P9 / cross-invocation)
+_1656_guard_hist_unavail='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}'
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1656_guard_hist_unavail"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s8d_guard_unavail_blocked" "1" "$_st"
+run_test "1656_s8d_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+run_test "1656_s8d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s8d_phase_not_started" "0" "$phase_after_clean_started"
+unset _1656_guard_hist_unavail
+
+# Scenario 7a: skipped pass — escalate, phase not started
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="skipped"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7a_guard_blocked" "1" "$_st"
+run_test "1656_s7a_guard_dispatch" "1" "$local_second_pass"
+run_test "1656_s7a_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7a_guard_escalate_reason" "local_pass_unavailable" "$aggregate_reason"
+run_test "1656_s7a_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 7: needs_fixes pass — gate closed, failed head recorded, phase not started
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="needs_fixes"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7_guard_blocked" "1" "$_st"
+run_test "1656_s7_guard_needs_fixes" "needs_fixes" "$aggregate_result"
+run_test "1656_s7_guard_failed_head" "$_1656_guard_head" "$local_second_pass_failed_head_record"
+run_test "1656_s7_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 7b: needs_rerun pass — unavailable escalation, phase not started
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="needs_rerun"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7b_guard_blocked" "1" "$_st"
+run_test "1656_s7b_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7b_guard_escalate" "escalate" "$aggregate_result"
+run_test "1656_s7b_phase_not_started" "0" "$phase_after_clean_started"
+
+# Escalate pass — unavailable escalation through shared processor mapping
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="escalate_pass"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7c_guard_blocked" "1" "$_st"
+run_test "1656_s7c_guard_escalate" "escalate" "$aggregate_result"
+run_test "1656_s7c_guard_timeout" "timeout" "$aggregate_reason"
+run_test "1656_s7c_guard_telemetry" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7c_phase_not_started" "0" "$phase_after_clean_started"
+
+# Unparseable pass output — unavailable escalation (P15 / scenario 7b shape)
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="unparseable"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s7d_guard_blocked" "1" "$_st"
+run_test "1656_s7d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s7d_phase_not_started" "0" "$phase_after_clean_started"
+
+# Clean pass without REVIEWED_HEAD — must not proceed (current-head evidence contract)
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="clean_no_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s3c_guard_no_reviewed_head" "1" "$_st"
+run_test "1656_s3c_guard_reason" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s3c_guard_unavailable" "local_pass_unavailable" "$aggregate_reason"
+run_test "1656_s3c_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenario 3a: head moves during clean pass — needs_fixes, head_moved_during_run
+_1656_moved_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pr_head="$_1656_moved_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s3a_guard_blocked" "1" "$_st"
+run_test "1656_s3a_guard_dispatch" "1" "$local_second_pass"
+run_test "1656_s3a_guard_reason" "head_moved_during_pass" "$local_second_pass_reason"
+run_test "1656_s3a_aggregate_reason" "head_moved_during_run" "$aggregate_reason"
+run_test "1656_s3a_phase_not_started" "0" "$phase_after_clean_started"
+
+# gh head re-read unavailable after clean pass — must not proceed
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pr_head="UNAVAILABLE"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s3d_guard_blocked" "1" "$_st"
+run_test "1656_s3d_guard_unavailable" "local_pass_unavailable" "$local_second_pass_reason"
+run_test "1656_s3d_no_failed_head_record" "" "$local_second_pass_failed_head_record"
+run_test "1656_s3d_phase_not_started" "0" "$phase_after_clean_started"
+
+# Scenarios 9/10 (P3): second pass must not increment cycle counters
+_1656_reset_guard_globals
+cycle_count=2
+lifetime_cycle_count=5
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="clean"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s9_dispatch_cycle_count" "2" "$cycle_count"
+run_test "1656_s9_dispatch_lifetime_count" "5" "$lifetime_cycle_count"
+
+# Dispatched clean success path proceeds when gh --jq returns raw head SHA
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="clean"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s5_guard_clean_proceed" "0" "$_st"
+run_test "1656_s5_guard_clean_dispatch" "1" "$local_second_pass"
+run_test "1656_s5_guard_clean_reason" "no_evidence" "$local_second_pass_reason"
+
+_1656_reset_guard_globals
+cycle_count=4
+lifetime_cycle_count=7
+_1656_guard_hist_payload="$_1656_guard_hist_failed"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s10_refuse_cycle_count" "4" "$cycle_count"
+run_test "1656_s10_refuse_lifetime_count" "7" "$lifetime_cycle_count"
+unset cycle_count lifetime_cycle_count
+
+# Scenario 13: no ready-phase — guard no-op
+_1656_reset_guard_globals
+phase_after_clean_enabled=0
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1656_s13_guard_noop" "0" "$_st"
+run_test "1656_s13_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
+
+unset _1656_guard_head _1656_guard_hist_clean _1656_guard_hist_failed _1656_guard_hist_payload
+unset _1656_run_platform_review_calls _1656_stub_pass_result _1656_stub_pr_head _1656_moved_head _st
+unset -f reviewer_loop_prior_history_payload_from_pr run_platform_review 2>/dev/null || true
+if declare -F gh >/dev/null 2>&1; then
+  unset -f gh
+fi
+
+unset _1656_head _1656_ancestor _1656_unrelated _1656_cfg _1656_failed_hist
+unset repo_review_platforms platforms
+unset -f _1656_hist_clean_same _1656_hist_clean_ancestor _1656_hist_needs_fixes _1656_hist_no_local 2>/dev/null || true
+
+echo "=== Area 1656 complete ==="
 
 # ---------------------------------------------------------------------------
 # Summary
