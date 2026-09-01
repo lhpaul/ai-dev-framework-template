@@ -1415,6 +1415,91 @@ run_test "1655_s17_kept_phase_ordering" "STRICT_PLAN_CHECKS=phase_ordering" "$(l
 run_test "1655_s17_unknown_from_drop" "STRICT_PLAN_UNKNOWN_COUNT=1" "$(line_for STRICT_PLAN_UNKNOWN_COUNT)"
 rm -rf "$PLAN_REPO"
 
+# Scenario 7a: coverage follows spec presence, not plan declaration
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+printf '# Plan\n\n**Source of truth**: None — Refactor item.\n' > "$PLAN_REPO/$PLAN_DOC"
+printf '# Spec\n\n- [ ] AC-1.\n' > "$PLAN_REPO/$PLAN_SPEC"
+git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
+git -C "$PLAN_REPO" commit -q -m "declares refactor but spec present"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-7a"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s7a_all_seven" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+rm -rf "$PLAN_REPO"
+
+# Scenario 8: plan text comes from reviewed head via git show
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
+printf 'COMMITTED-PLAN-TEXT\n' > "$PLAN_REPO/$PLAN_DOC"
+git -C "$PLAN_REPO" add "$PLAN_DOC"
+git -C "$PLAN_REPO" commit -q -m "plan committed"
+printf 'WORKTREE-ONLY-TEXT\n' > "$PLAN_REPO/$PLAN_DOC"
+_s8_head="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+_s8_text="$(
+  HARNESS_MODE=1 bash -c '
+    source "'"$REVIEWER"'"
+    REPO_ROOT="'"$PLAN_REPO"'"
+    HEAD_SHA="'"$_s8_head"'"
+    strict_git_show_at_head "'"$PLAN_DOC"'"
+  '
+)"
+run_test "1655_s8_git_show_text" "COMMITTED-PLAN-TEXT" "$_s8_text"
+rm -rf "$PLAN_REPO"
+
+# Scenario 11: git show failure → unavailable, one invocation
+PLAN_REPO="$(mktemp -d)"
+git -C "$PLAN_REPO" init -q
+git -C "$PLAN_REPO" config user.email "test@example.com"
+git -C "$PLAN_REPO" config user.name "Test User"
+printf '# Review\n' > "$PLAN_REPO/REVIEW.md"
+git -C "$PLAN_REPO" add REVIEW.md
+git -C "$PLAN_REPO" commit -q -m "fixture"
+git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
+mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
+cp "$PLAN_CHECKLIST_FIXTURES/well-formed.md" "$PLAN_REPO/docs/workflow/development-workflow/strict-plan-checks.md"
+reset_mocks
+install_recording_two_pass_mock
+install_plan_gh_mock "$PLAN_DOC"
+MOCK_RECORD_FILE="$(mktemp)"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT
+MOCK_PR_HEAD_BRANCH="implementation-plan/1655-s11"
+MOCK_PR_HEAD_SHA="$(git -C "$PLAN_REPO" rev-parse HEAD)"
+export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
+run_test "1655_s11_unavailable" "STRICT_PLAN_STATE=unavailable" "$(line_for STRICT_PLAN_STATE)"
+run_test "1655_s11_reason" "STRICT_PLAN_REASON=strict_pass_failed" "$(line_for STRICT_PLAN_REASON)"
+run_test "1655_s11_one_invocation" "1" "$(grep -c '^mode=' "$MOCK_RECORD_FILE" || true)"
+rm -f "$MOCK_RECORD_FILE"
+rm -rf "$PLAN_REPO"
+
 # Scenario 15 reverse: plan stage (fresh repo with spec sibling at HEAD)
 PLAN_REPO="$(mktemp -d)"
 git -C "$PLAN_REPO" init -q

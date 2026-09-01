@@ -227,6 +227,12 @@ Conditions are evaluated in order and stop at the first unmet one:
    [`integrations/local-ai-reviewer.md`](../integrations/local-ai-reviewer.md)
    and [`strict-spec-checks.md`](../strict-spec-checks.md)); `STRICT_SPEC_*`
    keys and the history `strict_spec` object never change the ordinary verdict.
+   On `implementation-plan/*` branches the local reviewer may run a second,
+   non-blocking strict-plan pass when at least one implementation-plan document
+   changed (see [`strict-plan-checks.md`](../strict-plan-checks.md));
+   `STRICT_PLAN_*` keys (including `STRICT_PLAN_APPLIED` when applied) and the
+   history `strict_plan` object never change the ordinary verdict. At most one
+   strict checklist reaches `applied` per review.
    The local reviewer also emits `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, and
    `REVIEW_CHECKLISTS` on stdout; `pr-review-loop.sh` forwards them into loop
    summaries as `PLATFORM_<n>_REVIEW_STAGE`, `PLATFORM_<n>_REVIEW_STAGE_SOURCE`,
