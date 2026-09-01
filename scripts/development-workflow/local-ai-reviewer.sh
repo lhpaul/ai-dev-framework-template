@@ -840,6 +840,9 @@ case "$strict_stage" in
           BASE_BRANCH="$BASE_BRANCH" \
           HEAD_BRANCH="$HEAD_BRANCH" \
           REVIEWED_HEAD="$HEAD_SHA" \
+          REVIEW_STAGE="$review_stage" \
+          REVIEW_STAGE_SOURCE="$review_stage_source" \
+          REVIEW_CHECKLISTS="$review_checklists_csv" \
             run_with_timeout "$remaining" "$strict_stdout_file" "$strict_stderr_file" \
               sh -c "$LOCAL_AI_REVIEWER_COMMAND"
           strict_exit=$?
