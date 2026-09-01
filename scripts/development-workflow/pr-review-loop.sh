@@ -8062,7 +8062,7 @@ reviewer_loop_platform_result_record_json() {
 reviewer_loop_replace_current_round_platform_record() {
   local platform_name="${1:-}"
   local entry record kept_heads=() kept_records=() kept_peer=() kept_tokens=()
-  local blocking_name blocking_rest kept_blocking=()
+  local blocking_name kept_blocking=()
 
   [ -n "$platform_name" ] || return 0
 
