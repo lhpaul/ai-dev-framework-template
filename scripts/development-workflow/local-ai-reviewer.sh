@@ -625,7 +625,6 @@ fi
 
 doctrine_supply_json="$(reviewer_doctrine_supply)"
 review_doctrine_state="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.state // "unreadable"')"
-review_doctrine_text="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.text // ""')"
 review_doctrine_pattern_count="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.pattern_count // 0')"
 review_doctrine_version="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.version // ""')"
 
@@ -673,10 +672,7 @@ jq -n \
   --arg diff_stat "$diff_stat" \
   --arg review_stage "$review_stage" \
   --arg review_stage_source "$review_stage_source" \
-  --arg review_doctrine "$review_doctrine_text" \
-  --arg review_doctrine_state "$review_doctrine_state" \
-  --argjson review_doctrine_pattern_count "$review_doctrine_pattern_count" \
-  --arg review_doctrine_version "$review_doctrine_version" \
+  --argjson doctrine_supply "$doctrine_supply_json" \
   --argjson changed_files "$changed_files_json" \
   --argjson review_checklists "$review_checklists_json" \
   '{
@@ -696,10 +692,10 @@ jq -n \
     review_stage: $review_stage,
     review_stage_source: $review_stage_source,
     review_checklists: $review_checklists,
-    review_doctrine: $review_doctrine,
-    review_doctrine_state: $review_doctrine_state,
-    review_doctrine_pattern_count: $review_doctrine_pattern_count,
-    review_doctrine_version: $review_doctrine_version
+    review_doctrine: $doctrine_supply.text,
+    review_doctrine_state: $doctrine_supply.state,
+    review_doctrine_pattern_count: $doctrine_supply.pattern_count,
+    review_doctrine_version: $doctrine_supply.version
   }' >"$context_file"
 
 print_kv BASE_BRANCH "$BASE_BRANCH"

@@ -1159,7 +1159,7 @@ run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
 for _1654_field in schema_version pr_number owner repo base_branch head_branch reviewed_head changed_files pr_body diff_name_status diff_stat review_contract graph_context review_stage review_stage_source review_checklists review_doctrine review_doctrine_state review_doctrine_pattern_count review_doctrine_version; do
   run_test "1654_s7_field_${_1654_field}" "yes" "$(jq -e "has(\"${_1654_field}\")" "$BUNDLE_DUMP" >/dev/null && echo yes || echo no)"
 done
-run_test "1654_s7a_bytes_match" "0" "$(cmp -s "$VALID_REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md" <(jq -r '.review_doctrine' "$BUNDLE_DUMP") && echo 0 || echo 1)"
+run_test "1654_s7a_bytes_match" "0" "$(jq -j -r '.review_doctrine' "$BUNDLE_DUMP" > /tmp/1654-doctrine-bytes.tmp && cmp -s "$VALID_REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md" /tmp/1654-doctrine-bytes.tmp && echo 0 || echo 1)"
 run_test "1654_s8_state_kv" "REVIEW_DOCTRINE_STATE=supplied" "$(line_for REVIEW_DOCTRINE_STATE)"
 run_test "1654_s8_count_kv" "REVIEW_DOCTRINE_PATTERN_COUNT=5" "$(line_for REVIEW_DOCTRINE_PATTERN_COUNT)"
 run_test "1654_s8_no_text_kv" "0" "$(grep -c '^REVIEW_DOCTRINE=' "$OUTPUT_FILE" 2>/dev/null || true)"
