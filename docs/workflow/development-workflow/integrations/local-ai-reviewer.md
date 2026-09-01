@@ -80,6 +80,7 @@ The command runs under `sh -c` with these environment variables:
 - `BASE_BRANCH`
 - `HEAD_BRANCH`
 - `REVIEWED_HEAD`
+- `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, `REVIEW_CHECKLISTS`
 - `LOCAL_AI_REVIEWER_MODE` — `ordinary` (default) or `strict`
 
 The context bundle JSON uses `schema_version:
@@ -93,6 +94,35 @@ local_ai_reviewer_context.v1` and includes:
   available in the checkout
 - `review_contract`
 - `graph_context`
+- `review_stage` — `spec`, `plan`, `implementation`, or `default`
+- `review_stage_source` — `branch`, `branch+files`, or `none`
+- `review_checklists` — ordered list of exact `REVIEW.md` level-2 heading
+  strings (may be empty for `default`)
+
+Selection is **additive and monotone**: `REVIEW.md` as a whole and its Core
+Rules always apply. The branch tier names one stage checklist; changed files
+may **add** `Workflow Policy Review Checklist` but never replace or drop the
+branch-implied checklist. Unknown branch types (`default`) keep the legacy
+stage-agnostic prompt with no named sections — even when workflow-policy files
+change.
+
+| Head branch | Policy files changed? | Stage | Checklists named |
+| --- | --- | --- | --- |
+| `spec/*` | no | `spec` | Spec Review Checklist |
+| `spec/*` | yes | `spec` | Spec, Workflow Policy |
+| `implementation-plan/*` | no | `plan` | Plan Review Checklist |
+| `implementation-plan/*` | yes | `plan` | Plan, Workflow Policy |
+| `feature/*`, `refactor/*`, `fix/*`, `hotfix/*` | no | `implementation` | Code Review Checklist |
+| `feature/*`, `refactor/*`, `fix/*`, `hotfix/*` | yes | `implementation` | Code, Workflow Policy |
+| anything else | no | `default` | none |
+| anything else | yes | `default` | none |
+
+Custom `LOCAL_AI_REVIEWER_COMMAND` values receive `REVIEW_STAGE`,
+`REVIEW_STAGE_SOURCE`, and `REVIEW_CHECKLISTS` in the environment and the
+three fields in the bundle; they may ignore the stage. The bundled Codex preset
+names selected sections in its default prompt when `REVIEW_CHECKLISTS` is
+non-empty. `LOCAL_CODEX_REVIEWER_PROMPT` overrides the built prompt entirely
+and does not receive the stage sentence.
 
 On a second, strict-mode invocation the companion script derives a copy of that
 bundle and adds `strict_spec_checks` (the checklist text). The ordinary-pass
@@ -105,7 +135,8 @@ Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
 `--evidence-file` to `local-codex-reviewer.sh` to persist a local evidence
 artifact. The artifact uses `schema_version: local_ai_reviewer_evidence.v1`
 and records the reviewed head, graph context, result, reason, counts, changed
-files, compact diff summary, and a `strict_spec` object that mirrors the
+files, compact diff summary, a `review_stage` object (stage, source,
+checklists), and a `strict_spec` object that mirrors the
 `STRICT_SPEC_*` keys. Keep this artifact alongside ready-phase
 reviewer-loop evidence when measuring whether Bugbot or another ready-phase
 reviewer found net-new blockers. Relative evidence paths are resolved from the
@@ -267,6 +298,9 @@ The companion script emits:
 
 - `REVIEWED_HEAD`
 - `GRAPH_CONTEXT`
+- `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, `REVIEW_CHECKLISTS` (comma-separated
+  checklist headings on one line; surfaced in loop summaries as
+  `PLATFORM_<n>_REVIEW_*` via `emit_prefixed_platform_output`)
 - `COMMENT_COUNT`
 - `BLOCKING_COUNT`
 - `SUGGESTION_COUNT`

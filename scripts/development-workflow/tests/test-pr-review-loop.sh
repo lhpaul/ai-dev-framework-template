@@ -17515,6 +17515,29 @@ unset expensive_gate_last_result strict_spec_recorded
 echo "=== Area 1651 complete ==="
 
 # ---------------------------------------------------------------------------
+# Area 1653 — emit_prefixed_platform_output forwards REVIEW_* keys
+# ---------------------------------------------------------------------------
+echo "=== Area 1653: stage evidence forwarding ==="
+
+_1653_platform_out="$(emit_prefixed_platform_output 1 "$(cat <<'KV'
+RESULT=clean
+REVIEW_STAGE=implementation
+REVIEW_STAGE_SOURCE=branch+files
+REVIEW_CHECKLISTS=Code Review Checklist,Workflow Policy Review Checklist
+KV
+)")"
+run_test "1653_s13_review_stage" "PLATFORM_1_REVIEW_STAGE=implementation" \
+  "$(printf '%s\n' "$_1653_platform_out" | grep '^PLATFORM_1_REVIEW_STAGE=' | head -n 1)"
+run_test "1653_s13_review_source" "PLATFORM_1_REVIEW_STAGE_SOURCE=branch+files" \
+  "$(printf '%s\n' "$_1653_platform_out" | grep '^PLATFORM_1_REVIEW_STAGE_SOURCE=' | head -n 1)"
+run_test "1653_s13_review_lists" "PLATFORM_1_REVIEW_CHECKLISTS=Code Review Checklist,Workflow Policy Review Checklist" \
+  "$(printf '%s\n' "$_1653_platform_out" | grep '^PLATFORM_1_REVIEW_CHECKLISTS=' | head -n 1)"
+run_test "1653_s13_no_fabricated_key" "0" \
+  "$(printf '%s\n' "$_1653_platform_out" | grep -c '^PLATFORM_1_Workflow Policy Review Checklist=' || true)"
+
+echo "=== Area 1653 complete ==="
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
