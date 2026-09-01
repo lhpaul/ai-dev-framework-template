@@ -16,7 +16,7 @@ current PR head unless a test path is given.
 ## P1 — per-head dispatch cap (loop/cost)
 
 - **Production**: `:8363` (`reviewer_loop_local_second_pass_failed_for_head` refusal) through `:8371` (`return 1` without dispatch)
-- **Plant**: skip `:8432` (`local_second_pass_failed_head_record="$loop_head_sha"`) so the next invocation cannot refuse at `:8363`
+- **Plant**: skip `:8430` (`local_second_pass_failed_head_record="$loop_head_sha"`) so the next invocation cannot refuse at `:8363`
 - **Fail when planted**: second loop invocation dispatches again at `:8376`
 - **Pass restored**: `1656_s8c_guard_refuse`, `1656_s8c_guard_no_dispatch` (`test-pr-review-loop.sh:17967-17968`)
 
@@ -36,7 +36,7 @@ current PR head unless a test path is given.
 
 ## P4 — ready gate after pass result (fail-open)
 
-- **Production**: `:11770` (`reviewer_loop_second_local_pass_before_ready_gate` before ready transition)
+- **Production**: `:11768` (`reviewer_loop_second_local_pass_before_ready_gate` before ready transition)
 - **Plant**: call `ensure_pr_ready_for_ready_phase` before `:8426-8445` gate handling
 - **Fail when planted**: `1656_s7_phase_not_started` (`:17903`) would read `1`
 - **Pass restored**: all `1656_s7*_phase_not_started` assert `0`
@@ -64,15 +64,15 @@ current PR head unless a test path is given.
 
 ## P8 — shared processor extraction (integration)
 
-- **Production**: `:8453-8530` (`reviewer_loop_process_platform_output`)
+- **Production**: `:8451-8528` (`reviewer_loop_process_platform_output`)
 - **Plant**: inline duplicate parser omitting `PLATFORM_*` keys
 - **Fail when planted**: `1656_s5a_extraction_byte_identical` (`:17775`) diverges
 - **Pass restored**: `1656_s5a_extraction_byte_identical`, `1656_s5a_no_second_pass_keys`, `1656_s5a_platform_result`
 
 ## P9 — failed head in ledger, not shell (integration)
 
-- **Production**: `:8432` (`local_second_pass_failed_head_record="$loop_head_sha"`) read back at `:8363`
-- **Plant**: in-memory flag instead of `:8432` ledger write
+- **Production**: `:8430` (`local_second_pass_failed_head_record="$loop_head_sha"`) read back at `:8363`
+- **Plant**: in-memory flag instead of `:8430` ledger write
 - **Fail when planted**: `1656_s8c_guard_no_dispatch` fails on second invocation
 - **Pass restored**: `1656_s8c_guard_refuse`, `1656_s8c_failed_head_count` (`:17726-17727`)
 
@@ -113,7 +113,7 @@ current PR head unless a test path is given.
 
 ## P15 — non-clean pass must override processor skip semantics (fail-open)
 
-- **Production**: `:8429-8431` (`local_second_pass_reason=local_pass_unavailable` on escalate)
-- **Plant**: skip `:8429-8431` and let skipped processor result proceed
+- **Production**: `:8428` (`local_second_pass_reason=local_pass_unavailable` on escalate)
+- **Plant**: skip `:8427-8428` and let skipped processor result proceed
 - **Fail when planted**: `1656_s7a_guard_unavailable` (`:17989-17992`) reads `not_required`
 - **Pass restored**: `1656_s7a_guard_unavailable`, `1656_s7b_guard_unavailable`, `1656_s7d_guard_unavailable`, `1656_s7c_guard_telemetry` (`:18023`)
