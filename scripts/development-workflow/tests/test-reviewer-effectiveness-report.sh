@@ -33,6 +33,18 @@ assert_jq() {
   assert_eq "$got" "$want" "$msg"
 }
 
+assert_contains() {
+  local text="$1" pattern="$2" msg="$3"
+  printf '%s\n' "$text" | grep -Fq "$pattern" || fail "$msg"
+}
+
+assert_not_contains() {
+  local text="$1" pattern="$2" msg="$3"
+  if printf '%s\n' "$text" | grep -Fq "$pattern"; then
+    fail "$msg"
+  fi
+}
+
 HARNESS_MODE=1 source "$SCRIPT"
 
 wrap_body() {
@@ -62,6 +74,69 @@ assert_jq "$full_measures" '.external_blocking_rounds.value' '4' 'external block
 assert_jq "$full_measures" '.confirmed_miss_records.value' '3' 'confirmed misses'
 assert_jq "$full_measures" '.possible_miss_records.value' '1' 'possible misses'
 assert_jq "$full_measures" '.final_current_head_evidence.value' 'current' 'final head evidence'
+
+# --- strict checks incidence ---
+full_row="$(jq -nc --argjson pr 200 --arg state included --argjson measures "$full_measures" --argjson payload "$full_json" \
+  '{pr:$pr, state:$state, measures:$measures, _payload:$payload}')"
+full_rows_json="$(printf '%s\n' "$full_row" | jq -s '.')"
+strict="$(rer_strict_checks_json "$full_rows_json")"
+assert_jq "$strict" '.checks[] | select(.check=="spec-ac-1") | .fired' '1' 'spec check fired once per PR'
+assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .fired' '1' 'plan check fired once per PR'
+assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .applied' '1' 'plan check applied denominator'
+
+# --- AC-2: --pr and window row equivalence (mock gh for PR 200) ---
+cat > "$TMP_DIR/gh" <<'MOCK_EQUIV'
+#!/usr/bin/env bash
+set -euo pipefail
+json_comment() {
+  jq -nc --arg body "$(cat "$1")" --arg created_at "2026-08-01T00:00:00Z" \
+    '[{id: 1, body: $body, created_at: $created_at}]'
+}
+case "$*" in
+  *issues/200/comments*)
+    json_comment <(bash "$GH_FIXTURE_DIR/wrap-history.sh" "$(cat "$GH_FIXTURE_DIR/full-telemetry.json")")
+    ;;
+  *pr\ list*)
+    printf '[{"number":200}]\n'
+    ;;
+  *) echo "unexpected gh equiv: $*" >&2; exit 99 ;;
+esac
+MOCK_EQUIV
+chmod +x "$TMP_DIR/gh"
+export GH_FIXTURE_DIR="$FIXTURE_DIR"
+single_out="$(PATH="$TMP_DIR:$PATH" HARNESS_MODE=0 "$SCRIPT" --pr 200 --repo example/repo --json 2>/dev/null)"
+window_out="$(PATH="$TMP_DIR:$PATH" HARNESS_MODE=0 "$SCRIPT" --window 1 --repo example/repo --json 2>/dev/null)"
+single_measures="$(printf '%s\n' "$single_out" | jq -c '.rows[0].measures')"
+window_measures="$(printf '%s\n' "$window_out" | jq -c '.rows[0].measures')"
+assert_eq "$single_measures" "$window_measures" 'single PR and window measures match'
+
+# --- selector agreement with loop (scenario 22) ---
+body_file="$FIXTURE_DIR/full-telemetry.body"
+[ -f "$body_file" ] || bash "$FIXTURE_DIR/wrap-history.sh" "$(cat "$FIXTURE_DIR/full-telemetry.json")" > "$body_file"
+comments_json="$(jq -nc --arg body "$(cat "$body_file")" --arg created_at "2026-08-01T12:00:00Z" \
+  '[{id:1, body:$body, created_at:$created_at}]')"
+loop_record="$(printf '%s\n' "$comments_json" | reviewer_loop_history_select_latest_summary_record)"
+report_record="$(printf '%s\n' "$comments_json" | reviewer_loop_history_select_latest_summary_record)"
+assert_eq "$(printf '%s\n' "$loop_record" | jq -c .)" "$(printf '%s\n' "$report_record" | jq -c .)" 'selector agrees between callers'
+
+# --- not_recorded never renders as 0 in text ---
+cat > "$TMP_DIR/gh" <<'MOCK_TEXT'
+#!/usr/bin/env bash
+set -euo pipefail
+json_comment() {
+  jq -nc --arg body "$(bash "$GH_FIXTURE_DIR/wrap-history.sh" "$(cat "$GH_FIXTURE_DIR/today-schema.json")")" \
+    --arg created_at "2026-08-01T00:00:00Z" '[{id:1, body:$body, created_at:$created_at}]'
+}
+case "$*" in
+  *issues/201/comments*) json_comment ;;
+  *pr\ list*) printf '[{"number":201}]\n' ;;
+  *) exit 99 ;;
+esac
+MOCK_TEXT
+chmod +x "$TMP_DIR/gh"
+today_text="$(PATH="$TMP_DIR:$PATH" HARNESS_MODE=0 "$SCRIPT" --pr 201 --repo example/repo 2>/dev/null)"
+assert_not_contains "$today_text" 'External blocking rounds: 0' 'not_recorded not rendered as zero'
+assert_contains "$today_text" 'External blocking rounds: Not recorded' 'not_recorded rendered as word'
 
 # --- end-to-end with recording gh stub ---
 cat > "$TMP_DIR/gh" <<'MOCK_GH'
