@@ -3404,6 +3404,8 @@ workflow_is_plan_document_path() {
 # Reviewer-loop history comment format (#1657 — shared producer/reader)
 # ---------------------------------------------------------------------------
 
+# Shared with pr-review-loop.sh and reviewer-effectiveness-report.sh (#1657).
+# shellcheck disable=SC2034
 REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
 REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
 
