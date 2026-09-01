@@ -8198,8 +8198,7 @@ reviewer_loop_missed_finding_records() {
   local results_json heads_json composed_payload local_verdict
   local platform_name normalized reviewed_head blocking_count paths_text path_total
   local state classification record records_json="[]"
-  local entry_name entry_head output_blob paths_json
-  local -a path_lines=()
+  local entry_name output_blob paths_json
 
   missed_finding_attribution_reports=""
 
@@ -9050,12 +9049,13 @@ reviewer_loop_history_append_to_summary() {
       --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
       --argjson prNumber "${pr_number:-0}" \
       --arg updatedAt "$(reviewer_loop_history_recorded_at)" \
+      --arg reason "${reviewer_loop_history_last_unavailable_reason:-history_render_failed}" \
       '{
         schema: $schema,
         pr_number: $prNumber,
         updated_at: $updatedAt,
         history_status: "unavailable",
-        history_unavailable_reason: "history_render_failed",
+        history_unavailable_reason: $reason,
         entries: []
       }' >"$_payload_tmp"
   fi
@@ -10446,7 +10446,6 @@ declare -a platform_blocking_outputs=()
 missed_findings_json='[]'
 platform_results_json='[]'
 missed_finding_attribution_reports=""
-missed_finding_telemetry_failure=""
 # Peer evidence for the expensive-reviewer gate (issue #1649): "platform|result|reason".
 platform_peer_evidence=()
 expensive_gate_last_platform=""
