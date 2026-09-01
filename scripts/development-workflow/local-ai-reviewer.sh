@@ -386,20 +386,20 @@ filter_strict_plan_parsed_response() {
     | .findings as $all
     | ($all | map(
         . as $f
-        | if ($required | index($f.check)) != null
-            and ($with_source | index($f.path)) == null
-            and ($f.check != "unknown") then
-            $f + {check: "unknown"}
+        | if ($f.check != "unknown")
+            and ($required | index($f.check)) != null
+            and ($with_source | index($f.path)) == null then
+            $f + {check: "unknown", remapped: true}
           else
             $f
           end
-      )) as $kept
-    | ($kept | map(select(.check != "unknown")) | length) as $named_count
-    | ($kept | map(select(.check == "unknown")) | length) as $unknown_named
+      )) as $processed
+    | ($processed | map(select(.remapped == true)) | length) as $remapped
+    | ($processed | map(del(.remapped))) as $kept
     | . + {
-        count: $named_count,
+        count: ($kept | map(select(.check != "unknown")) | length),
         checks: ($kept | map(select(.check != "unknown") | .check) | unique | join(",")),
-        unknown_count: ((.unknown_count // 0) + $unknown_named),
+        unknown_count: ((.unknown_count // 0) + $remapped),
         findings: $kept
       }
   ' 2>/dev/null
