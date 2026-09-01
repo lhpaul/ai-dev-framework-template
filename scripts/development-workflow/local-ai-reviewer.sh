@@ -388,14 +388,20 @@ filter_strict_plan_parsed_response() {
   local parsed="$1"
   local sections_json="$2"
   local sources_json="$3"
+  local documents_json="${4:-[]}"
 
-  printf '%s\n' "$parsed" | jq -c --argjson sections "$sections_json" --argjson sources "$sources_json" '
+  printf '%s\n' "$parsed" | jq -c --argjson sections "$sections_json" --argjson sources "$sources_json" --argjson documents "$documents_json" '
     ($sections | map(select(.source == "required") | .id)) as $required
     | ($sources | map(.plan_path)) as $with_source
+    | ($documents | map(.path)) as $plan_docs
     | .findings as $all
     | ($all | map(
         . as $f
         | if ($f.check != "unknown")
+            and (($f.path | type) != "string" or ($f.path | length) == 0
+                 or ($plan_docs | index($f.path)) == null) then
+            $f + {check: "unknown", remapped: true}
+          elif ($f.check != "unknown")
             and ($required | index($f.check)) != null
             and ($with_source | index($f.path)) == null then
             $f + {check: "unknown", remapped: true}
@@ -668,7 +674,7 @@ strict_run_registry_entry() {
             --argjson unknown_count "${unknown_count:-0}" \
             --argjson findings "${findings_json:-[]}" \
             '{count:$count, checks:$checks, unknown_count:$unknown_count, findings:$findings}')"
-          if strict_parsed="$(filter_strict_plan_parsed_response "$strict_parsed" "$strict_plan_sections_json" "$strict_plan_sources_json")"; then
+          if strict_parsed="$(filter_strict_plan_parsed_response "$strict_parsed" "$strict_plan_sections_json" "$strict_plan_sources_json" "$strict_plan_documents_json")"; then
             count="$(printf '%s\n' "$strict_parsed" | jq -r '.count')"
             checks="$(printf '%s\n' "$strict_parsed" | jq -r '.checks')"
             unknown_count="$(printf '%s\n' "$strict_parsed" | jq -r '.unknown_count')"
