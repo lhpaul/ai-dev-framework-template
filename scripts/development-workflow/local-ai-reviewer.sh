@@ -557,7 +557,7 @@ review_stage="$(printf '%s\n' "$review_stage_resolved" | sed -n '1p')"
 review_stage_source="$(printf '%s\n' "$review_stage_resolved" | sed -n '2p')"
 review_checklists_csv="$(printf '%s\n' "$review_stage_resolved" | sed -n '3p')"
 if [ -n "$review_checklists_csv" ]; then
-  review_checklists_json="$(printf '%s\n' "$review_checklists_csv" | jq -R -s -c 'split(",") | map(select(length > 0))')"
+  review_checklists_json="$(jq -n --arg csv "$review_checklists_csv" '$csv | split(",") | map(select(length > 0))')"
 else
   review_checklists_json="[]"
 fi
