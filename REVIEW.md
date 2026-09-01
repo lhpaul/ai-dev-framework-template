@@ -405,6 +405,9 @@ branch implies.
    named?
 6. Do the protocol document, the integration document and the `--help`
    output describe the same behavior as the code?
+7. Does every catalogue entry read generally — no person's name, no document
+   title, no wording that only makes sense to someone who saw the original
+   incident?
 
 ---
 

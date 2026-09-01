@@ -15,6 +15,7 @@ on:
       - 'scripts/lint/tests/test-workflow-shell-guard-lint.sh'
       - 'scripts/lint/workflow-shell-snippet-lint.py'
       - 'scripts/lint/tests/test-workflow-shell-snippet-lint.sh'
+      - 'scripts/lint/review-doctrine-lint.sh'
       - 'docs/workflow/**'
       - 'docs/best-practices/**'
       - '.agents/skills/**'

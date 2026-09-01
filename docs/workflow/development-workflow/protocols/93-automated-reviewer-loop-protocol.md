@@ -230,7 +230,11 @@ Conditions are evaluated in order and stop at the first unmet one:
    The local reviewer also emits `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, and
    `REVIEW_CHECKLISTS` on stdout; `pr-review-loop.sh` forwards them into loop
    summaries as `PLATFORM_<n>_REVIEW_STAGE`, `PLATFORM_<n>_REVIEW_STAGE_SOURCE`,
-   and `PLATFORM_<n>_REVIEW_CHECKLISTS`.
+   and `PLATFORM_<n>_REVIEW_CHECKLISTS`. It also emits `REVIEW_DOCTRINE_STATE`,
+   `REVIEW_DOCTRINE_PATTERN_COUNT`, and `REVIEW_DOCTRINE_VERSION`; the loop
+   forwards them as `PLATFORM_<n>_REVIEW_DOCTRINE_STATE`,
+   `PLATFORM_<n>_REVIEW_DOCTRINE_PATTERN_COUNT`, and
+   `PLATFORM_<n>_REVIEW_DOCTRINE_VERSION`.
 2. **Preceding peer evidence** — every platform that precedes this reviewer
    under the reordered list (same-bucket non-expensive peers plus every earlier
    bucket) has already run with acceptable evidence: `clean`, or `skipped`
