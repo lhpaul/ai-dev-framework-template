@@ -95,12 +95,10 @@ rer_fetch_summary_body() {
 rer_compute_measures_json() {
   local payload="$1"
   local m1 m2 m3 m4 m5 m6 m7
-  local avail2 avail3 avail6 avail7
 
   m1="$(printf '%s\n' "$payload" | jq -c '{availability:"computed", value:(.entries | length)}')"
 
   if rer_measure_available "$payload" "missed_findings"; then
-    avail2=computed
     m2="$(printf '%s\n' "$payload" | jq -c '
       {availability:"computed", value:([.entries[]? | select((.missed_findings | length) > 0)] | length)}
     ')"
@@ -113,7 +111,6 @@ rer_compute_measures_json() {
         | select(.local_evidence_state == "clean_earlier_commit")] | length)}
     ')"
   else
-    avail2=not_recorded
     m2='{"availability":"not_recorded"}'
     m4='{"availability":"not_recorded"}'
     m5='{"availability":"not_recorded"}'
@@ -390,7 +387,7 @@ rer_build_report() {
   local -a pr_numbers=("$@")
   local -a rows=()
   local pr body state json row measures
-  local rows_json accounting included excluded requested
+  local rows_json requested included excluded
   local -a aggregates=()
   local strict_checks report agg_json
 

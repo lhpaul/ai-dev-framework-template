@@ -224,10 +224,11 @@ requests (default **20**; pass `--window` to change it — no config or env over
 
 Usage:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234
-./scripts/development-workflow/reviewer-effectiveness-report.sh --window 20 --repo owner/repo
-./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234 --json
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --window 20 --repo owner/repo
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234 --json
 ```
 
 The seven measures, three exclusion reasons (`no_history`, `unparseable_history`,

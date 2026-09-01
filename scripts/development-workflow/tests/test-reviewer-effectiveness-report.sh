@@ -45,6 +45,7 @@ assert_not_contains() {
   fi
 }
 
+# shellcheck source=scripts/development-workflow/reviewer-effectiveness-report.sh
 HARNESS_MODE=1 source "$SCRIPT"
 
 wrap_body() {
