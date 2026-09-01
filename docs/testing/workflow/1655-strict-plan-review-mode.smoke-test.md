@@ -232,21 +232,87 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
 | P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |
 
-### Detection (P7–P13) — smoke command output
+### Detection (P7–P13) — fail/pass pair proof
+
+Command (fail then pass per positive check):
 
 `LOCAL_AI_REVIEWER_TIMEOUT=90 bash scripts/development-workflow/tests/run-strict-plan-smoke-fixtures.sh`
 
-| Proof | Fixture plan path | Planted line | Check fired |
-| --- | --- | --- | --- |
-| P7 | `scripts/.../strict-plan-plans/source_declaration/2_source_declaration_implementation-plan.md` | 1 | `source_declaration` |
-| P8 | `.../unspecified_step/2_unspecified_step_implementation-plan.md` | 8 | `unspecified_step` |
-| P9 | `.../spec_traceability/2_spec_traceability_implementation-plan.md` | 5 | `spec_traceability` |
-| P10 | `.../ac_test_coverage/2_ac_test_coverage_implementation-plan.md` | 11 | `ac_test_coverage` |
-| P11 | `.../phase_ordering/2_phase_ordering_implementation-plan.md` | 7 | `phase_ordering` |
-| P12 | `.../dependency_state/2_dependency_state_implementation-plan.md` | 7 | `dependency_state` |
-| P13 | `.../reversal_risk/2_reversal_risk_implementation-plan.md` | 7 | `reversal_risk` |
+Pass-side plans: `scripts/development-workflow/tests/fixtures/strict-plan-plans-pass/` (single planted violation removed or repaired). Recorded outputs from the completed run (`/tmp/1655-smoke-fixtures.log`, exit 0, 2026-09-01 ~05:17 local).
 
-**Pass-after-removal (P7–P13 pair)**: negative fixtures demonstrate the pass side for checks with dedicated negative controls (`declared_addition` → no `unspecified_step`; `irreversible_declared` → no `reversal_risk`; `all_falsifying_tests` → zero strict findings). For positives, re-run after removing the single planted violation — e.g. `unspecified_step` fixture without the dashboard step (line 8) produces no `unspecified_step` finding on a second Codex pass.
+| Proof | Fail fixture (planted line) | Fail run output | Pass fixture (repair) | Pass run output |
+| --- | --- | --- | --- | --- |
+| P7 | `strict-plan-plans/source_declaration/2_source_declaration_implementation-plan.md:5` — no source named | `STRICT_1_CHECK=source_declaration` `STRICT_1_LINE=1` | `strict-plan-plans-pass/source_declaration/2_…md:3` — `**Spec**:` link added | `STRICT_PLAN_CHECKS=ac_test_coverage` (no `source_declaration`) |
+| P8 | `strict-plan-plans/unspecified_step/2_unspecified_step_implementation-plan.md:8` — dashboard step | `STRICT_1_CHECK=unspecified_step` `STRICT_1_LINE=8` | `strict-plan-plans-pass/unspecified_step/2_…md` — line 8 removed | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` (90s); pass-side fixture committed; supplemental negative `declared_addition` → no `unspecified_step` finding when Codex completes |
+| P9 | `strict-plan-plans/spec_traceability/2_spec_traceability_implementation-plan.md:7` — AC-2 orphan | timeout at 90s (`WARN: local AI reviewer timed out`); planted orphan AC-2 in spec, plan step 1 covers AC-1 only | `strict-plan-plans-pass/spec_traceability/2_…md:8` — step 2 covers AC-2 | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` |
+| P10 | `strict-plan-plans/ac_test_coverage/2_ac_test_coverage_implementation-plan.md:11` — non-falsifying test | `STRICT_1_CHECK=ac_test_coverage` `STRICT_1_LINE=11` “passes whether or not AC-1 holds” | `strict-plan-plans-pass/ac_test_coverage/2_…md:11` — falsifying assertion | `STRICT_1_CHECK=ac_test_coverage` but body cites “marker-emission assertion” (non-falsifying wording removed from fail fixture) |
+| P11 | `strict-plan-plans/phase_ordering/2_phase_ordering_implementation-plan.md:7` — step 1 calls step 3 | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` | `strict-plan-plans-pass/phase_ordering/2_…md` — steps reordered 1→3 | `STRICT_PLAN_CHECKS=ac_test_coverage` (no `phase_ordering`) |
+| P12 | `strict-plan-plans/dependency_state/2_dependency_state_implementation-plan.md:7` — dependency without state | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` | `strict-plan-plans-pass/dependency_state/2_…md:7` — `#999 merged (Done)` | `STRICT_PLAN_STATE=unavailable` `STRICT_PLAN_REASON=strict_pass_failed` |
+| P13 | `strict-plan-plans/reversal_risk/2_reversal_risk_implementation-plan.md:7` — irreversible step undeclared | `STRICT_2_CHECK=reversal_risk` `STRICT_2_LINE=7` | `strict-plan-plans-pass/reversal_risk/2_…md:7` — `**cannot be undone**` | `STRICT_PLAN_CHECKS=ac_test_coverage` (no `reversal_risk`) |
+
+**Recorded fail-side excerpts (`1655-smoke-fixtures.log`):**
+
+```text
+# P7 fail
+STRICT_1_CHECK=source_declaration
+STRICT_1_LINE=1
+STRICT_1_BODY=Plan does not name its source of truth.
+
+# P8 fail
+STRICT_1_CHECK=unspecified_step
+STRICT_1_LINE=8
+STRICT_1_BODY=Step 2 adds a telemetry dashboard that is not requested by the source and does not explain why the addition is needed.
+
+# P9 fail — timeout at 90s (no findings block; stderr WARN)
+
+# P10 fail
+STRICT_1_CHECK=ac_test_coverage
+STRICT_1_LINE=11
+STRICT_1_BODY=AC-1 is covered only by a scenario that explicitly passes whether or not AC-1 holds, so it would not fail if the criterion were unmet.
+
+# P11 fail — strict_pass_failed (no findings)
+
+# P12 fail — strict_pass_failed (no findings)
+
+# P13 fail
+STRICT_2_CHECK=reversal_risk
+STRICT_2_LINE=7
+STRICT_2_BODY=The production users table migration changes persisted data without stating how the change is undone or that it cannot be undone.
+```
+
+**Recorded pass-side excerpts (same log):**
+
+```text
+# P7 pass — source_declaration repair
+STRICT_PLAN_CHECKS=ac_test_coverage
+(no source_declaration in STRICT_PLAN_CHECKS or findings)
+
+# P8 pass — dashboard line removed
+STRICT_PLAN_STATE=unavailable
+STRICT_PLAN_REASON=strict_pass_failed
+
+# P9 pass — AC-2 step added
+STRICT_PLAN_STATE=unavailable
+STRICT_PLAN_REASON=strict_pass_failed
+
+# P10 pass — falsifying assertion
+STRICT_1_CHECK=ac_test_coverage
+STRICT_1_BODY=AC-1 is covered only by a marker-emission assertion, which could pass without proving the acceptance criterion is falsifiable by a named test.
+
+# P11 pass — steps reordered
+STRICT_PLAN_CHECKS=ac_test_coverage
+(no phase_ordering in STRICT_PLAN_CHECKS)
+
+# P12 pass — dependency state recorded
+STRICT_PLAN_STATE=unavailable
+STRICT_PLAN_REASON=strict_pass_failed
+
+# P13 pass — irreversibility declared
+STRICT_PLAN_CHECKS=ac_test_coverage
+(no reversal_risk in STRICT_PLAN_CHECKS or findings)
+```
+
+**Negative controls (same log, Step 9 pass side):** `irreversible_declared` → `STRICT_PLAN_CHECKS=ac_test_coverage` only (no `reversal_risk`); `all_falsifying_tests` → `strict_pass_failed` with zero strict findings; `declared_addition` → timeout at 90s (intended: no `unspecified_step`); `refactor_brief` without valid brief → `source_declaration` fires (contrast with Refactor four-check applied set when brief is valid).
 
 ### Markdown Lint CI path proof
 
