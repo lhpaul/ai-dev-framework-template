@@ -120,10 +120,12 @@ run_test "s16_ac3a_name_pattern" "yes" "$(grep -Fq 'name it' "$CATALOGUE" && ech
 run_test "s16a_catalogue_generality" "yes" "$(grep -Fq 'reads generally' "$CATALOGUE" && echo yes || echo no)"
 run_test "s16a_review_generality" "yes" "$(grep -Fq 'read generally' "$REPO_ROOT/REVIEW.md" && echo yes || echo no)"
 
-# Scenario 17: CI path filters
-run_test "s17_markdown_paths_catalogue" "yes" "$(grep -Fq 'docs/workflow/development-workflow/review-doctrine.md' "$REPO_ROOT/.github/workflows/markdown-lint.yml" && echo yes || echo no)"
-run_test "s17_markdown_paths_linter" "yes" "$(grep -Fq 'scripts/lint/review-doctrine-lint.sh' "$REPO_ROOT/.github/workflows/markdown-lint.yml" && echo yes || echo no)"
-run_test "s17_shellcheck_paths_linter" "yes" "$(grep -Fq 'scripts/lint/review-doctrine-lint.sh' "$REPO_ROOT/.github/workflows/shellcheck.yml" && echo yes || echo no)"
+# Scenario 17: CI path filters (paths: block only — not run: steps)
+_markdown_paths_section="$(awk '/^on:/{on=1} on && /^  pull_request:/{pr=1} pr && /^    paths:/{paths=1;next} paths && /^      -/{print;next} paths && /^[^ ]/{exit}' "$REPO_ROOT/.github/workflows/markdown-lint.yml")"
+_shellcheck_paths_section="$(awk '/^on:/{on=1} on && /^  pull_request:/{pr=1} pr && /^    paths:/{paths=1;next} paths && /^      -/{print;next} paths && /^[^ ]/{exit}' "$REPO_ROOT/.github/workflows/shellcheck.yml")"
+run_test "s17_markdown_paths_catalogue" "yes" "$(printf '%s\n' "$_markdown_paths_section" | grep -Fq 'docs/workflow/development-workflow/review-doctrine.md' && echo yes || echo no)"
+run_test "s17_markdown_paths_linter" "yes" "$(printf '%s\n' "$_markdown_paths_section" | grep -Fq 'scripts/lint/review-doctrine-lint.sh' && echo yes || echo no)"
+run_test "s17_shellcheck_paths_linter" "yes" "$(printf '%s\n' "$_shellcheck_paths_section" | grep -Fq 'scripts/lint/review-doctrine-lint.sh' && echo yes || echo no)"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
