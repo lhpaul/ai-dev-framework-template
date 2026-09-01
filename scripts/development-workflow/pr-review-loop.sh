@@ -1939,8 +1939,9 @@ run_codex_github_review() {
 
       # Companion script REVIEWED_HEAD is artifact-derived on terminal safe-fail
       # paths with no unresolved threads; do not fall back when threads exist
-      # (multi-commit thread heads must stay unattributable per AC-11).
-      if [ "$actual_unresolved_count" -eq 0 ]; then
+      # (multi-commit thread heads must stay unattributable per AC-11) or when
+      # the thread audit could not be completed.
+      if [ "$thread_check_status" -eq 0 ] && [ "$actual_unresolved_count" -eq 0 ]; then
         local companion_reviewed_head
         companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
         [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
