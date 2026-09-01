@@ -112,7 +112,7 @@ rer_compute_measures_json() {
 
   if rer_measure_available "$payload" "missed_findings"; then
     m2="$(printf '%s\n' "$payload" | jq -c '
-      {availability:"computed", value:([.entries[]? | select((.missed_findings | length) > 0)] | length)}
+      {availability:"computed", value:([.entries[]?.missed_findings[]?] | length)}
     ')"
     m4="$(printf '%s\n' "$payload" | jq -c '
       {availability:"computed", value:([.entries[]?.missed_findings[]?

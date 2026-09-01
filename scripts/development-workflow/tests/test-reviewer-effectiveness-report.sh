@@ -71,7 +71,7 @@ assert_jq "$today_measures" '.final_current_head_evidence.availability' 'not_rec
 # --- full telemetry ---
 full_json="$(wrap_body "$FIXTURE_DIR/full-telemetry.json" | reviewer_loop_history_extract_latest_json)"
 full_measures="$(rer_compute_measures_json "$full_json")"
-assert_jq "$full_measures" '.external_blocking_rounds.value' '4' 'external blocking rounds total'
+assert_jq "$full_measures" '.external_blocking_rounds.value' '5' 'external blocking rounds total records'
 assert_jq "$full_measures" '.confirmed_miss_records.value' '3' 'confirmed misses'
 assert_jq "$full_measures" '.possible_miss_records.value' '1' 'possible misses'
 assert_jq "$full_measures" '.final_current_head_evidence.value' 'current' 'final head evidence'
@@ -89,7 +89,7 @@ assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .applied' '1' 'pl
 partial_json="$(wrap_body "$FIXTURE_DIR/partial-telemetry.json" | reviewer_loop_history_extract_latest_json)"
 partial_measures="$(rer_compute_measures_json "$partial_json")"
 assert_jq "$partial_measures" '.rounds.value' '5' 'partial rounds counts all entries'
-assert_jq "$partial_measures" '.external_blocking_rounds.value' '2' 'partial external rounds from rounds with records'
+assert_jq "$partial_measures" '.external_blocking_rounds.value' '2' 'partial external rounds count records'
 assert_jq "$partial_measures" '.confirmed_miss_records.value' '1' 'partial confirmed from later rounds'
 assert_jq "$partial_measures" '.possible_miss_records.value' '1' 'partial possible from later rounds'
 assert_jq "$partial_measures" '.final_current_head_evidence.availability' 'computed' 'measure7 available from last entry field'
