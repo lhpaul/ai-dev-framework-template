@@ -8803,26 +8803,35 @@ reviewer_loop_current_round_heads_ok() {
   local has_stale=0 has_unknown=0
   local blocked_by="" status="ok" details_json
 
-  while IFS= read -r platform || [ -n "$platform" ]; do
-    [ -n "$platform" ] || continue
-    found=0
-    reviewed_head=""
-    for entry in "${reviewed_entries[@]:-}"; do
-      if [ "${entry%%:*}" = "$platform" ]; then
-        reviewed_head="${entry#*:}"
-        found=1
-      fi
-    done
-    if [ "$found" -eq 0 ] || reviewer_loop_head_is_unknown_or_invalid "$reviewed_head"; then
+  # Fail closed: without a verifiable current head, currency cannot be established.
+  if reviewer_loop_head_is_unknown_or_invalid "$current_head"; then
+    while IFS= read -r platform || [ -n "$platform" ]; do
+      [ -n "$platform" ] || continue
       has_unknown=1
       details+=("head_unknown:${platform}")
-      continue
-    fi
-    if [ "$(printf '%s' "$reviewed_head" | tr 'A-F' 'a-f')" != "$(printf '%s' "$current_head" | tr 'A-F' 'a-f')" ]; then
-      has_stale=1
-      details+=("stale_head:${platform}")
-    fi
-  done
+    done
+  else
+    while IFS= read -r platform || [ -n "$platform" ]; do
+      [ -n "$platform" ] || continue
+      found=0
+      reviewed_head=""
+      for entry in "${reviewed_entries[@]:-}"; do
+        if [ "${entry%%:*}" = "$platform" ]; then
+          reviewed_head="${entry#*:}"
+          found=1
+        fi
+      done
+      if [ "$found" -eq 0 ] || reviewer_loop_head_is_unknown_or_invalid "$reviewed_head"; then
+        has_unknown=1
+        details+=("head_unknown:${platform}")
+        continue
+      fi
+      if [ "$(printf '%s' "$reviewed_head" | tr 'A-F' 'a-f')" != "$(printf '%s' "$current_head" | tr 'A-F' 'a-f')" ]; then
+        has_stale=1
+        details+=("stale_head:${platform}")
+      fi
+    done
+  fi
 
   if [ "$has_stale" -eq 1 ]; then
     blocked_by="stale_head"

@@ -2856,6 +2856,8 @@ run_test "1652_s11_stale_head" "stale_head" \
   "$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" "local-ai-reviewer:$_sf_other" | jq -r '.blocked_by')"
 run_test "1652_s11_head_unknown" "head_unknown" \
   "$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "$_sf_head" | jq -r '.blocked_by')"
+run_test "1652_s11_head_unknown_when_current_missing" "head_unknown" \
+  "$(printf '%s\n' "local-ai-reviewer" | reviewer_loop_current_round_heads_ok "" "local-ai-reviewer:$_sf_head" | jq -r '.blocked_by')"
 run_test "1652_s11_empty_when_small" "" \
   "$(printf '%s\n' "$_sf_a" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
 
