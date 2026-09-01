@@ -1,6 +1,6 @@
 # Plan
 
-**Source of truth**: tracker issue #1655 (Refactor) — restructure strict pass registry.
+**Tracker brief (Refactor)**: Issue #1655 — restructure the strict pass registry without changing spec dispatch timing.
 
 ## Steps
 
