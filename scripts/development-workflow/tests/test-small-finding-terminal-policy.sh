@@ -49,8 +49,8 @@ $(printf '%s\n' "$payload" | jq '.')
 
 _evaluate_terminal() {
   local ledger_body="$1"
-  local findings="$2"
-  printf '%s\n' "$findings" \
+  local _finding_lines="$2"
+  printf '%s\n' "$_finding_lines" \
     | reviewer_loop_evaluate_small_findings_terminal \
         "$ledger_body" "$_head" 2 0 "local-ai-reviewer:$_head"
 }
