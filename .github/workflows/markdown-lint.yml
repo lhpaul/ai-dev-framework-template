@@ -22,6 +22,8 @@ on:
       - 'package-lock.json'
       - 'scripts/lint/markdown-heuristic-lint.py'
       - 'scripts/lint/check-changelog-duplicate-headers.sh'
+      - 'docs/workflow/development-workflow/review-doctrine.md'
+      - 'scripts/lint/review-doctrine-lint.sh'
 
 jobs:
   markdown-lint:
@@ -92,3 +94,6 @@ jobs:
 
       - name: Check CHANGELOG for duplicate section headers
         run: bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+
+      - name: Lint review doctrine catalogue
+        run: bash scripts/lint/review-doctrine-lint.sh

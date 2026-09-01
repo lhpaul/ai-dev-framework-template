@@ -81,6 +81,7 @@ The command runs under `sh -c` with these environment variables:
 - `HEAD_BRANCH`
 - `REVIEWED_HEAD`
 - `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, `REVIEW_CHECKLISTS`
+- `REVIEW_DOCTRINE_STATE`, `REVIEW_DOCTRINE_PATTERN_COUNT`, `REVIEW_DOCTRINE_VERSION`
 - `LOCAL_AI_REVIEWER_MODE` — `ordinary` (default) or `strict`
 
 The context bundle JSON uses `schema_version:
@@ -98,6 +99,12 @@ local_ai_reviewer_context.v1` and includes:
 - `review_stage_source` — `branch`, `branch+files`, or `none`
 - `review_checklists` — ordered list of exact `REVIEW.md` level-2 heading
   strings (may be empty for `default`)
+- `review_doctrine` — full catalogue bytes when supplied, otherwise empty
+- `review_doctrine_state` — `supplied`, `absent`, `unreadable`, or `oversized`
+- `review_doctrine_pattern_count` — patterns **supplied** (zero when not
+  `supplied`)
+- `review_doctrine_version` — first twelve hex characters of the catalogue
+  SHA-256 (empty when no bytes were read)
 
 Selection is **additive and monotone**: `REVIEW.md` as a whole and its Core
 Rules always apply. The branch tier names one stage checklist; changed files
@@ -136,7 +143,8 @@ Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
 artifact. The artifact uses `schema_version: local_ai_reviewer_evidence.v1`
 and records the reviewed head, graph context, result, reason, counts, changed
 files, compact diff summary, a `review_stage` object (stage, source,
-checklists), and a `strict_spec` object that mirrors the
+checklists), a `review_doctrine` object (state, pattern_count, version), and a
+`strict_spec` object that mirrors the
 `STRICT_SPEC_*` keys. Keep this artifact alongside ready-phase
 reviewer-loop evidence when measuring whether Bugbot or another ready-phase
 reviewer found net-new blockers. Relative evidence paths are resolved from the

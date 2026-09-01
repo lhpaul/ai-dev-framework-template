@@ -2,6 +2,25 @@
 
 set -euo pipefail
 
+# The review doctrine's maximum size, in bytes as `wc -c` measures them.
+# AC-12: one source of truth, read by both the linter and the reviewer.
+if declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
+  case "$(declare -p REVIEW_DOCTRINE_MAX_BYTES 2>/dev/null || true)" in
+    *"-r"*)
+      if [ "${REVIEW_DOCTRINE_MAX_BYTES}" != "12000" ]; then
+        echo "ERROR: REVIEW_DOCTRINE_MAX_BYTES is readonly at ${REVIEW_DOCTRINE_MAX_BYTES}; AC-12 requires 12000." >&2
+        return 1
+      fi
+      ;;
+    *)
+      unset REVIEW_DOCTRINE_MAX_BYTES
+      readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+      ;;
+  esac
+else
+  readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+fi
+
 workflow_script_dir() {
   if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     printf 'ERROR: BASH_SOURCE[0] is unset — source workflow-lib.sh from a Bash script or via:\n  bash -c "source scripts/development-workflow/workflow-lib.sh"\n' >&2
