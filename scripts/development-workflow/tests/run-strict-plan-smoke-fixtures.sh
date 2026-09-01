@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 FIXTURES="$SCRIPT_DIR/fixtures/strict-plan-plans"
+FIXTURES_PASS="$SCRIPT_DIR/fixtures/strict-plan-plans-pass"
 CHECKLIST="$REPO_ROOT/docs/workflow/development-workflow/strict-plan-checks.md"
 TIMEOUT="${LOCAL_AI_REVIEWER_TIMEOUT:-120}"
 PR_NUM="${SMOKE_PR_NUMBER:-999}"
@@ -17,11 +18,17 @@ fi
 
 run_fixture() {
   local name="$1"
-  local tmp mock_bin head plan spec_path
+  local variant="${2:-fail}"
+  local tmp mock_bin head plan fixture_dir
   tmp="$(mktemp -d)"
   mock_bin="$(mktemp -d)/bin"
   mkdir -p "$mock_bin"
   plan="docs/specs/developments/strict-fixture-${name}/2_${name}_implementation-plan.md"
+  case "$variant" in
+    fail) fixture_dir="$FIXTURES/$name" ;;
+    pass) fixture_dir="$FIXTURES_PASS/$name" ;;
+    *) echo "ERROR: unknown variant $variant (expected fail or pass)" >&2; return 1 ;;
+  esac
 
   git -C "$tmp" init -q
   git -C "$tmp" config user.email "smoke@example.com"
@@ -30,7 +37,7 @@ run_fixture() {
   mkdir -p "$tmp/docs/workflow/development-workflow"
   cp "$CHECKLIST" "$tmp/docs/workflow/development-workflow/strict-plan-checks.md"
   mkdir -p "$tmp/docs/specs/developments/strict-fixture-${name}"
-  cp "$FIXTURES/$name/"*.md "$tmp/docs/specs/developments/strict-fixture-${name}/"
+  cp "$fixture_dir/"*.md "$tmp/docs/specs/developments/strict-fixture-${name}/"
   git -C "$tmp" add -A
   git -C "$tmp" commit -q -m "fixture $name"
   git -C "$tmp" remote add origin "git@github.com:owner/repo.git"
@@ -56,7 +63,7 @@ esac
 MOCK
   chmod +x "$mock_bin/gh"
 
-  echo "=== fixture: $name (head ${head:0:12}) ==="
+  echo "=== fixture: $name [$variant] (head ${head:0:12}) ==="
   set +e
   PATH="$mock_bin:$PATH" \
     LOCAL_AI_REVIEWER_COMMAND="$REPO_ROOT/scripts/development-workflow/local-codex-review-command.sh" \
@@ -79,7 +86,8 @@ negatives=(declared_addition irreversible_declared all_falsifying_tests refactor
 
 echo "Running strict-plan smoke fixtures (timeout ${TIMEOUT}s each)"
 for n in "${positives[@]}"; do
-  run_fixture "$n"
+  run_fixture "$n" fail
+  run_fixture "$n" pass
 done
 echo "=== negative controls ==="
 for n in "${negatives[@]}"; do

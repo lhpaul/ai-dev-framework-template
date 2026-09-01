@@ -1315,7 +1315,7 @@ run_plan_review() {
   export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
   LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
   export LOCAL_AI_REVIEWER_COMMAND
-  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT" "$@"
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
 }
 
 # Scenario 15: spec stage — spec applied, plan not_applicable stage_not_plan
