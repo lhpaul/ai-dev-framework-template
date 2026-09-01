@@ -666,6 +666,22 @@ Environment variables:
                                      Bypass the expensive-reviewer gate for manual escalation. The gate still
                                      evaluates and emits EXPENSIVE_GATE_* with RESULT=forced and the reason it
                                      would have deferred; justify use in the PR.
+  PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS=<n>
+                                     Consecutive small-findings rounds required before RESULT=clean with
+                                     REASON=small_findings_terminal (default: 2; valid range 1–999). A round
+                                     qualifies only when every blocking finding is small under the two-tier
+                                     rule (normative documents are never small; other non-shipped paths are
+                                     small unless the body touches a contract surface), the strict thread
+                                     audit is zero, and both prior counted rounds and the deciding round are
+                                     on the current PR head for every contributing platform. See Protocol 93.
+  SMALL_FINDINGS_BLOCKED_BY=<cause>  Emitted when the small-findings terminal rule does not fire for a content
+                                     or currency cause: shipped_path | contract_surface | stale_head |
+                                     head_unknown. Within-group precedence: shipped_path over contract_surface;
+                                     stale_head over head_unknown. Empty when the rule fired or the run was
+                                     simply short. Contract-surface identities include acceptance_criteria,
+                                     decision_gates_and_matrices, parser_and_input_behavior, scope_and_coverage,
+                                     fail_closed_semantics, state_and_status_models, telemetry_and_contracts,
+                                     proof_obligations.
 EOF
 }
 

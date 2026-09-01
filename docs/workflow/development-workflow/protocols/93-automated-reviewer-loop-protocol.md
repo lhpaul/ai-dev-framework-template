@@ -799,23 +799,53 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
    low-confidence cases; repeated low-confidence security labels indicate reviewer
    calibration drift, not necessarily a code defect.
 
-5. **Small non-shipped-artifact tail**: `pr-review-loop.sh` may stop a repeated
+5. **Small-finding terminal policy**: `pr-review-loop.sh` may stop a repeated
    small-findings tail when all of the following are true:
    - The current review result would otherwise be `needs_fixes`.
-   - Every blocking finding with a machine-readable path targets a non-shipped
-     artifact such as docs, tests, fixtures, snapshots, or markdown.
+   - Every **blocking** finding is classified as small under the two-tier rule
+     below. Advisory and suggestion-level findings never reach this rule.
    - The strict GraphQL review-thread audit reports
      `UNRESOLVED_THREAD_COUNT=0`.
+   - Both the prior counted rounds **and** the round being decided were
+     produced on the current PR head (`loop_head_sha`): each prior ledger
+     entry's `classification_head` must equal the current head, its
+     `contributing_platforms[]` must be non-empty, and every named contributor
+     must have a valid `reviewed_heads[]` head equal to that
+     `classification_head`; every contributor to the deciding round must
+     likewise report `loop_head_sha`. An absent, empty, or synthetic
+     `unknown-…` head ends the consecutive run (`head_unknown`) rather than
+     counting as current.
    - The latest reviewer-loop history already contains enough consecutive
-     `small_findings_only=true` rounds for the current round to reach
-     `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` (default `2`).
+     qualifying `small_findings_only=true` rounds for the current round to
+     reach `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` (default `2`).
+
+   **Two-tier small classification** (blocking findings only):
+
+   | Finding path | Blocking finding is small? |
+   | --- | --- |
+   | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever its wording |
+   | Any other non-shipped path — `CHANGELOG.md`, fixtures, snapshots, and other non-shipped `*.md` outside the normative set | Small **unless** its body touches a contract surface (acceptance criteria, decision gates/matrices, parser/input behavior, scope/coverage, fail-closed semantics, state/status models, telemetry/contracts, proof obligations). Matching is case-insensitive on POSIX word boundaries; bare common words such as `gate`, `scope`, or `state` alone do not match. |
+   | A shipped path | Never |
 
    When this rule fires, the script emits `RESULT=clean`,
    `REASON=small_findings_terminal`, `SMALL_FINDINGS_STOP=1`, and records
-   `small_findings_paths` in the summary history. This is only a review-loop
-   terminal condition: the caller must still run exact-head tests, exact-head CI,
-   readiness self-checks, and merge gates. The summary's `Unreviewed tail` line
-   is the audit record for the non-shipped findings that ended the review loop.
+   `small_findings_paths` plus `contributing_platforms[]` in the summary
+   history. This is only a review-loop terminal condition: the caller must
+   still run exact-head tests, exact-head CI, readiness self-checks, and merge
+   gates. The summary's `Unreviewed tail` line is the audit record for the
+   small findings that ended the review loop.
+
+   When the terminal rule does **not** fire for a content or currency cause,
+   the script emits `SMALL_FINDINGS_BLOCKED_BY` as one of `shipped_path`,
+   `contract_surface`, `stale_head`, or `head_unknown`. Content causes
+   (`shipped_path`, `contract_surface`) and currency causes (`stale_head`,
+   `head_unknown`) are mutually exclusive by construction. Within each group,
+   precedence is `shipped_path` over `contract_surface`, and `stale_head` over
+   `head_unknown`. The summary line names **every** cause present (shipped
+   paths, matched contract-surface identities, and platforms with stale or
+   unknown heads); only the single-valued key is reduced by precedence. The
+   key is empty when the rule fired and empty when the run was simply short
+   (`exhausted` or `not_small`).
 
 #### Escalation trigger
 
