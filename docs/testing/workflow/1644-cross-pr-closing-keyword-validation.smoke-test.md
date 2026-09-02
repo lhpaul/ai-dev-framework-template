@@ -96,12 +96,16 @@ tests cover it against a stubbed API, where the starting state is controlled.
 - Close the second owner.
 - **Expected**: the warning returns.
 
-### Step 7: The indeterminate outcome is visible and non-blocking
+### Step 7: The check run is published and never blocks
 
-- This step needs a forced failure. Temporarily revoke the workflow's `pull-requests: read` permission, or run the validator locally with a `gh` that fails on the open-pull-request list.
-- **Expected**: the existing comment is left exactly as it was, no new comment appears, and a **neutral** check appears on the pull request naming what could not be read. The pull request's mergeability is unchanged, and no check is failing.
-- Restore the permission and re-run.
-- **Expected**: the neutral check is replaced by the conclusive result, even when that result is silent.
+- On the claimant pull request from Step 2, open the checks list.
+- **Expected**: a check named `Closing-keyword scope` is present on the head commit, written by this workflow, and the pull request's mergeability is unchanged by it.
+- Merge-block check: confirm the pull request is not held by this check in the merge box.
+- **Expected**: it is not. This is the assertion that matters live — it is the first check run this repository writes, so `checks: write` working at all, and a non-`success` conclusion not blocking a merge, are both things only a real run can show.
+
+**What this step deliberately does not do.** The *indeterminate* path — an unreadable input producing a `neutral` conclusion with the existing report left untouched — is **unit-only**, and the unit suite covers it across every gate input. Forcing it live would mean either reducing the workflow's permissions, which is a change to the default-branch workflow and outside what a smoke runbook should do to a shared repository, or invoking the validator with `--publish` by hand, which the design forbids: only the serialized workflow job publishes, and that rule is what makes the ordering guarantee hold. Neither is worth breaking for a live re-proof of behaviour the unit suite already asserts.
+
+If a live proof is ever wanted, the way is a deliberate, reviewed pull request to `main` that lowers the workflow's `pull-requests` permission, observed and then reverted. That is a maintainer decision, not a runbook step.
 
 ### Last Step: Validate & shut down
 
