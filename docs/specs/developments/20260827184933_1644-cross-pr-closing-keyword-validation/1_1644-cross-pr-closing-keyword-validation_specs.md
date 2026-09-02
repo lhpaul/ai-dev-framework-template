@@ -45,7 +45,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when a pull request whose branch names one of the issues appears, reappears, departs, or is renamed into or out of naming it, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand. *(From the issue. Of these, the two rename cases are not delivered in this iteration — GitHub Actions has no rename event; see* Out of Scope*.)*
+- The check must re-run without anyone re-triggering it by hand, so a corrected pull request stops warning and a newly conflicted one starts: when the pull request's description or labels change, when it is opened, reopened or retargeted, when it reaches readiness, and when a pull request whose branch names one of the issues opens, reopens, closes or merges. The issue also asks for a re-run when a branch is **renamed** into or out of naming an issue; that one is not delivered here, because GitHub Actions has no rename event, and it is recorded in *Out of Scope* rather than promised.
 
 ---
 
@@ -117,7 +117,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 - The graduation closeout recognizes a narrower set of excluded constructs today. That difference is pre-existing, is neither introduced nor widened here, and reconciling the two parsers is not part of this feature.
 - A pull request labelled **`multi-issue-intentional`** produces no warning, regardless of how many issues it names. The label is the only opt-out; there is no per-issue variant and no description marker.
 - The opt-out is evaluated **at the time the validation runs**. Applying the label does not retroactively rewrite history, and removing it restores the warning on the next run.
-- The result is **recomputed** whenever any input to it changes. Because ownership evidence lives on *other* pull requests, that is more than this pull request's own edits:
+- The result is **recomputed from every input, every time the validation runs** — it never reuses a previous verdict. Because ownership evidence lives on *other* pull requests, the inputs are more than this pull request's own edits:
   - its description changes;
   - **its title changes**, for a pull request merging to a non-default branch, where the title contributes filtering state — adding or removing an unclosed fence in the title flips whether a description reference is live, with the description untouched;
   - its labels change;
@@ -127,8 +127,8 @@ Fork-originated pull requests are out of scope. This repository requires a same-
   - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
   - **ownership evidence for an issue it names changes** — another implementation pull request whose branch names that issue opens, reopens, closes, or merges, **or an open one is renamed into or out of naming it**. A sibling renamed from `fix/98-slug` to `fix/97-slug` starts carrying issue 97 without any lifecycle event at all.
 
-  This list defines what counts as an *input*, and the validation recomputes correctly from all of them whenever it runs. Two of them — a branch rename and a default-branch change — have no GitHub Actions event that can invoke it, so in this iteration they take effect at the next event that does fire rather than immediately. See *Out of Scope*.
-- A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
+  This list defines what counts as an *input*; **when** the validation runs is a separate question, answered by the Triggers table. Every input above has a trigger behind it except two — a branch rename and a default-branch change — which have no GitHub Actions event at all. A change to either is therefore read correctly by the next run, but does not itself cause one. See *Out of Scope*.
+- A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it. Where the change is a rename or a default-branch change, "must not survive" binds at the next delivered trigger, not immediately; the readiness backstop bounds that delay for any pull request heading for review.
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
 - The validation is **read-only with respect to project state**, with one exception: it may post or update its own report on the pull request, and it may create the `multi-issue-intentional` label if the repository does not have it yet. It does nothing else.
 - **The opt-out label must exist before an author can use it.** A fresh installation of this template does not have it, and the workflow's own bootstrap provisions only the readiness labels. The validation therefore creates it idempotently on first use — the same pattern the repository already uses for `ready-for-regression`, including tolerating a concurrent creator. An opt-out an author cannot reach is not an opt-out.
@@ -201,6 +201,8 @@ Every row above is **state the validation reads**. Failing to read any of them m
 ### Triggers
 
 Triggers are events, not state: they decide *when* the gate runs, and are never read as inputs, so their absence is not a failure and cannot make a run indeterminate.
+
+The rows marked **not delivered** are the ones GitHub Actions has no event for. They are listed because they are the events that *should* fire, and removing them would hide why the coverage has the shape it has; they are **not** requirements of this iteration. *Out of Scope* is the binding statement.
 
 | Trigger | Why it fires |
 | --- | --- |
