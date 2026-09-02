@@ -615,8 +615,31 @@ Outputs stable key=value lines including:
                   unreadable ledger. Absent otherwise.
   REASON=expensive_gate_deferred (RESULT=needs_fixes; expensive reviewer held back)
   REASON=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable (RESULT=escalate)
+  STAGE_SKIP_ENABLED=0|1
+  STAGE_SKIP_DISABLED_REASON=disabled_by_env|compare_mode|explicit_platform_selection|head_unknown|history_unavailable
+  STAGE_SKIPPED_PLATFORMS=<comma-separated platforms>
+                  Per-head reviewer staging (issue #1692). A platform the persisted
+                  reviewer_loop_history.v1 ledger already records clean on the loop's current head
+                  is not re-dispatched on a later cycle of that same head; its recorded verdict is
+                  replayed instead, contributing the same peer evidence, reviewed_heads[] entry, and
+                  ledger record a dispatch would have contributed. The governing verdict is the
+                  newest ledger entry carrying a platform_results record for that platform, and the
+                  reviewed head is read from that same entry — never borrowed from another one.
+                  Fail-closed: missing, unparseable, non-clean, or other-head evidence all dispatch,
+                  and an independent GitHub App/Actions check is never substitute evidence. A new
+                  head clears every skip on its own, so #1656 still owns the local re-dispatch and
+                  #1649 still owns the expensive-reviewer gate. STAGE_SKIPPED_PLATFORMS is emitted
+                  alongside every RESULT= that follows the platform loop, including the
+                  no-platforms-configured exit (empty when nothing was skipped). Guard exits that
+                  never reach the loop (lock_contention, release_pr, truncated_run,
+                  execution_budget_misconfigured) emit none of these keys.
 
 Environment variables:
+  PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1
+                                     Disable per-head reviewer staging (#1692) and dispatch every configured
+                                     platform even when the ledger already records it clean on this head.
+                                     Staging is also off in --compare runs and whenever the caller named
+                                     platforms with --platform.
   POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
                                      called settled (issue #1556). Defaults per platform: 120 for coderabbit /
                                      coderabbit-cli, 60 otherwise. Any platform activity — including an in-place
@@ -741,6 +764,10 @@ is_phase_after_clean_platform() {
 # review threads, and green non-reviewer baseline checks. Membership is a
 # property of the reviewer, not of repository config.
 EXPENSIVE_REVIEWER_PLATFORMS=(codex-github)
+# Per-head reviewer staging (issue #1692): the REASON/STAGE_SKIP_REASON token
+# recorded when a platform is not dispatched because the persisted ledger
+# already carries a clean verdict for it on the loop's current head.
+REVIEWER_LOOP_STAGE_SKIP_REASON="already_clean_current_head"
 EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS=(not_configured explicit-skip release_pr unsupported-platform)
 # Resolved once per run by expensive_gate_resolve_max_deferrals (default 3).
 expensive_gate_max_deferrals=""
@@ -770,6 +797,9 @@ strict_plan_reason=""
 strict_plan_summary_section=""
 # Peer evidence collected during this invocation: "platform|result|reason".
 declare -a platform_peer_evidence=()
+# Set when the caller named platforms with --platform. An explicit selection is
+# an instruction to run those reviewers, so the #1692 per-head skip stands down.
+platform_selection_explicit=0
 
 # expensive_gate_sync_last_from_output <gate_kv_output>
 #
@@ -8280,6 +8310,140 @@ reviewer_loop_local_pass_required() {
   fi
 }
 
+# reviewer_loop_platform_clean_for_head <history_payload> <platform> <head_sha>
+#
+# Issue #1692: per-head reviewer staging. Reports whether <platform> already
+# has a recorded clean verdict for <head_sha> in the persisted
+# reviewer_loop_history.v1 ledger, so a later cycle on the same head does not
+# re-dispatch a reviewer that is already clean on that exact commit.
+#
+# Generalises the #1656 local-reviewer predicate to every configured platform:
+# the newest ledger entry that carries a platform_results record for
+# <platform> governs, and the reviewed head is read from that same entry's
+# reviewed_heads[] (the #1648 evidence field), never from a different entry.
+#
+# Prints exactly one of:
+#   clean_current — newest recorded result is "clean" AND that entry's
+#                   reviewed head for <platform> equals <head_sha>
+#   head_changed  — newest recorded result is "clean" but on another head, or
+#                   the entry records no reviewed head for <platform>
+#   not_clean     — newest recorded result is not "clean"
+#   no_evidence   — the ledger records no result for <platform>, the payload is
+#                   unreadable, or either argument is empty
+#
+# Fail-closed: every value other than clean_current means "dispatch". An
+# independent GitHub App/Actions check is never consulted here — only in-loop
+# ledger evidence counts.
+reviewer_loop_platform_clean_for_head() {
+  local payload="${1:-}" platform="${2:-}" head="${3:-}"
+  local verdict outcome verdict_head
+
+  if [ -z "$platform" ] || [ -z "$head" ] || [ -z "$payload" ]; then
+    printf 'no_evidence\n'
+    return 0
+  fi
+
+  verdict="$(printf '%s' "$payload" | jq -c --arg platform "$platform" '
+      (.entries // []) as $entries
+      | [ $entries[]
+          | . as $entry
+          | ((.platform_results // [])[]
+             | select(.platform == $platform)
+             | {outcome: (.result // "unknown"),
+                head_sha: (
+                  ($entry.reviewed_heads // [])
+                  | map(select(.platform == $platform))
+                  | last
+                  | .reviewed_head // ""
+                ),
+                iteration: ($entry.iteration // 0)})
+        ] as $verdicts
+      | if ($verdicts | length) > 0 then
+          ($verdicts | sort_by(.iteration) | last)
+        else
+          {outcome: "not_yet_run", head_sha: "", iteration: 0}
+        end' 2>/dev/null)" || verdict=""
+  if [ -z "$verdict" ]; then
+    printf 'no_evidence\n'
+    return 0
+  fi
+
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"' 2>/dev/null)" || outcome="unknown"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)" || verdict_head=""
+
+  case "$outcome" in
+    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    clean) ;;
+    *) printf 'not_clean\n'; return 0 ;;
+  esac
+
+  if [ -n "$verdict_head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'clean_current\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+
+# reviewer_loop_stage_skip_resolve <pr_number>
+#
+# Issue #1692: decides whether per-head staging skips are possible this run and
+# loads the ledger they read. Sets stage_skip_enabled, stage_skip_disabled_reason
+# and stage_skip_history_payload.
+#
+# Skipping stands down whenever the run cannot prove what it would be skipping,
+# or whenever the caller asked for a dispatch:
+#   disabled_by_env             PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1
+#   compare_mode                --compare must run every platform to compare them
+#   explicit_platform_selection --platform names reviewers to run, so run them
+#   head_unknown                no platforms, no PR, or no readable loop head
+#   history_unavailable         the ledger for this PR could not be read
+reviewer_loop_stage_skip_resolve() {
+  local pr_number_arg="${1:-}"
+  local platform_count=0
+
+  stage_skip_enabled=0
+  stage_skip_history_payload=""
+  stage_skip_disabled_reason=""
+
+  if declare -p platforms >/dev/null 2>&1; then
+    platform_count="${#platforms[@]}"
+  fi
+
+  if [ "${PR_REVIEW_LOOP_DISABLE_STAGE_SKIP:-0}" = "1" ]; then
+    stage_skip_disabled_reason="disabled_by_env"
+  elif [ "${compare_mode:-0}" -eq 1 ]; then
+    stage_skip_disabled_reason="compare_mode"
+  elif [ "${platform_selection_explicit:-0}" -eq 1 ]; then
+    stage_skip_disabled_reason="explicit_platform_selection"
+  elif [ "$platform_count" -eq 0 ] || [ -z "$pr_number_arg" ] || [ -z "${loop_head_sha:-}" ]; then
+    stage_skip_disabled_reason="head_unknown"
+  else
+    stage_skip_history_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+    if [ "$(printf '%s' "$stage_skip_history_payload" | jq -r '.history_status // "available"' 2>/dev/null)" = "unavailable" ]; then
+      stage_skip_disabled_reason="history_unavailable"
+      stage_skip_history_payload=""
+    else
+      stage_skip_enabled=1
+    fi
+  fi
+}
+
+# reviewer_loop_stage_skip_output <head_sha>
+#
+# Issue #1692: the synthetic key=value block used when a platform is skipped
+# because the ledger already records it clean on the current head. It goes
+# through reviewer_loop_process_platform_output unchanged, so the skipped
+# platform contributes exactly the evidence a dispatch would have contributed:
+# peer evidence for the expensive gate (#1649), a reviewed_heads[] entry for
+# LOCAL_AI_HEAD_CURRENT / Protocol 91 Check 0.6 (#1648), and a
+# platform_results record for the ledger. The reviewed head is <head_sha> by
+# definition of the skip - it is the head the recorded clean verdict names.
+reviewer_loop_stage_skip_output() {
+  local head="${1:-}"
+  printf 'RESULT=clean\nREASON=%s\nDISPLAY_RESULT=clean (already clean on head)\nSTAGE_SKIP=1\nSTAGE_SKIP_REASON=%s\nREVIEWED_HEAD=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' \
+    "$REVIEWER_LOOP_STAGE_SKIP_REASON" "$REVIEWER_LOOP_STAGE_SKIP_REASON" "$head"
+}
+
 # reviewer_loop_second_local_pass_gate_result <pass_result> <pass_reason>
 # Prints tab-separated: aggregate_result<TAB>aggregate_reason
 reviewer_loop_second_local_pass_gate_result() {
@@ -11182,6 +11346,7 @@ while [ "$#" -gt 0 ]; do
     --platform)
       require_option_value "$@"
       append_platforms "$2"
+      platform_selection_explicit=1
       shift 2
       ;;
     --phase-after-clean)
@@ -11728,6 +11893,22 @@ print_kv MAX_CYCLES "$max_cycles"
 print_kv TOTAL_CYCLE_COUNT "$lifetime_cycle_count"
 print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 
+# --- Per-head reviewer staging (issue #1692) ---
+# A reviewer that the persisted ledger already records clean on this exact head
+# is not re-dispatched on a later cycle of the same head; its recorded verdict
+# is replayed as this round's evidence instead. Skipping is only safe when the
+# ledger for THIS PR is readable, the loop knows which head it is reviewing, the
+# run is not comparing platforms, and the caller did not name platforms
+# explicitly. Every other case dispatches, because "unknown" must never read as
+# "clean". A new head clears every skip on its own: the recorded clean then
+# names a different commit, so #1656 still owns the local re-dispatch and #1649
+# still owns the expensive-reviewer gate.
+stage_skip_state=""
+declare -a stage_skipped_platforms=()
+reviewer_loop_stage_skip_resolve "$pr_number"
+print_kv STAGE_SKIP_ENABLED "$stage_skip_enabled"
+[ -n "$stage_skip_disabled_reason" ] && print_kv STAGE_SKIP_DISABLED_REASON "$stage_skip_disabled_reason"
+
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
@@ -11843,6 +12024,29 @@ for index in "${!platforms[@]}"; do
       unset ready_status
       phase_after_clean_started=1
       phase_after_clean_gate_result="clean"
+    fi
+  fi
+
+  # Issue #1692: skip this reviewer when the ledger already records it clean on
+  # loop_head_sha. Placed after the ready-phase transition (so `gh pr ready` and
+  # the #1656 second local pass still run exactly as before) and before the
+  # #1649 expensive gate (so an already-clean expensive reviewer is not gated
+  # for a dispatch that will not happen). The replayed verdict goes through
+  # reviewer_loop_process_platform_output, so the skipped platform contributes
+  # the same peer evidence, reviewed_heads[] entry, and ledger record a real
+  # dispatch would have contributed.
+  if [ "$stage_skip_enabled" -eq 1 ]; then
+    stage_skip_state="$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")"
+    if [ "$stage_skip_state" = "clean_current" ]; then
+      echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
+      stage_skipped_platforms+=("$platform_name")
+      reviewer_loop_platform_loop_should_break=0
+      reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
+        "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
+      if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
+        break
+      fi
+      continue
     fi
   fi
 
@@ -12433,6 +12637,7 @@ EOF
 if [ -z "$last_platform" ]; then
   print_kv LOCAL_SECOND_PASS 0
   print_kv LOCAL_SECOND_PASS_REASON not_required
+  print_kv STAGE_SKIPPED_PLATFORMS ""
   print_kv RESULT skipped
   print_kv REASON not_configured
   print_kv PLATFORM ""
@@ -12998,6 +13203,11 @@ sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
 print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
 print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"
+# Issue #1692: which reviewers this run replayed from the ledger instead of
+# dispatching. Always emitted (empty when nothing was skipped) so a supervising
+# runner can tell "the reviewer was clean and re-run" apart from "the reviewer
+# was clean on this head already and was not re-run".
+print_kv STAGE_SKIPPED_PLATFORMS "$(IFS=,; printf '%s' "${stage_skipped_platforms[*]:-}")"
 print_kv RESULT "$aggregate_result"
 print_kv PLATFORM "$last_platform"
 [ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"

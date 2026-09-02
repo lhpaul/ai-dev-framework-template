@@ -356,6 +356,60 @@ normal orchestrated path), the Step 7a pre-check and draft GitHub gate have
 already controlled the ready transition; this pre-flight check is a safety net
 for standalone invocations.
 
+### Per-head reviewer staging (#1692)
+
+The loop is staged **per current head**, for whatever multi-tool set the
+repository configures — not as a special case for one reviewer.
+
+1. `review.on_draft.github` platforms run until they are clean on
+   `loop_head_sha`. The loop stops at the first non-clean platform, so a
+   later-phase reviewer never runs on a head an earlier-phase reviewer has not
+   cleared.
+2. `review.on_ready.github` platforms run only after that gate, and only after
+   the #1656 second local pass confirms current-head local clean evidence and
+   `ensure_pr_ready_for_ready_phase` converts the PR.
+3. On a **later cycle of the same head**, a platform the persisted
+   `reviewer_loop_history.v1` ledger already records clean on that head is
+   **not re-dispatched**. Its recorded verdict is replayed as this round's
+   evidence instead.
+4. A **new head** clears every skip on its own: the recorded clean then names a
+   different commit, so the local reviewer runs again on the new head (#1656)
+   before ready-phase reviewers resume.
+
+A later tool being clean while an earlier tool is not clean on the same head is
+never a loop-complete signal, and an independent GitHub App or Actions check is
+never substitute evidence that an in-loop reviewer is clean on this head.
+
+**The governing verdict** is the newest ledger entry that carries a
+`platform_results` record for that platform, and the reviewed head is read from
+**that same entry's** `reviewed_heads[]` (the #1648 evidence field) — never
+borrowed from another entry. The predicate
+(`reviewer_loop_platform_clean_for_head`) prints `clean_current`,
+`head_changed`, `not_clean`, or `no_evidence`, and only `clean_current` skips:
+missing, unparseable, non-clean, and other-head evidence all dispatch.
+
+**The replay is not a shortcut past the evidence gates.** A skipped platform
+goes through the same `reviewer_loop_process_platform_output` path as a
+dispatch, so it contributes the same peer evidence for the expensive-reviewer
+gate (#1649), the same `reviewed_heads[]` entry behind `LOCAL_AI_HEAD_CURRENT`
+and Protocol 91 Step 8a Check 0.6 (#1648), and the same `platform_results`
+record in the ledger. The reviewed head it reports is the head the recorded
+clean verdict names, which is `loop_head_sha` by definition of the skip. The
+post-clean settle and the unresolved-thread gates are unaffected and still run.
+
+**Telemetry:**
+
+| Key | Meaning |
+| --- | --- |
+| `STAGE_SKIP_ENABLED=0\|1` | Whether staging skips were possible this run |
+| `STAGE_SKIP_DISABLED_REASON=<reason>` | Why not, when disabled: `disabled_by_env`, `compare_mode`, `explicit_platform_selection`, `head_unknown`, `history_unavailable` |
+| `STAGE_SKIPPED_PLATFORMS=<platforms>` | Comma-separated platforms replayed instead of dispatched; emitted alongside every `RESULT=` that follows the platform loop, empty when none. Guard exits that never reach the loop (`lock_contention`, `release_pr`, `truncated_run`) emit none of these keys |
+
+Staging stands down when the caller names platforms with `--platform` (an
+explicit selection is an instruction to run those reviewers), in `--compare`
+runs, when the ledger for this PR is unreadable, when the loop cannot read its
+own head, and when `PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1` is set.
+
 ### Pre-flight: check for existing unresolved review findings
 
 Before running any scripts, inspect the PR's current review state:

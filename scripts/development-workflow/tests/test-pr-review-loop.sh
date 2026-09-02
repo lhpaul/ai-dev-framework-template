@@ -18153,6 +18153,350 @@ unset -f _1656_hist_clean_same _1656_hist_clean_ancestor _1656_hist_needs_fixes 
 echo "=== Area 1656 complete ==="
 
 # ---------------------------------------------------------------------------
+# Area 1692: per-head reviewer staging
+# ---------------------------------------------------------------------------
+#
+# The loop must not re-dispatch a reviewer that the persisted ledger already
+# records clean on the current head, must still dispatch on every other
+# evidence state, and must never let a later-phase reviewer's clean stand in
+# for an earlier-phase reviewer that is not clean on the same head.
+echo ""
+echo "=== Area 1692: per-head reviewer staging ==="
+
+_1692_head="1111111111111111111111111111111111111111"
+_1692_other="2222222222222222222222222222222222222222"
+
+# <platform> <result> <head> — one-entry ledger.
+_1692_hist_one() {
+  jq -nc --arg platform "$1" --arg result "$2" --arg head "$3" '{
+    schema: "reviewer_loop_history.v1",
+    entries: [{
+      iteration: 1,
+      platform_results: [{platform: $platform, result: $result, raw_result: $result, raw_reason: ""}],
+      reviewed_heads: [{platform: $platform, reviewed_head: $head, state: "current", reason: ""}]
+    }]
+  }'
+}
+
+# Scenario A: local clean on head H → skip local on later cycles of H.
+run_test "1692_sA_clean_current" "clean_current" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one local-ai-reviewer clean "$_1692_head")" local-ai-reviewer "$_1692_head")"
+
+# Scenario B: new head after ready-phase findings → the reviewer runs again.
+run_test "1692_sB_head_changed" "head_changed" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one local-ai-reviewer clean "$_1692_other")" local-ai-reviewer "$_1692_head")"
+
+# Scenario C: later-tool clean + earlier tool not clean on the same head must
+# not read as loop-complete. bugbot (on_ready) is clean on H, local
+# (on_draft) is not: the skip refuses for local, and the #1656 ready gate
+# still owes a pass, so the ready phase cannot proceed on bugbot's evidence.
+_1692_mixed="$(jq -nc --arg head "$_1692_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [
+      {platform: "local-ai-reviewer", result: "needs_fixes", raw_result: "needs_fixes", raw_reason: "blocking"},
+      {platform: "bugbot", result: "clean", raw_result: "clean", raw_reason: ""}
+    ],
+    reviewed_heads: [
+      {platform: "local-ai-reviewer", reviewed_head: $head, state: "current", reason: ""},
+      {platform: "bugbot", reviewed_head: $head, state: "current", reason: ""}
+    ]
+  }]
+}')"
+run_test "1692_sC_later_tool_clean_current" "clean_current" \
+  "$(reviewer_loop_platform_clean_for_head "$_1692_mixed" bugbot "$_1692_head")"
+run_test "1692_sC_earlier_tool_not_clean" "not_clean" \
+  "$(reviewer_loop_platform_clean_for_head "$_1692_mixed" local-ai-reviewer "$_1692_head")"
+run_test "1692_sC_ready_gate_still_owes_pass" "prior_findings" \
+  "$(reviewer_loop_local_pass_required "$_1692_mixed" "$_1692_head" $'local-ai-reviewer\n')"
+
+# Newest entry governs: a clean on H followed by needs_fixes on H dispatches.
+_1692_regressed="$(jq -nc --arg head "$_1692_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [
+    {iteration: 1,
+     platform_results: [{platform: "pr-agent", result: "clean", raw_result: "clean", raw_reason: ""}],
+     reviewed_heads: [{platform: "pr-agent", reviewed_head: $head, state: "current", reason: ""}]},
+    {iteration: 2,
+     platform_results: [{platform: "pr-agent", result: "needs_fixes", raw_result: "needs_fixes", raw_reason: "blocking"}],
+     reviewed_heads: [{platform: "pr-agent", reviewed_head: $head, state: "current", reason: ""}]}
+  ]
+}')"
+run_test "1692_sD_newest_entry_governs" "not_clean" \
+  "$(reviewer_loop_platform_clean_for_head "$_1692_regressed" pr-agent "$_1692_head")"
+
+# Unknown is never clean: absent platform, absent reviewed head, empty and
+# unparseable payloads, and empty arguments all dispatch.
+run_test "1692_sE_absent_platform" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head")" bugbot "$_1692_head")"
+run_test "1692_sE_no_reviewed_head" "head_changed" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head" | jq -c 'del(.entries[0].reviewed_heads)')" pr-agent "$_1692_head")"
+run_test "1692_sE_empty_payload" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "" pr-agent "$_1692_head")"
+run_test "1692_sE_unparseable_payload" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "not-json" pr-agent "$_1692_head")"
+run_test "1692_sE_empty_head" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head")" pr-agent "")"
+run_test "1692_sE_empty_platform" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head")" "" "$_1692_head")"
+run_test "1692_sE_skipped_is_not_clean" "not_clean" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent skipped "$_1692_head")" pr-agent "$_1692_head")"
+
+# The replayed verdict carries the same evidence a dispatch would have carried.
+_1692_skip_out="$(reviewer_loop_stage_skip_output "$_1692_head")"
+run_test "1692_sF_skip_output_result" "clean" \
+  "$(printf '%s\n' "$_1692_skip_out" | awk -F= '/^RESULT=/{print $2; exit}')"
+run_test "1692_sF_skip_output_reason" "already_clean_current_head" \
+  "$(printf '%s\n' "$_1692_skip_out" | awk -F= '/^REASON=/{print $2; exit}')"
+run_test "1692_sF_skip_output_reviewed_head" "$_1692_head" \
+  "$(printf '%s\n' "$_1692_skip_out" | awk -F= '/^REVIEWED_HEAD=/{print $2; exit}')"
+run_test "1692_sF_skip_output_no_blocking" "0" \
+  "$(printf '%s\n' "$_1692_skip_out" | awk -F= '/^BLOCKING_COUNT=/{print $2; exit}')"
+
+_1692_reset_processing_globals() {
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  compare_mode=0
+  compare_verdicts=()
+  platform_peer_evidence=()
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  aggregate_result="skipped"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  aggregate_advisory_labels=""
+  reviewer_loop_platform_loop_should_break=0
+  loop_head_sha="$_1692_head"
+}
+_1692_reset_processing_globals
+reviewer_loop_process_platform_output "local-ai-reviewer" 1 "$_1692_skip_out" 0 1 >/dev/null 2>&1
+run_test "1692_sF_replayed_aggregate" "clean" "$aggregate_result"
+run_test "1692_sF_replayed_no_break" "0" "$reviewer_loop_platform_loop_should_break"
+run_test "1692_sF_replayed_reviewed_head" "local-ai-reviewer:${_1692_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]}")"
+run_test "1692_sF_replayed_peer_evidence" "clean|already_clean_current_head" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+run_test "1692_sF_replayed_peer_acceptable" "acceptable" \
+  "$(expensive_gate_peer_evidence_acceptable clean already_clean_current_head && echo acceptable || echo refused)"
+run_test "1692_sF_replayed_ledger_record" "clean" \
+  "$(printf '%s\n' "${platform_result_records[@]}" | jq -r 'select(.platform == "local-ai-reviewer") | .result')"
+run_test "1692_sF_replayed_no_reviewer_failed" "0" "$reviewer_failed_required"
+run_test "1692_sF_replayed_token" "local-ai-reviewer:clean (already clean on head)" \
+  "$(printf '%s\n' "${platform_result_tokens[@]}")"
+run_test "1692_sF_replayed_head_current" "1" \
+  "$(expensive_gate_local_ai_head_current "$_1692_head")"
+
+# Check 0.6 (#1648) sees the replayed head, so a skipped local reviewer still
+# produces current-head evidence rather than the empty LOCAL_AI_HEAD_CURRENT
+# that refuses readiness.
+_1692_saved_platforms=()
+if declare -p platforms >/dev/null 2>&1 && [ "${#platforms[@]}" -gt 0 ]; then
+  _1692_saved_platforms=("${platforms[@]}")
+fi
+platforms=(local-ai-reviewer)
+repo_review_platforms=(local-ai-reviewer)
+_1692_local_ai_keys="$(reviewer_loop_emit_local_ai_head_evidence_keys 2>/dev/null)"
+run_test "1692_sF_check06_configured" "1" \
+  "$(printf '%s\n' "$_1692_local_ai_keys" | awk -F= '/^LOCAL_AI_CONFIGURED=/{print $2; exit}')"
+run_test "1692_sF_check06_head_current" "1" \
+  "$(printf '%s\n' "$_1692_local_ai_keys" | awk -F= '/^LOCAL_AI_HEAD_CURRENT=/{print $2; exit}')"
+run_test "1692_sF_check06_reviewed_head" "$_1692_head" \
+  "$(printf '%s\n' "$_1692_local_ai_keys" | awk -F= '/^LOCAL_AI_REVIEWED_HEAD=/{print $2; exit}')"
+
+# The composed current-round payload makes the #1656 ready gate a no-op, so a
+# skipped local reviewer is not immediately re-dispatched by the second pass.
+_1692_composed="$(reviewer_loop_compose_current_round_payload '{"schema":"reviewer_loop_history.v1","entries":[]}' 1)"
+run_test "1692_sG_second_pass_not_required" "not_required" \
+  "$(reviewer_loop_local_pass_required "$_1692_composed" "$_1692_head" $'local-ai-reviewer\n')"
+# ...and a head change after the skip still owes a pass.
+run_test "1692_sG_second_pass_after_new_head" "head_changed" \
+  "$(reviewer_loop_local_pass_required "$_1692_composed" "$_1692_other" $'local-ai-reviewer\n')"
+
+# Boundary and blank-input coverage for the predicate.
+run_test "1692_sE_zero_entries" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head '{"schema":"reviewer_loop_history.v1","entries":[]}' pr-agent "$_1692_head")"
+run_test "1692_sE_whitespace_payload" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "   " pr-agent "$_1692_head")"
+run_test "1692_sE_whitespace_platform" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head")" "   " "$_1692_head")"
+# Quoting safety: a platform name carrying spaces and glob characters must be
+# matched literally, never word-split or expanded.
+_1692_odd_platform='weird platform *[name]'
+run_test "1692_sE_odd_platform_name_clean" "clean_current" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one "$_1692_odd_platform" clean "$_1692_head")" "$_1692_odd_platform" "$_1692_head")"
+run_test "1692_sE_odd_platform_name_no_glob_match" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one "$_1692_odd_platform" clean "$_1692_head")" 'weird platform x' "$_1692_head")"
+unset _1692_odd_platform
+
+# Stage-skip resolution: every disable condition, and the enabled path.
+_1692_stage_hist='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1692_stage_hist_unavailable='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_fetch_failed","entries":[]}'
+_1692_stage_payload_to_return="$_1692_stage_hist"
+reviewer_loop_prior_history_payload_from_pr() { printf '%s\n' "$_1692_stage_payload_to_return"; }
+_1692_reset_stage_globals() {
+  platforms=(local-ai-reviewer bugbot)
+  compare_mode=0
+  platform_selection_explicit=0
+  loop_head_sha="$_1692_head"
+  _1692_stage_payload_to_return="$_1692_stage_hist"
+  unset PR_REVIEW_LOOP_DISABLE_STAGE_SKIP
+}
+
+_1692_reset_stage_globals
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_enabled" "1" "$stage_skip_enabled"
+run_test "1692_sH_enabled_no_reason" "" "$stage_skip_disabled_reason"
+
+_1692_reset_stage_globals
+PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_disabled_by_env" "disabled_by_env" "$stage_skip_disabled_reason"
+run_test "1692_sH_disabled_by_env_flag" "0" "$stage_skip_enabled"
+unset PR_REVIEW_LOOP_DISABLE_STAGE_SKIP
+
+# An empty or absent value is not "1" and must not disable staging.
+_1692_reset_stage_globals
+PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=""
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_empty_env_does_not_disable" "1" "$stage_skip_enabled"
+unset PR_REVIEW_LOOP_DISABLE_STAGE_SKIP
+
+_1692_reset_stage_globals
+compare_mode=1
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_compare_mode" "compare_mode" "$stage_skip_disabled_reason"
+
+_1692_reset_stage_globals
+platform_selection_explicit=1
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_explicit_platform" "explicit_platform_selection" "$stage_skip_disabled_reason"
+
+_1692_reset_stage_globals
+loop_head_sha=""
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_head_unknown" "head_unknown" "$stage_skip_disabled_reason"
+
+_1692_reset_stage_globals
+reviewer_loop_stage_skip_resolve ""
+run_test "1692_sH_no_pr" "head_unknown" "$stage_skip_disabled_reason"
+
+_1692_reset_stage_globals
+platforms=()
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_no_platforms" "head_unknown" "$stage_skip_disabled_reason"
+
+_1692_reset_stage_globals
+_1692_stage_payload_to_return="$_1692_stage_hist_unavailable"
+reviewer_loop_stage_skip_resolve 1692
+run_test "1692_sH_history_unavailable" "history_unavailable" "$stage_skip_disabled_reason"
+run_test "1692_sH_history_unavailable_flag" "0" "$stage_skip_enabled"
+run_test "1692_sH_history_unavailable_payload_cleared" "" "$stage_skip_history_payload"
+
+unset _1692_stage_hist _1692_stage_hist_unavailable _1692_stage_payload_to_return
+unset stage_skip_enabled stage_skip_disabled_reason stage_skip_history_payload
+unset compare_mode platform_selection_explicit loop_head_sha
+unset -f reviewer_loop_prior_history_payload_from_pr _1692_reset_stage_globals 2>/dev/null || true
+
+# Planted-violation proofs (REVIEW.md): the wrong helpers live only in this
+# harness. Each plant is a formulation that passes a naive reading of the
+# issue but breaks a stated contract, paired with the correct helper.
+#
+# P1 — deny-list instead of fail-closed: skip unless the newest result is
+# explicitly not clean. Missing evidence then reads as "already clean" and the
+# reviewer is never dispatched on a head nobody reviewed.
+_1692_pv_plant_p1_deny_list() {
+  local payload="${1:-}" platform="${2:-}" head="${3:-}"
+  local state
+  state="$(reviewer_loop_platform_clean_for_head "$payload" "$platform" "$head")"
+  case "$state" in
+    not_clean) printf 'not_clean\n' ;;
+    *) printf 'clean_current\n' ;;
+  esac
+}
+run_test "1692_pv_P1_plant" "clean_current" \
+  "$(_1692_pv_plant_p1_deny_list "$(_1692_hist_one pr-agent clean "$_1692_head")" bugbot "$_1692_head")"
+run_test "1692_pv_P1_correct" "no_evidence" \
+  "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head")" bugbot "$_1692_head")"
+run_test "1692_pv_P1_plant_differs" "different" \
+  "$( [ "$(_1692_pv_plant_p1_deny_list "$(_1692_hist_one pr-agent clean "$_1692_head")" bugbot "$_1692_head")" \
+      != "$(reviewer_loop_platform_clean_for_head "$(_1692_hist_one pr-agent clean "$_1692_head")" bugbot "$_1692_head")" ] \
+     && echo different || echo same)"
+
+# P2 — read the reviewed head from any entry instead of the entry that carries
+# the governing verdict. A stale clean on an old head then borrows a newer
+# entry's head evidence and skips a reviewer that never saw this commit.
+_1692_pv_plant_p2_any_entry_head() {
+  local payload="${1:-}" platform="${2:-}" head="${3:-}"
+  local outcome verdict_head
+  outcome="$(printf '%s' "$payload" | jq -r --arg p "$platform" '
+    [(.entries // [])[] | . as $e | ((.platform_results // [])[] | select(.platform == $p)
+      | {outcome: (.result // "unknown"), iteration: ($e.iteration // 0)})]
+    | if length > 0 then (sort_by(.iteration) | last | .outcome) else "not_yet_run" end')"
+  verdict_head="$(printf '%s' "$payload" | jq -r --arg p "$platform" '
+    [(.entries // [])[] | (.reviewed_heads // [])[] | select(.platform == $p) | .reviewed_head // ""]
+    | map(select(. != "")) | last // ""')"
+  case "$outcome" in
+    clean) ;;
+    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    *) printf 'not_clean\n'; return 0 ;;
+  esac
+  if [ -n "$verdict_head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'clean_current\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+# Entry 1: clean on the OLD head. Entry 2: a later round where the same
+# platform only reported a head (no verdict) on the CURRENT head.
+_1692_pv_borrowed="$(jq -nc --arg old "$_1692_other" --arg new "$_1692_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [
+    {iteration: 1,
+     platform_results: [{platform: "pr-agent", result: "clean", raw_result: "clean", raw_reason: ""}],
+     reviewed_heads: [{platform: "pr-agent", reviewed_head: $old, state: "current", reason: ""}]},
+    {iteration: 2,
+     platform_results: [],
+     reviewed_heads: [{platform: "pr-agent", reviewed_head: $new, state: "current", reason: ""}]}
+  ]
+}')"
+run_test "1692_pv_P2_plant" "clean_current" \
+  "$(_1692_pv_plant_p2_any_entry_head "$_1692_pv_borrowed" pr-agent "$_1692_head")"
+run_test "1692_pv_P2_correct" "head_changed" \
+  "$(reviewer_loop_platform_clean_for_head "$_1692_pv_borrowed" pr-agent "$_1692_head")"
+run_test "1692_pv_P2_plant_differs" "different" \
+  "$( [ "$(_1692_pv_plant_p2_any_entry_head "$_1692_pv_borrowed" pr-agent "$_1692_head")" \
+      != "$(reviewer_loop_platform_clean_for_head "$_1692_pv_borrowed" pr-agent "$_1692_head")" ] \
+     && echo different || echo same)"
+unset _1692_pv_borrowed
+unset -f _1692_pv_plant_p1_deny_list _1692_pv_plant_p2_any_entry_head 2>/dev/null || true
+
+unset _1692_composed _1692_local_ai_keys _1692_skip_out _1692_mixed _1692_regressed
+unset platforms repo_review_platforms
+if [ "${#_1692_saved_platforms[@]}" -gt 0 ]; then
+  platforms=("${_1692_saved_platforms[@]}")
+fi
+unset _1692_saved_platforms
+unset total_comment_count total_blocking_count total_suggestion_count reviewer_failed_required
+unset compare_mode compare_verdicts platform_peer_evidence platform_result_records
+unset platform_reviewed_heads platform_result_tokens platform_blocking_outputs
+unset aggregate_blocking_paths aggregate_blocking_findings platform_policy_status_notes
+unset aggregate_result aggregate_reason aggregate_output aggregate_status aggregate_advisory_labels
+unset reviewer_loop_platform_loop_should_break loop_head_sha
+unset _1692_head _1692_other
+unset -f _1692_hist_one _1692_reset_processing_globals 2>/dev/null || true
+
+echo "=== Area 1692 complete ==="
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
