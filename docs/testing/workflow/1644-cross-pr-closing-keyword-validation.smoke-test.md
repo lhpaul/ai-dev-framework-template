@@ -18,7 +18,7 @@ decided.
 
 Before running this smoke test:
 
-- [ ] The implementation is merged to a branch you can open pull requests against, or you are running from the implementation branch itself.
+- [ ] **The feature is on `main`.** GitHub loads a `pull_request_target` workflow from the repository's default branch, and this repository's is `main` while pull requests target `develop`. The workflow does not fire from the implementation branch or from `develop`, so this runbook cannot be run before the release that merges it into `main`. Confirm with `git ls-remote origin refs/heads/main` and check that `.github/workflows/closing-keyword-scope.yml` exists at that commit.
 - [ ] `gh` is authenticated against `lhpaul/ai-dev-framework-template` with permission to open and close pull requests.
 - [ ] You can see the repository's Actions runs, to read a workflow log when a step says to.
 - [ ] Do **not** delete the `multi-issue-intentional` label if the repository already has it. Label provisioning is repository-wide shared state, and this runbook never destroys it to create a test condition. Provisioning is covered by the unit suite against a stubbed API instead — see Step 4.
