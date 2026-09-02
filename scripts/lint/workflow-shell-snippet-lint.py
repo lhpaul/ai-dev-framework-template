@@ -59,7 +59,8 @@ def diff_text(base_ref: str | None, input_file: str | None) -> str:
 # things: `+++ b/<path>` file headers and well-formed `@@ -a,b +c,d @@` hunk
 # headers. `+++ /dev/null` is a deletion, which is a real header with nothing
 # to examine behind it.
-DIFF_MARKER = re.compile(r"(?m)^(?:diff --git |@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@)")
+DIFF_GIT_HEADER = re.compile(r"(?m)^diff --git ")
+DIFF_HUNK_HEADER = re.compile(r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
 DIFF_TARGET_HEADER = re.compile(r"(?m)^\+\+\+ (?:b/\S|/dev/null\s*$)")
 
 
@@ -73,29 +74,32 @@ def diff_shape(diff: str) -> str:
 
     The markers are matched against the syntax this parser consumes, not against
     a prefix: a stray `@@ some prose` line or a Markdown `---` rule is not a
-    diff, and text carrying diff markers but no `+++` target header is a diff
-    this parser cannot read rather than one with nothing in it.
+    diff. The classification then turns on whether the input carries changed
+    lines this parser is failing to read, which is the only case worth refusing:
 
-    Both markers are required for "diff". Either one alone is a fragment: a
-    lone `+++ b/<path>` gives changed_lines() a path but no hunk to attribute
-    lines to, and a lone hunk header gives it lines with no path — both parse to
-    an empty changed map and would exit 0 as "nothing to check".
+    * A hunk header means there ARE changed lines. Without a `+++` target header
+      they cannot be attributed to a path, so the input is unreadable — a
+      `git diff --no-prefix` output, for instance.
+    * No hunk header and a `diff --git` line means a genuine Git record with no
+      textual changes at all: a mode-only change, a binary file, a pure rename.
+      There is nothing to attribute, so zero examined is the correct answer and
+      the run passes. Refusing these would fail CI on any pull request that
+      contains one.
+    * A `+++` target header with no hunk and no `diff --git` line is a fragment:
+      a path with no lines behind it.
 
-    Returns:
-        "empty"       — no content at all.
-        "not_a_diff"  — neither a `diff --git`/hunk marker nor a target header.
-        "unparseable" — one of the two present, not both.
-        "diff"        — both present, so changed_lines() has something to read.
+    Returns "empty", "not_a_diff", "unparseable", or "diff".
     """
     if not diff.strip():
         return "empty"
-    has_marker = bool(DIFF_MARKER.search(diff))
+    has_git_header = bool(DIFF_GIT_HEADER.search(diff))
+    has_hunk = bool(DIFF_HUNK_HEADER.search(diff))
     has_target = bool(DIFF_TARGET_HEADER.search(diff))
-    if has_marker and has_target:
+    if has_hunk:
+        return "diff" if has_target else "unparseable"
+    if has_git_header:
         return "diff"
-    if has_marker or has_target:
-        return "unparseable"
-    return "not_a_diff"
+    return "unparseable" if has_target else "not_a_diff"
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
@@ -244,8 +248,8 @@ def main() -> int:
         if shape == "not_a_diff":
             emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} carries "
-                "neither a `diff --git` line or well-formed hunk header nor a `+++` target header. "
+                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} carries no "
+                "`diff --git` line, no well-formed hunk header, and no `+++` target header. "
                 "Produce it with `git diff --unified=0 <base>...HEAD`, or use --base-ref to let "
                 "this script run git diff itself.",
                 file=sys.stderr,
@@ -254,9 +258,9 @@ def main() -> int:
         if shape == "unparseable":
             emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: the diff under examination (source: {source}) is a fragment: this parser "
-                "needs BOTH a `diff --git` line or well-formed hunk header AND a `+++ b/<path>` or "
-                "`+++ /dev/null` target header, and only one of the two is present. Produce it with "
+                f"ERROR: the diff under examination (source: {source}) carries changed lines this "
+                "parser cannot read: a hunk header with no `+++ b/<path>` target header to attribute "
+                "it to, or a target header with no hunk behind it. Produce it with "
                 "`git diff --unified=0 <base>...HEAD` and keep the default a/ and b/ prefixes.",
                 file=sys.stderr,
             )

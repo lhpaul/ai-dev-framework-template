@@ -120,8 +120,8 @@ are different failures:
 | Condition | Message |
 | --- | --- |
 | `git diff` failed | `ERROR: <git stderr>` |
-| Input carries neither a `diff --git`/hunk marker nor a `+++` target header (a path list, prose, a stray `@@` line) | `expects a unified diff` |
-| Only one of the two is present — a fragment, e.g. a `--no-prefix` diff or a lone `+++ b/<path>` | `is a fragment` |
+| Input carries no `diff --git` line, no well-formed hunk header, and no `+++` target header (a path list, prose, a stray `@@` line) | `expects a unified diff` |
+| Changed lines the parser cannot attribute — a hunk with no `+++ b/<path>` header (a `--no-prefix` diff), or a `+++` header with no hunk behind it | `carries changed lines this parser cannot read` |
 | The diff is empty | `the diff under examination is empty` |
 
 `--input` / `--diff-file` takes a **unified diff**, not a path list. A path list
@@ -130,11 +130,14 @@ present (PR #1646); it is now an error. Produce the diff with
 `git diff --unified=0 <base>...HEAD` and keep the default `a/` and `b/`
 prefixes, or use `--base-ref` and let the script run `git diff` itself.
 
-A diff is accepted only when it carries **both** halves of what the parser
-reads: a `diff --git` line or a well-formed `@@ -a,b +c,d @@` hunk header, and a
-`+++ b/<path>` or `+++ /dev/null` target header. Either alone parses to nothing.
-A deletion-only diff, whose target header is `+++ /dev/null`, is a valid diff
-with a legitimate zero.
+What separates a legitimate zero from an unreadable input is whether the diff
+carries changed lines at all. A **hunk header** means it does: without a
+`+++ b/<path>` target header those lines cannot be attributed to a path, so the
+input is refused. A record with **no hunk** but a `diff --git` line is a genuine
+Git change with no textual content — a mode-only change, a binary file, a pure
+rename — so zero examined is the right answer and the run passes. A deletion,
+whose target header is `+++ /dev/null`, is likewise a valid diff with a
+legitimate zero.
 
 `--base-ref` diffs **committed** history (`<base>...HEAD`), so uncommitted work
 is invisible to it: run it after committing, or the empty-diff refusal will

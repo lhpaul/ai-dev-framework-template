@@ -163,18 +163,65 @@ check markdown_rule_not_a_diff 2 "$(run_linter python3 "$LINTER" --input "$TMP_D
 # "cannot read it" is not the same claim as "there was nothing in it".
 printf '%s\n' 'diff --git docs/workflow/x.md docs/workflow/x.md' '--- docs/workflow/x.md' '+++ docs/workflow/x.md' '@@ -0,0 +1 @@' '+hi' > "$TMP_DIR/no-prefix.diff"
 check no_prefix_diff_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/no-prefix.diff")"
-if grep -q "is a fragment" "$TMP_DIR/last.out"; then
+if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
   check no_prefix_diff_reason unparseable unparseable
 else
   check no_prefix_diff_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
 
-# Either marker alone is a fragment, not a diff: a lone target header gives the
-# parser a path with no hunk, and a lone hunk gives it lines with no path. Both
-# parse to an empty changed map, so both must refuse rather than exit 0.
+# A genuine Git record with no textual changes — a mode-only change, a binary
+# file, a pure rename — has no hunk and no `+++` header, and there is nothing
+# for this parser to attribute. That is a legitimate zero, and refusing it would
+# fail CI on any pull request containing one. Built with real git, not by hand,
+# so the fixture cannot drift from what git actually emits.
+mode_repo="$TMP_DIR/mode-repo"
+mkdir -p "$mode_repo/docs/workflow"
+(
+  cd "$mode_repo"
+  git init -q .
+  git config user.email test@example.com
+  git config user.name Test
+  printf 'hi\n' > docs/workflow/a.md
+  git add -A
+  git commit -q -m seed
+  git branch -M develop
+  git checkout -q -b feat
+  chmod +x docs/workflow/a.md
+  git add -A
+  git commit -q -m mode-only
+)
+check mode_only_diff_passes 0 "$(cd "$mode_repo" && run_linter python3 "$LINTER" --base-ref develop)"
+if grep -q "examined=0 files, 0 fences" "$TMP_DIR/last.out"; then
+  check mode_only_diff_summary announced announced
+else
+  check mode_only_diff_summary announced "$(cat "$TMP_DIR/last.out")"
+fi
+(
+  cd "$mode_repo"
+  printf '\000\001\002' > docs/workflow/b.bin
+  git add -A
+  git commit -q -m binary
+)
+check binary_diff_passes 0 "$(cd "$mode_repo" && run_linter python3 "$LINTER" --base-ref develop)"
+# ...and out of scope too, which is where most such changes land.
+(
+  cd "$mode_repo"
+  mkdir -p tools
+  printf 'x\n' > tools/script.sh
+  git add -A
+  git commit -q -m seed-out-of-scope
+  chmod +x tools/script.sh
+  git add -A
+  git commit -q -m mode-only-out-of-scope
+)
+check mode_only_out_of_scope_passes 0 "$(cd "$mode_repo" && run_linter python3 "$LINTER" --base-ref HEAD~1)"
+
+# A hunk with no target header is different: it carries changed lines this
+# parser cannot attribute to a path, so it refuses rather than reporting zero.
+# A lone target header is the mirror case — a path with no lines behind it.
 printf '%s\n' '+++ b/docs/workflow/x.md' > "$TMP_DIR/lone-target.diff"
 check lone_target_header_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-target.diff")"
-if grep -q "is a fragment" "$TMP_DIR/last.out"; then
+if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
   check lone_target_header_reason unparseable unparseable
 else
   check lone_target_header_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
