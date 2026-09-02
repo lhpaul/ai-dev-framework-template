@@ -92,20 +92,32 @@ jobs:
                 # matrix leg runs. So the triggering pull request still
                 # reaches validation, carrying the flag, and the validator
                 # records the failure through its ordinary accessor.
-                if ! open_prs="$(gh pr list --repo "$REPO" --state open --limit 200 \
-                      --json number,body --jq '.[] | "\(.number)\t\(.body // "")"' 2>/dev/null)"; then
+                #
+                # Fully paginated: a `--limit N` ceiling would silently drop a
+                # claimant past the cut, and a dropped claimant is never
+                # re-evaluated at all.
+                #
+                # The matching happens INSIDE jq, on whole body values. An
+                # earlier version serialized `number<TAB>body` and read it line
+                # by line, which only ever saw a pull request's FIRST line:
+                # bodies are multi-line, so a `Closes #N` in any later
+                # paragraph — where it usually is — never matched, and the
+                # claimant was never re-evaluated. Nothing in the shell sees a
+                # body here.
+                if ! matches="$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate \
+                      --jq '.[] | {number, body: (.body // "")} | @json' 2>/dev/null \
+                      | jq -r --arg issue "$issue" --arg self "$PR_NUMBER" '
+                          select((.number | tostring) != $self)
+                          | select(.body | test("(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#" + $issue + "([^0-9]|$)"; "i"))
+                          | .number
+                        ' 2>/dev/null)"; then
                   echo "WARN: could not list open pull requests; siblings stay unknown." >&2
                   unreadable="true"
-                  open_prs=""
+                  matches=""
                 fi
-                while IFS="$(printf '\t')" read -r number body; do
-                  [ -n "${number:-}" ] || continue
-                  [ "$number" != "$PR_NUMBER" ] || continue
-                  if printf '%s' "$body" \
-                    | grep -qiE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#${issue}([^0-9]|$)"; then
-                    targets="${targets} ${number}"
-                  fi
-                done <<< "$open_prs"
+                for number in $matches; do
+                  targets="${targets} ${number}"
+                done
               fi
               ;;
           esac

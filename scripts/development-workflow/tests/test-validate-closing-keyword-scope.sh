@@ -428,6 +428,7 @@ case "${1:-}" in
       case "$arg" in
         *"/issues/"*"/comments") key="comments" ;;
         *"check-runs"*) key="check_runs" ;;
+        *"/pulls?"*|*"/pulls") key="pulls" ;;
         repos/*) [ -n "$key" ] || key="repo" ;;
       esac
     done
@@ -438,6 +439,24 @@ case "${1:-}" in
   label) key="label_${2:-}" ;;
 esac
 file="${FIXTURES}/${key}"
+# VANISH_AFTER names a fixture that survives exactly one read: the second read
+# of it fails while the first succeeded, which is a failed RE-READ rather than
+# a changed input. CHANGE_AFTER rewrites one instead — readable both times,
+# different the second.
+if [ -n "${VANISH_AFTER:-}" ] && [ "${VANISH_AFTER}" = "$key" ]; then
+  if [ -f "${FIXTURES}/.seen_${key}" ]; then
+    echo "stub: fixture '${key}' vanished after its first read" >&2
+    exit 1
+  fi
+  touch "${FIXTURES}/.seen_${key}"
+fi
+if [ -n "${CHANGE_AFTER:-}" ] && [ "${CHANGE_AFTER}" = "$key" ]; then
+  if [ -f "${FIXTURES}/.seen_${key}" ]; then
+    printf '0\n%s\n' "${CHANGE_TO:-changed}" > "$file"
+  else
+    touch "${FIXTURES}/.seen_${key}"
+  fi
+fi
 if [ ! -f "$file" ]; then
   echo "stub: no fixture for key '${key}' (args: $*)" >&2
   exit 1
@@ -448,7 +467,10 @@ exit "$code"
 STUB
 chmod +x "$STUB_DIR/gh"
 
-# jq and shasum are real; only gh is stubbed.
+# jq and shasum are real; only gh is stubbed. The stub does NOT apply gh's own
+# `--jq`, so fixtures are written in the POST-jq shape. That leaves the API →
+# internal field mapping untested by the end-to-end cases, so it is asserted
+# directly below instead of left to a stub that cannot see it.
 new_fixtures() {
   local dir="$TMP_DIR/fixtures.$1"
   rm -rf "$dir"
@@ -462,7 +484,7 @@ new_fixtures() {
   printf '0\nfeature/1644-slug\n' > "$dir/pr_headRefName"
   printf '0\nOPEN\n' > "$dir/pr_state"
   printf '0\n\n' > "$dir/pr_labels"
-  printf '0\n[{"number":101,"headRefName":"fix/97-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$dir/pr_list"
+  printf '0\n[{"number":101,"headRefName":"fix/97-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$dir/pulls"
   printf '0\n[]\n' > "$dir/comments"
   printf '0\n[]\n' > "$dir/check_runs"
   printf '%s' "$dir"
@@ -477,6 +499,24 @@ run_validator() {
 
 verdict_of() { printf '%s\n' "$1" | sed -n 's/^VERDICT=//p' | head -1; }
 
+# The open-PR listing's field mapping, asserted against the API's own shape.
+# `gh pr list --limit N` was replaced by a fully paginated `gh api .../pulls`
+# so an owner past the old 200-PR ceiling cannot be silently dropped — a
+# dropped owner reads as "no sibling carries it" and the run goes silent, which
+# is the worst failure shape this feature has.
+api_shape='[{"number":101,"head":{"ref":"fix/97-slug"},"title":"t","body":"b","base":{"ref":"develop"}}]'
+mapped="$(printf '%s' "$api_shape" \
+  | jq '[.[] | {number, headRefName: .head.ref, title, body: (.body // ""), baseRefName: .base.ref}]' \
+  | jq -sc 'add // []')"
+check "the paginated listing maps head.ref to headRefName" \
+  '[{"number":101,"headRefName":"fix/97-slug","title":"t","body":"b","baseRefName":"develop"}]' "$mapped"
+check "the paginated listing slurps multiple pages into one array" "3" \
+  "$(printf '[{"number":1}]\n[{"number":2}]\n[{"number":3}]\n' | jq -sc 'add // []' | jq 'length')"
+check "an empty listing slurps to an empty array, not null" "[]" \
+  "$(printf '' | jq -sc 'add // []')"
+check "the validator no longer caps the listing at a fixed limit" "0" \
+  "$(grep -c -- '--limit 200' "$VALIDATOR" || true)"
+
 F="$(new_fixtures warn)"
 out="$(run_validator "$F")"
 check "a description claiming a sibling's issue warns" "warn" "$(verdict_of "$out")"
@@ -484,15 +524,15 @@ check_contains "the report names the issue and the sibling" "| #97 | #101 |" "$o
 check_contains "a non-publishing run says so" "PUBLISHED=false (no --publish)" "$out"
 
 F="$(new_fixtures self)"
-printf '0\n[{"number":42,"headRefName":"fix/97-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pr_list"
+printf '0\n[{"number":42,"headRefName":"fix/97-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pulls"
 check "self_owned_issue_is_silent" "silent" "$(verdict_of "$(run_validator "$F")")"
 
 F="$(new_fixtures contested)"
-printf '0\n[{"number":101,"headRefName":"fix/97-a","title":"t","body":"b","baseRefName":"develop"},{"number":102,"headRefName":"fix/97-b","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pr_list"
+printf '0\n[{"number":101,"headRefName":"fix/97-a","title":"t","body":"b","baseRefName":"develop"},{"number":102,"headRefName":"fix/97-b","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pulls"
 check "contested_ownership_is_silent" "silent" "$(verdict_of "$(run_validator "$F")")"
 
 F="$(new_fixtures noowner)"
-printf '0\n[{"number":101,"headRefName":"fix/555-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pr_list"
+printf '0\n[{"number":101,"headRefName":"fix/555-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pulls"
 check "no_owner_is_silent" "silent" "$(verdict_of "$(run_validator "$F")")"
 
 F="$(new_fixtures optout)"
@@ -535,7 +575,7 @@ for input in description title base_branch labels head_branch default_branch; do
 done
 
 F="$(new_fixtures unreadable_pr_list)"
-rm "$F/pr_list"
+rm "$F/pulls"
 check "unreadable_pr_list_is_indeterminate" "indeterminate" "$(verdict_of "$(run_validator "$F")")"
 
 F="$(new_fixtures unreadable_report)"
@@ -567,6 +607,87 @@ check_contains "a fork pull request with --publish is refused before any read" \
   "publication_context_not_serialized" "$out"
 
 # --- Publication gating ----------------------------------------------------
+
+F="$(new_fixtures publish_guard)"
+out="$(run_validator "$F" --publish)"
+check_contains "publish_without_the_workflow_context_stops" "publication_context_not_serialized" "$out"
+
+F="$(new_fixtures publish_no_flag)"
+out="$(run_validator "$F")"
+check_contains "invocation_without_publish_writes_nothing" "PUBLISHED=false (no --publish)" "$out"
+check_not_contains "a non-publishing run makes no write call" "write_" "$out"
+
+# --- The publication path itself -------------------------------------------
+#
+# Nothing above reaches it: every case so far runs without --publish. That gap
+# is where the freshness bug lived — a failed RE-READ took the abandon path and
+# published no neutral check, contradicting the spec's rule that any unreadable
+# input leaves the report untouched and publishes a neutral conclusion. These
+# fake the serialized context, which is the only way in.
+
+publish_env() {
+  local fixtures="$1"
+  shift
+  PATH="$STUB_DIR:$PATH" FIXTURES="$fixtures" \
+    GITHUB_ACTIONS=true GITHUB_WORKFLOW="Closing-keyword scope" GITHUB_JOB=validate \
+    GITHUB_RUN_ID=1 GITHUB_RUN_ATTEMPT=1 \
+    bash "$VALIDATOR" 42 lhpaul/ai-dev-framework-template --publish "$@" 2>&1 || true
+}
+
+writable_fixtures() {
+  local dir
+  dir="$(new_fixtures "$1")"
+  printf '0\n{}\n' > "$dir/write_check_runs"
+  printf '0\n{}\n' > "$dir/write_comments"
+  printf '0\n\n' > "$dir/label_view"
+  printf '%s' "$dir"
+}
+
+F="$(writable_fixtures publish_ok)"
+out="$(publish_env "$F")"
+check "a publishing run inside the serialized context publishes" "true" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+
+# VANISH_AFTER makes a fixture survive exactly one read, so the SECOND read of
+# it fails while the first succeeded — which is precisely a failed re-read.
+F="$(writable_fixtures publish_reread_fail)"
+out="$(VANISH_AFTER=pr_body publish_env "$F")"
+check "unreadable_input_on_the_freshness_recheck_is_indeterminate" "indeterminate" \
+  "$(printf '%s\n' "$out" | sed -n 's/^VERDICT_ON_RECHECK=//p' | head -1)"
+check "the re-check names the input that became unreadable" "description" \
+  "$(printf '%s\n' "$out" | sed -n 's/^UNREADABLE_INPUTS_ON_RECHECK=//p' | head -1)"
+check "the first verdict is still reported, so the log shows what changed" "warn" \
+  "$(printf '%s\n' "$out" | sed -n 's/^VERDICT=//p' | head -1)"
+check "a failed re-read still publishes the neutral check" "true" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+check_not_contains "a failed re-read is not misread as a changed input" \
+  "ABANDONED=inputs_changed" "$out"
+
+# CHANGE_AFTER rewrites a fixture between reads: readable both times, different
+# the second. That is the other path — abandon, write nothing.
+F="$(writable_fixtures publish_changed)"
+out="$(CHANGE_AFTER=pr_body CHANGE_TO="Closes #999" publish_env "$F")"
+check "input_changed_between_read_and_write_abandons_without_writing" "inputs_changed_between_read_and_write" \
+  "$(printf '%s\n' "$out" | sed -n 's/^ABANDONED=//p' | head -1)"
+check "an abandoned run publishes nothing" "false" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+
+# A later-started run's stamp blocks the write outright.
+F="$(writable_fixtures publish_later_stamp)"
+printf '0\n[{"id":9,"started_at":"2026-01-01T00:00:00Z","conclusion":"success","summary":"<!-- closing-keyword-scope:v1 started=2099-01-01T00:00:00.000Z run=9 attempt=9 -->"}]\n' > "$F/check_runs"
+out="$(publish_env "$F")"
+check "earlier_run_does_not_overwrite_later_check_run" "a_later_started_run_already_published" \
+  "$(printf '%s\n' "$out" | sed -n 's/^ABANDONED=//p' | head -1)"
+
+# With no marked comment present the stamp is read from the check run alone —
+# the normal state after a clean result, and the reason the check run is never
+# deleted.
+F="$(writable_fixtures publish_stamp_from_check_only)"
+printf '0\n[]\n' > "$F/comments"
+printf '0\n[{"id":9,"started_at":"2026-01-01T00:00:00Z","conclusion":"success","summary":"<!-- closing-keyword-scope:v1 started=2099-01-01T00:00:00.000Z run=9 attempt=9 -->"}]\n' > "$F/check_runs"
+out="$(publish_env "$F")"
+check "earlier_warning_run_does_not_resurrect_a_deleted_report" "a_later_started_run_already_published" \
+  "$(printf '%s\n' "$out" | sed -n 's/^ABANDONED=//p' | head -1)"
 
 F="$(new_fixtures publish_guard)"
 out="$(run_validator "$F" --publish)"
@@ -662,6 +783,60 @@ plant_and_prove "concurrency_target_key" assert_concurrency_keyed_to_target \
   'sed -i.bak "s/closing-keyword-scope-\${{ matrix\.pr }}/closing-keyword-scope-\${{ github.event.pull_request.number }}/" "$copy"'
 
 # --- The workflow's own routing contract -----------------------------------
+
+# The fan-out's selection program is EXTRACTED from the workflow and executed,
+# not restated here: a test that copied the jq would keep passing after the
+# workflow regressed. This is the same principle test-worktree-recipe.sh (#1593)
+# applies to the protocol recipes.
+FANOUT_JQ="$(python3 "$SCRIPT_DIR/fixtures/extract-fanout-jq.py" "$WORKFLOW")"
+check "the fan-out selection program was found in the workflow" "yes" \
+  "$(printf '%s' "$FANOUT_JQ" | grep -q 'select(.body | test(' && echo yes || echo no)"
+
+fanout_select() {
+  printf '%s' "$1" \
+    | jq -r '.[] | {number, body: (.body // "")} | @json' \
+    | jq -r --arg issue "$2" --arg self "$3" "$FANOUT_JQ" \
+    | tr '\n' ' ' | sed 's/ $//'
+}
+
+FANOUT_FIXTURE='[
+  {"number": 101, "body": "first line\nsecond line\nCloses #97 down here"},
+  {"number": 42,  "body": "Closes #97 but this is the source pull request"},
+  {"number": 102, "body": "nothing relevant"},
+  {"number": 103, "body": "line one\n\nFixes issue #97"},
+  {"number": 104, "body": "Closes #970 is a different issue"},
+  {"number": 105, "body": "```\nCloses #97\n```"}
+]'
+
+# The bug this replaced: the fan-out serialized number<TAB>body and read it line
+# by line, so only a pull request's FIRST line was ever matched. A `Closes #N`
+# in any later paragraph — where it usually is — never selected the claimant,
+# and the claimant was never re-evaluated when its sibling opened or closed.
+# 105's keyword is inside a fence, and it is selected here on purpose: routing
+# is not the verdict. See fan_out_routes_a_fenced_keyword_... below.
+check "fan_out_matches_a_keyword_on_a_later_line_of_the_body" "101 103 105" \
+  "$(fanout_select "$FANOUT_FIXTURE" 97 42)"
+check "fan_out_excludes_the_source_pull_request" "" \
+  "$(fanout_select '[{"number": 42, "body": "Closes #97"}]' 97 42)"
+check "fan_out_does_not_match_a_longer_issue_number" "" \
+  "$(fanout_select '[{"number": 104, "body": "Closes #970"}]' 97 42)"
+check "fan_out_is_case_insensitive_like_the_canonical_parser" "106" \
+  "$(fanout_select '[{"number": 106, "body": "CLOSES #97"}]' 97 42)"
+check "fan_out_reads_a_body_with_no_keyword_as_no_match" "" \
+  "$(fanout_select '[{"number": 102, "body": "nothing relevant"}]' 97 42)"
+
+# The fan-out is a ROUTING decision, not the verdict: it selects whom to
+# re-validate, and the validator then applies the canonical filter. So a fenced
+# keyword still routes here — and the validator, not this query, is what decides
+# the reference is not live. Asserted so nobody "fixes" the fan-out into a
+# second, divergent parser.
+check "fan_out_routes_a_fenced_keyword_and_leaves_liveness_to_the_validator" "105" \
+  "$(fanout_select '[{"number": 105, "body": "```\nCloses #97\n```"}]' 97 42)"
+
+check "the fan-out is fully paginated, with no fixed ceiling" "0" \
+  "$(grep -c -- '--limit 200' "$WORKFLOW" || true)"
+check "the fan-out never line-splits a pull request body in the shell" "0" \
+  "$(grep -c 'read -r number body' "$WORKFLOW" || true)"
 
 check "prs is always emitted, never left unset" "yes" \
   "$(grep -q 'json="\[\]"' "$WORKFLOW" && echo yes || echo no)"

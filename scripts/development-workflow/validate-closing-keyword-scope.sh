@@ -214,10 +214,14 @@ gh_default_branch() {
   gh api "repos/${REPO}" --jq '.default_branch'
 }
 
+# Full pagination, not `gh pr list --limit N`. A ceiling would silently drop an
+# owner or a claimant past the cut, and the verdict would be wrong rather than
+# unavailable — the worst failure shape this feature has, because a dropped
+# owner reads as "no sibling carries it" and the run goes silent.
 gh_open_pr_list() {
-  gh pr list --repo "$REPO" --state open --limit 200 \
-    --json number,headRefName,title,body,baseRefName \
-    --jq '[.[] | {number, headRefName, title, body, baseRefName}]'
+  gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate \
+    --jq '[.[] | {number, headRefName: .head.ref, title, body: (.body // ""), baseRefName: .base.ref}]' \
+  | jq -sc 'add // []'
 }
 
 gh_existing_report() {
@@ -736,12 +740,33 @@ main() {
   # next event recomputes from the current one.
   local decided_verdict="$VERDICT"
   read_all_inputs
+
+  # A failed RE-READ is an unreadable input, not a changed one, and the two
+  # need different answers. The spec requires any unreadable input to leave the
+  # existing report untouched and publish a neutral check naming what failed —
+  # so this path publishes the indeterminate outcome rather than abandoning.
+  # Abandoning would have swallowed the non-conclusion entirely, which is the
+  # failure the whole indeterminate design exists to prevent. It is checked
+  # BEFORE the hash comparison, because a failed read also changes the hash and
+  # would otherwise be misread as a change.
   if any_input_unreadable; then
     VERDICT="indeterminate"
+    # A distinct key rather than a second VERDICT= line: two conflicting
+    # VERDICT= lines in one run's log is exactly the kind of output that gets
+    # misread by a person and by whatever parses it next.
+    echo "VERDICT_ON_RECHECK=indeterminate"
+    echo "UNREADABLE_INPUTS_ON_RECHECK=$(unreadable_inputs | tr '\n' ',' | sed 's/,$//')"
+    publish
+    echo "PUBLISHED=true"
+    exit 0
   fi
+
   local snapshot_after
   snapshot_after="$(snapshot_hash)"
   if [ "$snapshot_before" != "$snapshot_after" ]; then
+    # Readable, and different. The decision was made against a state that no
+    # longer holds; the next event recomputes from the current one, so nothing
+    # is lost by writing nothing.
     echo "ABANDONED=inputs_changed_between_read_and_write"
     echo "PUBLISHED=false"
     exit 0
