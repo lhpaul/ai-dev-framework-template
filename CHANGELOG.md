@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-09-01
+
+### Added
+
+- **Strict spec contract review** (#1650): on `spec/*` branches the local AI
+  reviewer runs a second, non-blocking pass against the spec checklist and
+  records `STRICT_SPEC_*` evidence without changing the ordinary verdict.
+- **Strict implementation-plan review** (#1655): a second strict checklist
+  beside the spec pass, with plan documents read at the reviewed head and
+  `STRICT_PLAN_*` evidence in loop history.
+- **Missed-finding telemetry** (#1651): when an external reviewer reports
+  blocking findings after a local-clean pass, the loop history records the
+  miss without changing the review outcome.
+- **Review doctrine for the local AI reviewer** (#1654): five generalized
+  finding patterns, a doctrine linter, and `REVIEW_DOCTRINE_*` supply-state
+  reporting in the local reviewer bundle.
+- **Reviewer effectiveness report** (#1657): read-only
+  `reviewer-effectiveness-report.sh` summarizes loop history per pull request
+  and across a recent window.
+
+### Changed
+
+- **Current-head reviewer evidence** (#1648): summaries record which commit
+  each reviewer actually reviewed; a stale local-clean result no longer
+  satisfies `ready-for-human-review`.
+- **Expensive reviewers after local clean** (#1649): `codex-github` waits for
+  current-head local-clean evidence, prior-reviewer evidence, resolved
+  threads, and green non-reviewer checks, and fails closed when that
+  evidence is missing or stale.
+- **Small-finding terminal policy** (#1652): blocking findings on spec, plan,
+  protocol, or the review contract are never "small"; contract-surface
+  findings on other docs escalate; counted rounds must be on the current
+  head.
+- **Stage-specific local reviewer prompts** (#1653): the local reviewer
+  resolves workflow stage from the head branch, can add the Workflow Policy
+  checklist, and emits `REVIEW_STAGE*` evidence.
+- **Second local pass before ready-phase** (#1656): the loop may re-run the
+  local reviewer when its latest verdict is not clean on the current head,
+  and re-reads the live PR head on every proceed path (fail closed on
+  mismatch).
+
+### Fixed
+
+- **Workflow test harnesses in consumer repositories** (#1631): suites now
+  read the live `.ai-dev-workflow.yaml` or skip, so downstream replacements
+  of placeholder workflows keep the harness check green; the harness also
+  installs PyYAML before YAML-parsing suites.
+- **Protocol 91 `pgrep` wait-loop guidance** (#1659): document the bracket
+  trick so a wait loop cannot match its own command line, and capture
+  `pgrep`'s exit code in `pgrep_rc` instead of reading `$?` after the loop.
+
 ## [0.43.1] - 2026-08-27
 
 ### Changed
@@ -3085,7 +3136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...v0.42.0
