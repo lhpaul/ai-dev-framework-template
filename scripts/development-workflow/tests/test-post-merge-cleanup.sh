@@ -238,6 +238,10 @@ worktree_repo="$(make_repo worktree-cleanup "$worktree_branch" yes)"
 mkdir -p "$worktree_repo/scripts/development-workflow"
 cp "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
 cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$worktree_repo/scripts/development-workflow/workflow-lib.sh"
+# post-merge-cleanup.sh sources the canonical closing-keyword filter from here
+# (#1644). Without it the script cannot start, and every assertion after this
+# point fails on a missing file rather than on the behaviour it tests.
+cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$worktree_repo/scripts/development-workflow/closing-keyword-lib.sh"
 cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$worktree_repo/scripts/development-workflow/workflow-config-resolver.py"
 chmod +x "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
 worktree_pr_path="$TMP_ROOT/worktree-cleanup-pr"

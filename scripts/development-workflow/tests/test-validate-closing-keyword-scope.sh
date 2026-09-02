@@ -122,6 +122,25 @@ fi
 check "post-merge-cleanup.sh sources the library" "yes" \
   "$(grep -q 'closing-keyword-lib.sh' "$CLEANUP" && echo yes || echo no)"
 
+# Adding a `source` to a script silently breaks any suite that copies that
+# script into a fixture tree: the copy cannot start, and every assertion after
+# it fails on a missing file rather than on the behaviour it was testing. That
+# is what happened to test-post-merge-cleanup.sh when the extraction landed.
+#
+# So the dependency is asserted from here: every library post-merge-cleanup.sh
+# sources must be provisioned by its own suite. Derived from the script rather
+# than listed, so a third source added later is covered without anyone
+# remembering to come back.
+CLEANUP_SUITE="$REPO_ROOT/scripts/development-workflow/tests/test-post-merge-cleanup.sh"
+sourced_libs="$(grep -oE '\. "\$SCRIPT_DIR/[a-z-]+\.sh"' "$CLEANUP" | sed 's#.*/##; s/"$//')"
+check "post-merge-cleanup.sh sources at least two libraries" "yes" \
+  "$([ "$(printf '%s\n' "$sourced_libs" | grep -c '\.sh')" -ge 2 ] && echo yes || echo no)"
+missing_provision=""
+for lib in $sourced_libs; do
+  grep -q "$lib" "$CLEANUP_SUITE" || missing_provision="${missing_provision}${lib} "
+done
+check "every library it sources is provisioned by its own test suite" "" "$missing_provision"
+
 # The regex moved from an inline literal to a shared constant. Its VALUE must
 # not have changed in the move: this is what the two parsers agree on.
 check "the canonical regex is unchanged by the extraction" \
