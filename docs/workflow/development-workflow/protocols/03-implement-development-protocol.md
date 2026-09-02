@@ -850,13 +850,25 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 ```bash
 git add [files]
 git commit -m "feat([scope]): [description]"
+set -euo pipefail
+
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "feature/[slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not feature/[slug]."
+  echo "Human action: switch this checkout to feature/[slug] and re-run the push step."
+  exit 1
+fi
+
 git push origin "feature/[slug]:feature/[slug]"
 
 # Verify the push actually landed: a refused or mis-aimed push must not pass as
 # success (issue #1593). The refusal message is multi-line and can be truncated
 # to nothing by shell-output filtering.
 LOCAL_SHA=$(git rev-parse HEAD)
-REMOTE_SHA=$(git ls-remote origin "refs/heads/feature/[slug]" | cut -f1)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/feature/[slug]" | cut -f1)" || REMOTE_SHA=""
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
   echo "STOP: guardrail 'push_verification_failed' halted this run."
   echo "Item: branch feature/[slug] and its pull request."
@@ -1215,13 +1227,25 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+
+   # The push must send THIS branch. A checkout left on another branch would push
+   # that one under this branch's name (issue #1593).
+   if [ "$(git rev-parse --abbrev-ref HEAD)" != "refactor/[branch-slug]" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug]."
+     echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not refactor/[branch-slug]."
+     echo "Human action: switch this checkout to refactor/[branch-slug] and re-run the push step."
+     exit 1
+   fi
+
    git push origin "refactor/[branch-slug]:refactor/[branch-slug]"
 
    # Verify the push actually landed: a refused or mis-aimed push must not pass as
    # success (issue #1593). The refusal message is multi-line and can be truncated
    # to nothing by shell-output filtering.
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(git ls-remote origin "refs/heads/refactor/[branch-slug]" | cut -f1)
+   REMOTE_SHA="$(git ls-remote origin "refs/heads/refactor/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "STOP: guardrail 'push_verification_failed' halted this run."
      echo "Item: branch refactor/[branch-slug] and its pull request."
@@ -1495,13 +1519,25 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 ```bash
 git add [files]
 git commit -m "fix([scope]): [description]"
+set -euo pipefail
+
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "fix/[branch-slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not fix/[branch-slug]."
+  echo "Human action: switch this checkout to fix/[branch-slug] and re-run the push step."
+  exit 1
+fi
+
 git push origin "fix/[branch-slug]:fix/[branch-slug]"
 
 # Verify the push actually landed: a refused or mis-aimed push must not pass as
 # success (issue #1593). The refusal message is multi-line and can be truncated
 # to nothing by shell-output filtering.
 LOCAL_SHA=$(git rev-parse HEAD)
-REMOTE_SHA=$(git ls-remote origin "refs/heads/fix/[branch-slug]" | cut -f1)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/fix/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
   echo "STOP: guardrail 'push_verification_failed' halted this run."
   echo "Item: branch fix/[branch-slug] and its pull request."
@@ -1824,13 +1860,25 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 ```bash
 git add [files]
 git commit -m "fix([scope]): [description] (hotfix)"
+set -euo pipefail
+
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "hotfix/[branch-slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not hotfix/[branch-slug]."
+  echo "Human action: switch this checkout to hotfix/[branch-slug] and re-run the push step."
+  exit 1
+fi
+
 git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"
 
 # Verify the push actually landed: a refused or mis-aimed push must not pass as
 # success (issue #1593). The refusal message is multi-line and can be truncated
 # to nothing by shell-output filtering.
 LOCAL_SHA=$(git rev-parse HEAD)
-REMOTE_SHA=$(git ls-remote origin "refs/heads/hotfix/[branch-slug]" | cut -f1)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/hotfix/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
   echo "STOP: guardrail 'push_verification_failed' halted this run."
   echo "Item: branch hotfix/[branch-slug] and its pull request."

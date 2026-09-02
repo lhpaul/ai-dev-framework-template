@@ -332,13 +332,25 @@ If no blocking human decision remains:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+
+   # The push must send THIS branch. A checkout left on another branch would push
+   # that one under this branch's name (issue #1593).
+   if [ "$(git rev-parse --abbrev-ref HEAD)" != "spec/[branch-slug]" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch spec/[branch-slug]."
+     echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not spec/[branch-slug]."
+     echo "Human action: switch this checkout to spec/[branch-slug] and re-run the push step."
+     exit 1
+   fi
+
    git push origin "spec/[branch-slug]:spec/[branch-slug]"
 
    # Verify the push actually landed: a refused or mis-aimed push must not pass as
    # success (issue #1593). The refusal message is multi-line and can be truncated
    # to nothing by shell-output filtering.
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(git ls-remote origin "refs/heads/spec/[branch-slug]" | cut -f1)
+   REMOTE_SHA="$(git ls-remote origin "refs/heads/spec/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "STOP: guardrail 'push_verification_failed' halted this run."
      echo "Item: branch spec/[branch-slug] and its pull request."

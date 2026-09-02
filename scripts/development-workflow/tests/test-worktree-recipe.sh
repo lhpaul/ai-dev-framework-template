@@ -65,7 +65,14 @@ case "$CASE_A_CMD" in
   *--no-track*) check case_a_documents_no_track yes yes ;;
   *) check case_a_documents_no_track yes "no: $CASE_A_CMD" ;;
 esac
-# Case C branches from its own remote branch, where tracking is correct.
+# Case C branches from its own remote branch, where tracking is correct. Require
+# it to exist first: an empty extraction would otherwise satisfy the pattern
+# check below, so deleting Case C from the protocol would pass silently.
+if [ -n "$CASE_C_CMD" ]; then
+  check case_c_recipe_present yes yes
+else
+  check case_c_recipe_present yes "Case C recipe missing from $PROTOCOL_91"
+fi
 case "$CASE_C_CMD" in
   *--no-track*) check case_c_keeps_tracking yes "no: $CASE_C_CMD" ;;
   *) check case_c_keeps_tracking yes yes ;;
@@ -133,6 +140,27 @@ check bare_push_cannot_reach_develop "$DEVELOP_SEED" "$DEVELOP_AFTER"
 LOCAL_SHA="$(git -C "$ROOT_DOC/wt" rev-parse HEAD)"
 REMOTE_SHA="$(git -C "$ROOT_DOC/repo" ls-remote origin refs/heads/fix/1593-example | cut -f1)"
 check explicit_refspec_push_lands "$LOCAL_SHA" "$REMOTE_SHA"
+
+# Run the extracted Case C recipe against a branch that exists only on the
+# remote: its upstream must be its OWN remote branch, which is why Case C
+# deliberately keeps tracking. Measured, not asserted from the command text.
+run_case_c() {
+  local root="$1" command="$2" resolved
+  resolved="${command//<worktree-path>/$root/wt-c}"
+  resolved="${resolved//<branch-prefix>\/<slug>/fix/1593-remote-only}"
+  ( cd "$root/repo" && eval "$resolved" >/dev/null 2>&1 )
+}
+(
+  cd "$ROOT_DOC/repo"
+  git checkout -q -b fix/1593-remote-only develop
+  git push -q origin fix/1593-remote-only
+  git checkout -q develop
+  git branch -q -D fix/1593-remote-only
+  git fetch -q origin
+)
+run_case_c "$ROOT_DOC" "$CASE_C_CMD"
+CASE_C_MERGE="$(git -C "$ROOT_DOC/wt-c" config --get branch.fix/1593-remote-only.merge || true)"  # workflow-shell-guard: allow SH001 - absent key would be a failure this check reports
+check case_c_tracks_its_own_remote_branch "refs/heads/fix/1593-remote-only" "$CASE_C_MERGE"
 
 # --- Planted violation: the recipe as it was before #1593 --------------------
 # Proves the assertion above is what separates the fixed recipe from the defect,
@@ -225,6 +253,9 @@ run_upstream_check() {
 check upstream_check_accepts_documented pass "$(run_upstream_check "$ROOT_DOC/wt")"
 # The planted recipe's worktree — tracking refs/heads/develop — is rejected.
 check upstream_check_rejects_base_tracking reject "$(run_upstream_check "$ROOT_PLANT/wt")"
+# Case C's worktree tracks its OWN remote branch, which the check must accept:
+# the guard rejects a wrong destination, not the presence of an upstream.
+check upstream_check_accepts_case_c pass "$(run_upstream_check "$ROOT_DOC/wt-c")"
 
 # Right branch name, WRONG REMOTE: a bare push would go somewhere the pull
 # request never sees. The name alone is only half the destination.
@@ -366,9 +397,9 @@ for stop_protocol in $NAMED_STOP_PROTOCOLS; do
   STOP_COUNT="$(printf '%s\n' "$STOP_REPORT" | awk -F= '/^COUNT=/{print $2; exit}')"
   STOP_COUNT_TOTAL=$((STOP_COUNT_TOTAL + STOP_COUNT))
 done
-# All five protocols contribute: 6 push verifications (spec, plan, feature, fix,
-# refactor, hotfix), 2 upstream guards, and 2 push-retry stops in protocol 93.
-if [ "$STOP_COUNT_TOTAL" -ge 10 ]; then
+# All five protocols contribute: 6 push blocks with 2 guards each (wrong branch,
+# push did not land), 2 upstream guards, and 2 push-retry stops in protocol 93.
+if [ "$STOP_COUNT_TOTAL" -ge 16 ]; then
   check named_stop_sweep_not_vacuous yes yes
 else
   check named_stop_sweep_not_vacuous yes "only ${STOP_COUNT_TOTAL} guard(s) found"
