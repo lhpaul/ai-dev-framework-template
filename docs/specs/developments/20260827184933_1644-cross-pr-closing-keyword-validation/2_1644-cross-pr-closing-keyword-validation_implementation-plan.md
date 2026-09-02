@@ -13,7 +13,7 @@
 
 **Rationale**: The rule set is large — roughly sixty acceptance criteria across eight groups — and three of them are hard in their own right: byte-exact filtering parity with an existing parser whose behaviour differs by base branch, an indeterminate-versus-clean distinction that must hold for *every* input without enumeration, and an ordering guarantee across overlapping workflow runs. None of the individual pieces is large; the plan is L because the correctness surface is.
 
-**Dependencies**: None. #1593 (merged, `1b6b3443`) added `push_verification_failed` and the self-refspec push rules; this feature touches neither.
+**Dependencies**: **#1702** — the spec amendment recording the five re-evaluation criteria that GitHub Actions cannot trigger. Implementation should not start until it is merged, or the implementation PR is measured against criteria the human decided not to deliver (alignment option B, 2026-09-02). #1593 (merged, `1b6b3443`) added `push_verification_failed` and the self-refspec push rules; this feature touches neither.
 
 ---
 
@@ -75,7 +75,8 @@
 
 ### Infrastructure / Configuration
 
-- [ ] **`.github/workflows/closing-keyword-scope.yml`** (new). `pull_request_target` types `opened, reopened, edited, labeled, unlabeled, closed, ready_for_review`. API-only, no checkout of pull request code, following `pr-policy.yml`'s shape. Permissions: `pull-requests: write` (comment), `issues: write` (label creation), `checks: write` (the neutral conclusion — the first check-run writer in this repository), `contents: read`.
+- [ ] **`.github/workflows/closing-keyword-scope.yml`** (new). `pull_request_target` types `opened, reopened, edited, labeled, unlabeled, closed, ready_for_review`. Permissions: `pull-requests: write` (comment), `issues: write` (label creation), `checks: write` (the neutral conclusion — the first check-run writer in this repository), `contents: read`.
+- [ ] **How the workflow obtains the validator, and why that is fork-safe.** The validator is a repository script, so unlike `pr-policy.yml` this workflow cannot be checkout-free: a GitHub-hosted runner has no copy of it otherwise. It checks out **the base branch, pinned to `github.event.pull_request.base.sha`** — trusted code that the pull request cannot influence — and never `github.event.pull_request.head.sha`. That is the standard `pull_request_target` safety rule: the elevated token is paired only with code from the base. The pull request's description, labels, branch names and base are read through the API as data; nothing from the pull request is ever executed. The fork guard still runs first and exits before any write. *Acceptance criteria: Fork-originated pull requests.*
 - [ ] **Sibling fan-out.** On `opened`, `reopened` and `closed` for an implementation branch, resolve the issue its branch names and re-run the validator for each open pull request whose description declares that issue. The fan-out is bounded by the open pull request list and each target is validated by the same single-PR entry point.
 - [ ] **Concurrency.** `concurrency: group: closing-keyword-scope-<pr>` with `cancel-in-progress: false`, so writes for one pull request are serialized. Ordering across serialized runs is still enforced in the script, because a cancelled or duplicated delivery can still finish out of order.
 
@@ -101,7 +102,20 @@ Five acceptance criteria depend on these events, all under *Re-evaluation trigge
 | "Renaming a pull request's own branch so that it now names an issue its description declares … clears a warning" | No `renamed` event | `own_rename_into_ownership_clears_warning` |
 | "Changing the repository's default branch re-evaluates the affected pull requests, even those whose own base was never touched" | No default-branch-change event | `default_branch_change_flips_filtering` — validator invoked with each default-branch value |
 
-Each is implemented as **script behaviour**: invoking the validator after the rename or the default-branch change produces the correct result, and the named test asserts it. What is not delivered is the automatic invocation. The plan states this rather than letting the criteria read as satisfied.
+Each is implemented as **script behaviour**: invoking the validator after the rename or the default-branch change produces the correct result, and the named test asserts it. What is not delivered is the automatic invocation.
+
+**The spec still lists these five as required, and this plan cannot change that.**
+`check-documentation-stage-alignment.sh` allows only plan documents and
+smoke-test runbooks on an `implementation-plan/*` branch, so a spec edit here
+fails Protocol 91 Step 8a. Declaring the gap in the plan alone would leave the
+implementation PR measured against criteria nobody intends to deliver, so the
+amendment is tracked as **#1702**, which moves the five to the spec's *Out of
+Scope (MVP)* with the GitHub constraint as the reason.
+
+**Implementation of this plan should not start until #1702 is merged.** Until
+then the plan's coverage claim is conditional: every other acceptance criterion
+is delivered and tested, and these five are delivered as validator behaviour
+without automatic invocation.
 
 ---
 
@@ -210,7 +224,8 @@ This plan is parser-risk: it adds a scanner over markdown and moves an existing 
 | A check run cannot be deleted through the API, so an inherited duplicate cannot be cleaned up the way a duplicate comment can | Low | Low — two checks on one head SHA, both non-blocking | Selection is deterministic (oldest matching name and external id), so runs agree on which one they update; the extras age out with the head SHA and never block a merge |
 | An unreadable check-run listing is circular: the run is indeterminate, and saying so requires writing the check it cannot find | Low | Low | Resolved by an explicit rule rather than left to the implementer — create the check, accepting at most one duplicate, because an unpublished non-conclusion is worse than a visible duplicate. Named as the only duplicate-producing path in the design |
 | Sibling fan-out grows with the number of open pull requests | Low | Low | Bounded by the open PR list, one API call plus one validation per declaring PR; no scheduled sweep was added (option B) |
-| The declared trigger gaps read as satisfied criteria | Med | Med — a reviewer or a later reader assumes rename coverage | Stated in its own section with the affected criteria named, and the script-level behaviour is tested separately from the invocation |
+| The declared trigger gaps read as satisfied criteria | Med | Med — a reviewer or a later reader assumes rename coverage | Stated in its own section with the five criteria quoted from the spec, each paired with its test; the script-level behaviour is tested separately from the invocation |
+| The spec and the plan disagree about those five criteria until the spec is amended | High — it is true today | Med — the implementation PR is measured against criteria nobody intends to deliver | Tracked as #1702 and recorded as a dependency; implementation should not start until it merges |
 
 ---
 
