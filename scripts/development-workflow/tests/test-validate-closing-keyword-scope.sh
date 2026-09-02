@@ -466,6 +466,14 @@ if [ -n "${VANISH_AFTER:-}" ] && [ "${VANISH_AFTER}" = "$key" ]; then
   fi
   touch "${FIXTURES}/.seen_${key}"
 fi
+if [ -n "${RESTORE_AFTER:-}" ] && [ "${RESTORE_AFTER}" = "$key" ]; then
+  # The mirror of VANISH_AFTER: absent for the first read, present after it.
+  if [ ! -f "${FIXTURES}/.seen_${key}" ]; then
+    touch "${FIXTURES}/.seen_${key}"
+  else
+    printf '0\n%s\n' "${RESTORE_TO:-restored}" > "$file"
+  fi
+fi
 if [ -n "${CHANGE_AFTER:-}" ] && [ "${CHANGE_AFTER}" = "$key" ]; then
   if [ -f "${FIXTURES}/.seen_${key}" ]; then
     printf '0\n%s\n' "${CHANGE_TO:-changed}" > "$file"
@@ -821,6 +829,43 @@ check "without slurping, a two-page listing yields two ids" "2" \
   "$(printf '%s\n' "$two_pages" | jq -r 'sort_by(.started_at, .id) | .[0].id' | grep -c '[0-9]')"
 check "slurped, the same listing yields one id, the oldest" "10" \
   "$(printf '%s\n' "$two_pages" | jq -sc 'add // []' | jq -r 'sort_by(.started_at, .id) | .[0].id')"
+
+# A target that closes between the matrix resolving and this leg running must
+# not be written to at all — not the check run, not a comment deletion. "Not
+# validated" is not a clean result published quietly.
+F="$(writable_fixtures publish_closed_target)"
+printf '0\nCLOSED\n' > "$F/pr_state"
+out="$(publish_env "$F")"
+check "target_closed_between_resolve_and_validate_writes_nothing" "no" \
+  "$([ -f "$F/.args_write_check_runs" ] || [ -f "$F/.args_write_comments" ] && echo yes || echo no)"
+check_contains "and says why it published nothing" "target_is_not_open" "$out"
+
+# Same for a non-implementation pull request: outside the precondition means no
+# writes, including no provisioning of the shared opt-out label.
+F="$(writable_fixtures publish_non_implementation)"
+printf '0\nspec/97-slug\n' > "$F/pr_headRefName"
+out="$(publish_env "$F")"
+check "a non-implementation target is written to not at all" "no" \
+  "$([ -f "$F/.args_write_check_runs" ] || [ -f "$F/.args_write_comments" ] && echo yes || echo no)"
+check_contains "and says why" "not_an_implementation_branch" "$out"
+
+# An input that fails on the FIRST read and recovers on the re-read still gets
+# a visible indeterminate outcome. Without this, the recovery erased the
+# failure, the snapshot differed, and the run abandoned — publishing nothing
+# about a read that did fail.
+F="$(writable_fixtures publish_first_read_fails)"
+rm "$F/pr_body"
+# RESTORE_AFTER is the mirror of VANISH_AFTER: the fixture is absent for the
+# first read and present for every one after it.
+out="$(RESTORE_AFTER=pr_body RESTORE_TO='Closes #97' publish_env "$F")"
+check "an input that fails first and recovers still publishes an indeterminate" "true" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+check_contains "and the recovery is named, not hidden" "the first read failed" "$out"
+posted_check="$(cat "$F/.posted_write_check_runs" 2>/dev/null || true)"
+check "the recovered-input run still writes a neutral check" "neutral" \
+  "$(printf '%s' "$posted_check" | jq -r '.conclusion // ""')"
+check_not_contains "a recovered first read is not misread as a changed input" \
+  "ABANDONED=inputs_changed" "$out"
 
 # A later-started run's stamp blocks the write outright.
 F="$(writable_fixtures publish_later_stamp)"

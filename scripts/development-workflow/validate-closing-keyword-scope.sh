@@ -431,6 +431,7 @@ decide() {
   # in between.
   if [ "$PR_STATE" != "OPEN" ]; then
     VERDICT="silent"
+    NOT_VALIDATED_REASON="target_is_not_open"
     return 0
   fi
 
@@ -771,6 +772,16 @@ main() {
     exit 0
   fi
 
+  # "Not validated" means exactly that: no writes at all, not a clean result
+  # published quietly. A closed target must not be written to — it can close
+  # between the matrix resolving and this leg running — and a
+  # non-implementation pull request is outside the feature's precondition, so
+  # neither its report nor the shared opt-out label is this run's business.
+  if [ -n "$NOT_VALIDATED_REASON" ]; then
+    echo "PUBLISHED=false (${NOT_VALIDATED_REASON})"
+    exit 0
+  fi
+
   # Freshness. Re-read every input through the same accessor and compare the
   # snapshot. Equal means publish; different means abandon — no write at all,
   # because the decision was made against a state that no longer holds and the
@@ -786,6 +797,20 @@ main() {
   # failure the whole indeterminate design exists to prevent. It is checked
   # BEFORE the hash comparison, because a failed read also changes the hash and
   # would otherwise be misread as a change.
+  #
+  # The FIRST read's failure counts too, and read_all_inputs has just cleared
+  # it. An input that failed then and recovered now would otherwise reach the
+  # hash comparison, differ, and abandon — publishing nothing about a read that
+  # did fail. The spec asks for a visible indeterminate outcome for any gate
+  # input failure, so recovery on the second read does not erase the first.
+  if [ "$decided_verdict" = "indeterminate" ] && ! any_input_unreadable; then
+    VERDICT="indeterminate"
+    echo "VERDICT_ON_RECHECK=indeterminate (the first read failed; the second recovered)"
+    publish
+    echo "PUBLISHED=true"
+    exit 0
+  fi
+
   if any_input_unreadable; then
     VERDICT="indeterminate"
     # A distinct key rather than a second VERDICT= line: two conflicting
