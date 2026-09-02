@@ -67,7 +67,7 @@
   - **The check run** carries it as the first line of `output.summary`, in the same HTML-comment form, so it is invisible in the rendered check and returned by the same `filter=all` listing used for identity — no second API call is needed to read it.
   - A stamp that is missing or unparseable is treated as **older than any run**, so a pre-stamp artifact is adopted rather than becoming permanently un-writable. Only a well-formed, strictly later `started` blocks the write.
   *Acceptance criteria: Ordering and idempotence.*
-- [ ] **Fork guard.** Compare `head.repo.full_name` with the target repository and exit before any write when they differ. *Acceptance criteria: Fork-originated pull requests.*
+- [ ] **Fork guard, in the script.** Compare `head.repo.full_name` with the target repository and exit before any write when they differ. This is the inner half of a two-layer guard; the workflow-level `if:` is the outer half, specified under Infrastructure. *Acceptance criteria: Fork-originated pull requests.*
 
 ### Shared Packages / Libraries
 
@@ -76,7 +76,18 @@
 ### Infrastructure / Configuration
 
 - [ ] **`.github/workflows/closing-keyword-scope.yml`** (new). `pull_request_target` types `opened, reopened, edited, labeled, unlabeled, closed, ready_for_review`. Permissions: `pull-requests: write` (comment), `issues: write` (label creation), `checks: write` (the neutral conclusion — the first check-run writer in this repository), `contents: read`.
-- [ ] **How the workflow obtains the validator, and why that is fork-safe.** The validator is a repository script, so unlike `pr-policy.yml` this workflow cannot be checkout-free: a GitHub-hosted runner has no copy of it otherwise. It checks out **the base branch, pinned to `github.event.pull_request.base.sha`** — trusted code that the pull request cannot influence — and never `github.event.pull_request.head.sha`. That is the standard `pull_request_target` safety rule: the elevated token is paired only with code from the base. The pull request's description, labels, branch names and base are read through the API as data; nothing from the pull request is ever executed. The fork guard still runs first and exits before any write. *Acceptance criteria: Fork-originated pull requests.*
+- [ ] **How the workflow obtains the validator.** The validator is a repository script, so unlike `pr-policy.yml` this workflow cannot be checkout-free: a GitHub-hosted runner has no copy of it otherwise. Exactly one checkout step, written as:
+
+  ```yaml
+  - name: Check out the base commit
+    uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+    with:
+      ref: ${{ github.event.pull_request.base.sha }}
+      persist-credentials: false
+  ```
+
+  The action itself is pinned to a full commit SHA with the version in an adjacent comment, per the Protocol 03 workflow security checklist; the SHA is the one every other workflow in this repository already uses for `actions/checkout` v5. The `ref` is the **base** commit — trusted code the pull request cannot influence — and never `github.event.pull_request.head.sha` or `refs/pull/<n>/merge`. That is the `pull_request_target` safety rule: the elevated token is paired only with code from the base. Everything from the pull request — description, labels, branch names, base — is read through the API as data and never executed.
+- [ ] **Fork guard, at the workflow.** The job carries `if: github.event.pull_request.head.repo.full_name == github.repository`, as the Protocol 03 checklist requires of every step that writes to the repository — and this one comments, creates a label and writes a check run. The script's own guard stays as defence in depth, so the validator is also safe when invoked by hand. `pr-policy.yml` guards in the script only; this workflow does both, because the checklist asks for the `if:` explicitly. *Acceptance criteria: Fork-originated pull requests.*
 - [ ] **Sibling fan-out.** On `opened`, `reopened` and `closed` for an implementation branch, resolve the issue its branch names and re-run the validator for each open pull request whose description declares that issue. The fan-out is bounded by the open pull request list and each target is validated by the same single-PR entry point.
 - [ ] **Concurrency.** `concurrency: group: closing-keyword-scope-<pr>` with `cancel-in-progress: false`, so writes for one pull request are serialized. Ordering across serialized runs is still enforced in the script, because a cancelled or duplicated delivery can still finish out of order.
 
@@ -123,7 +134,7 @@ without automatic invocation.
 
 **Test types**: Unit (script-level, against stubbed `gh`), plus a smoke runbook for the GitHub-side wiring.
 
-**Key scenarios to test**: the traceability matrix below maps every acceptance-criterion group and every parser-risk edge case to the implementation item that satisfies it and the named test or runbook step that proves it. All test names refer to `scripts/development-workflow/tests/test-validate-closing-keyword-scope.sh` unless a runbook step is named instead.
+**Key scenarios to test**: the traceability matrix below maps every acceptance-criterion group and every parser-risk edge case to the implementation item that satisfies it and the named test or runbook step that proves it. All test names refer to `scripts/development-workflow/tests/test-validate-closing-keyword-scope.sh` unless a runbook step is named instead. Two of them — `workflow_job_carries_fork_if_guard` and `workflow_checkout_uses_base_sha_never_head` — assert on the text of `.github/workflows/closing-keyword-scope.yml` rather than on script behaviour: the first that the job's `if:` compares `head.repo.full_name` with `github.repository`, the second that the checkout's `ref` is `base.sha` and that neither `head.sha` nor `refs/pull/` appears anywhere in the file. They are structural because the guard they protect cannot be exercised from a test runner — a fork event cannot be synthesized locally — and a silently dropped `if:` is exactly the regression that would otherwise ship unnoticed.
 
 ### Traceability: acceptance criteria → implementation → test
 
@@ -131,7 +142,7 @@ without automatic invocation.
 | --- | --- | --- |
 | Reporting a mismatch | Ownership resolution; report publication | `sibling_owned_issue_warns`, `warning_names_issue_and_sibling_pr`, `all_issues_self_owned_is_silent`, `no_closing_keywords_is_silent`; runbook Steps 1–2 |
 | Which keywords count as live | Reuse of the canonical filter; base-branch-dependent filtering; boundary sentinel | `fenced_keyword_not_reported`, `blockquoted_keyword_not_reported`, `inline_span_keyword_not_reported`, `unclosed_fence_suppresses_rest`, `title_fence_suppresses_for_non_default_base`, `title_fence_does_not_suppress_for_default_base`, `title_only_keyword_not_reported`, `hotfix_to_default_branch_is_validated`, `substring_lookalikes_not_reported`; runbook Step 5 |
-| Fork-originated pull requests | Fork guard | `fork_pr_is_not_validated_and_writes_nothing` |
+| Fork-originated pull requests | Fork guard, in the script + workflow-level `if:` | `fork_pr_is_not_validated_and_writes_nothing`, `workflow_job_carries_fork_if_guard`, `workflow_checkout_uses_base_sha_never_head` |
 | The opt-out | Opt-out check; idempotent provisioning | `label_present_is_silent`, `label_created_on_first_use`, `concurrent_creation_does_not_fail`, `label_creation_failure_still_warns_and_names_label`, `applying_label_clears_existing_warning`, `removing_label_restores_warning`, `dropping_keyword_clears_warning`; runbook Step 4 |
 | Establishing ownership | Ownership resolution | `no_owner_is_silent`, `contested_ownership_is_silent`, `team_prefixed_sibling_is_owner`, `platform_link_is_not_ownership`, `non_naming_branch_is_not_owner`, `spec_and_plan_branches_are_never_owners`, `closed_or_merged_pr_is_never_owner`; runbook Step 6 |
 | Re-evaluation triggers (delivered) | Workflow trigger set; sibling fan-out | `sibling_open_raises_warning`, `sibling_close_or_merge_clears_warning`, `sibling_reopen_restores_warning`, `base_retarget_flips_filtering`, `reopen_reevaluates`, `readiness_backstop_reevaluates`; runbook Steps 2 and 5 |
@@ -244,7 +255,7 @@ None. The one design element that would benefit from a sample — the boundary s
 5. Implement the opt-out, including idempotent provisioning and the failed-provisioning warning line.
 6. Implement the single-accessor input reads and the indeterminate outcome. **Verify**: one test per gate input confirms an unreadable input leaves an existing report untouched and posts nothing.
 7. Implement report publication, freshness and the ordering stamp. **Verify**: the overlapping-run tests pass.
-8. Add `.github/workflows/closing-keyword-scope.yml` with the trigger set, permissions, fork guard and concurrency group.
+8. Add `.github/workflows/closing-keyword-scope.yml` with the trigger set, permissions, the SHA-pinned base-commit checkout, the job-level fork `if:` and the concurrency group. Complete the Protocol 03 GitHub Actions workflow security checklist for it before opening the development PR.
 9. Add the sibling fan-out to the workflow. **Verify**: run the workflow's job locally where possible, and confirm the fan-out list is derived from open pull requests only.
 10. Write `docs/testing/workflow/1644-cross-pr-closing-keyword-validation.smoke-test.md` and execute it against a scratch pull request pair.
 11. Update the project docs listed under **Documentation Updates**.
