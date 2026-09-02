@@ -924,9 +924,20 @@ check_not_contains "a non-publishing run makes no write call" "write_" "$out"
 # assertion that never fails is not evidence that the guard is present.
 # ---------------------------------------------------------------------------
 
+# File-global: is a fork guard present anywhere in the file?
 assert_fork_if_guard() {
   grep -qE "if:.*head\.repo\.full_name == github\.repository" "$1" \
     || grep -qzE "if: >-[^\"]*head\.repo\.full_name ==\s*github\.repository" "$1"
+}
+
+# Job-scoped, and this is the one that matters. `validate` is the job holding
+# `pull-requests: write`, `issues: write` and `checks: write`. A file-global
+# check passes as long as SOME job has a guard, so removing the privileged
+# job's guard while `resolve-targets` keeps its own would not change its
+# answer — which is a check that cannot fail for the case it exists to catch.
+assert_job_carries_fork_guard() {
+  awk -v job="  $2:" '$0 == job {f=1; next} f && /^  [a-z-]+:$/ {exit} f' "$1" \
+    | grep -qE "head\.repo\.full_name ==[[:space:]]*github\.repository"
 }
 
 # A privileged pull_request_target job must execute only code the pull request
@@ -955,9 +966,10 @@ check "workflow_concurrency_group_is_keyed_to_matrix_target" "yes" \
 # The writing job must carry the guard itself, not inherit it through `needs:`.
 # A guard you have to trace through a dependency chain is a guard someone can
 # remove by accident.
-validate_job_block="$(awk '/^  validate:/{f=1} f' "$WORKFLOW")"
 check "the writing job carries the fork guard itself" "yes" \
-  "$(printf '%s' "$validate_job_block" | grep -qE "head\.repo\.full_name ==" && echo yes || echo no)"
+  "$(assert_job_carries_fork_guard "$WORKFLOW" validate && echo yes || echo no)"
+check "the resolving job carries one too" "yes" \
+  "$(assert_job_carries_fork_guard "$WORKFLOW" resolve-targets && echo yes || echo no)"
 
 # --- Planted-violation proofs (REVIEW.md) -----------------------------------
 #
@@ -984,7 +996,26 @@ plant_and_prove() {
     "$("$assertion" "$copy" && echo yes || echo no)"
 }
 
-# 1. Delete the fork `if:` from the validate job.
+# 1a. Remove the fork guard from the PRIVILEGED job ONLY, leaving
+# `resolve-targets`' guard in place. The file-global assertion cannot see this
+# — some job still has a guard — which is precisely why the job-scoped one
+# exists. A proof that removed both would not have demonstrated that.
+PLANTED_VALIDATE_COPY="$PLANT_DIR/validate_only_fork_guard.yml"
+cp "$WORKFLOW" "$PLANTED_VALIDATE_COPY"
+check "planted-violation baseline: the validate job's guard is present on an unmodified copy" "yes" \
+  "$(assert_job_carries_fork_guard "$PLANTED_VALIDATE_COPY" validate && echo yes || echo no)"
+python3 "$SCRIPT_DIR/fixtures/plant-remove-validate-fork-guard.py" "$PLANTED_VALIDATE_COPY"
+check "planted-violation: removing ONLY the privileged job's guard is caught" "no" \
+  "$(assert_job_carries_fork_guard "$PLANTED_VALIDATE_COPY" validate && echo yes || echo no)"
+check "planted-violation: the file-global check does NOT catch it, which is why both exist" "yes" \
+  "$(assert_fork_if_guard "$PLANTED_VALIDATE_COPY" && echo yes || echo no)"
+check "planted-violation: resolve-targets' guard survived the plant, as intended" "yes" \
+  "$(assert_job_carries_fork_guard "$PLANTED_VALIDATE_COPY" resolve-targets && echo yes || echo no)"
+cp "$WORKFLOW" "$PLANTED_VALIDATE_COPY"
+check "planted-violation: the validate job's guard passes once the violation is removed" "yes" \
+  "$(assert_job_carries_fork_guard "$PLANTED_VALIDATE_COPY" validate && echo yes || echo no)"
+
+# 1b. Remove every fork guard in the file, against the file-global assertion.
 plant_and_prove "fork_if_guard" assert_fork_if_guard \
   'python3 - "$copy" <<PY
 import re, sys, pathlib
