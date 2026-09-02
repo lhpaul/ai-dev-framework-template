@@ -178,29 +178,64 @@ fi
 # protocol that drops either half fails here.
 PROTOCOL_DIR="$REPO_ROOT/docs/workflow/development-workflow/protocols"
 check_push_step() {
-  # check_push_step <protocol-file> <branch-placeholder>
-  local file="$1" branch="$2" name
-  name="$(basename "$file" .md)"
+  # check_push_step <protocol-file> <branch-placeholder> <label>
+  local file="$1" branch="$2" label="$3" name
+  name="$(basename "$file" .md)_${label}"
   if grep -Fq "git push origin \"${branch}:${branch}\"" "$file"; then
     check "push_refspec_${name}" yes yes
   else
     check "push_refspec_${name}" yes "no refspec for ${branch}"
   fi
-  if grep -Fq "git ls-remote origin \"refs/heads/${branch}\"" "$file" &&
-      grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' "$file"; then
+  if grep -Fq "git ls-remote origin \"refs/heads/${branch}\"" "$file"; then
     check "push_verified_${name}" yes yes
   else
     check "push_verified_${name}" yes "no remote-head comparison for ${branch}"
   fi
 }
-check_push_step "$PROTOCOL_DIR/01-generate-spec-protocol.md" 'spec/[branch-slug]'
-check_push_step "$PROTOCOL_DIR/02-generate-implementation-plan-protocol.md" 'implementation-plan/[branch-slug]'
-check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]'
+check_push_step "$PROTOCOL_DIR/01-generate-spec-protocol.md" 'spec/[branch-slug]' spec
+check_push_step "$PROTOCOL_DIR/02-generate-implementation-plan-protocol.md" 'implementation-plan/[branch-slug]' plan
+check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'feature/[slug]' feature
+check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]' fix
+check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'hotfix/[branch-slug]' hotfix
 
-# No documented item-branch push may be left bare: a `git push` with no remote
-# and no refspec depends entirely on local push.default.
-BARE_PUSHES="$(grep -rn '^\s*git push\s*$' "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, which is the passing state
+# Each of those protocols must also carry the non-zero exit that makes the
+# comparison a gate rather than an echo.
+for push_protocol in 01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol; do
+  if grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' "$PROTOCOL_DIR/${push_protocol}.md"; then
+    check "push_exit_gate_${push_protocol}" yes yes
+  else
+    check "push_exit_gate_${push_protocol}" yes no
+  fi
+done
+
+# Sweep, so a push step added later cannot skip the rule: no documented push of
+# an ITEM branch may be left bare or given a bare branch name. Base-branch
+# pushes (develop-<slug>, release, tags) are deliberate and excluded — they are
+# not reached from an item worktree.
+BARE_PUSHES="$(grep -rn '^[[:space:]]*git push[[:space:]]*$' "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, which is the passing state
 check no_bare_push_in_protocols "" "$BARE_PUSHES"
+
+ITEM_PUSHES="$(grep -rhE 'git push .*(spec|implementation-plan|feature|fix|hotfix|refactor)/' "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, reported by the non-vacuity check below
+MISSING_REFSPEC=""
+ITEM_PUSH_COUNT=0
+while IFS= read -r push_line; do
+  [ -n "$push_line" ] || continue
+  ITEM_PUSH_COUNT=$((ITEM_PUSH_COUNT + 1))
+  case "$push_line" in
+    *:*) : ;;
+    *) MISSING_REFSPEC="${MISSING_REFSPEC}${push_line}"$'\n' ;;
+  esac
+done <<ITEM_PUSH_LINES
+$ITEM_PUSHES
+ITEM_PUSH_LINES
+check every_item_push_uses_refspec "" "$MISSING_REFSPEC"
+# The sweep must have found the five documented item pushes, or it passes
+# vacuously — the same failure mode #1658 exists to remove.
+if [ "$ITEM_PUSH_COUNT" -ge 5 ]; then
+  check item_push_sweep_not_vacuous yes yes
+else
+  check item_push_sweep_not_vacuous yes "only ${ITEM_PUSH_COUNT} item push(es) found"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
