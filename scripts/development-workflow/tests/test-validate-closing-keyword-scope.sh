@@ -987,6 +987,43 @@ plant_and_prove "checkout_base_sha" assert_checkout_uses_a_trusted_ref \
 plant_and_prove "concurrency_target_key" assert_concurrency_keyed_to_target \
   'sed -i.bak "s/closing-keyword-scope-\${{ matrix\.pr }}/closing-keyword-scope-\${{ github.event.pull_request.number }}/" "$copy"'
 
+# --- Planted-violation proof for the validator itself -----------------------
+#
+# The three proofs above cover the STRUCTURAL assertions on the workflow. The
+# validator is itself a new automated check, and REVIEW.md wants the same
+# treatment for it: the violation it targets, planted at an addressable
+# location, proved to fail with it and to pass once removed.
+#
+# For a data-driven check the addressable location is the input. The violation
+# lives at a real path and line — fixtures/1644-planted-violation-description.md
+# line 3, `Closes #97` — which is a pull request description claiming an issue
+# whose sole owner is a different open pull request.
+
+PLANTED_DESCRIPTION="$SCRIPT_DIR/fixtures/1644-planted-violation-description.md"
+check "the planted violation is at the recorded location" "Closes #97" \
+  "$(sed -n '3p' "$PLANTED_DESCRIPTION")"
+
+F="$(new_fixtures planted_violation_present)"
+{ printf '0\n'; cat "$PLANTED_DESCRIPTION"; } > "$F/pr_body"
+out="$(run_validator "$F")"
+check "planted-violation: the validator WARNS with the violation present" "warn" "$(verdict_of "$out")"
+check_contains "planted-violation: and names the issue and its sole owner" "| #97 | #101 |" "$out"
+
+# Removing the violation — the same file, the same line, keyword deleted —
+# must clear it. Nothing else about the input changes.
+F="$(new_fixtures planted_violation_removed)"
+{ printf '0\n'; sed '3s/^Closes #97$/Refs #97/' "$PLANTED_DESCRIPTION"; } > "$F/pr_body"
+out="$(run_validator "$F")"
+check "planted-violation: the validator is SILENT once the violation is removed" "silent" "$(verdict_of "$out")"
+check_not_contains "planted-violation: and reports no row" "| #97 |" "$out"
+
+# Non-vacuity for the pair: the two inputs must actually differ on that line,
+# or both halves would be proving the same thing.
+check "planted-violation: the two inputs differ only on line 3" "Refs #97" \
+  "$(sed '3s/^Closes #97$/Refs #97/' "$PLANTED_DESCRIPTION" | sed -n '3p')"
+check "planted-violation: and are otherwise identical" "" \
+  "$(diff <(sed '3d' "$PLANTED_DESCRIPTION") <(sed '3s/^Closes #97$/Refs #97/' "$PLANTED_DESCRIPTION" | sed '3d') || true)"
+
 # --- The workflow's own routing contract -----------------------------------
 
 # The fan-out's selection program is EXTRACTED from the workflow and executed,
