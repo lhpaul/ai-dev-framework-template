@@ -80,13 +80,15 @@ def diff_shape(diff: str) -> str:
     * A hunk header means there ARE changed lines. Without a `+++` target header
       they cannot be attributed to a path, so the input is unreadable — a
       `git diff --no-prefix` output, for instance.
-    * No hunk header and a `diff --git` line means a genuine Git record with no
-      textual changes at all: a mode-only change, a binary file, a pure rename.
-      There is nothing to attribute, so zero examined is the correct answer and
-      the run passes. Refusing these would fail CI on any pull request that
-      contains one.
-    * A `+++` target header with no hunk and no `diff --git` line is a fragment:
-      a path with no lines behind it.
+    * A `+++` target header with no hunk is a fragment either way: in real
+      output a target header exists precisely to introduce a hunk, so a path
+      with no lines behind it is malformed even when a `diff --git` line frames
+      it. This case is checked before the metadata-only one.
+    * No hunk header, no target header, and a `diff --git` line means a genuine
+      Git record with no textual changes at all: a mode-only change, a binary
+      file, a pure rename. There is nothing to attribute, so zero examined is
+      the correct answer and the run passes. Refusing these would fail CI on any
+      pull request that contains one.
 
     Returns "empty", "not_a_diff", "unparseable", or "diff".
     """
@@ -97,9 +99,9 @@ def diff_shape(diff: str) -> str:
     has_target = bool(DIFF_TARGET_HEADER.search(diff))
     if has_hunk:
         return "diff" if has_target else "unparseable"
-    if has_git_header:
-        return "diff"
-    return "unparseable" if has_target else "not_a_diff"
+    if has_target:
+        return "unparseable"
+    return "diff" if has_git_header else "not_a_diff"
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:

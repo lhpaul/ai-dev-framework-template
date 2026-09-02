@@ -231,6 +231,19 @@ check lone_target_header_allow_empty_still_errors 2 \
   "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-target.diff" --allow-empty)"
 printf '%s\n' '@@ -0,0 +1 @@' '+hi' > "$TMP_DIR/lone-hunk.diff"
 check lone_hunk_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-hunk.diff")"
+# A `diff --git` frame does not rescue a target header with no hunk behind it:
+# in real output a target header exists to introduce a hunk, so this is a
+# fragment, not a metadata-only record.
+printf '%s\n' 'diff --git a/docs/workflow/x.md b/docs/workflow/x.md' '--- a/docs/workflow/x.md' '+++ b/docs/workflow/x.md' > "$TMP_DIR/framed-target-no-hunk.diff"
+check framed_target_no_hunk_refused 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/framed-target-no-hunk.diff")"
+check framed_target_no_hunk_allow_empty_still_errors 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/framed-target-no-hunk.diff" --allow-empty)"
+if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+  check framed_target_no_hunk_reason unparseable unparseable
+else
+  check framed_target_no_hunk_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
+fi
 
 # A deletion-only diff has `+++ /dev/null` and nothing to examine behind it.
 # That is a real diff with a legitimate zero, not a malformed one.
@@ -240,7 +253,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced

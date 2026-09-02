@@ -133,9 +133,11 @@ prefixes, or use `--base-ref` and let the script run `git diff` itself.
 What separates a legitimate zero from an unreadable input is whether the diff
 carries changed lines at all. A **hunk header** means it does: without a
 `+++ b/<path>` target header those lines cannot be attributed to a path, so the
-input is refused. A record with **no hunk** but a `diff --git` line is a genuine
-Git change with no textual content — a mode-only change, a binary file, a pure
-rename — so zero examined is the right answer and the run passes. A deletion,
+input is refused. A record with **no hunk and no `+++` header** but a `diff --git`
+line is a genuine Git change with no textual content — a mode-only change, a
+binary file, a pure rename — so zero examined is the right answer and the run
+passes. A `+++` header with no hunk behind it is a fragment either way: in real
+output a target header exists precisely to introduce a hunk. A deletion,
 whose target header is `+++ /dev/null`, is likewise a valid diff with a
 legitimate zero.
 
