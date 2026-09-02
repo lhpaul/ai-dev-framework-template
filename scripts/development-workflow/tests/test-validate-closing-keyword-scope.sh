@@ -439,6 +439,16 @@ case "${1:-}" in
   label) key="label_${2:-}" ;;
 esac
 file="${FIXTURES}/${key}"
+# Write calls are recorded, payload and all, so a test can assert on what was
+# actually POSTED rather than on what the run printed about itself. Those are
+# not the same thing, and the difference is where a publication bug hides.
+case "$key" in
+  write_*)
+    for arg in "$@"; do
+      if [ "$arg" = "-" ]; then cat > "${FIXTURES}/.posted_${key}"; break; fi
+    done
+    ;;
+esac
 # VANISH_AFTER names a fixture that survives exactly one read: the second read
 # of it fails while the first succeeded, which is a failed RE-READ rather than
 # a changed input. CHANGE_AFTER rewrites one instead — readable both times,
@@ -648,6 +658,24 @@ out="$(publish_env "$F")"
 check "a publishing run inside the serialized context publishes" "true" \
   "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
 
+posted_body="$(jq -r '.body // ""' "$F/.posted_write_comments" 2>/dev/null || true)"
+check_contains "the posted report carries the marker prefix on its first line" \
+  "$CLOSING_KEYWORD_SCOPE_MARKER_PREFIX" "$(printf '%s\n' "$posted_body" | head -1)"
+check_contains "the posted report's marker carries this run's stamp" \
+  "run=1 attempt=1" "$(printf '%s\n' "$posted_body" | head -1)"
+check_contains "the posted report names the issue and the sibling" "| #97 | #101 |" "$posted_body"
+check_contains "the posted report says it does not block" "never blocks a merge" "$posted_body"
+posted_check="$(cat "$F/.posted_write_check_runs" 2>/dev/null || true)"
+check "the posted check run carries the fixed name" "$CLOSING_KEYWORD_SCOPE_CHECK_NAME" \
+  "$(printf '%s' "$posted_check" | jq -r '.name // ""')"
+check "the posted check run carries the fixed external id" "$CLOSING_KEYWORD_SCOPE_CHECK_EXTERNAL_ID" \
+  "$(printf '%s' "$posted_check" | jq -r '.external_id // ""')"
+check "a conclusive run's check is success, not neutral" "success" \
+  "$(printf '%s' "$posted_check" | jq -r '.conclusion // ""')"
+check_contains "the check summary's first line is the stamp" \
+  "$CLOSING_KEYWORD_SCOPE_MARKER_PREFIX" \
+  "$(printf '%s' "$posted_check" | jq -r '.output.summary // ""' | head -1)"
+
 # VANISH_AFTER makes a fixture survive exactly one read, so the SECOND read of
 # it fails while the first succeeded — which is precisely a failed re-read.
 F="$(writable_fixtures publish_reread_fail)"
@@ -662,6 +690,13 @@ check "a failed re-read still publishes the neutral check" "true" \
   "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
 check_not_contains "a failed re-read is not misread as a changed input" \
   "ABANDONED=inputs_changed" "$out"
+posted_check="$(cat "$F/.posted_write_check_runs" 2>/dev/null || true)"
+check "indeterminate_writes_neutral_check_and_log" "neutral" \
+  "$(printf '%s' "$posted_check" | jq -r '.conclusion // ""')"
+check_contains "the neutral check names what could not be read" "description" \
+  "$(printf '%s' "$posted_check" | jq -r '.output.summary // ""')"
+check "unreadable_input_leaves_the_existing_report_untouched" "no" \
+  "$([ -f "$F/.posted_write_comments" ] && echo yes || echo no)"
 
 # CHANGE_AFTER rewrites a fixture between reads: readable both times, different
 # the second. That is the other path — abandon, write nothing.
@@ -671,6 +706,32 @@ check "input_changed_between_read_and_write_abandons_without_writing" "inputs_ch
   "$(printf '%s\n' "$out" | sed -n 's/^ABANDONED=//p' | head -1)"
 check "an abandoned run publishes nothing" "false" \
   "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+
+# Label provisioning tolerates a concurrent creator. Two validations can both
+# see the label missing; the second's `create` then fails BECAUSE the first
+# succeeded, and reporting that as "could not be created" would put a false
+# warning in front of an author whose opt-out works perfectly well.
+F="$(writable_fixtures label_concurrent_create)"
+printf '1\nnot found\n' > "$F/label_view"        # first view: absent
+printf '1\nalready exists\n' > "$F/label_create"  # create loses the race
+# CHANGE_AFTER makes the SECOND view succeed — the label exists now, because
+# the other run created it. That is the whole race, expressed in fixtures.
+out="$(CHANGE_AFTER=label_view CHANGE_TO='multi-issue-intentional' publish_env "$F")"
+check_not_contains "a concurrent creator is not reported as a provisioning failure" \
+  "could not be created" "$out"
+
+# A genuine failure still warns: view says absent both times, create fails.
+F="$(writable_fixtures label_real_failure)"
+printf '1\nnot found\n' > "$F/label_view"
+printf '1\nno permission\n' > "$F/label_create"
+out="$(publish_env "$F")"
+check_contains "a genuine provisioning failure is logged" \
+  "could not provision the multi-issue-intentional label" "$out"
+posted_body="$(jq -r '.body // ""' "$F/.posted_write_comments" 2>/dev/null || true)"
+check_contains "a genuine provisioning failure is carried into the report itself" \
+  "could not be created" "$posted_body"
+check_contains "the warning still ships despite the failed provisioning" \
+  "| #97 | #101 |" "$posted_body"
 
 # A later-started run's stamp blocks the write outright.
 F="$(writable_fixtures publish_later_stamp)"

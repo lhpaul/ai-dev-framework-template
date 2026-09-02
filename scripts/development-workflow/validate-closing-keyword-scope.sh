@@ -467,14 +467,24 @@ ensure_opt_out_label_exists() {
   if gh label view "$OPT_OUT_LABEL" --repo "$REPO" >/dev/null 2>&1; then
     return 0
   fi
-  if ! gh label create "$OPT_OUT_LABEL" --repo "$REPO" \
+  if gh label create "$OPT_OUT_LABEL" --repo "$REPO" \
       --color "$OPT_OUT_LABEL_COLOR" \
       --description "$OPT_OUT_LABEL_DESCRIPTION" >/dev/null 2>&1; then
-    # An opt-out an author cannot reach is not an opt-out, so the warning says
-    # so — but a failed provisioning never suppresses the warning itself.
-    LABEL_WARNING="The \`${OPT_OUT_LABEL}\` label could not be created, so applying it may fail. Ask a maintainer to add it."
-    echo "WARN: could not provision the ${OPT_OUT_LABEL} label" >&2
+    return 0
   fi
+
+  # A failed create is not the same as an absent label. Two validations can
+  # both see it missing; the second's create then fails BECAUSE the first
+  # succeeded. Re-checking is what tells "someone beat me to it" — the outcome
+  # the spec asks this to tolerate — apart from a genuine provisioning failure.
+  if gh label view "$OPT_OUT_LABEL" --repo "$REPO" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # An opt-out an author cannot reach is not an opt-out, so the warning says
+  # so — but a failed provisioning never suppresses the warning itself.
+  LABEL_WARNING="The \`${OPT_OUT_LABEL}\` label could not be created, so applying it may fail. Ask a maintainer to add it."
+  echo "WARN: could not provision the ${OPT_OUT_LABEL} label" >&2
   return 0
 }
 
