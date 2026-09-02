@@ -45,7 +45,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when a pull request whose branch names one of the issues appears, reappears, departs, or is renamed into or out of naming it, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
+- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when a pull request whose branch names one of the issues appears, reappears, departs, or is renamed into or out of naming it, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand. *(From the issue. Of these, the two rename cases are not delivered in this iteration — GitHub Actions has no rename event; see* Out of Scope*.)*
 
 ---
 
@@ -126,6 +126,8 @@ Fork-originated pull requests are out of scope. This repository requires a same-
   - **the repository's default branch changes**, even with this pull request's own base untouched — what matters is whether its base *is* the default branch;
   - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
   - **ownership evidence for an issue it names changes** — another implementation pull request whose branch names that issue opens, reopens, closes, or merges, **or an open one is renamed into or out of naming it**. A sibling renamed from `fix/98-slug` to `fix/97-slug` starts carrying issue 97 without any lifecycle event at all.
+
+  This list defines what counts as an *input*, and the validation recomputes correctly from all of them whenever it runs. Two of them — a branch rename and a default-branch change — have no GitHub Actions event that can invoke it, so in this iteration they take effect at the next event that does fire rather than immediately. See *Out of Scope*.
 - A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
 - The validation is **read-only with respect to project state**, with one exception: it may post or update its own report on the pull request, and it may create the `multi-issue-intentional` label if the repository does not have it yet. It does nothing else.
@@ -205,11 +207,12 @@ Triggers are events, not state: they decide *when* the gate runs, and are never 
 | The description changes | Changes which issues are claimed |
 | The title changes, where the title contributes filtering state | Can flip whether a description reference is live |
 | The labels change | Applying or removing the opt-out takes effect on its own |
-| The pull request's own head branch is renamed | Can flip it between owner and non-owner |
+| The pull request's own head branch is renamed | Can flip it between owner and non-owner. **Not delivered in this iteration** — see *Out of Scope* |
 | The base branch changes | Swaps which closer will act, and therefore the filtering |
-| An implementation sibling opens, **reopens**, closes, merges, or is renamed into or out of naming a declared issue | Ownership evidence lives outside this pull request and is mutable. Reopening restores ownership evidence exactly as closing removed it, so it has to be as much of a trigger |
+| An implementation sibling opens, **reopens**, closes, or merges | Ownership evidence lives outside this pull request and is mutable. Reopening restores ownership evidence exactly as closing removed it, so it has to be as much of a trigger |
+| A sibling is renamed into or out of naming a declared issue | Same reason. **Not delivered in this iteration** — see *Out of Scope* |
 | The pull request is opened, or reopened | Opening is the first evaluation. Reopening matters because a closed pull request is not evaluated at all: its owning sibling can merge while it is closed, so the warning it carried may already be obsolete when it comes back |
-| The repository's default branch changes | The gate input is whether this pull request's base *is* the default branch. Moving the default under a pull request that never changed its own base swaps the responsible closer, and therefore whether title fence state applies |
+| The repository's default branch changes | The gate input is whether this pull request's base *is* the default branch. Moving the default under a pull request that never changed its own base swaps the responsible closer, and therefore whether title fence state applies. **Not delivered in this iteration** — see *Out of Scope* |
 | The pull request reaches readiness for human review | Backstop, so no silence can go stale while a pull request waits |
 
 ### Allowed outcomes and required next actions
@@ -316,14 +319,11 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
 - [ ] Reopening a sole owning sibling restores the warning on the pull request that declares its issue, without any change to that pull request.
 - [ ] For a pull request merging to a non-default branch, adding or removing an unclosed fence in the title re-evaluates it, so a warning appears or disappears with the description untouched.
-- [ ] Renaming an open sibling's branch so that it becomes the sole owner of an issue this pull request declares — with this pull request not an owner and no other sibling naming it — re-evaluates this pull request and raises a warning that no lifecycle event would have triggered.
-- [ ] Renaming an open sibling's branch into naming an issue this pull request already owns, or that another sibling already names, leaves the result silent, because ownership is then this pull request's own or contested.
-- [ ] Renaming an open sibling's branch so that it no longer names the issue clears a warning that only the old sibling name justified.
-- [ ] Renaming a pull request's own branch so that it now names an issue its description declares re-evaluates it, and clears a warning that only the old branch name justified.
 - [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
 - [ ] Reopening a pull request re-evaluates it, so a warning that became obsolete while it was closed — because the sibling carrying the issue merged — does not survive the reopen.
-- [ ] Changing the repository's default branch re-evaluates the affected pull requests, even those whose own base was never touched.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
+
+Re-evaluation on a branch rename and on a default-branch change is deliberately absent from this list; the reason and the residual risk are in *Out of Scope*.
 
 ### The indeterminate outcome
 
@@ -359,4 +359,5 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 - **Ownership established by tracker linkage.** Branch naming is the only ownership signal. A pull request whose branch does not name an issue is never treated as its owner, so work whose branch predates the naming convention or was renamed produces silence rather than a warning.
 - **Reconciling the two existing parsers with each other.** They disagree today about which non-live references to exclude. This feature follows the canonical one and leaves the divergence exactly as it found it; unifying them is separate work.
 - **Any automatic correction.** The validation never edits a pull request description, reopens an issue, or restores a milestone.
+- **Automatic re-evaluation on a branch rename or a default-branch change.** GitHub Actions cannot deliver either event: `pull_request_target` has no `renamed` activity type, and no workflow event fires when a repository's default branch changes. Covering them would need a scheduled sweep over every open pull request, which was weighed and declined (2026-09-02) — the cost is continuous and the events are rare. The validation itself handles both correctly; only the automatic invocation is missing, so the result is recomputed at the next event that does fire, and the readiness backstop bounds how stale a silence can be on any pull request heading for review. The residual risk is a warning that appears or clears later than it could, never a wrong result once it runs.
 - **Fork-originated pull requests.** This repository forbids automated writes on them, so they are not validated. A fork pull request can still claim a sibling's issue without a warning; that residual risk is accepted here rather than worked around.
