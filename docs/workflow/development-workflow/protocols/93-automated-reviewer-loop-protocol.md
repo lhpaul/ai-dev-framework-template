@@ -459,6 +459,17 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    Use descriptive commit messages for the final local commit sequence.
    _(Push before resolving threads — if push fails, threads must not be falsely
    marked resolved.)_
+
+   Push with an explicit self-refspec. A bare `git push` depends on local
+   `push.default` and on an upstream that may point at the integration branch,
+   so it can either silently no-op or write the fix onto that branch
+   (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   git push origin "${FIX_BRANCH}:${FIX_BRANCH}"
+   ```
 4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
 
    <!-- workflow-shell-contract: bash-zsh -->
@@ -514,7 +525,14 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
    partial progress survives runner interruption.
 4. **Push once after all addressable fixes** — push only after all addressable
    fixes for the current reviewer-loop cycle are complete. Do not push after
-   each individual fix or checkpoint commit.
+   each individual fix or checkpoint commit. Push with an explicit self-refspec
+   for the same reason as the inline path above (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   git push origin "${FIX_BRANCH}:${FIX_BRANCH}"
+   ```
 5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
 
    <!-- workflow-shell-contract: bash-zsh -->

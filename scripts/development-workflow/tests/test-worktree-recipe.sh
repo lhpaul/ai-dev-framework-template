@@ -315,6 +315,21 @@ done <<ITEM_PUSH_LINES
 $ITEM_PUSHES
 ITEM_PUSH_LINES
 check every_item_push_uses_refspec "" "$MISSING_REFSPEC"
+
+# Protocol 93's fixer pushes name the branch through a variable rather than a
+# placeholder, so the prefix sweep above cannot see them. Every push in that
+# protocol must still be a self-refspec — the initial one as much as the retry,
+# since a bare initial push has already done the damage by the time the retry
+# runs.
+P93="$PROTOCOL_DIR/93-automated-reviewer-loop-protocol.md"
+P93_PUSHES="$(grep -cE '^[[:space:]]*git push' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, reported by the count assertion
+P93_REFSPEC_PUSHES="$(grep -cE '^[[:space:]]*git push origin "[^"]+:[^"]+"' "$P93" || true)"  # workflow-shell-guard: allow SH001 - same zero-match case
+check protocol_93_all_pushes_refspec "$P93_PUSHES" "$P93_REFSPEC_PUSHES"
+if [ "${P93_PUSHES:-0}" -ge 4 ]; then
+  check protocol_93_push_sweep_not_vacuous yes yes
+else
+  check protocol_93_push_sweep_not_vacuous yes "only ${P93_PUSHES} push(es) found"
+fi
 # The sweep must have found the five documented item pushes, or it passes
 # vacuously — the same failure mode #1658 exists to remove.
 if [ "$ITEM_PUSH_COUNT" -ge 5 ]; then
