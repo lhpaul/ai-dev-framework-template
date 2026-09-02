@@ -461,12 +461,15 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    marked resolved.)_
 4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    LOCAL_SHA=$(git rev-parse HEAD)
    REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
-     git push
+     # Explicit refspec: a bare `git push` here depends on local push.default and
+     # on an upstream that may point at the integration branch (issue #1593).
+     git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
      REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
        echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
@@ -514,12 +517,15 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
    each individual fix or checkpoint commit.
 5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    LOCAL_SHA=$(git rev-parse HEAD)
    REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
-     git push
+     # Explicit refspec: a bare `git push` here depends on local push.default and
+     # on an upstream that may point at the integration branch (issue #1593).
+     git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
      REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
        echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"

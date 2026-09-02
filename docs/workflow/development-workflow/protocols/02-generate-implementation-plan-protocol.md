@@ -514,7 +514,10 @@ If no blocking human decision remains:
 
 9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 10. Commit: `docs: add implementation plan for [feature-name]`
-11. Push: `git push -u origin implementation-plan/[branch-slug]`
+11. Push with an explicit refspec so the destination never depends on local
+    `push.default` (issue #1593):
+    `git push origin "implementation-plan/[branch-slug]:implementation-plan/[branch-slug]"`,
+    then confirm the remote head matches local before opening the PR.
 12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
     mode when a positive numeric issue number is available:
 

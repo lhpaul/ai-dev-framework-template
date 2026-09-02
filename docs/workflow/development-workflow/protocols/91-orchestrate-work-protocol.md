@@ -953,24 +953,59 @@ Use the matching workflow agent / skill for the next stage when your runner supp
    the missing assignment to the Portfolio Orchestrator. The command depends on
    whether the item's branch already exists:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Fetch latest remote refs first
 git fetch origin
 
 # Case A: New item — branch does not exist yet
 # <worktree-path> must be the manifest-assigned absolute path.
-git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
+# --no-track is required: branching from a remote-tracking ref otherwise sets
+# branch.<name>.merge to refs/heads/<base-branch>, and a later bare `git push`
+# then aims at the integration branch (issue #1593).
+git worktree add <worktree-path> -b <branch-prefix>/<slug> --no-track origin/<base-branch>
 
 # Case B: Resuming item — branch exists locally
 git worktree add <worktree-path> <branch-prefix>/<slug>
 
 # Case C: Resuming item — branch exists only on remote
+# No --no-track here: this branch's own remote branch is the correct upstream.
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<branch-prefix>/<slug>
 
 cd <worktree-path>
 ```
 
 Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
+
+**Upstream verification — mandatory immediately after creating or entering the worktree**
+
+`git worktree add -b <branch> origin/<base>` sets `branch.<branch>.merge` to
+`refs/heads/<base>`, so the new branch's upstream is the **integration branch**.
+Verified on git 2.50.1. Two harms follow from a later bare `git push`:
+
+1. With the default `push.default=simple` the push is **refused** — the safe
+   outcome, but the refusal is a multi-line message that RTK filtering can
+   truncate to nothing, so it reads as success and the PR silently sits on a
+   stale head (observed on PR #1592).
+2. With `push.default=upstream` or `tracking` the push **writes feature commits
+   straight onto the integration branch**, bypassing the PR path entirely.
+
+Case B inherits whatever upstream the existing branch already carries, which may
+have been set by a Case A creation before this rule existed. Assert it in every
+case rather than trusting the creation path:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+UPSTREAM_MERGE=$(git config --get "branch.${BRANCH}.merge" || true)
+if [ -n "$UPSTREAM_MERGE" ] && [ "$UPSTREAM_MERGE" != "refs/heads/${BRANCH}" ]; then
+  echo "ERROR: ${BRANCH} tracks ${UPSTREAM_MERGE}, not its own remote branch."
+  echo "A bare 'git push' from here is refused or aims at the wrong branch. Fix with:"
+  echo "  git branch --unset-upstream"
+  exit 1
+fi
+echo "Upstream verified: ${BRANCH} tracks ${UPSTREAM_MERGE:-nothing}"
+```
 
 **Branch-context verification — mandatory immediately after entering the worktree**
 

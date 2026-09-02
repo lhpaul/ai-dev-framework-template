@@ -846,10 +846,21 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git add [files]
 git commit -m "feat([scope]): [description]"
-git push -u origin feature/[slug]
+git push origin "feature/[slug]:feature/[slug]"
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git ls-remote origin "refs/heads/feature/[slug]" | cut -f1)
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  exit 1
+fi
 ```
 
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
@@ -1455,10 +1466,21 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git add [files]
 git commit -m "fix([scope]): [description]"
-git push -u origin fix/[branch-slug]
+git push origin "fix/[branch-slug]:fix/[branch-slug]"
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git ls-remote origin "refs/heads/fix/[branch-slug]" | cut -f1)
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  exit 1
+fi
 ```
 
 ### Step 8: Open PR (Draft)
@@ -1769,10 +1791,21 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git add [files]
 git commit -m "fix([scope]): [description] (hotfix)"
-git push -u origin hotfix/[branch-slug]
+git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git ls-remote origin "refs/heads/hotfix/[branch-slug]" | cut -f1)
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  exit 1
+fi
 ```
 
 ### Step 8: Open PR (Draft)

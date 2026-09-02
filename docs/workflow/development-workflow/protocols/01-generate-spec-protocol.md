@@ -326,7 +326,9 @@ If no blocking human decision remains:
 5. **Board membership check (when a tracker issue ID is present)**: If an issue number is available (i.e., the workflow uses a configured issue tracker and an issue ID was provided or created), call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation. Skip this step entirely when no issue ID is present (no-tracker workflows).
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
-8. Push: `git push -u origin spec/[branch-slug]`
+8. Push with an explicit refspec so the destination never depends on local
+   `push.default` (issue #1593): `git push origin "spec/[branch-slug]:spec/[branch-slug]"`,
+   then confirm the remote head matches local before opening the PR.
 9. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
    mode when a positive numeric issue number is available:
 
