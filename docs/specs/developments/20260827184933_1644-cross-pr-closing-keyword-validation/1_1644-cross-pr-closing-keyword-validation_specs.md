@@ -45,7 +45,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when a pull request whose branch names one of the issues appears, reappears, departs, or is renamed into or out of naming it, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
+- The check must re-run without anyone re-triggering it by hand, so a corrected pull request stops warning and a newly conflicted one starts: when the pull request's description or labels change, when it is opened, reopened or retargeted, when it reaches readiness, and when a pull request whose branch names one of the issues opens, reopens, closes or merges. The issue also asks for a re-run when a branch is **renamed** into or out of naming an issue; that one is not delivered here, because GitHub Actions has no rename event, and it is recorded in *Out of Scope* rather than promised.
 
 ---
 
@@ -117,7 +117,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 - The graduation closeout recognizes a narrower set of excluded constructs today. That difference is pre-existing, is neither introduced nor widened here, and reconciling the two parsers is not part of this feature.
 - A pull request labelled **`multi-issue-intentional`** produces no warning, regardless of how many issues it names. The label is the only opt-out; there is no per-issue variant and no description marker.
 - The opt-out is evaluated **at the time the validation runs**. Applying the label does not retroactively rewrite history, and removing it restores the warning on the next run.
-- The result is **recomputed** whenever any input to it changes. Because ownership evidence lives on *other* pull requests, that is more than this pull request's own edits:
+- The result is **recomputed from every input, every time the validation runs** — it never reuses a previous verdict. Because ownership evidence lives on *other* pull requests, the inputs are more than this pull request's own edits:
   - its description changes;
   - **its title changes**, for a pull request merging to a non-default branch, where the title contributes filtering state — adding or removing an unclosed fence in the title flips whether a description reference is live, with the description untouched;
   - its labels change;
@@ -126,7 +126,9 @@ Fork-originated pull requests are out of scope. This repository requires a same-
   - **the repository's default branch changes**, even with this pull request's own base untouched — what matters is whether its base *is* the default branch;
   - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
   - **ownership evidence for an issue it names changes** — another implementation pull request whose branch names that issue opens, reopens, closes, or merges, **or an open one is renamed into or out of naming it**. A sibling renamed from `fix/98-slug` to `fix/97-slug` starts carrying issue 97 without any lifecycle event at all.
-- A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
+
+  This list defines what counts as an *input*; **when** the validation runs is a separate question, answered by the Triggers table. Every input above has a trigger behind it except two — a branch rename and a default-branch change — which have no GitHub Actions event at all. A change to either is therefore read correctly by the next run, but does not itself cause one. See *Out of Scope*.
+- A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it. Where the change is a rename or a default-branch change, "must not survive" binds at the next delivered trigger, not immediately, and that trigger is not guaranteed to arrive — see *Out of Scope* for the unbounded case.
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
 - The validation is **read-only with respect to project state**, with one exception: it may post or update its own report on the pull request, and it may create the `multi-issue-intentional` label if the repository does not have it yet. It does nothing else.
 - **The opt-out label must exist before an author can use it.** A fresh installation of this template does not have it, and the workflow's own bootstrap provisions only the readiness labels. The validation therefore creates it idempotently on first use — the same pattern the repository already uses for `ready-for-regression`, including tolerating a concurrent creator. An opt-out an author cannot reach is not an opt-out.
@@ -200,16 +202,19 @@ Every row above is **state the validation reads**. Failing to read any of them m
 
 Triggers are events, not state: they decide *when* the gate runs, and are never read as inputs, so their absence is not a failure and cannot make a run indeterminate.
 
+The rows marked **not delivered** are the ones GitHub Actions has no event for. They are listed because they are the events that *should* fire, and removing them would hide why the coverage has the shape it has; they are **not** requirements of this iteration. *Out of Scope* is the binding statement.
+
 | Trigger | Why it fires |
 | --- | --- |
 | The description changes | Changes which issues are claimed |
 | The title changes, where the title contributes filtering state | Can flip whether a description reference is live |
 | The labels change | Applying or removing the opt-out takes effect on its own |
-| The pull request's own head branch is renamed | Can flip it between owner and non-owner |
+| The pull request's own head branch is renamed | Can flip it between owner and non-owner. **Not delivered in this iteration** — see *Out of Scope* |
 | The base branch changes | Swaps which closer will act, and therefore the filtering |
-| An implementation sibling opens, **reopens**, closes, merges, or is renamed into or out of naming a declared issue | Ownership evidence lives outside this pull request and is mutable. Reopening restores ownership evidence exactly as closing removed it, so it has to be as much of a trigger |
+| An implementation sibling opens, **reopens**, closes, or merges | Ownership evidence lives outside this pull request and is mutable. Reopening restores ownership evidence exactly as closing removed it, so it has to be as much of a trigger |
+| A sibling is renamed into or out of naming a declared issue | Same reason. **Not delivered in this iteration** — see *Out of Scope* |
 | The pull request is opened, or reopened | Opening is the first evaluation. Reopening matters because a closed pull request is not evaluated at all: its owning sibling can merge while it is closed, so the warning it carried may already be obsolete when it comes back |
-| The repository's default branch changes | The gate input is whether this pull request's base *is* the default branch. Moving the default under a pull request that never changed its own base swaps the responsible closer, and therefore whether title fence state applies |
+| The repository's default branch changes | The gate input is whether this pull request's base *is* the default branch. Moving the default under a pull request that never changed its own base swaps the responsible closer, and therefore whether title fence state applies. **Not delivered in this iteration** — see *Out of Scope* |
 | The pull request reaches readiness for human review | Backstop, so no silence can go stale while a pull request waits |
 
 ### Allowed outcomes and required next actions
@@ -257,6 +262,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 Acceptance criteria are referenced by group rather than by number. The groups are the sub-headings under **Acceptance Criteria**; numbering has shifted repeatedly during review, and a numeric range silently stops meaning what it says the moment a criterion is inserted.
 
+Two issues are traced here: **#1644**, the feature, and **#1702**, the amendment that moved the undeliverable triggers out of scope.
+
 | #1644 objective | Disposition |
 | --- | --- |
 | PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies. Groups: *Reporting a mismatch*, *Re-evaluation triggers*. Blocking, and reporting keywords found only outside the description, are Out of Scope |
@@ -265,6 +272,10 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 | False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links. Groups: *Which keywords count as live*, *Establishing ownership*, *The indeterminate outcome* |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3. Group: *The opt-out*, including provisioning on a fresh installation and a failed provisioning that still warns |
 | Tests for parser and validator edge cases | Every group carries its own edge cases; *Which keywords count as live* covers parity with what each closer excludes, *Establishing ownership* the contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases, *The indeterminate outcome* every unreadable input, and *Ordering and idempotence* the overlapping-run cases. *Fork-originated pull requests* records the one excluded shape |
+
+| #1702 objective | Disposition |
+| --- | --- |
+| Record the re-evaluation triggers GitHub Actions cannot deliver | Deferred, not covered by an acceptance criterion. The four branch-rename criteria and the default-branch-change criterion were removed from *Re-evaluation triggers*, the three affected rows of the Triggers table are marked not delivered, and the deferral with its reason, its declined alternative and its unbounded residual is *Out of Scope*, item **Automatic re-evaluation on a branch rename or a default-branch change**. Nothing from #1702 maps to a criterion, because the whole objective is the removal of five |
 
 ---
 
@@ -316,14 +327,11 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
 - [ ] Reopening a sole owning sibling restores the warning on the pull request that declares its issue, without any change to that pull request.
 - [ ] For a pull request merging to a non-default branch, adding or removing an unclosed fence in the title re-evaluates it, so a warning appears or disappears with the description untouched.
-- [ ] Renaming an open sibling's branch so that it becomes the sole owner of an issue this pull request declares — with this pull request not an owner and no other sibling naming it — re-evaluates this pull request and raises a warning that no lifecycle event would have triggered.
-- [ ] Renaming an open sibling's branch into naming an issue this pull request already owns, or that another sibling already names, leaves the result silent, because ownership is then this pull request's own or contested.
-- [ ] Renaming an open sibling's branch so that it no longer names the issue clears a warning that only the old sibling name justified.
-- [ ] Renaming a pull request's own branch so that it now names an issue its description declares re-evaluates it, and clears a warning that only the old branch name justified.
 - [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
 - [ ] Reopening a pull request re-evaluates it, so a warning that became obsolete while it was closed — because the sibling carrying the issue merged — does not survive the reopen.
-- [ ] Changing the repository's default branch re-evaluates the affected pull requests, even those whose own base was never touched.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
+
+Re-evaluation on a branch rename and on a default-branch change is deliberately absent from this list; the reason and the residual risk are in *Out of Scope*.
 
 ### The indeterminate outcome
 
@@ -359,4 +367,9 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 - **Ownership established by tracker linkage.** Branch naming is the only ownership signal. A pull request whose branch does not name an issue is never treated as its owner, so work whose branch predates the naming convention or was renamed produces silence rather than a warning.
 - **Reconciling the two existing parsers with each other.** They disagree today about which non-live references to exclude. This feature follows the canonical one and leaves the divergence exactly as it found it; unifying them is separate work.
 - **Any automatic correction.** The validation never edits a pull request description, reopens an issue, or restores a milestone.
+- **Automatic re-evaluation on a branch rename or a default-branch change.** GitHub Actions cannot deliver either event: `pull_request_target` has no `renamed` activity type, and no workflow event fires when a repository's default branch changes. Covering them would need a scheduled sweep over every open pull request, which was weighed and declined (2026-09-02) — the cost is continuous and the events are rare. The validation itself handles both correctly; only the automatic invocation is missing, so the result is recomputed at the next event that does fire.
+
+  **The delay is not bounded.** The readiness backstop helps only when readiness comes *after* the rename or the default-branch change. A branch renamed on a pull request that is already `ready-for-human-review` has no guaranteed later trigger: unless its description, labels or base change, or it is reopened, or a sibling opens, reopens, closes or merges, the stale warning — or the stale silence — survives until merge. That is the accepted cost of declining the sweep, and it is stated here rather than left for someone to discover.
+
+  The residual risk is therefore a warning that appears or clears later than it could, possibly never within the pull request's life, but never a wrong result once the validation does run.
 - **Fork-originated pull requests.** This repository forbids automated writes on them, so they are not validated. A fork pull request can still claim a sibling's issue without a warning; that residual risk is accepted here rather than worked around.
