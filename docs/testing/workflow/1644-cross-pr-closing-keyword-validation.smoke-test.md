@@ -152,12 +152,12 @@ signal the feature reads.
 
 ## Known Limitations
 
-These are the trigger gaps the plan declares (alignment decision, option B):
+These are out of scope in the spec, not defects (alignment decision, option B; the spec was amended in #1703):
 
-- **Renaming a pull request's own head branch, or a sibling's, does not re-evaluate anything.** GitHub Actions has no `renamed` activity type for pull requests. The result is corrected at the next event that does fire — an edit, a label change, or readiness.
+- **Renaming a pull request's own head branch, or a sibling's, does not re-evaluate anything.** GitHub Actions has no `renamed` activity type for pull requests. The result is corrected at the next event that does fire — an edit, a label change, or readiness — and if none fires, not at all: the delay is not bounded, which the spec's *Out of Scope* entry states.
 - **Changing the repository's default branch does not re-evaluate open pull requests.** GitHub Actions has no event for it. Each pull request keeps the filtering its base implied until its next event.
 - **Fork-originated pull requests are never validated**, by design: the repository forbids automated writes on them.
 
 None of these is a correctness gap in the validation itself — invoking the
 validator after any of them produces the right answer, and the unit suite
-asserts that. What is missing is the automatic invocation.
+asserts that. What is out of scope is the automatic invocation.
