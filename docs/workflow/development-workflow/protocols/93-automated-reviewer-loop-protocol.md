@@ -490,7 +490,16 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
      # Explicit refspec: a bare `git push` here depends on local push.default and
      # on an upstream that may point at the integration branch (issue #1593).
-     git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
+     # Handle its failure too: under `set -e` a bare failure would abort before
+     # the check below, so the contractual stop would never print.
+     RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
+       echo "Cause: git push failed on the retry. A refusal is multi-line and can be truncated to nothing."
+       echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+       exit 1
+     fi
      REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
        echo "STOP: guardrail 'push_verification_failed' halted this run."
@@ -567,7 +576,16 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
      # Explicit refspec: a bare `git push` here depends on local push.default and
      # on an upstream that may point at the integration branch (issue #1593).
-     git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
+     # Handle its failure too: under `set -e` a bare failure would abort before
+     # the check below, so the contractual stop would never print.
+     RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
+       echo "Cause: git push failed on the retry. A refusal is multi-line and can be truncated to nothing."
+       echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+       exit 1
+     fi
      REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
        echo "STOP: guardrail 'push_verification_failed' halted this run."

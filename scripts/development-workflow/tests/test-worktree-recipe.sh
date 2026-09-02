@@ -821,6 +821,66 @@ else
   check protocol_93_block_sweep_not_vacuous yes "only ${P93_BLOCK_TOTAL} block(s) found"
 fi
 
+# Every push in protocol 93 must handle its own failure, retries included: under
+# `set -e` a bare failure aborts before the stop that was supposed to report it.
+P93_UNGUARDED="$(grep -nE '^[[:space:]]*git push' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when every push is guarded, which is the passing state
+check protocol_93_every_push_handles_failure "" "$P93_UNGUARDED"
+
+# ...executed, not only asserted. Force the retry path (a stubbed `gh` reporting
+# a remote head that differs from local) and then force the retry push to fail.
+extract_p93_verification_block() {
+  python3 - "$1" <<'PYP93VER'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+block, inside = [], False
+for line in text.splitlines():
+    if line.strip().startswith("```"):
+        if inside:
+            if any("retrying push" in row for row in block):
+                print("\n".join(row[3:] if row.startswith("   ") else row for row in block))
+                sys.exit(0)
+            block, inside = [], False
+        else:
+            block, inside = [], True
+        continue
+    if inside:
+        block.append(line)
+PYP93VER
+}
+
+P93_VER_BLOCK="$(extract_p93_verification_block "$P93")"
+if [ -n "$P93_VER_BLOCK" ]; then
+  check p93_verification_block_extracted yes yes
+else
+  check p93_verification_block_extracted yes "no retry block found in $P93"
+fi
+P93_ROOT="$TMP_DIR/p93"
+mkdir -p "$P93_ROOT/bin"
+setup_repo "$P93_ROOT"
+(
+  cd "$P93_ROOT/repo"
+  git checkout -q -b fix/1593-p93
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m work
+)
+# A stubbed `gh` reporting a head that is not local HEAD sends the block into
+# its retry path; origin pointing at a non-repository makes that retry fail.
+printf '%s\n' '#!/usr/bin/env sh' 'echo 0000000000000000000000000000000000000000' > "$P93_ROOT/bin/gh"
+chmod +x "$P93_ROOT/bin/gh"
+printf '%s\n' "$P93_VER_BLOCK" | sed 's|<pr_number>|1700|g' > "$P93_ROOT/verify.sh"
+git -C "$P93_ROOT/repo" remote set-url origin "$P93_ROOT/not-a-repo"
+P93_RC=0
+( cd "$P93_ROOT/repo" && PATH="$P93_ROOT/bin:$PATH" bash "$P93_ROOT/verify.sh" ) > "$TMP_DIR/last.out" 2>&1 || P93_RC=$?
+check p93_retry_push_failure_stops 1 "$P93_RC"
+if grep -q "push_verification_failed" "$TMP_DIR/last.out" && grep -q "retry" "$TMP_DIR/last.out"; then
+  check p93_retry_push_failure_names_condition yes yes
+else
+  check p93_retry_push_failure_names_condition yes "$(cat "$TMP_DIR/last.out")"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
