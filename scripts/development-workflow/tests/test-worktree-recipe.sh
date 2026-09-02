@@ -321,22 +321,64 @@ check every_item_push_uses_refspec "" "$MISSING_REFSPEC"
 # protocol must still be a self-refspec — the initial one as much as the retry,
 # since a bare initial push has already done the damage by the time the retry
 # runs.
-P93="$PROTOCOL_DIR/93-automated-reviewer-loop-protocol.md"
-P93_PUSHES="$(grep -cE '^[[:space:]]*git push' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, reported by the count assertion
-P93_REFSPEC_PUSHES="$(grep -cE '^[[:space:]]*git push origin "[^"]+:[^"]+"' "$P93" || true)"  # workflow-shell-guard: allow SH001 - same zero-match case
-check protocol_93_all_pushes_refspec "$P93_PUSHES" "$P93_REFSPEC_PUSHES"
-if [ "${P93_PUSHES:-0}" -ge 4 ]; then
-  check protocol_93_push_sweep_not_vacuous yes yes
+# A refspec is not enough: `git push origin "${FIX_BRANCH}:develop"` contains a
+# colon and would satisfy any "has a refspec" check while reintroducing exactly
+# the push onto the integration branch this issue removes. Every quoted refspec
+# push in the protocols must have the SAME ref on both sides.
+check_self_refspecs() {
+  # check_self_refspecs <protocol-dir>: prints COUNT= and any OFFENDER= lines.
+  # The directory is passed as an argument, not on stdin: the heredoc below IS
+  # this python's stdin.
+  python3 - "$1" <<'PYSELF'
+import pathlib
+import re
+import sys
+
+pattern = re.compile(r'git push [^"\n]*"([^"]+):([^"]+)"')
+offenders = []
+count = 0
+for path in sorted(pathlib.Path(sys.argv[1]).glob("*.md")):
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = pattern.search(line)
+        if not match:
+            continue
+        count += 1
+        if match.group(1) != match.group(2):
+            offenders.append(f"{path.name}: {line.strip()}")
+print("COUNT=" + str(count))
+for offender in offenders:
+    print("OFFENDER=" + offender)
+PYSELF
+}
+
+SELF_REFSPEC_REPORT="$(check_self_refspecs "$PROTOCOL_DIR")"
+SELF_REFSPEC_OFFENDERS="$(printf '%s\n' "$SELF_REFSPEC_REPORT" | grep '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no offender, which is the passing state
+SELF_REFSPEC_COUNT="$(printf '%s\n' "$SELF_REFSPEC_REPORT" | awk -F= '/^COUNT=/{print $2; exit}')"
+check every_refspec_is_self_refspec "" "$SELF_REFSPEC_OFFENDERS"
+if [ "${SELF_REFSPEC_COUNT:-0}" -ge 9 ]; then
+  check self_refspec_sweep_not_vacuous yes yes
 else
-  check protocol_93_push_sweep_not_vacuous yes "only ${P93_PUSHES} push(es) found"
+  check self_refspec_sweep_not_vacuous yes "only ${SELF_REFSPEC_COUNT} refspec push(es) found"
 fi
-# The sweep must have found the five documented item pushes, or it passes
-# vacuously — the same failure mode #1658 exists to remove.
-if [ "$ITEM_PUSH_COUNT" -ge 5 ]; then
-  check item_push_sweep_not_vacuous yes yes
-else
-  check item_push_sweep_not_vacuous yes "only ${ITEM_PUSH_COUNT} item push(es) found"
-fi
+
+# Planted variant: retarget one push at develop and confirm it is reported.
+PLANT_DIR="$TMP_DIR/planted-protocols"
+mkdir -p "$PLANT_DIR"
+cp "$PROTOCOL_DIR"/*.md "$PLANT_DIR/"
+python3 - "$PLANT_DIR/93-automated-reviewer-loop-protocol.md" <<'PYPLANTPUSH'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = 'git push origin "${FIX_BRANCH}:${FIX_BRANCH}"'
+if old not in text:
+    sys.exit("plant target not found")
+path.write_text(text.replace(old, 'git push origin "${FIX_BRANCH}:develop"', 1), encoding="utf-8")
+PYPLANTPUSH
+PLANT_REPORT="$(check_self_refspecs "$PLANT_DIR")"
+PLANT_OFFENDERS="$(printf '%s\n' "$PLANT_REPORT" | grep -c '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
+check plant_retargeted_push_is_reported 1 "$PLANT_OFFENDERS"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
