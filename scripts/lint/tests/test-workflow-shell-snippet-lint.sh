@@ -495,6 +495,98 @@ fi
 # Same repo, no new commits on the branch tip vs itself: empty diff, refused.
 check base_ref_e2e_empty_refused 2 "$(cd "$e2e_repo" && run_linter python3 "$LINTER" --base-ref feature)"
 
+# --- Planted-violation proofs (REVIEW.md) ---
+#
+# Each plant is a copy of the shipped linter with one specific guard removed.
+# The pair proves the assertions above are what separates correct behaviour from
+# the defect, rather than passing either way: the plant must fail the same
+# concrete input the shipped script handles correctly.
+
+plant_linter() {
+  # plant_linter <dest> <python-expression-file>: writes a modified copy.
+  local dest="$1" edit="$2"
+  python3 - "$LINTER" "$dest" "$edit" <<'PYPLANT'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+old, new = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").split("\x00")
+if old not in source:
+    sys.exit("plant target not found: " + old[:60])
+pathlib.Path(sys.argv[2]).write_text(source.replace(old, new, 1), encoding="utf-8")
+PYPLANT
+}
+
+probe_changed_lines() {
+  # probe_changed_lines <linter-path>: prints the parsed attribution map.
+  python3 - "$1" <<'PYPROBE'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("probe_lint", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules["probe_lint"] = module
+spec.loader.exec_module(module)
+diff = "\n".join([
+    "diff --git a/docs/workflow/first.md b/docs/workflow/first.md",
+    "--- /dev/null",
+    "+++ b/docs/workflow/first.md",
+    "@@ -0,0 +1 @@",
+    "+prose",
+    "diff --git docs/workflow/second.md docs/workflow/second.md",
+    "--- docs/workflow/second.md",
+    "+++ docs/workflow/second.md",
+    "@@ -0,0 +1,3 @@",
+    "+```bash",
+    "+echo hello",
+    "+```",
+])
+result = module.changed_lines(diff)
+print(";".join(f"{path}={sorted(lines)}" for path, lines in sorted(result.items())))
+PYPROBE
+}
+
+# P1 — drop the per-record path reset in changed_lines(). The second record's
+# lines are then credited to the first record's path.
+printf '%s\x00%s' '        if DIFF_GIT_HEADER.match(row):
+            path = ""
+            continue
+' '' > "$TMP_DIR/p1.edit"
+plant_linter "$TMP_DIR/plant-p1.py" "$TMP_DIR/p1.edit"
+check p1_plant_leaks_attribution "docs/workflow/first.md=[1, 2, 3]" "$(probe_changed_lines "$TMP_DIR/plant-p1.py")"
+check p1_shipped_does_not_leak "docs/workflow/first.md=[1]" "$(probe_changed_lines "$LINTER")"
+
+# P2 — validate the whole diff as one record instead of per record. The mixed
+# diff then passes classification on the strength of its first record.
+printf '%s\x00%s' '    records = split_diff_records(diff)
+    if not records:
+        records = [diff]
+' '    records = [diff]
+' > "$TMP_DIR/p2.edit"
+plant_linter "$TMP_DIR/plant-p2.py" "$TMP_DIR/p2.edit"
+check p2_plant_accepts_mixed 0 \
+  "$(run_linter python3 "$TMP_DIR/plant-p2.py" --input "$TMP_DIR/mixed-records.diff")"
+check p2_shipped_refuses_mixed 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/mixed-records.diff")"
+
+# P3 — drop the header-order check. The out-of-order record then passes while
+# its additions are silently dropped.
+printf '%s\x00%s' '        if has_hunk and has_target and target_match.start() > hunk_match.start():
+            return "unparseable"
+' '' > "$TMP_DIR/p3.edit"
+plant_linter "$TMP_DIR/plant-p3.py" "$TMP_DIR/p3.edit"
+check p3_plant_accepts_out_of_order 0 \
+  "$(run_linter python3 "$TMP_DIR/plant-p3.py" --input "$TMP_DIR/out-of-order.diff")"
+check p3_shipped_refuses_out_of_order 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/out-of-order.diff")"
+
+# P4 — drop the empty-diff refusal, restoring the original defect: exit 0 after
+# examining nothing.
+printf '%s\x00%s' '        if shape == "empty" and not args.allow_empty:' '        if False:' > "$TMP_DIR/p4.edit"
+plant_linter "$TMP_DIR/plant-p4.py" "$TMP_DIR/p4.edit"
+check p4_plant_passes_empty 0 "$(run_linter python3 "$TMP_DIR/plant-p4.py" --input "$TMP_DIR/empty.diff")"
+check p4_shipped_refuses_empty 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/empty.diff")"
+
 if ! command -v zsh >/dev/null; then
   echo "FAIL: zsh is required for cross-shell fixture coverage"
   exit 1
