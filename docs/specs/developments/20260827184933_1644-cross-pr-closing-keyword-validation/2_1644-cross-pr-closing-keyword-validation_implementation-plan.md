@@ -11,7 +11,7 @@
 
 **Estimated complexity**: L
 
-**Rationale**: The rule set is large — roughly sixty acceptance criteria across eight groups — and three of them are hard in their own right: byte-exact filtering parity with an existing parser whose behaviour differs by base branch, an indeterminate-versus-clean distinction that must hold for *every* input without enumeration, and an ordering guarantee across overlapping workflow runs. None of the individual pieces is large; the plan is L because the correctness surface is.
+**Rationale**: The rule set is large — 45 acceptance criteria across eight groups, counted rather than estimated (see the Verification Log) — and three of them are hard in their own right: byte-exact filtering parity with an existing parser whose behaviour differs by base branch, an indeterminate-versus-clean distinction that must hold for *every* input without enumeration, and an ordering guarantee across overlapping workflow runs. None of the individual pieces is large; the plan is L because the correctness surface is.
 
 **Dependencies**: none outstanding. #1702 — the spec amendment that moved the five undeliverable re-evaluation criteria out of scope (alignment option B, 2026-09-02) — merged as `e9bee842` before this plan; this plan is written against the amended spec. **If it does not hold when work starts** — the amendment reverted, or the branch this plan is implemented from predates `e9bee842` — stop before writing code: the spec would again require five criteria this plan does not deliver, and the implementation PR would be reviewed against them. Confirm with `git log --oneline e9bee842 -1` on the implementation base, or re-read the spec's *Out of Scope (MVP)* for the entry naming the branch-rename and default-branch-change triggers. Restoring it is a spec-branch change, not an implementation one. #1593 (merged) added `push_verification_failed` and the self-refspec push rules; this feature touches neither.
 
@@ -22,6 +22,8 @@
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `e9bee842` |
+| Acceptance-criterion count | `awk '/^## Acceptance Criteria/{f=1;next} /^## /{if(f)exit} f' <spec> \| grep -c '^- \[ \] '` | `45` |
+| Acceptance-criterion group count | same extraction, `grep -c '^### '` | `8` |
 | Canonical filter location | `grep -n 'strip_fenced_pr_body_blocks' scripts/development-workflow/post-merge-cleanup.sh` | Defined at line 564; invoked by `fetch_pr_closing_issues` at lines 679 (title+body) and 683 (commit messages) |
 | Canonical keyword regex | `grep -n 'close\[sd\]' scripts/development-workflow/post-merge-cleanup.sh` | `(^\|[^[:alnum:]_])(close[sd]?\|fix(es\|ed)?\|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+` |
 | Canonical concatenation for non-default-branch merges | `grep -n 'json body,title' scripts/development-workflow/post-merge-cleanup.sh` | `(.title // "") + "\n" + (.body // "")` — title and body are one text before filtering |
