@@ -848,10 +848,9 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "feat([scope]): [description]"
-set -euo pipefail
-
 # The push must send THIS branch. A checkout left on another branch would push
 # that one under this branch's name (issue #1593).
 if [ "$(git rev-parse --abbrev-ref HEAD)" != "feature/[slug]" ]; then
@@ -1236,7 +1235,6 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    set -euo pipefail
-
    # The push must send THIS branch. A checkout left on another branch would push
    # that one under this branch's name (issue #1593).
    if [ "$(git rev-parse --abbrev-ref HEAD)" != "refactor/[branch-slug]" ]; then
@@ -1533,10 +1531,9 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "fix([scope]): [description]"
-set -euo pipefail
-
 # The push must send THIS branch. A checkout left on another branch would push
 # that one under this branch's name (issue #1593).
 if [ "$(git rev-parse --abbrev-ref HEAD)" != "fix/[branch-slug]" ]; then
@@ -1882,10 +1879,9 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "fix([scope]): [description] (hotfix)"
-set -euo pipefail
-
 # The push must send THIS branch. A checkout left on another branch would push
 # that one under this branch's name (issue #1593).
 if [ "$(git rev-parse --abbrev-ref HEAD)" != "hotfix/[branch-slug]" ]; then

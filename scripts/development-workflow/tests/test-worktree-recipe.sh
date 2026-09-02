@@ -550,13 +550,24 @@ GUARD_ROOT="$TMP_DIR/push-guard"
 mkdir -p "$GUARD_ROOT"
 setup_repo "$GUARD_ROOT"
 GUARD_BRANCH=fix/1593-guard-demo
+# `set -euo pipefail` must be the FIRST line of the fence, so a failed `git add`
+# or `git commit` cannot fall through and push an older HEAD.
+PUSH_BLOCK_RAW="$(extract_push_block "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]')"
+if [ "$(printf '%s\n' "$PUSH_BLOCK_RAW" | sed -n '1p')" = "set -euo pipefail" ]; then
+  check push_block_sets_shell_options_first yes yes
+else
+  check push_block_sets_shell_options_first yes "first line is: $(printf '%s\n' "$PUSH_BLOCK_RAW" | sed -n '1p')"
+fi
 # The fence also carries the `git add [files]` / `git commit` placeholders, which
-# are not runnable. Take the executable part: from `set -euo pipefail` onward.
-PUSH_BLOCK="$(extract_push_block "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]' | sed -n '/^set -euo pipefail$/,$p')"
+# are not runnable; drop exactly those two lines and assert both were found, so
+# the test cannot quietly skip more of the block than it means to.
+PUSH_BLOCK="$(printf '%s\n' "$PUSH_BLOCK_RAW" | grep -vE '^[[:space:]]*git add \[files\][[:space:]]*$|^[[:space:]]*git commit -m ')"  # workflow-shell-guard: allow SH001 - grep -v exits 1 only if every line is dropped, reported by the count below
+DROPPED_LINES=$(( $(printf '%s\n' "$PUSH_BLOCK_RAW" | wc -l) - $(printf '%s\n' "$PUSH_BLOCK" | wc -l) ))
+check push_block_dropped_only_placeholders 2 "$DROPPED_LINES"
 if [ -n "$PUSH_BLOCK" ]; then
   check push_block_executable_part_extracted yes yes
 else
-  check push_block_executable_part_extracted yes "no set -euo pipefail in the fix push block"
+  check push_block_executable_part_extracted yes "empty after dropping placeholders"
 fi
 # NOT ${var//pattern/...}: bash treats `[branch-slug]` as a character class, so
 # the placeholder would match one character rather than the literal text.
