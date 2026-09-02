@@ -172,6 +172,63 @@ else
   check protocol_91_documents_upstream_check yes no
 fi
 
+# --- The documented upstream assertion, executed --------------------------
+# Extracted and run, not restated: it is the guard AC-1 relies on for Case B and
+# for any branch whose upstream was set before this rule.
+extract_upstream_check() {
+  python3 - "$PROTOCOL_91" <<'PYUPSTREAM'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+block, inside = [], False
+for line in text.splitlines():
+    if line.strip().startswith("```"):
+        if inside:
+            if any("UPSTREAM_MERGE" in row for row in block):
+                print("\n".join(block))
+                sys.exit(0)
+            block, inside = [], False
+        else:
+            block, inside = [], True
+        continue
+    if inside:
+        block.append(line)
+PYUPSTREAM
+}
+
+UPSTREAM_CHECK="$(extract_upstream_check)"
+if [ -n "$UPSTREAM_CHECK" ]; then
+  check upstream_check_extracted yes yes
+else
+  check upstream_check_extracted yes no
+fi
+printf '%s\n' "$UPSTREAM_CHECK" > "$TMP_DIR/upstream-check.sh"
+
+run_upstream_check() {
+  # run_upstream_check <worktree>: prints "pass" or "reject".
+  if ( cd "$1" && bash "$TMP_DIR/upstream-check.sh" >/dev/null 2>&1 ); then
+    printf 'pass'
+  else
+    printf 'reject'
+  fi
+}
+
+# The documented recipe's own worktree passes it.
+check upstream_check_accepts_documented pass "$(run_upstream_check "$ROOT_DOC/wt")"
+# The planted recipe's worktree — tracking refs/heads/develop — is rejected.
+check upstream_check_rejects_base_tracking reject "$(run_upstream_check "$ROOT_PLANT/wt")"
+
+# Right branch name, WRONG REMOTE: a bare push would go somewhere the pull
+# request never sees. The name alone is only half the destination.
+git -C "$ROOT_DOC/repo" remote add backup "$ROOT_DOC/remote.git"
+git -C "$ROOT_DOC/wt" config branch.fix/1593-example.remote backup
+git -C "$ROOT_DOC/wt" config branch.fix/1593-example.merge refs/heads/fix/1593-example
+check upstream_check_rejects_wrong_remote reject "$(run_upstream_check "$ROOT_DOC/wt")"
+# Restore the state the recipe produced.
+git -C "$ROOT_DOC/wt" branch --unset-upstream fix/1593-example 2>/dev/null || true  # workflow-shell-guard: allow SH001 - unsetting an absent upstream is not an error here
+check upstream_check_accepts_after_unset pass "$(run_upstream_check "$ROOT_DOC/wt")"
+
 # --- AC-2 / AC-3: every documented branch push ------------------------------
 # Each protocol that pushes an item branch must push with an explicit refspec
 # and then compare the remote head to local. Checked by extraction, so a

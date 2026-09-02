@@ -998,13 +998,23 @@ case rather than trusting the creation path:
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 UPSTREAM_MERGE=$(git config --get "branch.${BRANCH}.merge" || true)
+UPSTREAM_REMOTE=$(git config --get "branch.${BRANCH}.remote" || true)
 if [ -n "$UPSTREAM_MERGE" ] && [ "$UPSTREAM_MERGE" != "refs/heads/${BRANCH}" ]; then
   echo "ERROR: ${BRANCH} tracks ${UPSTREAM_MERGE}, not its own remote branch."
   echo "A bare 'git push' from here is refused or aims at the wrong branch. Fix with:"
   echo "  git branch --unset-upstream"
   exit 1
 fi
-echo "Upstream verified: ${BRANCH} tracks ${UPSTREAM_MERGE:-nothing}"
+# The branch name is only half the destination. A branch tracking the right
+# name on the wrong remote passes the check above while a bare push lands
+# somewhere the pull request will never see.
+if [ -n "$UPSTREAM_REMOTE" ] && [ "$UPSTREAM_REMOTE" != "origin" ]; then
+  echo "ERROR: ${BRANCH} tracks remote '${UPSTREAM_REMOTE}', not 'origin'."
+  echo "A bare 'git push' from here would not reach the pull request. Fix with:"
+  echo "  git branch --unset-upstream"
+  exit 1
+fi
+echo "Upstream verified: ${BRANCH} tracks ${UPSTREAM_REMOTE:-no remote}/${UPSTREAM_MERGE:-nothing}"
 ```
 
 **Branch-context verification — mandatory immediately after entering the worktree**
