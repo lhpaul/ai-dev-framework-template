@@ -1204,6 +1204,27 @@ check "the workflow reads no issue from a spec branch" "" "$(branch_issue spec/9
 check "the workflow's extractor matches the validator's pattern" "yes" \
   "$(grep -q '(\[A-Za-z\]\[A-Za-z0-9\]\*-)?' "$WORKFLOW" && echo yes || echo no)"
 
+# An EMPTY open-PR listing is a successful read, not a failure. `gh --jq '.[]'`
+# emits nothing for `[]`, and the whole point of `unreadable` is to distinguish
+# "the API did not answer" from "the API answered, and the answer is nothing" —
+# conflating them would publish an indeterminate outcome for a repository that
+# simply has no other open pull requests.
+#
+# Raised in review as a defect on the grounds that jq errors on empty stdin. It
+# does not: jq 1.7 exits 0 with no output, and so does the pipeline under
+# `set -euo pipefail`. Asserted here rather than argued, and asserted through
+# the shipped program so a future jq that behaved otherwise would fail here.
+empty_listing_status="$(
+  set -euo pipefail
+  printf '[]' \
+    | jq -r '.[] | {number, body: (.body // "")} | @json' \
+    | jq -r --arg issue 97 --arg self 42 "$FANOUT_JQ" >/dev/null
+  echo "$?"
+)"
+check "an empty open-PR listing is a successful read, not an API failure" "0" "$empty_listing_status"
+check "and it selects no targets" "" \
+  "$(fanout_select '[]' 97 42)"
+
 check "the fan-out is fully paginated, with no fixed ceiling" "0" \
   "$(grep -c -- '--limit 200' "$WORKFLOW" || true)"
 check "the fan-out never line-splits a pull request body in the shell" "0" \
