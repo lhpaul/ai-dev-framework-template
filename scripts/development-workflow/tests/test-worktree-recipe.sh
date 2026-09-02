@@ -507,6 +507,65 @@ for path_branch in 'feature/[slug]' 'fix/[branch-slug]' 'refactor/[branch-slug]'
 done
 check protocol_03_all_paths_have_push_block 4 "$PATH_PUSH_COUNT"
 
+# --- The documented push block, executed ------------------------------------
+# The wrong-branch guard is asserted structurally above; run it, so a guard that
+# stops detecting the wrong branch fails here rather than keeping its STOP text.
+GUARD_ROOT="$TMP_DIR/push-guard"
+mkdir -p "$GUARD_ROOT"
+setup_repo "$GUARD_ROOT"
+GUARD_BRANCH=fix/1593-guard-demo
+# The fence also carries the `git add [files]` / `git commit` placeholders, which
+# are not runnable. Take the executable part: from `set -euo pipefail` onward.
+PUSH_BLOCK="$(extract_push_block "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]' | sed -n '/^set -euo pipefail$/,$p')"
+if [ -n "$PUSH_BLOCK" ]; then
+  check push_block_executable_part_extracted yes yes
+else
+  check push_block_executable_part_extracted yes "no set -euo pipefail in the fix push block"
+fi
+# NOT ${var//pattern/...}: bash treats `[branch-slug]` as a character class, so
+# the placeholder would match one character rather than the literal text.
+printf '%s\n' "$PUSH_BLOCK" | sed "s|fix/\[branch-slug\]|$GUARD_BRANCH|g" > "$GUARD_ROOT/push-block.sh"
+if grep -Fq -- "$GUARD_BRANCH" "$GUARD_ROOT/push-block.sh" &&
+    ! grep -Fq -- 'fix/[branch-slug]' "$GUARD_ROOT/push-block.sh"; then
+  check push_block_placeholder_substituted yes yes
+else
+  check push_block_placeholder_substituted yes "placeholder still present"
+fi
+(
+  cd "$GUARD_ROOT/repo"
+  git checkout -q -b "$GUARD_BRANCH"
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m work
+)
+run_push_block() {
+  # run_push_block: prints the exit code; output lands in $TMP_DIR/last.out.
+  local rc=0
+  ( cd "$GUARD_ROOT/repo" && bash "$GUARD_ROOT/push-block.sh" ) > "$TMP_DIR/last.out" 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+
+# On the right branch the documented block pushes and verifies.
+check push_block_on_correct_branch_succeeds 0 "$(run_push_block)"
+GUARD_LOCAL="$(git -C "$GUARD_ROOT/repo" rev-parse "$GUARD_BRANCH")"
+GUARD_REMOTE="$(git -C "$GUARD_ROOT/remote.git" rev-parse "$GUARD_BRANCH")"
+check push_block_landed_on_remote "$GUARD_LOCAL" "$GUARD_REMOTE"
+
+# On another branch it stops before pushing, with the named condition.
+git -C "$GUARD_ROOT/repo" checkout -q develop
+check push_block_on_wrong_branch_stops 1 "$(run_push_block)"
+if grep -q "push_verification_failed" "$TMP_DIR/last.out"; then
+  check push_block_wrong_branch_names_condition yes yes
+else
+  check push_block_wrong_branch_names_condition yes "$(cat "$TMP_DIR/last.out")"
+fi
+# ...and it stopped BEFORE pushing: develop must not have moved.
+GUARD_DEVELOP_AFTER="$(git -C "$GUARD_ROOT/remote.git" rev-parse develop)"
+GUARD_DEVELOP_SEED="$(git -C "$GUARD_ROOT/repo" rev-parse develop)"
+check push_block_wrong_branch_pushed_nothing "$GUARD_DEVELOP_SEED" "$GUARD_DEVELOP_AFTER"
+
+# Each of those protocols must also carry
+
 # Planted variant: put the Refactor path back in prose. The count must drop, or
 # the check above would pass on a document that reintroduced the defect.
 PLANT_PROSE_DIR="$TMP_DIR/planted-prose"
