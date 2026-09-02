@@ -63,7 +63,7 @@ against them.
 ### Step 3: Correct the claimant
 
 - Edit the claimant's description to remove the `Closes #<ISSUE>` line.
-- **Expected**: the existing comment is cleared or updated to a clean state. There is not a second comment.
+- **Expected**: the report comment is **deleted**. Silence is the clean signal, so a clean result leaves no comment at all — not a comment saying everything is fine.
 
 ### Step 4: Exercise the opt-out
 
@@ -121,15 +121,16 @@ If a live proof is ever wanted, the way is a deliberate, reviewed pull request t
 - [ ] A claimant with no sibling is silent (Step 1).
 - [ ] A warning appears on the claimant when the owner opens, with no change to the claimant (Step 2).
 - [ ] The warning names the issue number and the sibling pull request (Step 2).
-- [ ] Correcting the description clears the warning and leaves a single comment, not two (Step 3).
+- [ ] Correcting the description deletes the report comment rather than leaving a clean-state one (Step 3).
 - [ ] Applying and removing the label works against a repository that already has it (Step 4). First-use creation is asserted by the unit suite, not here — see the note in Step 4.
 - [ ] Applying the label clears the warning with no push; removing it restores the warning with no push (Step 4).
 - [ ] An unclosed fence in the title suppresses the reference for a `develop`-targeting pull request, and does not for one targeting the default branch (Step 5).
 - [ ] Retargeting between the default branch and `develop` re-evaluates the pull request (Step 5).
 - [ ] Two owners make the result silent; closing one restores the warning (Step 6).
-- [ ] An unreadable input leaves the existing comment untouched and posts nothing (Step 7).
-- [ ] An indeterminate run leaves a neutral, non-blocking check and never a failing one (Step 7).
-- [ ] A conclusive re-run replaces the neutral check, including when it is silent (Step 7).
+- [ ] The check run is published and does not block the merge (Step 7).
+- [ ] An unreadable input leaves the existing comment untouched and posts nothing — **unit suite**, not this runbook; see the note in Step 7.
+- [ ] An indeterminate run leaves a neutral, non-blocking check and never a failing one — **unit suite**.
+- [ ] A conclusive re-run replaces the neutral check, including when it is silent — **unit suite**.
 - [ ] No step changed an issue's milestone, closed an issue, or altered any pull request's mergeability.
 
 ---
