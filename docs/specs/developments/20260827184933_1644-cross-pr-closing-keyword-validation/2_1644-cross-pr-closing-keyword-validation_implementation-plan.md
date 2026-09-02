@@ -13,7 +13,7 @@
 
 **Rationale**: The rule set is large — roughly sixty acceptance criteria across eight groups — and three of them are hard in their own right: byte-exact filtering parity with an existing parser whose behaviour differs by base branch, an indeterminate-versus-clean distinction that must hold for *every* input without enumeration, and an ordering guarantee across overlapping workflow runs. None of the individual pieces is large; the plan is L because the correctness surface is.
 
-**Dependencies**: **#1702** — the spec amendment recording the five re-evaluation criteria that GitHub Actions cannot trigger. Implementation should not start until it is merged, or the implementation PR is measured against criteria the human decided not to deliver (alignment option B, 2026-09-02). #1593 (merged, `1b6b3443`) added `push_verification_failed` and the self-refspec push rules; this feature touches neither.
+**Dependencies**: none outstanding. #1702 — the spec amendment that moved the five undeliverable re-evaluation criteria out of scope (alignment option B, 2026-09-02) — merged as `e9bee842` before this plan; this plan is written against the amended spec. #1593 (merged) added `push_verification_failed` and the self-refspec push rules; this feature touches neither.
 
 ---
 
@@ -21,7 +21,7 @@
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `1b6b3443` |
+| Repo revision | `git rev-parse --short HEAD` | `e9bee842` |
 | Canonical filter location | `grep -n 'strip_fenced_pr_body_blocks' scripts/development-workflow/post-merge-cleanup.sh` | Defined at line 564; invoked by `fetch_pr_closing_issues` at lines 679 (title+body) and 683 (commit messages) |
 | Canonical keyword regex | `grep -n 'close\[sd\]' scripts/development-workflow/post-merge-cleanup.sh` | `(^\|[^[:alnum:]_])(close[sd]?\|fix(es\|ed)?\|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+` |
 | Canonical concatenation for non-default-branch merges | `grep -n 'json body,title' scripts/development-workflow/post-merge-cleanup.sh` | `(.title // "") + "\n" + (.body // "")` — title and body are one text before filtering |
@@ -41,9 +41,9 @@
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| Canonical filtering semantics for closing keywords | `strip_fenced_pr_body_blocks` in `post-merge-cleanup.sh` | The script itself, read at plan time | 2026-09-02, repo SHA `1b6b3443` | This item only; no open PR changes that parser | `Verified` |
-| Approved base branch for this plan's PR | `develop` | Bounded prelude for #1644 (`baseReason: no integration branch label`) | 2026-09-02, repo SHA `1b6b3443` | This item only | `Verified` |
-| Repository writes are commit statuses today; this feature introduces the first check run | `pr-policy.yml` uses `repos/$REPO/statuses/$sha` | `.github/workflows/pr-policy.yml` lines 105, 377, 442 | 2026-09-02, repo SHA `1b6b3443` | This item only | `Verified` |
+| Canonical filtering semantics for closing keywords | `strip_fenced_pr_body_blocks` in `post-merge-cleanup.sh` | The script itself, read at plan time | 2026-09-02, repo SHA `e9bee842` | This item only; no open PR changes that parser | `Verified` |
+| Approved base branch for this plan's PR | `develop` | Bounded prelude for #1644 (`baseReason: no integration branch label`) | 2026-09-02, repo SHA `e9bee842` | This item only | `Verified` |
+| Repository writes are commit statuses today; this feature introduces the first check run | `pr-policy.yml` uses `repos/$REPO/statuses/$sha` | `.github/workflows/pr-policy.yml` lines 105, 377, 442, 461 — every status write in the file | 2026-09-02, repo SHA `e9bee842` | This item only | `Verified` |
 
 ---
 
@@ -100,40 +100,23 @@
 
 ---
 
-## Declared trigger gaps (alignment decision: option B, 2026-09-02)
+## Out-of-scope triggers, and what is still tested (alignment decision: option B, 2026-09-02)
 
-The spec lists triggers that GitHub Actions cannot deliver. The human chose to cover what exists and record the rest rather than add a scheduled sweep. These are gaps in *timeliness*, not in correctness: the result is recomputed correctly at the next event that does fire, and the readiness backstop bounds the staleness for any pull request heading for review.
+GitHub Actions has no event for two of the changes that alter a result: `pull_request_target` has no `renamed` activity type, and nothing fires when a repository's default branch changes. A scheduled sweep is the only mechanism that covers them, and it was declined on 2026-09-02.
 
-| Spec trigger | Status | Consequence |
-| --- | --- | --- |
-| The pull request's own head branch is renamed | **Not delivered.** `pull_request_target` has no `renamed` activity type | A rename that flips ownership is reflected at the next edit, label change, or readiness event |
-| A sibling is renamed into or out of naming an issue | **Not delivered**, same reason | Same |
-| The repository's default branch changes | **Not delivered.** Actions has no event for it | Pull requests keep the filtering their base implied until their next event |
+The spec now says so itself. #1703 (issue #1702, merged as `e9bee842`) removed the five acceptance criteria that depended on those events from *Re-evaluation triggers* and put the deferral in *Out of Scope (MVP)*, together with the residual the review surfaced: the delay is **not** bounded. The readiness backstop helps only when readiness arrives *after* the unobservable change, so a branch renamed on an already-ready pull request can carry a stale warning to merge unless some other trigger happens to fire. This plan therefore covers every acceptance criterion the spec asks for; nothing here is undelivered.
 
-Five acceptance criteria depend on these events, all under *Re-evaluation triggers*. Naming them, in the spec's own words:
+What remains is that the validator must still compute the right answer when it *does* run after such a change — the spec keeps requiring that, and it is the half that is testable. The tests are named here so they are not lost with the criteria that were removed:
 
-| Acceptance criterion (spec text, abbreviated) | Gap | Test that covers the behaviour |
-| --- | --- | --- |
-| "Renaming an open sibling's branch so that it becomes the sole owner … raises a warning that no lifecycle event would have triggered" | No `renamed` event | `sibling_rename_into_sole_ownership_warns` — validator invoked directly after the rename |
-| "Renaming an open sibling's branch into naming an issue this pull request already owns, or that another sibling already names, leaves the result silent" | No `renamed` event | `sibling_rename_into_owned_or_contested_stays_silent` |
-| "Renaming an open sibling's branch so that it no longer names the issue clears a warning" | No `renamed` event | `sibling_rename_out_clears_warning` |
-| "Renaming a pull request's own branch so that it now names an issue its description declares … clears a warning" | No `renamed` event | `own_rename_into_ownership_clears_warning` |
-| "Changing the repository's default branch re-evaluates the affected pull requests, even those whose own base was never touched" | No default-branch-change event | `default_branch_change_flips_filtering` — validator invoked with each default-branch value |
+| Behaviour, exercised by invoking the validator directly | Test |
+| --- | --- |
+| A sibling renamed into sole ownership of a declared issue produces a warning | `sibling_rename_into_sole_ownership_warns` |
+| A sibling renamed into an issue this pull request already owns, or another sibling already names, stays silent | `sibling_rename_into_owned_or_contested_stays_silent` |
+| A sibling renamed out of naming the issue clears the warning | `sibling_rename_out_clears_warning` |
+| A pull request's own branch renamed into naming a declared issue clears the warning | `own_rename_into_ownership_clears_warning` |
+| Each default-branch value selects the filtering its base implies | `default_branch_change_flips_filtering` |
 
-Each is implemented as **script behaviour**: invoking the validator after the rename or the default-branch change produces the correct result, and the named test asserts it. What is not delivered is the automatic invocation.
-
-**The spec still lists these five as required, and this plan cannot change that.**
-`check-documentation-stage-alignment.sh` allows only plan documents and
-smoke-test runbooks on an `implementation-plan/*` branch, so a spec edit here
-fails Protocol 91 Step 8a. Declaring the gap in the plan alone would leave the
-implementation PR measured against criteria nobody intends to deliver, so the
-amendment is tracked as **#1702**, which moves the five to the spec's *Out of
-Scope (MVP)* with the GitHub constraint as the reason.
-
-**Implementation of this plan should not start until #1702 is merged.** Until
-then the plan's coverage claim is conditional: every other acceptance criterion
-is delivered and tested, and these five are delivered as validator behaviour
-without automatic invocation.
+The workflow does not invoke the validator on either change, because no event exists to invoke it from. Nothing in the workflow needs to be written to make that true, and nothing in the plan claims otherwise.
 
 ---
 
@@ -152,8 +135,8 @@ without automatic invocation.
 | Fork-originated pull requests | Fork guard, in the script + workflow-level `if:` | `fork_pr_is_not_validated_and_writes_nothing`, `workflow_job_carries_fork_if_guard`, `workflow_checkout_uses_base_sha_never_head` |
 | The opt-out | Opt-out check; idempotent provisioning | `label_present_is_silent`, `label_created_on_first_use`, `concurrent_creation_does_not_fail`, `label_creation_failure_still_warns_and_names_label`, `applying_label_clears_existing_warning`, `removing_label_restores_warning`, `dropping_keyword_clears_warning`; runbook Step 4 |
 | Establishing ownership | Ownership resolution | `no_owner_is_silent`, `contested_ownership_is_silent`, `team_prefixed_sibling_is_owner`, `platform_link_is_not_ownership`, `non_naming_branch_is_not_owner`, `spec_and_plan_branches_are_never_owners`, `closed_or_merged_pr_is_never_owner`; runbook Step 6 |
-| Re-evaluation triggers (delivered) | Workflow trigger set; sibling fan-out | `sibling_open_raises_warning`, `sibling_close_or_merge_clears_warning`, `sibling_reopen_restores_warning`, `base_retarget_flips_filtering`, `reopen_reevaluates`, `readiness_backstop_reevaluates`; runbook Steps 2 and 5 |
-| Re-evaluation triggers (not delivered) | Script behaviour only — see *Declared trigger gaps* | The five tests named in that section's table |
+| Re-evaluation triggers | Workflow trigger set; sibling fan-out | `sibling_open_raises_warning`, `sibling_close_or_merge_clears_warning`, `sibling_reopen_restores_warning`, `base_retarget_flips_filtering`, `reopen_reevaluates`, `readiness_backstop_reevaluates`; runbook Steps 2 and 5 |
+| Correct filtering after a rename or a default-branch change — out of scope as a *trigger*, still required as *behaviour* | Validator invoked directly; no workflow event exists | The five tests named under *Out-of-scope triggers, and what is still tested* |
 | The indeterminate outcome | Single-accessor input reads; check-run identity | `unreadable_description_leaves_report`, `unreadable_pr_list_leaves_report`, `unreadable_label_is_indeterminate`, `unreadable_base_is_indeterminate`, `unreadable_existing_report_is_indeterminate`, `unreadable_head_branch_is_indeterminate`, `unreadable_check_run_list_is_indeterminate`, `unreadable_check_run_list_still_publishes_neutral_check`, `unreadable_check_run_list_posts_no_second_report`, `indeterminate_writes_neutral_check_and_log`, `indeterminate_does_not_change_mergeability`, `conclusive_rerun_updates_same_check_run`, `silent_conclusive_rerun_replaces_neutral_check`, `inherited_duplicate_check_runs_update_the_oldest`, `earlier_run_does_not_overwrite_later_check_run`, `unparseable_check_run_stamp_is_adopted`; runbook Step 7 |
 | Ordering and idempotence | Report marker; freshness; ordering stamp; target-keyed concurrency | `late_started_conclusive_survives_earlier_indeterminate`, `earlier_run_does_not_restore_cleared_warning`, `earlier_run_does_not_clear_raised_warning`, `repeated_run_leaves_one_report`, `overlapping_runs_leave_one_report`, `inherited_duplicate_reports_are_reconciled_to_the_oldest`, `cross_trigger_fan_out_to_one_target_writes_once`, `workflow_concurrency_group_is_keyed_to_matrix_target` |
 
@@ -242,8 +225,7 @@ This plan is parser-risk: it adds a scanner over markdown and moves an existing 
 | A check run cannot be deleted through the API, so an inherited duplicate cannot be cleaned up the way a duplicate comment can | Low | Low — two checks on one head SHA, both non-blocking | Selection is deterministic (oldest matching name and external id), so runs agree on which one they update; the extras age out with the head SHA and never block a merge |
 | An unreadable check-run listing is circular: the run is indeterminate, and saying so requires writing the check it cannot find | Low | Low | Resolved by an explicit rule rather than left to the implementer — create the check, accepting at most one duplicate, because an unpublished non-conclusion is worse than a visible duplicate. Named as the only duplicate-producing path in the design |
 | Sibling fan-out grows with the number of open pull requests | Low | Low | Bounded by the open PR list, one API call plus one validation per declaring PR; no scheduled sweep was added (option B) |
-| The declared trigger gaps read as satisfied criteria | Med | Med — a reviewer or a later reader assumes rename coverage | Stated in its own section with the five criteria quoted from the spec, each paired with its test; the script-level behaviour is tested separately from the invocation |
-| The spec and the plan disagree about those five criteria until the spec is amended | High — it is true today | Med — the implementation PR is measured against criteria nobody intends to deliver | Tracked as #1702 and recorded as a dependency; implementation should not start until it merges |
+| The out-of-scope triggers are forgotten once their criteria left the spec | Med | Med — a later reader assumes rename coverage, or the five behaviour tests get dropped as unmotivated | Kept in a section of their own that names each test and says plainly that no workflow event invokes the validator on those changes |
 
 ---
 
