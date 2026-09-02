@@ -129,20 +129,29 @@ def diff_shape(diff: str) -> str:
     if not diff.strip():
         return "empty"
     records = split_diff_records(diff)
-    if records:
-        for record in records:
-            has_hunk = bool(DIFF_HUNK_HEADER.search(record))
-            has_target = bool(DIFF_TARGET_HEADER.search(record))
+    if not records:
+        records = [diff]
+    shape = "diff"
+    for record in records:
+        framed = bool(DIFF_GIT_HEADER.match(record))
+        has_hunk = bool(DIFF_HUNK_HEADER.search(record))
+        has_target = bool(DIFF_TARGET_HEADER.search(record))
+        if framed:
+            # A Git record may legitimately carry neither: a mode-only change, a
+            # binary file, a pure rename. It may not carry only one.
             if has_hunk != has_target:
                 return "unparseable"
-        return "diff"
-    # No `diff --git` framing: a bare unified diff (`diff -u a b`) or something
-    # that is not a diff at all. Both halves must be present together.
-    has_hunk = bool(DIFF_HUNK_HEADER.search(diff))
-    has_target = bool(DIFF_TARGET_HEADER.search(diff))
-    if has_hunk and has_target:
-        return "diff"
-    return "unparseable" if (has_hunk or has_target) else "not_a_diff"
+            continue
+        # An unframed record — the text before the first `diff --git` header, or
+        # the whole input when there is none — has no header vouching for it, so
+        # only the full `+++` plus hunk pair makes it a diff. Carrying neither is
+        # not a metadata-only record; it is prose.
+        if has_hunk and has_target:
+            continue
+        if has_hunk or has_target:
+            return "unparseable"
+        shape = "not_a_diff"
+    return shape
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
@@ -297,10 +306,11 @@ def main() -> int:
         if shape == "not_a_diff":
             emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} carries no "
-                "`diff --git` line, no well-formed hunk header, and no `+++` target header. "
-                "Produce it with `git diff --unified=0 <base>...HEAD`, or use --base-ref to let "
-                "this script run git diff itself.",
+                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} contains "
+                "text that is not one — either the whole file, or the lines before its first "
+                "`diff --git` header, carry no hunk and no `+++` target header. Produce it with "
+                "`git diff --unified=0 <base>...HEAD`, or use --base-ref to let this script run "
+                "git diff itself.",
                 file=sys.stderr,
             )
             return 2

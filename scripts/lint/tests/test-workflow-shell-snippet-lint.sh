@@ -248,6 +248,20 @@ if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
 else
   check unreadable_preamble_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
+# Only a `diff --git`-framed record may legitimately carry neither a hunk nor a
+# target header. Prose before one is not a metadata-only record; it is prose.
+printf '%s\n' 'just some prose' 'more prose' \
+  'diff --git a/docs/workflow/a.md b/docs/workflow/a.md' 'old mode 100644' 'new mode 100755' \
+  > "$TMP_DIR/prose-preamble.diff"
+check prose_preamble_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/prose-preamble.diff")"
+check prose_preamble_allow_empty_still_errors 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/prose-preamble.diff" --allow-empty)"
+if grep -q "text that is not one" "$TMP_DIR/last.out"; then
+  check prose_preamble_reason not_a_diff not_a_diff
+else
+  check prose_preamble_reason not_a_diff "$(head -1 "$TMP_DIR/last.out")"
+fi
+
 # A readable preamble — a bare `diff -u` record with no `diff --git` framing —
 # is still valid input, and its path is still examined.
 printf '%s\n' '--- a/docs/workflow/z.md' '+++ b/docs/workflow/z.md' '@@ -0,0 +1 @@' '+x' \
@@ -364,7 +378,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff prose-preamble.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced
