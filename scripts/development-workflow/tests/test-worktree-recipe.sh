@@ -177,19 +177,58 @@ fi
 # and then compare the remote head to local. Checked by extraction, so a
 # protocol that drops either half fails here.
 PROTOCOL_DIR="$REPO_ROOT/docs/workflow/development-workflow/protocols"
+extract_push_block() {
+  # extract_push_block <file> <branch-placeholder>: prints the fenced block that
+  # contains that branch's refspec push, and nothing else. Checking the whole
+  # file would let one block satisfy another block's requirement.
+  python3 - "$1" "$2" <<'PYBLOCK'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+branch = sys.argv[2]
+needle = f'git push origin "{branch}:{branch}"'
+block, inside = [], False
+for line in text.splitlines():
+    if line.strip().startswith("```"):
+        if inside:
+            if any(needle in row for row in block):
+                print("\n".join(block))
+                sys.exit(0)
+            block, inside = [], False
+        else:
+            block, inside = [], True
+        continue
+    if inside:
+        block.append(line)
+PYBLOCK
+}
+
 check_push_step() {
   # check_push_step <protocol-file> <branch-placeholder> <label>
-  local file="$1" branch="$2" label="$3" name
+  local file="$1" branch="$2" label="$3" name block
   name="$(basename "$file" .md)_${label}"
-  if grep -Fq "git push origin \"${branch}:${branch}\"" "$file"; then
-    check "push_refspec_${name}" yes yes
-  else
-    check "push_refspec_${name}" yes "no refspec for ${branch}"
+  block="$(extract_push_block "$file" "$branch")"
+  if [ -z "$block" ]; then
+    check "push_refspec_${name}" yes "no refspec block for ${branch}"
+    check "push_verified_${name}" yes "no refspec block for ${branch}"
+    check "push_exit_gate_${name}" yes "no refspec block for ${branch}"
+    return 0
   fi
-  if grep -Fq "git ls-remote origin \"refs/heads/${branch}\"" "$file"; then
+  check "push_refspec_${name}" yes yes
+  # The ls-remote must name THIS branch, inside THIS block.
+  if printf '%s\n' "$block" | grep -Fq "git ls-remote origin \"refs/heads/${branch}\""; then
     check "push_verified_${name}" yes yes
   else
-    check "push_verified_${name}" yes "no remote-head comparison for ${branch}"
+    check "push_verified_${name}" yes "no remote-head comparison for ${branch} in its own block"
+  fi
+  # ...and the comparison must be a gate, in THIS block, not merely present
+  # somewhere else in the same file.
+  if printf '%s\n' "$block" | grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' &&
+      printf '%s\n' "$block" | grep -Eq '^[[:space:]]*exit 1[[:space:]]*$'; then
+    check "push_exit_gate_${name}" yes yes
+  else
+    check "push_exit_gate_${name}" yes "comparison is not a gate for ${branch}"
   fi
 }
 check_push_step "$PROTOCOL_DIR/01-generate-spec-protocol.md" 'spec/[branch-slug]' spec
@@ -197,16 +236,6 @@ check_push_step "$PROTOCOL_DIR/02-generate-implementation-plan-protocol.md" 'imp
 check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'feature/[slug]' feature
 check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]' fix
 check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'hotfix/[branch-slug]' hotfix
-
-# Each of those protocols must also carry the non-zero exit that makes the
-# comparison a gate rather than an echo.
-for push_protocol in 01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol; do
-  if grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' "$PROTOCOL_DIR/${push_protocol}.md"; then
-    check "push_exit_gate_${push_protocol}" yes yes
-  else
-    check "push_exit_gate_${push_protocol}" yes no
-  fi
-done
 
 # Sweep, so a push step added later cannot skip the rule: no documented push of
 # an ITEM branch may be left bare or given a bare branch name. Base-branch
