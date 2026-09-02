@@ -22,7 +22,7 @@
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `1b6b3443` |
-| Canonical filter location | `grep -n 'strip_fenced_pr_body_blocks' scripts/development-workflow/post-merge-cleanup.sh` | Defined at line 564; used by `fetch_pr_closing_issues` (line 659) |
+| Canonical filter location | `grep -n 'strip_fenced_pr_body_blocks' scripts/development-workflow/post-merge-cleanup.sh` | Defined at line 564; invoked by `fetch_pr_closing_issues` at lines 679 (title+body) and 683 (commit messages) |
 | Canonical keyword regex | `grep -n 'close\[sd\]' scripts/development-workflow/post-merge-cleanup.sh` | `(^\|[^[:alnum:]_])(close[sd]?\|fix(es\|ed)?\|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+` |
 | Canonical concatenation for non-default-branch merges | `grep -n 'json body,title' scripts/development-workflow/post-merge-cleanup.sh` | `(.title // "") + "\n" + (.body // "")` — title and body are one text before filtering |
 | Branch issue-number forms | `grep -n 'A-Z\]\[A-Z0-9\]' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | `^(feature\|fix\|refactor\|hotfix)/([A-Z][A-Z0-9]*-)?<N>(-\|$)` at line 581 — bare and team-prefixed |
@@ -57,7 +57,7 @@
 - [ ] **Report from the description only, with a boundary sentinel.** In the concatenated case, insert a sentinel line between title and description before filtering, and report only keywords found after it. If the sentinel does not survive filtering, the title opened a construct that swallowed the description too, so there is nothing to report and the run is silent — which is the required outcome for that row. *Acceptance criteria: a closing keyword that appears only in the title is not reported; the title-fence rows.*
 - [ ] **Ownership resolution.** List open pull requests, keep those whose head branch matches `^(feature|fix|refactor|hotfix|backport/hotfix)/([A-Z][A-Z0-9]*-)?<issue>(-|$)`, and apply the four ownership rules: none → silent for that issue; two or more → contested, silent; self → in scope, silent; exactly one other → reported. Platform-derived issue links are never consulted. *Acceptance criteria: Establishing ownership.*
 - [ ] **Opt-out.** Skip reporting when the PR carries `multi-issue-intentional`. Provision the label idempotently on first use with the `ensure_reviewer_failed_label_exists` pattern; a failed creation warns in the report and never suppresses it. *Acceptance criteria: The opt-out.*
-- [ ] **Indeterminate outcome, stated over the input set rather than a list.** Read every gate input through one accessor that records success or failure into a single associative structure; the outcome is indeterminate when *any* recorded read failed. A new input added later is covered by construction. On indeterminate: leave any existing report untouched, post nothing, write a `neutral` check run naming what could not be read. *Acceptance criteria: The indeterminate outcome.*
+- [ ] **Indeterminate outcome, stated over the input set rather than a list.** Read every gate input through one accessor that appends the input's name and its read status to **two parallel indexed arrays** — not an associative array, which is Bash 4+ and this repository targets Bash 3.2 (macOS system bash). The outcome is indeterminate when any recorded status is a failure, so an input added later is covered by construction rather than by extending a list. On indeterminate: leave any existing report untouched, post nothing, write a `neutral` check run naming every input that could not be read. *Acceptance criteria: The indeterminate outcome.*
 - [ ] **Freshness and ordering.** Re-read the inputs immediately before writing and discard if any moved (freshness). Stamp each published report and check run with the run's start time and run id, and refuse to overwrite one stamped by a later-started run (ordering). *Acceptance criteria: Ordering and idempotence.*
 - [ ] **Fork guard.** Compare `head.repo.full_name` with the target repository and exit before any write when they differ. *Acceptance criteria: Fork-originated pull requests.*
 
@@ -83,7 +83,17 @@ The spec lists triggers that GitHub Actions cannot deliver. The human chose to c
 | A sibling is renamed into or out of naming an issue | **Not delivered**, same reason | Same |
 | The repository's default branch changes | **Not delivered.** Actions has no event for it | Pull requests keep the filtering their base implied until their next event |
 
-Four acceptance criteria under *Re-evaluation triggers* and one under the same group depend on these events. They are implemented as **script behaviour** — validating after a rename or a default-branch change produces the correct result — and are tested by invoking the validator directly. What is not delivered is the automatic invocation. The plan states this rather than letting the criteria read as satisfied.
+Five acceptance criteria depend on these events, all under *Re-evaluation triggers*. Naming them, in the spec's own words:
+
+| Acceptance criterion (spec text, abbreviated) | Gap | Test that covers the behaviour |
+| --- | --- | --- |
+| "Renaming an open sibling's branch so that it becomes the sole owner … raises a warning that no lifecycle event would have triggered" | No `renamed` event | `sibling_rename_into_sole_ownership_warns` — validator invoked directly after the rename |
+| "Renaming an open sibling's branch into naming an issue this pull request already owns, or that another sibling already names, leaves the result silent" | No `renamed` event | `sibling_rename_into_owned_or_contested_stays_silent` |
+| "Renaming an open sibling's branch so that it no longer names the issue clears a warning" | No `renamed` event | `sibling_rename_out_clears_warning` |
+| "Renaming a pull request's own branch so that it now names an issue its description declares … clears a warning" | No `renamed` event | `own_rename_into_ownership_clears_warning` |
+| "Changing the repository's default branch re-evaluates the affected pull requests, even those whose own base was never touched" | No default-branch-change event | `default_branch_change_flips_filtering` — validator invoked with each default-branch value |
+
+Each is implemented as **script behaviour**: invoking the validator after the rename or the default-branch change produces the correct result, and the named test asserts it. What is not delivered is the automatic invocation. The plan states this rather than letting the criteria read as satisfied.
 
 ---
 

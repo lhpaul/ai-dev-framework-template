@@ -21,7 +21,7 @@ Before running this smoke test:
 - [ ] The implementation is merged to a branch you can open pull requests against, or you are running from the implementation branch itself.
 - [ ] `gh` is authenticated against `lhpaul/ai-dev-framework-template` with permission to open and close pull requests.
 - [ ] You can see the repository's Actions runs, to read a workflow log when a step says to.
-- [ ] The `multi-issue-intentional` label is **absent** from the repository at the start, so Step 4 exercises provisioning. If it already exists, delete it first and note that in the results.
+- [ ] Do **not** delete the `multi-issue-intentional` label if the repository already has it. Label provisioning is repository-wide shared state, and this runbook never destroys it to create a test condition. Provisioning is covered by the unit suite against a stubbed API instead — see Step 4.
 
 ---
 
@@ -65,13 +65,21 @@ against them.
 - Edit the claimant's description to remove the `Closes #<ISSUE>` line.
 - **Expected**: the existing comment is cleared or updated to a clean state. There is not a second comment.
 
-### Step 4: Exercise the opt-out and its provisioning
+### Step 4: Exercise the opt-out
 
 - Restore `Closes #<ISSUE>` in the claimant's description and wait for the warning to return.
-- Apply the `multi-issue-intentional` label to the claimant. If the label does not exist yet, confirm the repository now has it — the validation created it on first use.
+- Apply the `multi-issue-intentional` label to the claimant.
 - **Expected**: the warning clears with no push to the pull request.
 - Remove the label.
 - **Expected**: the warning returns, again with no push.
+
+**Provisioning is not tested here.** Two reasons, both structural rather than
+preference: the label is repository-wide state that this runbook must not
+destroy to create a test condition, and Step 1 already ran the validation, so
+by this point the label may exist because of *this run* — which makes any
+observation here unable to distinguish first-use creation from an earlier one.
+The `label_created_on_first_use` and `concurrent_creation_does_not_fail` unit
+tests cover it against a stubbed API, where the starting state is controlled.
 
 ### Step 5: Filtering follows the base branch
 
@@ -99,7 +107,7 @@ against them.
 
 - Close all scratch pull requests and delete their branches.
 - Close the scratch issue.
-- Remove the `multi-issue-intentional` label from the repository if it was created only for this test and the repository did not have it before.
+- Leave the `multi-issue-intentional` label in place. It is repository-wide state and a real opt-out authors may need; this runbook neither created a condition by deleting it nor removes it afterwards.
 - Confirm `develop` was not modified by any step.
 
 ---
@@ -110,7 +118,7 @@ against them.
 - [ ] A warning appears on the claimant when the owner opens, with no change to the claimant (Step 2).
 - [ ] The warning names the issue number and the sibling pull request (Step 2).
 - [ ] Correcting the description clears the warning and leaves a single comment, not two (Step 3).
-- [ ] The `multi-issue-intentional` label is created on first use in a repository that lacks it (Step 4).
+- [ ] Applying and removing the label works against a repository that already has it (Step 4). First-use creation is asserted by the unit suite, not here — see the note in Step 4.
 - [ ] Applying the label clears the warning with no push; removing it restores the warning with no push (Step 4).
 - [ ] An unclosed fence in the title suppresses the reference for a `develop`-targeting pull request, and does not for one targeting the default branch (Step 5).
 - [ ] Retargeting between the default branch and `develop` re-evaluates the pull request (Step 5).
