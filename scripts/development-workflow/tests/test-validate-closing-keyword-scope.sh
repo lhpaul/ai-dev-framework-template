@@ -551,6 +551,38 @@ F="$(new_fixtures noowner)"
 printf '0\n[{"number":101,"headRefName":"fix/555-slug","title":"t","body":"b","baseRefName":"develop"}]\n' > "$F/pulls"
 check "no_owner_is_silent" "silent" "$(verdict_of "$(run_validator "$F")")"
 
+# The spec's precondition: this validation is for IMPLEMENTATION pull requests.
+# A spec pull request legitimately declares the issue it specifies, and warning
+# on it would be noise about a closing keyword doing its job. The check also
+# runs BEFORE label provisioning, so a non-implementation pull request cannot
+# cause a repository-wide label to be created on its behalf.
+for branch in spec/97-slug implementation-plan/97-slug release/v1.2.3 docs/97-slug develop; do
+  F="$(new_fixtures "nonimpl_$(printf '%s' "$branch" | tr '/.' '__')")"
+  printf '0\n%s\n' "$branch" > "$F/pr_headRefName"
+  out="$(run_validator "$F")"
+  check "a ${branch%%/*} pull request is not validated" "silent" "$(verdict_of "$out")"
+  check_contains "and says why, rather than looking like a clean result" \
+    "NOT_VALIDATED=not_an_implementation_branch" "$out"
+done
+
+for branch in feature/97-slug fix/97-slug refactor/97-slug hotfix/97-slug backport/hotfix/97-slug feature/no-issue-number; do
+  F="$(new_fixtures "impl_$(printf '%s' "$branch" | tr '/.' '__')")"
+  printf '0\n%s\n' "$branch" > "$F/pr_headRefName"
+  out="$(run_validator "$F")"
+  check_not_contains "an implementation branch (${branch}) IS validated" \
+    "NOT_VALIDATED=" "$out"
+done
+
+# Non-vacuity: the precondition gate must be what produced those silences, not
+# some other silence. A spec branch whose description claims a sibling's issue
+# would warn if the gate were absent — the warn fixture is identical except for
+# the branch.
+F="$(new_fixtures nonimpl_would_otherwise_warn)"
+printf '0\nspec/97-slug\n' > "$F/pr_headRefName"
+check "a spec branch that would otherwise warn is silent" "silent" "$(verdict_of "$(run_validator "$F")")"
+F="$(new_fixtures impl_does_warn)"
+check "the same fixture on an implementation branch warns" "warn" "$(verdict_of "$(run_validator "$F")")"
+
 F="$(new_fixtures optout)"
 printf '0\nmulti-issue-intentional\n' > "$F/pr_labels"
 check "the_opt_out_label_silences_the_warning" "silent" "$(verdict_of "$(run_validator "$F")")"

@@ -255,11 +255,6 @@ read_all_inputs() {
   record_input base_branch gh_pr_field baseRefName '.baseRefName // ""'
   PR_BASE="$LAST_INPUT_VALUE"
   record_input head_branch gh_pr_field headRefName '.headRefName // ""'
-  # A gate input in the spec's matrix — it decides whether this pull request
-  # owns an issue it declares — and so it belongs in the freshness snapshot
-  # even though ownership is resolved from the open-PR listing, which carries
-  # this pull request's own branch too.
-  # shellcheck disable=SC2034  # read for the snapshot; ownership uses the listing
   PR_HEAD_BRANCH="$LAST_INPUT_VALUE"
   record_input pr_state gh_pr_field state '.state // ""'
   PR_STATE="$LAST_INPUT_VALUE"
@@ -375,7 +370,19 @@ description_live_refs() {
 # issue, not the work that closes it.
 # --------------------------------------------------------------------------
 
-BRANCH_OWNS_ISSUE_PATTERN_PREFIX='^(feature|fix|refactor|hotfix|backport/hotfix)/([A-Z][A-Z0-9]*-)?'
+IMPLEMENTATION_BRANCH_PREFIXES='^(feature|fix|refactor|hotfix|backport/hotfix)/'
+BRANCH_OWNS_ISSUE_PATTERN_PREFIX="${IMPLEMENTATION_BRANCH_PREFIXES}([A-Z][A-Z0-9]*-)?"
+
+# is_implementation_branch <branch>
+# The spec's precondition: this validation is for IMPLEMENTATION pull requests.
+# A spec, plan, release or docs pull request is not one, and warning on it
+# would be noise about a closing keyword that is doing its job — a spec PR
+# legitimately declares the issue it specifies. Ownership is a separate
+# question with a stricter pattern; this is only "is this the kind of pull
+# request the feature is about".
+is_implementation_branch() {
+  printf '%s' "$1" | grep -qE "$IMPLEMENTATION_BRANCH_PREFIXES"
+}
 
 branch_owns_issue() {
   local branch="$1" issue="$2"
@@ -408,6 +415,7 @@ owners_of_issue() {
 VERDICT=""
 REPORT_ROWS=""
 LABEL_WARNING=""
+NOT_VALIDATED_REASON=""
 
 decide() {
   local refs issue owners owner_count sole_owner
@@ -423,6 +431,16 @@ decide() {
   # in between.
   if [ "$PR_STATE" != "OPEN" ]; then
     VERDICT="silent"
+    return 0
+  fi
+
+  # The spec's precondition: an implementation pull request. Checked before the
+  # opt-out and before any label provisioning, so a spec or release pull
+  # request neither warns nor causes a repository-wide label to be created on
+  # its behalf.
+  if ! is_implementation_branch "$PR_HEAD_BRANCH"; then
+    VERDICT="silent"
+    NOT_VALIDATED_REASON="not_an_implementation_branch"
     return 0
   fi
 
@@ -739,6 +757,7 @@ main() {
   decide
 
   echo "VERDICT=${VERDICT}"
+  [ -z "$NOT_VALIDATED_REASON" ] || echo "NOT_VALIDATED=${NOT_VALIDATED_REASON}"
   echo "STAMP=$(own_stamp)"
   if [ "$VERDICT" = "indeterminate" ]; then
     echo "UNREADABLE_INPUTS=$(unreadable_inputs | tr '\n' ',' | sed 's/,$//')"
