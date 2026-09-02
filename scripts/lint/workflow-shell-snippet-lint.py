@@ -59,7 +59,12 @@ def diff_text(base_ref: str | None, input_file: str | None) -> str:
 # things: `+++ b/<path>` file headers and well-formed `@@ -a,b +c,d @@` hunk
 # headers. `+++ /dev/null` is a deletion, which is a real header with nothing
 # to examine behind it.
-DIFF_GIT_HEADER = re.compile(r"(?m)^diff --git ")
+# A complete `diff --git` header names two paths. Requiring the second one keeps
+# a prose line that merely starts with "diff --git " from standing in as
+# evidence of a Git record. Paths are matched loosely on purpose: git does not
+# quote a path containing spaces in this header, so "diff --git a/a b.txt
+# b/a b.txt" is valid output and must not be rejected.
+DIFF_GIT_HEADER = re.compile(r"(?m)^diff --git \S+ \S[^\n]*$")
 DIFF_HUNK_HEADER = re.compile(r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
 DIFF_TARGET_HEADER = re.compile(r"(?m)^\+\+\+ (?:b/\S|/dev/null\s*$)")
 

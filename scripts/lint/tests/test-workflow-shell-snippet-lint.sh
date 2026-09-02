@@ -169,6 +169,25 @@ else
   check no_prefix_diff_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
 
+# A line that merely starts with "diff --git " is not a header: a complete one
+# names two paths. Without that check, prose could stand in as evidence of a
+# metadata-only Git record and exit 0.
+printf '%s\n' 'diff --git notas' 'some prose' > "$TMP_DIR/partial-git-header.diff"
+check partial_git_header_refused 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/partial-git-header.diff")"
+check partial_git_header_allow_empty_still_errors 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/partial-git-header.diff" --allow-empty)"
+if grep -q "expects a unified diff" "$TMP_DIR/last.out"; then
+  check partial_git_header_reason not_a_diff not_a_diff
+else
+  check partial_git_header_reason not_a_diff "$(head -1 "$TMP_DIR/last.out")"
+fi
+# A path containing a space is not quoted in this header; the check must still
+# accept it.
+printf '%s\n' 'diff --git a/docs/workflow/a b.md b/docs/workflow/a b.md' 'old mode 100644' 'new mode 100755' > "$TMP_DIR/spaced-path.diff"
+check spaced_path_metadata_only_passes 0 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/spaced-path.diff")"
+
 # A genuine Git record with no textual changes — a mode-only change, a binary
 # file, a pure rename — has no hunk and no `+++` header, and there is nothing
 # for this parser to attribute. That is a legitimate zero, and refusing it would
@@ -253,7 +272,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced
