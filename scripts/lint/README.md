@@ -101,6 +101,28 @@ python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop
 bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh
 ```
 
+**Exit 0 without an examined count is not evidence.** Every run prints a
+summary line — `examined=N files, M fences, K changed-lines (source: ...);
+findings=N` — precisely so a silent success cannot be mistaken for a real pass.
+If `examined=0`, no WS rule ran and the run proves nothing about WS001–WS006.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | The run examined its scope and found nothing. `examined=0 files` here means the diff was well formed but touched no in-scope guidance file — a legitimate "nothing to check", announced on stderr. |
+| `1` | Findings were reported. |
+| `2` | The run examined nothing and refuses to be read as a pass: the diff was empty, the `--input` file was not a unified diff, or `git diff` failed. |
+
+`--input` / `--diff-file` takes a **unified diff**, not a path list. A path list
+was previously parsed as an empty diff and exited 0 while a real WS002 was still
+present (PR #1646); it is now an error. Produce the diff with
+`git diff --unified=0 <base>...HEAD`, or use `--base-ref` and let the script run
+`git diff` itself.
+
+`--base-ref` diffs **committed** history (`<base>...HEAD`), so uncommitted work
+is invisible to it: run it after committing, or the empty-diff refusal will
+tell you so. Pass `--allow-empty` only where an empty diff is genuinely
+expected. `--all` reads no diff and is exempt from the refusal.
+
 **Tests:**
 
 ```bash
