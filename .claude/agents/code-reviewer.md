@@ -31,4 +31,5 @@ That document is the single source of truth for this review stage. Always read t
 
 When dispatched for **Pass 1 (Spec Compliance)**: evaluate only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. Do not evaluate code quality items.
 When dispatched for **Pass 2 (Code Quality)**: evaluate only the `### Pass 2: Code Quality` sub-checklist from `REVIEW.md`. Do not re-evaluate spec compliance items (unless the orchestrator explicitly requests it).
+When the change under review touches workflow-policy surfaces — `REVIEW.md`, the root agent instruction files, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `scripts/development-workflow/**`, or the per-tool instruction trees `.claude/**`, `.cursor/**`, `.codex/**` and `.agents/**` — also evaluate the `## Workflow Policy Review Checklist`, in addition to the dispatched pass.
 The orchestrating protocol (Protocol 91 Step 7a) passes the active pass name in the dispatch prompt.

@@ -2,6 +2,25 @@
 
 set -euo pipefail
 
+# The review doctrine's maximum size, in bytes as `wc -c` measures them.
+# AC-12: one source of truth, read by both the linter and the reviewer.
+if declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
+  case "$(declare -p REVIEW_DOCTRINE_MAX_BYTES 2>/dev/null || true)" in
+    *"-r"*)
+      if [ "${REVIEW_DOCTRINE_MAX_BYTES}" != "12000" ]; then
+        echo "ERROR: REVIEW_DOCTRINE_MAX_BYTES is readonly at ${REVIEW_DOCTRINE_MAX_BYTES}; AC-12 requires 12000." >&2
+        return 1
+      fi
+      ;;
+    *)
+      unset REVIEW_DOCTRINE_MAX_BYTES
+      readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+      ;;
+  esac
+else
+  readonly REVIEW_DOCTRINE_MAX_BYTES=12000
+fi
+
 workflow_script_dir() {
   if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     printf 'ERROR: BASH_SOURCE[0] is unset — source workflow-lib.sh from a Bash script or via:\n  bash -c "source scripts/development-workflow/workflow-lib.sh"\n' >&2
@@ -474,6 +493,51 @@ reviewer_for_branch() {
 
 print_kv() {
   printf '%s=%s\n' "$1" "$2"
+}
+
+# configured_reviewer_check_names_json [config_file]
+#
+# Returns a JSON array of GitHub check-run names owned by configured review
+# platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot). Shared by
+# pr-ci-loop.sh (to exclude reviewer checks from the baseline CI set) and
+# pr-review-loop.sh (expensive-reviewer gate baseline-check classification).
+# Relocated from pr-ci-loop.sh (#1649) with no behavior change.
+configured_reviewer_check_names_json() {
+  local config_file="${1:-}"
+  local platform=""
+  local -a names=()
+
+  if [ -z "$config_file" ]; then
+    config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  fi
+
+  if [ -f "$config_file" ]; then
+    while IFS= read -r platform; do
+      platform="$(printf '%s' "$platform" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -z "$platform" ] && continue
+      case "$platform" in
+        haystack)
+          names+=("${HAYSTACK_CHECK_NAME:-Haystack / Review}")
+          ;;
+        bugbot)
+          names+=("${BUGBOT_CHECK_NAME:-Cursor Bugbot}")
+          ;;
+      esac
+    done < <(
+      if [ "$config_file" = "$(workflow_config_file)" ]; then
+        WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file"
+      else
+        workflow_config_review_platforms "$config_file"
+      fi
+    )
+  fi
+
+  if [ "${#names[@]}" -eq 0 ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  printf '%s\n' "${names[@]}" | jq -R . | jq -s .
 }
 
 print_kv_escaped() {
@@ -3325,4 +3389,69 @@ _workflow_lowti_candidate_keys_json() {
     return 0
   fi
   printf '%s\n' "${keys[@]}" | jq -R . | jq -sc .
+}
+
+# workflow_is_plan_document_path <path>
+#
+# True when path is an implementation-plan document under docs/specs/developments/.
+# Shared by check-documentation-stage-alignment.sh and local-ai-reviewer.sh (#1655).
+workflow_is_plan_document_path() {
+  local path="$1"
+  [[ "$path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]]
+}
+
+# ---------------------------------------------------------------------------
+# Reviewer-loop history comment format (#1657 — shared producer/reader)
+# ---------------------------------------------------------------------------
+
+# Shared with pr-review-loop.sh and reviewer-effectiveness-report.sh (#1657).
+# shellcheck disable=SC2034
+REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
+REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
+
+reviewer_loop_history_extract_latest_json() {
+  awk -v marker="$REVIEWER_LOOP_HISTORY_MARKER" '
+    index($0, marker) > 0 {
+      seen_marker = 1
+      in_json = 0
+      block = ""
+      next
+    }
+    seen_marker && $0 ~ /^```json[[:space:]]*$/ {
+      in_json = 1
+      block = ""
+      next
+    }
+    in_json && $0 ~ /^```[[:space:]]*$/ {
+      latest = block
+      in_json = 0
+      seen_marker = 0
+      next
+    }
+    in_json {
+      block = block $0 "\n"
+    }
+    END {
+      printf "%s", latest
+    }
+  '
+}
+
+reviewer_loop_history_select_latest_summary_record() {
+  jq -rs '
+    (add // []) as $all
+    | [
+        $all[]
+        | select(
+            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+          )
+      ]
+    | sort_by(.created_at)
+    | last
+    | {
+        id: (.id // ""),
+        body: (.body // "")
+      }
+  '
 }

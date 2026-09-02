@@ -216,6 +216,31 @@ Use this when:
 - A downstream private repository may inherit template workflows that are
   zero-billable in the public template but expensive after sync
 
+### `reviewer-effectiveness-report.sh`
+
+Read-only report of reviewer-loop effectiveness from persisted history comments.
+Supports a single pull request (`--pr`) or a window of the most recent *n* pull
+requests (default **20**; pass `--window` to change it — no config or env override).
+
+Usage:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --window 20 --repo owner/repo
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234 --json
+```
+
+The seven measures, three exclusion reasons (`no_history`, `unparseable_history`,
+`history_unavailable`), and per-measure `not_recorded` states are documented in
+the `--help` output and in issue #1657's spec.
+
+Use this when:
+
+- You need evidence on whether the local reviewer is reducing external review
+  cycles, not just whether it ran
+- You are deciding whether a strict check earns the right to block
+
 ### `add-backlog-item.sh`
 
 Resolves the configured issue tracker destination for backlog creation and can create a GitHub issue when `issue_tracker.provider` maps to GitHub Issues / GitHub Projects.

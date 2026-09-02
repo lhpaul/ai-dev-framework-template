@@ -72,6 +72,44 @@ run_test "local_ai_reviewer_preserves_needs_rerun_mapping" "present" "$actual"
 
 unset -f run_local_ai_reviewer_review
 
+# Issue #1648: LOCAL_AI_* stdout contract for dispatch surfaces
+_1648_ancestor_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+_1648_live_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+platforms=(local-ai-reviewer)
+platform_reviewed_heads=("local-ai-reviewer:$_1648_ancestor_sha")
+loop_head_sha="$_1648_live_sha"
+_1648_dispatch_out="$(mktemp)"
+reviewer_loop_emit_local_ai_head_evidence_keys > "$_1648_dispatch_out"
+run_test "1648_dispatch_stale_local_head_current" "LOCAL_AI_HEAD_CURRENT=0" \
+  "$(grep '^LOCAL_AI_HEAD_CURRENT=' "$_1648_dispatch_out")"
+run_test "1648_dispatch_stale_local_reviewed_head" "LOCAL_AI_REVIEWED_HEAD=$_1648_ancestor_sha" \
+  "$(grep '^LOCAL_AI_REVIEWED_HEAD=' "$_1648_dispatch_out")"
+
+platforms=(pr-agent)
+platform_reviewed_heads=()
+loop_head_sha="$_1648_live_sha"
+reviewer_loop_emit_local_ai_head_evidence_keys > "$_1648_dispatch_out"
+run_test "1648_dispatch_not_configured" "LOCAL_AI_CONFIGURED=0" \
+  "$(grep '^LOCAL_AI_CONFIGURED=' "$_1648_dispatch_out")"
+
+platforms=(local-ai-reviewer)
+platform_reviewed_heads=("local-ai-reviewer:")
+loop_head_sha="$_1648_live_sha"
+reviewer_loop_emit_local_ai_head_evidence_keys > "$_1648_dispatch_out"
+run_test "1648_dispatch_missing_reviewed_head" "LOCAL_AI_HEAD_CURRENT=" \
+  "$(grep '^LOCAL_AI_HEAD_CURRENT=' "$_1648_dispatch_out")"
+run_test "1648_dispatch_configured_no_head" "LOCAL_AI_CONFIGURED=1" \
+  "$(grep '^LOCAL_AI_CONFIGURED=' "$_1648_dispatch_out")"
+
+platforms=(local-ai-reviewer)
+platform_reviewed_heads=("local-ai-reviewer:$_1648_live_sha")
+loop_head_sha="$_1648_live_sha"
+reviewer_loop_emit_local_ai_head_evidence_keys > "$_1648_dispatch_out"
+run_test "1648_dispatch_current_head" "LOCAL_AI_HEAD_CURRENT=1" \
+  "$(grep '^LOCAL_AI_HEAD_CURRENT=' "$_1648_dispatch_out")"
+rm -f "$_1648_dispatch_out"
+unset _1648_ancestor_sha _1648_live_sha _1648_dispatch_out platforms platform_reviewed_heads loop_head_sha
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
   exit 1

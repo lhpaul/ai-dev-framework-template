@@ -36,6 +36,11 @@ print_result() {
   print_kv SUGGESTION_COUNT "$suggestion_count"
   [ -n "$reason" ] && print_kv REASON "$reason"
   [ -n "$display_result" ] && print_kv DISPLAY_RESULT "$display_result"
+  # #1651: the CLI reviews the PR head it already resolved and matched.
+  # Emit only when exactly one head is known; leave absent otherwise (AC-11).
+  if [ -n "${HEAD_SHA:-}" ]; then
+    print_kv REVIEWED_HEAD "$HEAD_SHA"
+  fi
   return 0
 }
 

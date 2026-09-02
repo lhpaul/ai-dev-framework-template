@@ -25,6 +25,10 @@ Use it for every pre-PR review gate and as the normalization layer for PR review
 
 When a review references mirrored agent docs, compare the live repository surface map before treating the finding as blocking. A `Rules violation` that only points at tool-specific front matter differences or an absent `.cursor/skills` tree is advisory only; a real mismatch between mirrored workflow bodies is actionable.
 
+### Small-finding terminal policy
+
+A **blocking** finding on a normative document (spec, plan, protocol, `REVIEW.md`, best-practices, project docs, or the agent guidance files) is never classified as small, whatever its wording. On other non-shipped documentation paths, a finding that touches a contract surface (acceptance criteria, decision gates/matrices, fail-closed semantics, and related allow-listed phrases) is escalated to non-small; a cosmetic blocking finding may still terminate the small-findings tail. The terminal rule requires both its prior counted rounds and the round being decided to be on the current PR head. When the rule does not fire for a content or currency cause, `SMALL_FINDINGS_BLOCKED_BY` reports one of `shipped_path`, `contract_surface`, `stale_head`, or `head_unknown` (within-group precedence: `shipped_path` over `contract_surface`, `stale_head` over `head_unknown`). Full detail lives in Protocol 93's small-finding terminal policy section.
+
 ### Fix vs. Report
 
 Fix directly when:
@@ -373,6 +377,37 @@ Typical `important` issues:
 - Important edge cases missed
 - Unnecessary complexity
 - Inconsistent architecture or unclear code structure
+
+---
+
+## Workflow Policy Review Checklist
+
+For changes to the documents and scripts that define how the workflow itself
+behaves — `REVIEW.md`, the root agent instruction files, `.ai-dev-workflow.yaml`,
+`docs/workflow/**`, `docs/best-practices/**`, `scripts/development-workflow/**`,
+and the per-tool instruction trees `.claude/**`, `.cursor/**`, `.codex/**`, and
+`.agents/**` — apply this checklist in addition to the stage checklist the
+branch implies.
+
+1. Does every stated count match what the document actually contains, by
+   extraction rather than by reading?
+2. Does every gate name its inputs, its decision for each combination of
+   them, and its behavior when an input is missing or malformed?
+3. Does a rule asserted as fail-closed have a path that reaches the
+   permissive branch — an allow-list stated as a deny-list, an empty set
+   treated as satisfied, an absent value treated as a match?
+4. Does every new or modified check carry a planted-violation proof at a
+   concrete file and line, and can the plant actually change the check's
+   answer? A proof whose plant is masked by an earlier rule is not a
+   proof.
+5. Does the change alter a `key=value` contract, a JSON schema version, or
+   a stdout surface another script parses, and if so is every consumer
+   named?
+6. Do the protocol document, the integration document and the `--help`
+   output describe the same behavior as the code?
+7. Does every catalogue entry read generally — no person's name, no document
+   title, no wording that only makes sense to someone who saw the original
+   incident?
 
 ---
 

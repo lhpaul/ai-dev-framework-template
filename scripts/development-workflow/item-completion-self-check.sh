@@ -376,6 +376,45 @@ fetch_latest_review_summary() {
   printf '%s\n' "$latest"
 }
 
+extract_reviewer_loop_history_json() {
+  awk '
+    index($0, "<!-- reviewer-loop-history:v1 -->") > 0 {
+      seen_marker = 1
+      in_json = 0
+      block = ""
+      next
+    }
+    seen_marker && $0 ~ /^```json[[:space:]]*$/ {
+      in_json = 1
+      block = ""
+      next
+    }
+    in_json && $0 ~ /^```[[:space:]]*$/ {
+      latest = block
+      in_json = 0
+      seen_marker = 0
+      next
+    }
+    in_json {
+      block = block $0 "\n"
+    }
+    END {
+      printf "%s", latest
+    }
+  '
+}
+
+local_ai_reviewer_configured() {
+  local config_file
+  local platform
+
+  config_file="$(workflow_effective_config_file)"
+  while IFS= read -r platform; do
+    [ "$platform" = "local-ai-reviewer" ] && return 0
+  done < <(configured_review_platforms "$config_file")
+  return 1
+}
+
 fetch_unreplied_rest_review_comments_count() {
   local repo="$1"
   local number="$2"
@@ -715,6 +754,40 @@ if [ -n "$pr_number" ]; then
         else
           add_row "pull_request.review_summary" "unavailable_optional" "$latest_review_summary" "review summary not required for this terminal claim"
         fi
+      fi
+
+      if ! is_true "$require_review_summary"; then
+        add_row "pull_request.local_reviewer_head" "unavailable_optional" "not claimed" "--require-review-summary not set"
+      elif ! local_ai_reviewer_configured; then
+        add_row "pull_request.local_reviewer_head" "unavailable_optional" "local-ai-reviewer not configured" "resolved platform list"
+      elif latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
+        if [ -n "$latest_review_summary" ]; then
+          ledger_json="$(printf '%s\n' "$latest_review_summary" | extract_reviewer_loop_history_json)"
+          if [ -z "$ledger_json" ] \
+              || ! ledger_payload="$(printf '%s\n' "$ledger_json" | jq -c '.' 2>&1)"; then
+            add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger unreadable" "reviewer_loop_history.v1 in summary comment"
+          elif ! printf '%s\n' "$ledger_payload" | jq -e '.entries[-1].reviewed_heads? | type == "array"' >/dev/null 2>&1; then
+            add_row "pull_request.local_reviewer_head" "unavailable_required" "pre-field ledger entry" "reviewed_heads missing from newest entry"
+          elif ledger_local_head="$(printf '%s\n' "$ledger_payload" | jq -r '.entries[-1].reviewed_heads[]? | select(.platform == "local-ai-reviewer") | .reviewed_head // ""' | head -n 1)"; then
+            if [ -z "$ledger_local_head" ]; then
+              add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "newest reviewed_heads entry"
+            elif [ -z "${pr_head_oid:-}" ]; then
+              add_row "pull_request.local_reviewer_head" "unavailable_required" "live headRefOid unavailable" "gh pr view headRefOid"
+            elif [ "$ledger_local_head" = "$pr_head_oid" ]; then
+              add_row "pull_request.local_reviewer_head" "verified" "ledger head matches live headRefOid" "reviewer_loop_history.v1 reviewed_heads"
+            else
+              add_row "pull_request.local_reviewer_head" "discrepancy" "ledger head ${ledger_local_head} != live ${pr_head_oid}" "reviewer_loop_history.v1 reviewed_heads"
+            fi
+          else
+            add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger parse failed" "reviewer_loop_history.v1 reviewed_heads"
+          fi
+        elif is_true "$require_review_summary"; then
+          add_row "pull_request.local_reviewer_head" "unavailable_required" "missing reviewer-loop summary" "gh api repos/$pr_repo/issues/$pr_number/comments --paginate"
+        else
+          add_row "pull_request.local_reviewer_head" "unavailable_optional" "not claimed" "review summary not required for this terminal claim"
+        fi
+      else
+        add_row "pull_request.local_reviewer_head" "unavailable_required" "$latest_review_summary" "gh api repos/$pr_repo/issues/$pr_number/comments --paginate"
       fi
 
       if is_true "$require_review_threads"; then

@@ -1,0 +1,8 @@
+{
+  "schema": "reviewer_loop_history.v1",
+  "pr_number": 102,
+  "updated_at": "2026-08-01T00:00:00Z",
+  "history_status": "unavailable",
+  "history_unavailable_reason": "history_render_failed",
+  "entries": []
+}

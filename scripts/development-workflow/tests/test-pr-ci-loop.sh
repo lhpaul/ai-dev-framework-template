@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-pr-ci-loop.sh - CI loop verdict tests.
 # covers: scripts/development-workflow/pr-ci-loop.sh
+# covers: scripts/development-workflow/workflow-lib.sh
 #
 # Focus: the CI-evidence gate (#1514, #1580). "No failing and no pending
 # checks" is not evidence that CI ran — a head can legitimately carry zero

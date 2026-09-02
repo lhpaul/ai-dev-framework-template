@@ -180,6 +180,173 @@ PR comments (including during the async grace-period poll) must be treated as
 unavailable and must not let a clean submitted review be accepted before the
 root comments are known. Fail closed, not open.
 
+#### Missed-finding telemetry (`missed_findings`)
+
+When an **external** reviewer reports **blocking** findings on an attributable
+commit, `pr-review-loop.sh` writes a `missed_findings[]` element into that
+round's `reviewer_loop_history.v1` entry (schema string unchanged). Each
+element records the external reviewer, the reviewed commit (joined from
+`reviewed_heads[]`, never from `loop_head_sha`), the blocking count, every
+distinct finding path, the local evidence state, and a three-value
+`classification`: `confirmed_miss` (`clean_same_commit`), `possible_miss`
+(`clean_earlier_commit`), or `not_a_miss` (every other state, including
+`unknown`).
+
+The local evidence state is derived from the local reviewer's **most recent**
+verdict (not its most recent *clean* verdict), using per-platform
+`platform_results` plus `reviewed_heads[]`. The current round is composed as a
+synthetic entry before selection so a same-round local clean + external block
+is visible. Records accumulate; they never change readiness, labels, or merge
+decisions.
+
+Summary lines are one per record, at most 200 characters, with at most three
+named paths and an always-stated file total. When history cannot be appended
+to and a record was owed, the prior history block is left byte-for-byte
+unchanged and the summary reports the telemetry failure; when no record was
+owed, an unwritable history produces no telemetry-failure report.
+
+#### Expensive reviewer gate (`codex-github`)
+
+Before dispatching an expensive reviewer (`codex-github` today),
+`pr-review-loop.sh` evaluates a dedicated pre-dispatch gate. Membership is a
+fixed property of the reviewer (`EXPENSIVE_REVIEWER_PLATFORMS`), not repository
+config. Expensive reviewers are reordered last **within their own phase
+bucket** (draft vs ready / `phase_after_clean`) so peer evidence is reachable;
+the reorder never crosses the draft/ready boundary.
+
+Conditions are evaluated in order and stop at the first unmet one:
+
+1. **Local current-head evidence** — `local-ai-reviewer` is in the resolved
+   platform list and its `platform_reviewed_heads` entry classifies as
+   `current` against `loop_head_sha`. Exact-match allow-list: both derived
+   values must be the literal `1`. Missing, unexpected, or stale values defer
+   (`local_reviewer_not_configured`, `local_evidence_missing`, or
+   `local_evidence_stale`). Derived from in-loop state — never from the
+   `LOCAL_AI_*` stdout keys as environment variables. On `spec/*` branches the
+   local reviewer also runs a second, non-blocking strict-spec pass (see
+   [`integrations/local-ai-reviewer.md`](../integrations/local-ai-reviewer.md)
+   and [`strict-spec-checks.md`](../strict-spec-checks.md)); `STRICT_SPEC_*`
+   keys and the history `strict_spec` object never change the ordinary verdict.
+   On `implementation-plan/*` branches the local reviewer may run a second,
+   non-blocking strict-plan pass when at least one implementation-plan document
+   changed (see [`strict-plan-checks.md`](../strict-plan-checks.md));
+   `STRICT_PLAN_*` keys (including `STRICT_PLAN_APPLIED` when applied) and the
+   history `strict_plan` object never change the ordinary verdict. At most one
+   strict checklist reaches `applied` per review.
+   The local reviewer also emits `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE`, and
+   `REVIEW_CHECKLISTS` on stdout; `pr-review-loop.sh` forwards them into loop
+   summaries as `PLATFORM_<n>_REVIEW_STAGE`, `PLATFORM_<n>_REVIEW_STAGE_SOURCE`,
+   and `PLATFORM_<n>_REVIEW_CHECKLISTS`. It also emits `REVIEW_DOCTRINE_STATE`,
+   `REVIEW_DOCTRINE_PATTERN_COUNT`, and `REVIEW_DOCTRINE_VERSION`; the loop
+   forwards them as `PLATFORM_<n>_REVIEW_DOCTRINE_STATE`,
+   `PLATFORM_<n>_REVIEW_DOCTRINE_PATTERN_COUNT`, and
+   `PLATFORM_<n>_REVIEW_DOCTRINE_VERSION`.
+2. **Preceding peer evidence** — every platform that precedes this reviewer
+   under the reordered list (same-bucket non-expensive peers plus every earlier
+   bucket) has already run with acceptable evidence: `clean`, or `skipped`
+   whose reason is a member of
+   `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`
+   (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`)
+   **and** `reviewer_failed_label_required_for_result` returns false. Peer set
+   is phase-scoped, not the whole list — a draft-phase expensive reviewer does
+   not wait on ready-phase peers.
+3. **Review threads** — zero unresolved, non-outdated review threads, bound to
+   the same `loop_head_sha` (else `evidence_head_moved` /
+   `evidence_unavailable_review_threads`).
+4. **Baseline checks** — the non-reviewer check set on `loop_head_sha` is
+   **non-empty** and every member is `SUCCESS`, `SKIPPED`, or `NEUTRAL`. An
+   empty set defers with `baseline_checks_unobserved` (vacuous-green is not
+   green). Reviewer-owned check names from
+   `configured_reviewer_check_names_json` are excluded.
+
+Fail-closed on unreadable inputs (`evidence_unavailable_head`,
+`evidence_unavailable_review_threads`, `evidence_unavailable_checks`).
+
+A **deferred** outcome sets the loop aggregate to `needs_fixes` with
+`REASON=expensive_gate_deferred` so readiness is withheld and Step 7 re-runs;
+it also **breaks** the platform iteration immediately so a later ready-phase
+platform cannot call `gh pr ready`. When the ready-phase transition is about
+to start and any **remaining** ready-phase platform is expensive, the loop
+**preflights** those expensive gates **before** `ensure_pr_ready_for_ready_phase`
+/ `gh pr ready`, because vendors such as Codex may auto-start a review when a
+draft is marked ready. That preflight uses peer scope `earlier_buckets` only
+(draft peers + local/thread/baseline checks) so same-bucket ready peers such as
+`bugbot` — which themselves require the PR to be ready — cannot deadlock the
+transition. The full per-platform gate (including same-bucket peers) still runs
+again immediately before `run_platform_review`. Deferrals are bounded by a head-scoped
+occurrence counter (`PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, default `3`) —
+the existing cycle caps cannot bound them because they unique-bucket
+`needs_fixes` by head+result. At the cap the loop escalates with
+`RESULT=escalate`. `EXPENSIVE_GATE_ESCALATION` is emitted **only** on a
+`deferral_cap` result and is one of:
+
+- `expensive_gate_deferral_cap` — budget exhausted for this head
+- `expensive_gate_deferral_budget_unreadable` — ledger marker present but
+  unreadable (`EXPENSIVE_GATE_DEFERRALS=-1`); an *absent* ledger is `0` and
+  defers normally
+
+`PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` bypasses the gate for manual
+escalation: the gate still evaluates and emits `EXPENSIVE_GATE_RESULT=forced`
+with the reason it would have deferred; justify use in the PR. Forced runs do
+not set the `needs_fixes` aggregate.
+
+Telemetry keys: `EXPENSIVE_GATE_PLATFORM`, `EXPENSIVE_GATE_RESULT`,
+`EXPENSIVE_GATE_REASON`, `EXPENSIVE_GATE_HEAD`, `EXPENSIVE_GATE_DEFERRALS`,
+`EXPENSIVE_GATE_MAX_DEFERRALS`, and (on `deferral_cap` only)
+`EXPENSIVE_GATE_ESCALATION`. The summary comment includes an
+`**Expensive reviewer gate:**` line; the `reviewer_loop_history.v1` entry
+carries an additive `expensive_gate` object (`platform`, `result`, `reason`,
+`head`).
+
+### Second local pass before the ready-phase gate (#1656)
+
+Immediately before `ensure_pr_ready_for_ready_phase`, when ready-phase platforms
+are configured, the loop evaluates whether the local reviewer's most recent
+verdict is **clean on `loop_head_sha`**. When it is not — because the head moved
+after a fix, prior findings remain, or the invocation omitted a configured local
+reviewer — the loop dispatches `local-ai-reviewer` **once** and requires that
+pass to be clean before converting the PR to ready or dispatching ready-phase
+reviewers. This is a **re-dispatch**, complementary to the expensive-reviewer
+gate's refusal when evidence is missing for other reasons.
+
+The condition reads the repository's configured platform list
+(`reviewer_loop_repo_configured_platforms`), not the invocation-filtered
+`platforms[]` array, so an explicit `--platform` run that omits a configured
+local reviewer still owes a pass when evidence is stale.
+
+**Reasons** (`LOCAL_SECOND_PASS_REASON`, always emitted):
+
+| Reason | Meaning |
+| --- | --- |
+| `not_required` | Current-head clean evidence exists; no pass ran |
+| `head_changed` | Verdict is clean on an older commit |
+| `prior_findings` | Verdict is not clean |
+| `no_evidence` | Configured local reviewer has not reported on this head |
+| `no_local_reviewer` | Repository has no local reviewer configured; gate proceeds |
+| `failed_for_head` | A prior pass failed on this head; refusing without dispatch |
+| `head_moved_during_pass` | Live PR head does not match `loop_head_sha` on a proceed path. This includes a clean second pass whose head then moved, and also `not_required` / `no_local_reviewer` paths that never dispatched a pass because the live-head re-read failed the equality test. The cycle still uses aggregate `REASON=head_moved_during_run`. |
+| `local_pass_unavailable` | Pass skipped, escalated, unparseable, or clean without current-head `REVIEWED_HEAD` evidence |
+
+After a pass returns `RESULT=clean`, the guard verifies the pass output's
+`REVIEWED_HEAD` classifies as current on `loop_head_sha` (via
+`reviewer_loop_head_evidence_classify`) before proceeding; missing or stale head
+evidence maps to `local_pass_unavailable`. The check reads the just-dispatched
+pass output, not the first `platform_reviewed_heads` entry from earlier in the
+same invocation. Every proceed path — including `not_required` and
+`no_local_reviewer`, which do not dispatch a pass — then re-reads the live PR
+head with `gh pr view` and compares it to `loop_head_sha`. An empty or
+unreadable snapshot maps to `local_pass_unavailable`; a mismatch maps to
+`head_moved_during_pass` with aggregate `REASON=head_moved_during_run`.
+
+Telemetry: `LOCAL_SECOND_PASS=0|1` and `LOCAL_SECOND_PASS_REASON=<reason>`.
+When a pass fails on an unchanged head, the ledger entry records
+`local_second_pass_failed_head`. The summary comment includes
+`**Second local pass:** second local pass: <reason> → <result>` when a pass ran.
+
+The pass does not increment `CYCLE_COUNT` or `TOTAL_CYCLE_COUNT`. A failed pass
+on an unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` on
+the next cycle (cross-invocation), without relying on cycle caps.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks
@@ -695,23 +862,53 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
    low-confidence cases; repeated low-confidence security labels indicate reviewer
    calibration drift, not necessarily a code defect.
 
-5. **Small non-shipped-artifact tail**: `pr-review-loop.sh` may stop a repeated
+5. **Small-finding terminal policy**: `pr-review-loop.sh` may stop a repeated
    small-findings tail when all of the following are true:
    - The current review result would otherwise be `needs_fixes`.
-   - Every blocking finding with a machine-readable path targets a non-shipped
-     artifact such as docs, tests, fixtures, snapshots, or markdown.
+   - Every **blocking** finding is classified as small under the two-tier rule
+     below. Advisory and suggestion-level findings never reach this rule.
    - The strict GraphQL review-thread audit reports
      `UNRESOLVED_THREAD_COUNT=0`.
+   - Both the prior counted rounds **and** the round being decided were
+     produced on the current PR head (`loop_head_sha`): each prior ledger
+     entry's `classification_head` must equal the current head, its
+     `contributing_platforms[]` must be non-empty, and every named contributor
+     must have a valid `reviewed_heads[]` head equal to that
+     `classification_head`; every contributor to the deciding round must
+     likewise report `loop_head_sha`. An absent, empty, or synthetic
+     `unknown-…` head ends the consecutive run (`head_unknown`) rather than
+     counting as current.
    - The latest reviewer-loop history already contains enough consecutive
-     `small_findings_only=true` rounds for the current round to reach
-     `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` (default `2`).
+     qualifying `small_findings_only=true` rounds for the current round to
+     reach `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` (default `2`).
+
+   **Two-tier small classification** (blocking findings only):
+
+   | Finding path | Blocking finding is small? |
+   | --- | --- |
+   | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever its wording |
+   | Any other non-shipped path — `CHANGELOG.md`, fixtures, snapshots, and other non-shipped `*.md` outside the normative set | Small **unless** its body touches a contract surface (acceptance criteria, decision gates/matrices, parser/input behavior, scope/coverage, fail-closed semantics, state/status models, telemetry/contracts, proof obligations). Matching is case-insensitive on POSIX word boundaries; bare common words such as `gate`, `scope`, or `state` alone do not match. |
+   | A shipped path | Never |
 
    When this rule fires, the script emits `RESULT=clean`,
    `REASON=small_findings_terminal`, `SMALL_FINDINGS_STOP=1`, and records
-   `small_findings_paths` in the summary history. This is only a review-loop
-   terminal condition: the caller must still run exact-head tests, exact-head CI,
-   readiness self-checks, and merge gates. The summary's `Unreviewed tail` line
-   is the audit record for the non-shipped findings that ended the review loop.
+   `small_findings_paths` plus `contributing_platforms[]` in the summary
+   history. This is only a review-loop terminal condition: the caller must
+   still run exact-head tests, exact-head CI, readiness self-checks, and merge
+   gates. The summary's `Unreviewed tail` line is the audit record for the
+   small findings that ended the review loop.
+
+   When the terminal rule does **not** fire for a content or currency cause,
+   the script emits `SMALL_FINDINGS_BLOCKED_BY` as one of `shipped_path`,
+   `contract_surface`, `stale_head`, or `head_unknown`. Content causes
+   (`shipped_path`, `contract_surface`) and currency causes (`stale_head`,
+   `head_unknown`) are mutually exclusive by construction. Within each group,
+   precedence is `shipped_path` over `contract_surface`, and `stale_head` over
+   `head_unknown`. The summary line names **every** cause present (shipped
+   paths, matched contract-surface identities, and platforms with stale or
+   unknown heads); only the single-valued key is reduced by precedence. The
+   key is empty when the rule fired and empty when the run was simply short
+   (`exhausted` or `not_small`).
 
 #### Escalation trigger
 
