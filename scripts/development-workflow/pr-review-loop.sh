@@ -8390,6 +8390,123 @@ reviewer_loop_platform_clean_for_head() {
   fi
 }
 
+# reviewer_loop_platform_pre_dispatch <platform_name> <platform_index>
+#
+# The real per-platform pre-dispatch sequence, extracted from the platform loop
+# so its ordering is executable in tests rather than restated by them (#1692
+# Step 7a review). Sets reviewer_loop_pre_dispatch_action to one of:
+#   dispatch — run_platform_review must run for this platform
+#   replay   — the recorded current-head clean was replayed; the caller continues
+#   break    — a gate refused; aggregate_* is already set and the caller breaks
+# Always returns 0, so a `set -e` caller branches on the action rather than on
+# an exit status.
+reviewer_loop_platform_pre_dispatch() {
+  local platform_name="$1"
+  local platform_index="$2"
+  local stage_skip_replay=0
+  local stage_skip_gate_state="not_required"
+  local stage_skip_state=""
+  local expensive_gate_output expensive_gate_status _eg_escalation
+
+  reviewer_loop_pre_dispatch_action="dispatch"
+
+  # Issue #1692: decide whether this reviewer's recorded clean may be replayed
+  # instead of dispatched. The decision is taken here but ACTED ON below, after
+  # the #1649 gate: a recorded clean vouches only for the reviewer's own verdict
+  # on this head, never for the gate's live inputs (unresolved threads, baseline
+  # checks), so an expensive reviewer still owes its gate before anything —
+  # dispatch or replay — is allowed to report clean for it.
+  if [ "$stage_skip_enabled" -eq 1 ]; then
+    stage_skip_state="$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")"
+    if [ "$stage_skip_state" = "clean_current" ]; then
+      stage_skip_replay=1
+    fi
+  fi
+  if is_expensive_reviewer_platform "$platform_name"; then
+    stage_skip_gate_state="pending"
+  fi
+
+  # Issue #1649: expensive-reviewer gate — require current-head local clean,
+  # preceding peer evidence, resolved threads, and green baseline checks
+  # before dispatching. A defer sets needs_fixes and breaks so later platforms
+  # (including ready-phase) do not run.
+  if is_expensive_reviewer_platform "$platform_name"; then
+    set +e
+    expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")"
+    expensive_gate_status=$?
+    set -e
+    expensive_gate_sync_last_from_output "$expensive_gate_output"
+    if [ "$expensive_gate_status" -ne 0 ]; then
+      # Re-emit gate telemetry on the loop's stdout contract.
+      printf '%s\n' "$expensive_gate_output"
+      last_platform="$platform_name"
+      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+        aggregate_result="escalate"
+        _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
+        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
+          aggregate_reason="expensive_gate_deferral_budget_unreadable"
+        else
+          aggregate_reason="expensive_gate_deferral_cap"
+        fi
+        _eg_escalation=""
+        aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
+        aggregate_status=2
+        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
+      else
+        aggregate_result="needs_fixes"
+        aggregate_reason="expensive_gate_deferred"
+        aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=expensive_gate_deferred\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        aggregate_status=1
+        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
+      fi
+      reviewer_loop_pre_dispatch_action="break"
+      return 0
+    fi
+    stage_skip_gate_state="passed"
+    if [ "$stage_skip_replay" -eq 1 ]; then
+      # A passing gate that ends in a replay is not a dispatch and must not emit
+      # EXPENSIVE_GATE_RESULT=dispatched/forced into the machine-consumed stdout
+      # contract, summary, or history — the same rule the ready-phase preflight
+      # applies. The gate still ran: its live thread and baseline-check
+      # conditions were satisfied for this head before the replay was allowed.
+      echo "INFO: expensive-gate passed for ${platform_name}; replaying the recorded current-head clean instead of dispatching" >&2
+      expensive_gate_last_platform=""
+      expensive_gate_last_result=""
+      expensive_gate_last_reason=""
+      expensive_gate_last_head=""
+    else
+      # Re-emit gate telemetry on the loop's stdout contract.
+      printf '%s\n' "$expensive_gate_output"
+    fi
+    # forced / dispatched continue to run_platform_review. Clear rather than
+    # unset: these are function locals, and unset would unshadow the same-named
+    # globals the ready-phase preflight block uses.
+    expensive_gate_output=""
+    expensive_gate_status=0
+  fi
+
+  # Issue #1692: act on the replay decision, now that any expensive reviewer has
+  # cleared its #1649 gate on this head. The replayed verdict goes through
+  # reviewer_loop_process_platform_output, so the skipped platform contributes
+  # the same peer evidence, reviewed_heads[] entry, and ledger record a real
+  # dispatch would have contributed.
+  if [ "$stage_skip_replay" -eq 1 ] \
+      && reviewer_loop_stage_skip_allowed_now "$platform_name" "$stage_skip_gate_state"; then
+    echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
+    stage_skipped_platforms+=("$platform_name")
+    reviewer_loop_platform_loop_should_break=0
+    reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
+      "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
+    if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
+      reviewer_loop_pre_dispatch_action="break"
+    else
+      reviewer_loop_pre_dispatch_action="replay"
+    fi
+    return 0
+  fi
+  return 0
+}
+
 # reviewer_loop_stage_skip_allowed_now <platform> <gate_state>
 #
 # Issue #1692 x #1649: a recorded clean vouches for one reviewer's verdict on
@@ -11925,6 +12042,7 @@ print_kv MAX_CYCLES "$max_cycles"
 print_kv TOTAL_CYCLE_COUNT "$lifetime_cycle_count"
 print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 
+
 # --- Per-head reviewer staging (issue #1692) ---
 # A reviewer that the persisted ledger already records clean on this exact head
 # is not re-dispatched on a later cycle of the same head; its recorded verdict
@@ -11935,10 +12053,8 @@ print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 # "clean". A new head clears every skip on its own: the recorded clean then
 # names a different commit, so #1656 still owns the local re-dispatch and #1649
 # still owns the expensive-reviewer gate.
-stage_skip_state=""
-stage_skip_replay=0
-stage_skip_gate_state="not_required"
 declare -a stage_skipped_platforms=()
+reviewer_loop_pre_dispatch_action="dispatch"
 reviewer_loop_stage_skip_resolve "$pr_number"
 print_kv STAGE_SKIP_ENABLED "$stage_skip_enabled"
 [ -n "$stage_skip_disabled_reason" ] && print_kv STAGE_SKIP_DISABLED_REASON "$stage_skip_disabled_reason"
@@ -12061,96 +12177,11 @@ for index in "${!platforms[@]}"; do
     fi
   fi
 
-  # Issue #1692: decide whether this reviewer's recorded clean may be replayed
-  # instead of dispatched. The decision is taken here but ACTED ON below, after
-  # the #1649 gate: a recorded clean vouches only for the reviewer's own verdict
-  # on this head, never for the gate's live inputs (unresolved threads, baseline
-  # checks), so an expensive reviewer still owes its gate before anything —
-  # dispatch or replay — is allowed to report clean for it.
-  stage_skip_replay=0
-  if [ "$stage_skip_enabled" -eq 1 ]; then
-    stage_skip_state="$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")"
-    if [ "$stage_skip_state" = "clean_current" ]; then
-      stage_skip_replay=1
-    fi
-  fi
-  stage_skip_gate_state="not_required"
-  if is_expensive_reviewer_platform "$platform_name"; then
-    stage_skip_gate_state="pending"
-  fi
-
-  # Issue #1649: expensive-reviewer gate — require current-head local clean,
-  # preceding peer evidence, resolved threads, and green baseline checks
-  # before dispatching. A defer sets needs_fixes and breaks so later platforms
-  # (including ready-phase) do not run.
-  if is_expensive_reviewer_platform "$platform_name"; then
-    set +e
-    expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")"
-    expensive_gate_status=$?
-    set -e
-    expensive_gate_sync_last_from_output "$expensive_gate_output"
-    if [ "$expensive_gate_status" -ne 0 ]; then
-      # Re-emit gate telemetry on the loop's stdout contract.
-      printf '%s\n' "$expensive_gate_output"
-      last_platform="$platform_name"
-      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
-        aggregate_result="escalate"
-        _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
-        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
-          aggregate_reason="expensive_gate_deferral_budget_unreadable"
-        else
-          aggregate_reason="expensive_gate_deferral_cap"
-        fi
-        unset _eg_escalation
-        aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
-        aggregate_status=2
-        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
-      else
-        aggregate_result="needs_fixes"
-        aggregate_reason="expensive_gate_deferred"
-        aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=expensive_gate_deferred\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
-        aggregate_status=1
-        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
-      fi
-      break
-    fi
-    stage_skip_gate_state="passed"
-    if [ "$stage_skip_replay" -eq 1 ]; then
-      # A passing gate that ends in a replay is not a dispatch and must not emit
-      # EXPENSIVE_GATE_RESULT=dispatched/forced into the machine-consumed stdout
-      # contract, summary, or history — the same rule the ready-phase preflight
-      # applies. The gate still ran: its live thread and baseline-check
-      # conditions were satisfied for this head before the replay was allowed.
-      echo "INFO: expensive-gate passed for ${platform_name}; replaying the recorded current-head clean instead of dispatching" >&2
-      expensive_gate_last_platform=""
-      expensive_gate_last_result=""
-      expensive_gate_last_reason=""
-      expensive_gate_last_head=""
-    else
-      # Re-emit gate telemetry on the loop's stdout contract.
-      printf '%s\n' "$expensive_gate_output"
-    fi
-    # forced / dispatched continue to run_platform_review
-    unset expensive_gate_output expensive_gate_status
-  fi
-
-  # Issue #1692: act on the replay decision, now that any expensive reviewer has
-  # cleared its #1649 gate on this head. The replayed verdict goes through
-  # reviewer_loop_process_platform_output, so the skipped platform contributes
-  # the same peer evidence, reviewed_heads[] entry, and ledger record a real
-  # dispatch would have contributed.
-  if [ "$stage_skip_replay" -eq 1 ] \
-      && reviewer_loop_stage_skip_allowed_now "$platform_name" "$stage_skip_gate_state"; then
-    echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
-    stage_skipped_platforms+=("$platform_name")
-    reviewer_loop_platform_loop_should_break=0
-    reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
-      "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
-    if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
-      break
-    fi
-    continue
-  fi
+  reviewer_loop_platform_pre_dispatch "$platform_name" "$platform_index"
+  case "$reviewer_loop_pre_dispatch_action" in
+    break) break ;;
+    replay) continue ;;
+  esac
 
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
