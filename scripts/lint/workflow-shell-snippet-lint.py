@@ -69,6 +69,19 @@ DIFF_HUNK_HEADER = re.compile(r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
 DIFF_TARGET_HEADER = re.compile(r"(?m)^\+\+\+ (?:b/\S|/dev/null\s*$)")
 
 
+def split_diff_records(diff: str) -> list[str]:
+    """Split a diff into per-file records at each complete `diff --git` header.
+
+    Returns an empty list when the text carries no such header, which the caller
+    treats as a single implicit record.
+    """
+    starts = [match.start() for match in DIFF_GIT_HEADER.finditer(diff)]
+    if not starts:
+        return []
+    bounds = starts + [len(diff)]
+    return [diff[bounds[index]:bounds[index + 1]] for index in range(len(starts))]
+
+
 def diff_shape(diff: str) -> str:
     """Classify what `diff` actually is, before trying to parse it.
 
@@ -95,18 +108,31 @@ def diff_shape(diff: str) -> str:
       the correct answer and the run passes. Refusing these would fail CI on any
       pull request that contains one.
 
+    The check is **per record**, not global. A diff with several file records
+    would otherwise pass on the strength of one well-formed record while another
+    carried a hunk this parser cannot attribute: the markers would all be
+    present *somewhere*, and changed_lines() would credit the unreadable
+    record's lines to the previous record's path.
+
     Returns "empty", "not_a_diff", "unparseable", or "diff".
     """
     if not diff.strip():
         return "empty"
-    has_git_header = bool(DIFF_GIT_HEADER.search(diff))
+    records = split_diff_records(diff)
+    if records:
+        for record in records:
+            has_hunk = bool(DIFF_HUNK_HEADER.search(record))
+            has_target = bool(DIFF_TARGET_HEADER.search(record))
+            if has_hunk != has_target:
+                return "unparseable"
+        return "diff"
+    # No `diff --git` framing: a bare unified diff (`diff -u a b`) or something
+    # that is not a diff at all. Both halves must be present together.
     has_hunk = bool(DIFF_HUNK_HEADER.search(diff))
     has_target = bool(DIFF_TARGET_HEADER.search(diff))
-    if has_hunk:
-        return "diff" if has_target else "unparseable"
-    if has_target:
-        return "unparseable"
-    return "diff" if has_git_header else "not_a_diff"
+    if has_hunk and has_target:
+        return "diff"
+    return "unparseable" if (has_hunk or has_target) else "not_a_diff"
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
@@ -114,6 +140,12 @@ def changed_lines(diff: str) -> dict[str, set[int]]:
     path = ""
     number = 0
     for row in diff.splitlines():
+        # Each file record starts fresh: without this reset, a record whose
+        # `+++ b/<path>` header this parser cannot read would have its lines
+        # credited to the previous record's path.
+        if DIFF_GIT_HEADER.match(row):
+            path = ""
+            continue
         if row.startswith("+++ b/"):
             path = row[6:]
             continue

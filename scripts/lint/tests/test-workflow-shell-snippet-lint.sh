@@ -169,6 +169,72 @@ else
   check no_prefix_diff_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
 
+# Validation is per record, not global. A diff whose first record is well formed
+# would otherwise vouch for a later record this parser cannot read: the markers
+# are all present *somewhere*, and changed_lines() would credit the unreadable
+# record's lines to the previous record's path.
+printf '%s\n' \
+  'diff --git a/scripts/lint/x.py b/scripts/lint/x.py' '--- a/scripts/lint/x.py' '+++ b/scripts/lint/x.py' '@@ -0,0 +1 @@' '+print("hi")' \
+  'diff --git docs/workflow/ws.md docs/workflow/ws.md' '--- docs/workflow/ws.md' '+++ docs/workflow/ws.md' '@@ -0,0 +1,3 @@' '+```bash' '+echo hello' '+```' \
+  > "$TMP_DIR/mixed-records.diff"
+check mixed_records_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/mixed-records.diff")"
+if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+  check mixed_records_reason unparseable unparseable
+else
+  check mixed_records_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
+fi
+# ...and the lines of an unreadable record are never credited to the previous
+# record's path. Proven directly: put an in-scope, well-formed record FIRST, so
+# a leaking parser would attribute the following unreadable record's fence to
+# it and report a WS001 against the wrong file at the wrong line.
+leak_doc="docs/workflow/snippet-leak-target.md"
+mkdir -p "$REPO_ROOT/docs/workflow"
+printf '%s\n' 'prose only, no fence here' > "$REPO_ROOT/$leak_doc"
+printf '%s\n' \
+  "diff --git a/$leak_doc b/$leak_doc" "--- /dev/null" "+++ b/$leak_doc" '@@ -0,0 +1 @@' '+prose only, no fence here' \
+  'diff --git docs/workflow/other.md docs/workflow/other.md' '--- docs/workflow/other.md' '+++ docs/workflow/other.md' '@@ -0,0 +1,3 @@' '+```bash' '+echo hello' '+```' \
+  > "$TMP_DIR/leak.diff"
+check attribution_leak_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/leak.diff")"
+if grep -q "$leak_doc" "$TMP_DIR/last.out"; then
+  check attribution_no_leak no_leak "leaked: $(cat "$TMP_DIR/last.out")"
+else
+  check attribution_no_leak no_leak no_leak
+fi
+rm -f "$REPO_ROOT/$leak_doc"
+
+# The refusal above short-circuits before parsing, so assert the parser-level
+# property directly: changed_lines() must credit an unreadable record's lines to
+# nothing, not to the previous record's path. Without the per-record reset this
+# returns {"docs/workflow/first.md": {1, 2, 3, 4}}.
+attribution_probe="$(python3 - "$LINTER" <<'PYPROBE'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("snippet_lint", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+# @dataclass resolves annotations through sys.modules; register before exec.
+sys.modules["snippet_lint"] = module
+spec.loader.exec_module(module)
+diff = "\n".join([
+    "diff --git a/docs/workflow/first.md b/docs/workflow/first.md",
+    "--- /dev/null",
+    "+++ b/docs/workflow/first.md",
+    "@@ -0,0 +1 @@",
+    "+prose",
+    "diff --git docs/workflow/second.md docs/workflow/second.md",
+    "--- docs/workflow/second.md",
+    "+++ docs/workflow/second.md",
+    "@@ -0,0 +1,3 @@",
+    "+```bash",
+    "+echo hello",
+    "+```",
+])
+result = module.changed_lines(diff)
+print(";".join(f"{path}={sorted(lines)}" for path, lines in sorted(result.items())))
+PYPROBE
+)"
+check attribution_per_record "docs/workflow/first.md=[1]" "$attribution_probe"
+
 # A line that merely starts with "diff --git " is not a header: a complete one
 # names two paths. Without that check, prose could stand in as evidence of a
 # metadata-only Git record and exit 0.
@@ -272,7 +338,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced
