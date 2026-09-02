@@ -767,6 +767,60 @@ PLANT_REPORT="$(check_self_refspecs "$PLANT_DIR")"
 PLANT_OFFENDERS="$(printf '%s\n' "$PLANT_REPORT" | grep -c '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
 check plant_retargeted_push_is_reported 1 "$PLANT_OFFENDERS"
 
+# Protocol 93's fixer pushes name their branch through a variable rather than a
+# placeholder, so `check_push_step` cannot reach them. Audit them separately:
+# every push must be a self-refspec, and every multi-command block must set the
+# shell options first, exactly as the six placeholder blocks do.
+P93="$PROTOCOL_DIR/93-automated-reviewer-loop-protocol.md"
+P93_PUSHES="$(grep -cE '^[[:space:]]*(if ! )?git push' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, reported by the count assertion
+P93_REFSPEC_PUSHES="$(grep -cE '^[[:space:]]*(if ! )?git push origin "[^"]+:[^"]+"' "$P93" || true)"  # workflow-shell-guard: allow SH001 - same zero-match case
+check protocol_93_all_pushes_refspec "$P93_PUSHES" "$P93_REFSPEC_PUSHES"
+if [ "${P93_PUSHES:-0}" -ge 4 ]; then
+  check protocol_93_push_sweep_not_vacuous yes yes
+else
+  check protocol_93_push_sweep_not_vacuous yes "only ${P93_PUSHES} push(es) found"
+fi
+
+audit_p93_blocks() {
+  # audit_p93_blocks <file>: prints TOTAL= and MISSING= for the multi-command,
+  # state-mutating blocks. Defined as a function so the markdown fence backticks
+  # inside the python are parsed once here, not inside a command substitution.
+  python3 - "$1" <<'PYP93'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+blocks, block, inside = [], [], False
+for line in text.splitlines():
+    if line.strip().startswith("```"):
+        if inside:
+            blocks.append(block)
+        block, inside = [], not inside
+        continue
+    if inside:
+        block.append(line)
+total = missing = 0
+for block in blocks:
+    body = "\n".join(block)
+    if "FIX_BRANCH" not in body and "LOCAL_SHA" not in body:
+        continue
+    total += 1
+    if not block or block[0].strip() != "set -euo pipefail":
+        missing += 1
+print(f"TOTAL={total}")
+print(f"MISSING={missing}")
+PYP93
+}
+
+P93_BLOCK_REPORT="$(audit_p93_blocks "$P93")"
+check protocol_93_blocks_set_shell_options "0" "$(printf '%s\n' "$P93_BLOCK_REPORT" | awk -F= '/^MISSING=/{print $2; exit}')"
+P93_BLOCK_TOTAL="$(printf '%s\n' "$P93_BLOCK_REPORT" | awk -F= '/^TOTAL=/{print $2; exit}')"
+if [ "${P93_BLOCK_TOTAL:-0}" -ge 4 ]; then
+  check protocol_93_block_sweep_not_vacuous yes yes
+else
+  check protocol_93_block_sweep_not_vacuous yes "only ${P93_BLOCK_TOTAL} block(s) found"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

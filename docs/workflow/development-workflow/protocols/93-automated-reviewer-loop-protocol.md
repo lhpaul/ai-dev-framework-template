@@ -467,21 +467,31 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-   git push origin "${FIX_BRANCH}:${FIX_BRANCH}"
+   # Handle a failed push explicitly: under `set -e` a bare failure would abort
+   # before the verification below, so the contractual stop would never print.
+   if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number> on branch ${FIX_BRANCH}."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
    ```
 4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
      # Explicit refspec: a bare `git push` here depends on local push.default and
      # on an upstream that may point at the integration branch (issue #1593).
      git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
-     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
        echo "STOP: guardrail 'push_verification_failed' halted this run."
        echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
@@ -534,21 +544,31 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-   git push origin "${FIX_BRANCH}:${FIX_BRANCH}"
+   # Handle a failed push explicitly: under `set -e` a bare failure would abort
+   # before the verification below, so the contractual stop would never print.
+   if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number> on branch ${FIX_BRANCH}."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
    ```
 5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
      # Explicit refspec: a bare `git push` here depends on local push.default and
      # on an upstream that may point at the integration branch (issue #1593).
      git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
-     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
        echo "STOP: guardrail 'push_verification_failed' halted this run."
        echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
