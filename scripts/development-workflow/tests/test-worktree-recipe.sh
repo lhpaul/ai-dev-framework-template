@@ -296,21 +296,30 @@ PYSTOPS
 # DISCOVERED by looking for `stop_conditions:` lists and the enforcement table,
 # so a fourth one added later is audited automatically instead of drifting.
 STOP_CONDITION_NAME=push_verification_failed
-STOP_SURFACES="$(grep -rl '^[[:space:]]*stop_conditions:' "$REPO_ROOT/docs/workflow" "$REPO_ROOT/.ai-dev-workflow.yaml" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, reported by the count assertion
-STOP_SURFACES="${STOP_SURFACES}
-$REPO_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md"
-STOP_SURFACE_COUNT=0
-while IFS= read -r surface; do
-  [ -n "$surface" ] || continue
-  STOP_SURFACE_COUNT=$((STOP_SURFACE_COUNT + 1))
-  if grep -Fq -- "$STOP_CONDITION_NAME" "$surface"; then
-    check "stop_condition_declared_in_$(basename "$surface")" yes yes
-  else
-    check "stop_condition_declared_in_$(basename "$surface")" yes "missing from ${surface#"$REPO_ROOT"/}"
+
+audit_stop_surfaces() {
+  # audit_stop_surfaces <docs-root> <config-file> [extra-table-file]
+  # Prints COUNT=<n> and one MISSING=<file> per surface lacking the condition.
+  local docs_root="$1" config_file="$2" extra="${3:-}" surfaces surface count=0
+  surfaces="$(grep -rl '^[[:space:]]*stop_conditions:' "$docs_root" "$config_file" 2>/dev/null || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, reported by COUNT
+  if [ -n "$extra" ] && [ -f "$extra" ]; then
+    surfaces="${surfaces}
+$extra"
   fi
-done <<STOP_SURFACE_LIST
-$STOP_SURFACES
-STOP_SURFACE_LIST
+  while IFS= read -r surface; do
+    [ -n "$surface" ] || continue
+    count=$((count + 1))
+    grep -Fq -- "$STOP_CONDITION_NAME" "$surface" || printf 'MISSING=%s\n' "$surface"
+  done <<AUDIT_SURFACES
+$surfaces
+AUDIT_SURFACES
+  printf 'COUNT=%s\n' "$count"
+}
+
+STOP_AUDIT="$(audit_stop_surfaces "$REPO_ROOT/docs/workflow" "$REPO_ROOT/.ai-dev-workflow.yaml" "$REPO_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md")"
+STOP_MISSING="$(printf '%s\n' "$STOP_AUDIT" | grep '^MISSING=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when nothing is missing, which is the passing state
+STOP_SURFACE_COUNT="$(printf '%s\n' "$STOP_AUDIT" | awk -F= '/^COUNT=/{print $2; exit}')"
+check stop_condition_declared_on_every_surface "" "$STOP_MISSING"
 # Four surfaces today: the two guardrails documents, the workflow README's
 # example config, and the shipped .ai-dev-workflow.yaml.
 if [ "$STOP_SURFACE_COUNT" -ge 4 ]; then
@@ -318,6 +327,31 @@ if [ "$STOP_SURFACE_COUNT" -ge 4 ]; then
 else
   check stop_surface_discovery_not_vacuous yes "only ${STOP_SURFACE_COUNT} surface(s) discovered"
 fi
+
+# Planted variant: a FIFTH surface that ships a stop_conditions list without the
+# condition. Discovery must find it and the audit must report it, or a future
+# surface could drift unnoticed — the exact failure that produced this check.
+PLANT_SURFACE_ROOT="$TMP_DIR/planted-surfaces"
+mkdir -p "$PLANT_SURFACE_ROOT/docs/workflow/development-workflow"
+cp "$REPO_ROOT/docs/workflow/development-workflow/guardrails.md" \
+   "$REPO_ROOT/docs/workflow/development-workflow/README.md" \
+   "$REPO_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md" \
+   "$PLANT_SURFACE_ROOT/docs/workflow/development-workflow/"
+cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$PLANT_SURFACE_ROOT/.ai-dev-workflow.yaml"
+cat > "$PLANT_SURFACE_ROOT/docs/workflow/development-workflow/consumer-example.md" <<'PLANTED_SURFACE'
+```yaml
+guardrails:
+  stop_conditions:
+    - unclear_requirements
+    - failing_ci
+```
+PLANTED_SURFACE
+PLANT_AUDIT="$(audit_stop_surfaces "$PLANT_SURFACE_ROOT/docs/workflow" "$PLANT_SURFACE_ROOT/.ai-dev-workflow.yaml" "$PLANT_SURFACE_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md")"
+PLANT_MISSING_COUNT="$(printf '%s\n' "$PLANT_AUDIT" | grep -c '^MISSING=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
+PLANT_SURFACE_COUNT="$(printf '%s\n' "$PLANT_AUDIT" | awk -F= '/^COUNT=/{print $2; exit}')"
+check plant_fifth_surface_is_reported 1 "$PLANT_MISSING_COUNT"
+check plant_fifth_surface_is_discovered 5 "$PLANT_SURFACE_COUNT"
+
 # ...and the stops must actually use it, not the borrowed condition they used
 # before this was a canonical name.
 BORROWED_STOPS="$(grep -rl "STOP: guardrail 'unclear_requirements' halted this run" "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, which is the passing state
