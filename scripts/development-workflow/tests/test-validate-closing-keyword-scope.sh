@@ -951,6 +951,39 @@ check "fan_out_reads_a_body_with_no_keyword_as_no_match" "" \
 check "fan_out_routes_a_fenced_keyword_and_leaves_liveness_to_the_validator" "105" \
   "$(fanout_select '[{"number": 105, "body": "```\nCloses #97\n```"}]' 97 42)"
 
+# The fan-out and the canonical parser must agree about WHICH issue a
+# reference names. They are different expressions — the fan-out asks "does this
+# body reference issue N", the canonical parser asks "which issues does this
+# body reference" — so agreement is a property to assert, not to assume. If
+# they diverged, an owner event would fail to re-validate a claimant and its
+# warning would go stale, which is silent and therefore the worst way for this
+# to break.
+#
+# This was raised in review as a defect on `#16x`: the claim was that the
+# fan-out's `([^0-9]|$)` excludes it while the canonical parser reads it as
+# issue 16. It does not — `x` IS `[^0-9]` — and the assertions below are the
+# check that settles it either way, for every shape rather than the one case.
+agreement_case() {
+  local body="$1" issue="$2" expected="$3"
+  local canonical fanout
+  canonical="$(printf '%s' "$body" | closing_keyword_live_refs | tr '\n' ' ' | sed 's/ $//')"
+  fanout="$(fanout_select "$(jq -nc --arg b "$body" '[{number: 9, body: $b}]')" "$issue" 42)"
+  check "parser agreement on [$body] for #$issue" "$expected" "canonical=[$canonical] fanout=[$fanout]"
+}
+
+# A trailing non-digit does not end the reference for either of them.
+agreement_case 'Closes #16x' 16 'canonical=[16] fanout=[9]'
+# A trailing digit makes it a different issue for both.
+agreement_case 'Closes #160' 16 'canonical=[160] fanout=[]'
+agreement_case 'Closes #160' 160 'canonical=[160] fanout=[9]'
+# Punctuation, case, and the optional "issue" word behave the same on both.
+agreement_case '(Fixes #16)' 16 'canonical=[16] fanout=[9]'
+agreement_case 'resolved issue #16' 16 'canonical=[16] fanout=[9]'
+agreement_case 'CLOSES #16' 16 'canonical=[16] fanout=[9]'
+# And a lookalike is a reference for neither.
+agreement_case 'disclose #16' 16 'canonical=[] fanout=[]'
+agreement_case 'Closes#16' 16 'canonical=[] fanout=[]'
+
 check "the fan-out is fully paginated, with no fixed ceiling" "0" \
   "$(grep -c -- '--limit 200' "$WORKFLOW" || true)"
 check "the fan-out never line-splits a pull request body in the shell" "0" \
