@@ -291,23 +291,33 @@ print("COUNT=" + str(count))
 PYSTOPS
 }
 
-# The condition these stops name must be declared on all three surfaces a
-# consumer repository reads: the guardrails reference table, the enforcement
-# table the checker validates against, and the shipped config's stop_conditions
-# list. Declaring it in only one leaves the other two silently inconsistent.
+# The condition these stops name must be declared on EVERY normative surface a
+# consumer repository reads, not on a hand-listed subset: the surfaces are
+# DISCOVERED by looking for `stop_conditions:` lists and the enforcement table,
+# so a fourth one added later is audited automatically instead of drifting.
 STOP_CONDITION_NAME=push_verification_failed
-for declaration in \
-    "docs/workflow/development-workflow/guardrails.md|\`${STOP_CONDITION_NAME}\`" \
-    "docs/workflow/development-workflow/guardrails-enforcement.md|\`${STOP_CONDITION_NAME}\`" \
-    ".ai-dev-workflow.yaml|- ${STOP_CONDITION_NAME}"; do
-  declaration_file="${declaration%%|*}"
-  declaration_needle="${declaration#*|}"
-  if grep -Fq -- "$declaration_needle" "$REPO_ROOT/$declaration_file"; then
-    check "stop_condition_declared_in_$(basename "$declaration_file")" yes yes
+STOP_SURFACES="$(grep -rl '^[[:space:]]*stop_conditions:' "$REPO_ROOT/docs/workflow" "$REPO_ROOT/.ai-dev-workflow.yaml" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, reported by the count assertion
+STOP_SURFACES="${STOP_SURFACES}
+$REPO_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md"
+STOP_SURFACE_COUNT=0
+while IFS= read -r surface; do
+  [ -n "$surface" ] || continue
+  STOP_SURFACE_COUNT=$((STOP_SURFACE_COUNT + 1))
+  if grep -Fq -- "$STOP_CONDITION_NAME" "$surface"; then
+    check "stop_condition_declared_in_$(basename "$surface")" yes yes
   else
-    check "stop_condition_declared_in_$(basename "$declaration_file")" yes "missing from $declaration_file"
+    check "stop_condition_declared_in_$(basename "$surface")" yes "missing from ${surface#"$REPO_ROOT"/}"
   fi
-done
+done <<STOP_SURFACE_LIST
+$STOP_SURFACES
+STOP_SURFACE_LIST
+# Four surfaces today: the two guardrails documents, the workflow README's
+# example config, and the shipped .ai-dev-workflow.yaml.
+if [ "$STOP_SURFACE_COUNT" -ge 4 ]; then
+  check stop_surface_discovery_not_vacuous yes yes
+else
+  check stop_surface_discovery_not_vacuous yes "only ${STOP_SURFACE_COUNT} surface(s) discovered"
+fi
 # ...and the stops must actually use it, not the borrowed condition they used
 # before this was a canonical name.
 BORROWED_STOPS="$(grep -rl "STOP: guardrail 'unclear_requirements' halted this run" "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, which is the passing state
