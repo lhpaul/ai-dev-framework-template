@@ -3,6 +3,14 @@
 # branch tracking the integration branch (issue #1593).
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 # covers: docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
+# covers: docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md
+# covers: docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md
+# covers: docs/workflow/development-workflow/protocols/03-implement-development-protocol.md
+# covers: docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md
+# covers: docs/workflow/development-workflow/guardrails.md
+# covers: docs/workflow/development-workflow/guardrails-enforcement.md
+# covers: docs/workflow/development-workflow/README.md
+# covers: .ai-dev-workflow.yaml
 #
 # The recipes are EXTRACTED from the protocol and executed, rather than restated
 # here: a test that copies the command would keep passing after the protocol
@@ -36,6 +44,33 @@ check() {
 }
 
 echo "=== test-worktree-recipe (#1593) ==="
+
+# --- Self-coverage: CI must select this suite for everything it exercises ----
+# Diff-based CI runs a suite only when a changed path matches its `# covers:`
+# declarations. A suite that exercises a file it does not declare is a suite CI
+# will not run when that file changes alone — the gap this check closes.
+COVERAGE_TMP="$TMP_DIR/coverage"
+mkdir -p "$COVERAGE_TMP"
+SELF_PATH="scripts/development-workflow/tests/test-worktree-recipe.sh"
+for covered in \
+    docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md \
+    docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md \
+    docs/workflow/development-workflow/protocols/03-implement-development-protocol.md \
+    docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md \
+    docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md \
+    docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md \
+    docs/workflow/development-workflow/guardrails.md \
+    docs/workflow/development-workflow/guardrails-enforcement.md \
+    docs/workflow/development-workflow/README.md \
+    .ai-dev-workflow.yaml; do
+  printf '%s\n' "$covered" > "$COVERAGE_TMP/changed.txt"
+  if bash "$REPO_ROOT/scripts/development-workflow/select-test-suites.sh" \
+      --changed-files "$COVERAGE_TMP/changed.txt" | grep -Fq "$SELF_PATH"; then
+    check "ci_selects_this_suite_for_$(basename "$covered")" yes yes
+  else
+    check "ci_selects_this_suite_for_$(basename "$covered")" yes "not selected for $covered"
+  fi
+done
 
 # --- Extract the documented commands -----------------------------------------
 # Case A is the one that creates a branch from a base branch, and the only one
