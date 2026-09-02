@@ -199,7 +199,14 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      # The Protocol 03 checklist asks for the fork condition on every STEP that
+      # writes to the repository, and this one comments, creates a label and
+      # writes a check run. The job already carries it, so this is redundant by
+      # construction — which is the point: a guard that survives someone
+      # editing the job's `if:` is worth the two lines, and the checklist is
+      # written the way it is because job-level guards do get edited.
       - name: Validate
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

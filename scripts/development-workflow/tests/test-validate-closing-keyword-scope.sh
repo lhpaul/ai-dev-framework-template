@@ -983,8 +983,19 @@ assert_fork_if_guard() {
 # check passes as long as SOME job has a guard, so removing the privileged
 # job's guard while `resolve-targets` keeps its own would not change its
 # answer — which is a check that cannot fail for the case it exists to catch.
+# The guard must be at JOB level — four-space `if:` and its continuation lines —
+# not merely somewhere inside the job. Scanning the whole block would also
+# match the Validate step's own `if:`, and then removing the job-level guard
+# would not change this answer, which is a check that cannot fail for the case
+# it exists to catch.
 assert_job_carries_fork_guard() {
-  awk -v job="  $2:" '$0 == job {f=1; next} f && /^  [a-z-]+:$/ {exit} f' "$1" \
+  awk -v job="  $2:" '
+    $0 == job {injob=1; next}
+    injob && /^  [a-z-]+:$/ {exit}
+    injob && /^    if:/ {inif=1; print; next}
+    inif && /^      / {print; next}
+    inif {inif=0}
+  ' "$1" \
     | grep -qE "head\.repo\.full_name ==[[:space:]]*github\.repository"
 }
 
@@ -1019,7 +1030,17 @@ check "the writing job carries the fork guard itself" "yes" \
 check "the resolving job carries one too" "yes" \
   "$(assert_job_carries_fork_guard "$WORKFLOW" resolve-targets && echo yes || echo no)"
 
-# --- Planted-violation proofs (REVIEW.md) -----------------------------------
+# And the writing STEP carries it too. The Protocol 03 checklist asks for the
+# condition on every step that mutates repository state, not only on the job —
+# the job's guard is one edit away from being gone, and this one survives that
+# edit.
+assert_validate_step_carries_fork_guard() {
+  awk '/^      - name: Validate$/{f=1} f && /^      - name: /{n++} f' "$1" \
+    | head -6 | grep -qE "^        if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository$"
+}
+check "the writing step carries the fork guard too" "yes" \
+  "$(assert_validate_step_carries_fork_guard "$WORKFLOW" && echo yes || echo no)"
+
 #
 # Each plants ONE violation on a COPY of the shipped workflow — never the
 # shipped file — and asserts both directions: the check fails with the
@@ -1027,6 +1048,33 @@ check "the resolving job carries one too" "yes" \
 
 PLANT_DIR="$TMP_DIR/planted"
 mkdir -p "$PLANT_DIR"
+
+PLANTED_STEP_COPY="$PLANT_DIR/validate_step_fork_guard.yml"
+cp "$WORKFLOW" "$PLANTED_STEP_COPY"
+check "planted-violation baseline: the step guard is present on an unmodified copy" "yes" \
+  "$(assert_validate_step_carries_fork_guard "$PLANTED_STEP_COPY" && echo yes || echo no)"
+python3 - "$PLANTED_STEP_COPY" <<'PLANTSTEP'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+lines = p.read_text().split("\n")
+for i, line in enumerate(lines):
+    if line == "      - name: Validate":
+        assert lines[i + 1].strip().startswith("if:"), lines[i + 1]
+        del lines[i + 1]
+        break
+else:
+    raise SystemExit("Validate step not found")
+p.write_text("\n".join(lines))
+PLANTSTEP
+check "planted-violation: removing the STEP guard is caught" "no" \
+  "$(assert_validate_step_carries_fork_guard "$PLANTED_STEP_COPY" && echo yes || echo no)"
+check "planted-violation: the job guard still passes, so the step check is what caught it" "yes" \
+  "$(assert_job_carries_fork_guard "$PLANTED_STEP_COPY" validate && echo yes || echo no)"
+cp "$WORKFLOW" "$PLANTED_STEP_COPY"
+check "planted-violation: the step guard passes once the violation is removed" "yes" \
+  "$(assert_validate_step_carries_fork_guard "$PLANTED_STEP_COPY" && echo yes || echo no)"
+
+# --- Planted-violation proofs (REVIEW.md) -----------------------------------
 
 plant_and_prove() {
   local label="$1" assertion="$2" plant_cmd="$3"
