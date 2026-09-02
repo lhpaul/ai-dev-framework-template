@@ -224,9 +224,16 @@ gh_open_pr_list() {
   | jq -sc 'add // []'
 }
 
+# `--paginate` with a `--jq` that wraps each page in `[...]` emits ONE ARRAY
+# PER PAGE, not one array. Every consumer below sorts and takes `.[0]`, so
+# without slurping they would do that per page and return several answers —
+# several ids for one PATCH URL, and a stamp chosen from the wrong page. The
+# `jq -sc 'add // []'` merges the pages first, and `// []` covers the
+# no-pages-at-all case, where `add` is null rather than an empty array.
 gh_existing_report() {
   gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-    --jq '[.[] | {id, body: (.body // ""), created_at}]'
+    --jq '[.[] | {id, body: (.body // ""), created_at}]' \
+  | jq -sc 'add // []'
 }
 
 # The listing is filter=all with full pagination on purpose: the default
@@ -234,7 +241,8 @@ gh_existing_report() {
 # duplicate unobservable and the "oldest match wins" rule undecidable.
 gh_existing_checks() {
   gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?filter=all&per_page=100" --paginate \
-    --jq "[.check_runs[] | select(.name == \"${CLOSING_KEYWORD_SCOPE_CHECK_NAME}\" and .external_id == \"${CLOSING_KEYWORD_SCOPE_CHECK_EXTERNAL_ID}\") | {id, started_at, conclusion, summary: (.output.summary // \"\")}]"
+    --jq "[.check_runs[] | select(.name == \"${CLOSING_KEYWORD_SCOPE_CHECK_NAME}\" and .external_id == \"${CLOSING_KEYWORD_SCOPE_CHECK_EXTERNAL_ID}\") | {id, started_at, conclusion, summary: (.output.summary // \"\")}]" \
+  | jq -sc 'add // []'
 }
 
 read_all_inputs() {
@@ -540,7 +548,7 @@ existing_report_stamp() {
 }
 
 existing_check_id() {
-  printf '%s' "$EXISTING_CHECK_JSON" | jq -r 'sort_by(.started_at, .id) | .[0].id // empty' 2>/dev/null
+  printf '%s' "$EXISTING_CHECK_JSON" | jq -r 'sort_by(.started_at, .id) | .[0].id // empty' 2>/dev/null | head -1
 }
 
 existing_check_stamp() {

@@ -426,7 +426,8 @@ case "${1:-}" in
   api)
     for arg in "$@"; do
       case "$arg" in
-        *"/issues/"*"/comments") key="comments" ;;
+        *"/issues/comments/"*) key="comments" ;;   # PATCH/DELETE one comment
+        *"/issues/"*"/comments") key="comments" ;;   # GET or POST the list
         *"check-runs"*) key="check_runs" ;;
         *"/pulls?"*|*"/pulls") key="pulls" ;;
         repos/*) [ -n "$key" ] || key="repo" ;;
@@ -444,6 +445,11 @@ file="${FIXTURES}/${key}"
 # not the same thing, and the difference is where a publication bug hides.
 case "$key" in
   write_*)
+    # Appended, not overwritten: a single publication makes several write
+    # calls — PATCH the surviving report, DELETE each duplicate — and the
+    # sequence is the thing worth asserting on. Overwriting would leave only
+    # the last one and quietly hide the rest.
+    printf '%s\n' "$*" >> "${FIXTURES}/.args_${key}"
     for arg in "$@"; do
       if [ "$arg" = "-" ]; then cat > "${FIXTURES}/.posted_${key}"; break; fi
     done
@@ -732,6 +738,57 @@ check_contains "a genuine provisioning failure is carried into the report itself
   "could not be created" "$posted_body"
 check_contains "the warning still ships despite the failed provisioning" \
   "| #97 | #101 |" "$posted_body"
+
+# Multi-page listings. `gh api --paginate` with a `--jq` that wraps each page in
+# `[...]` emits one array PER PAGE, so a consumer that sorts and takes `.[0]`
+# does it per page and returns several answers — several check-run ids for one
+# PATCH URL, and a stamp from whichever page happened to come first. The
+# unreadable-listing path can create unbounded duplicate checks on one head SHA,
+# so matches really can span pages; this is not hypothetical.
+F="$(writable_fixtures publish_multipage_checks)"
+{
+  printf '0\n'
+  printf '[{"id":30,"started_at":"2026-01-03T00:00:00Z","conclusion":"neutral","summary":"page two"}]\n'
+  printf '[{"id":10,"started_at":"2026-01-01T00:00:00Z","conclusion":"neutral","summary":"page one, oldest"}]\n'
+} > "$F/check_runs"
+out="$(publish_env "$F")"
+check "multi_page_check_runs_resolve_to_exactly_one_target" "true" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+check_contains "the oldest match across ALL pages is the one updated" \
+  "/check-runs/10" "$(cat "$F/.args_write_check_runs" 2>/dev/null || true)"
+
+# Same shape for the comment listing, which had the identical defect and was
+# not named in the finding.
+F="$(writable_fixtures publish_multipage_comments)"
+# A quoted heredoc, not printf: the marker bodies contain a literal \n that
+# printf would turn into a real newline, which is an unescaped control
+# character inside a JSON string and makes the fixture unparseable. The fixture
+# has to be valid JSON to test anything.
+cat > "$F/comments" <<'PAGES'
+0
+[{"id":300,"body":"<!-- closing-keyword-scope:v1 started=2026-01-03T00:00:00.000Z run=1 attempt=1 -->\nnewer","created_at":"2026-01-03T00:00:00Z"}]
+[{"id":100,"body":"<!-- closing-keyword-scope:v1 started=2026-01-01T00:00:00.000Z run=1 attempt=1 -->\nolder","created_at":"2026-01-01T00:00:00Z"}]
+PAGES
+out="$(publish_env "$F")"
+check "multi_page_report_comments_resolve_to_exactly_one_target" "true" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+write_calls="$(cat "$F/.args_write_comments" 2>/dev/null || true)"
+check_contains "the oldest comment across ALL pages is the one updated" \
+  "PATCH repos/lhpaul/ai-dev-framework-template/issues/comments/100" "$write_calls"
+check_contains "inherited_duplicate_reports_are_reconciled_to_the_oldest" \
+  "DELETE repos/lhpaul/ai-dev-framework-template/issues/comments/300" "$write_calls"
+check "reconciliation touches exactly the two comments and no others" "2" \
+  "$(printf '%s\n' "$write_calls" | grep -c 'issues/comments/')"
+
+# Non-vacuity for both: without slurping, these listings yield MORE than one
+# id, which is the defect. Asserted directly against the merge expression so a
+# regression in it is caught even if the validator stops using it.
+two_pages='[{"id":30,"started_at":"2026-01-03T00:00:00Z"}]
+[{"id":10,"started_at":"2026-01-01T00:00:00Z"}]'
+check "without slurping, a two-page listing yields two ids" "2" \
+  "$(printf '%s\n' "$two_pages" | jq -r 'sort_by(.started_at, .id) | .[0].id' | grep -c '[0-9]')"
+check "slurped, the same listing yields one id, the oldest" "10" \
+  "$(printf '%s\n' "$two_pages" | jq -sc 'add // []' | jq -r 'sort_by(.started_at, .id) | .[0].id')"
 
 # A later-started run's stamp blocks the write outright.
 F="$(writable_fixtures publish_later_stamp)"
