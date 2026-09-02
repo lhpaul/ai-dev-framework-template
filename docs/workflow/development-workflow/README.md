@@ -533,6 +533,7 @@ guardrails:
     - destructive_action
     - missing_tracker_context
     - missing_required_secret_or_permission
+    - push_verification_failed
   audit:
     pr_disposition_record: required
     work_item_ledger_record: required

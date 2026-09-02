@@ -526,17 +526,76 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    Use descriptive commit messages for the final local commit sequence.
    _(Push before resolving threads — if push fails, threads must not be falsely
    marked resolved.)_
+
+   Push with an explicit self-refspec. A bare `git push` depends on local
+   `push.default` and on an upstream that may point at the integration branch,
+   so it can either silently no-op or write the fix onto that branch
+   (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   # The checkout must be on the PR's own head branch. A self-refspec push is
+   # safe in the sense that it cannot hit the integration branch, but from an
+   # unrelated checkout it would publish that branch and only be caught by the
+   # SHA mismatch afterwards — after the push (issue #1593).
+   PR_HEAD_BRANCH="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || PR_HEAD_BRANCH=""
+   if [ "$FIX_BRANCH" != "$PR_HEAD_BRANCH" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number>."
+     echo "Cause: this checkout is on ${FIX_BRANCH}, but the PR's head branch is ${PR_HEAD_BRANCH:-<unreadable>}."
+     echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+     exit 1
+   fi
+   # Handle a failed push explicitly: under `set -e` a bare failure would abort
+   # before the verification below, so the contractual stop would never print.
+   if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number> on branch ${FIX_BRANCH}."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+   ```
 4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
-     git push
-     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     # Explicit refspec: a bare `git push` here depends on local push.default and
+     # on an upstream that may point at the integration branch (issue #1593).
+     # Handle its failure too: under `set -e` a bare failure would abort before
+     # the check below, so the contractual stop would never print.
+     RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     # Re-check the checkout here too: the retry runs after something already
+     # went wrong, which is exactly when the checkout may have moved.
+     RETRY_PR_HEAD="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || RETRY_PR_HEAD=""
+     if [ "$RETRY_BRANCH" != "$RETRY_PR_HEAD" ]; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number>."
+       echo "Cause: the retry would push ${RETRY_BRANCH}, but the PR's head branch is ${RETRY_PR_HEAD:-<unreadable>}."
+       echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+       exit 1
+     fi
+     if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
+       echo "Cause: git push failed on the retry. A refusal is multi-line and can be truncated to nothing."
+       echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+       exit 1
+     fi
+     REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-       echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
+       echo "Cause: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete."
+       echo "Human action: check the branch upstream and push permissions, push the branch"
+       echo "  with an explicit self-refspec, and confirm the PR head matches before resuming the loop."
        # Do not resolve threads or declare the fix pass complete. Report BLOCKED to the human.
        exit 1
      fi
@@ -578,18 +637,73 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
    partial progress survives runner interruption.
 4. **Push once after all addressable fixes** — push only after all addressable
    fixes for the current reviewer-loop cycle are complete. Do not push after
-   each individual fix or checkpoint commit.
+   each individual fix or checkpoint commit. Push with an explicit self-refspec
+   for the same reason as the inline path above (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   # The checkout must be on the PR's own head branch. A self-refspec push is
+   # safe in the sense that it cannot hit the integration branch, but from an
+   # unrelated checkout it would publish that branch and only be caught by the
+   # SHA mismatch afterwards — after the push (issue #1593).
+   PR_HEAD_BRANCH="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || PR_HEAD_BRANCH=""
+   if [ "$FIX_BRANCH" != "$PR_HEAD_BRANCH" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number>."
+     echo "Cause: this checkout is on ${FIX_BRANCH}, but the PR's head branch is ${PR_HEAD_BRANCH:-<unreadable>}."
+     echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+     exit 1
+   fi
+   # Handle a failed push explicitly: under `set -e` a bare failure would abort
+   # before the verification below, so the contractual stop would never print.
+   if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number> on branch ${FIX_BRANCH}."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+   ```
 5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
-     git push
-     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     # Explicit refspec: a bare `git push` here depends on local push.default and
+     # on an upstream that may point at the integration branch (issue #1593).
+     # Handle its failure too: under `set -e` a bare failure would abort before
+     # the check below, so the contractual stop would never print.
+     RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     # Re-check the checkout here too: the retry runs after something already
+     # went wrong, which is exactly when the checkout may have moved.
+     RETRY_PR_HEAD="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || RETRY_PR_HEAD=""
+     if [ "$RETRY_BRANCH" != "$RETRY_PR_HEAD" ]; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number>."
+       echo "Cause: the retry would push ${RETRY_BRANCH}, but the PR's head branch is ${RETRY_PR_HEAD:-<unreadable>}."
+       echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+       exit 1
+     fi
+     if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
+       echo "Cause: git push failed on the retry. A refusal is multi-line and can be truncated to nothing."
+       echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+       exit 1
+     fi
+     REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-       echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
+       echo "Cause: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete."
+       echo "Human action: check the branch upstream and push permissions, push the branch"
+       echo "  with an explicit self-refspec, and confirm the PR head matches before resuming the loop."
        # Do not resolve threads or declare the fix pass complete. Report BLOCKED to the human.
        exit 1
      fi

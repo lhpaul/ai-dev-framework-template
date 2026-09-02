@@ -212,6 +212,7 @@ The following stop conditions are always in force:
 | `security_sensitive_advisory_pending` | A security-sensitive advisory finding (per the classifier in `scripts/development-workflow/security-advisory-classifier.sh`) lacks a fixed commit or a verified human accept/reject decision at the PR's current head SHA. |
 | `missing_tracker_context`             | The work item is missing required tracker metadata (status, type, or linked spec).     |
 | `missing_required_secret_or_permission` | A required credential or GitHub permission is absent.                                |
+| `push_verification_failed`            | A branch push could not be verified: the branch's upstream would send it somewhere other than its own remote branch, or the pushed commit is not present on the remote. |
 
 **These stops hold in all modes, including `autonomous`.** A repository cannot
 configure its way out of a stop condition. The guardrails model is about granting
@@ -360,6 +361,7 @@ guardrails:
     - destructive_action
     - missing_tracker_context
     - missing_required_secret_or_permission
+    - push_verification_failed
   audit:
     pr_disposition_record: required
     work_item_ledger_record: required

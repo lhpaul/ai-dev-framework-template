@@ -514,7 +514,48 @@ If no blocking human decision remains:
 
 9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 10. Commit: `docs: add implementation plan for [feature-name]`
-11. Push: `git push -u origin implementation-plan/[branch-slug]`
+11. Push with an explicit refspec so the destination never depends on local
+    `push.default`, then verify the remote head matches local before opening the
+    PR (issue #1593):
+
+    <!-- workflow-shell-contract: bash-zsh -->
+    ```bash
+    set -euo pipefail
+
+    # The push must send THIS branch. A checkout left on another branch would push
+    # that one under this branch's name (issue #1593).
+    if [ "$(git rev-parse --abbrev-ref HEAD)" != "implementation-plan/[branch-slug]" ]; then
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
+      echo "Item: branch implementation-plan/[branch-slug]."
+      echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not implementation-plan/[branch-slug]."
+      echo "Human action: switch this checkout to implementation-plan/[branch-slug] and re-run the push step."
+      exit 1
+    fi
+
+    # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+    # block before the verification below, so the contractual stop would never print.
+    if ! git push origin "implementation-plan/[branch-slug]:implementation-plan/[branch-slug]"; then
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
+      echo "Item: branch implementation-plan/[branch-slug]."
+      echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+      echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+      exit 1
+    fi
+
+    # Verify the push actually landed: a refused or mis-aimed push must not pass as
+    # success (issue #1593). The refusal message is multi-line and can be truncated
+    # to nothing by shell-output filtering.
+    LOCAL_SHA=$(git rev-parse HEAD)
+    REMOTE_SHA="$(git ls-remote origin "refs/heads/implementation-plan/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
+      echo "Item: branch implementation-plan/[branch-slug] and its pull request."
+      echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+      echo "Human action: check the branch upstream and push permissions, re-run"
+      echo "  git push origin \"implementation-plan/[branch-slug]:implementation-plan/[branch-slug]\", and confirm the remote head matches before continuing."
+      exit 1
+    fi
+    ```
 12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
     mode when a positive numeric issue number is available:
 

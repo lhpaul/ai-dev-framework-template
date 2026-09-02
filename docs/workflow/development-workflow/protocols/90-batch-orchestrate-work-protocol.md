@@ -1533,6 +1533,12 @@ not substitute a generic path or continue from the main repository checkout.
 git worktree add <manifest-assigned-worktree-path> <branch>
 ```
 
+This form creates no tracking of its own, but `<branch>` may already carry an
+upstream pointing at the integration branch from an earlier creation. Run
+Protocol 91 Step 3's **Upstream verification** immediately after entering the
+worktree, and push with an explicit refspec, so a bare `git push` can neither
+silently no-op nor aim at the integration branch (issue #1593).
+
 Before any inline edit, branch-changing command, commit, push, PR mutation, or
 tracker mutation, run the same Protocol 91 pre-mutation isolation self-check:
 `BATCH_CONTEXT=true`, expected branch, artifact repo root, approved base branch,

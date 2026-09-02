@@ -846,10 +846,44 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "feat([scope]): [description]"
-git push -u origin feature/[slug]
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "feature/[slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not feature/[slug]."
+  echo "Human action: switch this checkout to feature/[slug] and re-run the push step."
+  exit 1
+fi
+
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "feature/[slug]:feature/[slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/feature/[slug]" | cut -f1)" || REMOTE_SHA=""
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"feature/[slug]:feature/[slug]\", and confirm the remote head matches before continuing."
+  exit 1
+fi
 ```
 
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
@@ -1194,7 +1228,47 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
    If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reopen and save in your editor) before staging.
 
 7. Commit: `refactor([scope]): [description]`
-8. Push branch to remote
+8. Push with an explicit refspec so the destination never depends on local
+   `push.default`, then verify the remote head matches local before opening the
+   PR (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   # The push must send THIS branch. A checkout left on another branch would push
+   # that one under this branch's name (issue #1593).
+   if [ "$(git rev-parse --abbrev-ref HEAD)" != "refactor/[branch-slug]" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug]."
+     echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not refactor/[branch-slug]."
+     echo "Human action: switch this checkout to refactor/[branch-slug] and re-run the push step."
+     exit 1
+   fi
+
+   # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+   # block before the verification below, so the contractual stop would never print.
+   if ! git push origin "refactor/[branch-slug]:refactor/[branch-slug]"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug]."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+
+   # Verify the push actually landed: a refused or mis-aimed push must not pass as
+   # success (issue #1593). The refusal message is multi-line and can be truncated
+   # to nothing by shell-output filtering.
+   LOCAL_SHA=$(git rev-parse HEAD)
+   REMOTE_SHA="$(git ls-remote origin "refs/heads/refactor/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug] and its pull request."
+     echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+     echo "Human action: check the branch upstream and push permissions, re-run"
+     echo "  git push origin \"refactor/[branch-slug]:refactor/[branch-slug]\", and confirm the remote head matches before continuing."
+     exit 1
+   fi
+   ```
 9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 10. **Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the [Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item exists, create or accept a retroactive backlog item and reference it in the PR description before running `gh pr create`.
 11. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
@@ -1455,10 +1529,44 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "fix([scope]): [description]"
-git push -u origin fix/[branch-slug]
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "fix/[branch-slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not fix/[branch-slug]."
+  echo "Human action: switch this checkout to fix/[branch-slug] and re-run the push step."
+  exit 1
+fi
+
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "fix/[branch-slug]:fix/[branch-slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/fix/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"fix/[branch-slug]:fix/[branch-slug]\", and confirm the remote head matches before continuing."
+  exit 1
+fi
 ```
 
 ### Step 8: Open PR (Draft)
@@ -1769,10 +1877,44 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "fix([scope]): [description] (hotfix)"
-git push -u origin hotfix/[branch-slug]
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "hotfix/[branch-slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not hotfix/[branch-slug]."
+  echo "Human action: switch this checkout to hotfix/[branch-slug] and re-run the push step."
+  exit 1
+fi
+
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/hotfix/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"hotfix/[branch-slug]:hotfix/[branch-slug]\", and confirm the remote head matches before continuing."
+  exit 1
+fi
 ```
 
 ### Step 8: Open PR (Draft)
