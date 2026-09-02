@@ -826,6 +826,15 @@ fi
 P93_UNGUARDED="$(grep -nE '^[[:space:]]*git push' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when every push is guarded, which is the passing state
 check protocol_93_every_push_handles_failure "" "$P93_UNGUARDED"
 
+# ...and each fixer push must confirm the checkout is on the PR's own head
+# branch before pushing, not only that the refspec is self-consistent.
+P93_PUSH_BLOCKS="$(grep -c 'PR_HEAD_BRANCH' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
+if [ "${P93_PUSH_BLOCKS:-0}" -ge 4 ]; then
+  check protocol_93_pushes_check_pr_head_branch yes yes
+else
+  check protocol_93_pushes_check_pr_head_branch yes "only ${P93_PUSH_BLOCKS} PR_HEAD_BRANCH reference(s)"
+fi
+
 # ...executed, not only asserted. Force the retry path (a stubbed `gh` reporting
 # a remote head that differs from local) and then force the retry push to fail.
 extract_p93_verification_block() {

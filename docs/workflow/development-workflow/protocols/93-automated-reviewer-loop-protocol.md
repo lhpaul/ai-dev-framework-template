@@ -469,6 +469,18 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    ```bash
    set -euo pipefail
    FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   # The checkout must be on the PR's own head branch. A self-refspec push is
+   # safe in the sense that it cannot hit the integration branch, but from an
+   # unrelated checkout it would publish that branch and only be caught by the
+   # SHA mismatch afterwards — after the push (issue #1593).
+   PR_HEAD_BRANCH="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || PR_HEAD_BRANCH=""
+   if [ "$FIX_BRANCH" != "$PR_HEAD_BRANCH" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number>."
+     echo "Cause: this checkout is on ${FIX_BRANCH}, but the PR's head branch is ${PR_HEAD_BRANCH:-<unreadable>}."
+     echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+     exit 1
+   fi
    # Handle a failed push explicitly: under `set -e` a bare failure would abort
    # before the verification below, so the contractual stop would never print.
    if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
@@ -555,6 +567,18 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
    ```bash
    set -euo pipefail
    FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   # The checkout must be on the PR's own head branch. A self-refspec push is
+   # safe in the sense that it cannot hit the integration branch, but from an
+   # unrelated checkout it would publish that branch and only be caught by the
+   # SHA mismatch afterwards — after the push (issue #1593).
+   PR_HEAD_BRANCH="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || PR_HEAD_BRANCH=""
+   if [ "$FIX_BRANCH" != "$PR_HEAD_BRANCH" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number>."
+     echo "Cause: this checkout is on ${FIX_BRANCH}, but the PR's head branch is ${PR_HEAD_BRANCH:-<unreadable>}."
+     echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+     exit 1
+   fi
    # Handle a failed push explicitly: under `set -e` a bare failure would abort
    # before the verification below, so the contractual stop would never print.
    if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
