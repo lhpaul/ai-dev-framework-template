@@ -172,6 +172,36 @@ else
   check protocol_91_documents_upstream_check yes no
 fi
 
+# --- AC-2 / AC-3: every documented branch push ------------------------------
+# Each protocol that pushes an item branch must push with an explicit refspec
+# and then compare the remote head to local. Checked by extraction, so a
+# protocol that drops either half fails here.
+PROTOCOL_DIR="$REPO_ROOT/docs/workflow/development-workflow/protocols"
+check_push_step() {
+  # check_push_step <protocol-file> <branch-placeholder>
+  local file="$1" branch="$2" name
+  name="$(basename "$file" .md)"
+  if grep -Fq "git push origin \"${branch}:${branch}\"" "$file"; then
+    check "push_refspec_${name}" yes yes
+  else
+    check "push_refspec_${name}" yes "no refspec for ${branch}"
+  fi
+  if grep -Fq "git ls-remote origin \"refs/heads/${branch}\"" "$file" &&
+      grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' "$file"; then
+    check "push_verified_${name}" yes yes
+  else
+    check "push_verified_${name}" yes "no remote-head comparison for ${branch}"
+  fi
+}
+check_push_step "$PROTOCOL_DIR/01-generate-spec-protocol.md" 'spec/[branch-slug]'
+check_push_step "$PROTOCOL_DIR/02-generate-implementation-plan-protocol.md" 'implementation-plan/[branch-slug]'
+check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]'
+
+# No documented item-branch push may be left bare: a `git push` with no remote
+# and no refspec depends entirely on local push.default.
+BARE_PUSHES="$(grep -rn '^\s*git push\s*$' "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, which is the passing state
+check no_bare_push_in_protocols "" "$BARE_PUSHES"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

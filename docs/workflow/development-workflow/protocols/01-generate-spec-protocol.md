@@ -327,8 +327,23 @@ If no blocking human decision remains:
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
 8. Push with an explicit refspec so the destination never depends on local
-   `push.default` (issue #1593): `git push origin "spec/[branch-slug]:spec/[branch-slug]"`,
-   then confirm the remote head matches local before opening the PR.
+   `push.default`, then verify the remote head matches local before opening the
+   PR (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   git push origin "spec/[branch-slug]:spec/[branch-slug]"
+
+   # Verify the push actually landed: a refused or mis-aimed push must not pass as
+   # success (issue #1593). The refusal message is multi-line and can be truncated
+   # to nothing by shell-output filtering.
+   LOCAL_SHA=$(git rev-parse HEAD)
+   REMOTE_SHA=$(git ls-remote origin "refs/heads/spec/[branch-slug]" | cut -f1)
+   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+     echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+     exit 1
+   fi
+   ```
 9. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
    mode when a positive numeric issue number is available:
 
