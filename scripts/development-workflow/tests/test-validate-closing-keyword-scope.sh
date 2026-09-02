@@ -832,9 +832,15 @@ assert_fork_if_guard() {
     || grep -qzE "if: >-[^\"]*head\.repo\.full_name ==\s*github\.repository" "$1"
 }
 
-assert_checkout_uses_base_sha() {
-  grep -qE 'ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}' "$1" \
-    && ! grep -qE 'pull_request\.head\.sha|refs/pull/' "$1"
+# A privileged pull_request_target job must execute only code the pull request
+# cannot influence. `base.sha` fails that: a same-repository pull request can
+# target any branch, its author's included. The default branch is the fixed
+# point — and is where GitHub loads this workflow from, so anyone who can change
+# what runs could already change the workflow.
+assert_checkout_uses_a_trusted_ref() {
+  grep -qE 'ref: \$\{\{ github\.event\.repository\.default_branch \}\}' "$1" \
+    && ! grep -qE 'ref: \$\{\{ github\.event\.pull_request\.(head|base)\.sha' "$1" \
+    && ! grep -qE 'refs/pull/' "$1"
 }
 
 assert_concurrency_keyed_to_target() {
@@ -844,8 +850,8 @@ assert_concurrency_keyed_to_target() {
 
 check "workflow_job_carries_fork_if_guard" "yes" \
   "$(assert_fork_if_guard "$WORKFLOW" && echo yes || echo no)"
-check "workflow_checkout_uses_base_sha_never_head" "yes" \
-  "$(assert_checkout_uses_base_sha "$WORKFLOW" && echo yes || echo no)"
+check "workflow_checkout_uses_a_trusted_ref_never_a_pr_controlled_one" "yes" \
+  "$(assert_checkout_uses_a_trusted_ref "$WORKFLOW" && echo yes || echo no)"
 check "workflow_concurrency_group_is_keyed_to_matrix_target" "yes" \
   "$(assert_concurrency_keyed_to_target "$WORKFLOW" && echo yes || echo no)"
 
@@ -893,8 +899,12 @@ p.write_text(t)
 PY'
 
 # 2. Point the checkout at the pull request head instead of the base.
-plant_and_prove "checkout_base_sha" assert_checkout_uses_base_sha \
-  'sed -i.bak "s/pull_request\.base\.sha/pull_request.head.sha/" "$copy"'
+plant_and_prove "checkout_head_sha" assert_checkout_uses_a_trusted_ref \
+  'sed -i.bak "s/github\.event\.repository\.default_branch/github.event.pull_request.head.sha/" "$copy"'
+
+# And the subtler one this replaced: `base.sha` is not a fixed point either.
+plant_and_prove "checkout_base_sha" assert_checkout_uses_a_trusted_ref \
+  'sed -i.bak "s/github\.event\.repository\.default_branch/github.event.pull_request.base.sha/" "$copy"'
 
 # 3. Key the concurrency group to the triggering pull request.
 plant_and_prove "concurrency_target_key" assert_concurrency_keyed_to_target \
@@ -988,6 +998,17 @@ check "the fan-out is fully paginated, with no fixed ceiling" "0" \
   "$(grep -c -- '--limit 200' "$WORKFLOW" || true)"
 check "the fan-out never line-splits a pull request body in the shell" "0" \
   "$(grep -c 'read -r number body' "$WORKFLOW" || true)"
+
+# An unreadable listing with no target left cannot publish its indeterminate
+# outcome anywhere — the triggering pull request is closed and out of scope by
+# spec, and the siblings are unknown because the listing is what failed. It
+# fails the job instead, so the run is red rather than green-and-silent.
+check "an unreportable unreadable listing fails the job rather than exiting green" "yes" \
+  "$(grep -q 'if \[ "$unreadable" = "true" \] && \[ "$json" = "\[\]" \]; then' "$WORKFLOW" && echo yes || echo no)"
+check "that failure path exits non-zero" "yes" \
+  "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep -q 'exit 1' && echo yes || echo no)"
+check "a readable listing with no targets still exits green" "yes" \
+  "$(grep -q 'echo "prs=\${json}" >> "\$GITHUB_OUTPUT"' "$WORKFLOW" && echo yes || echo no)"
 
 check "prs is always emitted, never left unset" "yes" \
   "$(grep -q 'json="\[\]"' "$WORKFLOW" && echo yes || echo no)"

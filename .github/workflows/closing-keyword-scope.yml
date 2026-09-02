@@ -128,6 +128,22 @@ jobs:
           echo "sibling_list_unreadable=${unreadable}" >> "$GITHUB_OUTPUT"
           echo "Resolved targets: ${json} (sibling list unreadable: ${unreadable})"
 
+          # An unreadable listing with NO target left is the one shape that
+          # cannot be reported the usual way: the validator publishes its
+          # indeterminate outcome onto a pull request, and here there is none.
+          # The triggering pull request is closed, and the spec says a closed
+          # pull request is not evaluated at all; the siblings are unknown
+          # precisely because the listing failed.
+          #
+          # So the failure is raised as a failed JOB rather than published as a
+          # check. That is visible in Actions and on the triggering pull
+          # request, which is the whole requirement — exiting 0 here would have
+          # made an unreadable input look identical to "nothing to do".
+          if [ "$unreadable" = "true" ] && [ "$json" = "[]" ]; then
+            echo "ERROR: the open pull request list could not be read, and this event has no other target to report on (the triggering pull request is closed). Re-run this workflow once the API is available." >&2
+            exit 1
+          fi
+
   validate:
     name: Validate closing-keyword scope
     needs: resolve-targets
@@ -158,10 +174,23 @@ jobs:
       group: closing-keyword-scope-${{ matrix.pr }}
       cancel-in-progress: false
     steps:
-      - name: Check out the base commit
+      # The DEFAULT BRANCH, not the pull request's base.
+      #
+      # `pull_request_target` runs with write permissions, so it must only ever
+      # execute code the pull request cannot influence. `base.sha` looked like
+      # that and is not: a same-repository pull request can target ANY branch,
+      # including one its own author controls, and the validator would then run
+      # from that branch with `pull-requests`, `issues` and `checks` write.
+      #
+      # The default branch is the one fixed point available here — it is also
+      # where GitHub loads this workflow file from, so anyone who can change
+      # what runs has already been able to change the workflow itself. The
+      # pull request's requested base is read through the API as data, never
+      # checked out.
+      - name: Check out the default branch
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Validate
