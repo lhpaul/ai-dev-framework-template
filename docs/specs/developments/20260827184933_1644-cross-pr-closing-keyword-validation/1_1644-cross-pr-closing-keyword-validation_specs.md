@@ -262,6 +262,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 Acceptance criteria are referenced by group rather than by number. The groups are the sub-headings under **Acceptance Criteria**; numbering has shifted repeatedly during review, and a numeric range silently stops meaning what it says the moment a criterion is inserted.
 
+Two issues are traced here: **#1644**, the feature, and **#1702**, the amendment that moved the undeliverable triggers out of scope.
+
 | #1644 objective | Disposition |
 | --- | --- |
 | PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies. Groups: *Reporting a mismatch*, *Re-evaluation triggers*. Blocking, and reporting keywords found only outside the description, are Out of Scope |
@@ -270,6 +272,10 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 | False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links. Groups: *Which keywords count as live*, *Establishing ownership*, *The indeterminate outcome* |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3. Group: *The opt-out*, including provisioning on a fresh installation and a failed provisioning that still warns |
 | Tests for parser and validator edge cases | Every group carries its own edge cases; *Which keywords count as live* covers parity with what each closer excludes, *Establishing ownership* the contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases, *The indeterminate outcome* every unreadable input, and *Ordering and idempotence* the overlapping-run cases. *Fork-originated pull requests* records the one excluded shape |
+
+| #1702 objective | Disposition |
+| --- | --- |
+| Record the re-evaluation triggers GitHub Actions cannot deliver | Deferred, not covered by an acceptance criterion. The four branch-rename criteria and the default-branch-change criterion were removed from *Re-evaluation triggers*, the three affected rows of the Triggers table are marked not delivered, and the deferral with its reason, its declined alternative and its unbounded residual is *Out of Scope*, item **Automatic re-evaluation on a branch rename or a default-branch change**. Nothing from #1702 maps to a criterion, because the whole objective is the removal of five |
 
 ---
 
