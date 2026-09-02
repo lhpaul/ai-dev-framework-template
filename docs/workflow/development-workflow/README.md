@@ -95,6 +95,8 @@ This stage also includes the validation work needed to prove the implementation 
 
 The final implementation-validation checkpoint in this workflow is the smoke test: a targeted run driven by a smoke test runbook or an existing committed automated spec.
 
+A pull request opened in this stage is also checked for **closing-keyword scope**: if its description declares `Closes #N` for an issue that another open pull request's branch names, the workflow posts an advisory warning naming the issue and the sibling. It never blocks a merge, and a pull request that deliberately closes several issues silences it with the `multi-issue-intentional` label. The point is to catch the mistake while the batch is in flight, rather than after a release has been assembled around the wrong scope.
+
 ### Merge
 
 Merge is the point where a change joins `develop`. A merged change is integrated, but not necessarily released. Treating merge as its own stage keeps integration quality and production release quality from getting conflated.

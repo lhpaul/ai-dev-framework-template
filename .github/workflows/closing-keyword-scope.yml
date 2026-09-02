@@ -1,0 +1,166 @@
+# Cross-PR closing-keyword validation (#1644).
+#
+# Warns when a pull request declares a closing keyword for an issue that
+# another open pull request is carrying, so the mistake is caught while the
+# batch is still in flight rather than after a release has been assembled
+# around the wrong scope. The warning never blocks a merge.
+#
+# Two jobs, and the split is load-bearing:
+#
+#   resolve-targets  computes which pull requests this event should
+#                    re-validate. It writes nothing.
+#   validate         one matrix leg per target, each writing only to its own
+#                    target, with a concurrency group keyed to that target.
+#
+# A single job that fanned out and wrote to several pull requests could not be
+# serialized: two sibling events fanning out to the same claimant would sit in
+# different concurrency groups and race. Keyed to the target, every write to a
+# given pull request is serialized against every other, whoever triggered it.
+#
+# Unlike pr-policy.yml this workflow cannot be checkout-free — its validator is
+# a repository script. It checks out the BASE commit, which the pull request
+# cannot influence, and never the head. Everything from the pull request is
+# read through the API as data and never executed.
+#
+# NOTE ON ACTIVATION: GitHub loads pull_request_target workflows from the
+# repository's default branch (`main`), while pull requests target `develop`.
+# This workflow is inert until a release merges it into `main`. Pre-merge
+# evidence is the unit suite plus the structural assertions in
+# tests/test-validate-closing-keyword-scope.sh; the smoke runbook is
+# post-release verification. See the implementation plan.
+name: Closing-keyword scope
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, labeled, unlabeled, closed, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-targets:
+    name: Resolve validation targets
+    runs-on: ubuntu-latest
+    # Fork guard, outer half. Every step below can reach a step that writes to
+    # the repository, and the Protocol 03 checklist requires an explicit `if:`
+    # on those. The validator carries its own guard as defence in depth.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      prs: ${{ steps.resolve.outputs.prs }}
+      sibling_list_unreadable: ${{ steps.resolve.outputs.sibling_list_unreadable }}
+    steps:
+      - name: Resolve targets
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          set -euo pipefail
+
+          # `prs` is ALWAYS set, `[]` when there is nothing to validate. An
+          # unset output would pass the validate gate below — unset is not the
+          # string "[]" — and then fail the workflow on fromJSON(''), turning
+          # "nothing to do" into a red run.
+          targets=""
+          unreadable="false"
+
+          # The event's own pull request, only while it is open. A `closed`
+          # event fans out to the siblings it affects and drops itself,
+          # because a closed pull request is not evaluated at all.
+          if [ "$PR_STATE" = "open" ]; then
+            targets="$PR_NUMBER"
+          fi
+
+          # Sibling fan-out: opening, reopening or closing an implementation
+          # branch changes ownership evidence for the issue its branch names,
+          # which lives on OTHER pull requests.
+          case "$ACTION" in
+            opened|reopened|closed)
+              issue="$(printf '%s' "$PR_BRANCH" \
+                | sed -nE 's#^(feature|fix|refactor|hotfix|backport/hotfix)/([A-Z][A-Z0-9]*-)?([0-9]+)(-.*)?$#\3#p')"
+              if [ -n "$issue" ]; then
+                # Fail OPEN, not closed. An unreadable listing is an
+                # unreadable GATE INPUT, and the spec requires a neutral check
+                # and a log line naming it — which nothing can publish if no
+                # matrix leg runs. So the triggering pull request still
+                # reaches validation, carrying the flag, and the validator
+                # records the failure through its ordinary accessor.
+                if ! open_prs="$(gh pr list --repo "$REPO" --state open --limit 200 \
+                      --json number,body --jq '.[] | "\(.number)\t\(.body // "")"' 2>/dev/null)"; then
+                  echo "WARN: could not list open pull requests; siblings stay unknown." >&2
+                  unreadable="true"
+                  open_prs=""
+                fi
+                while IFS="$(printf '\t')" read -r number body; do
+                  [ -n "${number:-}" ] || continue
+                  [ "$number" != "$PR_NUMBER" ] || continue
+                  if printf '%s' "$body" \
+                    | grep -qiE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#${issue}([^0-9]|$)"; then
+                    targets="${targets} ${number}"
+                  fi
+                done <<< "$open_prs"
+              fi
+              ;;
+          esac
+
+          json="$(printf '%s' "$targets" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un | jq -R . | jq -sc . || printf '[]')"
+          [ -n "$json" ] || json="[]"
+          echo "prs=${json}" >> "$GITHUB_OUTPUT"
+          echo "sibling_list_unreadable=${unreadable}" >> "$GITHUB_OUTPUT"
+          echo "Resolved targets: ${json} (sibling list unreadable: ${unreadable})"
+
+  validate:
+    name: Validate closing-keyword scope
+    needs: resolve-targets
+    # Fork guard, repeated on the job that actually writes. `resolve-targets`
+    # carrying it would be enough to skip this job in practice, but the
+    # Protocol 03 checklist asks for the `if:` on every step that writes to
+    # the repository, and a guard you have to trace through a `needs:` chain
+    # is a guard someone can remove by accident.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.resolve-targets.outputs.prs != '' &&
+      needs.resolve-targets.outputs.prs != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.resolve-targets.outputs.prs) }}
+    # Keyed to the TARGET, not to the triggering pull request. GitHub keeps at
+    # most one running and one pending job per group and cancels the older
+    # pending one — which is the outcome we want: the survivor starts later, so
+    # it reads fresher state.
+    concurrency:
+      group: closing-keyword-scope-${{ matrix.pr }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out the base commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=""
+          if [ "${{ needs.resolve-targets.outputs.sibling_list_unreadable }}" = "true" ]; then
+            args="--sibling-list-unreadable"
+          fi
+          # shellcheck disable=SC2086  # args is a single optional flag, intentionally word-split
+          ./scripts/development-workflow/validate-closing-keyword-scope.sh \
+            "${{ matrix.pr }}" "${{ github.repository }}" --publish $args

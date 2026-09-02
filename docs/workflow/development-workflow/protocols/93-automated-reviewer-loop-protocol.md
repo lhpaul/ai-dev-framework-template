@@ -1191,6 +1191,18 @@ This signal is for tool-evaluation and graduation decisions. It does not weaken
 the normal merge gates: any net-new blocker still follows the standard
 `needs_fixes` loop.
 
+### Closing-keyword scope is advisory and outside this loop
+
+The `Closing-keyword scope` check (#1644) warns when a pull request declares a
+closing keyword for an issue a sibling pull request is carrying. It is **not a
+reviewer-loop platform** and never gates this loop: its conclusion is `success`
+for a conclusive run and `neutral` for one that could not read an input, so it
+cannot make a pull request non-mergeable and cannot make a loop iteration
+`needs_fixes`. Treat its comment the way a human would treat a note — read it,
+fix the description if it is right, apply `multi-issue-intentional` if the
+multi-issue scope is deliberate — and do not add it to `review.on_draft` or
+`review.on_ready`.
+
 ### PR-Agent "Possible Issue" advisory labels
 
 When `pr-review-loop.sh` returns `RESULT=clean` and the output contains an

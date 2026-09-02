@@ -170,6 +170,18 @@ spaces before branch creation or push. To recover already started work, preserve
 the original branch, create a compliant replacement through the normal PR path,
 verify push-triggered checks start, and never force-push shared history.
 
+### Closing Keywords In A PR Description
+
+Declare `Closes #N` only for issues **this** pull request's work carries. If the
+issue belongs to a sibling pull request — one whose branch names it — the merge
+closes it on the wrong work, and the release is assembled around the wrong
+scope.
+
+An automated check warns when it sees that, naming the issue and the sibling.
+It is advisory and never blocks a merge. When a pull request deliberately
+closes several issues, apply the `multi-issue-intentional` label and the
+warning clears; the label is the only opt-out.
+
 ### Tracker Classification
 
 When `issue_tracker.provider: github_projects` is configured, the GitHub
