@@ -864,6 +864,13 @@ check_contains "and the recovery is named, not hidden" "the first read failed" "
 posted_check="$(cat "$F/.posted_write_check_runs" 2>/dev/null || true)"
 check "the recovered-input run still writes a neutral check" "neutral" \
   "$(printf '%s' "$posted_check" | jq -r '.conclusion // ""')"
+# The check has to NAME what failed. On this path the current read succeeded,
+# so recomputing the list gives nothing — a check saying "did not conclude"
+# while naming no input tells a reader less than no check at all.
+check_contains "the recovered-input check names the input that failed on the first read" \
+  "- description" "$(printf '%s' "$posted_check" | jq -r '.output.summary // ""')"
+check "and the run reports the same name on stdout" "description" \
+  "$(printf '%s\n' "$out" | sed -n 's/^UNREADABLE_INPUTS_ON_RECHECK=//p' | head -1)"
 check_not_contains "a recovered first read is not misread as a changed input" \
   "ABANDONED=inputs_changed" "$out"
 

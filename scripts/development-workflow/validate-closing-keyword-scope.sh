@@ -91,6 +91,21 @@ record_input() {
   return 0
 }
 
+# The names published in an indeterminate check. Normally the current read's
+# failures — but on the recovery path the current read has none, and the check
+# would say "did not conclude" while naming nothing. Whatever failed is what a
+# person needs to see, so the first read's failures are carried forward
+# explicitly rather than recomputed from a state that no longer holds them.
+REPORTED_UNREADABLE_OVERRIDE=""
+
+reported_unreadable_inputs() {
+  if [ -n "$REPORTED_UNREADABLE_OVERRIDE" ]; then
+    printf '%s\n' "$REPORTED_UNREADABLE_OVERRIDE"
+    return 0
+  fi
+  unreadable_inputs
+}
+
 unreadable_inputs() {
   local i=1 name status
   while :; do
@@ -533,7 +548,7 @@ check_summary() {
   case "$VERDICT" in
     indeterminate)
       printf '\nThe validation did not conclude. These inputs could not be read:\n\n'
-      unreadable_inputs | sed 's/^/- /'
+      reported_unreadable_inputs | sed 's/^/- /'
       printf '\nAn existing report, if any, was left exactly as it was rather than cleared on incomplete information.\n'
       ;;
     warn)
@@ -787,6 +802,8 @@ main() {
   # because the decision was made against a state that no longer holds and the
   # next event recomputes from the current one.
   local decided_verdict="$VERDICT"
+  local first_read_unreadable
+  first_read_unreadable="$(unreadable_inputs)"
   read_all_inputs
 
   # A failed RE-READ is an unreadable input, not a changed one, and the two
@@ -805,7 +822,12 @@ main() {
   # input failure, so recovery on the second read does not erase the first.
   if [ "$decided_verdict" = "indeterminate" ] && ! any_input_unreadable; then
     VERDICT="indeterminate"
+    # The re-read succeeded, so the current failure list is empty. Publishing
+    # that would produce a check saying "did not conclude" while naming
+    # nothing, which tells a reader less than no check at all.
+    REPORTED_UNREADABLE_OVERRIDE="$first_read_unreadable"
     echo "VERDICT_ON_RECHECK=indeterminate (the first read failed; the second recovered)"
+    echo "UNREADABLE_INPUTS_ON_RECHECK=$(printf '%s' "$first_read_unreadable" | tr '\n' ',' | sed 's/,$//')"
     publish
     echo "PUBLISHED=true"
     exit 0
