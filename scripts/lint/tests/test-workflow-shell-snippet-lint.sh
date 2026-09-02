@@ -248,6 +248,23 @@ if grep -q "record this parser\|parser cannot read" "$TMP_DIR/last.out"; then
 else
   check unreadable_preamble_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
+# Order matters as much as presence: a hunk that precedes its own target header
+# has its additions dropped by changed_lines(), which would report a false
+# zero-examined clean.
+printf '%s\n' 'diff --git a/docs/workflow/ooo.md b/docs/workflow/ooo.md' \
+  '@@ -0,0 +1,3 @@' '+```bash' '+echo hello' '+```' \
+  '--- /dev/null' '+++ b/docs/workflow/ooo.md' \
+  > "$TMP_DIR/out-of-order.diff"
+check out_of_order_headers_refused 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/out-of-order.diff")"
+check out_of_order_headers_allow_empty_still_errors 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/out-of-order.diff" --allow-empty)"
+# The normal order is unaffected.
+printf '%s\n' 'diff --git a/docs/workflow/ok.md b/docs/workflow/ok.md' \
+  '--- /dev/null' '+++ b/docs/workflow/ok.md' '@@ -0,0 +1 @@' '+prose' \
+  > "$TMP_DIR/in-order.diff"
+check in_order_headers_pass 0 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/in-order.diff")"
+
 # A framed record with no hunk must carry the metadata that makes it a real
 # change. A bare `diff --git a b` line is text shaped like a header.
 printf '%s\n' 'diff --git a b' > "$TMP_DIR/bare-header.diff"
@@ -394,7 +411,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff prose-preamble.diff bare-header.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff prose-preamble.diff bare-header.diff out-of-order.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced

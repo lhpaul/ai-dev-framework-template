@@ -148,8 +148,15 @@ def diff_shape(diff: str) -> str:
     shape = "diff"
     for record in records:
         framed = bool(DIFF_GIT_HEADER.match(record))
-        has_hunk = bool(DIFF_HUNK_HEADER.search(record))
-        has_target = bool(DIFF_TARGET_HEADER.search(record))
+        hunk_match = DIFF_HUNK_HEADER.search(record)
+        target_match = DIFF_TARGET_HEADER.search(record)
+        has_hunk = bool(hunk_match)
+        has_target = bool(target_match)
+        # Order matters as much as presence: changed_lines() attributes a hunk's
+        # additions to the path most recently seen, so a hunk that precedes its
+        # own target header has its lines silently dropped.
+        if has_hunk and has_target and target_match.start() > hunk_match.start():
+            return "unparseable"
         if framed:
             # A Git record may legitimately carry neither hunk nor target: a
             # mode-only change, a binary file, a pure rename. It may not carry
@@ -338,8 +345,9 @@ def main() -> int:
             print(
                 f"ERROR: the diff under examination (source: {source}) has a record this parser "
                 "cannot read: a hunk header with no `+++ b/<path>` target header to attribute it to, "
-                "a target header with no hunk behind it, or a `diff --git` header with neither and "
-                "no mode/index/rename/binary metadata behind it. Produce it with "
+                "a target header that comes after the hunk it should introduce, a target header "
+                "with no hunk behind it, or a `diff --git` header with neither and no "
+                "mode/index/rename/binary metadata behind it. Produce it with "
                 "`git diff --unified=0 <base>...HEAD` and keep the default a/ and b/ prefixes.",
                 file=sys.stderr,
             )
