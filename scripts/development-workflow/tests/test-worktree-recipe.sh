@@ -115,7 +115,13 @@ check case_a_no_base_upstream "" "$DOC_MERGE"
   git commit -q -m work
   git -c push.default=upstream push >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - the push is expected to fail; that it cannot reach develop is the property under test
 )
-DEVELOP_AFTER="$(git -C "$ROOT_DOC/repo" rev-parse origin/develop)"
+# Read the BARE REMOTE, not the local remote-tracking ref. The remote is the
+# thing under test; whether the pushing clone's origin/develop happens to be
+# refreshed is git-version and configuration dependent, and an assertion about
+# harm to the integration branch should not rest on that. (Measured on git
+# 2.50.1 the tracking ref did move, so the previous form was not wrong here —
+# it was simply asserting the wrong object.)
+DEVELOP_AFTER="$(git -C "$ROOT_DOC/remote.git" rev-parse develop)"
 DEVELOP_SEED="$(git -C "$ROOT_DOC/repo" rev-parse develop)"
 check bare_push_cannot_reach_develop "$DEVELOP_SEED" "$DEVELOP_AFTER"
 
