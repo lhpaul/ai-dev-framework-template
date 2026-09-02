@@ -500,7 +500,7 @@ PYBLOCK
 
 check_push_step() {
   # check_push_step <protocol-file> <branch-placeholder> <label>
-  local file="$1" branch="$2" label="$3" name block
+  local file="$1" branch="$2" label="$3" name block block_first_line
   name="$(basename "$file" .md)_${label}"
   block="$(extract_push_block "$file" "$branch")"
   if [ -z "$block" ]; then
@@ -510,6 +510,15 @@ check_push_step() {
     return 0
   fi
   check "push_refspec_${name}" yes yes
+  # `set -euo pipefail` must be the FIRST line, so a failed `git add` or
+  # `git commit` cannot fall through and push an older HEAD.
+  # Blocks inside numbered list items are indented; compare the trimmed line.
+  block_first_line="$(printf '%s\n' "$block" | sed -n '1s/^[[:space:]]*//p')"
+  if [ "$block_first_line" = "set -euo pipefail" ]; then
+    check "push_shell_options_first_${name}" yes yes
+  else
+    check "push_shell_options_first_${name}" yes "first line is: $block_first_line"
+  fi
   # The ls-remote must name THIS branch, inside THIS block.
   if printf '%s\n' "$block" | grep -Fq "git ls-remote origin \"refs/heads/${branch}\""; then
     check "push_verified_${name}" yes yes
@@ -550,14 +559,7 @@ GUARD_ROOT="$TMP_DIR/push-guard"
 mkdir -p "$GUARD_ROOT"
 setup_repo "$GUARD_ROOT"
 GUARD_BRANCH=fix/1593-guard-demo
-# `set -euo pipefail` must be the FIRST line of the fence, so a failed `git add`
-# or `git commit` cannot fall through and push an older HEAD.
 PUSH_BLOCK_RAW="$(extract_push_block "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]')"
-if [ "$(printf '%s\n' "$PUSH_BLOCK_RAW" | sed -n '1p')" = "set -euo pipefail" ]; then
-  check push_block_sets_shell_options_first yes yes
-else
-  check push_block_sets_shell_options_first yes "first line is: $(printf '%s\n' "$PUSH_BLOCK_RAW" | sed -n '1p')"
-fi
 # The fence also carries the `git add [files]` / `git commit` placeholders, which
 # are not runnable; drop exactly those two lines and assert both were found, so
 # the test cannot quietly skip more of the block than it means to.
@@ -628,6 +630,27 @@ GUARD_DEVELOP_SEED="$(git -C "$GUARD_ROOT/repo" rev-parse develop)"
 check push_block_wrong_branch_pushed_nothing "$GUARD_DEVELOP_SEED" "$GUARD_DEVELOP_AFTER"
 
 # Each of those protocols must also carry
+
+# Planted variant: displace `set -euo pipefail` in the feature path — a path the
+# executed test above does not use — and confirm the per-block check reports it.
+PLANT_OPTIONS_DIR="$TMP_DIR/planted-options"
+mkdir -p "$PLANT_OPTIONS_DIR"
+cp "$PROTOCOL_DIR/03-implement-development-protocol.md" "$PLANT_OPTIONS_DIR/"
+python3 - "$PLANT_OPTIONS_DIR/03-implement-development-protocol.md" <<'PYPLANTOPTS'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+needle = 'git push origin "feature/[slug]:feature/[slug]"'
+fence = text.rindex("```bash\n", 0, text.index(needle)) + len("```bash\n")
+old = "set -euo pipefail\ngit add [files]\n"
+if not text.startswith(old, fence):
+    sys.exit("plant target not found")
+path.write_text(text[:fence] + "git add [files]\nset -euo pipefail\n" + text[fence + len(old):], encoding="utf-8")
+PYPLANTOPTS
+PLANT_FIRST_LINE="$(extract_push_block "$PLANT_OPTIONS_DIR/03-implement-development-protocol.md" 'feature/[slug]' | sed -n '1p')"
+check plant_displaced_shell_options_is_reported "git add [files]" "$PLANT_FIRST_LINE"
 
 # Planted variant: put the Refactor path back in prose. The count must drop, or
 # the check above would pass on a document that reintroduced the defect.
