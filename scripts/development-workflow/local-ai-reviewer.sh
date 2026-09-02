@@ -26,7 +26,12 @@ Environment:
                                     unless LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
-                                    HEAD_BRANCH, and REVIEWED_HEAD in env.
+                                    HEAD_BRANCH, REVIEWED_HEAD,
+                                    REVIEW_STAGE, REVIEW_STAGE_SOURCE,
+                                    REVIEW_CHECKLISTS, REVIEW_DOCTRINE_STATE,
+                                    REVIEW_DOCTRINE_PATTERN_COUNT,
+                                    REVIEW_DOCTRINE_VERSION, and
+                                    LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
                                     Do not apply the bundled Codex preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
@@ -34,6 +39,22 @@ Environment:
   LOCAL_AI_REVIEWER_GRAPH_STRATEGY  none|auto|code-review-graph|graphify.
   LOCAL_CODEX_REVIEWER_BIN          Codex binary for the bundled preset (default: codex).
   LOCAL_CODEX_REVIEWER_MODEL        Optional model for the bundled preset.
+  LOCAL_CODEX_REVIEWER_PROMPT       Override the ordinary-pass Codex prompt only.
+  LOCAL_CODEX_REVIEWER_STRICT_PROMPT
+                                    Override the strict-pass Codex prompt only.
+
+Strict contract checks (#1650 spec, #1655 plan):
+  Two registry entries (spec and plan) each report STRICT_<entry>_STATE on every
+  review. At most one entry dispatches a second LOCAL_AI_REVIEWER_COMMAND
+  invocation per review. The pass shares the reviewer's --timeout budget.
+
+  Spec entry: STRICT_SPEC_* keys; response marker strict_spec_checks.
+  Plan entry: STRICT_PLAN_* keys (includes STRICT_PLAN_APPLIED when applied);
+  response marker strict_plan_checks; supplies plan documents via git show at
+  the reviewed head.
+
+  Strict findings are emitted as STRICT_<n>_CHECK/PATH/LINE/BODY and never
+  change RESULT or BLOCKING_<n>_*.
 EOF
 }
 
@@ -141,6 +162,716 @@ run_with_timeout() {
   fi
   wait "$child_pid"
 }
+
+# ---------------------------------------------------------------------------
+# Strict contract checks registry (#1650 spec, #1655 plan)
+# ---------------------------------------------------------------------------
+
+STRICT_SPEC_CHECKLIST_RELPATH="docs/workflow/development-workflow/strict-spec-checks.md"
+STRICT_PLAN_CHECKLIST_RELPATH="docs/workflow/development-workflow/strict-plan-checks.md"
+STRICT_REGISTRY_ENTRIES="spec plan"
+
+strict_entry_checklist_relpath() {
+  case "$1" in
+    spec) printf '%s\n' "$STRICT_SPEC_CHECKLIST_RELPATH" ;;
+    plan) printf '%s\n' "$STRICT_PLAN_CHECKLIST_RELPATH" ;;
+    *) return 1 ;;
+  esac
+}
+
+strict_entry_key_prefix() {
+  case "$1" in
+    spec) printf 'STRICT_SPEC\n' ;;
+    plan) printf 'STRICT_PLAN\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+strict_entry_bundle_checklist_key() {
+  case "$1" in
+    spec) printf 'strict_spec_checks\n' ;;
+    plan) printf 'strict_plan_checks\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+strict_entry_target_stage() {
+  case "$1" in
+    spec) printf 'spec\n' ;;
+    plan) printf 'plan\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+strict_entry_reports_na_reason() {
+  case "$1" in
+    plan) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+strict_plan_source_path_for_plan() {
+  local plan_path="$1"
+  local spec_path
+  if [[ "$plan_path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]]; then
+    spec_path="${plan_path%/*}/1_${plan_path##*/2_}"
+    case "$spec_path" in
+      *_implementation-plan.doc.md)
+        printf '%s\n' "${spec_path/_implementation-plan.doc.md/_specs.doc.md}"
+        ;;
+      *_implementation-plan.md)
+        printf '%s\n' "${spec_path/_implementation-plan.md/_specs.md}"
+        ;;
+    esac
+  fi
+}
+
+strict_changed_plan_paths() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if workflow_is_plan_document_path "$path"; then
+      printf '%s\n' "$path"
+    fi
+  done < <(printf '%s\n' "$changed_files_json" | jq -r '.[]?' 2>/dev/null)
+}
+
+extract_strict_checklist_known_checks() {
+  local checklist="$1"
+  local status=0
+  local declared=0
+  local ids=""
+  local known=""
+  local length=0
+  local unique=0
+
+  if [ ! -f "$checklist" ] || [ ! -r "$checklist" ]; then
+    return 1
+  fi
+
+  status=0
+  declared="$(grep -c '^### ' "$checklist")" || status=$?
+  if [ "$status" -eq 1 ]; then
+    declared=0
+  elif [ "$status" -ne 0 ]; then
+    return 1
+  fi
+
+  ids="$(sed -n 's/^### \([a-z][a-z0-9_]*\)[[:space:]]*$/\1/p' "$checklist")" || return 1
+  known="$(printf '%s\n' "$ids" | jq -R -s 'split("\n") | map(select(length > 0))')" || return 1
+
+  length="$(printf '%s\n' "$known" | jq -e 'length')" || return 1
+  if [ "$length" -eq 0 ]; then
+    return 1
+  fi
+  if [ "$length" -ne "$declared" ]; then
+    return 1
+  fi
+  unique="$(printf '%s\n' "$known" | jq -e 'unique | length')" || return 1
+  if [ "$length" -ne "$unique" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$known"
+  return 0
+}
+
+extract_strict_spec_known_checks() {
+  extract_strict_checklist_known_checks "$1"
+}
+
+extract_strict_plan_sections() {
+  local checklist="$1"
+  local status=0
+  local pairs=""
+  local ids=""
+  local sections=""
+
+  if [ ! -f "$checklist" ] || [ ! -r "$checklist" ]; then
+    return 1
+  fi
+
+  status=0
+  pairs="$(awk '
+    /^### / {
+      if (id != "" && n != 1) { bad = 1 }
+      id = $2; n = 0; next
+    }
+    /^Source: *required$/     { print id "\trequired";     n++; next }
+    /^Source: *not required$/ { print id "\tnot_required"; n++; next }
+    END { if (id == "" || n != 1 || bad) exit 3 }
+  ' "$checklist")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    return 1
+  fi
+
+  if ! ids="$(extract_strict_checklist_known_checks "$checklist")"; then
+    return 1
+  fi
+
+  if [ "$(printf '%s\n' "$pairs" | cut -f1 | jq -R -s -r 'split("\n") | map(select(length > 0)) | sort | join(",")')" != "$(printf '%s\n' "$ids" | jq -r 'sort | join(",")')" ]; then
+    return 1
+  fi
+
+  sections="$(printf '%s\n' "$pairs" | jq -R -s '
+    split("\n")
+    | map(select(length > 0))
+    | map(split("\t"))
+    | map(select(length == 2) | {id: .[0], source: .[1]})
+  ')" || return 1
+
+  printf '%s\n' "$sections"
+  return 0
+}
+
+parse_strict_checks_response() {
+  local response_json="$1"
+  local admission_checks_json="$2"
+  local response_marker="$3"
+
+  printf '%s\n' "$response_json" | jq -c --argjson admission_checks "$admission_checks_json" --arg marker "$response_marker" '
+    def ident:
+      ((.check? // null) | if type == "string" then ascii_downcase else null end);
+    def known($c): $c != null and ($admission_checks | index($c) != null);
+    def text_value:
+      [.body?, .message?, .description?, .title?, .summary?, .comment?, .text?]
+      | map(select(type == "string" and length > 0)) | .[0] // "";
+    def path_value:
+      [.path?, .file?, .filename?, .filepath?, .location.path?]
+      | map(select(type == "string" and length > 0)) | .[0] // "";
+    def line_value:
+      [.line?, .startLine?, .start_line?, .location.line?]
+      | map(select((type == "number") or (type == "string" and length > 0)))
+      | .[0] // "";
+    if (.mode? // null) != $marker then
+      { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
+    else
+      (if   has("findings") then .findings
+       elif has("comments") then .comments
+       elif has("issues")   then .issues
+       else null end) as $f
+      | if ($f | type) != "array" then
+          { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
+        else
+          ($f | map(select(known(ident)))) as $named
+          | ($f | map(select(known(ident) | not))) as $unnamed
+          | {
+              malformed: false,
+              count: ($named | length),
+              checks: ($named | map(ident) | unique | join(",")),
+              unknown_count: ($unnamed | length),
+              findings: ($f | map({
+                check: (if known(ident) then ident else "unknown" end),
+                path: path_value,
+                line: (line_value | tostring),
+                body: (text_value | gsub("\n"; "\\n"))
+              }))
+            }
+        end
+    end
+  ' 2>/dev/null
+}
+
+parse_strict_spec_response() {
+  parse_strict_checks_response "$1" "$2" "strict_spec_checks"
+}
+
+parse_strict_plan_response() {
+  parse_strict_checks_response "$1" "$2" "strict_plan_checks"
+}
+
+# Drop source-dependent findings reported against plan documents that have no
+# sibling spec at the reviewed head. Review-level admission may include those
+# checks when any changed plan has a source; each document still gets only the
+# checks that apply to it (AC-13 / AC-19a).
+filter_strict_plan_parsed_response() {
+  local parsed="$1"
+  local sections_json="$2"
+  local sources_json="$3"
+  local documents_json="${4:-[]}"
+
+  printf '%s\n' "$parsed" | jq -c --argjson sections "$sections_json" --argjson sources "$sources_json" --argjson documents "$documents_json" '
+    ($sections | map(select(.source == "required") | .id)) as $required
+    | ($sources | map(.plan_path)) as $with_source
+    | ($documents | map(.path)) as $plan_docs
+    | .findings as $all
+    | ($all | map(
+        . as $f
+        | if ($f.check != "unknown")
+            and (($f.path | type) != "string" or ($f.path | length) == 0
+                 or ($plan_docs | index($f.path)) == null) then
+            $f + {check: "unknown", remapped: true}
+          elif ($f.check != "unknown")
+            and ($required | index($f.check)) != null
+            and ($with_source | index($f.path)) == null then
+            $f + {check: "unknown", remapped: true}
+          else
+            $f
+          end
+      )) as $processed
+    | ($processed | map(select(.remapped == true)) | length) as $remapped
+    | ($processed | map(del(.remapped))) as $kept
+    | . + {
+        count: ($kept | map(select(.check != "unknown")) | length),
+        checks: ($kept | map(select(.check != "unknown") | .check) | unique | join(",")),
+        unknown_count: ((.unknown_count // 0) + $remapped),
+        findings: $kept
+      }
+  ' 2>/dev/null
+}
+
+emit_strict_entry_output() {
+  local prefix="$1"
+  local state="$2"
+  local count="${3:-}"
+  local checks="${4:-}"
+  local unknown_count="${5:-0}"
+  local reason="${6:-}"
+  local applied="${7:-}"
+  local findings_json="${8:-[]}"
+
+  print_kv "${prefix}_STATE" "$state"
+  case "$state" in
+    applied)
+      print_kv "${prefix}_COUNT" "$count"
+      print_kv "${prefix}_CHECKS" "$checks"
+      if [ -n "$applied" ]; then
+        print_kv "${prefix}_APPLIED" "$applied"
+      fi
+      if [ "${unknown_count:-0}" -gt 0 ]; then
+        print_kv "${prefix}_UNKNOWN_COUNT" "$unknown_count"
+      fi
+      ;;
+    unavailable|not_applicable)
+      [ -n "$reason" ] && print_kv "${prefix}_REASON" "$reason"
+      ;;
+  esac
+
+  if [ "$state" = "applied" ]; then
+    local idx=0
+    local finding_count
+    finding_count="$(printf '%s\n' "$findings_json" | jq -e 'length' 2>/dev/null)" || finding_count=0
+    while [ "$idx" -lt "$finding_count" ]; do
+      local check path line body
+      check="$(printf '%s\n' "$findings_json" | jq -r --argjson i "$idx" '.[$i].check // "unknown"')"
+      path="$(printf '%s\n' "$findings_json" | jq -r --argjson i "$idx" '.[$i].path // ""')"
+      line="$(printf '%s\n' "$findings_json" | jq -r --argjson i "$idx" '.[$i].line // ""')"
+      body="$(printf '%s\n' "$findings_json" | jq -r --argjson i "$idx" '.[$i].body // ""')"
+      idx=$((idx + 1))
+      print_kv "STRICT_${idx}_CHECK" "$check"
+      print_kv "STRICT_${idx}_PATH" "$path"
+      print_kv "STRICT_${idx}_LINE" "$line"
+      print_kv "STRICT_${idx}_BODY" "$body"
+    done
+  fi
+}
+
+emit_strict_spec_output() {
+  emit_strict_entry_output "STRICT_SPEC" "$@"
+}
+
+emit_strict_plan_output() {
+  emit_strict_entry_output "STRICT_PLAN" "$@"
+}
+
+strict_git_show_at_head() {
+  local relpath="$1"
+  local git_dir="${REPO_ROOT:-.}"
+  git -C "$git_dir" show "${HEAD_SHA}:${relpath}" 2>/dev/null
+}
+
+strict_build_plan_bundle_extras() {
+  local plan_paths="$1"
+  local sections_json="$2"
+  local any_source=0
+  local documents_json="[]"
+  local sources_json="[]"
+  local plan_path source_path text doc_has_source
+
+  while IFS= read -r plan_path; do
+    [ -n "$plan_path" ] || continue
+    if ! text="$(strict_git_show_at_head "$plan_path")"; then
+      return 1
+    fi
+    doc_has_source=false
+    source_path="$(strict_plan_source_path_for_plan "$plan_path")"
+    if [ -n "$source_path" ] && text="$(strict_git_show_at_head "$source_path")"; then
+      any_source=1
+      doc_has_source=true
+      sources_json="$(jq -n --argjson srcs "$sources_json" --arg plan_path "$plan_path" \
+        --arg source_path "$source_path" --arg text "$text" \
+        '$srcs + [{plan_path:$plan_path, source_path:$source_path, text:$text}]')"
+      if ! text="$(strict_git_show_at_head "$plan_path")"; then
+        return 1
+      fi
+    fi
+    documents_json="$(jq -n --argjson docs "$documents_json" --arg path "$plan_path" --arg text "$text" \
+      --argjson has_source "$doc_has_source" \
+      '$docs + [{path:$path, text:$text, has_source:$has_source}]')"
+  done <<< "$plan_paths"
+
+  strict_plan_sections_json="$sections_json"
+  strict_plan_applied_set="$(printf '%s\n' "$sections_json" | jq -r --arg any_source "$any_source" '
+    map(select(($any_source == "1") or .source == "not_required") | .id) | join(",")
+  ')"
+  strict_plan_admission_checks_json="$(printf '%s\n' "$strict_plan_applied_set" | jq -R 'split(",") | map(select(length > 0))')"
+
+  strict_plan_documents_json="$documents_json"
+  strict_plan_sources_json="$sources_json"
+  return 0
+}
+
+strict_dispatch_pass() {
+  local checklist_path="$1"
+  local checklist_key="$2"
+  local admission_json="$3"
+  local pass_kind="$4"
+  local remaining="$5"
+  local strict_context_file_local=""
+  local strict_stdout_file_local=""
+  local strict_stderr_file_local=""
+  local strict_exit=0
+  local strict_stdout=""
+  local strict_parsed=""
+  local result_state=""
+  local result_reason=""
+  local result_count=""
+  local result_checks=""
+  local result_unknown=0
+  local result_findings="[]"
+
+  strict_context_file_local="$(mktemp)"
+  strict_stdout_file_local="$(mktemp)"
+  strict_stderr_file_local="$(mktemp)"
+
+  if [ "$pass_kind" = "plan" ]; then
+    if ! jq --rawfile checks "$checklist_path" \
+        --argjson documents "$strict_plan_documents_json" \
+        --argjson sources "$strict_plan_sources_json" \
+        --arg checklist_key "$checklist_key" \
+        '. + { ($checklist_key): $checks, strict_plan_documents: $documents, strict_plan_sources: $sources }' \
+        "$context_file" >"$strict_context_file_local"; then
+      result_state="unavailable"
+      result_reason="strict_pass_failed"
+      rm -f "$strict_context_file_local" "$strict_stdout_file_local" "$strict_stderr_file_local"
+      printf '%s\n' "$result_state" "$result_reason" "$result_count" "$result_checks" "$result_unknown" "$result_findings"
+      return 0
+    fi
+  elif ! jq --rawfile checks "$checklist_path" \
+      --arg checklist_key "$checklist_key" \
+      '. + { ($checklist_key): $checks }' \
+      "$context_file" >"$strict_context_file_local"; then
+    result_state="unavailable"
+    result_reason="strict_pass_failed"
+    rm -f "$strict_context_file_local" "$strict_stdout_file_local" "$strict_stderr_file_local"
+    printf '%s\n' "$result_state" "$result_reason" "$result_count" "$result_checks" "$result_unknown" "$result_findings"
+    return 0
+  fi
+
+  set +e
+  LOCAL_AI_REVIEWER_MODE=strict \
+  CONTEXT_BUNDLE_PATH="$strict_context_file_local" \
+  PR_NUMBER="$PR_NUMBER" \
+  OWNER="$OWNER" \
+  REPO="$REPO" \
+  BASE_BRANCH="$BASE_BRANCH" \
+  HEAD_BRANCH="$HEAD_BRANCH" \
+  REVIEWED_HEAD="$HEAD_SHA" \
+  REVIEW_STAGE="$review_stage" \
+  REVIEW_STAGE_SOURCE="$review_stage_source" \
+  REVIEW_CHECKLISTS="$review_checklists_csv" \
+  REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
+  REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+  REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+    run_with_timeout "$remaining" "$strict_stdout_file_local" "$strict_stderr_file_local" \
+      sh -c "$LOCAL_AI_REVIEWER_COMMAND"
+  strict_exit=$?
+  set -e
+  strict_stdout="$(cat "$strict_stdout_file_local" 2>/dev/null || true)"
+  rm -f "$strict_context_file_local" "$strict_stdout_file_local" "$strict_stderr_file_local"
+
+  if [ "$strict_exit" -ne 0 ] \
+      || [ -z "$(printf '%s' "$strict_stdout" | tr -d '[:space:]')" ] \
+      || ! printf '%s\n' "$strict_stdout" | jq -e . >/dev/null 2>&1; then
+    result_state="unavailable"
+    result_reason="strict_pass_failed"
+  else
+    case "$pass_kind" in
+      plan) strict_parsed="$(parse_strict_plan_response "$strict_stdout" "$admission_json")" || strict_parsed="" ;;
+      *) strict_parsed="$(parse_strict_spec_response "$strict_stdout" "$admission_json")" || strict_parsed="" ;;
+    esac
+    if [ -z "$strict_parsed" ] \
+        || [ "$(printf '%s\n' "$strict_parsed" | jq -r '.malformed')" = "true" ]; then
+      result_state="unavailable"
+      result_reason="strict_pass_failed"
+    else
+      result_state="applied"
+      result_count="$(printf '%s\n' "$strict_parsed" | jq -r '.count')"
+      result_checks="$(printf '%s\n' "$strict_parsed" | jq -r '.checks')"
+      result_unknown="$(printf '%s\n' "$strict_parsed" | jq -r '.unknown_count')"
+      result_findings="$(printf '%s\n' "$strict_parsed" | jq -c '.findings')"
+    fi
+  fi
+
+  printf '%s\n' "$result_state" "$result_reason" "$result_count" "$result_checks" "$result_unknown" "$result_findings"
+}
+
+strict_run_registry_entry() {
+  local entry="$1"
+  local target_stage checklist_path checklist_key
+  local state="" reason="" count="" checks="" applied="" unknown_count=0
+  local findings_json="[]"
+  local admission_json="[]"
+  local sections_json=""
+  local plan_paths=""
+  local remaining=0
+  local now_epoch=""
+  local dispatch_out=""
+
+  target_stage="$(strict_entry_target_stage "$entry")"
+  checklist_path="$(strict_entry_checklist_relpath "$entry")"
+  checklist_key="$(strict_entry_bundle_checklist_key "$entry")"
+
+  if [ -z "$HEAD_BRANCH" ]; then
+    state="unavailable"
+    reason="stage_unresolved"
+  elif [ "$review_stage" != "$target_stage" ]; then
+    state="not_applicable"
+    if strict_entry_reports_na_reason "$entry"; then
+      reason="stage_not_plan"
+    fi
+  elif [ "$entry" = "plan" ]; then
+    plan_paths="$(strict_changed_plan_paths)"
+    if [ -z "$plan_paths" ]; then
+      state="not_applicable"
+      reason="no_plan_document_changed"
+    elif ! sections_json="$(extract_strict_plan_sections "$checklist_path")"; then
+      state="unavailable"
+      reason="checklist_unreadable"
+    elif ! strict_build_plan_bundle_extras "$plan_paths" "$sections_json"; then
+      state="unavailable"
+      reason="strict_pass_failed"
+    else
+      applied="$strict_plan_applied_set"
+      admission_json="$strict_plan_admission_checks_json"
+      now_epoch="$(date +%s)"
+      remaining=$((TIMEOUT - (now_epoch - round_start_epoch)))
+      if [ "$remaining" -le 0 ]; then
+        state="unavailable"
+        reason="strict_pass_failed"
+      else
+        dispatch_out="$(strict_dispatch_pass "$checklist_path" "$checklist_key" "$admission_json" plan "$remaining")"
+        state="$(printf '%s\n' "$dispatch_out" | sed -n '1p')"
+        reason="$(printf '%s\n' "$dispatch_out" | sed -n '2p')"
+        count="$(printf '%s\n' "$dispatch_out" | sed -n '3p')"
+        checks="$(printf '%s\n' "$dispatch_out" | sed -n '4p')"
+        unknown_count="$(printf '%s\n' "$dispatch_out" | sed -n '5p')"
+        findings_json="$(printf '%s\n' "$dispatch_out" | sed -n '6p')"
+        if [ "$state" = "applied" ] && [ -n "$strict_plan_sections_json" ]; then
+          strict_parsed="$(jq -nc \
+            --argjson count "${count:-0}" \
+            --arg checks "${checks:-}" \
+            --argjson unknown_count "${unknown_count:-0}" \
+            --argjson findings "${findings_json:-[]}" \
+            '{count:$count, checks:$checks, unknown_count:$unknown_count, findings:$findings}')"
+          if strict_parsed="$(filter_strict_plan_parsed_response "$strict_parsed" "$strict_plan_sections_json" "$strict_plan_sources_json" "$strict_plan_documents_json")"; then
+            count="$(printf '%s\n' "$strict_parsed" | jq -r '.count')"
+            checks="$(printf '%s\n' "$strict_parsed" | jq -r '.checks')"
+            unknown_count="$(printf '%s\n' "$strict_parsed" | jq -r '.unknown_count')"
+            findings_json="$(printf '%s\n' "$strict_parsed" | jq -c '.findings')"
+          fi
+        fi
+      fi
+    fi
+  elif [ "$entry" = "spec" ]; then
+    if ! admission_json="$(extract_strict_checklist_known_checks "$checklist_path")"; then
+      state="unavailable"
+      reason="checklist_unreadable"
+    else
+      now_epoch="$(date +%s)"
+      remaining=$((TIMEOUT - (now_epoch - round_start_epoch)))
+      if [ "$remaining" -le 0 ]; then
+        state="unavailable"
+        reason="strict_pass_failed"
+      else
+        dispatch_out="$(strict_dispatch_pass "$checklist_path" "$checklist_key" "$admission_json" spec "$remaining")"
+        state="$(printf '%s\n' "$dispatch_out" | sed -n '1p')"
+        reason="$(printf '%s\n' "$dispatch_out" | sed -n '2p')"
+        count="$(printf '%s\n' "$dispatch_out" | sed -n '3p')"
+        checks="$(printf '%s\n' "$dispatch_out" | sed -n '4p')"
+        unknown_count="$(printf '%s\n' "$dispatch_out" | sed -n '5p')"
+        findings_json="$(printf '%s\n' "$dispatch_out" | sed -n '6p')"
+      fi
+    fi
+  fi
+
+  case "$entry" in
+    spec)
+      strict_spec_state="$state"
+      strict_spec_count="$count"
+      strict_spec_checks="$checks"
+      strict_spec_unknown_count="$unknown_count"
+      strict_spec_reason="$reason"
+      strict_spec_findings_json="$findings_json"
+      ;;
+    plan)
+      strict_plan_state="$state"
+      strict_plan_count="$count"
+      strict_plan_checks="$checks"
+      strict_plan_applied="$applied"
+      strict_plan_unknown_count="$unknown_count"
+      strict_plan_reason="$reason"
+      strict_plan_findings_json="$findings_json"
+      ;;
+  esac
+}
+
+strict_run_all_registry_entries() {
+  local entry
+  for entry in $STRICT_REGISTRY_ENTRIES; do
+    strict_run_registry_entry "$entry"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Stage-specific review checklist selection (#1653)
+# ---------------------------------------------------------------------------
+
+# Branch tier. Literal prefixes, never a regex: `specification/foo` must not
+# match `spec/*`.
+reviewer_stage_for_branch() {
+  case "${1:-}" in
+    spec/*) printf 'spec\n' ;;
+    implementation-plan/*) printf 'plan\n' ;;
+    feature/*|refactor/*|fix/*|hotfix/*) printf 'implementation\n' ;;
+    *) printf 'default\n' ;;
+  esac
+}
+
+# File tier. Reads newline-delimited paths on stdin — NOT the JSON array.
+# NOTE: this list is not #1652's reviewer_loop_path_is_normative_document and
+# must not be merged with it — that one decides whether a finding may be
+# cleared as cosmetic, this one decides which checklist applies.
+reviewer_changed_files_touch_workflow_policy() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
+        return 0 ;;
+      docs/workflow/*|docs/best-practices/*|scripts/development-workflow/*)
+        return 0 ;;
+      .claude/*|.cursor/*|.codex/*|.agents/*)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Decode the compact JSON array into newline-delimited paths, buffered.
+reviewer_decode_changed_files() {
+  local decoded
+  if ! decoded="$(printf '%s' "${1:-}" | jq -r '.[]?' 2>/dev/null)"; then
+    echo "WARN: could not decode changed_files_json; workflow-policy checklist not applied" >&2
+    decoded=""
+  fi
+  printf '%s\n' "$decoded"
+}
+
+# The merge. The file tier only ever appends, and never runs for `default`.
+reviewer_resolve_review_stage() {
+  local head_branch="$1" changed_files_json="$2"
+  local stage checklists source
+
+  stage="$(reviewer_stage_for_branch "$head_branch")"
+  case "$stage" in
+    spec) checklists="Spec Review Checklist" ;;
+    plan) checklists="Plan Review Checklist" ;;
+    implementation) checklists="Code Review Checklist" ;;
+    default) checklists="" ;;
+  esac
+
+  source="branch"
+  if [ -z "$checklists" ]; then
+    source="none"
+  elif reviewer_changed_files_touch_workflow_policy \
+    <<< "$(reviewer_decode_changed_files "$changed_files_json")"; then
+    checklists="${checklists},Workflow Policy Review Checklist"
+    source="branch+files"
+  fi
+
+  printf '%s\n%s\n%s\n' "$stage" "$source" "$checklists"
+}
+
+# ---------------------------------------------------------------------------
+# Review doctrine supply (#1654)
+# ---------------------------------------------------------------------------
+
+reviewer_doctrine_version() {
+  local snapshot="$1"
+  local digest_cmd=""
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest_cmd="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then
+    digest_cmd="shasum -a 256"
+  else
+    return 1
+  fi
+
+  local full_hash
+  full_hash="$($digest_cmd "$snapshot" 2>/dev/null | awk '{print $1}')" || return 1
+  [ -n "$full_hash" ] || return 1
+  printf '%s\n' "${full_hash:0:12}"
+}
+
+reviewer_doctrine_supply() {
+  local path="docs/workflow/development-workflow/review-doctrine.md"
+  local snapshot bytes version count status
+  local unreadable='{"state":"unreadable","text":"","pattern_count":0,"version":""}'
+
+  [ -f "$path" ] || { printf '{"state":"absent","text":"","pattern_count":0,"version":""}\n'; return 0; }
+
+  snapshot="$(mktemp)" || { printf '%s\n' "$unreadable"; return 0; }
+  cp "$path" "$snapshot" 2>/dev/null || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  bytes="$(wc -c <"$snapshot" 2>/dev/null)" || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+  bytes="${bytes//[[:space:]]/}"
+  [ -n "$bytes" ] || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  version="$(reviewer_doctrine_version "$snapshot")" || {
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  if [ "$bytes" -gt "$REVIEW_DOCTRINE_MAX_BYTES" ]; then
+    rm -f "$snapshot"
+    jq -n --arg v "$version" '{state:"oversized", text:"", pattern_count:0, version:$v}'
+    return 0
+  fi
+
+  status=0
+  count="$(grep -c '^### ' "$snapshot" 2>/dev/null)" || status=$?
+  if [ "$status" -eq 1 ]; then
+    count=0
+  elif [ "$status" -ne 0 ]; then
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0
+  fi
+
+  jq -n --rawfile t "$snapshot" --arg v "$version" --argjson c "${count:-0}" \
+    '{state:"supplied", text:$t, pattern_count:$c, version:$v}' 2>/dev/null || {
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+  rm -f "$snapshot"
+}
+
+# Effective harness mode: only when HARNESS_MODE=1 AND the script is sourced.
+_HARNESS_MODE_EFFECTIVE=0
+if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  _HARNESS_MODE_EFFECTIVE=1
+fi
+
+if [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ]; then
+  return 0 2>/dev/null || true
+fi
 
 if [ "$#" -lt 3 ]; then
   usage
@@ -302,6 +1033,21 @@ if [ ! -f REVIEW.md ]; then
   exit 2
 fi
 
+review_stage_resolved="$(reviewer_resolve_review_stage "$HEAD_BRANCH" "$changed_files_json")"
+review_stage="$(printf '%s\n' "$review_stage_resolved" | sed -n '1p')"
+review_stage_source="$(printf '%s\n' "$review_stage_resolved" | sed -n '2p')"
+review_checklists_csv="$(printf '%s\n' "$review_stage_resolved" | sed -n '3p')"
+if [ -n "$review_checklists_csv" ]; then
+  review_checklists_json="$(jq -n --arg csv "$review_checklists_csv" '$csv | split(",") | map(select(length > 0))')"
+else
+  review_checklists_json="[]"
+fi
+
+doctrine_supply_json="$(reviewer_doctrine_supply)"
+review_doctrine_state="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.state // "unreadable"')"
+review_doctrine_pattern_count="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.pattern_count // 0')"
+review_doctrine_version="$(printf '%s\n' "$doctrine_supply_json" | jq -r '.version // ""')"
+
 graph_strategy="${LOCAL_AI_REVIEWER_GRAPH_STRATEGY:-none}"
 graph_context="none"
 case "$graph_strategy" in
@@ -331,10 +1077,7 @@ esac
 context_file="$(mktemp)"
 stdout_file="$(mktemp)"
 stderr_file="$(mktemp)"
-cleanup() {
-  rm -f "${context_file:-}" "${stdout_file:-}" "${stderr_file:-}"
-}
-trap cleanup EXIT
+# cleanup/trap redefined after BASE_BRANCH print once strict temp paths exist
 
 jq -n \
   --arg pr_number "$PR_NUMBER" \
@@ -347,7 +1090,11 @@ jq -n \
   --arg pr_body "$PR_BODY" \
   --arg diff_name_status "$diff_name_status" \
   --arg diff_stat "$diff_stat" \
+  --arg review_stage "$review_stage" \
+  --arg review_stage_source "$review_stage_source" \
+  --argjson doctrine_supply "$doctrine_supply_json" \
   --argjson changed_files "$changed_files_json" \
+  --argjson review_checklists "$review_checklists_json" \
   '{
     schema_version: "local_ai_reviewer_context.v1",
     pr_number: ($pr_number | tonumber),
@@ -361,15 +1108,56 @@ jq -n \
     diff_name_status: $diff_name_status,
     diff_stat: $diff_stat,
     review_contract: "REVIEW.md",
-    graph_context: $graph_context
+    graph_context: $graph_context,
+    review_stage: $review_stage,
+    review_stage_source: $review_stage_source,
+    review_checklists: $review_checklists,
+    review_doctrine: $doctrine_supply.text,
+    review_doctrine_state: $doctrine_supply.state,
+    review_doctrine_pattern_count: $doctrine_supply.pattern_count,
+    review_doctrine_version: $doctrine_supply.version
   }' >"$context_file"
 
 print_kv BASE_BRANCH "$BASE_BRANCH"
 [ -n "$HEAD_BRANCH" ] && print_kv HEAD_BRANCH "$HEAD_BRANCH"
 print_kv REVIEWED_HEAD "$HEAD_SHA"
 print_kv GRAPH_CONTEXT "$graph_context"
+print_kv REVIEW_STAGE "$review_stage"
+print_kv REVIEW_STAGE_SOURCE "$review_stage_source"
+[ -n "$review_checklists_csv" ] && print_kv REVIEW_CHECKLISTS "$review_checklists_csv"
+print_kv REVIEW_DOCTRINE_STATE "$review_doctrine_state"
+print_kv REVIEW_DOCTRINE_PATTERN_COUNT "$review_doctrine_pattern_count"
+print_kv REVIEW_DOCTRINE_VERSION "$review_doctrine_version"
+
+# Strict registry state (always emitted after a completed ordinary parse).
+strict_spec_state=""
+strict_spec_count=""
+strict_spec_checks=""
+strict_spec_unknown_count=0
+strict_spec_reason=""
+strict_spec_findings_json="[]"
+strict_plan_state=""
+strict_plan_count=""
+strict_plan_checks=""
+strict_plan_applied=""
+strict_plan_unknown_count=0
+strict_plan_reason=""
+strict_plan_findings_json="[]"
+strict_plan_applied_set=""
+strict_plan_admission_checks_json="[]"
+strict_plan_sections_json="[]"
+strict_plan_documents_json="[]"
+strict_plan_sources_json="[]"
+
+cleanup() {
+  rm -f "${context_file:-}" "${stdout_file:-}" "${stderr_file:-}"
+}
+trap cleanup EXIT
+
+round_start_epoch="$(date +%s)"
 
 set +e
+LOCAL_AI_REVIEWER_MODE=ordinary \
 CONTEXT_BUNDLE_PATH="$context_file" \
 PR_NUMBER="$PR_NUMBER" \
 OWNER="$OWNER" \
@@ -377,6 +1165,12 @@ REPO="$REPO" \
 BASE_BRANCH="$BASE_BRANCH" \
 HEAD_BRANCH="$HEAD_BRANCH" \
 REVIEWED_HEAD="$HEAD_SHA" \
+REVIEW_STAGE="$review_stage" \
+REVIEW_STAGE_SOURCE="$review_stage_source" \
+REVIEW_CHECKLISTS="$review_checklists_csv" \
+REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
+REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
   run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
 command_exit=$?
 set -e
@@ -509,6 +1303,64 @@ blocking_count="${blocking_count:-0}"
 suggestion_count="${suggestion_count:-0}"
 reason="${reason:-}"
 
+# --- Strict registry passes (at most one dispatches; never merges into blocking) ---
+strict_run_all_registry_entries
+
+strict_build_strict_evidence_json() {
+  local state="$1"
+  local count="$2"
+  local checks="$3"
+  local applied="$4"
+  local unknown_count="$5"
+  local reason="$6"
+
+  case "$state" in
+    applied)
+      if [ -n "$applied" ]; then
+        if [ "${unknown_count:-0}" -gt 0 ]; then
+          jq -n \
+            --arg state "$state" \
+            --argjson count "$count" \
+            --arg checks "$checks" \
+            --arg applied "$applied" \
+            --argjson unknown_count "$unknown_count" \
+            '{state:$state, count:$count, checks:($checks | if . == "" then [] else (split(",") | map(select(length > 0))) end), applied:($applied | if . == "" then [] else (split(",") | map(select(length > 0))) end), unknown_count:$unknown_count}'
+        else
+          jq -n \
+            --arg state "$state" \
+            --argjson count "$count" \
+            --arg checks "$checks" \
+            --arg applied "$applied" \
+            '{state:$state, count:$count, checks:($checks | if . == "" then [] else (split(",") | map(select(length > 0))) end), applied:($applied | if . == "" then [] else (split(",") | map(select(length > 0))) end)}'
+        fi
+      elif [ "${unknown_count:-0}" -gt 0 ]; then
+        jq -n \
+          --arg state "$state" \
+          --argjson count "$count" \
+          --arg checks "$checks" \
+          --argjson unknown_count "$unknown_count" \
+          '{state:$state, count:$count, checks:($checks | if . == "" then [] else (split(",") | map(select(length > 0))) end), unknown_count:$unknown_count}'
+      else
+        jq -n \
+          --arg state "$state" \
+          --argjson count "$count" \
+          --arg checks "$checks" \
+          '{state:$state, count:$count, checks:($checks | if . == "" then [] else (split(",") | map(select(length > 0))) end)}'
+      fi
+      ;;
+    unavailable|not_applicable)
+      if [ -n "$reason" ]; then
+        jq -n --arg state "$state" --arg reason "$reason" '{state:$state, reason:$reason}'
+      else
+        jq -n --arg state "$state" '{state:$state}'
+      fi
+      ;;
+    *)
+      jq -n '{}'
+      ;;
+  esac
+}
+
 write_evidence_file() {
   local final_result="$1"
   local final_reason="$2"
@@ -517,6 +1369,13 @@ write_evidence_file() {
   local final_suggestion_count="$5"
 
   [ -n "${LOCAL_AI_REVIEWER_EVIDENCE_FILE:-}" ] || return 0
+
+  local strict_spec_json strict_plan_json
+  strict_spec_json="$(strict_build_strict_evidence_json "$strict_spec_state" "$strict_spec_count" \
+    "$strict_spec_checks" "" "$strict_spec_unknown_count" "$strict_spec_reason")"
+  strict_plan_json="$(strict_build_strict_evidence_json "$strict_plan_state" "$strict_plan_count" \
+    "$strict_plan_checks" "$strict_plan_applied" "$strict_plan_unknown_count" "$strict_plan_reason")"
+
   if ! jq -n \
     --arg schema_version "local_ai_reviewer_evidence.v1" \
     --arg result "$final_result" \
@@ -531,10 +1390,18 @@ write_evidence_file() {
     --arg pr_body "$PR_BODY" \
     --arg diff_name_status "$diff_name_status" \
     --arg diff_stat "$diff_stat" \
+    --arg review_stage "$review_stage" \
+    --arg review_stage_source "$review_stage_source" \
+    --arg review_checklists "$review_checklists_csv" \
+    --arg review_doctrine_state "$review_doctrine_state" \
+    --argjson review_doctrine_pattern_count "$review_doctrine_pattern_count" \
+    --arg review_doctrine_version "$review_doctrine_version" \
     --argjson changed_files "$changed_files_json" \
     --argjson comment_count "$final_comment_count" \
     --argjson blocking_count "$final_blocking_count" \
     --argjson suggestion_count "$final_suggestion_count" \
+    --argjson strict_spec "$strict_spec_json" \
+    --argjson strict_plan "$strict_plan_json" \
     '{
       schema_version: $schema_version,
       result: $result,
@@ -556,49 +1423,83 @@ write_evidence_file() {
         pr_body: ($pr_body[0:20000]),
         diff_name_status: $diff_name_status,
         diff_stat: $diff_stat
-      }
+      },
+      review_stage: {
+        stage: $review_stage,
+        source: $review_stage_source,
+        checklists: ($review_checklists | if . == "" then [] else (split(",") | map(select(length > 0))) end)
+      },
+      review_doctrine: {
+        state: $review_doctrine_state,
+        pattern_count: $review_doctrine_pattern_count,
+        version: $review_doctrine_version
+      },
+      strict_spec: $strict_spec,
+      strict_plan: $strict_plan
     }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; then
     echo "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
   fi
+}
+
+emit_ordinary_and_strict() {
+  # Emit RESULT block then STRICT block. Ordinary verdict is never influenced
+  # by strict findings.
+  local final_result="$1"
+  local final_comment_count="$2"
+  local final_blocking_count="$3"
+  local final_suggestion_count="$4"
+  local final_reason="${5:-}"
+  local final_display="${6:-}"
+
+  print_result "$final_result" "$final_comment_count" "$final_blocking_count" \
+    "$final_suggestion_count" "$final_reason" "$final_display"
+  if [ "$final_result" = "needs_fixes" ]; then
+    printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }'
+  fi
+  emit_strict_spec_output "$strict_spec_state" "$strict_spec_count" \
+    "$strict_spec_checks" "$strict_spec_unknown_count" "$strict_spec_reason" "" \
+    "$strict_spec_findings_json"
+  emit_strict_plan_output "$strict_plan_state" "$strict_plan_count" \
+    "$strict_plan_checks" "$strict_plan_unknown_count" "$strict_plan_reason" "$strict_plan_applied" \
+    "$strict_plan_findings_json"
 }
 
 case "$result" in
   clean)
     if [ "$command_exit" -ne 0 ]; then
       write_evidence_file escalate malformed_output "$comment_count" "$blocking_count" "$suggestion_count"
-      print_result escalate "$comment_count" "$blocking_count" "$suggestion_count" malformed_output malformed_output
+      emit_ordinary_and_strict escalate "$comment_count" "$blocking_count" "$suggestion_count" malformed_output malformed_output
       exit 2
     fi
     write_evidence_file clean "" "$comment_count" 0 "$suggestion_count"
-    print_result clean "$comment_count" 0 "$suggestion_count"
+    emit_ordinary_and_strict clean "$comment_count" 0 "$suggestion_count"
     exit 0
     ;;
   needs_fixes)
     [ "$blocking_count" -eq 0 ] && blocking_count=1
     [ "$comment_count" -eq 0 ] && comment_count=1
     write_evidence_file needs_fixes local_ai_review_findings "$comment_count" "$blocking_count" "$suggestion_count"
-    print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count" local_ai_review_findings
-    printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }'
+    emit_ordinary_and_strict needs_fixes "$comment_count" "$blocking_count" "$suggestion_count" local_ai_review_findings
     exit 1
     ;;
   needs_rerun)
     write_evidence_file needs_rerun "${reason:-needs_rerun}" "$comment_count" "$blocking_count" "$suggestion_count"
-    print_result needs_rerun "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-needs_rerun}"
+    emit_ordinary_and_strict needs_rerun "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-needs_rerun}"
     exit 1
     ;;
   skipped)
     write_evidence_file skipped "${reason:-disabled_by_config}" "$comment_count" "$blocking_count" "$suggestion_count"
-    print_result skipped "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-disabled_by_config}" "${reason:-disabled_by_config}"
+    emit_ordinary_and_strict skipped "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-disabled_by_config}" "${reason:-disabled_by_config}"
     exit 3
     ;;
   escalate)
     write_evidence_file escalate "${reason:-malformed_output}" "$comment_count" "$blocking_count" "$suggestion_count"
-    print_result escalate "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-malformed_output}" "${reason:-malformed_output}"
+    emit_ordinary_and_strict escalate "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-malformed_output}" "${reason:-malformed_output}"
     exit 2
     ;;
   *)
     write_evidence_file escalate malformed_output 0 0 0
-    print_result escalate 0 0 0 malformed_output malformed_output
+    emit_ordinary_and_strict escalate 0 0 0 malformed_output malformed_output
     exit 2
     ;;
 esac

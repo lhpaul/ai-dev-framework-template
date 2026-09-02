@@ -68,6 +68,41 @@ require, and runs those; a nightly scheduled job runs all of them. Adding a new
 [`select-test-suites.sh`](#select-test-suitessh) below for the mapping rules and
 for the `# covers:` header a suite uses when its name does not match a script.
 
+### Suites must not assert template-only defaults
+
+These suites run in two very different trees: this template, and every
+repository that syncs it. A downstream consumer legitimately replaces the
+placeholder `deploy.yml` / `e2e-regression.yml`, declines `pr-policy.yml`, and
+configures its own Step 7 reviewers. A suite that asserts this repository's
+shipped defaults therefore turns a successful sync into a red required check
+(#1631, first hit on the v0.43.0 sync in `mome-cl/mome-platform#2706`).
+
+When an assertion depends on something a consumer may legitimately change,
+read the live configuration or skip — do not hard-code the template value:
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
+# Assertions about files this template ships as placeholders.
+if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
+  # ... placeholder-shape assertions ...
+fi
+
+# Assertions about a reviewer's companion workflow file.
+if workflow_config_review_github_reviewer_configured "pr-agent" \
+     "$REPO_ROOT/.ai-dev-workflow.yaml"; then
+  # ... pr-agent.yml assertions ...
+fi
+```
+
+Print an explicit `SKIP: <test name> - <why>` line when an assertion is gated
+out, so a consumer reading the job log can tell a skipped check from a check
+that never existed. `test-consumer-tree-test-gating.sh` covers both helpers and
+asserts the gates stay wired into the suites that need them.
+
 ## `select-test-suites.sh`
 
 Resolves which test suites a change set requires, and reports coverage gaps.
@@ -180,6 +215,31 @@ Use this when:
   replaced, disabled, or investigated
 - A downstream private repository may inherit template workflows that are
   zero-billable in the public template but expensive after sync
+
+### `reviewer-effectiveness-report.sh`
+
+Read-only report of reviewer-loop effectiveness from persisted history comments.
+Supports a single pull request (`--pr`) or a window of the most recent *n* pull
+requests (default **20**; pass `--window` to change it — no config or env override).
+
+Usage:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --window 20 --repo owner/repo
+bash ./scripts/development-workflow/reviewer-effectiveness-report.sh --pr 1234 --json
+```
+
+The seven measures, three exclusion reasons (`no_history`, `unparseable_history`,
+`history_unavailable`), and per-measure `not_recorded` states are documented in
+the `--help` output and in issue #1657's spec.
+
+Use this when:
+
+- You need evidence on whether the local reviewer is reducing external review
+  cycles, not just whether it ran
+- You are deciding whether a strict check earns the right to block
 
 ### `add-backlog-item.sh`
 
