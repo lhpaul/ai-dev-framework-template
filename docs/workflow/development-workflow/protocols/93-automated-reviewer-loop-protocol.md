@@ -505,6 +505,16 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
      # Handle its failure too: under `set -e` a bare failure would abort before
      # the check below, so the contractual stop would never print.
      RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     # Re-check the checkout here too: the retry runs after something already
+     # went wrong, which is exactly when the checkout may have moved.
+     RETRY_PR_HEAD="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || RETRY_PR_HEAD=""
+     if [ "$RETRY_BRANCH" != "$RETRY_PR_HEAD" ]; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number>."
+       echo "Cause: the retry would push ${RETRY_BRANCH}, but the PR's head branch is ${RETRY_PR_HEAD:-<unreadable>}."
+       echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+       exit 1
+     fi
      if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
        echo "STOP: guardrail 'push_verification_failed' halted this run."
        echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
@@ -603,6 +613,16 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
      # Handle its failure too: under `set -e` a bare failure would abort before
      # the check below, so the contractual stop would never print.
      RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     # Re-check the checkout here too: the retry runs after something already
+     # went wrong, which is exactly when the checkout may have moved.
+     RETRY_PR_HEAD="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || RETRY_PR_HEAD=""
+     if [ "$RETRY_BRANCH" != "$RETRY_PR_HEAD" ]; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number>."
+       echo "Cause: the retry would push ${RETRY_BRANCH}, but the PR's head branch is ${RETRY_PR_HEAD:-<unreadable>}."
+       echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+       exit 1
+     fi
      if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
        echo "STOP: guardrail 'push_verification_failed' halted this run."
        echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."

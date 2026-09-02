@@ -828,11 +828,16 @@ check protocol_93_every_push_handles_failure "" "$P93_UNGUARDED"
 
 # ...and each fixer push must confirm the checkout is on the PR's own head
 # branch before pushing, not only that the refspec is self-consistent.
-P93_PUSH_BLOCKS="$(grep -c 'PR_HEAD_BRANCH' "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
-if [ "${P93_PUSH_BLOCKS:-0}" -ge 4 ]; then
-  check protocol_93_pushes_check_pr_head_branch yes yes
+# Count the guards by their distinguishing message rather than by a variable
+# name: the initial and retry guards use different variables, and a rename
+# should not silently drop one of them from this audit.
+P93_HEAD_GUARDS="$(grep -c "head branch is" "$P93" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
+P93_PUSH_COUNT="$(grep -cE '^[[:space:]]*if ! git push' "$P93" || true)"  # workflow-shell-guard: allow SH001 - same zero-match case
+check protocol_93_every_push_checks_pr_head_branch "$P93_PUSH_COUNT" "$P93_HEAD_GUARDS"
+if [ "${P93_PUSH_COUNT:-0}" -ge 4 ]; then
+  check protocol_93_head_guard_sweep_not_vacuous yes yes
 else
-  check protocol_93_pushes_check_pr_head_branch yes "only ${P93_PUSH_BLOCKS} PR_HEAD_BRANCH reference(s)"
+  check protocol_93_head_guard_sweep_not_vacuous yes "only ${P93_PUSH_COUNT} guarded push(es)"
 fi
 
 # ...executed, not only asserted. Force the retry path (a stubbed `gh` reporting
@@ -875,9 +880,16 @@ setup_repo "$P93_ROOT"
   git add work.txt
   git commit -q -m work
 )
-# A stubbed `gh` reporting a head that is not local HEAD sends the block into
-# its retry path; origin pointing at a non-repository makes that retry fail.
-printf '%s\n' '#!/usr/bin/env sh' 'echo 0000000000000000000000000000000000000000' > "$P93_ROOT/bin/gh"
+# A stubbed `gh` that answers both queries: the PR's head branch (so the
+# checkout check agrees) and a head SHA that is not local HEAD (so the block
+# enters its retry path). GH_STUB_BRANCH lets a later case disagree on purpose.
+cat > "$P93_ROOT/bin/gh" <<'GH_STUB'
+#!/usr/bin/env sh
+case "$*" in
+  *headRefName*) echo "${GH_STUB_BRANCH:-fix/1593-p93}" ;;
+  *) echo 0000000000000000000000000000000000000000 ;;
+esac
+GH_STUB
 chmod +x "$P93_ROOT/bin/gh"
 printf '%s\n' "$P93_VER_BLOCK" | sed 's|<pr_number>|1700|g' > "$P93_ROOT/verify.sh"
 git -C "$P93_ROOT/repo" remote set-url origin "$P93_ROOT/not-a-repo"
@@ -888,6 +900,18 @@ if grep -q "push_verification_failed" "$TMP_DIR/last.out" && grep -q "retry" "$T
   check p93_retry_push_failure_names_condition yes yes
 else
   check p93_retry_push_failure_names_condition yes "$(cat "$TMP_DIR/last.out")"
+fi
+
+# The retry must also re-check the checkout: it runs after something already
+# went wrong, which is exactly when the checkout may have moved. Make the stub
+# report a different head branch and confirm it stops BEFORE pushing.
+P93_RC2=0
+( cd "$P93_ROOT/repo" && PATH="$P93_ROOT/bin:$PATH" GH_STUB_BRANCH=some/other-branch bash "$P93_ROOT/verify.sh" ) > "$TMP_DIR/last.out" 2>&1 || P93_RC2=$?
+check p93_retry_wrong_checkout_stops 1 "$P93_RC2"
+if grep -q "push_verification_failed" "$TMP_DIR/last.out" && grep -q "head branch is some/other-branch" "$TMP_DIR/last.out"; then
+  check p93_retry_wrong_checkout_names_condition yes yes
+else
+  check p93_retry_wrong_checkout_names_condition yes "$(cat "$TMP_DIR/last.out")"
 fi
 
 echo ""
