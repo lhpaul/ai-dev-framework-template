@@ -146,6 +146,52 @@ else
   check out_of_scope_diff_summary announced "$(cat "$TMP_DIR/last.out")"
 fi
 
+# Diff markers must be the syntax this parser consumes, not a prefix. A stray
+# "@@ some prose" line or a Markdown rule is not a diff, and accepting either
+# would restore the fail-open path this issue closes.
+printf '%s\n' '@@ arbitrary text' 'not a diff at all' > "$TMP_DIR/bogus-marker.diff"
+check isolated_marker_not_a_diff 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/bogus-marker.diff")"
+if grep -q "expects a unified diff" "$TMP_DIR/last.out"; then
+  check isolated_marker_reason not_a_diff not_a_diff
+else
+  check isolated_marker_reason not_a_diff "$(head -1 "$TMP_DIR/last.out")"
+fi
+printf -- '--- \nsome prose under a Markdown rule\n' > "$TMP_DIR/md-rule.diff"
+check markdown_rule_not_a_diff 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/md-rule.diff")"
+
+# Diff-shaped but with no target header this parser can read is its own refusal:
+# "cannot read it" is not the same claim as "there was nothing in it".
+printf '%s\n' 'diff --git docs/workflow/x.md docs/workflow/x.md' '--- docs/workflow/x.md' '+++ docs/workflow/x.md' '@@ -0,0 +1 @@' '+hi' > "$TMP_DIR/no-prefix.diff"
+check no_prefix_diff_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/no-prefix.diff")"
+if grep -q "no \`+++ b/<path>\` or \`+++ /dev/null\` target header" "$TMP_DIR/last.out"; then
+  check no_prefix_diff_reason unparseable unparseable
+else
+  check no_prefix_diff_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
+fi
+
+# A deletion-only diff has `+++ /dev/null` and nothing to examine behind it.
+# That is a real diff with a legitimate zero, not a malformed one.
+printf '%s\n' 'diff --git a/docs/workflow/x.md b/docs/workflow/x.md' 'deleted file mode 100644' '--- a/docs/workflow/x.md' '+++ /dev/null' '@@ -1 +0,0 @@' '-gone' > "$TMP_DIR/deletion.diff"
+check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/deletion.diff")"
+
+# The summary is printed before EVERY exit, refusals included: a refusal that
+# printed only an error would still leave a run with no machine-readable
+# statement of how much it examined.
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff; do
+  run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
+  if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
+    check "summary_on_refusal_$refusal_case" announced announced
+  else
+    check "summary_on_refusal_$refusal_case" announced "$(cat "$TMP_DIR/last.out")"
+  fi
+done
+PATH="$fake_git_fail_dir:$PATH" run_linter python3 "$LINTER" --base-ref ignored > /dev/null
+if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
+  check summary_on_refusal_git_failure announced announced
+else
+  check summary_on_refusal_git_failure announced "$(cat "$TMP_DIR/last.out")"
+fi
+
 # --all is exempt from the empty-diff refusal: it reads no diff, so it can only
 # exit 0 (no findings) or 1 (findings), never 2 (nothing examined). It scans the
 # whole repository, so the finding count here is whatever the repository holds —

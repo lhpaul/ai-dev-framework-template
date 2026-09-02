@@ -106,17 +106,29 @@ summary line — `examined=N files, M fences, K changed-lines (source: ...);
 findings=N` — precisely so a silent success cannot be mistaken for a real pass.
 If `examined=0`, no WS rule ran and the run proves nothing about WS001–WS006.
 
+The summary is printed before **every** exit, refusals included.
+
 | Exit | Meaning |
 | --- | --- |
 | `0` | The run examined its scope and found nothing. `examined=0 files` here means the diff was well formed but touched no in-scope guidance file — a legitimate "nothing to check", announced on stderr. |
 | `1` | Findings were reported. |
-| `2` | The run examined nothing and refuses to be read as a pass: the diff was empty, the `--input` file was not a unified diff, or `git diff` failed. |
+| `2` | The run examined nothing and refuses to be read as a pass. |
+
+The four ways a run can examine nothing are reported distinctly, because they
+are different failures:
+
+| Condition | Message |
+| --- | --- |
+| `git diff` failed | `ERROR: <git stderr>` |
+| Input carries no `diff --git` line and no well-formed hunk header (a path list, prose, a stray `@@` line) | `--input/--diff-file expects a unified diff` |
+| Diff markers present but no `+++ b/<path>` or `+++ /dev/null` target header (e.g. a `--no-prefix` diff) | `has diff markers but no ... target header` |
+| The diff is empty | `the diff under examination is empty` |
 
 `--input` / `--diff-file` takes a **unified diff**, not a path list. A path list
 was previously parsed as an empty diff and exited 0 while a real WS002 was still
 present (PR #1646); it is now an error. Produce the diff with
-`git diff --unified=0 <base>...HEAD`, or use `--base-ref` and let the script run
-`git diff` itself.
+`git diff --unified=0 <base>...HEAD` and keep the default `a/` and `b/`
+prefixes, or use `--base-ref` and let the script run `git diff` itself.
 
 `--base-ref` diffs **committed** history (`<base>...HEAD`), so uncommitted work
 is invisible to it: run it after committing, or the empty-diff refusal will

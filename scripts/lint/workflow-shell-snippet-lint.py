@@ -55,7 +55,12 @@ def diff_text(base_ref: str | None, input_file: str | None) -> str:
     return result.stdout
 
 
-DIFF_SHAPE = re.compile(r"(?m)^(?:diff --git |--- |\+\+\+ |@@ )")
+# Structure this parser can actually consume. changed_lines() reads exactly two
+# things: `+++ b/<path>` file headers and well-formed `@@ -a,b +c,d @@` hunk
+# headers. `+++ /dev/null` is a deletion, which is a real header with nothing
+# to examine behind it.
+DIFF_MARKER = re.compile(r"(?m)^(?:diff --git |@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@)")
+DIFF_TARGET_HEADER = re.compile(r"(?m)^\+\+\+ (?:b/\S|/dev/null\s*$)")
 
 
 def diff_shape(diff: str) -> str:
@@ -66,12 +71,22 @@ def diff_shape(diff: str) -> str:
     clean run (issue #1658, observed on PR #1646 where a real WS002 survived an
     `--input <path list>` invocation that exited 0).
 
-    Returns "empty" for no content, "diff" for text carrying at least one
-    unified-diff header or hunk marker, and "not_a_diff" for anything else.
+    The markers are matched against the syntax this parser consumes, not against
+    a prefix: a stray `@@ some prose` line or a Markdown `---` rule is not a
+    diff, and text carrying diff markers but no `+++` target header is a diff
+    this parser cannot read rather than one with nothing in it.
+
+    Returns:
+        "empty"       — no content at all.
+        "not_a_diff"  — content with no `diff --git` line and no well-formed hunk header.
+        "unparseable" — diff-shaped, but no `+++ b/<path>` or `+++ /dev/null` header to read.
+        "diff"        — has a target header this parser can consume.
     """
     if not diff.strip():
         return "empty"
-    return "diff" if DIFF_SHAPE.search(diff) else "not_a_diff"
+    if DIFF_TARGET_HEADER.search(diff):
+        return "diff"
+    return "unparseable" if DIFF_MARKER.search(diff) else "not_a_diff"
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
@@ -169,6 +184,19 @@ def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
     return findings, evaluated
 
 
+def emit_summary(files: int, fences: int, changed_line_count: int, source: str, findings: int) -> None:
+    """Print the run summary. Called before EVERY exit, refusals included.
+
+    A refusal that printed only an error would still leave a run with no
+    machine-readable statement of how much it examined, which is the shape of
+    evidence issue #1658 exists to remove.
+    """
+    print(
+        f"examined={files} files, {fences} fences, {changed_line_count} changed-lines "
+        f"(source: {source}); findings={findings}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Lint changed executable shell fences on framework-owned guidance surfaces.",
@@ -195,22 +223,37 @@ def main() -> int:
         try:
             diff = diff_text(args.base_ref, args.input_file)
         except (OSError, RuntimeError) as error:
+            emit_summary(0, 0, 0, source, 0)
             print(f"ERROR: {error}", file=sys.stderr)
             return 2
         # Issue #1658: a run that examined nothing must never be mistaken for a
-        # clean run. Classify the input before parsing it — a path list and an
-        # empty diff both parse to an empty changed map, but they are different
-        # failures and only one of them is ever legitimate.
+        # clean run. Classify the input before parsing it — a path list, a
+        # malformed diff, and an empty diff all parse to an empty changed map,
+        # but they are different failures and only one of them is ever
+        # legitimate.
         shape = diff_shape(diff)
         if shape == "not_a_diff":
+            emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} contains no "
-                "diff header or hunk marker. Produce it with `git diff --unified=0 <base>...HEAD`, "
-                "or use --base-ref to let this script run git diff itself.",
+                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} carries no "
+                "`diff --git` line and no well-formed hunk header. Produce it with "
+                "`git diff --unified=0 <base>...HEAD`, or use --base-ref to let this script run "
+                "git diff itself.",
+                file=sys.stderr,
+            )
+            return 2
+        if shape == "unparseable":
+            emit_summary(0, 0, 0, source, 0)
+            print(
+                f"ERROR: the diff under examination (source: {source}) has diff markers but no "
+                "`+++ b/<path>` or `+++ /dev/null` target header, so this parser can read nothing "
+                "from it. Produce it with `git diff --unified=0 <base>...HEAD` and keep the default "
+                "a/ and b/ prefixes.",
                 file=sys.stderr,
             )
             return 2
         if shape == "empty" and not args.allow_empty:
+            emit_summary(0, 0, 0, source, 0)
             print(
                 f"ERROR: the diff under examination is empty (source: {source}); nothing was examined, "
                 "so this run is not evidence that WS rules pass.",
@@ -239,12 +282,12 @@ def main() -> int:
         fences += path_fences
     for finding in findings:
         print(f"{finding.path}:{finding.line}: {finding.rule}: {finding.message}")
-    # Printed on every run, including clean ones: "exit 0" with no output cannot
-    # be told apart from "exit 0 after examining nothing" (issue #1658).
-    changed_line_count = sum(len(lines) for lines in changed.values())
-    print(
-        f"examined={len(changed)} files, {fences} fences, {changed_line_count} changed-lines "
-        f"(source: {source}); findings={len(findings)}"
+    emit_summary(
+        len(changed),
+        fences,
+        sum(len(lines) for lines in changed.values()),
+        source,
+        len(findings),
     )
     if not changed:
         print(
