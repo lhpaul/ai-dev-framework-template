@@ -404,6 +404,33 @@ for path_branch in 'feature/[slug]' 'fix/[branch-slug]' 'refactor/[branch-slug]'
 done
 check protocol_03_all_paths_have_push_block 4 "$PATH_PUSH_COUNT"
 
+# Planted variant: put the Refactor path back in prose. The count must drop, or
+# the check above would pass on a document that reintroduced the defect.
+PLANT_PROSE_DIR="$TMP_DIR/planted-prose"
+mkdir -p "$PLANT_PROSE_DIR"
+cp "$PROTOCOL_DIR/03-implement-development-protocol.md" "$PLANT_PROSE_DIR/"
+python3 - "$PLANT_PROSE_DIR/03-implement-development-protocol.md" <<'PYPLANTPROSE'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+needle = 'git push origin "refactor/[branch-slug]:refactor/[branch-slug]"'
+if needle not in text:
+    sys.exit("plant target not found")
+start = text.rindex("8. Push with an explicit refspec", 0, text.index(needle))
+end = text.index("```\n", text.index(needle)) + len("```\n")
+path.write_text(text[:start] + "8. Push branch to remote\n" + text[end:], encoding="utf-8")
+PYPLANTPROSE
+PLANT_PATH_COUNT=0
+for path_branch in 'feature/[slug]' 'fix/[branch-slug]' 'refactor/[branch-slug]' 'hotfix/[branch-slug]'; do
+  if [ -n "$(extract_push_block "$PLANT_PROSE_DIR/03-implement-development-protocol.md" "$path_branch")" ]; then
+    PLANT_PATH_COUNT=$((PLANT_PATH_COUNT + 1))
+  fi
+done
+check plant_prose_refactor_path_is_reported 3 "$PLANT_PATH_COUNT"
+
 # Sweep, so a push step added later cannot skip the rule: no documented push of
 # an ITEM branch may be left bare or given a bare branch name. Base-branch
 # pushes (develop-<slug>, release, tags) are deliberate and excluded — they are
