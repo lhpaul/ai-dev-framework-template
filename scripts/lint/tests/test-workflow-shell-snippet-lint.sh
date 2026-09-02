@@ -235,6 +235,32 @@ PYPROBE
 )"
 check attribution_per_record "docs/workflow/first.md=[1]" "$attribution_probe"
 
+# changed_lines() processes the bytes before the first `diff --git` header, so
+# the shape check has to cover them too. An unreadable preamble followed by a
+# valid metadata-only record must refuse, not pass on the record's strength.
+printf '%s\n' '@@ -0,0 +1,3 @@' '+```bash' '+echo hello' '+```' \
+  'diff --git a/docs/workflow/a.md b/docs/workflow/a.md' 'old mode 100644' 'new mode 100755' \
+  > "$TMP_DIR/unreadable-preamble.diff"
+check unreadable_preamble_refused 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/unreadable-preamble.diff")"
+if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+  check unreadable_preamble_reason unparseable unparseable
+else
+  check unreadable_preamble_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
+fi
+# A readable preamble — a bare `diff -u` record with no `diff --git` framing —
+# is still valid input, and its path is still examined.
+printf '%s\n' '--- a/docs/workflow/z.md' '+++ b/docs/workflow/z.md' '@@ -0,0 +1 @@' '+x' \
+  'diff --git a/docs/workflow/a.md b/docs/workflow/a.md' 'old mode 100644' 'new mode 100755' \
+  > "$TMP_DIR/readable-preamble.diff"
+check readable_preamble_passes 0 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/readable-preamble.diff")"
+if grep -q "examined=1 files" "$TMP_DIR/last.out"; then
+  check readable_preamble_examined announced announced
+else
+  check readable_preamble_examined announced "$(cat "$TMP_DIR/last.out")"
+fi
+
 # A line that merely starts with "diff --git " is not a header: a complete one
 # names two paths. Without that check, prose could stand in as evidence of a
 # metadata-only Git record and exit 0.
@@ -338,7 +364,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced

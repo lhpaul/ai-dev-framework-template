@@ -70,16 +70,26 @@ DIFF_TARGET_HEADER = re.compile(r"(?m)^\+\+\+ (?:b/\S|/dev/null\s*$)")
 
 
 def split_diff_records(diff: str) -> list[str]:
-    """Split a diff into per-file records at each complete `diff --git` header.
+    """Split a diff into records at each complete `diff --git` header.
 
-    Returns an empty list when the text carries no such header, which the caller
-    treats as a single implicit record.
+    Any non-blank text before the first header is returned as its own leading
+    record. changed_lines() processes those bytes, so the shape check must cover
+    them too: validation and parsing have to see exactly the same input, or the
+    unvalidated remainder is a hole.
+
+    Returns an empty list when the text carries no `diff --git` header at all,
+    which the caller treats as a single implicit record.
     """
     starts = [match.start() for match in DIFF_GIT_HEADER.finditer(diff)]
     if not starts:
         return []
+    records: list[str] = []
+    preamble = diff[: starts[0]]
+    if preamble.strip():
+        records.append(preamble)
     bounds = starts + [len(diff)]
-    return [diff[bounds[index]:bounds[index + 1]] for index in range(len(starts))]
+    records.extend(diff[bounds[index] : bounds[index + 1]] for index in range(len(starts)))
+    return records
 
 
 def diff_shape(diff: str) -> str:
