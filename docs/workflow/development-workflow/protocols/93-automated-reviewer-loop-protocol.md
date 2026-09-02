@@ -397,6 +397,19 @@ record in the ledger. The reviewed head it reports is the head the recorded
 clean verdict names, which is `loop_head_sha` by definition of the skip. The
 post-clean settle and the unresolved-thread gates are unaffected and still run.
 
+**An expensive reviewer still owes its #1649 gate before a replay.** The gate
+runs *before* the replay decision is acted on, never after and never instead.
+A recorded clean vouches for one reviewer's verdict on one commit; it does not
+vouch for the gate's **live** inputs — unresolved review threads and baseline
+check runs on that same head, which can change after the verdict was recorded.
+Skipping the gate to avoid a dispatch that will not happen would also skip the
+readiness-withholding deferral the gate exists to produce, so a deferring gate
+still yields `RESULT=needs_fixes REASON=expensive_gate_deferred` even when the
+ledger says that reviewer is clean on this head. A gate that passes and then
+ends in a replay is not a dispatch: it suppresses the
+`EXPENSIVE_GATE_RESULT=dispatched` telemetry exactly as the ready-phase
+preflight does.
+
 **Telemetry:**
 
 | Key | Meaning |

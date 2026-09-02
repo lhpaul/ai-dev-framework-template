@@ -627,8 +627,14 @@ Outputs stable key=value lines including:
                   reviewed head is read from that same entry — never borrowed from another one.
                   Fail-closed: missing, unparseable, non-clean, or other-head evidence all dispatch,
                   and an independent GitHub App/Actions check is never substitute evidence. A new
-                  head clears every skip on its own, so #1656 still owns the local re-dispatch and
-                  #1649 still owns the expensive-reviewer gate. STAGE_SKIPPED_PLATFORMS is emitted
+                  head clears every skip on its own, so #1656 still owns the local re-dispatch.
+                  An expensive reviewer still owes its #1649 gate BEFORE a replay is acted on: the
+                  gate's unresolved-thread and baseline-check conditions are live inputs a recorded
+                  clean cannot vouch for, so a deferring gate still yields needs_fixes /
+                  expensive_gate_deferred even when the ledger says that reviewer is clean on this
+                  head, and a passing gate that ends in a replay suppresses its
+                  EXPENSIVE_GATE_RESULT=dispatched telemetry the way the ready-phase preflight does.
+                  STAGE_SKIPPED_PLATFORMS is emitted
                   alongside every RESULT= that follows the platform loop, including the
                   no-platforms-configured exit (empty when nothing was skipped). Guard exits that
                   never reach the loop (lock_contention, release_pr, truncated_run,
@@ -8384,6 +8390,32 @@ reviewer_loop_platform_clean_for_head() {
   fi
 }
 
+# reviewer_loop_stage_skip_allowed_now <platform> <gate_state>
+#
+# Issue #1692 x #1649: a recorded clean vouches for one reviewer's verdict on
+# one commit. It does not vouch for the expensive-reviewer gate's live inputs —
+# unresolved review threads and baseline check runs on that same head, which can
+# change after the verdict was recorded. So an expensive reviewer may only have
+# its verdict replayed once its gate has actually passed for this head; skipping
+# the gate to avoid a dispatch that will not happen would also skip the
+# readiness-withholding deferral the gate exists to produce.
+#
+# <gate_state> is "passed" once expensive_reviewer_gate returned success this
+# iteration, "pending" before that, and "not_required" for a platform with no
+# gate to owe. Anything other than those last two, or "passed", refuses.
+reviewer_loop_stage_skip_allowed_now() {
+  local platform="${1:-}" gate_state="${2:-}"
+
+  if is_expensive_reviewer_platform "$platform"; then
+    [ "$gate_state" = "passed" ]
+    return $?
+  fi
+  case "$gate_state" in
+    not_required|passed) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # reviewer_loop_stage_skip_resolve <pr_number>
 #
 # Issue #1692: decides whether per-head staging skips are possible this run and
@@ -11904,6 +11936,8 @@ print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 # names a different commit, so #1656 still owns the local re-dispatch and #1649
 # still owns the expensive-reviewer gate.
 stage_skip_state=""
+stage_skip_replay=0
+stage_skip_gate_state="not_required"
 declare -a stage_skipped_platforms=()
 reviewer_loop_stage_skip_resolve "$pr_number"
 print_kv STAGE_SKIP_ENABLED "$stage_skip_enabled"
@@ -12027,27 +12061,22 @@ for index in "${!platforms[@]}"; do
     fi
   fi
 
-  # Issue #1692: skip this reviewer when the ledger already records it clean on
-  # loop_head_sha. Placed after the ready-phase transition (so `gh pr ready` and
-  # the #1656 second local pass still run exactly as before) and before the
-  # #1649 expensive gate (so an already-clean expensive reviewer is not gated
-  # for a dispatch that will not happen). The replayed verdict goes through
-  # reviewer_loop_process_platform_output, so the skipped platform contributes
-  # the same peer evidence, reviewed_heads[] entry, and ledger record a real
-  # dispatch would have contributed.
+  # Issue #1692: decide whether this reviewer's recorded clean may be replayed
+  # instead of dispatched. The decision is taken here but ACTED ON below, after
+  # the #1649 gate: a recorded clean vouches only for the reviewer's own verdict
+  # on this head, never for the gate's live inputs (unresolved threads, baseline
+  # checks), so an expensive reviewer still owes its gate before anything —
+  # dispatch or replay — is allowed to report clean for it.
+  stage_skip_replay=0
   if [ "$stage_skip_enabled" -eq 1 ]; then
     stage_skip_state="$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")"
     if [ "$stage_skip_state" = "clean_current" ]; then
-      echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
-      stage_skipped_platforms+=("$platform_name")
-      reviewer_loop_platform_loop_should_break=0
-      reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
-        "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
-      if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
-        break
-      fi
-      continue
+      stage_skip_replay=1
     fi
+  fi
+  stage_skip_gate_state="not_required"
+  if is_expensive_reviewer_platform "$platform_name"; then
+    stage_skip_gate_state="pending"
   fi
 
   # Issue #1649: expensive-reviewer gate — require current-head local clean,
@@ -12060,9 +12089,9 @@ for index in "${!platforms[@]}"; do
     expensive_gate_status=$?
     set -e
     expensive_gate_sync_last_from_output "$expensive_gate_output"
-    # Re-emit gate telemetry on the loop's stdout contract.
-    printf '%s\n' "$expensive_gate_output"
     if [ "$expensive_gate_status" -ne 0 ]; then
+      # Re-emit gate telemetry on the loop's stdout contract.
+      printf '%s\n' "$expensive_gate_output"
       last_platform="$platform_name"
       if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
         aggregate_result="escalate"
@@ -12085,8 +12114,42 @@ for index in "${!platforms[@]}"; do
       fi
       break
     fi
+    stage_skip_gate_state="passed"
+    if [ "$stage_skip_replay" -eq 1 ]; then
+      # A passing gate that ends in a replay is not a dispatch and must not emit
+      # EXPENSIVE_GATE_RESULT=dispatched/forced into the machine-consumed stdout
+      # contract, summary, or history — the same rule the ready-phase preflight
+      # applies. The gate still ran: its live thread and baseline-check
+      # conditions were satisfied for this head before the replay was allowed.
+      echo "INFO: expensive-gate passed for ${platform_name}; replaying the recorded current-head clean instead of dispatching" >&2
+      expensive_gate_last_platform=""
+      expensive_gate_last_result=""
+      expensive_gate_last_reason=""
+      expensive_gate_last_head=""
+    else
+      # Re-emit gate telemetry on the loop's stdout contract.
+      printf '%s\n' "$expensive_gate_output"
+    fi
     # forced / dispatched continue to run_platform_review
     unset expensive_gate_output expensive_gate_status
+  fi
+
+  # Issue #1692: act on the replay decision, now that any expensive reviewer has
+  # cleared its #1649 gate on this head. The replayed verdict goes through
+  # reviewer_loop_process_platform_output, so the skipped platform contributes
+  # the same peer evidence, reviewed_heads[] entry, and ledger record a real
+  # dispatch would have contributed.
+  if [ "$stage_skip_replay" -eq 1 ] \
+      && reviewer_loop_stage_skip_allowed_now "$platform_name" "$stage_skip_gate_state"; then
+    echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
+    stage_skipped_platforms+=("$platform_name")
+    reviewer_loop_platform_loop_should_break=0
+    reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
+      "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
+    if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
+      break
+    fi
+    continue
   fi
 
   set +e

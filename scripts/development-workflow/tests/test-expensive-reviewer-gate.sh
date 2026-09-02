@@ -357,6 +357,120 @@ _docs_has "1649_docs_p93_unreadable" "expensive_gate_deferral_budget_unreadable"
 _docs_has "1649_docs_cg_cap" "expensive_gate_deferral_cap" "$_cg"
 _docs_has "1649_docs_cg_unreadable" "expensive_gate_deferral_budget_unreadable" "$_cg"
 
+# --- Scenario 1692: per-head replay never bypasses the expensive gate ---
+# A recorded clean vouches for one reviewer's verdict on one commit. It does not
+# vouch for the gate's LIVE inputs — unresolved review threads and baseline
+# check runs on that same head, which can change after the verdict was
+# recorded. So an expensive reviewer with a clean ledger entry for the current
+# head must still clear its gate before anything reports clean for it.
+_1692_head="$_head"
+_1692_ledger_clean="$(jq -nc --arg head "$_1692_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [{platform: "codex-github", result: "clean", raw_result: "clean", raw_reason: ""}],
+    reviewed_heads: [{platform: "codex-github", reviewed_head: $head, state: "current", reason: ""}]
+  }]
+}')"
+run_test "1692_gate_ledger_says_clean_current" "clean_current" \
+  "$(reviewer_loop_platform_clean_for_head "$_1692_ledger_clean" codex-github "$_1692_head")"
+
+# The ordering predicate: an expensive reviewer owes its gate; nothing else does.
+run_test "1692_gate_expensive_pending_refused" "refused" \
+  "$(reviewer_loop_stage_skip_allowed_now codex-github pending && echo allowed || echo refused)"
+run_test "1692_gate_expensive_not_required_refused" "refused" \
+  "$(reviewer_loop_stage_skip_allowed_now codex-github not_required && echo allowed || echo refused)"
+run_test "1692_gate_expensive_passed_allowed" "allowed" \
+  "$(reviewer_loop_stage_skip_allowed_now codex-github passed && echo allowed || echo refused)"
+run_test "1692_gate_cheap_not_required_allowed" "allowed" \
+  "$(reviewer_loop_stage_skip_allowed_now local-ai-reviewer not_required && echo allowed || echo refused)"
+run_test "1692_gate_cheap_passed_allowed" "allowed" \
+  "$(reviewer_loop_stage_skip_allowed_now local-ai-reviewer passed && echo allowed || echo refused)"
+run_test "1692_gate_cheap_unknown_state_refused" "refused" \
+  "$(reviewer_loop_stage_skip_allowed_now local-ai-reviewer pending && echo allowed || echo refused)"
+
+# Composition, mirroring the platform-loop body: the ledger says codex-github is
+# clean on this head, but the gate defers because the live local evidence is
+# stale. The replay must not fire and the loop must report the deferral.
+_1692_ran=()
+run_platform_review() { _1692_ran+=("$1"); printf 'RESULT=clean\nREASON=\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'; return 0; }
+_1692_replayed=()
+platforms=(codex-github)
+phase_after_clean_platforms=()
+phase_after_clean_enabled=0
+compare_mode=0
+loop_head_sha="$_1692_head"
+expensive_gate_max_deferrals=3
+EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+aggregate_result="skipped"
+aggregate_reason=""
+platform_peer_evidence=()
+# Stale local evidence: the gate's condition 1 fails for this head.
+platform_reviewed_heads=("local-ai-reviewer:$_other")
+
+_1692_run_loop_body() {
+  local platform_name="$1"
+  local stage_skip_replay=0 stage_skip_gate_state="not_required"
+  if [ "$(reviewer_loop_platform_clean_for_head "$_1692_ledger_clean" "$platform_name" "$loop_head_sha")" = "clean_current" ]; then
+    stage_skip_replay=1
+  fi
+  if is_expensive_reviewer_platform "$platform_name"; then
+    stage_skip_gate_state="pending"
+    if ! expensive_reviewer_gate 1692 "$platform_name" "$loop_head_sha" >/dev/null 2>&1; then
+      aggregate_result="needs_fixes"
+      aggregate_reason="expensive_gate_deferred"
+      return 1
+    fi
+    stage_skip_gate_state="passed"
+  fi
+  if [ "$stage_skip_replay" -eq 1 ] \
+      && reviewer_loop_stage_skip_allowed_now "$platform_name" "$stage_skip_gate_state"; then
+    _1692_replayed+=("$platform_name")
+    return 0
+  fi
+  run_platform_review "$platform_name" 1692 fix/x 1 1 >/dev/null
+  return 0
+}
+
+_1692_run_loop_body codex-github || true
+run_test "1692_gate_defer_no_replay" "0" \
+  "$(printf '%s\n' "${_1692_replayed[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_defer_no_dispatch" "0" \
+  "$(printf '%s\n' "${_1692_ran[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_defer_aggregate" "needs_fixes" "$aggregate_result"
+run_test "1692_gate_defer_reason" "expensive_gate_deferred" "$aggregate_reason"
+
+# Same ledger, same head, but the gate now passes: the replay fires and no
+# dispatch happens.
+_1692_ran=()
+_1692_replayed=()
+aggregate_result="skipped"
+aggregate_reason=""
+repo_review_platforms=(local-ai-reviewer codex-github)
+platforms=(local-ai-reviewer codex-github)
+platform_peer_evidence=("local-ai-reviewer|clean|")
+platform_reviewed_heads=("local-ai-reviewer:$_1692_head")
+_1692_run_loop_body codex-github || true
+run_test "1692_gate_pass_replays" "1" \
+  "$(printf '%s\n' "${_1692_replayed[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_pass_no_dispatch" "0" \
+  "$(printf '%s\n' "${_1692_ran[@]:-}" | grep -c '^codex-github$' || true)"
+
+# And with no ledger evidence the gate passes but the reviewer is dispatched.
+_1692_ran=()
+_1692_replayed=()
+_1692_ledger_clean='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1692_run_loop_body codex-github || true
+run_test "1692_gate_pass_no_evidence_dispatches" "1" \
+  "$(printf '%s\n' "${_1692_ran[@]:-}" | grep -c '^codex-github$' || true)"
+
+unset _1692_head _1692_ledger_clean _1692_ran _1692_replayed
+unset -f _1692_run_loop_body run_platform_review 2>/dev/null || true
+
+_docs_has "1692_docs_p93_staging" "Per-head reviewer staging" "$_p93"
+_docs_has "1692_docs_p93_gate_owner" "#1649" "$_p93"
+
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]
