@@ -1,0 +1,155 @@
+# Smoke Test Runbook: Cross-PR Closing Keyword Validation
+
+**Feature**: Cross-PR closing keyword validation (#1644)
+**Spec**: [`1_1644-cross-pr-closing-keyword-validation_specs.md`](../../specs/developments/20260827184933_1644-cross-pr-closing-keyword-validation/1_1644-cross-pr-closing-keyword-validation_specs.md)
+**Created in**: Plan Ready stage
+**Updated in**: In Development stage
+
+This feature has no user interface and no application to log into. It runs as a
+GitHub Actions workflow and writes to pull requests, so the smoke test exercises
+it on real throwaway pull requests in the repository. The unit suite covers the
+rules; this runbook covers the wiring the unit suite cannot see — that the
+workflow is triggered, has the permissions it needs, and writes what the script
+decided.
+
+---
+
+## Prerequisites
+
+Before running this smoke test:
+
+- [ ] The implementation is merged to a branch you can open pull requests against, or you are running from the implementation branch itself.
+- [ ] `gh` is authenticated against `lhpaul/ai-dev-framework-template` with permission to open and close pull requests.
+- [ ] You can see the repository's Actions runs, to read a workflow log when a step says to.
+- [ ] The `multi-issue-intentional` label is **absent** from the repository at the start, so Step 4 exercises provisioning. If it already exists, delete it first and note that in the results.
+
+---
+
+## Test Data
+
+| Item | Value |
+| --- | --- |
+| Scratch issue | An open issue used only for this test — record its number as `<ISSUE>` |
+| Owner pull request | Branch `fix/<ISSUE>-smoke-owner`, description says nothing about closing |
+| Claimant pull request | Branch `fix/999999-smoke-claimant`, description declares `Closes #<ISSUE>` |
+| Opt-out label | `multi-issue-intentional` |
+| Report location | A comment on the claimant pull request |
+
+Both pull requests target `develop`. Both are drafts, so no reviewer loop runs
+against them.
+
+---
+
+## Smoke Test Steps
+
+### Step 0: Create the scratch issue
+
+- Open an issue titled `smoke test for #1644 — safe to close`.
+- Record its number as `<ISSUE>`.
+
+### Step 1: Open the claimant with no sibling
+
+- Create branch `fix/999999-smoke-claimant` from `develop` with one trivial commit.
+- Open a **draft** pull request whose description contains `Closes #<ISSUE>`.
+- **Expected**: no comment is posted. Ownership is unestablished — no open pull request's branch names `<ISSUE>` — and absence of evidence is not a warning.
+
+### Step 2: Open the owner, and watch the claimant change on its own
+
+- Create branch `fix/<ISSUE>-smoke-owner` from `develop` with one trivial commit.
+- Open a **draft** pull request from it. Its description declares nothing.
+- **Expected**: within a workflow run, the **claimant** pull request — untouched — gains a comment naming `<ISSUE>` and pointing at the owner pull request by number.
+- This is the sibling fan-out: the event happened on the owner, the write happened on the claimant.
+
+### Step 3: Correct the claimant
+
+- Edit the claimant's description to remove the `Closes #<ISSUE>` line.
+- **Expected**: the existing comment is cleared or updated to a clean state. There is not a second comment.
+
+### Step 4: Exercise the opt-out and its provisioning
+
+- Restore `Closes #<ISSUE>` in the claimant's description and wait for the warning to return.
+- Apply the `multi-issue-intentional` label to the claimant. If the label does not exist yet, confirm the repository now has it — the validation created it on first use.
+- **Expected**: the warning clears with no push to the pull request.
+- Remove the label.
+- **Expected**: the warning returns, again with no push.
+
+### Step 5: Filtering follows the base branch
+
+- Edit the claimant's **title** so it ends with an unclosed triple-backtick fence.
+- **Expected**, with the base still `develop` (not the default branch): the warning clears, because the cleanup that would close the issue reads title and description as one text and the fence suppresses the reference.
+- Retarget the claimant to the repository's default branch.
+- **Expected**: the warning returns, because the platform closes from the description alone and never saw the title.
+- Retarget it back to `develop` and remove the fence from the title.
+
+### Step 6: Contested ownership is silent
+
+- Create a second owner branch `fix/<ISSUE>-smoke-owner-2` and open a draft pull request from it.
+- **Expected**: the claimant's warning clears. Two open pull requests name `<ISSUE>`, so ownership is contested and guessing an owner is the mistake this feature exists to catch.
+- Close the second owner.
+- **Expected**: the warning returns.
+
+### Step 7: The indeterminate outcome is visible and non-blocking
+
+- This step needs a forced failure. Temporarily revoke the workflow's `pull-requests: read` permission, or run the validator locally with a `gh` that fails on the open-pull-request list.
+- **Expected**: the existing comment is left exactly as it was, no new comment appears, and a **neutral** check appears on the pull request naming what could not be read. The pull request's mergeability is unchanged, and no check is failing.
+- Restore the permission and re-run.
+- **Expected**: the neutral check is replaced by the conclusive result, even when that result is silent.
+
+### Last Step: Validate & shut down
+
+- Close all scratch pull requests and delete their branches.
+- Close the scratch issue.
+- Remove the `multi-issue-intentional` label from the repository if it was created only for this test and the repository did not have it before.
+- Confirm `develop` was not modified by any step.
+
+---
+
+## Assertions Checklist
+
+- [ ] A claimant with no sibling is silent (Step 1).
+- [ ] A warning appears on the claimant when the owner opens, with no change to the claimant (Step 2).
+- [ ] The warning names the issue number and the sibling pull request (Step 2).
+- [ ] Correcting the description clears the warning and leaves a single comment, not two (Step 3).
+- [ ] The `multi-issue-intentional` label is created on first use in a repository that lacks it (Step 4).
+- [ ] Applying the label clears the warning with no push; removing it restores the warning with no push (Step 4).
+- [ ] An unclosed fence in the title suppresses the reference for a `develop`-targeting pull request, and does not for one targeting the default branch (Step 5).
+- [ ] Retargeting between the default branch and `develop` re-evaluates the pull request (Step 5).
+- [ ] Two owners make the result silent; closing one restores the warning (Step 6).
+- [ ] An unreadable input leaves the existing comment untouched and posts nothing (Step 7).
+- [ ] An indeterminate run leaves a neutral, non-blocking check and never a failing one (Step 7).
+- [ ] A conclusive re-run replaces the neutral check, including when it is silent (Step 7).
+- [ ] No step changed an issue's milestone, closed an issue, or altered any pull request's mergeability.
+
+---
+
+## Seed Data Reference
+
+No database seed data. The test data is the scratch issue and the throwaway
+pull requests created in the steps above; the branch names carry the ownership
+signal the feature reads.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to check |
+| --- | --- | --- |
+| No comment appears in Step 2 | The sibling fan-out did not run | The workflow run for the **owner** pull request's `opened` event; it is the run that writes to the claimant |
+| A second comment appears instead of an update | The existing report could not be read, so the run treated it as absent | The run log — an unreadable existing report should have produced an indeterminate outcome, not a duplicate |
+| The neutral check never appears | The workflow lacks `checks: write` | The workflow's `permissions:` block. This is the repository's first check-run writer |
+| The warning does not clear after applying the label | The label event did not trigger a run, or the label could not be read | The workflow's `pull_request_target` types include `labeled` and `unlabeled`; then the run log |
+| A rename does not re-evaluate anything | Expected — see Known Limitations | Nothing to fix |
+
+---
+
+## Known Limitations
+
+These are the trigger gaps the plan declares (alignment decision, option B):
+
+- **Renaming a pull request's own head branch, or a sibling's, does not re-evaluate anything.** GitHub Actions has no `renamed` activity type for pull requests. The result is corrected at the next event that does fire — an edit, a label change, or readiness.
+- **Changing the repository's default branch does not re-evaluate open pull requests.** GitHub Actions has no event for it. Each pull request keeps the filtering its base implied until its next event.
+- **Fork-originated pull requests are never validated**, by design: the repository forbids automated writes on them.
+
+None of these is a correctness gap in the validation itself — invoking the
+validator after any of them produces the right answer, and the unit suite
+asserts that. What is missing is the automatic invocation.
