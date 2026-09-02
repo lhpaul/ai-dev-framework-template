@@ -101,6 +101,59 @@ python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop
 bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh
 ```
 
+**Exit 0 without an examined count is not evidence.** Every run prints a
+summary line — `examined=N files, M fences, K changed-lines (source: ...);
+findings=N` — precisely so a silent success cannot be mistaken for a real pass.
+If `examined=0`, no WS rule ran and the run proves nothing about WS001–WS006.
+
+The summary is printed before **every** exit, refusals included.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | The run examined its scope and found nothing. `examined=0 files` here means the diff was well formed but touched no in-scope guidance file — a legitimate "nothing to check", announced on stderr. |
+| `1` | Findings were reported. |
+| `2` | The run examined nothing and refuses to be read as a pass. |
+
+The four ways a run can examine nothing are reported distinctly, because they
+are different failures:
+
+| Condition | Message |
+| --- | --- |
+| `git diff` failed | `ERROR: <git stderr>` |
+| Input carries no `diff --git` line, no well-formed hunk header, and no `+++` target header (a path list, prose, a stray `@@` line) | `expects a unified diff` |
+| Changed lines the parser cannot attribute — a hunk with no `+++ b/<path>` header (a `--no-prefix` diff), or a `+++` header with no hunk behind it | `carries changed lines this parser cannot read` |
+| The diff is empty | `the diff under examination is empty` |
+
+`--input` / `--diff-file` takes a **unified diff**, not a path list. A path list
+was previously parsed as an empty diff and exited 0 while a real WS002 was still
+present (PR #1646); it is now an error. Produce the diff with
+`git diff --unified=0 <base>...HEAD` and keep the default `a/` and `b/`
+prefixes, or use `--base-ref` and let the script run `git diff` itself.
+
+What separates a legitimate zero from an unreadable input is whether the diff
+carries changed lines at all. A **hunk header** means it does: without a
+`+++ b/<path>` target header those lines cannot be attributed to a path, so the
+input is refused. A record with **no hunk and no `+++` header** but a `diff --git`
+line is a genuine Git change with no textual content — a mode-only change, a
+binary file, a pure rename — so zero examined is the right answer and the run
+passes, provided it carries the metadata git emits for one (`old mode`,
+`new file mode`, `index`, `similarity index`, `rename from`, `Binary files ...
+differ`, `GIT binary patch`). A bare `diff --git a b` line with nothing behind
+it is text shaped like a header, not a record. A `+++` header with no hunk
+behind it is a fragment either way: in real output a target header exists
+precisely to introduce a hunk.
+
+Every record is checked separately, and the text before the first `diff --git`
+header counts as one: validation covers exactly the bytes the parser reads, so a
+well-formed record cannot vouch for an unreadable neighbour. A deletion,
+whose target header is `+++ /dev/null`, is likewise a valid diff with a
+legitimate zero.
+
+`--base-ref` diffs **committed** history (`<base>...HEAD`), so uncommitted work
+is invisible to it: run it after committing, or the empty-diff refusal will
+tell you so. Pass `--allow-empty` only where an empty diff is genuinely
+expected. `--all` reads no diff and is exempt from the refusal.
+
 **Tests:**
 
 ```bash
