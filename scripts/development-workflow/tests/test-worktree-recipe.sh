@@ -291,6 +291,28 @@ print("COUNT=" + str(count))
 PYSTOPS
 }
 
+# The condition these stops name must be declared on all three surfaces a
+# consumer repository reads: the guardrails reference table, the enforcement
+# table the checker validates against, and the shipped config's stop_conditions
+# list. Declaring it in only one leaves the other two silently inconsistent.
+STOP_CONDITION_NAME=push_verification_failed
+for declaration in \
+    "docs/workflow/development-workflow/guardrails.md|\`${STOP_CONDITION_NAME}\`" \
+    "docs/workflow/development-workflow/guardrails-enforcement.md|\`${STOP_CONDITION_NAME}\`" \
+    ".ai-dev-workflow.yaml|- ${STOP_CONDITION_NAME}"; do
+  declaration_file="${declaration%%|*}"
+  declaration_needle="${declaration#*|}"
+  if grep -Fq -- "$declaration_needle" "$REPO_ROOT/$declaration_file"; then
+    check "stop_condition_declared_in_$(basename "$declaration_file")" yes yes
+  else
+    check "stop_condition_declared_in_$(basename "$declaration_file")" yes "missing from $declaration_file"
+  fi
+done
+# ...and the stops must actually use it, not the borrowed condition they used
+# before this was a canonical name.
+BORROWED_STOPS="$(grep -rl "STOP: guardrail 'unclear_requirements' halted this run" "$PROTOCOL_DIR" || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no match, which is the passing state
+check no_borrowed_stop_condition "" "$BORROWED_STOPS"
+
 NAMED_STOP_PROTOCOLS="01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol 91-orchestrate-work-protocol 93-automated-reviewer-loop-protocol"
 STOP_COUNT_TOTAL=0
 for stop_protocol in $NAMED_STOP_PROTOCOLS; do
@@ -320,7 +342,7 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-old = """  echo "STOP: guardrail 'unclear_requirements' halted this run."
+old = """  echo "STOP: guardrail 'push_verification_failed' halted this run."
   echo "Item: branch ${BRANCH} in this worktree."
   echo "Cause: it tracks remote '${UPSTREAM_REMOTE}', not 'origin', so a bare"
   echo "  'git push' from here would not reach the pull request."

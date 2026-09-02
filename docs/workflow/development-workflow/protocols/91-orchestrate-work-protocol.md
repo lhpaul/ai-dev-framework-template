@@ -1000,7 +1000,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 UPSTREAM_MERGE=$(git config --get "branch.${BRANCH}.merge" || true)
 UPSTREAM_REMOTE=$(git config --get "branch.${BRANCH}.remote" || true)
 if [ -n "$UPSTREAM_MERGE" ] && [ "$UPSTREAM_MERGE" != "refs/heads/${BRANCH}" ]; then
-  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
   echo "Item: branch ${BRANCH} in this worktree."
   echo "Cause: it tracks ${UPSTREAM_MERGE}, not its own remote branch, so a bare"
   echo "  'git push' from here is refused or aims at the wrong branch."
@@ -1012,7 +1012,7 @@ fi
 # name on the wrong remote passes the check above while a bare push lands
 # somewhere the pull request will never see.
 if [ -n "$UPSTREAM_REMOTE" ] && [ "$UPSTREAM_REMOTE" != "origin" ]; then
-  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
   echo "Item: branch ${BRANCH} in this worktree."
   echo "Cause: it tracks remote '${UPSTREAM_REMOTE}', not 'origin', so a bare"
   echo "  'git push' from here would not reach the pull request."

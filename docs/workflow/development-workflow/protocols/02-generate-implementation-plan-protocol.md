@@ -528,7 +528,7 @@ If no blocking human decision remains:
     LOCAL_SHA=$(git rev-parse HEAD)
     REMOTE_SHA=$(git ls-remote origin "refs/heads/implementation-plan/[branch-slug]" | cut -f1)
     if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-      echo "STOP: guardrail 'unclear_requirements' halted this run."
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
       echo "Item: branch implementation-plan/[branch-slug] and its pull request."
       echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
       echo "Human action: check the branch upstream and push permissions, re-run"

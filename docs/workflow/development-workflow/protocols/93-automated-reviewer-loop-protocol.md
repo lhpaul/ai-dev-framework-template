@@ -483,7 +483,7 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
      git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
      REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-       echo "STOP: guardrail 'unclear_requirements' halted this run."
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
        echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
        echo "Cause: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete."
        echo "Human action: check the branch upstream and push permissions, push the branch"
@@ -550,7 +550,7 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
      git push origin "$(git rev-parse --abbrev-ref HEAD):$(git rev-parse --abbrev-ref HEAD)"
      REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-       echo "STOP: guardrail 'unclear_requirements' halted this run."
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
        echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
        echo "Cause: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete."
        echo "Human action: check the branch upstream and push permissions, push the branch"
