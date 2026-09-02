@@ -294,9 +294,9 @@ for stop_protocol in $NAMED_STOP_PROTOCOLS; do
   STOP_COUNT="$(printf '%s\n' "$STOP_REPORT" | awk -F= '/^COUNT=/{print $2; exit}')"
   STOP_COUNT_TOTAL=$((STOP_COUNT_TOTAL + STOP_COUNT))
 done
-# All five protocols contribute: 5 push verifications, 2 upstream guards, and
-# 2 push-retry stops in protocol 93.
-if [ "$STOP_COUNT_TOTAL" -ge 9 ]; then
+# All five protocols contribute: 6 push verifications (spec, plan, feature, fix,
+# refactor, hotfix), 2 upstream guards, and 2 push-retry stops in protocol 93.
+if [ "$STOP_COUNT_TOTAL" -ge 10 ]; then
   check named_stop_sweep_not_vacuous yes yes
 else
   check named_stop_sweep_not_vacuous yes "only ${STOP_COUNT_TOTAL} guard(s) found"
@@ -390,7 +390,19 @@ check_push_step "$PROTOCOL_DIR/01-generate-spec-protocol.md" 'spec/[branch-slug]
 check_push_step "$PROTOCOL_DIR/02-generate-implementation-plan-protocol.md" 'implementation-plan/[branch-slug]' plan
 check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'feature/[slug]' feature
 check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'fix/[branch-slug]' fix
+check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'refactor/[branch-slug]' refactor
 check_push_step "$PROTOCOL_DIR/03-implement-development-protocol.md" 'hotfix/[branch-slug]' hotfix
+
+# Every implementation path in protocol 03 must have a push step, and the sweep
+# above only sees the ones that exist. A path that pushes in prose — as the
+# Refactor path did — is invisible to it, so require one push block per path.
+PATH_PUSH_COUNT=0
+for path_branch in 'feature/[slug]' 'fix/[branch-slug]' 'refactor/[branch-slug]' 'hotfix/[branch-slug]'; do
+  if [ -n "$(extract_push_block "$PROTOCOL_DIR/03-implement-development-protocol.md" "$path_branch")" ]; then
+    PATH_PUSH_COUNT=$((PATH_PUSH_COUNT + 1))
+  fi
+done
+check protocol_03_all_paths_have_push_block 4 "$PATH_PUSH_COUNT"
 
 # Sweep, so a push step added later cannot skip the rule: no documented push of
 # an ITEM branch may be left bare or given a bare branch name. Base-branch
@@ -455,7 +467,7 @@ SELF_REFSPEC_REPORT="$(check_self_refspecs "$PROTOCOL_DIR")"
 SELF_REFSPEC_OFFENDERS="$(printf '%s\n' "$SELF_REFSPEC_REPORT" | grep '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no offender, which is the passing state
 SELF_REFSPEC_COUNT="$(printf '%s\n' "$SELF_REFSPEC_REPORT" | awk -F= '/^COUNT=/{print $2; exit}')"
 check every_refspec_is_self_refspec "" "$SELF_REFSPEC_OFFENDERS"
-if [ "${SELF_REFSPEC_COUNT:-0}" -ge 9 ]; then
+if [ "${SELF_REFSPEC_COUNT:-0}" -ge 10 ]; then
   check self_refspec_sweep_not_vacuous yes yes
 else
   check self_refspec_sweep_not_vacuous yes "only ${SELF_REFSPEC_COUNT} refspec push(es) found"
