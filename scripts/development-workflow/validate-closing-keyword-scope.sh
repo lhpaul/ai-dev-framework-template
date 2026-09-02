@@ -386,7 +386,18 @@ description_live_refs() {
 # --------------------------------------------------------------------------
 
 IMPLEMENTATION_BRANCH_PREFIXES='^(feature|fix|refactor|hotfix|backport/hotfix)/'
-BRANCH_OWNS_ISSUE_PATTERN_PREFIX="${IMPLEMENTATION_BRANCH_PREFIXES}([A-Z][A-Z0-9]*-)?"
+# The team prefix is case-INSENSITIVE. The spec's own canonical example is
+# lowercase — `fix/lh-97-some-slug` — and an uppercase-only pattern would leave
+# every lowercase team-prefixed sibling invisible, which is the spec's stated
+# reason for reading the form at all: "the warning would go silent on precisely
+# the mistake it exists to catch".
+#
+# The cost is real and the spec accepts it. A descriptive slug that happens to
+# start `<word>-<number>-` — `fix/retro-517-doc-gaps` — is indistinguishable in
+# shape from a team-prefixed identifier, so it reads as naming issue 517. That
+# produces a visible, correctable warning; missing a team-prefixed sibling
+# produces silence, which is the failure nobody notices.
+BRANCH_OWNS_ISSUE_PATTERN_PREFIX="${IMPLEMENTATION_BRANCH_PREFIXES}([A-Za-z][A-Za-z0-9]*-)?"
 
 # is_implementation_branch <branch>
 # The spec's precondition: this validation is for IMPLEMENTATION pull requests.

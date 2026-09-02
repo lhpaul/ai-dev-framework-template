@@ -87,7 +87,7 @@ jobs:
           case "$ACTION" in
             opened|reopened|closed)
               issue="$(printf '%s' "$PR_BRANCH" \
-                | sed -nE 's#^(feature|fix|refactor|hotfix|backport/hotfix)/([A-Z][A-Z0-9]*-)?([0-9]+)(-.*)?$#\3#p')"
+                | sed -nE 's#^(feature|fix|refactor|hotfix|backport/hotfix)/([A-Za-z][A-Za-z0-9]*-)?([0-9]+)(-.*)?$#\3#p')"
               if [ -n "$issue" ]; then
                 # Fail OPEN, not closed. An unreadable listing is an
                 # unreadable GATE INPUT, and the spec requires a neutral check

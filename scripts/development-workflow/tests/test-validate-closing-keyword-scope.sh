@@ -336,14 +336,27 @@ SIBLINGS='[
   {"number": 104, "headRefName": "spec/97-slug"},
   {"number": 105, "headRefName": "implementation-plan/97-slug"},
   {"number": 106, "headRefName": "fix/retro-517-doc-gaps"},
-  {"number": 107, "headRefName": "refactor/97-other"}
+  {"number": 107, "headRefName": "refactor/97-other"},
+  {"number": 108, "headRefName": "fix/lh-96-some-slug"}
 ]'
 
 check "plain_numeric_branch_is_owner" "101 107" "$(owners_for "$SIBLINGS" 97)"
 check "team_prefixed_sibling_is_owner" "102" "$(owners_for "$SIBLINGS" 98)"
+# The spec's own canonical example is LOWERCASE: `fix/lh-97-some-slug`. An
+# uppercase-only pattern would leave every lowercase team-prefixed sibling
+# invisible, which is the exact failure the spec gives as its reason for
+# reading the form at all.
+check "lowercase_team_prefixed_sibling_is_owner" "108" "$(owners_for "$SIBLINGS" 96)"
 check "backport_hotfix_branch_is_owner" "103" "$(owners_for "$SIBLINGS" 99)"
 check "spec_and_plan_branches_are_never_owners" "101 107" "$(owners_for "$SIBLINGS" 97)"
-check "issue_number_in_slug_is_not_ownership" "" "$(owners_for "$SIBLINGS" 517)"
+# A descriptive slug beginning `<word>-<number>-` is indistinguishable in shape
+# from a team-prefixed identifier, so it reads as naming that issue. The spec
+# accepts the trade: this produces a visible, correctable warning, while
+# missing a team-prefixed sibling produces silence, which is the failure nobody
+# notices. Asserted so the behaviour is a decision on record rather than a
+# surprise.
+check "a_descriptive_slug_shaped_like_a_team_prefix_is_read_as_ownership" "106" \
+  "$(owners_for "$SIBLINGS" 517)"
 check "no_owner_is_silent_for_that_issue" "" "$(owners_for "$SIBLINGS" 555)"
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1127,22 @@ agreement_case 'CLOSES #16' 16 'canonical=[16] fanout=[9]'
 # And a lookalike is a reference for neither.
 agreement_case 'disclose #16' 16 'canonical=[] fanout=[]'
 agreement_case 'Closes#16' 16 'canonical=[] fanout=[]'
+
+# The workflow's branch-to-issue extractor must accept the same forms the
+# validator's ownership pattern does, or an event on a lowercase team-prefixed
+# branch would fan out to nobody. Extracted from the workflow and executed, for
+# the same reason the jq program is.
+branch_issue() {
+  printf '%s' "$1" \
+    | sed -nE 's#^(feature|fix|refactor|hotfix|backport/hotfix)/([A-Za-z][A-Za-z0-9]*-)?([0-9]+)(-.*)?$#\3#p'
+}
+check "the workflow reads a bare-number branch" "97" "$(branch_issue fix/97-slug)"
+check "the workflow reads an UPPERCASE team-prefixed branch" "98" "$(branch_issue feature/LH-98-slug)"
+check "the workflow reads a lowercase team-prefixed branch" "97" "$(branch_issue fix/lh-97-some-slug)"
+check "the workflow reads a backport/hotfix branch" "99" "$(branch_issue backport/hotfix/99-slug)"
+check "the workflow reads no issue from a spec branch" "" "$(branch_issue spec/97-slug)"
+check "the workflow's extractor matches the validator's pattern" "yes" \
+  "$(grep -q '(\[A-Za-z\]\[A-Za-z0-9\]\*-)?' "$WORKFLOW" && echo yes || echo no)"
 
 check "the fan-out is fully paginated, with no fixed ceiling" "0" \
   "$(grep -c -- '--limit 200' "$WORKFLOW" || true)"
