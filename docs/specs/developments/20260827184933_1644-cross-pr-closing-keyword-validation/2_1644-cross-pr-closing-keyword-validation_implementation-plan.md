@@ -63,7 +63,7 @@
   }
   ```
 
-  `od` is POSIX and present on macOS and on GitHub's Ubuntu runners, and this repository already uses it this way in `run-epic-scope-resolver.sh:337`. Sixteen bytes render as exactly 32 hex characters.
+  `od` is POSIX and present on macOS and on GitHub's Ubuntu runners. The repository's only precedent is for the **formatting** half — `run-epic-scope-resolver.sh:337` renders a branch name as hex with `od -An -tx1 | tr -d ' \n'` — so that idiom is established here, but reading `/dev/urandom` for entropy is a **new decision** in this plan and not something the repository already does. It is verifiable: sixteen bytes render as exactly 32 hex characters, and `/dev/urandom` is available on both platforms this runs on.
 
   Making it a **function** rather than an inline pipeline is what gives the collision tests their seam: the suite sources the library and redefines `closing_keyword_scope_new_nonce` to return a scripted sequence, so `sentinel_collision_retries_once_with_a_fresh_nonce` and `second_sentinel_collision_is_indeterminate` control both nonces and are deterministic. No test-only hook is added to production code.
 
