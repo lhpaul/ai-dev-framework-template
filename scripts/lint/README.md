@@ -136,8 +136,16 @@ carries changed lines at all. A **hunk header** means it does: without a
 input is refused. A record with **no hunk and no `+++` header** but a `diff --git`
 line is a genuine Git change with no textual content — a mode-only change, a
 binary file, a pure rename — so zero examined is the right answer and the run
-passes. A `+++` header with no hunk behind it is a fragment either way: in real
-output a target header exists precisely to introduce a hunk. A deletion,
+passes, provided it carries the metadata git emits for one (`old mode`,
+`new file mode`, `index`, `similarity index`, `rename from`, `Binary files ...
+differ`, `GIT binary patch`). A bare `diff --git a b` line with nothing behind
+it is text shaped like a header, not a record. A `+++` header with no hunk
+behind it is a fragment either way: in real output a target header exists
+precisely to introduce a hunk.
+
+Every record is checked separately, and the text before the first `diff --git`
+header counts as one: validation covers exactly the bytes the parser reads, so a
+well-formed record cannot vouch for an unreadable neighbour. A deletion,
 whose target header is `+++ /dev/null`, is likewise a valid diff with a
 legitimate zero.
 

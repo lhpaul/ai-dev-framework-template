@@ -67,6 +67,20 @@ def diff_text(base_ref: str | None, input_file: str | None) -> str:
 DIFF_GIT_HEADER = re.compile(r"(?m)^diff --git \S+ \S[^\n]*$")
 DIFF_HUNK_HEADER = re.compile(r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
 DIFF_TARGET_HEADER = re.compile(r"(?m)^\+\+\+ (?:b/\S|/dev/null\s*$)")
+# What a Git record with no hunk must actually contain to be a real change:
+# the metadata lines git emits for a mode change, a new/deleted file, a
+# rename or copy, or a binary file. Without one of these, a bare
+# `diff --git a b` line is just text that looks like a header.
+DIFF_RECORD_METADATA = re.compile(
+    r"(?m)^(?:old mode \d+"
+    r"|new mode \d+"
+    r"|(?:new|deleted) file mode \d+"
+    r"|index [0-9a-f]+\.\.[0-9a-f]+"
+    r"|(?:similarity|dissimilarity) index \d+%"
+    r"|(?:rename|copy) (?:from|to) "
+    r"|Binary files .* differ"
+    r"|GIT binary patch)"
+)
 
 
 def split_diff_records(diff: str) -> list[str]:
@@ -137,9 +151,14 @@ def diff_shape(diff: str) -> str:
         has_hunk = bool(DIFF_HUNK_HEADER.search(record))
         has_target = bool(DIFF_TARGET_HEADER.search(record))
         if framed:
-            # A Git record may legitimately carry neither: a mode-only change, a
-            # binary file, a pure rename. It may not carry only one.
+            # A Git record may legitimately carry neither hunk nor target: a
+            # mode-only change, a binary file, a pure rename. It may not carry
+            # only one, and when it carries neither it must carry the metadata
+            # that makes it a real change — otherwise a bare `diff --git a b`
+            # line is just text shaped like a header.
             if has_hunk != has_target:
+                return "unparseable"
+            if not has_hunk and not DIFF_RECORD_METADATA.search(record):
                 return "unparseable"
             continue
         # An unframed record — the text before the first `diff --git` header, or
@@ -317,9 +336,10 @@ def main() -> int:
         if shape == "unparseable":
             emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: the diff under examination (source: {source}) carries changed lines this "
-                "parser cannot read: a hunk header with no `+++ b/<path>` target header to attribute "
-                "it to, or a target header with no hunk behind it. Produce it with "
+                f"ERROR: the diff under examination (source: {source}) has a record this parser "
+                "cannot read: a hunk header with no `+++ b/<path>` target header to attribute it to, "
+                "a target header with no hunk behind it, or a `diff --git` header with neither and "
+                "no mode/index/rename/binary metadata behind it. Produce it with "
                 "`git diff --unified=0 <base>...HEAD` and keep the default a/ and b/ prefixes.",
                 file=sys.stderr,
             )

@@ -163,7 +163,7 @@ check markdown_rule_not_a_diff 2 "$(run_linter python3 "$LINTER" --input "$TMP_D
 # "cannot read it" is not the same claim as "there was nothing in it".
 printf '%s\n' 'diff --git docs/workflow/x.md docs/workflow/x.md' '--- docs/workflow/x.md' '+++ docs/workflow/x.md' '@@ -0,0 +1 @@' '+hi' > "$TMP_DIR/no-prefix.diff"
 check no_prefix_diff_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/no-prefix.diff")"
-if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+if grep -q "record this parser\|parser cannot read" "$TMP_DIR/last.out"; then
   check no_prefix_diff_reason unparseable unparseable
 else
   check no_prefix_diff_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
@@ -178,7 +178,7 @@ printf '%s\n' \
   'diff --git docs/workflow/ws.md docs/workflow/ws.md' '--- docs/workflow/ws.md' '+++ docs/workflow/ws.md' '@@ -0,0 +1,3 @@' '+```bash' '+echo hello' '+```' \
   > "$TMP_DIR/mixed-records.diff"
 check mixed_records_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/mixed-records.diff")"
-if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+if grep -q "record this parser\|parser cannot read" "$TMP_DIR/last.out"; then
   check mixed_records_reason unparseable unparseable
 else
   check mixed_records_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
@@ -243,11 +243,27 @@ printf '%s\n' '@@ -0,0 +1,3 @@' '+```bash' '+echo hello' '+```' \
   > "$TMP_DIR/unreadable-preamble.diff"
 check unreadable_preamble_refused 2 \
   "$(run_linter python3 "$LINTER" --input "$TMP_DIR/unreadable-preamble.diff")"
-if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+if grep -q "record this parser\|parser cannot read" "$TMP_DIR/last.out"; then
   check unreadable_preamble_reason unparseable unparseable
 else
   check unreadable_preamble_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
+# A framed record with no hunk must carry the metadata that makes it a real
+# change. A bare `diff --git a b` line is text shaped like a header.
+printf '%s\n' 'diff --git a b' > "$TMP_DIR/bare-header.diff"
+check bare_header_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/bare-header.diff")"
+check bare_header_allow_empty_still_errors 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/bare-header.diff" --allow-empty)"
+# Each metadata form git actually emits keeps a header-only record valid.
+for metadata_line in 'old mode 100644' 'new file mode 100644' 'deleted file mode 100644' \
+    'index 0000000..8352675' 'similarity index 95%' 'rename from docs/workflow/a.md' \
+    'Binary files /dev/null and b/docs/workflow/b.bin differ' 'GIT binary patch'; do
+  printf '%s\n' 'diff --git a/docs/workflow/a.md b/docs/workflow/a.md' "$metadata_line" \
+    > "$TMP_DIR/metadata-record.diff"
+  check "metadata_record_${metadata_line%% *}" 0 \
+    "$(run_linter python3 "$LINTER" --input "$TMP_DIR/metadata-record.diff")"
+done
+
 # Only a `diff --git`-framed record may legitimately carry neither a hunk nor a
 # target header. Prose before one is not a metadata-only record; it is prose.
 printf '%s\n' 'just some prose' 'more prose' \
@@ -346,7 +362,7 @@ check mode_only_out_of_scope_passes 0 "$(cd "$mode_repo" && run_linter python3 "
 # A lone target header is the mirror case — a path with no lines behind it.
 printf '%s\n' '+++ b/docs/workflow/x.md' > "$TMP_DIR/lone-target.diff"
 check lone_target_header_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-target.diff")"
-if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+if grep -q "record this parser\|parser cannot read" "$TMP_DIR/last.out"; then
   check lone_target_header_reason unparseable unparseable
 else
   check lone_target_header_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
@@ -364,7 +380,7 @@ check framed_target_no_hunk_refused 2 \
   "$(run_linter python3 "$LINTER" --input "$TMP_DIR/framed-target-no-hunk.diff")"
 check framed_target_no_hunk_allow_empty_still_errors 2 \
   "$(run_linter python3 "$LINTER" --input "$TMP_DIR/framed-target-no-hunk.diff" --allow-empty)"
-if grep -q "parser cannot read" "$TMP_DIR/last.out"; then
+if grep -q "record this parser\|parser cannot read" "$TMP_DIR/last.out"; then
   check framed_target_no_hunk_reason unparseable unparseable
 else
   check framed_target_no_hunk_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
@@ -378,7 +394,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff prose-preamble.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff framed-target-no-hunk.diff partial-git-header.diff mixed-records.diff unreadable-preamble.diff prose-preamble.diff bare-header.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced
