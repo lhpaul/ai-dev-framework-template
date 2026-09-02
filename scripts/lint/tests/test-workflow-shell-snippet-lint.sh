@@ -163,11 +163,27 @@ check markdown_rule_not_a_diff 2 "$(run_linter python3 "$LINTER" --input "$TMP_D
 # "cannot read it" is not the same claim as "there was nothing in it".
 printf '%s\n' 'diff --git docs/workflow/x.md docs/workflow/x.md' '--- docs/workflow/x.md' '+++ docs/workflow/x.md' '@@ -0,0 +1 @@' '+hi' > "$TMP_DIR/no-prefix.diff"
 check no_prefix_diff_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/no-prefix.diff")"
-if grep -q "no \`+++ b/<path>\` or \`+++ /dev/null\` target header" "$TMP_DIR/last.out"; then
+if grep -q "is a fragment" "$TMP_DIR/last.out"; then
   check no_prefix_diff_reason unparseable unparseable
 else
   check no_prefix_diff_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
 fi
+
+# Either marker alone is a fragment, not a diff: a lone target header gives the
+# parser a path with no hunk, and a lone hunk gives it lines with no path. Both
+# parse to an empty changed map, so both must refuse rather than exit 0.
+printf '%s\n' '+++ b/docs/workflow/x.md' > "$TMP_DIR/lone-target.diff"
+check lone_target_header_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-target.diff")"
+if grep -q "is a fragment" "$TMP_DIR/last.out"; then
+  check lone_target_header_reason unparseable unparseable
+else
+  check lone_target_header_reason unparseable "$(head -1 "$TMP_DIR/last.out")"
+fi
+# --allow-empty does not rescue a fragment either: it is malformed, not empty.
+check lone_target_header_allow_empty_still_errors 2 \
+  "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-target.diff" --allow-empty)"
+printf '%s\n' '@@ -0,0 +1 @@' '+hi' > "$TMP_DIR/lone-hunk.diff"
+check lone_hunk_refused 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/lone-hunk.diff")"
 
 # A deletion-only diff has `+++ /dev/null` and nothing to examine behind it.
 # That is a real diff with a legitimate zero, not a malformed one.
@@ -177,7 +193,7 @@ check deletion_only_diff_passes 0 "$(run_linter python3 "$LINTER" --input "$TMP_
 # The summary is printed before EVERY exit, refusals included: a refusal that
 # printed only an error would still leave a run with no machine-readable
 # statement of how much it examined.
-for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff; do
+for refusal_case in empty.diff pathlist.txt bogus-marker.diff no-prefix.diff lone-target.diff lone-hunk.diff; do
   run_linter python3 "$LINTER" --input "$TMP_DIR/$refusal_case" > /dev/null
   if grep -q "examined=0 files, 0 fences, 0 changed-lines" "$TMP_DIR/last.out"; then
     check "summary_on_refusal_$refusal_case" announced announced

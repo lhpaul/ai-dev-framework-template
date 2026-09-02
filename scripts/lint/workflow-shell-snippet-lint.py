@@ -76,17 +76,26 @@ def diff_shape(diff: str) -> str:
     diff, and text carrying diff markers but no `+++` target header is a diff
     this parser cannot read rather than one with nothing in it.
 
+    Both markers are required for "diff". Either one alone is a fragment: a
+    lone `+++ b/<path>` gives changed_lines() a path but no hunk to attribute
+    lines to, and a lone hunk header gives it lines with no path — both parse to
+    an empty changed map and would exit 0 as "nothing to check".
+
     Returns:
         "empty"       — no content at all.
-        "not_a_diff"  — content with no `diff --git` line and no well-formed hunk header.
-        "unparseable" — diff-shaped, but no `+++ b/<path>` or `+++ /dev/null` header to read.
-        "diff"        — has a target header this parser can consume.
+        "not_a_diff"  — neither a `diff --git`/hunk marker nor a target header.
+        "unparseable" — one of the two present, not both.
+        "diff"        — both present, so changed_lines() has something to read.
     """
     if not diff.strip():
         return "empty"
-    if DIFF_TARGET_HEADER.search(diff):
+    has_marker = bool(DIFF_MARKER.search(diff))
+    has_target = bool(DIFF_TARGET_HEADER.search(diff))
+    if has_marker and has_target:
         return "diff"
-    return "unparseable" if DIFF_MARKER.search(diff) else "not_a_diff"
+    if has_marker or has_target:
+        return "unparseable"
+    return "not_a_diff"
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
@@ -235,20 +244,20 @@ def main() -> int:
         if shape == "not_a_diff":
             emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} carries no "
-                "`diff --git` line and no well-formed hunk header. Produce it with "
-                "`git diff --unified=0 <base>...HEAD`, or use --base-ref to let this script run "
-                "git diff itself.",
+                f"ERROR: --input/--diff-file expects a unified diff; {args.input_file!r} carries "
+                "neither a `diff --git` line or well-formed hunk header nor a `+++` target header. "
+                "Produce it with `git diff --unified=0 <base>...HEAD`, or use --base-ref to let "
+                "this script run git diff itself.",
                 file=sys.stderr,
             )
             return 2
         if shape == "unparseable":
             emit_summary(0, 0, 0, source, 0)
             print(
-                f"ERROR: the diff under examination (source: {source}) has diff markers but no "
-                "`+++ b/<path>` or `+++ /dev/null` target header, so this parser can read nothing "
-                "from it. Produce it with `git diff --unified=0 <base>...HEAD` and keep the default "
-                "a/ and b/ prefixes.",
+                f"ERROR: the diff under examination (source: {source}) is a fragment: this parser "
+                "needs BOTH a `diff --git` line or well-formed hunk header AND a `+++ b/<path>` or "
+                "`+++ /dev/null` target header, and only one of the two is present. Produce it with "
+                "`git diff --unified=0 <base>...HEAD` and keep the default a/ and b/ prefixes.",
                 file=sys.stderr,
             )
             return 2

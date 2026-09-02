@@ -120,8 +120,8 @@ are different failures:
 | Condition | Message |
 | --- | --- |
 | `git diff` failed | `ERROR: <git stderr>` |
-| Input carries no `diff --git` line and no well-formed hunk header (a path list, prose, a stray `@@` line) | `--input/--diff-file expects a unified diff` |
-| Diff markers present but no `+++ b/<path>` or `+++ /dev/null` target header (e.g. a `--no-prefix` diff) | `has diff markers but no ... target header` |
+| Input carries neither a `diff --git`/hunk marker nor a `+++` target header (a path list, prose, a stray `@@` line) | `expects a unified diff` |
+| Only one of the two is present — a fragment, e.g. a `--no-prefix` diff or a lone `+++ b/<path>` | `is a fragment` |
 | The diff is empty | `the diff under examination is empty` |
 
 `--input` / `--diff-file` takes a **unified diff**, not a path list. A path list
@@ -129,6 +129,12 @@ was previously parsed as an empty diff and exited 0 while a real WS002 was still
 present (PR #1646); it is now an error. Produce the diff with
 `git diff --unified=0 <base>...HEAD` and keep the default `a/` and `b/`
 prefixes, or use `--base-ref` and let the script run `git diff` itself.
+
+A diff is accepted only when it carries **both** halves of what the parser
+reads: a `diff --git` line or a well-formed `@@ -a,b +c,d @@` hunk header, and a
+`+++ b/<path>` or `+++ /dev/null` target header. Either alone parses to nothing.
+A deletion-only diff, whose target header is `+++ /dev/null`, is a valid diff
+with a legitimate zero.
 
 `--base-ref` diffs **committed** history (`<base>...HEAD`), so uncommitted work
 is invisible to it: run it after committing, or the empty-diff refusal will
