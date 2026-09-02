@@ -589,7 +589,13 @@ publish_report() {
     # which cannot be deleted, carries it from here.
     for id in $ids; do
       [ -n "$id" ] || continue
-      gh api --method DELETE "repos/${REPO}/issues/comments/${id}" >/dev/null 2>&1 || true
+      if ! gh api --method DELETE "repos/${REPO}/issues/comments/${id}" >/dev/null 2>&1; then
+        # A failed delete leaves a stale warning standing. Say so rather than
+        # swallowing it: the next event re-runs and tries again, and a log
+        # line is what tells a human the difference between "the warning is
+        # correct" and "the warning could not be cleared".
+        echo "WARN: could not delete report comment ${id} on #${PR_NUMBER}; the stale warning survives until the next run." >&2
+      fi
     done
     return 0
   fi
@@ -603,7 +609,12 @@ publish_report() {
     # here first.
     for id in $rest; do
       [ -n "$id" ] || continue
-      gh api --method DELETE "repos/${REPO}/issues/comments/${id}" >/dev/null 2>&1 || true
+      if ! gh api --method DELETE "repos/${REPO}/issues/comments/${id}" >/dev/null 2>&1; then
+        # The surviving duplicate is cosmetic — the oldest comment already
+        # carries the current result — so this does not fail the run, but it
+        # is not silent either.
+        echo "WARN: could not delete duplicate report comment ${id} on #${PR_NUMBER}." >&2
+      fi
     done
   else
     jq -n --arg body "$body" '{body: $body}' \

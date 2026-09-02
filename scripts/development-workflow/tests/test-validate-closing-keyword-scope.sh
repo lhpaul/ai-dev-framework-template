@@ -134,24 +134,36 @@ check "no second copy of the keyword literal in post-merge-cleanup.sh" "0" \
 
 # Byte-identical output over a corpus that exercises every construct the
 # filter knows about.
-cat > "$TMP_DIR/corpus.txt" <<'CORPUS'
-Closes #1 at the top
-```
-Closes #2 inside a fence
-```
-Closes #3 after the fence
-> Closes #4 in a blockquote
-`Closes #5` in an inline span
-~~~
-Closes #6 in a tilde fence
-~~~
-    ```
-Closes #7 after four-space indent
-   ```
-Closes #8 inside a three-space-indented fence
-   ```
-Closes #9 after it closes
-CORPUS
+# The corpus is BUILT rather than written as a heredoc. A heredoc would put
+# literal ``` and ~~~ at the start of lines in this file, and
+# workflow-shell-snippet-lint.py reads any changed file under
+# scripts/development-workflow/ — not only markdown — so it would parse them as
+# unmarked shell fences. Assembling the fences from variables keeps the corpus
+# exactly as intended without lying to the linter about what this file is.
+BT='```'
+BT4='````'
+TT='~~~'
+{
+  printf 'Closes #1 at the top\n'
+  printf '%s\n' "$BT"
+  printf 'Closes #2 inside a fence\n'
+  printf '%s\n' "$BT"
+  printf 'Closes #3 after the fence\n'
+  printf '> Closes #4 in a blockquote\n'
+  printf '`Closes #5` in an inline span\n'
+  printf '%s\n' "$TT"
+  printf 'Closes #6 in a tilde fence\n'
+  printf '%s\n' "$TT"
+  printf '    %s\n' "$BT"
+  printf 'Closes #7 after four-space indent\n'
+  printf '   %s\n' "$BT"
+  printf 'Closes #8 inside a three-space-indented fence\n'
+  printf '   %s\n' "$BT"
+  printf 'Closes #9 after it closes\n'
+  printf '%s\n' "$BT4"
+  printf 'Closes #10 inside a four-backtick fence\n'
+  printf '%s\n' "$BT4"
+} > "$TMP_DIR/corpus.txt"
 lib_out="$(printf '%s' "$(cat "$TMP_DIR/corpus.txt")" | strip_fenced_pr_body_blocks | shasum -a 256 | awk '{print $1}')"
 develop_filter="$TMP_DIR/develop-filter.sh"
 if git -C "$REPO_ROOT" show "origin/develop:scripts/development-workflow/post-merge-cleanup.sh" > "$TMP_DIR/develop-cleanup.sh" 2>/dev/null; then
