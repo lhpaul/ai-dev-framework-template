@@ -103,7 +103,38 @@ Each is implemented as **script behaviour**: invoking the validator after the re
 
 **Test types**: Unit (script-level, against stubbed `gh`), plus a smoke runbook for the GitHub-side wiring.
 
-**Key scenarios to test**: one per acceptance-criterion group, enumerated in the addenda below.
+**Key scenarios to test**: the traceability matrix below maps every acceptance-criterion group and every parser-risk edge case to the implementation item that satisfies it and the named test or runbook step that proves it. All test names refer to `scripts/development-workflow/tests/test-validate-closing-keyword-scope.sh` unless a runbook step is named instead.
+
+### Traceability: acceptance criteria → implementation → test
+
+| Spec group | Implementation item | Named coverage |
+| --- | --- | --- |
+| Reporting a mismatch | Ownership resolution; report publication | `sibling_owned_issue_warns`, `warning_names_issue_and_sibling_pr`, `all_issues_self_owned_is_silent`, `no_closing_keywords_is_silent`; runbook Steps 1–2 |
+| Which keywords count as live | Reuse of the canonical filter; base-branch-dependent filtering; boundary sentinel | `fenced_keyword_not_reported`, `blockquoted_keyword_not_reported`, `inline_span_keyword_not_reported`, `unclosed_fence_suppresses_rest`, `title_fence_suppresses_for_non_default_base`, `title_fence_does_not_suppress_for_default_base`, `title_only_keyword_not_reported`, `hotfix_to_default_branch_is_validated`, `substring_lookalikes_not_reported`; runbook Step 5 |
+| Fork-originated pull requests | Fork guard | `fork_pr_is_not_validated_and_writes_nothing` |
+| The opt-out | Opt-out check; idempotent provisioning | `label_present_is_silent`, `label_created_on_first_use`, `concurrent_creation_does_not_fail`, `label_creation_failure_still_warns_and_names_label`, `applying_label_clears_existing_warning`, `removing_label_restores_warning`, `dropping_keyword_clears_warning`; runbook Step 4 |
+| Establishing ownership | Ownership resolution | `no_owner_is_silent`, `contested_ownership_is_silent`, `team_prefixed_sibling_is_owner`, `platform_link_is_not_ownership`, `non_naming_branch_is_not_owner`, `spec_and_plan_branches_are_never_owners`, `closed_or_merged_pr_is_never_owner`; runbook Step 6 |
+| Re-evaluation triggers (delivered) | Workflow trigger set; sibling fan-out | `sibling_open_raises_warning`, `sibling_close_or_merge_clears_warning`, `sibling_reopen_restores_warning`, `base_retarget_flips_filtering`, `reopen_reevaluates`, `readiness_backstop_reevaluates`; runbook Steps 2 and 5 |
+| Re-evaluation triggers (not delivered) | Script behaviour only — see *Declared trigger gaps* | The five tests named in that section's table |
+| The indeterminate outcome | Single-accessor input reads | `unreadable_description_leaves_report`, `unreadable_pr_list_leaves_report`, `unreadable_label_is_indeterminate`, `unreadable_base_is_indeterminate`, `unreadable_existing_report_is_indeterminate`, `unreadable_head_branch_is_indeterminate`, `indeterminate_writes_neutral_check_and_log`, `indeterminate_does_not_change_mergeability`, `conclusive_rerun_replaces_neutral_check`; runbook Step 7 |
+| Ordering and idempotence | Report marker; freshness; ordering stamp | `late_started_conclusive_survives_earlier_indeterminate`, `earlier_run_does_not_restore_cleared_warning`, `earlier_run_does_not_clear_raised_warning`, `repeated_run_leaves_one_report`, `overlapping_runs_leave_one_report`, `inherited_duplicate_reports_are_reconciled_to_the_oldest` |
+
+### Traceability: parser-risk edge cases → test
+
+| Edge case | Named test |
+| --- | --- |
+| Boundary characters (`Closes #12`, `(Fixes #12)`, `resolved issue #12`, `CLOSES #12`) | `boundary_characters_match_and_near_misses_do_not` |
+| Negative lookalikes (`disclose`, `hotfix`, `unfixes`) | `substring_lookalikes_not_reported` |
+| Multiple occurrences on one line | `multiple_keywords_on_one_line_yield_all` |
+| Nested and overlapping fences | `nested_backtick_in_tilde_fence`, `longer_closing_fence_closes`, `shorter_closing_fence_does_not_close` |
+| Normative-spec flexibility (fence length, ≤3-space indent) | `closing_fence_length_at_least_opening`, `three_space_indent_is_a_fence`, `four_space_indent_is_indented_code` |
+| Unclosed fence extends to end of input | `unclosed_fence_suppresses_rest` |
+| Inline code spans, single and multi-backtick, multi-line within a paragraph | `inline_span_keyword_not_reported`, `multiline_inline_span_within_paragraph`, `paragraph_break_ends_span_scope` |
+| Blockquote lines | `blockquoted_keyword_not_reported` |
+| Title interaction, evaluated for both base kinds | `title_fence_suppresses_for_non_default_base`, `title_fence_does_not_suppress_for_default_base` |
+| Branch forms and non-owners | `team_prefixed_sibling_is_owner`, `backport_hotfix_branch_is_owner`, `spec_and_plan_branches_are_never_owners`, `issue_number_in_slug_is_not_ownership` |
+| Report identity: zero, one, two marked comments | `repeated_run_leaves_one_report`, `inherited_duplicate_reports_are_reconciled_to_the_oldest` |
+| Filter parity with the canonical parser | `filter_output_is_byte_identical_to_post_merge_cleanup` |
 
 **Smoke test runbook**: `docs/testing/workflow/1644-cross-pr-closing-keyword-validation.smoke-test.md`
 
