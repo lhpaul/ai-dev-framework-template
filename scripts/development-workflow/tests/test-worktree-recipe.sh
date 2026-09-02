@@ -236,8 +236,9 @@ check upstream_check_accepts_after_unset pass "$(run_upstream_check "$ROOT_DOC/w
 # that only prints ERROR leaves the operator with nothing to act on.
 GUARDRAILS_DOC="$REPO_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md"
 check_named_stops() {
-  # check_named_stops <file>: every `exit 1` in a fenced block must be preceded
-  # by a STOP: line naming a condition, an Item: line, and a Human action: line.
+  # check_named_stops <file>: every `exit 1` in a block this change owns must
+  # have its OWN STOP block. Evaluated per guard, not per block: a block with two
+  # guards would otherwise pass on the strength of the first one's message.
   python3 - "$1" "$GUARDRAILS_DOC" <<'PYSTOPS'
 import pathlib
 import re
@@ -261,39 +262,71 @@ for block in blocks:
     # Scope: the stops THIS change introduces — post-push verification and the
     # worktree upstream verification. Pre-existing stops elsewhere in these
     # protocols are a separate sweep and are out of scope for #1593.
-    owned = ("REMOTE_SHA" in body) or ("UPSTREAM_MERGE" in body)
-    if not owned or not re.search(r"^\s*exit 1\s*$", body, re.M):
+    if ("REMOTE_SHA" not in body) and ("UPSTREAM_MERGE" not in body):
         continue
-    count += 1
-    named = re.search(r"STOP: guardrail '([a-z_]+)'", body)
-    if not named:
-        print("OFFENDER=no named stop condition: " + block[0].strip()[:70])
-    elif named.group(1) not in known:
-        print("OFFENDER=unknown stop condition " + named.group(1))
-    elif "Item:" not in body:
-        print("OFFENDER=no affected item: " + named.group(1))
-    elif "Human action:" not in body:
-        print("OFFENDER=no human action: " + named.group(1))
+    guard = []
+    for line in block:
+        if re.match(r"^\s*exit 1\s*$", line):
+            count += 1
+            guard_body = "\n".join(guard)
+            named = re.search(r"STOP: guardrail '([a-z_]+)'", guard_body)
+            if not named:
+                print("OFFENDER=guard with no named stop condition near: " + (guard[-1].strip()[:60] if guard else "<start of block>"))
+            elif named.group(1) not in known:
+                print("OFFENDER=unknown stop condition " + named.group(1))
+            elif "Item:" not in guard_body:
+                print("OFFENDER=no affected item: " + named.group(1))
+            elif "Human action:" not in guard_body:
+                print("OFFENDER=no human action: " + named.group(1))
+            guard = []
+            continue
+        guard.append(line)
 print("COUNT=" + str(count))
 PYSTOPS
 }
 
-for stop_protocol in 01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol 91-orchestrate-work-protocol 93-automated-reviewer-loop-protocol; do
+NAMED_STOP_PROTOCOLS="01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol 91-orchestrate-work-protocol 93-automated-reviewer-loop-protocol"
+STOP_COUNT_TOTAL=0
+for stop_protocol in $NAMED_STOP_PROTOCOLS; do
   STOP_REPORT="$(check_named_stops "$PROTOCOL_DIR/${stop_protocol}.md")"
   STOP_OFFENDERS="$(printf '%s\n' "$STOP_REPORT" | grep '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no offender, which is the passing state
   check "named_stops_${stop_protocol}" "" "$STOP_OFFENDERS"
-done
-# ...and the sweep must actually have found stops to check.
-STOP_COUNT_TOTAL=0
-for stop_protocol in 01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol 91-orchestrate-work-protocol; do
-  STOP_COUNT="$(check_named_stops "$PROTOCOL_DIR/${stop_protocol}.md" | awk -F= '/^COUNT=/{print $2; exit}')"
+  STOP_COUNT="$(printf '%s\n' "$STOP_REPORT" | awk -F= '/^COUNT=/{print $2; exit}')"
   STOP_COUNT_TOTAL=$((STOP_COUNT_TOTAL + STOP_COUNT))
 done
-if [ "$STOP_COUNT_TOTAL" -ge 6 ]; then
+# All five protocols contribute: 5 push verifications, 2 upstream guards, and
+# 2 push-retry stops in protocol 93.
+if [ "$STOP_COUNT_TOTAL" -ge 9 ]; then
   check named_stop_sweep_not_vacuous yes yes
 else
-  check named_stop_sweep_not_vacuous yes "only ${STOP_COUNT_TOTAL} stop(s) found"
+  check named_stop_sweep_not_vacuous yes "only ${STOP_COUNT_TOTAL} guard(s) found"
 fi
+
+# Planted variant: strip the STOP lines from the SECOND upstream guard only. A
+# per-block check would still pass on the first guard's message; a per-guard one
+# reports it.
+PLANT_STOPS_DIR="$TMP_DIR/planted-stops"
+mkdir -p "$PLANT_STOPS_DIR"
+cp "$PROTOCOL_DIR"/*.md "$PLANT_STOPS_DIR/"
+python3 - "$PLANT_STOPS_DIR/91-orchestrate-work-protocol.md" <<'PYPLANTSTOP'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = """  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "Item: branch ${BRANCH} in this worktree."
+  echo "Cause: it tracks remote '${UPSTREAM_REMOTE}', not 'origin', so a bare"
+  echo "  'git push' from here would not reach the pull request."
+  echo "Human action: run 'git branch --unset-upstream' in this worktree, then re-run"
+  echo "  this verification before any push."
+"""
+if old not in text:
+    sys.exit("plant target not found")
+path.write_text(text.replace(old, '  echo "ERROR: wrong remote."\n', 1), encoding="utf-8")
+PYPLANTSTOP
+PLANT_STOP_OFFENDERS="$(check_named_stops "$PLANT_STOPS_DIR/91-orchestrate-work-protocol.md" | grep -c '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 on zero matches, which this check reports
+check plant_second_guard_without_stop_is_reported 1 "$PLANT_STOP_OFFENDERS"
 
 # --- AC-2 / AC-3: every documented branch push ------------------------------
 # Each protocol that pushes an item branch must push with an explicit refspec
