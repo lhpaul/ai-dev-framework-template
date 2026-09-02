@@ -18,9 +18,12 @@
 # given pull request is serialized against every other, whoever triggered it.
 #
 # Unlike pr-policy.yml this workflow cannot be checkout-free — its validator is
-# a repository script. It checks out the BASE commit, which the pull request
-# cannot influence, and never the head. Everything from the pull request is
-# read through the API as data and never executed.
+# a repository script. It checks out the repository's DEFAULT BRANCH, which is
+# also where GitHub loads this workflow file from. Not the pull request's head,
+# and not its base either: a same-repository pull request can target any
+# branch, its own author's included, so the base is not a fixed point.
+# Everything from the pull request is read through the API as data and never
+# executed.
 #
 # NOTE ON ACTIVATION: GitHub loads pull_request_target workflows from the
 # repository's default branch (`main`), while pull requests target `develop`.
@@ -135,13 +138,16 @@ jobs:
           # pull request is not evaluated at all; the siblings are unknown
           # precisely because the listing failed.
           #
-          # So the failure is raised as a failed JOB rather than published as a
-          # check. That is visible in Actions and on the triggering pull
-          # request, which is the whole requirement — exiting 0 here would have
-          # made an unreadable input look identical to "nothing to do".
+          # It is raised as a workflow ANNOTATION rather than a failed job. The
+          # plan requires this path to skip cleanly, and this feature is
+          # advisory throughout — it never blocks a merge — so failing the run
+          # here would be the one place it did. `::warning::` puts the
+          # non-conclusion on the run summary and in the Actions UI, which is
+          # what "not silent" needs to mean for an advisory gate; exiting 0
+          # with only a log line would have made an unreadable input look
+          # identical to "nothing to do".
           if [ "$unreadable" = "true" ] && [ "$json" = "[]" ]; then
-            echo "ERROR: the open pull request list could not be read, and this event has no other target to report on (the triggering pull request is closed). Re-run this workflow once the API is available." >&2
-            exit 1
+            echo "::warning title=Closing-keyword scope did not run::The open pull request list could not be read, and this event has no other target to report on (the triggering pull request is closed). No validation ran. Re-run this workflow once the API is available."
           fi
 
   validate:

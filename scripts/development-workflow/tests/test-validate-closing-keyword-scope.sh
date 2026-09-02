@@ -1115,12 +1115,17 @@ check "the fan-out never line-splits a pull request body in the shell" "0" \
 
 # An unreadable listing with no target left cannot publish its indeterminate
 # outcome anywhere — the triggering pull request is closed and out of scope by
-# spec, and the siblings are unknown because the listing is what failed. It
-# fails the job instead, so the run is red rather than green-and-silent.
-check "an unreportable unreadable listing fails the job rather than exiting green" "yes" \
+# spec, and the siblings are unknown because the listing is what failed. It is
+# annotated, not failed: this feature is advisory throughout, so failing the
+# run here would be the one place it blocked anything. `::warning::` puts the
+# non-conclusion on the run summary, which is what "not silent" has to mean for
+# an advisory gate.
+check "an unreportable unreadable listing is annotated" "yes" \
   "$(grep -q 'if \[ "$unreadable" = "true" \] && \[ "$json" = "\[\]" \]; then' "$WORKFLOW" && echo yes || echo no)"
-check "that failure path exits non-zero" "yes" \
-  "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep -q 'exit 1' && echo yes || echo no)"
+check "that path emits a workflow warning annotation" "yes" \
+  "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep -q '::warning' && echo yes || echo no)"
+check "and does not fail the job — this gate never blocks" "0" \
+  "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep -c 'exit 1' || true)"
 check "a readable listing with no targets still exits green" "yes" \
   "$(grep -q 'echo "prs=\${json}" >> "\$GITHUB_OUTPUT"' "$WORKFLOW" && echo yes || echo no)"
 
