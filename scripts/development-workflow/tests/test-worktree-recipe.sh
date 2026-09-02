@@ -16,6 +16,7 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 PROTOCOL_91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
 PROTOCOL_90="$REPO_ROOT/docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md"
+PROTOCOL_DIR="$REPO_ROOT/docs/workflow/development-workflow/protocols"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -229,11 +230,75 @@ check upstream_check_rejects_wrong_remote reject "$(run_upstream_check "$ROOT_DO
 git -C "$ROOT_DOC/wt" branch --unset-upstream fix/1593-example 2>/dev/null || true  # workflow-shell-guard: allow SH001 - unsetting an absent upstream is not an error here
 check upstream_check_accepts_after_unset pass "$(run_upstream_check "$ROOT_DOC/wt")"
 
+# --- Named-stop contract (guardrails-enforcement.md section 5) ---------------
+# Every stop this change introduces must name an exact stop condition from the
+# table in section 4, the affected item, and a concrete human action. A stop
+# that only prints ERROR leaves the operator with nothing to act on.
+GUARDRAILS_DOC="$REPO_ROOT/docs/workflow/development-workflow/guardrails-enforcement.md"
+check_named_stops() {
+  # check_named_stops <file>: every `exit 1` in a fenced block must be preceded
+  # by a STOP: line naming a condition, an Item: line, and a Human action: line.
+  python3 - "$1" "$GUARDRAILS_DOC" <<'PYSTOPS'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+known = set(re.findall(r"^\| `([a-z_]+)` \|", pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"), re.M))
+blocks, block, inside = [], [], False
+for line in text.splitlines():
+    if line.strip().startswith("```"):
+        if inside:
+            blocks.append(block)
+        block, inside = [], not inside
+        continue
+    if inside:
+        block.append(line)
+
+count = 0
+for block in blocks:
+    body = "\n".join(block)
+    # Scope: the stops THIS change introduces — post-push verification and the
+    # worktree upstream verification. Pre-existing stops elsewhere in these
+    # protocols are a separate sweep and are out of scope for #1593.
+    owned = ("REMOTE_SHA" in body) or ("UPSTREAM_MERGE" in body)
+    if not owned or not re.search(r"^\s*exit 1\s*$", body, re.M):
+        continue
+    count += 1
+    named = re.search(r"STOP: guardrail '([a-z_]+)'", body)
+    if not named:
+        print("OFFENDER=no named stop condition: " + block[0].strip()[:70])
+    elif named.group(1) not in known:
+        print("OFFENDER=unknown stop condition " + named.group(1))
+    elif "Item:" not in body:
+        print("OFFENDER=no affected item: " + named.group(1))
+    elif "Human action:" not in body:
+        print("OFFENDER=no human action: " + named.group(1))
+print("COUNT=" + str(count))
+PYSTOPS
+}
+
+for stop_protocol in 01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol 91-orchestrate-work-protocol 93-automated-reviewer-loop-protocol; do
+  STOP_REPORT="$(check_named_stops "$PROTOCOL_DIR/${stop_protocol}.md")"
+  STOP_OFFENDERS="$(printf '%s\n' "$STOP_REPORT" | grep '^OFFENDER=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when there is no offender, which is the passing state
+  check "named_stops_${stop_protocol}" "" "$STOP_OFFENDERS"
+done
+# ...and the sweep must actually have found stops to check.
+STOP_COUNT_TOTAL=0
+for stop_protocol in 01-generate-spec-protocol 02-generate-implementation-plan-protocol 03-implement-development-protocol 91-orchestrate-work-protocol; do
+  STOP_COUNT="$(check_named_stops "$PROTOCOL_DIR/${stop_protocol}.md" | awk -F= '/^COUNT=/{print $2; exit}')"
+  STOP_COUNT_TOTAL=$((STOP_COUNT_TOTAL + STOP_COUNT))
+done
+if [ "$STOP_COUNT_TOTAL" -ge 6 ]; then
+  check named_stop_sweep_not_vacuous yes yes
+else
+  check named_stop_sweep_not_vacuous yes "only ${STOP_COUNT_TOTAL} stop(s) found"
+fi
+
 # --- AC-2 / AC-3: every documented branch push ------------------------------
 # Each protocol that pushes an item branch must push with an explicit refspec
 # and then compare the remote head to local. Checked by extraction, so a
 # protocol that drops either half fails here.
-PROTOCOL_DIR="$REPO_ROOT/docs/workflow/development-workflow/protocols"
 extract_push_block() {
   # extract_push_block <file> <branch-placeholder>: prints the fenced block that
   # contains that branch's refspec push, and nothing else. Checking the whole
@@ -334,7 +399,9 @@ import pathlib
 import re
 import sys
 
-pattern = re.compile(r'git push [^"\n]*"([^"]+):([^"]+)"')
+# Anchored at line start: prose and echo lines that QUOTE a push command are
+# not push commands, and their escaped quotes parse into nonsense groups.
+pattern = re.compile(r'^\s*git push [^"\n]*"([^"]+):([^"]+)"')
 offenders = []
 count = 0
 for path in sorted(pathlib.Path(sys.argv[1]).glob("*.md")):

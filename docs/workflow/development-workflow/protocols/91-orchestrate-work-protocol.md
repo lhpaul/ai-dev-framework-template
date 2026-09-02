@@ -1000,18 +1000,24 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 UPSTREAM_MERGE=$(git config --get "branch.${BRANCH}.merge" || true)
 UPSTREAM_REMOTE=$(git config --get "branch.${BRANCH}.remote" || true)
 if [ -n "$UPSTREAM_MERGE" ] && [ "$UPSTREAM_MERGE" != "refs/heads/${BRANCH}" ]; then
-  echo "ERROR: ${BRANCH} tracks ${UPSTREAM_MERGE}, not its own remote branch."
-  echo "A bare 'git push' from here is refused or aims at the wrong branch. Fix with:"
-  echo "  git branch --unset-upstream"
+  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "Item: branch ${BRANCH} in this worktree."
+  echo "Cause: it tracks ${UPSTREAM_MERGE}, not its own remote branch, so a bare"
+  echo "  'git push' from here is refused or aims at the wrong branch."
+  echo "Human action: run 'git branch --unset-upstream' in this worktree, then re-run"
+  echo "  this verification before any push."
   exit 1
 fi
 # The branch name is only half the destination. A branch tracking the right
 # name on the wrong remote passes the check above while a bare push lands
 # somewhere the pull request will never see.
 if [ -n "$UPSTREAM_REMOTE" ] && [ "$UPSTREAM_REMOTE" != "origin" ]; then
-  echo "ERROR: ${BRANCH} tracks remote '${UPSTREAM_REMOTE}', not 'origin'."
-  echo "A bare 'git push' from here would not reach the pull request. Fix with:"
-  echo "  git branch --unset-upstream"
+  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "Item: branch ${BRANCH} in this worktree."
+  echo "Cause: it tracks remote '${UPSTREAM_REMOTE}', not 'origin', so a bare"
+  echo "  'git push' from here would not reach the pull request."
+  echo "Human action: run 'git branch --unset-upstream' in this worktree, then re-run"
+  echo "  this verification before any push."
   exit 1
 fi
 echo "Upstream verified: ${BRANCH} tracks ${UPSTREAM_REMOTE:-no remote}/${UPSTREAM_MERGE:-nothing}"

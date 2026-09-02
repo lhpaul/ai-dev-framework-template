@@ -858,7 +858,11 @@ git push origin "feature/[slug]:feature/[slug]"
 LOCAL_SHA=$(git rev-parse HEAD)
 REMOTE_SHA=$(git ls-remote origin "refs/heads/feature/[slug]" | cut -f1)
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-  echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "Item: branch feature/[slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"feature/[slug]:feature/[slug]\", and confirm the remote head matches before continuing."
   exit 1
 fi
 ```
@@ -1478,7 +1482,11 @@ git push origin "fix/[branch-slug]:fix/[branch-slug]"
 LOCAL_SHA=$(git rev-parse HEAD)
 REMOTE_SHA=$(git ls-remote origin "refs/heads/fix/[branch-slug]" | cut -f1)
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-  echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "Item: branch fix/[branch-slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"fix/[branch-slug]:fix/[branch-slug]\", and confirm the remote head matches before continuing."
   exit 1
 fi
 ```
@@ -1803,7 +1811,11 @@ git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"
 LOCAL_SHA=$(git rev-parse HEAD)
 REMOTE_SHA=$(git ls-remote origin "refs/heads/hotfix/[branch-slug]" | cut -f1)
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-  echo "ERROR: push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "STOP: guardrail 'unclear_requirements' halted this run."
+  echo "Item: branch hotfix/[branch-slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"hotfix/[branch-slug]:hotfix/[branch-slug]\", and confirm the remote head matches before continuing."
   exit 1
 fi
 ```
