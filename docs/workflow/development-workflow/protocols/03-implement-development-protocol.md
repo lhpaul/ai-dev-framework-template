@@ -862,7 +862,15 @@ if [ "$(git rev-parse --abbrev-ref HEAD)" != "feature/[slug]" ]; then
   exit 1
 fi
 
-git push origin "feature/[slug]:feature/[slug]"
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "feature/[slug]:feature/[slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
 
 # Verify the push actually landed: a refused or mis-aimed push must not pass as
 # success (issue #1593). The refusal message is multi-line and can be truncated
@@ -1239,7 +1247,15 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
      exit 1
    fi
 
-   git push origin "refactor/[branch-slug]:refactor/[branch-slug]"
+   # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+   # block before the verification below, so the contractual stop would never print.
+   if ! git push origin "refactor/[branch-slug]:refactor/[branch-slug]"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug]."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
 
    # Verify the push actually landed: a refused or mis-aimed push must not pass as
    # success (issue #1593). The refusal message is multi-line and can be truncated
@@ -1531,7 +1547,15 @@ if [ "$(git rev-parse --abbrev-ref HEAD)" != "fix/[branch-slug]" ]; then
   exit 1
 fi
 
-git push origin "fix/[branch-slug]:fix/[branch-slug]"
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "fix/[branch-slug]:fix/[branch-slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
 
 # Verify the push actually landed: a refused or mis-aimed push must not pass as
 # success (issue #1593). The refusal message is multi-line and can be truncated
@@ -1872,7 +1896,15 @@ if [ "$(git rev-parse --abbrev-ref HEAD)" != "hotfix/[branch-slug]" ]; then
   exit 1
 fi
 
-git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
 
 # Verify the push actually landed: a refused or mis-aimed push must not pass as
 # success (issue #1593). The refusal message is multi-line and can be truncated

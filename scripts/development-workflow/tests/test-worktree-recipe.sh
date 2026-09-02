@@ -397,9 +397,10 @@ for stop_protocol in $NAMED_STOP_PROTOCOLS; do
   STOP_COUNT="$(printf '%s\n' "$STOP_REPORT" | awk -F= '/^COUNT=/{print $2; exit}')"
   STOP_COUNT_TOTAL=$((STOP_COUNT_TOTAL + STOP_COUNT))
 done
-# All five protocols contribute: 6 push blocks with 2 guards each (wrong branch,
-# push did not land), 2 upstream guards, and 2 push-retry stops in protocol 93.
-if [ "$STOP_COUNT_TOTAL" -ge 16 ]; then
+# All five protocols contribute: 6 push blocks with 3 guards each (wrong branch,
+# push failed, push did not land), 2 upstream guards, and 2 push-retry stops in
+# protocol 93.
+if [ "$STOP_COUNT_TOTAL" -ge 22 ]; then
   check named_stop_sweep_not_vacuous yes yes
 else
   check named_stop_sweep_not_vacuous yes "only ${STOP_COUNT_TOTAL} guard(s) found"
@@ -526,7 +527,7 @@ fi
 # the placeholder would match one character rather than the literal text.
 printf '%s\n' "$PUSH_BLOCK" | sed "s|fix/\[branch-slug\]|$GUARD_BRANCH|g" > "$GUARD_ROOT/push-block.sh"
 if grep -Fq -- "$GUARD_BRANCH" "$GUARD_ROOT/push-block.sh" &&
-    ! grep -Fq -- 'fix/[branch-slug]' "$GUARD_ROOT/push-block.sh"; then
+    ! grep -Fq -- 'fix/[branch-slug]' "$GUARD_ROOT/push-block.sh"; then  # workflow-shell-guard: allow SH004 - literal placeholder text, not a branch-prefix match
   check push_block_placeholder_substituted yes yes
 else
   check push_block_placeholder_substituted yes "placeholder still present"
@@ -559,6 +560,22 @@ if grep -q "push_verification_failed" "$TMP_DIR/last.out"; then
 else
   check push_block_wrong_branch_names_condition yes "$(cat "$TMP_DIR/last.out")"
 fi
+# A push that FAILS must produce the contractual stop, not a bare `set -e` exit
+# with no message. Point origin at a path that is not a repository.
+git -C "$GUARD_ROOT/repo" checkout -q "$GUARD_BRANCH"
+git -C "$GUARD_ROOT/repo" remote set-url origin "$GUARD_ROOT/not-a-repo"
+printf 'work2\n' > "$GUARD_ROOT/repo/work2.txt"
+git -C "$GUARD_ROOT/repo" add work2.txt
+git -C "$GUARD_ROOT/repo" commit -q -m work2
+check push_block_failed_push_stops 1 "$(run_push_block)"
+if grep -q "push_verification_failed" "$TMP_DIR/last.out" && grep -q "git push failed" "$TMP_DIR/last.out"; then
+  check push_block_failed_push_names_condition yes yes
+else
+  check push_block_failed_push_names_condition yes "$(cat "$TMP_DIR/last.out")"
+fi
+git -C "$GUARD_ROOT/repo" remote set-url origin "$GUARD_ROOT/remote.git"
+git -C "$GUARD_ROOT/repo" checkout -q develop
+
 # ...and it stopped BEFORE pushing: develop must not have moved.
 GUARD_DEVELOP_AFTER="$(git -C "$GUARD_ROOT/remote.git" rev-parse develop)"
 GUARD_DEVELOP_SEED="$(git -C "$GUARD_ROOT/repo" rev-parse develop)"
@@ -635,7 +652,7 @@ import sys
 
 # Anchored at line start: prose and echo lines that QUOTE a push command are
 # not push commands, and their escaped quotes parse into nonsense groups.
-pattern = re.compile(r'^\s*git push [^"\n]*"([^"]+):([^"]+)"')
+pattern = re.compile(r'^\s*(?:if ! )?git push [^"\n]*"([^"]+):([^"]+)"')
 offenders = []
 count = 0
 for path in sorted(pathlib.Path(sys.argv[1]).glob("*.md")):

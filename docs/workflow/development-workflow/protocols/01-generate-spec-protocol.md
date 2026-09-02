@@ -344,7 +344,15 @@ If no blocking human decision remains:
      exit 1
    fi
 
-   git push origin "spec/[branch-slug]:spec/[branch-slug]"
+   # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+   # block before the verification below, so the contractual stop would never print.
+   if ! git push origin "spec/[branch-slug]:spec/[branch-slug]"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch spec/[branch-slug]."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
 
    # Verify the push actually landed: a refused or mis-aimed push must not pass as
    # success (issue #1593). The refusal message is multi-line and can be truncated
