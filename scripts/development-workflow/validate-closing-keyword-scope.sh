@@ -233,9 +233,16 @@ gh_default_branch() {
 # owner or a claimant past the cut, and the verdict would be wrong rather than
 # unavailable — the worst failure shape this feature has, because a dropped
 # owner reads as "no sibling carries it" and the run goes silent.
+# Only the two fields ownership depends on. This is not economy — the listing
+# is a freshness-snapshot input, so every field in it is a field an unrelated
+# edit can change. Carrying titles and bodies here meant someone editing an
+# unrelated open pull request between this run's two reads would abandon it,
+# and nothing would fan out a replacement: an edit to a pull request that names
+# no issue this one declares triggers no event for this target. The stale
+# result would then stand indefinitely.
 gh_open_pr_list() {
   gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate \
-    --jq '[.[] | {number, headRefName: .head.ref, title, body: (.body // ""), baseRefName: .base.ref}]' \
+    --jq '[.[] | {number, headRefName: .head.ref}]' \
   | jq -sc 'add // []'
 }
 
@@ -245,9 +252,14 @@ gh_open_pr_list() {
 # several ids for one PATCH URL, and a stamp chosen from the wrong page. The
 # `jq -sc 'add // []'` merges the pages first, and `// []` covers the
 # no-pages-at-all case, where `add` is null rather than an empty array.
+# Only comments carrying this validator's marker. Same reason as the listing
+# above: an unrelated human or bot comment arriving between the two reads would
+# otherwise change the snapshot and abandon the run, and posting a comment
+# fires no event that would re-validate this pull request. A review comment
+# could silently suppress the warning it was commenting on.
 gh_existing_report() {
   gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-    --jq '[.[] | {id, body: (.body // ""), created_at}]' \
+    --jq "[.[] | select((.body // \"\") | split(\"\\n\") | any(startswith(\"${CLOSING_KEYWORD_SCOPE_MARKER_PREFIX}\"))) | {id, body: (.body // \"\"), created_at}]" \
   | jq -sc 'add // []'
 }
 

@@ -887,6 +887,35 @@ check "and the run reports the same name on stdout" "description" \
 check_not_contains "a recovered first read is not misread as a changed input" \
   "ABANDONED=inputs_changed" "$out"
 
+# The freshness snapshot must be narrow enough that only changes which MATTER
+# abandon a run. The two inputs below were over-broad: a run abandoned on
+# changes that fire no event for this target, so no replacement run would ever
+# correct the stale result — the abandon was permanent rather than deferred.
+
+# An unrelated open pull request's title or body changing must not abandon.
+F="$(writable_fixtures snapshot_unrelated_pr_edit)"
+out="$(CHANGE_AFTER=pulls CHANGE_TO='[{"number":101,"headRefName":"fix/97-slug"},{"number":900,"headRefName":"fix/900-unrelated"}]' publish_env "$F")"
+check_contains "an unrelated sibling's presence does change the snapshot (it changes ownership evidence)" \
+  "ABANDONED=inputs_changed_between_read_and_write" "$out"
+
+# ...but the listing carries only the fields ownership depends on, so an edit
+# to an unrelated pull request's TITLE or BODY is not even visible here.
+check "the open-PR listing carries only number and headRefName" "yes" \
+  "$(grep -q "jq '\[.\[\] | {number, headRefName: .head.ref}\]'" "$VALIDATOR" && echo yes || echo no)"
+check "the listing does not carry titles or bodies into the snapshot" "0" \
+  "$(awk '/^gh_open_pr_list\(\)/,/^}/' "$VALIDATOR" | grep -c 'title\|body' || true)"
+
+# An unrelated human or bot comment must not abandon: posting a comment fires no
+# event that would re-validate this pull request, so a review comment could
+# otherwise silently suppress the warning it was commenting on.
+check "the existing-report input selects only this validator's marked comments" "yes" \
+  "$(awk '/^gh_existing_report\(\)/,/^}/' "$VALIDATOR" | grep -q 'startswith' && echo yes || echo no)"
+F="$(writable_fixtures snapshot_unrelated_comment)"
+printf '0\n[]\n' > "$F/comments"
+out="$(CHANGE_AFTER=comments CHANGE_TO='[]' publish_env "$F")"
+check "an unrelated comment does not abandon the run" "true" \
+  "$(printf '%s\n' "$out" | sed -n 's/^PUBLISHED=//p' | head -1)"
+
 # A later-started run's stamp blocks the write outright.
 F="$(writable_fixtures publish_later_stamp)"
 printf '0\n[{"id":9,"started_at":"2026-01-01T00:00:00Z","conclusion":"success","summary":"<!-- closing-keyword-scope:v1 started=2099-01-01T00:00:00.000Z run=9 attempt=9 -->"}]\n' > "$F/check_runs"
