@@ -17057,6 +17057,7 @@ strict_spec_recorded=1
 strict_spec_state="applied"
 strict_spec_count="3"
 strict_spec_checks="ac_consistency,gate_matrix"
+strict_spec_applied="ac_consistency,gate_matrix"
 strict_spec_unknown_count=""
 strict_spec_reason=""
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
@@ -17066,6 +17067,8 @@ run_test "1650_ledger_applied_count" "3" \
   "$(printf '%s\n' "$_entry" | jq -r '.strict_spec.count')"
 run_test "1650_ledger_applied_has_checks" "true" \
   "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("checks")')"
+run_test "1650_ledger_applied_has_applied" "true" \
+  "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("applied")')"
 run_test "1650_ledger_applied_no_reason" "false" \
   "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("reason")')"
 
@@ -17073,6 +17076,7 @@ run_test "1650_ledger_applied_no_reason" "false" \
 strict_spec_state="not_applicable"
 strict_spec_count=""
 strict_spec_checks=""
+strict_spec_applied=""
 strict_spec_unknown_count=""
 strict_spec_reason=""
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
@@ -17098,13 +17102,14 @@ strict_spec_state="unavailable"
 strict_spec_reason="checklist_unreadable"
 strict_spec_count=""
 strict_spec_checks=""
+strict_spec_applied=""
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
 run_test "1650_ledger_unavail_reason" "checklist_unreadable" \
   "$(printf '%s\n' "$_entry" | jq -r '.strict_spec.reason')"
 run_test "1650_ledger_unavail_no_count" "false" \
   "$(printf '%s\n' "$_entry" | jq -r '.strict_spec | has("count")')"
 
-unset strict_spec_recorded strict_spec_state strict_spec_count strict_spec_checks
+unset strict_spec_recorded strict_spec_state strict_spec_count strict_spec_checks strict_spec_applied
 unset strict_spec_unknown_count strict_spec_reason _entry current_run_id
 unset unresolved_thread_count late_thread_count pr_number
 
@@ -17702,11 +17707,14 @@ _1656_fresh_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 platform_reviewed_heads=("local-ai-reviewer:${_1656_stale_head}" "codex-github:${_1656_head}")
 platform_result_records=("$(reviewer_loop_platform_result_record_json local-ai-reviewer needs_fixes blocking)" \
   "$(reviewer_loop_platform_result_record_json codex-github clean "")")
+compare_verdicts=("local-ai-reviewer" "unavailable" "codex-github" "clean")
 reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
 run_test "1656_s6c_replace_heads" "codex-github:${_1656_head}" \
   "$(printf '%s\n' "${platform_reviewed_heads[@]}")"
 run_test "1656_s6c_replace_records" "1" \
   "$(printf '%s\n' "${platform_result_records[@]}" | jq -s 'map(.platform) | length')"
+run_test "1656_s6c_replace_compare_verdicts" "codex-github clean" \
+  "$(printf '%s %s\n' "${compare_verdicts[@]}")"
 total_comment_count=0
 total_blocking_count=0
 total_suggestion_count=0
@@ -17729,7 +17737,24 @@ reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
 platform_peer_evidence+=("local-ai-reviewer|clean|")
 run_test "1656_s6e_peer_replace_latest" "clean|" \
   "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
-unset _1656_stale_head _1656_fresh_head platform_reviewed_heads platform_result_records _sl_clean_out loop_head_sha total_comment_count total_blocking_count total_suggestion_count platform_peer_evidence aggregate_blocking_paths aggregate_blocking_findings compare_mode compare_verdicts
+platform_peer_evidence=("local-ai-reviewer|skipped|unavailable")
+platform_blocking_outputs=("local-ai-reviewer"$'\036'$'RESULT=skipped\nREASON=unavailable\nCOMMENT_COUNT=1\nBLOCKING_COUNT=1\nSUGGESTION_COUNT=1\nBLOCKING_1_PATH=stale.md\nBLOCKING_1_BODY=stale\n')
+total_comment_count=1
+total_blocking_count=1
+total_suggestion_count=1
+reviewer_failed_required=1
+aggregate_blocking_paths=("stale.md")
+aggregate_blocking_findings=('{"path":"stale.md","body":"stale"}')
+_sl_clean_out=$'RESULT=clean\nREVIEWED_HEAD='"${_1656_fresh_head}"$'\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'
+reviewer_loop_process_platform_output "local-ai-reviewer" 100 "$_sl_clean_out" 0 0 >/dev/null
+run_test "1656_s6f_replacement_clears_reviewer_failed_required" "0" "$reviewer_failed_required"
+run_test "1656_s6f_replacement_recomputes_comment_count" "0" "$total_comment_count"
+run_test "1656_s6f_replacement_recomputes_blocking_count" "0" "$total_blocking_count"
+run_test "1656_s6f_replacement_recomputes_suggestion_count" "0" "$total_suggestion_count"
+run_test "1656_s6f_replacement_clears_blocking_paths" "0" "${#aggregate_blocking_paths[@]}"
+run_test "1656_s6f_replacement_keeps_clean_peer" "clean|" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+unset _1656_stale_head _1656_fresh_head platform_reviewed_heads platform_result_records _sl_clean_out loop_head_sha total_comment_count total_blocking_count total_suggestion_count platform_peer_evidence aggregate_blocking_paths aggregate_blocking_findings compare_mode compare_verdicts platform_blocking_outputs reviewer_failed_required
 
 _1656_failed_hist="$(jq -nc --arg head "$_1656_head" '{
   schema: "reviewer_loop_history.v1",
@@ -17970,6 +17995,12 @@ reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1656_s4_guard_proceed" "0" "$_st"
 run_test "1656_s4_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
 run_test "1656_s4_guard_reason" "not_required" "$local_second_pass_reason"
+run_test "1656_s4_guard_retains_head" "local-ai-reviewer:${_1656_guard_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]:-}")"
+run_test "1656_s4_guard_retains_peer" "clean|retained_history" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+run_test "1656_s4_guard_retains_result" "clean" \
+  "$(printf '%s\n' "${platform_result_records[@]:-}" | jq -sr 'map(select(.platform == "local-ai-reviewer")) | last | .result // ""')"
 
 # not_required must still re-read the live head before proceeding to ready-phase
 _1656_moved_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -17998,6 +18029,8 @@ reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1656_s4c_no_local_head_moved" "1" "$_st"
 run_test "1656_s4c_no_local_no_dispatch" "0" "$_1656_run_platform_review_calls"
 run_test "1656_s4c_no_local_reason" "head_moved_during_pass" "$local_second_pass_reason"
+run_test "1656_s4c_no_local_no_retained_peer" "" \
+  "$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
 
 # Scenario 8c: failed head refusal — no dispatch, escalate (P1/P9 restored)
 _1656_reset_guard_globals

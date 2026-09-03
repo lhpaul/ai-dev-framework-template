@@ -923,6 +923,7 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
@@ -935,7 +936,8 @@ ISSUE_NUMBER="${ISSUE_NUMBER:-$PR_NUMBER}"
 SYNC_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 WORKTREE_PATH=$(pwd -P)
 REVIEW_SELF_CHECK_REQUIRED=false
-if workflow_config_review_platforms | grep -q .; then
+REVIEW_PLATFORM_LIST="$(workflow_config_review_platforms)"
+if [ -n "$REVIEW_PLATFORM_LIST" ]; then
   REVIEW_SELF_CHECK_REQUIRED=true
 fi
 

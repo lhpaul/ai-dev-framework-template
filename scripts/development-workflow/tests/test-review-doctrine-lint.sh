@@ -48,6 +48,11 @@ run_test "s12_forge_url_fail" "1" "$(lint_exit "$FIXTURES/incident-forge-url.md"
 run_test "s12_spelled_out_fail" "1" "$(lint_exit "$FIXTURES/incident-spelled-out.md")"
 run_test "s12_dev_path_fail" "1" "$(lint_exit "$FIXTURES/incident-dev-path.md")"
 
+_unterminated_file="$(mktemp)"
+printf '# Unterminated final line\n\n### Unterminated incident reference\n\n**Shape**: Final catalogue lines must be scanned.\n\n**Example**: Keep examples generic.\n\n**Detect**: PR #999' > "$_unterminated_file"
+run_test "s12_unterminated_final_line_fail" "1" "$(lint_exit "$_unterminated_file")"
+rm -f "$_unterminated_file"
+
 # Scenario 12 near-miss controls (must pass on well-formed + shipped catalogue)
 _near_miss_file="$(mktemp)"
 cat > "$_near_miss_file" <<'EOF'
@@ -103,10 +108,11 @@ while IFS= read -r _assign_file; do
   esac
 done < <(grep -rl 'REVIEW_DOCTRINE_MAX_BYTES=' scripts 2>/dev/null || true)
 run_test "s15_single_assignment" "1" "$_assign_count"
-run_test "s15_linter_uses_constant" "yes" "$(grep -Fq '$REVIEW_DOCTRINE_MAX_BYTES' "$LINTER" && echo yes || echo no)"
+_max_bytes_literal="\$REVIEW_DOCTRINE_MAX_BYTES"
+run_test "s15_linter_uses_constant" "yes" "$(grep -Fq "$_max_bytes_literal" "$LINTER" && echo yes || echo no)"
 run_test "s15_linter_no_literal_gt" "no" "$(grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' "$LINTER" && echo yes || echo no)"
 _reviewer_supply_fn="$(sed -n '/^reviewer_doctrine_supply(/,/^}/p' "$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh")"
-run_test "s15_reviewer_uses_constant" "yes" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Fq '$REVIEW_DOCTRINE_MAX_BYTES' && echo yes || echo no)"
+run_test "s15_reviewer_uses_constant" "yes" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Fq "$_max_bytes_literal" && echo yes || echo no)"
 run_test "s15_reviewer_no_literal_gt" "no" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' && echo yes || echo no)"
 
 # Scenario 16: shipped catalogue

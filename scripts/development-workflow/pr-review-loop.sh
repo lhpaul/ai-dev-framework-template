@@ -789,6 +789,7 @@ strict_spec_recorded=0
 strict_spec_state=""
 strict_spec_count=""
 strict_spec_checks=""
+strict_spec_applied=""
 strict_spec_unknown_count=""
 strict_spec_reason=""
 strict_spec_summary_section=""
@@ -3732,7 +3733,7 @@ emit_local_ai_strict_spec_keys() {
     [ -z "${line:-}" ] && continue
     key="${line%%=*}"
     case "$key" in
-      STRICT_SPEC_STATE|STRICT_SPEC_COUNT|STRICT_SPEC_CHECKS|STRICT_SPEC_UNKNOWN_COUNT|STRICT_SPEC_REASON)
+      STRICT_SPEC_STATE|STRICT_SPEC_COUNT|STRICT_SPEC_CHECKS|STRICT_SPEC_APPLIED|STRICT_SPEC_UNKNOWN_COUNT|STRICT_SPEC_REASON)
         print_kv "$key" "${line#*=}"
         ;;
       STRICT_PLAN_STATE|STRICT_PLAN_COUNT|STRICT_PLAN_CHECKS|STRICT_PLAN_APPLIED|STRICT_PLAN_UNKNOWN_COUNT|STRICT_PLAN_REASON)
@@ -3785,6 +3786,7 @@ capture_strict_spec_globals_from_output() {
   strict_spec_state="$state"
   strict_spec_count="$(kv_value_default STRICT_SPEC_COUNT "$script_output" "")"
   strict_spec_checks="$(kv_value_default STRICT_SPEC_CHECKS "$script_output" "")"
+  strict_spec_applied="$(kv_value_default STRICT_SPEC_APPLIED "$script_output" "")"
   strict_spec_unknown_count="$(kv_value_default STRICT_SPEC_UNKNOWN_COUNT "$script_output" "")"
   strict_spec_reason="$(kv_value_default STRICT_SPEC_REASON "$script_output" "")"
   strict_spec_summary_section=""
@@ -8071,6 +8073,7 @@ reviewer_loop_replace_current_round_platform_record() {
   local platform_name="${1:-}"
   local entry record kept_heads=() kept_records=() kept_peer=() kept_tokens=()
   local blocking_name kept_blocking=()
+  local kept_compare=() compare_idx compare_name compare_token
 
   [ -n "$platform_name" ] || return 0
 
@@ -8114,6 +8117,20 @@ reviewer_loop_replace_current_round_platform_record() {
     platform_result_tokens=("${kept_tokens[@]+"${kept_tokens[@]}"}")
   fi
 
+  if declare -p compare_verdicts >/dev/null 2>&1 \
+      && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+    compare_idx=0
+    while [ "$compare_idx" -lt "${#compare_verdicts[@]}" ]; do
+      compare_name="${compare_verdicts[$compare_idx]}"
+      compare_token="${compare_verdicts[$((compare_idx + 1))]:-}"
+      if [ "$compare_name" != "$platform_name" ]; then
+        kept_compare+=("$compare_name" "$compare_token")
+      fi
+      compare_idx=$((compare_idx + 2))
+    done
+    compare_verdicts=("${kept_compare[@]+"${kept_compare[@]}"}")
+  fi
+
   if declare -p platform_blocking_outputs >/dev/null 2>&1 \
       && [ "${#platform_blocking_outputs[@]}" -gt 0 ]; then
     for entry in "${platform_blocking_outputs[@]}"; do
@@ -8124,6 +8141,96 @@ reviewer_loop_replace_current_round_platform_record() {
     done
     platform_blocking_outputs=("${kept_blocking[@]+"${kept_blocking[@]}"}")
   fi
+}
+
+# reviewer_loop_recompute_current_round_aggregates
+#
+# Rebuild aggregate counters and reviewer-failed state from the current platform
+# records. This is needed after replacement flows such as the mandatory second
+# local pass: the first local pass may have contributed skipped/unavailable state
+# before being superseded by a clean retry.
+reviewer_loop_recompute_current_round_aggregates() {
+  local entry peer_result peer_reason
+  local output_blob platform_name platform_output
+  local platform_comment_count platform_blocking_count platform_suggestion_count
+  local platform_advisory_labels _blocking_path _blocking_finding
+
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  aggregate_advisory_labels=""
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+
+  if declare -p platform_peer_evidence >/dev/null 2>&1; then
+    for entry in "${platform_peer_evidence[@]:-}"; do
+      peer_result="${entry#*|}"
+      peer_reason="${peer_result#*|}"
+      peer_result="${peer_result%%|*}"
+      if reviewer_failed_label_required_for_result "$peer_result" "$peer_reason"; then
+        reviewer_failed_required=1
+      fi
+    done
+  fi
+
+  if declare -p platform_blocking_outputs >/dev/null 2>&1; then
+    for output_blob in "${platform_blocking_outputs[@]:-}"; do
+      platform_name="${output_blob%%$'\036'*}"
+      platform_output="${output_blob#*$'\036'}"
+      platform_comment_count="$(kv_value_default COMMENT_COUNT "$platform_output" 0)"
+      platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
+      platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
+      total_comment_count=$((total_comment_count + platform_comment_count))
+      total_blocking_count=$((total_blocking_count + platform_blocking_count))
+      total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+
+      platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
+      if [ -n "$platform_advisory_labels" ]; then
+        if [ -n "$aggregate_advisory_labels" ]; then
+          aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
+        else
+          aggregate_advisory_labels="$platform_advisory_labels"
+        fi
+      fi
+
+      while IFS= read -r _blocking_path; do
+        [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
+      done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
+      unset _blocking_path
+      while IFS= read -r _blocking_finding; do
+        [ -n "$_blocking_finding" ] && aggregate_blocking_findings+=("$_blocking_finding")
+      done < <(reviewer_loop_blocking_findings_from_output "$platform_output" "$platform_blocking_count" "$platform_name")
+      unset _blocking_finding
+    done
+  fi
+}
+
+# reviewer_loop_retain_local_evidence_for_current_run <history_payload> <configured_platforms> <head_sha>
+#
+# When a platform-filtered ready-phase invocation reuses an existing clean local
+# review, hydrate the current-run evidence arrays consumed by the expensive gate.
+reviewer_loop_retain_local_evidence_for_current_run() {
+  local payload="${1:-}"
+  local configured="${2:-}"
+  local head_sha="${3:-}"
+  local verdict outcome reviewed_head reason
+
+  [ -n "$head_sha" ] || return 0
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")" || return 0
+  outcome="$(printf '%s\n' "$verdict" | jq -r '.outcome // ""' 2>/dev/null)" || return 0
+  reviewed_head="$(printf '%s\n' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)" || return 0
+  case "$outcome" in
+    clean|skipped) ;;
+    *) return 0 ;;
+  esac
+  [ "$reviewed_head" = "$head_sha" ] || return 0
+
+  reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
+  platform_reviewed_heads+=("local-ai-reviewer:${reviewed_head}")
+  reason="retained_history"
+  platform_peer_evidence+=("local-ai-reviewer|${outcome}|${reason}")
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json local-ai-reviewer "$outcome" "$reason")")
 }
 
 # reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
@@ -8668,6 +8775,9 @@ reviewer_loop_second_local_pass_before_ready_gate() {
 
   if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
     if reviewer_loop_second_local_pass_confirm_live_head "$pr_number_arg"; then
+      if [ "$_sl_required" = "not_required" ]; then
+        reviewer_loop_retain_local_evidence_for_current_run "$_sl_composed" "$_sl_configured" "$loop_head_sha"
+      fi
       return 0
     fi
     return 1
@@ -8861,6 +8971,9 @@ reviewer_loop_process_platform_output() {
 
   if [ "$compare_mode" -eq 1 ]; then
     compare_verdicts+=("$platform_name" "$(normalize_platform_verdict "$platform_result" "$platform_output")")
+  fi
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    reviewer_loop_recompute_current_round_aggregates
   fi
 
   reviewer_loop_last_platform_result="$platform_result"
@@ -10214,6 +10327,7 @@ reviewer_loop_history_build_entry() {
     --arg strictState "${strict_spec_state:-}" \
     --arg strictCount "${strict_spec_count:-}" \
     --arg strictChecks "${strict_spec_checks:-}" \
+    --arg strictApplied "${strict_spec_applied:-}" \
     --arg strictUnknown "${strict_spec_unknown_count:-}" \
     --arg strictReason "${strict_spec_reason:-}" \
     --argjson strictPlanRecorded "${strict_plan_recorded:-0}" \
@@ -10268,7 +10382,8 @@ reviewer_loop_history_build_entry() {
             | if $strictState == "applied" then
                 . + {
                   count: ($strictCount | tonumber),
-                  checks: ($strictChecks | if . == "" then [] else (split(",") | map(select(length > 0))) end)
+                  checks: ($strictChecks | if . == "" then [] else (split(",") | map(select(length > 0))) end),
+                  applied: ($strictApplied | if . == "" then [] else (split(",") | map(select(length > 0))) end)
                 }
                 | if ($strictUnknown | length) > 0 then
                     . + { unknown_count: ($strictUnknown | tonumber) }

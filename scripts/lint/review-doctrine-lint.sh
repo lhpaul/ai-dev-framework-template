@@ -108,12 +108,12 @@ if [ "${#entry_starts[@]}" -eq 0 ]; then
 else
   well_formed_ok=0
   incident_ok=0
-  total_lines="$(wc -l <"$FILE" | tr -d '[:space:]')"
+  total_lines="$(awk 'END { print NR }' "$FILE")"
   idx=0
   while [ "$idx" -lt "${#entry_starts[@]}" ]; do
     start="${entry_starts[$idx]}"
     if [ "$idx" -lt $((${#entry_starts[@]} - 1)) ]; then
-      end=$((entry_starts[$idx + 1] - 1))
+      end=$((entry_starts[idx + 1] - 1))
     else
       end="$total_lines"
     fi

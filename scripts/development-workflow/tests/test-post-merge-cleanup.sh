@@ -233,7 +233,7 @@ run_contains "merged_implementation_remote_deleted" "REMOTE_DELETE_RESULT=delete
 run_contains "merged_implementation_records_pr" "REMOTE_DELETE_PR_NUMBER=77" "$merged_output"
 run_test "merged_implementation_remote_ref_absent" "" "$("$REAL_GIT" -C "$merged_repo" ls-remote --heads origin "$merged_branch")"
 
-worktree_branch="feature/noissue-worktree-cleanup"
+worktree_branch="feature/123-worktree-cleanup"
 worktree_repo="$(make_repo worktree-cleanup "$worktree_branch" yes)"
 mkdir -p "$worktree_repo/scripts/development-workflow"
 cp "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
@@ -259,11 +259,19 @@ worktree_output="$(
 )"
 run_contains \
   "worktree_cleanup_reenters_base_worktree" \
-  "Re-entering cleanup from that worktree" \
+  "Re-entering cleanup through the workflow hub helper" \
   "$worktree_output"
 run_contains \
   "worktree_cleanup_deletes_remote_branch" \
   "REMOTE_DELETE_RESULT=deleted" \
+  "$worktree_output"
+run_contains \
+  "worktree_cleanup_uses_stable_tracker_root" \
+  "TRACKER_REPO_ROOT=$worktree_repo" \
+  "$worktree_output"
+run_contains \
+  "worktree_cleanup_processes_numbered_issue_after_reentry" \
+  "Issue #123 is already CLOSED, skipping close." \
   "$worktree_output"
 run_test "worktree_cleanup_pr_worktree_removed" "no" "$(
   if [ -d "$worktree_pr_path" ]; then
@@ -398,6 +406,54 @@ hub_sync_output="$(
 )"
 run_contains "hub_sync_branch_is_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$hub_sync_output"
 run_contains "hub_sync_branch_skips_product_repo_requirement" "BRANCH_LIFECYCLE=unclassified" "$hub_sync_output"
+
+hub_product_branch="feature/hub-product-cleanup"
+hub_product_repo="$(make_repo hub-product "$hub_product_branch" yes)"
+hub_product_worktree="$TMP_ROOT/hub-product-worktree"
+"$REAL_GIT" -C "$hub_product_repo" worktree add -q "$hub_product_worktree" "$hub_product_branch"
+hub_repo="$TMP_ROOT/workflow-hub"
+"$REAL_GIT" init -q -b develop "$hub_repo"
+"$REAL_GIT" -C "$hub_repo" config user.email "fixture@example.com"
+"$REAL_GIT" -C "$hub_repo" config user.name "Fixture User"
+cat >"$hub_repo/.ai-dev-workflow.yaml" <<HUB_CONFIG
+schema_version: 2
+mode: workflow_hub
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/repo
+      default_branch: develop
+      role: mobile
+      scope: fixture app
+      tracker:
+        component: mobile
+HUB_CONFIG
+cat >"$hub_repo/.ai-dev-workflow.local.yaml" <<HUB_LOCAL_CONFIG
+product_repos:
+  - name: mobile-app
+    local_path: "$hub_product_worktree"
+HUB_LOCAL_CONFIG
+"$REAL_GIT" -C "$hub_repo" add .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml
+"$REAL_GIT" -C "$hub_repo" commit -q -m "hub config"
+hub_product_output="$(
+  GH_MERGED_HEAD="$hub_product_branch" \
+  GH_MERGED_PR=85 \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$hub_repo" --repo mobile-app --base develop --pr 85 "$hub_product_branch"
+)"
+run_contains \
+  "workflow_hub_reentry_uses_hub_helper" \
+  "Re-entering cleanup through the workflow hub helper" \
+  "$hub_product_output"
+run_contains "workflow_hub_reentry_preserves_tracker_root" "TRACKER_REPO_ROOT=$hub_repo" "$hub_product_output"
+run_contains "workflow_hub_reentry_uses_product_base_worktree" "CLEANUP_REPO_ROOT=$hub_product_repo" "$hub_product_output"
+run_test "workflow_hub_reentry_removes_product_branch" "no" "$(
+  if "$REAL_GIT" -C "$hub_product_repo" show-ref --quiet "refs/heads/$hub_product_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
 
 fail_branch="feature/noissue-delete-fails"
 fail_repo="$(make_repo delete-fails "$fail_branch" yes)"
