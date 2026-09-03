@@ -911,7 +911,9 @@ unresolved-thread, regression, and readiness gates remain mandatory.
 
 Once the reviewer loop exits clean, apply the regression label and wait for CI:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
 ./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
 ```
@@ -924,7 +926,9 @@ CI loop.
 
 Once CI is green:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
 ```
 
