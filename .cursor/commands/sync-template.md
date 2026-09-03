@@ -909,20 +909,26 @@ unresolved-thread, regression, and readiness gates remain mandatory.
 
 ### 6.3 — Apply readiness labels
 
-Once the reviewer loop exits clean:
+Once the reviewer loop exits clean, apply the regression label and wait for CI:
 
 ```bash
 gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
-gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
 ./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
 ```
 
-Update the tracker status to `Development in Review` if an issue tracker is configured.
+Do not apply `ready-for-human-review` or proceed to the terminal self-check
+until `pr-ci-loop.sh` exits with `RESULT=green` for the current PR head.
+Applying `ready-for-regression` can create or re-run regression checks
+asynchronously; the self-check is not a substitute for waiting through that
+CI loop.
 
-Do not proceed to the terminal self-check until `pr-ci-loop.sh` exits with
-`RESULT=green` for the current PR head. Applying `ready-for-regression` can
-create or re-run regression checks asynchronously; the self-check is not a
-substitute for waiting through that CI loop.
+Once CI is green:
+
+```bash
+gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+```
+
+Update the tracker status to `Development in Review` if an issue tracker is configured.
 
 
 ### 6.4 — Ground-truth completion verification
