@@ -91,7 +91,11 @@ if [ -n "${MOCK_LOCAL_REVIEWER_IGNORE_TERM:-}" ]; then
   trap '' TERM
 fi
 if [ -n "${MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE:-}" ]; then
-  sleep 30 &
+  if [ -n "${MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM:-}" ]; then
+    ( trap '' TERM; sleep 30 ) &
+  else
+    sleep 30 &
+  fi
   printf '%s\n' "$!" > "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE"
   wait
 fi
@@ -115,7 +119,7 @@ reset_mocks() {
   install_local_reviewer_mock
   unset MOCK_PR_HEAD_SHA MOCK_PR_DIFF_EXIT MOCK_PR_DIFF_FILES MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
   unset MOCK_LOCAL_REVIEWER_EXIT MOCK_LOCAL_REVIEWER_SLEEP
-  unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_PR_HEAD_BRANCH
+  unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM MOCK_PR_HEAD_BRANCH
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
   unset LOCAL_AI_REVIEWER_EVIDENCE_FILE LOCAL_AI_REVIEWER_GRAPH_STRATEGY
   unset LOCAL_AI_REVIEWER_DISABLE_DEFAULT
@@ -418,6 +422,35 @@ fi
 run_test "fallback_timeout_kills_grandchild" "0" "$_grandchild_alive"
 rm -f "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE"
 unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE _grandchild_pid _grandchild_alive _grandchild_state
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_TIMEOUT=1
+MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE="$(mktemp)"
+MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM=1
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT
+export MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM
+run_reviewer "$MOCK_BIN:$FALLBACK_BIN"
+run_test "fallback_timeout_kills_orphan_grandchild_result" "RESULT=escalate" "$(line_for RESULT)"
+_grandchild_pid=""
+if [ -s "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE" ]; then
+  _grandchild_pid="$(cat "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE")"
+fi
+_grandchild_alive=0
+if [ -n "$_grandchild_pid" ] && kill -0 "$_grandchild_pid" 2>/dev/null; then
+  _grandchild_state="$(ps -o stat= -p "$_grandchild_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  case "$_grandchild_state" in
+    Z*) ;;
+    *)
+      _grandchild_alive=1
+      kill -KILL "$_grandchild_pid" 2>/dev/null || true
+      ;;
+  esac
+fi
+run_test "fallback_timeout_kills_orphan_grandchild" "0" "$_grandchild_alive"
+rm -f "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE"
+unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM
+unset _grandchild_pid _grandchild_alive _grandchild_state
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock

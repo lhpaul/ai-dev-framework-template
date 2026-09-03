@@ -263,12 +263,18 @@ cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$workt
 chmod +x "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
 worktree_pr_path="$TMP_ROOT/worktree-cleanup-pr"
 "$REAL_GIT" -C "$worktree_repo" worktree add -q "$worktree_pr_path" "$worktree_branch"
+mkdir -p "$worktree_pr_path/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" "$worktree_pr_path/scripts/development-workflow/post-merge-cleanup.sh"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$worktree_pr_path/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$worktree_pr_path/scripts/development-workflow/closing-keyword-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$worktree_pr_path/scripts/development-workflow/workflow-config-resolver.py"
+chmod +x "$worktree_pr_path/scripts/development-workflow/post-merge-cleanup.sh"
 worktree_output="$(
   GH_MERGED_HEAD="$worktree_branch" \
   GH_MERGED_PR=85 \
   WORKFLOW_TARGET_GITHUB_REPO=example/repo \
   PATH="$stub_bin:$PATH" \
-  "$HELPER" \
+  "$worktree_pr_path/scripts/development-workflow/post-merge-cleanup.sh" \
     --repo-root "$worktree_pr_path" \
     --base develop \
     --pr 85 \

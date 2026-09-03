@@ -168,6 +168,11 @@ run_with_timeout() {
     done
     if kill -0 "$child_pid" 2>/dev/null; then
       kill -KILL -- "-$child_pid" 2>/dev/null || kill -KILL "$child_pid" 2>/dev/null || true
+    else
+      # The session leader can exit on TERM while descendants remain. Always
+      # send a process-group KILL after the grace period so those children
+      # cannot leak.
+      kill -KILL -- "-$child_pid" 2>/dev/null || true
     fi
     wait "$child_pid" 2>/dev/null || true
     return 124

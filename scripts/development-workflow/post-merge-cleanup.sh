@@ -502,7 +502,7 @@ fi
 echo ""
 
 reenter_base_worktree_if_needed() {
-  local current_root base_worktree script_path tracker_repo_root tracker_repo_root_real
+  local current_root base_worktree script_path script_dir_real tracker_repo_root tracker_repo_root_real
   local reenter_args=()
 
   # Git refuses to check out a branch that is already checked out in another
@@ -523,9 +523,23 @@ reenter_base_worktree_if_needed() {
     return 1
   fi
 
-  script_path="$SCRIPT_DIR/post-merge-cleanup.sh"
+  script_path=""
+  script_dir_real=""
+  if [ -f "$SCRIPT_DIR/post-merge-cleanup.sh" ]; then
+    script_dir_real="$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)" || return 1
+    case "$script_dir_real" in
+      "$current_root"|"$current_root"/*)
+        ;;
+      *)
+        script_path="$SCRIPT_DIR/post-merge-cleanup.sh"
+        ;;
+    esac
+  fi
+  if [ -z "$script_path" ]; then
+    script_path="$base_worktree/scripts/development-workflow/post-merge-cleanup.sh"
+  fi
   if [ ! -f "$script_path" ]; then
-    echo "ERROR: cleanup helper is missing from the workflow hub: $script_path" >&2
+    echo "ERROR: cleanup helper is missing from the surviving checkout: $script_path" >&2
     return 1
   fi
 
