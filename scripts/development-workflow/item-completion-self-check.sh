@@ -736,7 +736,7 @@ if [ -n "$pr_number" ]; then
       if latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
         if [ -n "$latest_review_summary" ]; then
           normalized_review_summary="$(printf '%s\n' "$latest_review_summary" | tr -d '*')"
-          if printf '%s\n' "$normalized_review_summary" | grep -Eq 'Result:[[:space:]]*(clean|skipped)|RESULT=(clean|skipped)|No blocking PR feedback'; then
+          if grep -Eq 'Result:[[:space:]]*(clean|skipped)|RESULT=(clean|skipped)|No blocking PR feedback' <<<"$normalized_review_summary"; then
             add_row "pull_request.review_summary" "verified" "clean_or_skipped" "paginated issue comments sorted by updated_at"
           elif is_true "$require_review_summary"; then
             add_row "pull_request.review_summary" "discrepancy" "summary present but not clean/skipped" "paginated issue comments sorted by updated_at"
@@ -766,11 +766,26 @@ if [ -n "$pr_number" ]; then
           if [ -z "$ledger_json" ] \
               || ! ledger_payload="$(printf '%s\n' "$ledger_json" | jq -c '.' 2>&1)"; then
             add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger unreadable" "reviewer_loop_history.v1 in summary comment"
-          elif ! printf '%s\n' "$ledger_payload" | jq -e '.entries[-1].reviewed_heads? | type == "array"' >/dev/null 2>&1; then
-            add_row "pull_request.local_reviewer_head" "unavailable_required" "pre-field ledger entry" "reviewed_heads missing from newest entry"
-          elif ledger_local_head="$(printf '%s\n' "$ledger_payload" | jq -r '.entries[-1].reviewed_heads[]? | select(.platform == "local-ai-reviewer") | .reviewed_head // ""' | head -n 1)"; then
-            if [ -z "$ledger_local_head" ]; then
-              add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "newest reviewed_heads entry"
+          elif ! printf '%s\n' "$ledger_payload" | jq -e '[.entries[]? | select(.reviewed_heads? | type == "array")] | length > 0' >/dev/null 2>&1; then
+            add_row "pull_request.local_reviewer_head" "unavailable_required" "pre-field ledger entry" "reviewed_heads missing from ledger entries"
+          elif ledger_local_record="$(printf '%s\n' "$ledger_payload" | jq -c '
+              [
+                .entries[]? as $entry
+                | select(($entry.reviewed_heads? | type) == "array")
+                | select(($entry.platform_results? | type) == "array")
+                | ($entry.platform_results[]? | select(.platform == "local-ai-reviewer")) as $local_result
+                | ($entry.reviewed_heads[]? | select(.platform == "local-ai-reviewer")) as $local_head
+                | {result: ($local_result.result // ""), reviewed_head: ($local_head.reviewed_head // "")}
+              ]
+              | last
+              | select(.result == "clean")
+              | {reviewed_head}
+              // empty
+            ')"; then
+            if [ -z "$ledger_local_record" ]; then
+              add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "latest local-ai-reviewer reviewed_heads entry"
+            elif ! ledger_local_head="$(printf '%s\n' "$ledger_local_record" | jq -r '.reviewed_head // ""')"; then
+              add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger parse failed" "reviewer_loop_history.v1 reviewed_heads"
             elif [ -z "${pr_head_oid:-}" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "live headRefOid unavailable" "gh pr view headRefOid"
             elif [ "$ledger_local_head" = "$pr_head_oid" ]; then

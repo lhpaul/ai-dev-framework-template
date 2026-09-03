@@ -66,8 +66,11 @@ restate this rule for those two specifically):**
   <!-- workflow-shell-contract: bash-zsh -->
   ```bash
   while true; do
-    pgrep -f "[p]r-review-loop.sh 1550" >/dev/null
-    pgrep_rc=$?
+    if pgrep -f "[p]r-review-loop.sh 1550" >/dev/null; then
+      pgrep_rc=0
+    else
+      pgrep_rc=$?
+    fi
     case $pgrep_rc in
       0) sleep 20 ;;
       1) break ;;  # no match — step ended

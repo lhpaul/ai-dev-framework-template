@@ -12,6 +12,7 @@ if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
 fi
 
 RER_DEFAULT_WINDOW=20
+RER_STRICT_SPEC_CHECKLIST_RELPATH="docs/workflow/development-workflow/strict-spec-checks.md"
 
 rer_fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -65,11 +66,26 @@ rer_measure7_available() {
   ' >/dev/null 2>&1
 }
 
+rer_strict_spec_known_checks_json() {
+  local checklist="${SCRIPT_DIR}/../../${RER_STRICT_SPEC_CHECKLIST_RELPATH}"
+  local ids
+
+  if [ ! -f "$checklist" ] || [ ! -r "$checklist" ]; then
+    printf '[]\n'
+    return 0
+  fi
+  ids="$(sed -n 's/^### \([a-z][a-z0-9_]*\)[[:space:]]*$/\1/p' "$checklist")" || {
+    printf '[]\n'
+    return 0
+  }
+  printf '%s\n' "$ids" | jq -R -s 'split("\n") | map(select(length > 0)) | unique'
+}
+
 rer_classify_payload() {
   local body="$1"
   local json=""
 
-  if ! printf '%s\n' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+  if [[ "$body" != *"$REVIEWER_LOOP_HISTORY_MARKER"* ]]; then
     printf 'no_history\n'
     return 0
   fi
@@ -110,10 +126,29 @@ rer_compute_measures_json() {
 
   m1="$(printf '%s\n' "$payload" | jq -c '{availability:"computed", value:(.entries | length)}')"
 
-  if rer_measure_available "$payload" "missed_findings"; then
+  if rer_measure_available "$payload" "platform_results"; then
     m2="$(printf '%s\n' "$payload" | jq -c '
-      {availability:"computed", value:([.entries[]?.missed_findings[]?] | length)}
+      {availability:"computed", value:([.entries[]?
+        | if (.platform_results? | type) == "array" then
+            select(any(.platform_results[]?;
+              (.platform // "") != "local-ai-reviewer"
+              and (.result // "") == "needs_fixes"))
+          elif (.missed_findings? | type) == "array" then
+            select((.missed_findings | length) > 0)
+          else
+            empty
+          end] | length)}
     ')"
+  elif rer_measure_available "$payload" "missed_findings"; then
+    m2="$(printf '%s\n' "$payload" | jq -c '
+      {availability:"computed", value:([.entries[]?
+        | select((.missed_findings? | type) == "array" and (.missed_findings | length) > 0)] | length)}
+    ')"
+  else
+    m2='{"availability":"not_recorded"}'
+  fi
+
+  if rer_measure_available "$payload" "missed_findings"; then
     m4="$(printf '%s\n' "$payload" | jq -c '
       {availability:"computed", value:([.entries[]?.missed_findings[]?
         | select(.local_evidence_state == "clean_same_commit")] | length)}
@@ -123,7 +158,6 @@ rer_compute_measures_json() {
         | select(.local_evidence_state == "clean_earlier_commit")] | length)}
     ')"
   else
-    m2='{"availability":"not_recorded"}'
     m4='{"availability":"not_recorded"}'
     m5='{"availability":"not_recorded"}'
   fi
@@ -138,7 +172,13 @@ rer_compute_measures_json() {
 
   if rer_measure_available "$payload" "platforms"; then
     m6="$(printf '%s\n' "$payload" | jq -c '
-      {availability:"computed", value:([.entries[]? | select(has("platforms")) | select(.platforms | index("codex-github"))] | length)}
+      def codex_github_invoked:
+        if (.platform_results? | type) == "array" then
+          any(.platform_results[]?; .platform == "codex-github")
+        else
+          any(.platforms[]?; (tostring | . == "codex-github" or startswith("codex-github ")))
+        end;
+      {availability:"computed", value:([.entries[]? | select(codex_github_invoked)] | length)}
     ')"
   else
     m6='{"availability":"not_recorded"}'
@@ -266,14 +306,27 @@ rer_aggregate_state_measure() {
 
 rer_strict_checks_json() {
   local rows_json="$1"
-  printf '%s\n' "$rows_json" | jq -c '
+  local strict_spec_known_checks
+  strict_spec_known_checks="$(rer_strict_spec_known_checks_json)"
+  printf '%s\n' "$rows_json" | jq -c --argjson strict_spec_known_checks "$strict_spec_known_checks" '
     def pr_entries:
       [.[] | select(.state == "included") | . as $row
         | ($row._payload.entries // [])[] | . + {_pr: $row.pr}];
 
-    def spec_applied_prs:
+    def spec_entry_applied_checks:
+      if (.strict_spec.applied? | type) == "array" then
+        .strict_spec.applied
+      elif (.strict_spec.state // "") == "applied" then
+        $strict_spec_known_checks
+      else
+        []
+      end;
+
+    def spec_applied_prs($check):
       [.[] | select(.state == "included") | select(
-        any(._payload.entries[]?; (.strict_spec.state // "") == "applied")
+        any(._payload.entries[]?;
+          (.strict_spec.state // "") == "applied"
+          and ((spec_entry_applied_checks) | index($check)))
       ) | .pr] | unique;
 
     def plan_applied_prs($check):
@@ -297,21 +350,23 @@ rer_strict_checks_json() {
           and ((.strict_plan.checks // []) | index($check)))
       ) | .pr] | unique;
 
-    [pr_entries[] | .strict_spec.checks[]? // empty] as $spec_checks
+    [pr_entries[] | .strict_spec.checks[]? // empty] as $spec_fired_checks
+    | [pr_entries[] | select((.strict_spec.applied? | type) != "array") | spec_entry_applied_checks[]?] as $spec_legacy_applied_checks
+    | [pr_entries[] | .strict_spec.applied[]? // empty] as $spec_recorded_applied_checks
     | [pr_entries[] | .strict_plan.applied[]? // empty] as $plan_applied_checks
     | [pr_entries[] | .strict_plan.checks[]? // empty] as $plan_fired_checks
-    | ($spec_checks + $plan_applied_checks + $plan_fired_checks | unique) as $all_checks
+    | ($spec_legacy_applied_checks + $spec_recorded_applied_checks + $spec_fired_checks + $plan_applied_checks + $plan_fired_checks | unique) as $all_checks
     | if ($all_checks | length) == 0 then
         null
       else
         {
           checks: (
-            [($spec_checks | unique[]) as $c
+            [(($spec_legacy_applied_checks + $spec_recorded_applied_checks + $spec_fired_checks) | unique[]) as $c
               | {
                   check: $c,
                   kind: "spec",
                   fired: (spec_fired_prs($c) | length),
-                  applied: (spec_applied_prs | length)
+                  applied: (spec_applied_prs($c) | length)
                 }]
             + [($plan_applied_checks | unique[]) as $c
               | {
