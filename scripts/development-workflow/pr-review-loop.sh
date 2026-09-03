@@ -975,6 +975,27 @@ expensive_gate_local_ai_head_current() {
   fi
 }
 
+# expensive_gate_local_ai_result_clean
+#
+# Prints 1 when the latest local-ai-reviewer peer evidence records a clean
+# verdict, 0 when it records any other verdict, or empty when absent.
+expensive_gate_local_ai_result_clean() {
+  local evidence result
+
+  evidence="$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+  if [ -z "$evidence" ]; then
+    printf '\n'
+    return 0
+  fi
+
+  result="${evidence%%|*}"
+  if [ "$result" = "clean" ]; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+}
+
 # expensive_gate_peer_evidence_acceptable <result> <reason>
 #
 # Acceptable when result is clean, or skipped with an allow-listed reason
@@ -1403,6 +1424,7 @@ expensive_reviewer_gate() {
   local deferrals=""
   local configured=""
   local head_current=""
+  local result_clean=""
   local peer_reason=""
   local threads_status="" threads_count="" threads_head=""
   local checks_state="" checks_head=""
@@ -1416,6 +1438,7 @@ expensive_reviewer_gate() {
 
   configured="$(expensive_gate_local_ai_configured)"
   head_current="$(expensive_gate_local_ai_head_current "$head_sha")"
+  result_clean="$(expensive_gate_local_ai_result_clean)"
 
   if [ -z "$head_sha" ]; then
     reason="evidence_unavailable_head"
@@ -1426,6 +1449,10 @@ expensive_reviewer_gate() {
   elif [ "$head_current" = "0" ]; then
     reason="local_evidence_stale"
   elif [ "$head_current" != "1" ]; then
+    reason="local_evidence_missing"
+  elif [ "$result_clean" = "0" ]; then
+    reason="local_evidence_not_clean"
+  elif [ "$result_clean" != "1" ]; then
     reason="local_evidence_missing"
   fi
 
@@ -2256,7 +2283,9 @@ run_copilot_review() {
 
   # Resolve head SHA before requesting review so the poll loop can filter
   # reviews to only those submitted against the current commit (#759).
-  head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
+  if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    head_sha=""
+  fi
   if [ -z "$head_sha" ]; then
     # Cannot determine current commit — escalate rather than risk matching a
     # stale unscoped review from a previous cycle.
@@ -7869,6 +7898,8 @@ reviewer_loop_history_platforms_json() {
 reviewer_loop_path_is_normative_document() {
   case "${1:-}" in
     REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
+      return 0 ;;
+    .claude/*|.cursor/*|.codex/*|.agents/*)
       return 0 ;;
     docs/workflow/*|docs/best-practices/*|docs/specs/developments/*|docs/testing/workflow/*|docs/project/*)
       return 0 ;;

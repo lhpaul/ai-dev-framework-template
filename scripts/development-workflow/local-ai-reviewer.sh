@@ -137,8 +137,9 @@ run_with_timeout() {
   local stderr_file="$3"
   shift 3
 
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$timeout_seconds" "$@" >"$stdout_file" 2>"$stderr_file"
+  if command -v timeout >/dev/null 2>&1 \
+      && timeout --help 2>&1 | grep -q -- '--kill-after'; then
+    timeout --kill-after=2s "$timeout_seconds" "$@" >"$stdout_file" 2>"$stderr_file"
     return $?
   fi
 
@@ -247,6 +248,16 @@ strict_changed_plan_paths() {
   done < <(printf '%s\n' "$changed_files_json" | jq -r '.[]?' 2>/dev/null)
 }
 
+strict_changed_spec_paths() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [[ "$path" =~ ^docs/specs/developments/.+/1_.+_specs(\.doc)?\.md$ ]]; then
+      printf '%s\n' "$path"
+    fi
+  done < <(printf '%s\n' "$changed_files_json" | jq -r '.[]?' 2>/dev/null)
+}
+
 extract_strict_checklist_known_checks() {
   local checklist="$1"
   local status=0
@@ -340,7 +351,7 @@ parse_strict_checks_response() {
   local admission_checks_json="$2"
   local response_marker="$3"
 
-  printf '%s\n' "$response_json" | jq -c --argjson admission_checks "$admission_checks_json" --arg marker "$response_marker" '
+  printf '%s\n' "$response_json" | jq -s -c --argjson admission_checks "$admission_checks_json" --arg marker "$response_marker" '
     def ident:
       ((.check? // null) | if type == "string" then ascii_downcase else null end);
     def known($c): $c != null and ($admission_checks | index($c) != null);
@@ -359,13 +370,16 @@ parse_strict_checks_response() {
     def has_required_evidence:
       (path_value | stripped | length > 0)
       and (
-        (line_value | type == "number" and . > 0)
+        (line_value | type == "number" and . > 0 and . == floor)
         or (line_value | type == "string" and (stripped | test("^[1-9][0-9]*$")))
       )
       and (text_value | stripped | length > 0);
     def admitted:
       known(ident) and has_required_evidence;
-    if (.mode? // null) != $marker then
+    if (length != 1) or ((.[0] | type) != "object") then
+      { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
+    else .[0]
+    | if (.mode? // null) != $marker then
       { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
     else
       (if   has("findings") then .findings
@@ -391,6 +405,7 @@ parse_strict_checks_response() {
             }
         end
     end
+    end
   ' 2>/dev/null
 }
 
@@ -400,6 +415,34 @@ parse_strict_spec_response() {
 
 parse_strict_plan_response() {
   parse_strict_checks_response "$1" "$2" "strict_plan_checks"
+}
+
+filter_strict_spec_parsed_response() {
+  local parsed="$1"
+  local documents_json="${2:-[]}"
+
+  printf '%s\n' "$parsed" | jq -c --argjson documents "$documents_json" '
+    ($documents | map(.path)) as $spec_docs
+    | .findings as $all
+    | ($all | map(
+        . as $f
+        | if ($f.check != "unknown")
+            and (($f.path | type) != "string" or ($f.path | length) == 0
+                 or ($spec_docs | index($f.path)) == null) then
+            $f + {check: "unknown", remapped: true}
+          else
+            $f
+          end
+      )) as $processed
+    | ($processed | map(select(.remapped == true)) | length) as $remapped
+    | ($processed | map(del(.remapped))) as $kept
+    | . + {
+        count: ($kept | map(select(.check != "unknown")) | length),
+        checks: ($kept | map(select(.check != "unknown") | .check) | unique | join(",")),
+        unknown_count: ((.unknown_count // 0) + $remapped),
+        findings: $kept
+      }
+  ' 2>/dev/null
 }
 
 # Drop source-dependent findings reported against plan documents that have no
@@ -643,6 +686,8 @@ strict_run_registry_entry() {
   local admission_json="[]"
   local sections_json=""
   local plan_paths=""
+  local spec_paths=""
+  local spec_documents_json="[]"
   local remaining=0
   local now_epoch=""
   local dispatch_out=""
@@ -707,6 +752,8 @@ strict_run_registry_entry() {
       state="unavailable"
       reason="checklist_unreadable"
     else
+      spec_paths="$(strict_changed_spec_paths)"
+      spec_documents_json="$(printf '%s\n' "$spec_paths" | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({path:.})')"
       applied="$(printf '%s\n' "$admission_json" | jq -r 'join(",")')"
       now_epoch="$(date +%s)"
       remaining=$((TIMEOUT - (now_epoch - round_start_epoch)))
@@ -721,6 +768,20 @@ strict_run_registry_entry() {
         checks="$(printf '%s\n' "$dispatch_out" | sed -n '4p')"
         unknown_count="$(printf '%s\n' "$dispatch_out" | sed -n '5p')"
         findings_json="$(printf '%s\n' "$dispatch_out" | sed -n '6p')"
+        if [ "$state" = "applied" ]; then
+          strict_parsed="$(jq -nc \
+            --argjson count "${count:-0}" \
+            --arg checks "${checks:-}" \
+            --argjson unknown_count "${unknown_count:-0}" \
+            --argjson findings "${findings_json:-[]}" \
+            '{count:$count, checks:$checks, unknown_count:$unknown_count, findings:$findings}')"
+          if strict_parsed="$(filter_strict_spec_parsed_response "$strict_parsed" "$spec_documents_json")"; then
+            count="$(printf '%s\n' "$strict_parsed" | jq -r '.count')"
+            checks="$(printf '%s\n' "$strict_parsed" | jq -r '.checks')"
+            unknown_count="$(printf '%s\n' "$strict_parsed" | jq -r '.unknown_count')"
+            findings_json="$(printf '%s\n' "$strict_parsed" | jq -c '.findings')"
+          fi
+        fi
       fi
     fi
   fi
@@ -1014,6 +1075,11 @@ if [ "$diff_fetch_failed" -ne 0 ]; then
 fi
 
 if [ -n "$REPO_ROOT" ]; then
+  if ! REPO_ROOT="$(CDPATH='' cd -- "$REPO_ROOT" && pwd -P)"; then
+    echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+    print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
+    exit 2
+  fi
   if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
     print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
@@ -1200,7 +1266,7 @@ set -e
 command_stdout="$(cat "$stdout_file" 2>/dev/null || true)"
 command_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
 
-if [ "$command_exit" -eq 124 ]; then
+if [ "$command_exit" -eq 124 ] || [ "$command_exit" -eq 137 ]; then
   echo "WARN: local AI reviewer timed out after ${TIMEOUT}s" >&2
   print_result escalate 0 0 0 timeout timeout
   exit 2

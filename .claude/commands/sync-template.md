@@ -915,9 +915,15 @@ Once the reviewer loop exits clean:
 ```bash
 gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
 gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
 ```
 
 Update the tracker status to `Development in Review` if an issue tracker is configured.
+
+Do not proceed to the terminal self-check until `pr-ci-loop.sh` exits with
+`RESULT=green` for the current PR head. Applying `ready-for-regression` can
+create or re-run regression checks asynchronously; the self-check is not a
+substitute for waiting through that CI loop.
 
 
 ### 6.4 — Ground-truth completion verification
@@ -953,6 +959,7 @@ fi
   --expected-label ready-for-regression \
   --forbid-label needs-fixes \
   --tracker-required false \
+  --require-ci-green true \
   --require-review-summary "$REVIEW_SELF_CHECK_REQUIRED" \
   --require-review-threads "$REVIEW_SELF_CHECK_REQUIRED"
 ```

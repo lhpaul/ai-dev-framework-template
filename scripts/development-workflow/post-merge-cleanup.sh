@@ -300,9 +300,10 @@ ORIGINAL_REF=""
 ORIGINAL_REF_KIND=""
 if ORIGINAL_REF="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
   ORIGINAL_REF_KIND="branch"
+elif ORIGINAL_REF="$(git rev-parse --quiet --verify HEAD 2>/dev/null)"; then
+  ORIGINAL_REF_KIND="detached"
 else
-  ORIGINAL_REF="$(git rev-parse --quiet --verify HEAD 2>/dev/null || true)"
-  [ -n "$ORIGINAL_REF" ] && ORIGINAL_REF_KIND="detached"
+  ORIGINAL_REF=""
 fi
 BASE_CHECKED_OUT=0
 
@@ -318,8 +319,11 @@ restore_original_ref() {
     return 0
   fi
 
-  CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null \
-    || git -C "$CLEANUP_REPO_ROOT" rev-parse --quiet --verify HEAD 2>/dev/null || true)"
+  if ! CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
+    if ! CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" rev-parse --quiet --verify HEAD 2>/dev/null)"; then
+      CURRENT_REF=""
+    fi
+  fi
   [ "$CURRENT_REF" = "$ORIGINAL_REF" ] && return 0
 
   if [ "$ORIGINAL_REF_KIND" = "branch" ] \
@@ -1011,8 +1015,17 @@ else
 fi
 
 echo ""
+FINAL_REF_AFTER_CLEANUP="$DEVELOP_BRANCH"
+if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" != "$TO_DELETE" ] \
+    && git -C "$CLEANUP_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ORIGINAL_REF"; then
+    FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  elif [ "$ORIGINAL_REF_KIND" = "detached" ]; then
+    FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  fi
+fi
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
-  echo "Done. You are on $DEVELOP_BRANCH; local branch '$TO_DELETE' was already removed."
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
 else
-  echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' has been removed locally."
 fi

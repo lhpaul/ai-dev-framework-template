@@ -736,7 +736,7 @@ if [ -n "$pr_number" ]; then
       if latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
         if [ -n "$latest_review_summary" ]; then
           normalized_review_summary="$(printf '%s\n' "$latest_review_summary" | tr -d '*')"
-          if printf '%s\n' "$normalized_review_summary" | grep -Eq 'Result:[[:space:]]*(clean|skipped)|RESULT=(clean|skipped)|No blocking PR feedback'; then
+          if grep -Eq 'Result:[[:space:]]*(clean|skipped)|RESULT=(clean|skipped)|No blocking PR feedback' <<<"$normalized_review_summary"; then
             add_row "pull_request.review_summary" "verified" "clean_or_skipped" "paginated issue comments sorted by updated_at"
           elif is_true "$require_review_summary"; then
             add_row "pull_request.review_summary" "discrepancy" "summary present but not clean/skipped" "paginated issue comments sorted by updated_at"
@@ -772,16 +772,15 @@ if [ -n "$pr_number" ]; then
               [
                 .entries[]? as $entry
                 | select(($entry.reviewed_heads? | type) == "array")
-                | select(
-                    (($entry.platform_results? | type) == "array")
-                    and any($entry.platform_results[]?;
-                      .platform == "local-ai-reviewer"
-                      and .result == "clean")
-                  )
-                | $entry.reviewed_heads[]
-                | select(.platform == "local-ai-reviewer")
+                | select(($entry.platform_results? | type) == "array")
+                | ($entry.platform_results[]? | select(.platform == "local-ai-reviewer")) as $local_result
+                | ($entry.reviewed_heads[]? | select(.platform == "local-ai-reviewer")) as $local_head
+                | {result: ($local_result.result // ""), reviewed_head: ($local_head.reviewed_head // "")}
               ]
-              | last // empty
+              | last
+              | select(.result == "clean")
+              | {reviewed_head}
+              // empty
             ')"; then
             if [ -z "$ledger_local_record" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "latest local-ai-reviewer reviewed_heads entry"

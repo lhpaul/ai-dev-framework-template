@@ -220,6 +220,20 @@ ${_history_json}
       jq -n --arg body "$_body_text" \
         '{body:$body, created_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'
       ;;
+    local_head_later_non_clean_platform_result)
+      _history_json="$(jq -nc --arg headOid "${MOCK_GH_HEAD_OID:?MOCK_GH_HEAD_OID must be set for local_head_later_non_clean_platform_result}" \
+        '{schema:"reviewer_loop_history.v1",entries:[{iteration:1,result:"clean",platform_results:[{platform:"local-ai-reviewer",result:"clean",raw_result:"clean",raw_reason:""}],reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$headOid,state:"current",reason:""}]},{iteration:2,result:"needs_fixes",platform_results:[{platform:"local-ai-reviewer",result:"needs_fixes",raw_result:"needs_fixes",raw_reason:"blocking_feedback"}],reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$headOid,state:"current",reason:""}]},{iteration:3,result:"clean",platform_results:[{platform:"codex-github",result:"clean",raw_result:"clean",raw_reason:""}],reviewed_heads:[{platform:"codex-github",reviewed_head:$headOid,state:"current",reason:""}]}]}')"
+      _body_text="Automated Reviewer Loop Summary
+
+Result: clean
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+${_history_json}
+\`\`\`"
+      jq -n --arg body "$_body_text" \
+        '{body:$body, created_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'
+      ;;
     local_head_pre_field)
       cat <<'JSON'
 {"body":"Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"reviewer_loop_history.v1\",\"entries\":[{\"iteration\":1,\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"result\":\"clean\"}]}\n```","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
@@ -955,6 +969,23 @@ out="$(self_check_output \
   --require-ci-green false)"
 run_test "local_head_skipped_platform_result_exit_one" "1" "$(status_code "$out")"
 run_contains "local_head_skipped_platform_result_blocks" "| pull_request.local_reviewer_head | unavailable_required | local-ai-reviewer head not recorded |" "$(body "$out")"
+
+repo="$(make_repo local-head-later-non-clean-platform-result)"
+bind_local_head_fixture "$repo"
+export MOCK_GH_SUMMARY_MODE=local_head_later_non_clean_platform_result
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1648 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false)"
+run_test "local_head_later_non_clean_platform_result_exit_one" "1" "$(status_code "$out")"
+run_contains "local_head_later_non_clean_platform_result_blocks" "| pull_request.local_reviewer_head | unavailable_required | local-ai-reviewer head not recorded |" "$(body "$out")"
 
 repo="$(make_repo local-head-missing-platform-results)"
 bind_local_head_fixture "$repo"

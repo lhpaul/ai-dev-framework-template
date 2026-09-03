@@ -41,6 +41,7 @@ run_test "s11_well_formed_pass" "0" "$(lint_exit "$FIXTURES/well-formed.md")"
 run_test "s11_missing_detect_fail" "1" "$(lint_exit "$FIXTURES/malformed-missing-detect.md")"
 run_test "s11_duplicate_shape_fail" "1" "$(lint_exit "$FIXTURES/malformed-duplicate-shape.md")"
 run_test "s11_wrong_order_fail" "1" "$(lint_exit "$FIXTURES/malformed-wrong-order.md")"
+run_test "s11_empty_field_fail" "1" "$(lint_exit "$FIXTURES/malformed-empty-field.md")"
 
 # Scenario 12: incident references (one per AC-4 form)
 run_test "s12_hash_number_fail" "1" "$(lint_exit "$FIXTURES/incident-hash-number.md")"

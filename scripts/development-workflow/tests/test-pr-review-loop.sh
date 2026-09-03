@@ -2512,6 +2512,7 @@ _sf_is_small() {
 # --- Scenario 1: normative document patterns ---
 for _p in \
   "REVIEW.md" "AGENTS.md" "CLAUDE.md" "GEMINI.md" "LLM_RULES.md" ".ai-dev-workflow.yaml" \
+  ".claude/agents/reviewer.md" ".cursor/rules/workflow.mdc" ".codex/skills/workflow/SKILL.md" ".agents/skills/run-item/SKILL.md" \
   "docs/workflow/protocols/x.md" "docs/best-practices/1-general.md" \
   "docs/specs/developments/x/1_x_specs.md" "docs/testing/workflow/x.smoke-test.md" \
   "docs/project/1-business-domain.md"; do
@@ -16805,6 +16806,16 @@ platforms=(local-ai-reviewer pr-agent codex-github)
 platform_peer_evidence=("local-ai-reviewer|clean|")
 _out="$(_1649_run_gate)"
 run_test "1649_s7_peer_not_run" "peer_reviewer_not_run" \
+  "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
+
+# Local reviewer itself must be clean; accepted skip reasons only apply to
+# ordinary peer reviewers.
+platforms=(local-ai-reviewer codex-github)
+phase_after_clean_platforms=()
+platform_reviewed_heads=("local-ai-reviewer:$_1649_head")
+platform_peer_evidence=("local-ai-reviewer|skipped|explicit-skip")
+_out="$(_1649_run_gate)"
+run_test "1649_s7a_local_skip_not_enough" "local_evidence_not_clean" \
   "$(_1649_kv EXPENSIVE_GATE_REASON "$_out")"
 
 # --- Scenario 8: peer evidence acceptance ---

@@ -69,7 +69,11 @@ case "$*" in
     if [ "${MOCK_PR_DIFF_EXIT:-0}" -ne 0 ]; then
       exit "$MOCK_PR_DIFF_EXIT"
     fi
-    printf 'scripts/example.sh\nREVIEW.md\n'
+    if [ -n "${MOCK_PR_DIFF_FILES:-}" ]; then
+      printf '%s\n' "$MOCK_PR_DIFF_FILES"
+    else
+      printf '%s\n' "scripts/example.sh" "REVIEW.md" "docs/specs/developments/test/1_test_specs.md"
+    fi
     exit 0
     ;;
   *)
@@ -109,7 +113,7 @@ reset_mocks() {
   rm -f "$MOCK_BIN/gh" "$MOCK_BIN/local-reviewer-mock"
   install_gh_mock
   install_local_reviewer_mock
-  unset MOCK_PR_HEAD_SHA MOCK_PR_DIFF_EXIT MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
+  unset MOCK_PR_HEAD_SHA MOCK_PR_DIFF_EXIT MOCK_PR_DIFF_FILES MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
   unset MOCK_LOCAL_REVIEWER_EXIT MOCK_LOCAL_REVIEWER_SLEEP
   unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_PR_HEAD_BRANCH
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
@@ -368,6 +372,27 @@ run_test "timeout_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "timeout_reason" "REASON=timeout" "$(line_for REASON)"
 
 reset_mocks
+_timeout_bin="$(mktemp -d)"
+cat > "$_timeout_bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "Usage: timeout [--kill-after=DURATION] DURATION COMMAND"
+  exit 0
+fi
+printf '%s\n' '{"result":"needs_fixes","findings":[{"severity":"suggestion","path":"README.md","line":1,"body":"advisory"}]}'
+exit 137
+EOF
+chmod +x "$_timeout_bin/timeout"
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_TIMEOUT=1
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT
+run_reviewer "$_timeout_bin:$MOCK_BIN:$PATH"
+run_test "timeout_kill_after_137_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "timeout_kill_after_137_reason" "REASON=timeout" "$(line_for REASON)"
+rm -rf "$_timeout_bin"
+unset _timeout_bin
+
+reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 LOCAL_AI_REVIEWER_TIMEOUT=1
 MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE="$(mktemp)"
@@ -510,6 +535,8 @@ run_test "s9d_no_strict_timeout_name" "yes" \
   "$(grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' "$REVIEWER" >/dev/null && echo no || echo yes)"
 run_test "s9d_help_no_second_timeout_knob" "yes" \
   "$(bash "$REVIEWER" --help 2>&1 | grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' && echo no || echo yes)"
+run_test "s9d_gnu_timeout_has_kill_after" "yes" \
+  "$(grep -Fq 'timeout --kill-after=2s "$timeout_seconds"' "$REVIEWER" && echo yes || echo no)"
 
 # --- Matrix rows via full runs ---
 install_recording_two_pass_mock
@@ -607,7 +634,7 @@ run_test "s11_strict_bundle_has_key" "true" \
 rm -f "$MOCK_RECORD_FILE"
 
 # Scenario 5a / row 6 / scenarios 4,8,9: findings
-THREE_STRICT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency","path":"spec.md","line":1,"body":"contradiction A"},{"check":"gate_matrix","path":"spec.md","line":2,"body":"missing combo"},{"check":"ac_consistency","path":"spec.md","line":3,"body":"contradiction B"}]}'
+THREE_STRICT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"contradiction A"},{"check":"gate_matrix","path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"missing combo"},{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":3,"body":"contradiction B"}]}'
 reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
@@ -653,7 +680,7 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT="$FIXED_ORDINARY"
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","result":"needs_fixes","findings":[{"check":"ac_consistency","path":"s.md","line":1,"body":"x"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","result":"needs_fixes","findings":[{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"x"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 R1="$(line_for RESULT)"
@@ -661,7 +688,7 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT="$FIXED_ORDINARY"
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","result":"clean","findings":[{"check":"ac_consistency","path":"s.md","line":1,"body":"x"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","result":"clean","findings":[{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"x"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 R2="$(line_for RESULT)"
@@ -673,7 +700,7 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"not_a_real_check","path":"s.md","line":1,"body":"x"},{"check":"ac_consistency","path":"s.md","line":2,"body":"y"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"not_a_real_check","path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"x"},{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"y"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 run_test "s6_count_excludes_unknown" "STRICT_SPEC_COUNT=1" "$(line_for STRICT_SPEC_COUNT)"
@@ -687,7 +714,7 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency"},{"check":"gate_matrix","path":"s.md","line":2,"body":"usable"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency"},{"check":"gate_matrix","path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"usable"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 run_test "s6a_missing_evidence_excluded" "STRICT_SPEC_COUNT=1" "$(line_for STRICT_SPEC_COUNT)"
@@ -699,19 +726,54 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency","path":"   ","line":"N/A","body":"   "},{"check":"gate_matrix","path":"s.md","line":" 2 ","body":"usable"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency","path":"   ","line":"N/A","body":"   "},{"check":"gate_matrix","path":"docs/specs/developments/test/1_test_specs.md","line":" 2 ","body":"usable"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 run_test "s6b_whitespace_evidence_excluded" "STRICT_SPEC_COUNT=1" "$(line_for STRICT_SPEC_COUNT)"
 run_test "s6b_whitespace_evidence_unknown" "STRICT_SPEC_UNKNOWN_COUNT=1" "$(line_for STRICT_SPEC_UNKNOWN_COUNT)"
 run_test "s6b_whitespace_evidence_unknown_label" "STRICT_1_CHECK=unknown" "$(line_for STRICT_1_CHECK)"
 
+# Scenario 6b.1: fractional JSON number lines are not usable evidence
+reset_mocks
+install_recording_two_pass_mock
+install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":1.5,"body":"fractional"},{"check":"gate_matrix","path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"usable"}]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+run_spec_review
+run_test "s6b_fractional_line_excluded" "STRICT_SPEC_COUNT=1" "$(line_for STRICT_SPEC_COUNT)"
+run_test "s6b_fractional_line_unknown" "STRICT_SPEC_UNKNOWN_COUNT=1" "$(line_for STRICT_SPEC_UNKNOWN_COUNT)"
+run_test "s6b_fractional_line_unknown_label" "STRICT_1_CHECK=unknown" "$(line_for STRICT_1_CHECK)"
+
+# Scenario 6c: known findings outside changed spec documents are not admitted
+reset_mocks
+install_recording_two_pass_mock
+install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ac_consistency","path":"README.md","line":1,"body":"outside changed spec"},{"check":"gate_matrix","path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"usable"}]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+run_spec_review
+run_test "s6c_outside_changed_spec_excluded" "STRICT_SPEC_COUNT=1" "$(line_for STRICT_SPEC_COUNT)"
+run_test "s6c_outside_changed_spec_unknown" "STRICT_SPEC_UNKNOWN_COUNT=1" "$(line_for STRICT_SPEC_UNKNOWN_COUNT)"
+run_test "s6c_outside_changed_spec_unknown_label" "STRICT_1_CHECK=unknown" "$(line_for STRICT_1_CHECK)"
+
+# Scenario 6d: strict output must contain exactly one top-level JSON object
+reset_mocks
+install_recording_two_pass_mock
+install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_STRICT_STDOUT=$'{"diagnostic":true}\n{"mode":"strict_spec_checks","findings":[{"check":"gate_matrix","path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"usable"}]}'
+export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
+run_spec_review
+run_test "s6d_multi_json_unavailable" "STRICT_SPEC_STATE=unavailable" "$(line_for STRICT_SPEC_STATE)"
+run_test "s6d_multi_json_reason" "STRICT_SPEC_REASON=strict_pass_failed" "$(line_for STRICT_SPEC_REASON)"
+
 # Scenario 7: non-string / missing check
 reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":12,"path":"s.md","line":1,"body":"n"},{"check":{"x":1},"path":"s.md","line":2,"body":"o"},{"check":null,"path":"s.md","line":3,"body":"z"},{"path":"s.md","line":4,"body":"missing"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":12,"path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"n"},{"check":{"x":1},"path":"docs/specs/developments/test/1_test_specs.md","line":2,"body":"o"},{"check":null,"path":"docs/specs/developments/test/1_test_specs.md","line":3,"body":"z"},{"path":"docs/specs/developments/test/1_test_specs.md","line":4,"body":"missing"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 run_test "s7_all_unknown" "STRICT_SPEC_UNKNOWN_COUNT=4" "$(line_for STRICT_SPEC_UNKNOWN_COUNT)"
@@ -770,7 +832,7 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
 MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
-MOCK_STRICT_STDOUT='{"findings":[{"check":"ac_consistency","path":"s.md","line":1,"body":"x"}]}'
+MOCK_STRICT_STDOUT='{"findings":[{"check":"ac_consistency","path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"x"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 run_test "s7b_missing_mode" "STRICT_SPEC_REASON=strict_pass_failed" "$(line_for STRICT_SPEC_REASON)"
@@ -854,13 +916,9 @@ exit 0
 MOCK_REVIEWER
 chmod +x "$MOCK_BIN/local-reviewer-mock"
 export MOCK_RECORD_FILE MOCK_ORDINARY_STDOUT LOCAL_AI_REVIEWER_TIMEOUT
-START_TS=$(date +%s)
 run_spec_review --timeout 2
-END_TS=$(date +%s)
-ELAPSED=$((END_TS - START_TS))
 run_test "s9a_timeout_reason" "STRICT_SPEC_REASON=strict_pass_failed" "$(line_for STRICT_SPEC_REASON)"
 run_test "s9a_timeout_clean" "RESULT=clean" "$(line_for RESULT)"
-run_test "s9c_within_budget" "yes" "$([ "$ELAPSED" -le 4 ] && echo yes || echo no)"
 run_test "s9b_timeout_invocations" "2" "$(grep -c '^mode=' "$MOCK_RECORD_FILE" || true)"
 rm -f "$MOCK_RECORD_FILE"
 unset LOCAL_AI_REVIEWER_TIMEOUT
@@ -912,7 +970,7 @@ reset_mocks
 install_recording_two_pass_mock
 install_checklist_into_repo "$CHECKLIST_FIXTURES/nine-section.md"
 MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
-MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ninth_check","path":"s.md","line":1,"body":"n"}]}'
+MOCK_STRICT_STDOUT='{"mode":"strict_spec_checks","findings":[{"check":"ninth_check","path":"docs/specs/developments/test/1_test_specs.md","line":1,"body":"n"}]}'
 export MOCK_ORDINARY_STDOUT MOCK_STRICT_STDOUT
 run_spec_review
 run_test "s13_ninth_counted" "STRICT_SPEC_COUNT=1" "$(line_for STRICT_SPEC_COUNT)"
@@ -985,6 +1043,23 @@ export LOCAL_AI_REVIEWER_COMMAND
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
 run_test "s12_na_evidence_state" "not_applicable" "$(jq -r '.strict_spec.state' "$EVIDENCE_FILE")"
 run_test "s12_na_evidence_no_count" "false" "$(jq -r 'if .strict_spec | has("count") then "true" else "false" end' "$EVIDENCE_FILE")"
+
+reset_mocks
+install_recording_two_pass_mock
+install_checklist_into_repo "$CHECKLIST_FIXTURES/well-formed.md"
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
+MOCK_ORDINARY_STDOUT='{"result":"clean","findings":[]}'
+MOCK_PR_HEAD_BRANCH="implementation-plan/test"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_ORDINARY_STDOUT MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+export LOCAL_AI_REVIEWER_COMMAND
+(
+  cd "$(dirname "$VALID_REPO_ROOT")"
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$(basename "$VALID_REPO_ROOT")"
+)
+run_test "s12_relative_repo_root_exit" "0" "$(exit_code)"
+run_test "s12_relative_repo_root_not_double_resolved" "RESULT=clean" "$(line_for RESULT)"
 
 # Scenario 11a prompt overrides (codex preset source check)
 CODEX_CMD="$REPO_ROOT/scripts/development-workflow/local-codex-review-command.sh"

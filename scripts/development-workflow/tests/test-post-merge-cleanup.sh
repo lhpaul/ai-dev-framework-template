@@ -233,6 +233,23 @@ run_contains "merged_implementation_remote_deleted" "REMOTE_DELETE_RESULT=delete
 run_contains "merged_implementation_records_pr" "REMOTE_DELETE_PR_NUMBER=77" "$merged_output"
 run_test "merged_implementation_remote_ref_absent" "" "$("$REAL_GIT" -C "$merged_repo" ls-remote --heads origin "$merged_branch")"
 
+restore_msg_branch="feature/noissue-restore-message"
+restore_msg_repo="$(make_repo restore-message "$restore_msg_branch" yes)"
+"$REAL_GIT" -C "$restore_msg_repo" checkout -q -b ops/current
+restore_msg_output="$(
+  GH_MERGED_HEAD="$restore_msg_branch" \
+  GH_MERGED_PR=177 \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$restore_msg_repo" --base develop --pr 177 "$restore_msg_branch"
+)"
+run_contains "restore_message_reports_original_branch" \
+  "exit cleanup will restore 'ops/current'" \
+  "$restore_msg_output"
+run_test "restore_message_branch_restored" \
+  "ops/current" \
+  "$("$REAL_GIT" -C "$restore_msg_repo" symbolic-ref --quiet --short HEAD)"
+
 worktree_branch="feature/123-worktree-cleanup"
 worktree_repo="$(make_repo worktree-cleanup "$worktree_branch" yes)"
 mkdir -p "$worktree_repo/scripts/development-workflow"
