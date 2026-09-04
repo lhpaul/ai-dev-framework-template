@@ -10,8 +10,9 @@ set -euo pipefail
 DIFF_MAX_BYTES="${LOCAL_AI_REVIEWER_DIFF_MAX_BYTES:-200000}"
 payload_file="$(mktemp)"
 body_file="$(mktemp)"
+diff_err="$(mktemp)"
 cleanup() {
-  rm -f "${payload_file:-}" "${body_file:-}"
+  rm -f "${payload_file:-}" "${body_file:-}" "${diff_err:-}"
 }
 trap cleanup EXIT
 
@@ -79,7 +80,15 @@ if [ -f "REVIEW.md" ]; then
 fi
 diff_text=""
 if [ -n "${BASE_BRANCH:-}" ]; then
-  diff_text="$(git diff --find-renames --find-copies "origin/${BASE_BRANCH}...HEAD" 2>/dev/null || true)"
+  set +e
+  diff_text="$(git diff --find-renames --find-copies "origin/${BASE_BRANCH}...HEAD" 2>"$diff_err")"
+  diff_exit=$?
+  set -e
+  if [ "$diff_exit" -ne 0 ]; then
+    echo "ERROR: git diff origin/${BASE_BRANCH}...HEAD failed (exit ${diff_exit})" >&2
+    cat "$diff_err" >&2
+    exit 1
+  fi
 fi
 if [ "${#diff_text}" -gt "$DIFF_MAX_BYTES" ]; then
   diff_text="${diff_text:0:$DIFF_MAX_BYTES}

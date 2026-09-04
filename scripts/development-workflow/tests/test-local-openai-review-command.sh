@@ -85,6 +85,16 @@ fi
 MOCK_CURL
 chmod +x "$MOCK_BIN/curl"
 
+cat > "$MOCK_BIN/git" <<'MOCK_GIT'
+#!/usr/bin/env bash
+if [ "${MOCK_GIT_FAIL:-0}" = "1" ]; then
+  echo "fatal: bad revision" >&2
+  exit 128
+fi
+exit 0
+MOCK_GIT
+chmod +x "$MOCK_BIN/git"
+
 export CONTEXT_BUNDLE_PATH BASE_BRANCH=develop REVIEWED_HEAD=abc123 REQUEST_FILE URL_FILE
 export LOCAL_AI_REVIEWER_MODEL=deepseek-v4-pro
 export LOCAL_AI_REVIEWER_API_BASE_URL=https://api.deepseek.com
@@ -136,6 +146,15 @@ export LOCAL_AI_REVIEWER_API_KEY=test-key
 run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
 run_test "wrapper_help_mentions_model" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_MODEL' && echo yes || echo no)"
 
+MOCK_GIT_FAIL=1
+export MOCK_GIT_FAIL
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_git_diff_failure_exits" "yes" "$(grep -q 'git diff origin/develop...HEAD failed' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_GIT_FAIL
+
 # Backend resolution through local-ai-reviewer.sh
 unset LOCAL_AI_REVIEWER_COMMAND
 LOCAL_AI_REVIEWER_BACKEND=openai_compat
@@ -147,6 +166,24 @@ resolve_local_ai_reviewer_command 2>"$resolve_stderr"
 run_test "backend_defaults_to_openai_preset" "yes" "$(printf '%s' "$LOCAL_AI_REVIEWER_COMMAND" | grep -q 'local-openai-review-command.sh' && echo yes || echo no)"
 run_test "backend_info_mentions_openai_preset" "yes" "$(grep -q 'bundled openai-compatible preset' "$resolve_stderr" && echo yes || echo no)"
 rm -f "$resolve_stderr"
+unset LOCAL_AI_REVIEWER_COMMAND
+LOCAL_AI_REVIEWER_BACKEND=openai
+export LOCAL_AI_REVIEWER_BACKEND
+set +e
+resolve_local_ai_reviewer_command 2>"$STDERR_FILE"
+alias_rc=$?
+set -e
+run_test "backend_rejects_openai_alias" "1" "$alias_rc"
+run_test "backend_alias_error_names_openai_compat" "yes" "$(grep -q 'expected codex or openai_compat' "$STDERR_FILE" && echo yes || echo no)"
+unset LOCAL_AI_REVIEWER_BACKEND LOCAL_AI_REVIEWER_COMMAND
+
+LOCAL_AI_REVIEWER_BACKEND=not-a-backend
+export LOCAL_AI_REVIEWER_BACKEND
+set +e
+resolve_local_ai_reviewer_command 2>"$STDERR_FILE"
+unknown_rc=$?
+set -e
+run_test "backend_unknown_nonzero" "1" "$unknown_rc"
 unset LOCAL_AI_REVIEWER_BACKEND LOCAL_AI_REVIEWER_COMMAND
 
 if [ "$FAIL_COUNT" -ne 0 ]; then

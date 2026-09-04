@@ -79,7 +79,7 @@ resolve_local_ai_reviewer_command() {
   local default_command=""
   local preset_label=""
   case "$backend" in
-    openai_compat|openai-compatible|openai)
+    openai_compat)
       default_command="$SCRIPT_DIR/local-openai-review-command.sh"
       preset_label="openai-compatible"
       ;;
@@ -89,7 +89,7 @@ resolve_local_ai_reviewer_command() {
       ;;
     *)
       echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or openai_compat)" >&2
-      return 0
+      return 1
       ;;
   esac
 
@@ -970,7 +970,10 @@ if [ "${LOCAL_AI_REVIEWER_DISABLED:-0}" = "1" ]; then
   exit 3
 fi
 
-resolve_local_ai_reviewer_command
+if ! resolve_local_ai_reviewer_command; then
+  print_result escalate 0 0 0 missing_command missing_command
+  exit 2
+fi
 
 if [ -z "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
   echo "ERROR: LOCAL_AI_REVIEWER_COMMAND is not configured" >&2
