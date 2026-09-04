@@ -85,6 +85,7 @@ model cannot read the local filesystem:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
 export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
 export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"

@@ -28,9 +28,7 @@ if [ -z "$api_key" ] && [ -n "${LOCAL_AI_REVIEWER_API_KEY_COMMAND:-}" ]; then
   api_key="$(sh -c "$LOCAL_AI_REVIEWER_API_KEY_COMMAND")"
 fi
 if [ -z "$api_key" ]; then
-  case "$base_url $model" in
-    *deepseek*) api_key="${DEEPSEEK_API_KEY:-}" ;;
-  esac
+  api_key="${DEEPSEEK_API_KEY:-}"
 fi
 if [ -z "$api_key" ]; then
   api_key="${OPENAI_API_KEY:-}"

@@ -83,7 +83,7 @@ resolve_local_ai_reviewer_command() {
       default_command="$SCRIPT_DIR/local-openai-review-command.sh"
       preset_label="openai-compatible"
       ;;
-    codex|'')
+    codex)
       default_command="$SCRIPT_DIR/local-codex-review-command.sh"
       preset_label="Codex"
       ;;

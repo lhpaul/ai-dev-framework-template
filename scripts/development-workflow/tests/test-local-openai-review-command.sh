@@ -135,6 +135,15 @@ export MOCK_MODEL_CONTENT
 run_test "openai_strips_markdown_fence" "needs_fixes" "$(jq -r '.result' "$OUTPUT_FILE")"
 unset MOCK_MODEL_CONTENT
 
+MOCK_MODEL_CONTENT='not-json'
+export MOCK_MODEL_CONTENT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_malformed_json_exits" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_MODEL_CONTENT
+
 unset LOCAL_AI_REVIEWER_API_KEY DEEPSEEK_API_KEY OPENAI_API_KEY LOCAL_AI_REVIEWER_API_KEY_COMMAND
 (
   cd "$WORK_DIR"
