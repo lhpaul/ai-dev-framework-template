@@ -115,6 +115,23 @@ run_test "openai_inlines_review_md" "yes" "$(grep -q 'Review Contract' "$REQUEST
 run_test "openai_requests_json_object" "yes" "$(jq -e '.response_format.type == "json_object"' "$REQUEST_FILE" >/dev/null && echo yes || echo no)"
 run_test "openai_model_id" "deepseek-v4-pro" "$(jq -r '.model' "$REQUEST_FILE")"
 
+python3 - "$CONTEXT_BUNDLE_PATH" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text())
+data["padding"] = "x" * 32768
+path.write_text(json.dumps(data))
+PY
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "openai_large_payload_via_rawfile" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
+run_test "openai_large_payload_inlined" "yes" "$(python3 -c 'import json,sys; print("yes" if "x"*32768 in json.load(open(sys.argv[1]))["messages"][1]["content"] else "no")' "$REQUEST_FILE")"
+cat > "$CONTEXT_BUNDLE_PATH" <<'EOF'
+{"schema_version":"local_ai_reviewer_context.v1","reviewed_head":"abc123"}
+EOF
+
 REVIEW_STAGE=implementation
 REVIEW_CHECKLISTS="Code Review Checklist,Workflow Policy Review Checklist"
 export REVIEW_STAGE REVIEW_CHECKLISTS

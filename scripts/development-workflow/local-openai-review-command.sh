@@ -11,8 +11,9 @@ DIFF_MAX_BYTES="${LOCAL_AI_REVIEWER_DIFF_MAX_BYTES:-200000}"
 payload_file="$(mktemp)"
 body_file="$(mktemp)"
 diff_err="$(mktemp)"
+user_file="$(mktemp)"
 cleanup() {
-  rm -f "${payload_file:-}" "${body_file:-}" "${diff_err:-}"
+  rm -f "${payload_file:-}" "${body_file:-}" "${diff_err:-}" "${user_file:-}"
 }
 trap cleanup EXIT
 
@@ -93,18 +94,21 @@ if [ "${#diff_text}" -gt "$DIFF_MAX_BYTES" ]; then
 ... [truncated]"
 fi
 
-user_content="$(
+{
   printf '%s\n\n--- CONTEXT BUNDLE ---\n%s\n\n--- REVIEW.md ---\n%s\n\n--- BOUNDED DIFF ---\n%s\n' \
     "$prompt" "$bundle_json" "$review_md" "$diff_text"
-)"
+} >"$user_file"
 
 system_content="You are a repository review tool. Return only compact JSON matching the requested schema. Do not wrap the JSON in markdown."
 
+# Read the user prompt from a file. Passing REVIEW.md + the context bundle + a
+# bounded diff through jq --arg puts the whole payload on the process argument
+# list and can fail with ARG_MAX on typical PRs.
 jq_args=(
   -n
   --arg model "$model"
   --arg system "$system_content"
-  --arg user "$user_content"
+  --rawfile user "$user_file"
 )
 if [ "$json_object" = "1" ]; then
   jq_args+=(
