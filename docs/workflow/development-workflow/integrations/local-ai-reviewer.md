@@ -32,6 +32,8 @@ When `LOCAL_AI_REVIEWER_COMMAND` is unset, `local-ai-reviewer.sh` defaults to
 the bundled Codex preset at
 `scripts/development-workflow/local-codex-review-command.sh` (requires the
 `codex` CLI on `PATH` and a working Codex login). Set
+`LOCAL_AI_REVIEWER_BACKEND=openai_compat` to use the HTTP preset at
+`scripts/development-workflow/local-openai-review-command.sh` instead. Set
 `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` to restore the old missing-command
 behavior for tests or minimal environments.
 
@@ -42,7 +44,13 @@ export LOCAL_CODEX_REVIEWER_BIN='codex'
 export LOCAL_CODEX_REVIEWER_MODEL='gpt-5.4'   # optional; codex uses its own default when omitted
 export LOCAL_AI_REVIEWER_TIMEOUT='900'
 
-# Custom command instead of the bundled Codex preset:
+# OpenAI-compatible HTTP backend (DeepSeek, Qwen, GLM, or any /chat/completions API):
+export LOCAL_AI_REVIEWER_BACKEND='openai_compat'
+export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
+export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
+export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+
+# Custom command instead of a bundled preset:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
 
@@ -70,6 +78,22 @@ The wrapper sets `LOCAL_AI_REVIEWER_COMMAND` to
 the companion script. Override `LOCAL_CODEX_REVIEWER_BIN`,
 `LOCAL_CODEX_REVIEWER_MODEL`, or `LOCAL_CODEX_REVIEWER_PROMPT` when a local
 machine needs a different Codex binary, model, or prompt.
+
+For an OpenAI-compatible HTTP backend, use the matching wrapper. It inlines
+`REVIEW.md`, the context bundle, and a bounded unified diff because the remote
+model cannot read the local filesystem:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
+export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
+export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+./scripts/development-workflow/local-openai-reviewer.sh \
+  <pr-number> <owner> <repo> \
+  --repo-root "$PWD" \
+  --timeout 900 \
+  --evidence-file /tmp/local-ai-reviewer-evidence.json
+```
 
 The command runs under `sh -c` with these environment variables:
 

@@ -21,9 +21,10 @@ Options:
                        match the pull request head SHA before review runs.
 
 Environment:
-  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults to the bundled
-                                    Codex preset at local-codex-review-command.sh
-                                    unless LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
+  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults from
+                                    LOCAL_AI_REVIEWER_BACKEND (codex or
+                                    openai_compat) unless
+                                    LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
                                     HEAD_BRANCH, REVIEWED_HEAD,
@@ -32,8 +33,10 @@ Environment:
                                     REVIEW_DOCTRINE_PATTERN_COUNT,
                                     REVIEW_DOCTRINE_VERSION, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
+  LOCAL_AI_REVIEWER_BACKEND         codex (default) or openai_compat. Used only
+                                    when LOCAL_AI_REVIEWER_COMMAND is unset.
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
-                                    Do not apply the bundled Codex preset default.
+                                    Do not apply a bundled preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
   LOCAL_AI_REVIEWER_EVIDENCE_FILE   Optional path for a JSON evidence artifact.
   LOCAL_AI_REVIEWER_GRAPH_STRATEGY  none|auto|code-review-graph|graphify.
@@ -42,6 +45,12 @@ Environment:
   LOCAL_CODEX_REVIEWER_PROMPT       Override the ordinary-pass Codex prompt only.
   LOCAL_CODEX_REVIEWER_STRICT_PROMPT
                                     Override the strict-pass Codex prompt only.
+  LOCAL_AI_REVIEWER_MODEL           Model id for the openai_compat preset
+                                    (example: deepseek-v4-pro).
+  LOCAL_AI_REVIEWER_API_BASE_URL   OpenAI-compatible base URL for openai_compat
+                                    (example: https://api.deepseek.com).
+  LOCAL_AI_REVIEWER_API_KEY         API key for openai_compat. Falls back to
+                                    DEEPSEEK_API_KEY or OPENAI_API_KEY.
 
 Strict contract checks (#1650 spec, #1655 plan):
   Two registry entries (spec and plan) each report STRICT_<entry>_STATE on every
@@ -66,11 +75,28 @@ resolve_local_ai_reviewer_command() {
     return 0
   fi
 
-  local default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+  local backend="${LOCAL_AI_REVIEWER_BACKEND:-codex}"
+  local default_command=""
+  local preset_label=""
+  case "$backend" in
+    openai_compat|openai-compatible|openai)
+      default_command="$SCRIPT_DIR/local-openai-review-command.sh"
+      preset_label="openai-compatible"
+      ;;
+    codex|'')
+      default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+      preset_label="Codex"
+      ;;
+    *)
+      echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or openai_compat)" >&2
+      return 0
+      ;;
+  esac
+
   if [ -f "$default_command" ]; then
     LOCAL_AI_REVIEWER_COMMAND="$default_command"
     export LOCAL_AI_REVIEWER_COMMAND
-    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled Codex preset: $default_command" >&2
+    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled ${preset_label} preset: $default_command" >&2
   fi
 }
 
