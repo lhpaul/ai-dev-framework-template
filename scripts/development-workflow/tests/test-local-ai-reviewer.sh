@@ -168,6 +168,14 @@ run_test "missing_command_reason" "REASON=missing_command" "$(line_for REASON)"
 run_test "missing_command_exit" "2" "$(exit_code)"
 
 reset_mocks
+LOCAL_AI_REVIEWER_BACKEND=not-a-backend
+export LOCAL_AI_REVIEWER_BACKEND
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "invalid_backend_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "invalid_backend_reason" "REASON=invalid_backend" "$(line_for REASON)"
+run_test "invalid_backend_exit" "2" "$(exit_code)"
+
+reset_mocks
 cat > "$MOCK_BIN/codex" <<'MOCK_CODEX'
 #!/usr/bin/env bash
 output_file=""

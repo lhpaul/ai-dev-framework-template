@@ -101,14 +101,14 @@ The HTTP preset's fail-closed setup checks are proven by
 (the unit tests plant the violation, assert the command fails, then restore
 the env so later assertions pass):
 
-| Check | Planted violation | Fail assertion | Restored pass |
+| Check | Planted violation | Fail assertion | Guard / test lines |
 | --- | --- | --- | --- |
-| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `openai_missing_base_branch_exits` (`local-openai-review-command.sh` `ERROR: BASE_BRANCH is not set`) | later tests export `BASE_BRANCH=develop` |
-| `git diff` failure | `MOCK_GIT_FAIL=1` | `openai_git_diff_failure_exits` | mock git exit 0 |
-| missing credentials | unset API key vars | `openai_missing_credentials` | `LOCAL_AI_REVIEWER_API_KEY=test-key` |
-| missing `REVIEW.md` | rename `REVIEW.md` | `openai_missing_review_md` | restore `REVIEW.md` |
-| missing model / base URL / context | unset the env var | `openai_missing_model`, `openai_missing_base_url`, `openai_missing_context_bundle` | restore env |
-| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `openai_http_401_exits`, `openai_http_500_exits` | `MOCK_HTTP_CODE` unset (200) |
+| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `openai_missing_base_branch_exits` | command L101; test L271 |
+| `git diff` failure | `MOCK_GIT_FAIL=1` | `openai_git_diff_failure_exits` | command L107; test L250 |
+| missing credentials | unset API key vars | `openai_missing_credentials` | command L66; test L184 |
+| missing `REVIEW.md` | rename `REVIEW.md` | `openai_missing_review_md` | command L74; test L223 |
+| missing model / base URL / context | unset the env var | `openai_missing_model`, `openai_missing_base_url`, `openai_missing_context_bundle` | command L58 / L62 / L70; tests L197 / L206 / L215 |
+| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `openai_http_401_exits`, `openai_http_500_exits` | command L179 / L183; tests L232 / L239 |
 
 This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
 unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture

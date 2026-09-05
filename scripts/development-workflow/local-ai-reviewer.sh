@@ -982,7 +982,7 @@ if [ "${LOCAL_AI_REVIEWER_DISABLED:-0}" = "1" ]; then
 fi
 
 if ! resolve_local_ai_reviewer_command; then
-  print_result escalate 0 0 0 missing_command missing_command
+  print_result escalate 0 0 0 invalid_backend invalid_backend
   exit 2
 fi
 
