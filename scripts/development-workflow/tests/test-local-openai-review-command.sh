@@ -188,6 +188,57 @@ unset LOCAL_AI_REVIEWER_API_KEY DEEPSEEK_API_KEY OPENAI_API_KEY LOCAL_AI_REVIEWE
 run_test "openai_missing_credentials" "yes" "$(grep -Eiq 'missing credentials' "$STDERR_FILE" && echo yes || echo no)"
 export LOCAL_AI_REVIEWER_API_KEY=test-key
 
+saved_model="$LOCAL_AI_REVIEWER_MODEL"
+unset LOCAL_AI_REVIEWER_MODEL
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_missing_model" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_MODEL is not set' "$STDERR_FILE" && echo yes || echo no)"
+export LOCAL_AI_REVIEWER_MODEL="$saved_model"
+
+saved_base_url="$LOCAL_AI_REVIEWER_API_BASE_URL"
+unset LOCAL_AI_REVIEWER_API_BASE_URL OPENAI_BASE_URL
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_missing_base_url" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_API_BASE_URL is not set' "$STDERR_FILE" && echo yes || echo no)"
+export LOCAL_AI_REVIEWER_API_BASE_URL="$saved_base_url"
+
+saved_context="$CONTEXT_BUNDLE_PATH"
+unset CONTEXT_BUNDLE_PATH
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_missing_context_bundle" "yes" "$(grep -q 'CONTEXT_BUNDLE_PATH is missing or unreadable' "$STDERR_FILE" && echo yes || echo no)"
+export CONTEXT_BUNDLE_PATH="$saved_context"
+
+mv "$WORK_DIR/REVIEW.md" "$WORK_DIR/REVIEW.md.bak"
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_missing_review_md" "yes" "$(grep -q 'REVIEW.md is missing or unreadable' "$STDERR_FILE" && echo yes || echo no)"
+mv "$WORK_DIR/REVIEW.md.bak" "$WORK_DIR/REVIEW.md"
+
+MOCK_HTTP_CODE=401
+export MOCK_HTTP_CODE
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_http_401_exits" "yes" "$(grep -q 'unauthorized (401)' "$STDERR_FILE" && echo yes || echo no)"
+MOCK_HTTP_CODE=500
+export MOCK_HTTP_CODE
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_http_500_exits" "yes" "$(grep -q 'openai-compatible reviewer HTTP 500' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_HTTP_CODE
+
 run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
 run_test "wrapper_help_mentions_model" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_MODEL' && echo yes || echo no)"
 run_test "wrapper_help_mentions_http_timeout" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_HTTP_TIMEOUT' && echo yes || echo no)"

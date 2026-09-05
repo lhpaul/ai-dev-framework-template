@@ -70,6 +70,10 @@ if [ -z "${CONTEXT_BUNDLE_PATH:-}" ] || [ ! -f "$CONTEXT_BUNDLE_PATH" ]; then
   echo "ERROR: CONTEXT_BUNDLE_PATH is missing or unreadable" >&2
   exit 1
 fi
+if [ ! -f "REVIEW.md" ]; then
+  echo "ERROR: REVIEW.md is missing or unreadable" >&2
+  exit 1
+fi
 
 if [ "$mode" = "strict" ]; then
   prompt="${LOCAL_AI_REVIEWER_STRICT_PROMPT:-}"
@@ -92,10 +96,7 @@ else
 fi
 
 bundle_json="$(cat "$CONTEXT_BUNDLE_PATH")"
-review_md=""
-if [ -f "REVIEW.md" ]; then
-  review_md="$(cat "REVIEW.md")"
-fi
+review_md="$(cat "REVIEW.md")"
 if [ -z "${BASE_BRANCH:-}" ]; then
   echo "ERROR: BASE_BRANCH is not set" >&2
   exit 1

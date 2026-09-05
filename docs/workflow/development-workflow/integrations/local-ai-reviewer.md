@@ -106,6 +106,9 @@ the env so later assertions pass):
 | missing `BASE_BRANCH` | unset `BASE_BRANCH` | `openai_missing_base_branch_exits` (`local-openai-review-command.sh` `ERROR: BASE_BRANCH is not set`) | later tests export `BASE_BRANCH=develop` |
 | `git diff` failure | `MOCK_GIT_FAIL=1` | `openai_git_diff_failure_exits` | mock git exit 0 |
 | missing credentials | unset API key vars | `openai_missing_credentials` | `LOCAL_AI_REVIEWER_API_KEY=test-key` |
+| missing `REVIEW.md` | rename `REVIEW.md` | `openai_missing_review_md` | restore `REVIEW.md` |
+| missing model / base URL / context | unset the env var | `openai_missing_model`, `openai_missing_base_url`, `openai_missing_context_bundle` | restore env |
+| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `openai_http_401_exits`, `openai_http_500_exits` | `MOCK_HTTP_CODE` unset (200) |
 
 This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
 unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture
