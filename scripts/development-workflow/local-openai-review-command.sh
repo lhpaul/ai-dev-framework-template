@@ -96,17 +96,18 @@ review_md=""
 if [ -f "REVIEW.md" ]; then
   review_md="$(cat "REVIEW.md")"
 fi
-diff_text=""
-if [ -n "${BASE_BRANCH:-}" ]; then
-  set +e
-  diff_text="$(git diff --find-renames --find-copies "origin/${BASE_BRANCH}...HEAD" 2>"$diff_err")"
-  diff_exit=$?
-  set -e
-  if [ "$diff_exit" -ne 0 ]; then
-    echo "ERROR: git diff origin/${BASE_BRANCH}...HEAD failed (exit ${diff_exit})" >&2
-    cat "$diff_err" >&2
-    exit 1
-  fi
+if [ -z "${BASE_BRANCH:-}" ]; then
+  echo "ERROR: BASE_BRANCH is not set" >&2
+  exit 1
+fi
+set +e
+diff_text="$(git diff --find-renames --find-copies "origin/${BASE_BRANCH}...HEAD" 2>"$diff_err")"
+diff_exit=$?
+set -e
+if [ "$diff_exit" -ne 0 ]; then
+  echo "ERROR: git diff origin/${BASE_BRANCH}...HEAD failed (exit ${diff_exit})" >&2
+  cat "$diff_err" >&2
+  exit 1
 fi
 if [ "${#diff_text}" -gt "$DIFF_MAX_BYTES" ]; then
   diff_text="${diff_text:0:$DIFF_MAX_BYTES}

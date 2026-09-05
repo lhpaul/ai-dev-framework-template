@@ -94,6 +94,10 @@ if [ "${MOCK_GIT_FAIL:-0}" = "1" ]; then
   echo "fatal: bad revision" >&2
   exit 128
 fi
+if [ -n "${MOCK_GIT_DIFF:-}" ]; then
+  printf '%s\n' "$MOCK_GIT_DIFF"
+  exit 0
+fi
 exit 0
 MOCK_GIT
 chmod +x "$MOCK_BIN/git"
@@ -196,6 +200,25 @@ export MOCK_GIT_FAIL
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
 run_test "openai_git_diff_failure_exits" "yes" "$(grep -q 'git diff origin/develop...HEAD failed' "$STDERR_FILE" && echo yes || echo no)"
 unset MOCK_GIT_FAIL
+
+MOCK_GIT_DIFF='diff --git a/foo b/foo
++openai-compat-diff-marker'
+export MOCK_GIT_DIFF
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "openai_inlines_bounded_diff" "yes" "$(grep -q 'openai-compat-diff-marker' "$REQUEST_FILE" && echo yes || echo no)"
+unset MOCK_GIT_DIFF
+
+saved_base_branch="$BASE_BRANCH"
+unset BASE_BRANCH
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "openai_missing_base_branch_exits" "yes" "$(grep -q 'BASE_BRANCH is not set' "$STDERR_FILE" && echo yes || echo no)"
+export BASE_BRANCH="$saved_base_branch"
 
 # Backend resolution through local-ai-reviewer.sh
 unset LOCAL_AI_REVIEWER_COMMAND
