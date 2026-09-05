@@ -21,9 +21,10 @@ Options:
                        match the pull request head SHA before review runs.
 
 Environment:
-  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults to the bundled
-                                    Codex preset at local-codex-review-command.sh
-                                    unless LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
+  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults from
+                                    LOCAL_AI_REVIEWER_BACKEND (codex or
+                                    openai_compat) unless
+                                    LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
                                     HEAD_BRANCH, REVIEWED_HEAD,
@@ -32,8 +33,10 @@ Environment:
                                     REVIEW_DOCTRINE_PATTERN_COUNT,
                                     REVIEW_DOCTRINE_VERSION, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
+  LOCAL_AI_REVIEWER_BACKEND         codex (default) or openai_compat. Used only
+                                    when LOCAL_AI_REVIEWER_COMMAND is unset.
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
-                                    Do not apply the bundled Codex preset default.
+                                    Do not apply a bundled preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
   LOCAL_AI_REVIEWER_EVIDENCE_FILE   Optional path for a JSON evidence artifact.
   LOCAL_AI_REVIEWER_GRAPH_STRATEGY  none|auto|code-review-graph|graphify.
@@ -42,6 +45,22 @@ Environment:
   LOCAL_CODEX_REVIEWER_PROMPT       Override the ordinary-pass Codex prompt only.
   LOCAL_CODEX_REVIEWER_STRICT_PROMPT
                                     Override the strict-pass Codex prompt only.
+  LOCAL_AI_REVIEWER_MODEL           Model id for the openai_compat preset
+                                    (example: deepseek-v4-pro).
+  LOCAL_AI_REVIEWER_API_BASE_URL   OpenAI-compatible base URL for openai_compat
+                                    (example: https://api.deepseek.com).
+  LOCAL_AI_REVIEWER_API_KEY         API key for openai_compat. Falls back to
+                                    DEEPSEEK_API_KEY or OPENAI_API_KEY.
+  LOCAL_AI_REVIEWER_API_KEY_COMMAND Optional command that prints the API key.
+  LOCAL_AI_REVIEWER_HTTP_TIMEOUT    curl --max-time for openai_compat. Defaults
+                                    to LOCAL_AI_REVIEWER_TIMEOUT minus 30s
+                                    (or 300-30 when unset) and is capped under
+                                    the companion --timeout.
+  LOCAL_AI_REVIEWER_JSON_OBJECT     1 (default) requests response_format
+                                    json_object from openai_compat.
+  LOCAL_AI_REVIEWER_DIFF_MAX_BYTES Bound for the inlined unified diff
+                                    (default 200000).
+  LOCAL_AI_REVIEWER_CURL_BIN        curl binary override (tests).
 
 Strict contract checks (#1650 spec, #1655 plan):
   Two registry entries (spec and plan) each report STRICT_<entry>_STATE on every
@@ -66,11 +85,28 @@ resolve_local_ai_reviewer_command() {
     return 0
   fi
 
-  local default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+  local backend="${LOCAL_AI_REVIEWER_BACKEND:-codex}"
+  local default_command=""
+  local preset_label=""
+  case "$backend" in
+    openai_compat)
+      default_command="$SCRIPT_DIR/local-openai-review-command.sh"
+      preset_label="openai-compatible"
+      ;;
+    codex)
+      default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+      preset_label="Codex"
+      ;;
+    *)
+      echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or openai_compat)" >&2
+      return 1
+      ;;
+  esac
+
   if [ -f "$default_command" ]; then
     LOCAL_AI_REVIEWER_COMMAND="$default_command"
     export LOCAL_AI_REVIEWER_COMMAND
-    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled Codex preset: $default_command" >&2
+    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled ${preset_label} preset: $default_command" >&2
   fi
 }
 
@@ -581,8 +617,9 @@ strict_dispatch_pass() {
   REVIEW_STAGE_SOURCE="$review_stage_source" \
   REVIEW_CHECKLISTS="$review_checklists_csv" \
   REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
-  REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
-  REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+LOCAL_AI_REVIEWER_TIMEOUT="$remaining" \
     run_with_timeout "$remaining" "$strict_stdout_file_local" "$strict_stderr_file_local" \
       sh -c "$LOCAL_AI_REVIEWER_COMMAND"
   strict_exit=$?
@@ -944,7 +981,10 @@ if [ "${LOCAL_AI_REVIEWER_DISABLED:-0}" = "1" ]; then
   exit 3
 fi
 
-resolve_local_ai_reviewer_command
+if ! resolve_local_ai_reviewer_command; then
+  print_result escalate 0 0 0 invalid_backend invalid_backend
+  exit 2
+fi
 
 if [ -z "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
   echo "ERROR: LOCAL_AI_REVIEWER_COMMAND is not configured" >&2
@@ -1171,6 +1211,7 @@ REVIEW_CHECKLISTS="$review_checklists_csv" \
 REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
 REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
 REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+LOCAL_AI_REVIEWER_TIMEOUT="$TIMEOUT" \
   run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
 command_exit=$?
 set -e
@@ -1203,6 +1244,10 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+credentials|c
 fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: local AI reviewer produced no machine output" >&2
+  if [ -n "$command_stderr" ]; then
+    echo "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" >&2
+  fi
   print_result escalate 0 0 0 malformed_output malformed_output
   exit 2
 fi

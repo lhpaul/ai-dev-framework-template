@@ -111,7 +111,7 @@ reset_mocks() {
   unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_PR_HEAD_BRANCH
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
   unset LOCAL_AI_REVIEWER_EVIDENCE_FILE LOCAL_AI_REVIEWER_GRAPH_STRATEGY
-  unset LOCAL_AI_REVIEWER_DISABLE_DEFAULT
+  unset LOCAL_AI_REVIEWER_DISABLE_DEFAULT LOCAL_AI_REVIEWER_BACKEND
   unset MOCK_STRICT_STDOUT MOCK_ORDINARY_STDOUT MOCK_STRICT_EXIT MOCK_ORDINARY_SLEEP
   unset MOCK_RECORD_FILE MOCK_ORDINARY_EXIT
 }
@@ -166,6 +166,14 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "missing_command_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "missing_command_reason" "REASON=missing_command" "$(line_for REASON)"
 run_test "missing_command_exit" "2" "$(exit_code)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_BACKEND=not-a-backend
+export LOCAL_AI_REVIEWER_BACKEND
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "invalid_backend_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "invalid_backend_reason" "REASON=invalid_backend" "$(line_for REASON)"
+run_test "invalid_backend_exit" "2" "$(exit_code)"
 
 reset_mocks
 cat > "$MOCK_BIN/codex" <<'MOCK_CODEX'

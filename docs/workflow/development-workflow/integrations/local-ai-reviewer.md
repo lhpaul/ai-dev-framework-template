@@ -32,6 +32,8 @@ When `LOCAL_AI_REVIEWER_COMMAND` is unset, `local-ai-reviewer.sh` defaults to
 the bundled Codex preset at
 `scripts/development-workflow/local-codex-review-command.sh` (requires the
 `codex` CLI on `PATH` and a working Codex login). Set
+`LOCAL_AI_REVIEWER_BACKEND=openai_compat` to use the HTTP preset at
+`scripts/development-workflow/local-openai-review-command.sh` instead. Set
 `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` to restore the old missing-command
 behavior for tests or minimal environments.
 
@@ -42,7 +44,13 @@ export LOCAL_CODEX_REVIEWER_BIN='codex'
 export LOCAL_CODEX_REVIEWER_MODEL='gpt-5.4'   # optional; codex uses its own default when omitted
 export LOCAL_AI_REVIEWER_TIMEOUT='900'
 
-# Custom command instead of the bundled Codex preset:
+# OpenAI-compatible HTTP backend (DeepSeek, Qwen, GLM, or any /chat/completions API):
+export LOCAL_AI_REVIEWER_BACKEND='openai_compat'
+export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
+export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
+export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+
+# Custom command instead of a bundled preset:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
 
@@ -70,6 +78,41 @@ The wrapper sets `LOCAL_AI_REVIEWER_COMMAND` to
 the companion script. Override `LOCAL_CODEX_REVIEWER_BIN`,
 `LOCAL_CODEX_REVIEWER_MODEL`, or `LOCAL_CODEX_REVIEWER_PROMPT` when a local
 machine needs a different Codex binary, model, or prompt.
+
+For an OpenAI-compatible HTTP backend, use the matching wrapper. It inlines
+`REVIEW.md`, the context bundle, and a bounded unified diff because the remote
+model cannot read the local filesystem:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
+export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
+export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+./scripts/development-workflow/local-openai-reviewer.sh \
+  <pr-number> <owner> <repo> \
+  --repo-root "$PWD" \
+  --timeout 900 \
+  --evidence-file /tmp/local-ai-reviewer-evidence.json
+```
+
+The HTTP preset's fail-closed setup checks are proven by
+`scripts/development-workflow/tests/test-local-openai-review-command.sh`
+(the unit tests plant the violation, assert the command fails, then restore
+the env so later assertions pass):
+
+| Check | Planted violation | Fail assertion | Guard / test lines |
+| --- | --- | --- | --- |
+| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `openai_missing_base_branch_exits` | command L101; test L271 |
+| `git diff` failure | `MOCK_GIT_FAIL=1` | `openai_git_diff_failure_exits` | command L107; test L250 |
+| missing credentials | unset API key vars | `openai_missing_credentials` | command L66; test L184 |
+| missing `REVIEW.md` | rename `REVIEW.md` | `openai_missing_review_md` | command L74; test L223 |
+| missing model / base URL / context | unset the env var | `openai_missing_model`, `openai_missing_base_url`, `openai_missing_context_bundle` | command L58 / L62 / L70; tests L197 / L206 / L215 |
+| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `openai_http_401_exits`, `openai_http_500_exits` | command L179 / L183; tests L232 / L239 |
+
+This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
+unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture
+contract is not applicable (this template still uses the placeholder E2E job).
 
 The command runs under `sh -c` with these environment variables:
 
