@@ -96,6 +96,21 @@ export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
   --evidence-file /tmp/local-ai-reviewer-evidence.json
 ```
 
+The HTTP preset's fail-closed setup checks are proven by
+`scripts/development-workflow/tests/test-local-openai-review-command.sh`
+(the unit tests plant the violation, assert the command fails, then restore
+the env so later assertions pass):
+
+| Check | Planted violation | Fail assertion | Restored pass |
+| --- | --- | --- | --- |
+| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `openai_missing_base_branch_exits` (`local-openai-review-command.sh` `ERROR: BASE_BRANCH is not set`) | later tests export `BASE_BRANCH=develop` |
+| `git diff` failure | `MOCK_GIT_FAIL=1` | `openai_git_diff_failure_exits` | mock git exit 0 |
+| missing credentials | unset API key vars | `openai_missing_credentials` | `LOCAL_AI_REVIEWER_API_KEY=test-key` |
+
+This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
+unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture
+contract is not applicable (this template still uses the placeholder E2E job).
+
 The command runs under `sh -c` with these environment variables:
 
 - `CONTEXT_BUNDLE_PATH`
