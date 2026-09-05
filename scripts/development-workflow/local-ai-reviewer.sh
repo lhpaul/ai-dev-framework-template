@@ -51,6 +51,16 @@ Environment:
                                     (example: https://api.deepseek.com).
   LOCAL_AI_REVIEWER_API_KEY         API key for openai_compat. Falls back to
                                     DEEPSEEK_API_KEY or OPENAI_API_KEY.
+  LOCAL_AI_REVIEWER_API_KEY_COMMAND Optional command that prints the API key.
+  LOCAL_AI_REVIEWER_HTTP_TIMEOUT    curl --max-time for openai_compat. Defaults
+                                    to LOCAL_AI_REVIEWER_TIMEOUT minus 30s
+                                    (or 300-30 when unset) and is capped under
+                                    the companion --timeout.
+  LOCAL_AI_REVIEWER_JSON_OBJECT     1 (default) requests response_format
+                                    json_object from openai_compat.
+  LOCAL_AI_REVIEWER_DIFF_MAX_BYTES Bound for the inlined unified diff
+                                    (default 200000).
+  LOCAL_AI_REVIEWER_CURL_BIN        curl binary override (tests).
 
 Strict contract checks (#1650 spec, #1655 plan):
   Two registry entries (spec and plan) each report STRICT_<entry>_STATE on every
@@ -607,8 +617,9 @@ strict_dispatch_pass() {
   REVIEW_STAGE_SOURCE="$review_stage_source" \
   REVIEW_CHECKLISTS="$review_checklists_csv" \
   REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
-  REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
-  REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+LOCAL_AI_REVIEWER_TIMEOUT="$remaining" \
     run_with_timeout "$remaining" "$strict_stdout_file_local" "$strict_stderr_file_local" \
       sh -c "$LOCAL_AI_REVIEWER_COMMAND"
   strict_exit=$?
@@ -1200,6 +1211,7 @@ REVIEW_CHECKLISTS="$review_checklists_csv" \
 REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
 REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
 REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+LOCAL_AI_REVIEWER_TIMEOUT="$TIMEOUT" \
   run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
 command_exit=$?
 set -e

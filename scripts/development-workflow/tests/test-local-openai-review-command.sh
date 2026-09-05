@@ -118,7 +118,17 @@ run_test "openai_inlines_context_bundle" "yes" "$(grep -q 'local_ai_reviewer_con
 run_test "openai_inlines_review_md" "yes" "$(grep -q 'Review Contract' "$REQUEST_FILE" && echo yes || echo no)"
 run_test "openai_requests_json_object" "yes" "$(jq -e '.response_format.type == "json_object"' "$REQUEST_FILE" >/dev/null && echo yes || echo no)"
 run_test "openai_model_id" "deepseek-v4-pro" "$(jq -r '.model' "$REQUEST_FILE")"
-run_test "openai_http_timeout_default" "840" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
+run_test "openai_http_timeout_default" "270" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
+
+LOCAL_AI_REVIEWER_HTTP_TIMEOUT=840
+LOCAL_AI_REVIEWER_TIMEOUT=300
+export LOCAL_AI_REVIEWER_HTTP_TIMEOUT LOCAL_AI_REVIEWER_TIMEOUT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "openai_http_timeout_capped_to_companion" "300" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
+unset LOCAL_AI_REVIEWER_HTTP_TIMEOUT LOCAL_AI_REVIEWER_TIMEOUT
 
 python3 - "$CONTEXT_BUNDLE_PATH" <<'PY'
 import json, pathlib, sys
@@ -176,6 +186,7 @@ export LOCAL_AI_REVIEWER_API_KEY=test-key
 
 run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
 run_test "wrapper_help_mentions_model" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_MODEL' && echo yes || echo no)"
+run_test "wrapper_help_mentions_http_timeout" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_HTTP_TIMEOUT' && echo yes || echo no)"
 
 MOCK_GIT_FAIL=1
 export MOCK_GIT_FAIL

@@ -22,9 +22,26 @@ model="${LOCAL_AI_REVIEWER_MODEL:-}"
 base_url="${LOCAL_AI_REVIEWER_API_BASE_URL:-${OPENAI_BASE_URL:-}}"
 api_key="${LOCAL_AI_REVIEWER_API_KEY:-}"
 curl_bin="${LOCAL_AI_REVIEWER_CURL_BIN:-curl}"
-# Keep curl under the companion timeout. DeepSeek often needs 3–4 minutes;
-# a 240s default races typical reviews and exits with empty stdout.
-http_timeout="${LOCAL_AI_REVIEWER_HTTP_TIMEOUT:-${LOCAL_AI_REVIEWER_TIMEOUT:-840}}"
+# Keep curl under the companion timeout. DeepSeek often needs 3–4 minutes,
+# so callers should raise LOCAL_AI_REVIEWER_TIMEOUT (and optionally
+# LOCAL_AI_REVIEWER_HTTP_TIMEOUT) rather than relying on the 300s default.
+companion_timeout="${LOCAL_AI_REVIEWER_TIMEOUT:-300}"
+case "$companion_timeout" in
+  ''|*[!0-9]*) companion_timeout=300 ;;
+esac
+http_timeout="${LOCAL_AI_REVIEWER_HTTP_TIMEOUT:-}"
+case "$http_timeout" in
+  ''|*[!0-9]*)
+    if [ "$companion_timeout" -gt 30 ]; then
+      http_timeout=$((companion_timeout - 30))
+    else
+      http_timeout="$companion_timeout"
+    fi
+    ;;
+esac
+if [ "$http_timeout" -gt "$companion_timeout" ]; then
+  http_timeout="$companion_timeout"
+fi
 json_object="${LOCAL_AI_REVIEWER_JSON_OBJECT:-1}"
 
 if [ -z "$api_key" ] && [ -n "${LOCAL_AI_REVIEWER_API_KEY_COMMAND:-}" ]; then

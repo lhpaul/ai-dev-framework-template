@@ -20,6 +20,12 @@ Environment:
   LOCAL_AI_REVIEWER_API_KEY          API key. Falls back to DEEPSEEK_API_KEY or
                                      OPENAI_API_KEY.
   LOCAL_AI_REVIEWER_API_KEY_COMMAND  Optional command that prints the API key.
+  LOCAL_AI_REVIEWER_HTTP_TIMEOUT    Optional curl --max-time. Defaults to
+                                     LOCAL_AI_REVIEWER_TIMEOUT minus 30s and
+                                     is capped under that companion timeout.
+  LOCAL_AI_REVIEWER_JSON_OBJECT     1 (default) requests json_object responses.
+  LOCAL_AI_REVIEWER_DIFF_MAX_BYTES Bound for the inlined unified diff.
+  LOCAL_AI_REVIEWER_CURL_BIN        curl binary override (tests).
   LOCAL_AI_REVIEWER_PROMPT           Optional ordinary-pass prompt override.
   LOCAL_AI_REVIEWER_STRICT_PROMPT    Optional strict-pass prompt override.
 EOF
