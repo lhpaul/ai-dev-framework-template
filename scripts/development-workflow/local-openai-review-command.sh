@@ -22,7 +22,9 @@ model="${LOCAL_AI_REVIEWER_MODEL:-}"
 base_url="${LOCAL_AI_REVIEWER_API_BASE_URL:-${OPENAI_BASE_URL:-}}"
 api_key="${LOCAL_AI_REVIEWER_API_KEY:-}"
 curl_bin="${LOCAL_AI_REVIEWER_CURL_BIN:-curl}"
-http_timeout="${LOCAL_AI_REVIEWER_HTTP_TIMEOUT:-240}"
+# Keep curl under the companion timeout. DeepSeek often needs 3–4 minutes;
+# a 240s default races typical reviews and exits with empty stdout.
+http_timeout="${LOCAL_AI_REVIEWER_HTTP_TIMEOUT:-${LOCAL_AI_REVIEWER_TIMEOUT:-840}}"
 json_object="${LOCAL_AI_REVIEWER_JSON_OBJECT:-1}"
 
 if [ -z "$api_key" ] && [ -n "${LOCAL_AI_REVIEWER_API_KEY_COMMAND:-}" ]; then

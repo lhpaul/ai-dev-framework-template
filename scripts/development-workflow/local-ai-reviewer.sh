@@ -1232,6 +1232,10 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+credentials|c
 fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: local AI reviewer produced no machine output" >&2
+  if [ -n "$command_stderr" ]; then
+    echo "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" >&2
+  fi
   print_result escalate 0 0 0 malformed_output malformed_output
   exit 2
 fi

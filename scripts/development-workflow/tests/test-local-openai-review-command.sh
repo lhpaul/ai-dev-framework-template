@@ -16,6 +16,7 @@ MOCK_BIN="$(mktemp -d)"
 WORK_DIR="$(mktemp -d)"
 REQUEST_FILE="$(mktemp)"
 URL_FILE="$(mktemp)"
+TIMEOUT_FILE="$(mktemp)"
 OUTPUT_FILE="$(mktemp)"
 STDERR_FILE="$(mktemp)"
 CONTEXT_BUNDLE_PATH="$WORK_DIR/context.json"
@@ -23,7 +24,7 @@ CONTEXT_BUNDLE_PATH="$WORK_DIR/context.json"
 cleanup() {
   local status=$?
   rm -rf "$MOCK_BIN" "$WORK_DIR"
-  rm -f "$REQUEST_FILE" "$URL_FILE" "$OUTPUT_FILE" "$STDERR_FILE"
+  rm -f "$REQUEST_FILE" "$URL_FILE" "$TIMEOUT_FILE" "$OUTPUT_FILE" "$STDERR_FILE"
   exit "$status"
 }
 trap cleanup EXIT
@@ -66,6 +67,8 @@ for arg in "$@"; do
     write_fmt="$arg"
   elif [ "$previous" = "--data-binary" ]; then
     data_file="${arg#@}"
+  elif [ "$previous" = "--max-time" ]; then
+    printf '%s\n' "$arg" > "${TIMEOUT_FILE:?}"
   fi
   previous="$arg"
   case "$arg" in
@@ -95,12 +98,13 @@ exit 0
 MOCK_GIT
 chmod +x "$MOCK_BIN/git"
 
-export CONTEXT_BUNDLE_PATH BASE_BRANCH=develop REVIEWED_HEAD=abc123 REQUEST_FILE URL_FILE
+export CONTEXT_BUNDLE_PATH BASE_BRANCH=develop REVIEWED_HEAD=abc123 REQUEST_FILE URL_FILE TIMEOUT_FILE
 export LOCAL_AI_REVIEWER_MODEL=deepseek-v4-pro
 export LOCAL_AI_REVIEWER_API_BASE_URL=https://api.deepseek.com
 export LOCAL_AI_REVIEWER_API_KEY=test-key
 export LOCAL_AI_REVIEWER_CURL_BIN="$MOCK_BIN/curl"
 export LOCAL_AI_REVIEWER_JSON_OBJECT=1
+unset LOCAL_AI_REVIEWER_HTTP_TIMEOUT LOCAL_AI_REVIEWER_TIMEOUT
 
 (
   cd "$WORK_DIR"
@@ -114,6 +118,7 @@ run_test "openai_inlines_context_bundle" "yes" "$(grep -q 'local_ai_reviewer_con
 run_test "openai_inlines_review_md" "yes" "$(grep -q 'Review Contract' "$REQUEST_FILE" && echo yes || echo no)"
 run_test "openai_requests_json_object" "yes" "$(jq -e '.response_format.type == "json_object"' "$REQUEST_FILE" >/dev/null && echo yes || echo no)"
 run_test "openai_model_id" "deepseek-v4-pro" "$(jq -r '.model' "$REQUEST_FILE")"
+run_test "openai_http_timeout_default" "840" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
 
 python3 - "$CONTEXT_BUNDLE_PATH" <<'PY'
 import json, pathlib, sys
