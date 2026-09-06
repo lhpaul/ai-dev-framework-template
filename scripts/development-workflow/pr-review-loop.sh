@@ -250,15 +250,44 @@ CODERABBIT_SKIP_BANNER_RE='skip review by coderabbit|> *#{1,6} *review skipped|a
 # Note the one residual aliasing case: invoking the same run once as
 # `--repo owner/name` and once as `--product-repo name` yields two different
 # keys when the context resolver is unavailable to normalize the selector.
-# That is a strictly narrower collision surface than the PR-number-only key it
-# replaces, and both forms are stable within themselves.
+# That is an aliasing case (one repository, two keys), not a collision case
+# (two repositories, one key) — it can only ever weaken mutual exclusion
+# between two spellings of the same run, never let one repository block
+# another. Both forms are stable within themselves.
 # ---------------------------------------------------------------------------
 
-# _lock_key_component <value> — reduce a value to a filesystem-safe lock-name
-# component. Everything outside [A-Za-z0-9._-] (the '/' in an owner/repo slug
-# included) becomes '-'.
+# _lock_digest — short digest of stdin. Used to make the lock key injective;
+# see _lock_key_component. shasum/sha256sum are present on every platform this
+# workflow targets; cksum is a last-resort fallback so a missing hasher degrades
+# the collision margin rather than breaking the run.
+_lock_digest() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -c1-8
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -c1-8
+  else
+    cksum | LC_ALL=C tr -cd '0-9' | cut -c1-8
+  fi
+}
+
+# _lock_key_component <value> — render a value as a filesystem-safe lock-name
+# component: a readable label plus a short digest of the ORIGINAL value.
+#
+# The digest is not decoration. Sanitizing alone is lossy — everything outside
+# [A-Za-z0-9._-] folds to '-', the '/' of an owner/repo slug included — so
+# `acme/widgets-core` and `acme-widgets/core` both render `acme-widgets-core`
+# and would share one lock. That is the same defect this repository-scoped key
+# exists to fix, merely narrowed from "every repository at PR #N" to "slugs
+# that differ only in where the slash falls". The digest is taken before
+# sanitizing, so distinct inputs cannot share a key however they fold.
+#
+# The label is kept (and truncated) so `ls /tmp` still says which repository a
+# lock belongs to; correctness rests on the digest, readability on the label.
 _lock_key_component() {
-  printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-'
+  local raw="$1" label digest
+  label="$(printf '%s' "$raw" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-' | cut -c1-64)"
+  digest="$(printf '%s' "$raw" | _lock_digest)"
+  printf '%s-%s' "$label" "$digest"
 }
 
 # _resolve_lock_repo_key <repo-selector> <repo-root>
@@ -413,9 +442,13 @@ if [ "$_HARNESS_MODE_EFFECTIVE" -ne 1 ]; then
 # component is required.
 #
 # Layout:
-#   /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir/     — lock dir (atomic creation)
-#   /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir/pid  — PID of the owner process
-#   /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir/cmd  — basename of script ($0) for verification
+#   /tmp/pr-review-loop-<repo-key>-<pr>.lockdir/     — lock dir (atomic creation)
+#   /tmp/pr-review-loop-<repo-key>-<pr>.lockdir/pid  — PID of the owner process
+#   /tmp/pr-review-loop-<repo-key>-<pr>.lockdir/cmd  — basename of script ($0) for verification
+#
+# <repo-key> is `<owner>-<repo>-<digest>` (see _lock_key_component): a readable
+# label for `ls /tmp`, plus a digest that keeps distinct repositories on
+# distinct keys even where the label folds them together.
 _PR_ARG=""
 _REPO_SELECTOR_ARG=""
 _REPO_ROOT_ARG=""
@@ -571,8 +604,11 @@ Subcommands:
       ./scripts/development-workflow/pr-review-loop.sh unlock 123
       ./scripts/development-workflow/pr-review-loop.sh unlock 123 --repo acme/widgets
 
-    The lock directory path is /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir.
-    You can also remove it manually with: rm -rf <that path>
+    The lock directory path is /tmp/pr-review-loop-<repo-key>-<pr>.lockdir,
+    where <repo-key> is derived from the target repository. Do not build the
+    path by hand — a lock_contention report prints LOCK_DIR verbatim, and
+    `unlock` prints the path it resolved. You can remove it manually with:
+    rm -rf <that path>
 
 --post-final-summary:
   Compatibility no-op. The script now posts or updates the

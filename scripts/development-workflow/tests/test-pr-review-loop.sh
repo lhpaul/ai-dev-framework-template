@@ -12917,14 +12917,22 @@ unset _codex_placeholder_newline_separated_overflow_not_approved_mock_dir _codex
 
 
 # The single-instance lock is keyed by target repository AND PR number, so the
-# lock directory name carries a sanitized owner-repo component. These tests pass
-# an explicit --repo so the expected path is deterministic regardless of the
-# checkout's origin remote.
+# lock directory name carries a repository component. These tests pass an
+# explicit --repo so the key does not depend on the checkout's origin remote,
+# and ask the script itself for the resulting path rather than reconstructing
+# the naming scheme here — a test that hard-codes the scheme stops testing the
+# script and starts testing its own copy of it.
 _unlock_repo="lock-owner/lock-repo"
-_unlock_repo_key="lock-owner-lock-repo"
+
+# _lock_dir_for_repo <pr> <repo-slug> — the lock path the script resolves for
+# that pair, read out of `unlock`'s own report.
+_lock_dir_for_repo() {
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$1" --repo "$2" \
+    | sed -n 's/.*(\(\/tmp\/pr-review-loop-[^)]*\.lockdir\)).*/\1/p'
+}
 
 _unlock_pr="80213$$"
-_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_repo_key}-${_unlock_pr}.lockdir"
+_unlock_lock_dir="$(_lock_dir_for_repo "$_unlock_pr" "$_unlock_repo")"
 rm -rf "$_unlock_lock_dir"
 mkdir -p "$_unlock_lock_dir/pid"
 printf '%s\n' "pr-review-loop.sh" > "$_unlock_lock_dir/cmd"
@@ -12941,7 +12949,7 @@ rm -rf "$_unlock_lock_dir"
 unset _unlock_output _unlock_exit _unlock_error_seen
 
 _unlock_pr="80313$$"
-_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_repo_key}-${_unlock_pr}.lockdir"
+_unlock_lock_dir="$(_lock_dir_for_repo "$_unlock_pr" "$_unlock_repo")"
 rm -rf "$_unlock_lock_dir"
 mkdir -p "$_unlock_lock_dir/cmd"
 printf '%s\n' "999999" > "$_unlock_lock_dir/pid"
@@ -12966,9 +12974,13 @@ unset _unlock_pr _unlock_lock_dir _unlock_output _unlock_exit _unlock_error_seen
 _lockkey_pr="80413$$"
 _lockkey_repo_a="lock-a-owner/lock-a-repo"
 _lockkey_repo_b="lock-b-owner/lock-b-repo"
-_lockkey_dir_a="/tmp/pr-review-loop-lock-a-owner-lock-a-repo-${_lockkey_pr}.lockdir"
-_lockkey_dir_b="/tmp/pr-review-loop-lock-b-owner-lock-b-repo-${_lockkey_pr}.lockdir"
+_lockkey_dir_a="$(_lock_dir_for_repo "$_lockkey_pr" "$_lockkey_repo_a")"
+_lockkey_dir_b="$(_lock_dir_for_repo "$_lockkey_pr" "$_lockkey_repo_b")"
 rm -rf "$_lockkey_dir_a" "$_lockkey_dir_b"
+run_test "lock_dir_resolved_for_repo_a" "yes" \
+  "$(case "$_lockkey_dir_a" in /tmp/pr-review-loop-*.lockdir) printf yes ;; *) printf no ;; esac)"
+run_test "lock_dirs_differ_between_repos" "yes" \
+  "$([ "$_lockkey_dir_a" != "$_lockkey_dir_b" ] && printf 'yes' || printf 'no')"
 
 # The non-contending case runs past the guard into the script proper, which then
 # tries to resolve the PR. Stub gh so the assertion stays offline and fast: what
@@ -13025,10 +13037,26 @@ run_test "lock_other_repo_run_leaves_live_lock_intact" "yes" \
 kill "$_lockkey_live_pid" 2>/dev/null || true
 wait "$_lockkey_live_pid" 2>/dev/null || true
 rm -rf "$_lockkey_dir_a" "$_lockkey_dir_b" "$_lockkey_mock_dir"
+
+# Sanitizing the slug is lossy on its own: '/' folds to '-', so
+# `acme/widgets-core` and `acme-widgets/core` render the same label. Two
+# distinct repositories sharing one lock is the very defect the repository
+# component exists to remove, so the key must stay injective across that fold.
+_lockfold_pr="80513$$"
+_lockfold_dir_a="$(_lock_dir_for_repo "$_lockfold_pr" "acme/widgets-core")"
+_lockfold_dir_b="$(_lock_dir_for_repo "$_lockfold_pr" "acme-widgets/core")"
+run_test "lock_key_survives_slash_folding" "yes" \
+  "$([ "$_lockfold_dir_a" != "$_lockfold_dir_b" ] && printf 'yes' || printf 'no')"
+# The same slug must still resolve to the same lock on every invocation, or the
+# guard stops excluding anything at all.
+run_test "lock_key_is_stable_for_one_repo" "yes" \
+  "$([ "$_lockfold_dir_a" = "$(_lock_dir_for_repo "$_lockfold_pr" "acme/widgets-core")" ] && printf 'yes' || printf 'no')"
+unset _lockfold_pr _lockfold_dir_a _lockfold_dir_b
+
 unset _lockkey_mock_dir _lockkey_pr _lockkey_repo_a _lockkey_repo_b _lockkey_dir_a _lockkey_dir_b \
   _lockkey_live_pid _lockkey_same_exit _lockkey_same_output _lockkey_other_exit \
   _lockkey_other_output _lockkey_other_contended _lockkey_hint_seen \
-  _unlock_repo _unlock_repo_key
+  _unlock_repo
 
 _codex_overrides='
   cd_workflow_repo_root() { :; }
