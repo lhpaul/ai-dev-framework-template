@@ -100,12 +100,16 @@ Recommended model tier: `balanced`
     does not substitute here. Never end a turn while something this run
     started is still in flight.
 23. **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already
-    running**: it takes a per-PR single-instance lock; a second concurrent
-    invocation exits 75 with `REASON=lock_contention` and reports nothing
-    about the PR's actual review state. If re-entering this item after a
-    backgrounded or interrupted run, do not start a new one — poll for the
-    earlier process to finish (or confirm it is genuinely gone), then read
-    the outcome from PR state directly (`gh pr view`, the reviewer-loop
-    summary comment, GraphQL review threads) instead of launching a duplicate
-    run. Use `pr-review-loop.sh unlock <pr-number>` only once the recorded
-    lock PID is confirmed no longer alive.
+    running**: it takes a single-instance lock keyed by target repository and
+    PR number; a second concurrent invocation exits 75 with
+    `REASON=lock_contention` and reports nothing about the PR's actual review
+    state. If re-entering this item after a backgrounded or interrupted run,
+    do not start a new one — poll for the earlier process to finish (or
+    confirm it is genuinely gone), then read the outcome from PR state
+    directly (`gh pr view`, the reviewer-loop summary comment, GraphQL review
+    threads) instead of launching a duplicate run. Use
+    `pr-review-loop.sh unlock <pr-number>` only once the recorded lock PID is
+    confirmed no longer alive, passing the same
+    `--repo`/`--product-repo`/`--repo-root` options the blocked run used — the
+    contention message prints the exact recovery command and a
+    `LOCK_REPO_KEY` naming the repository the lock belongs to.

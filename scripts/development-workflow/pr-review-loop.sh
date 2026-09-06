@@ -222,18 +222,151 @@ _check_execution_budget() {
 # and no backslash escapes that differ between the two.
 CODERABBIT_SKIP_BANNER_RE='skip review by coderabbit|> *#{1,6} *review skipped|auto reviews are disabled'
 
+# ---------------------------------------------------------------------------
+# Lock key resolution (repository-scoped single-instance lock)
+#
+# The lock must be keyed by (target repository, PR number), never by PR number
+# alone. PR numbers are per-repository counters, so any two checkouts on one
+# machine reach the same low numbers almost immediately: a live loop for
+# other-org/other-repo PR #3 used to hold /tmp/pr-review-loop-3.lockdir and
+# make an unrelated this-org/this-repo PR #3 exit 75 with
+# REASON=lock_contention. Nothing was corrupted — the foreign lock was
+# correctly seen as live rather than stale — but the run was blocked by a PR it
+# has nothing to do with, and the recovery hint it printed
+# (`pr-review-loop.sh unlock <pr>`) would have deleted the *other*
+# repository's in-flight lock.
+#
+# Resolution order, cheapest and most explicit first. Every step is local (no
+# network) because this runs before anything else in the script:
+#   1. an explicit --repo/--product-repo selector: used directly when it is
+#      already an owner/repo slug, otherwise resolved through the repository
+#      context resolver (product-repo mode);
+#   2. WORKFLOW_TARGET_GITHUB_REPO from the environment;
+#   3. the origin remote of --repo-root (or the working directory).
+# When none of those resolve, the key degrades to "unknown-repo" — which
+# preserves the historical PR-number-only behavior rather than failing a run
+# over a lock name.
+#
+# Note the one residual aliasing case: invoking the same run once as
+# `--repo owner/name` and once as `--product-repo name` yields two different
+# keys when the context resolver is unavailable to normalize the selector.
+# That is a strictly narrower collision surface than the PR-number-only key it
+# replaces, and both forms are stable within themselves.
+# ---------------------------------------------------------------------------
+
+# _lock_key_component <value> — reduce a value to a filesystem-safe lock-name
+# component. Everything outside [A-Za-z0-9._-] (the '/' in an owner/repo slug
+# included) becomes '-'.
+_lock_key_component() {
+  printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-'
+}
+
+# _resolve_lock_repo_key <repo-selector> <repo-root>
+_resolve_lock_repo_key() {
+  local selector="${1:-}"
+  local root="${2:-}"
+  local slug=""
+  local context=""
+  local git_url=""
+
+  if [ -n "$selector" ]; then
+    if workflow_is_valid_github_repo_slug "$selector"; then
+      slug="$selector"
+    else
+      context="$(workflow_repository_context "$selector" "${root:-$(workflow_repo_root)}" 2>/dev/null || true)"
+      if [ -n "$context" ]; then
+        slug="$(workflow_github_repo_from_context "$context" 2>/dev/null || true)"
+      fi
+      # A selector that names a product repo we cannot resolve here is still a
+      # stable discriminator on its own — better than folding it into the
+      # shared "unknown-repo" bucket.
+      [ -n "$slug" ] || slug="selector-$selector"
+    fi
+  elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    slug="$WORKFLOW_TARGET_GITHUB_REPO"
+  else
+    git_url="$(git -C "${root:-.}" remote get-url origin 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - no origin remote is an expected case; the key falls back to unknown-repo rather than failing the run over a lock name
+    if [ -n "$git_url" ]; then
+      slug="$(workflow_github_repo_from_git_url "$git_url" 2>/dev/null || true)"
+    fi
+  fi
+
+  _lock_key_component "${slug:-unknown-repo}"
+  printf '\n'
+}
+
+# _lock_dir_for <repo-key> <pr-number>
+_lock_dir_for() {
+  printf '/tmp/pr-review-loop-%s-%s.lockdir\n' "$1" "${2:-unknown}"
+}
+
+# _unlock_hint <repo-selector> <repo-root> <pr-number> — the exact recovery
+# command for this run, so an operator recovering from lock_contention cannot
+# accidentally target a different repository's lock.
+_unlock_hint() {
+  local selector="${1:-}"
+  local root="${2:-}"
+  local pr="${3:-<pr>}"
+  local hint="./scripts/development-workflow/pr-review-loop.sh unlock ${pr}"
+
+  [ -n "$selector" ] && hint="$hint --repo \"$selector\""
+  [ -n "$root" ] && hint="$hint --repo-root \"$root\""
+  printf '%s\n' "$hint"
+}
+
 # --- unlock subcommand ---
 # Must run before the single-instance lock guard so stale-lock recovery always
 # works: if a previous invocation crashed, the lock guard would re-acquire the
 # lock for this process before `unlock` could check it, causing `unlock` to see
 # a live PID and refuse to remove the (now re-owned) lock dir.
 if [ "${1:-}" = "unlock" ]; then
-  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-    echo "Usage: $0 unlock <pr-number>" >&2
+  shift
+  _UNLOCK_PR=""
+  _UNLOCK_REPO_SELECTOR=""
+  _UNLOCK_REPO_ROOT=""
+  # Accepts the same repository selectors as a normal run, because the lock
+  # name now depends on them. With none of them given the key comes from the
+  # working directory's origin remote, which is the common case: an operator
+  # recovering a stale lock is standing in the checkout that took it.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo|--product-repo)
+        if [ -z "${2:-}" ]; then
+          echo "$1 requires a value." >&2
+          exit 64
+        fi
+        _UNLOCK_REPO_SELECTOR="$2"
+        shift 2
+        ;;
+      --repo-root)
+        if [ -z "${2:-}" ]; then
+          echo "$1 requires a value." >&2
+          exit 64
+        fi
+        _UNLOCK_REPO_ROOT="$2"
+        shift 2
+        ;;
+      -*)
+        echo "Unknown option for unlock: $1" >&2
+        echo "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
+        exit 64
+        ;;
+      *)
+        if [ -n "$_UNLOCK_PR" ]; then
+          echo "Only one PR number may be provided." >&2
+          exit 64
+        fi
+        _UNLOCK_PR="$1"
+        shift
+        ;;
+    esac
+  done
+  if [ -z "$_UNLOCK_PR" ]; then
+    echo "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
     exit 64
   fi
-  _UNLOCK_PR="$2"
-  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
+  _UNLOCK_REPO_KEY="$(_resolve_lock_repo_key "$_UNLOCK_REPO_SELECTOR" "$_UNLOCK_REPO_ROOT")"
+  _UNLOCK_LOCK_DIR="$(_lock_dir_for "$_UNLOCK_REPO_KEY" "$_UNLOCK_PR")"
   # Read lock metadata only when the dir exists; surface failures explicitly so
   # filesystem or permission errors are not silently swallowed.
   _UNLOCK_PID=""
@@ -251,16 +384,16 @@ if [ "${1:-}" = "unlock" ]; then
     fi
   fi
   if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR}. Not removing a live lock." >&2
     echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
     exit 1
   fi
   if [ -d "$_UNLOCK_LOCK_DIR" ]; then
     rm -rf "$_UNLOCK_LOCK_DIR"
-    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
+    echo "OK: stale lock removed for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
     exit 0
   else
-    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
+    echo "OK: no lock found for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
     exit 0
   fi
 fi
@@ -271,26 +404,48 @@ fi
 if [ "$_HARNESS_MODE_EFFECTIVE" -ne 1 ]; then
 
 # --- Single-instance guard ---
-# Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
-# lock directory (POSIX-guaranteed atomic) so two concurrent callers cannot
-# both acquire the lock. The lock dir name includes the PR number so parallel
-# runs for different PRs do not interfere with each other.
+# Prevent two simultaneous invocations for the same PR of the same repository.
+# Uses an atomic mkdir lock directory (POSIX-guaranteed atomic) so two
+# concurrent callers cannot both acquire the lock. The lock dir name includes
+# both the target repository and the PR number, so parallel runs for different
+# PRs — or for the same PR number in different repositories — do not interfere
+# with each other. See "Lock key resolution" above for why the repository
+# component is required.
 #
 # Layout:
-#   /tmp/pr-review-loop-<pr>.lockdir/   — lock directory (atomic creation)
-#   /tmp/pr-review-loop-<pr>.lockdir/pid — PID of the owner process
-#   /tmp/pr-review-loop-<pr>.lockdir/cmd — basename of script ($0) for verification
+#   /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir/     — lock dir (atomic creation)
+#   /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir/pid  — PID of the owner process
+#   /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir/cmd  — basename of script ($0) for verification
 _PR_ARG=""
+_REPO_SELECTOR_ARG=""
+_REPO_ROOT_ARG=""
 _skip_next=0
+_capture_next=""
+# Scans the whole argument list rather than stopping at the PR number: --repo
+# and --repo-root routinely follow it (`pr-review-loop.sh 12 --repo o/r`), and
+# the lock name now depends on them. The first bare numeric argument is still
+# the PR number; option values are consumed before that test can see them.
 for _arg in "$@"; do
+  if [ -n "$_capture_next" ]; then
+    case "$_capture_next" in
+      repo) _REPO_SELECTOR_ARG="$_arg" ;;
+      repo-root) _REPO_ROOT_ARG="$_arg" ;;
+    esac
+    _capture_next=""
+    continue
+  fi
   if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
-    --branch|--platform|--poll-interval|--max-wait|--pre-trigger-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
-    [0-9]*) _PR_ARG="$_arg"; break ;;
+    --repo|--product-repo) _capture_next="repo" ;;
+    --repo-root) _capture_next="repo-root" ;;
+    --branch|--platform|--poll-interval|--max-wait|--pre-trigger-wait|--ready-phase|--phase-after-clean) _skip_next=1 ;;
+    [0-9]*) [ -n "$_PR_ARG" ] || _PR_ARG="$_arg" ;;
   esac
 done
-unset _skip_next
-_LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
+unset _skip_next _capture_next
+_LOCK_REPO_KEY="$(_resolve_lock_repo_key "$_REPO_SELECTOR_ARG" "$_REPO_ROOT_ARG")"
+_LOCK_DIR="$(_lock_dir_for "$_LOCK_REPO_KEY" "$_PR_ARG")"
+_UNLOCK_COMMAND="$(_unlock_hint "$_REPO_SELECTOR_ARG" "$_REPO_ROOT_ARG" "${_PR_ARG:-<pr>}")"
 _OWN_LOCK=0
 _PR_CONFIG_TMPFILE=""
 # PID of the current background child (sleep or gh api) started by
@@ -310,14 +465,15 @@ else
   _LOCK_PID="$(cat "$_LOCK_DIR/pid" 2>/dev/null || true)"
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    echo "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
     echo "  Lock file: $_LOCK_DIR" >&2
     echo "  If the process is dead (stale lock from a crash), recover with:" >&2
-    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "    $_UNLOCK_COMMAND" >&2
     echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
     print_kv LOCK_DIR "$_LOCK_DIR"
+    print_kv LOCK_REPO_KEY "$_LOCK_REPO_KEY"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
   fi
@@ -333,14 +489,15 @@ else
     printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
     _OWN_LOCK=1
   else
-    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    echo "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
     echo "  Lock file: $_LOCK_DIR" >&2
     echo "  If the process is dead (stale lock from a crash), recover with:" >&2
-    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "    $_UNLOCK_COMMAND" >&2
     echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
     print_kv LOCK_DIR "$_LOCK_DIR"
+    print_kv LOCK_REPO_KEY "$_LOCK_REPO_KEY"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75
   fi
@@ -387,28 +544,35 @@ _interruptible_sleep() {
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
-       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
+       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
 If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
-detected for the same PR number, the script emits RESULT=escalate with
-REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+detected for the same PR number in the same repository, the script emits
+RESULT=escalate with REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
 Subcommands:
-  unlock <pr-number>
+  unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]
     Remove the stale lock directory for a PR whose previous run crashed without
     cleaning up. Safe to run when no review loop is actively running for that PR.
     Use this to recover autonomously when lock_contention is reported but the
     recorded PID is no longer alive.
 
+    The lock is keyed by target repository AND PR number, so `unlock` must
+    resolve the same repository the blocked run did. Pass the same
+    --repo/--product-repo/--repo-root options that run used; with none of them,
+    the repository is taken from the working directory's origin remote. The
+    lock_contention message prints the exact recovery command for that run.
+
     Example:
       ./scripts/development-workflow/pr-review-loop.sh unlock 123
+      ./scripts/development-workflow/pr-review-loop.sh unlock 123 --repo acme/widgets
 
-    The lock directory path is /tmp/pr-review-loop-<pr>.lockdir. You can also
-    remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
+    The lock directory path is /tmp/pr-review-loop-<owner>-<repo>-<pr>.lockdir.
+    You can also remove it manually with: rm -rf <that path>
 
 --post-final-summary:
   Compatibility no-op. The script now posts or updates the

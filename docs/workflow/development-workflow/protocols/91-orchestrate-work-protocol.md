@@ -102,17 +102,22 @@ restate this rule for those two specifically):**
   the turn is not a way to make the wait "free"; it is a way to lose the run.
 
 **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.**
-The script takes a per-PR single-instance lock; a second concurrent invocation
-exits `75` with `REASON=lock_contention` and gives no review information at
-all — it will not tell the runner anything about the PR's actual state. If
-re-entering this item after a backgrounded or interrupted `pr-review-loop.sh`
-run, do not start a new one. Instead, poll for the prior process to finish (or
-confirm it is genuinely gone), then read the outcome directly from PR state —
-`gh pr view`, the "Automated Reviewer Loop Summary" comment, and the GraphQL
-review-thread query — rather than launching a duplicate run. Use
+The script takes a single-instance lock keyed by target repository and PR
+number; a second concurrent invocation exits `75` with
+`REASON=lock_contention` and gives no review information at all — it will not
+tell the runner anything about the PR's actual state. If re-entering this item
+after a backgrounded or interrupted `pr-review-loop.sh` run, do not start a new
+one. Instead, poll for the prior process to finish (or confirm it is genuinely
+gone), then read the outcome directly from PR state — `gh pr view`, the
+"Automated Reviewer Loop Summary" comment, and the GraphQL review-thread query
+— rather than launching a duplicate run. Use
 `pr-review-loop.sh unlock <pr-number>` only after confirming the recorded lock
 PID is no longer alive; it is a stale-lock recovery command, not a way to force
-a second run alongside a live one.
+a second run alongside a live one. Pass `unlock` the same
+`--repo`/`--product-repo`/`--repo-root` options the blocked run used, or it
+resolves a different lock than the one reported — the contention message prints
+the exact recovery command, and `LOCK_REPO_KEY` names the repository the lock
+belongs to.
 
 ---
 
@@ -1912,7 +1917,7 @@ If one or more automated code review platforms are configured (see [`integration
 
 1. **Do not race ahead.** Do not run Step 7 in the background while proceeding to Step 8 without its result.
 2. **Do not background-and-yield.** Do not start `pr-review-loop.sh` in the background and then **end your turn** to wait for it. A backgrounded process's completion notification is delivered to whatever dispatched *you* (the parent orchestrator, or a human) — never back to you. If you end your turn while the loop is still running in the background, you park permanently: not blocked, not escalated, not dead, just structurally unable to ever observe your own process finishing. A parked runner is indistinguishable from a terminated one from the outside, which means it will not be recovered automatically. Run Step 7 in the foreground, or if you must background it, keep polling it yourself **in the same turn** until it returns. The review loop can take several minutes (poll interval × wait for bot); that is expected — stay with it. Only when the script exits with `clean` or `skipped`, observed by you in-turn, may you continue to Step 8.
-3. **Never launch a second `pr-review-loop.sh` for the same PR while one is already running.** The script holds a per-PR single-instance lock; a concurrent invocation exits `75` with `REASON=lock_contention` and reports nothing about the PR's actual review state. If you are re-entering this step after a backgrounded or interrupted run (including after a compaction or a fresh session resuming this item), do not start a new invocation to "check." Poll for the earlier process to finish, or confirm via the lock file / process table that it is genuinely gone, and read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, the GraphQL review-thread query). Reserve `pr-review-loop.sh unlock <pr-number>` for a confirmed-stale lock (recorded PID no longer alive) — never as a way to run two instances at once. See the "Execution Discipline" section above the Step 0 heading for the general foreground/poll rule this specializes.
+3. **Never launch a second `pr-review-loop.sh` for the same PR while one is already running.** The script holds a single-instance lock keyed by target repository and PR number; a concurrent invocation exits `75` with `REASON=lock_contention` and reports nothing about the PR's actual review state. If you are re-entering this step after a backgrounded or interrupted run (including after a compaction or a fresh session resuming this item), do not start a new invocation to "check." Poll for the earlier process to finish, or confirm via the lock file / process table that it is genuinely gone, and read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, the GraphQL review-thread query). Reserve `pr-review-loop.sh unlock <pr-number>` for a confirmed-stale lock (recorded PID no longer alive) — never as a way to run two instances at once, and pass it the same `--repo`/`--product-repo`/`--repo-root` options the blocked run used so it resolves the same lock. The contention output prints the exact recovery command along with `LOCK_DIR` and `LOCK_REPO_KEY`; use those rather than reconstructing the path by hand. See the "Execution Discipline" section above the Step 0 heading for the general foreground/poll rule this specializes.
 
 The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
@@ -2998,6 +3003,12 @@ else
           | select((.isOutdated // false) == false)
           | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
           | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+  # Split the owner and name out of TARGET_REPO (resolved at the top of this
+  # checklist). Do not leave <owner>/<repo> placeholders here — gh passes them
+  # through literally and the gate silently queries a repository that does not
+  # exist.
+  GRAPHQL_OWNER="${TARGET_REPO%%/*}"
+  GRAPHQL_REPO="${TARGET_REPO#*/}"
   UNRESOLVED_COUNT=$(gh api graphql -f query='
     query($owner:String!, $repo:String!, $number:Int!) {
       repository(owner:$owner, name:$repo) {
@@ -3007,8 +3018,7 @@ else
           }
         }
       }
-    }
-  }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
+    }' -f owner="$GRAPHQL_OWNER" -f repo="$GRAPHQL_REPO" -F number="$PR_NUMBER" \
     --jq "$JQ_FILTER")
 
   if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
@@ -3116,6 +3126,8 @@ a wait of its own (issue #1574).
          | select((.isOutdated // false) == false)
          | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
          | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+   GRAPHQL_OWNER="${TARGET_REPO%%/*}"
+   GRAPHQL_REPO="${TARGET_REPO#*/}"
    UNRESOLVED_RECHECK=$(gh api graphql -f query='
      query($owner:String!, $repo:String!, $number:Int!) {
        repository(owner:$owner, name:$repo) {
@@ -3125,7 +3137,7 @@ a wait of its own (issue #1574).
            }
          }
        }
-     }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
+     }' -f owner="$GRAPHQL_OWNER" -f repo="$GRAPHQL_REPO" -F number="$PR_NUMBER" \
      --jq "$JQ_FILTER")
    ```
 

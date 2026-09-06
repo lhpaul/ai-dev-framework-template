@@ -12916,13 +12916,20 @@ unset _codex_placeholder_newline_separated_overflow_not_approved_mock_dir _codex
 
 
 
+# The single-instance lock is keyed by target repository AND PR number, so the
+# lock directory name carries a sanitized owner-repo component. These tests pass
+# an explicit --repo so the expected path is deterministic regardless of the
+# checkout's origin remote.
+_unlock_repo="lock-owner/lock-repo"
+_unlock_repo_key="lock-owner-lock-repo"
+
 _unlock_pr="80213$$"
-_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
+_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_repo_key}-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
 mkdir -p "$_unlock_lock_dir/pid"
 printf '%s\n' "pr-review-loop.sh" > "$_unlock_lock_dir/cmd"
 _unlock_exit=0
-_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" 2>&1)" || _unlock_exit=$?
+_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" --repo "$_unlock_repo" 2>&1)" || _unlock_exit=$?
 run_test "unlock_unreadable_pid_exits_1" "1" "$_unlock_exit"
 if printf '%s\n' "$_unlock_output" | grep -q "could not read lock PID"; then
   _unlock_error_seen="yes"
@@ -12934,12 +12941,12 @@ rm -rf "$_unlock_lock_dir"
 unset _unlock_output _unlock_exit _unlock_error_seen
 
 _unlock_pr="80313$$"
-_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
+_unlock_lock_dir="/tmp/pr-review-loop-${_unlock_repo_key}-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
 mkdir -p "$_unlock_lock_dir/cmd"
 printf '%s\n' "999999" > "$_unlock_lock_dir/pid"
 _unlock_exit=0
-_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" 2>&1)" || _unlock_exit=$?
+_unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" --repo "$_unlock_repo" 2>&1)" || _unlock_exit=$?
 run_test "unlock_unreadable_cmd_exits_1" "1" "$_unlock_exit"
 if printf '%s\n' "$_unlock_output" | grep -q "could not read lock cmd"; then
   _unlock_error_seen="yes"
@@ -12949,6 +12956,79 @@ fi
 run_test "unlock_unreadable_cmd_error" "yes" "$_unlock_error_seen"
 rm -rf "$_unlock_lock_dir"
 unset _unlock_pr _unlock_lock_dir _unlock_output _unlock_exit _unlock_error_seen
+
+# --- Repository-scoped lock key regression coverage ---------------------------
+# A live lock held for one repository's PR #N must not block a different
+# repository's PR #N. Before the lock name carried a repository component, a
+# live run for another checkout's PR #3 made this repository's PR #3 exit 75
+# with REASON=lock_contention, and the recovery hint it printed would have
+# deleted the other repository's in-flight lock.
+_lockkey_pr="80413$$"
+_lockkey_repo_a="lock-a-owner/lock-a-repo"
+_lockkey_repo_b="lock-b-owner/lock-b-repo"
+_lockkey_dir_a="/tmp/pr-review-loop-lock-a-owner-lock-a-repo-${_lockkey_pr}.lockdir"
+_lockkey_dir_b="/tmp/pr-review-loop-lock-b-owner-lock-b-repo-${_lockkey_pr}.lockdir"
+rm -rf "$_lockkey_dir_a" "$_lockkey_dir_b"
+
+# The non-contending case runs past the guard into the script proper, which then
+# tries to resolve the PR. Stub gh so the assertion stays offline and fast: what
+# matters is only that the run was NOT refused at the lock guard.
+_lockkey_mock_dir="$(mktemp -d)"
+cat > "$_lockkey_mock_dir/gh" <<'LOCKKEY_GH'
+#!/usr/bin/env bash
+printf 'gh: stubbed for lock-key test\n' >&2
+exit 1
+LOCKKEY_GH
+chmod +x "$_lockkey_mock_dir/gh"
+
+# A live holder for repo A's PR: sleep in the background and record its PID with
+# the cmd name the guard verifies, so the lock reads as live rather than stale.
+sleep 120 &
+_lockkey_live_pid=$!
+mkdir -p "$_lockkey_dir_a"
+printf '%s\n' "$_lockkey_live_pid" > "$_lockkey_dir_a/pid"
+printf '%s\n' "pr-review-loop.sh" > "$_lockkey_dir_a/cmd"
+
+# Same repository, same PR — must contend.
+_lockkey_same_exit=0
+_lockkey_same_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_lockkey_pr" --repo "$_lockkey_repo_a" 2>&1)" || _lockkey_same_exit=$?
+run_test "lock_same_repo_same_pr_contends_exit_75" "75" "$_lockkey_same_exit"
+run_test "lock_same_repo_same_pr_reason" "REASON=lock_contention" \
+  "$(printf '%s\n' "$_lockkey_same_output" | grep '^REASON=' | head -1)"
+run_test "lock_same_repo_same_pr_lock_dir" "LOCK_DIR=$_lockkey_dir_a" \
+  "$(printf '%s\n' "$_lockkey_same_output" | grep '^LOCK_DIR=' | head -1)"
+# The recovery hint must name the repository, or following it would remove
+# another repository's lock.
+if printf '%s\n' "$_lockkey_same_output" | grep -q -- "unlock ${_lockkey_pr} --repo \"${_lockkey_repo_a}\""; then
+  _lockkey_hint_seen="yes"
+else
+  _lockkey_hint_seen="no"
+fi
+run_test "lock_contention_hint_carries_repo" "yes" "$_lockkey_hint_seen"
+
+# Different repository, same PR number — must NOT contend. The run gets past the
+# guard on its own lock; whatever it exits with afterwards, it must not be
+# lock_contention, and it must not have taken repo A's lock dir.
+_lockkey_other_exit=0
+_lockkey_other_output="$(PATH="$_lockkey_mock_dir:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_lockkey_pr" --repo "$_lockkey_repo_b" 2>&1)" || _lockkey_other_exit=$?
+if printf '%s\n' "$_lockkey_other_output" | grep -q "REASON=lock_contention"; then
+  _lockkey_other_contended="yes"
+else
+  _lockkey_other_contended="no"
+fi
+run_test "lock_other_repo_same_pr_does_not_contend" "no" "$_lockkey_other_contended"
+run_test "lock_other_repo_same_pr_exit_not_75" "no" "$([ "$_lockkey_other_exit" -eq 75 ] && printf 'yes' || printf 'no')"
+# Repo A's live lock is untouched by repo B's run.
+run_test "lock_other_repo_run_leaves_live_lock_intact" "yes" \
+  "$([ -d "$_lockkey_dir_a" ] && printf 'yes' || printf 'no')"
+
+kill "$_lockkey_live_pid" 2>/dev/null || true
+wait "$_lockkey_live_pid" 2>/dev/null || true
+rm -rf "$_lockkey_dir_a" "$_lockkey_dir_b" "$_lockkey_mock_dir"
+unset _lockkey_mock_dir _lockkey_pr _lockkey_repo_a _lockkey_repo_b _lockkey_dir_a _lockkey_dir_b \
+  _lockkey_live_pid _lockkey_same_exit _lockkey_same_output _lockkey_other_exit \
+  _lockkey_other_output _lockkey_other_contended _lockkey_hint_seen \
+  _unlock_repo _unlock_repo_key
 
 _codex_overrides='
   cd_workflow_repo_root() { :; }
