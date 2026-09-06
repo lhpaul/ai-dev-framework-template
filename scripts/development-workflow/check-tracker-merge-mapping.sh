@@ -108,6 +108,60 @@ else
   ERRORS=$((ERRORS + 1))
 fi
 
+# ---------------------------------------------------------------------------
+# Tracker-configuration gate (issue #1715)
+#
+# `github-token` is a REQUIRED input of actions/github-script, so an empty
+# GH_PROJECT_TOKEN aborts that action before any guard inside its `script:`
+# body can run. Every step that consumes the secret must therefore be gated on
+# the separate "Check tracker configuration" step, which exposes `configured`
+# as a plain step output (the `secrets` context is unavailable in step-level
+# `if:` conditions).
+#
+# Stated fail-closed: when the workflow references secrets.GH_PROJECT_TOKEN at
+# all, the gate step must exist AND every consuming step must be gated. The
+# "no reference" case is reported explicitly rather than passing silently, so
+# an empty set is never treated as satisfied.
+# ---------------------------------------------------------------------------
+if grep -Fq 'secrets.GH_PROJECT_TOKEN' "$WORKFLOW_FILE"; then
+  if grep -Eq '^[[:space:]]*id:[[:space:]]*config[[:space:]]*$' "$WORKFLOW_FILE" \
+    && grep -Fq 'configured=true' "$WORKFLOW_FILE" \
+    && grep -Fq 'configured=false' "$WORKFLOW_FILE"; then
+    echo "OK: tracker-configuration gate step is present"
+  else
+    echo "ERROR: workflow uses secrets.GH_PROJECT_TOKEN but has no 'id: config' gate step emitting configured=true/false"
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  # Report every token-consuming step that is not gated. The gate step itself
+  # reads the secret to decide, so it is exempt by design.
+  UNGATED_STEPS="$(awk '
+    /^[[:space:]]*-[[:space:]]*name:[[:space:]]/ {
+      if (in_step && uses_token && !gated && !is_gate) print step_name
+      in_step = 1; uses_token = 0; gated = 0; is_gate = 0
+      step_name = $0
+      sub(/^[[:space:]]*-[[:space:]]*name:[[:space:]]*/, "", step_name)
+      next
+    }
+    in_step && /^[[:space:]]*id:[[:space:]]*config[[:space:]]*$/ { is_gate = 1 }
+    in_step && /secrets\.GH_PROJECT_TOKEN/ { uses_token = 1 }
+    in_step && /steps\.config\.outputs\.configured[[:space:]]*==[[:space:]]*.true./ { gated = 1 }
+    END { if (in_step && uses_token && !gated && !is_gate) print step_name }
+  ' "$WORKFLOW_FILE")"
+
+  if [ -z "$UNGATED_STEPS" ]; then
+    echo "OK: every step consuming GH_PROJECT_TOKEN is gated on the configuration check"
+  else
+    while IFS= read -r ungated_step; do
+      [ -z "$ungated_step" ] && continue
+      echo "ERROR: step '${ungated_step}' consumes secrets.GH_PROJECT_TOKEN without gating on steps.config.outputs.configured == 'true'"
+      ERRORS=$((ERRORS + 1))
+    done <<< "$UNGATED_STEPS"
+  fi
+else
+  echo "OK: workflow does not reference secrets.GH_PROJECT_TOKEN — configuration gate not applicable"
+fi
+
 # Checkout for graduation closeout requires contents: read when permissions: is explicit.
 if grep -Eq 'uses:[[:space:]]*actions/checkout@' "$WORKFLOW_FILE"; then
   if grep -Eq '^[[:space:]]*contents:[[:space:]]*read[[:space:]]*$' "$WORKFLOW_FILE"; then

@@ -24,6 +24,14 @@
 #   PROJECT_NUMBER         — the integer project number (e.g. 1)
 #   PROJECT_OWNER          — the GitHub user or org owning the project
 #                            (falls back to github.repository_owner when unset)
+#
+# Repositories that have not configured a GitHub Project (e.g. freshly created
+# from the template) are a supported state: the "Check tracker configuration"
+# step below detects the missing secret/variable and skips the tracker update
+# with a warning, so merges do not report a failing check. Do not inline that
+# check into the actions/github-script step — `github-token` is a *required*
+# input of that action, so an empty GH_PROJECT_TOKEN aborts the action before
+# any in-script guard can run.
 name: Update tracker status on PR merge
 
 on:
@@ -130,6 +138,50 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Detected: type=$BRANCH_TYPE, issue=$ISSUE_NUMBER, status=$TARGET_STATUS"
 
+      # Determine whether GitHub Projects is configured for this repository.
+      # `secrets` is not available in step-level `if:` conditions, so the secret
+      # is read into env here and exposed as a plain step output that later
+      # steps can gate on.
+      - name: Check tracker configuration
+        id: config
+        if: steps.detect.outputs.skip == 'false'
+        env:
+          PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          if [ -z "${PROJECT_TOKEN:-}" ]; then
+            missing="${missing} GH_PROJECT_TOKEN (repository secret)"
+          fi
+          if [ -z "${PROJECT_NUMBER:-}" ]; then
+            missing="${missing} PROJECT_NUMBER (repository variable)"
+          fi
+
+          if [ -z "$missing" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "GitHub Projects tracker is configured — tracker steps will run."
+            exit 0
+          fi
+
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::GitHub Projects tracker is not configured for this repository (missing:${missing}) — skipping the tracker status update. See docs/workflow/development-workflow/integrations/github-projects.md."
+          {
+            echo "## Tracker update skipped"
+            echo ""
+            echo "GitHub Projects is not configured for this repository, so the tracker"
+            echo "status was **not** updated. Missing:"
+            echo ""
+            for item in GH_PROJECT_TOKEN PROJECT_NUMBER; do
+              case "$missing" in
+                *"$item"*) echo "- \`${item}\`" ;;
+              esac
+            done
+            echo ""
+            echo "Setup instructions: \`docs/workflow/development-workflow/integrations/github-projects.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Close issue for impl branches
         if: >
           steps.detect.outputs.skip == 'false' &&
@@ -154,12 +206,14 @@ jobs:
       - name: Checkout repository for graduation closeout
         if: >
           steps.detect.outputs.skip == 'false' &&
+          steps.config.outputs.configured == 'true' &&
           steps.detect.outputs.branch_type == 'graduation'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
 
       - name: Run graduation closeout fallback
         if: >
           steps.detect.outputs.skip == 'false' &&
+          steps.config.outputs.configured == 'true' &&
           steps.detect.outputs.branch_type == 'graduation'
         env:
           GH_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
@@ -176,6 +230,10 @@ jobs:
             echo "- Head slug: ${GRADUATION_SLUG}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Defensive only: this step is gated on the "Check tracker configuration"
+          # step, which already skips the whole tracker path when either value is
+          # missing. Reaching these branches means the gate itself is broken, so
+          # failing loudly is correct here.
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "ERROR: GH_PROJECT_TOKEN is not configured — cannot run graduation closeout." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -211,6 +269,7 @@ jobs:
       - name: Update GitHub Projects status after close
         if: >
           steps.detect.outputs.skip == 'false' &&
+          steps.config.outputs.configured == 'true' &&
           steps.detect.outputs.branch_type != 'graduation'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         env:
@@ -368,6 +427,8 @@ jobs:
           echo "========================================================"
           if [ "${{ steps.detect.outputs.skip }}" = "true" ]; then
             echo "This run: SKIP (untracked or invalid branch)"
+          elif [ "${{ steps.config.outputs.configured }}" != "true" ]; then
+            echo "This run: SKIP (GitHub Projects tracker not configured for this repository)"
           elif [ "${{ steps.detect.outputs.branch_type }}" = "graduation" ]; then
             echo "This run: RUN graduation closeout fallback"
           else
