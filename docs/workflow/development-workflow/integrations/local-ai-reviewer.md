@@ -109,6 +109,8 @@ the env so later assertions pass):
 | missing `REVIEW.md` | rename `REVIEW.md` | `http_missing_review_md` | command L74; test L223 |
 | missing model / base URL / context | unset the env var | `http_missing_model`, `http_missing_base_url`, `http_missing_context_bundle` | command L58 / L62 / L70; tests L197 / L206 / L215 |
 | HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `http_status_401_exits`, `http_status_500_exits` | command L179 / L183; tests L232 / L239 |
+| curl non-zero exit | `MOCK_CURL_EXIT=28` | `http_curl_failure_exits` | command L173; test (after status cases) |
+| empty message content | `MOCK_MODEL_CONTENT=''` | `http_empty_content_exits` | command L193; test (after curl failure) |
 
 This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
 unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture

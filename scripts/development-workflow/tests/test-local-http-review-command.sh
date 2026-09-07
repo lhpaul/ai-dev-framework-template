@@ -33,7 +33,7 @@ PASS_COUNT=0
 FAIL_COUNT=0
 
 # Avoid inherited MOCK_* env from a previous interactive shell.
-unset MOCK_MODEL_CONTENT MOCK_HTTP_CODE MOCK_GIT_FAIL MOCK_GIT_DIFF
+unset MOCK_MODEL_CONTENT MOCK_HTTP_CODE MOCK_GIT_FAIL MOCK_GIT_DIFF MOCK_CURL_EXIT
 
 run_test() {
   local name="$1"
@@ -58,6 +58,9 @@ EOF
 
 cat > "$MOCK_BIN/curl" <<'MOCK_CURL'
 #!/usr/bin/env bash
+if [ "${MOCK_CURL_EXIT:-0}" != "0" ]; then
+  exit "${MOCK_CURL_EXIT}"
+fi
 output_file=""
 write_fmt=""
 previous=""
@@ -244,6 +247,24 @@ export MOCK_HTTP_CODE
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
 run_test "http_status_500_exits" "yes" "$(grep -q 'HTTP reviewer HTTP 500' "$STDERR_FILE" && echo yes || echo no)"
 unset MOCK_HTTP_CODE
+
+MOCK_CURL_EXIT=28
+export MOCK_CURL_EXIT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "http_curl_failure_exits" "yes" "$(grep -q 'HTTP request failed (curl exit 28)' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_CURL_EXIT
+
+MOCK_MODEL_CONTENT=''
+export MOCK_MODEL_CONTENT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "http_empty_content_exits" "yes" "$(grep -q 'empty message content' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_MODEL_CONTENT
 
 run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
 run_test "wrapper_help_mentions_model" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_MODEL' && echo yes || echo no)"
