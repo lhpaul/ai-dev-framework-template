@@ -450,24 +450,56 @@ discovers slug/epic/deferral signals and invokes `graduation-closeout.sh`.
 
 ### Required configuration (GitHub Projects only)
 
-Set the following as **repository variables** (not secrets — these are not sensitive):
+This is a **bootstrap step**: a repository created from the template has none of
+these set. Configure them once, before the first merge to `develop`.
 
-| Variable                | Description                                                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `GITHUB_PROJECT_NUMBER` | The integer project number (e.g. `1`)                                                          |
-| `GITHUB_PROJECT_OWNER`  | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
+Two repository variables (not sensitive):
 
-To set them via CLI:
+| Variable         | Required | Description                                                                                    |
+| ---------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `PROJECT_NUMBER` | Yes      | The integer project number — the number in the project URL, e.g. `1` in `/users/<owner>/projects/1` |
+| `PROJECT_OWNER`  | No       | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
+
+<!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
-gh variable set GITHUB_PROJECT_NUMBER --body "1"
-gh variable set GITHUB_PROJECT_OWNER --body "<your-github-username-or-org>"
+gh variable set PROJECT_NUMBER --body "1"
+gh variable set PROJECT_OWNER --body "<your-github-username-or-org>"
 ```
+
+One repository secret:
+
+| Secret             | Required | Description                                                                          |
+| ------------------ | -------- | -------------------------------------------------------------------------------------- |
+| `GH_PROJECT_TOKEN` | Yes      | A personal access token with the `project` scope. The built-in `GITHUB_TOKEN` cannot write Projects v2 fields, so a PAT is required. |
+
+Create the token at **Settings → Developer settings → Personal access tokens**,
+then add it under **repository Settings → Secrets and variables → Actions → New
+repository secret**, named exactly `GH_PROJECT_TOKEN`:
+
+- **Classic token**: select the `project` scope (add `repo` if the repository is private).
+- **Fine-grained token**: grant the organization or user permission
+  **Projects: Read and write**, and scope it to this repository.
+
+Verify with `gh variable list` and `gh secret list` — all three names must appear.
+
+### Behavior when the project is not configured
+
+Not configuring a project is a supported state. When `GH_PROJECT_TOKEN` or
+`PROJECT_NUMBER` is missing, the workflow's `Check tracker configuration` step
+records the gap as a job warning and step-summary note, and the tracker-update
+and graduation-closeout steps are skipped — the merge check stays green.
+
+This check must remain a separate step. `github-token` is a **required input**
+of `actions/github-script`, so an empty `GH_PROJECT_TOKEN` makes the action fail
+with `Input required and not supplied: github-token` before any guard inside the
+`script:` body can run.
 
 ### Security model
 
-- Uses the built-in `GITHUB_TOKEN` — no personal access token (PAT) required
-- Minimum permissions: `pull-requests: read`, `issues: write`, `projects: write`
+- Projects v2 field writes use the `GH_PROJECT_TOKEN` PAT; everything else
+  (reading PR metadata, closing issues) uses the built-in `GITHUB_TOKEN`
+- Workflow permissions: `contents: read`, `pull-requests: read`, `issues: write`
 - All external action SHAs are pinned to exact commit hashes (no floating `@v7` tags)
 
 ### Relationship to `post-merge-cleanup` (GitHub Projects only)
