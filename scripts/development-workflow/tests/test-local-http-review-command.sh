@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2089,SC2090
 # Unit tests for local-http-review-command.sh.
 # covers: scripts/development-workflow/local-http-review-command.sh
 # covers: scripts/development-workflow/local-http-reviewer.sh
