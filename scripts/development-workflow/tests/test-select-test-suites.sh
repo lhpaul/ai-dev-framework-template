@@ -26,7 +26,7 @@ run_test() {
 
 assert_contains() {
   local name="$1" needle="$2" haystack="$3"
-  if printf '%s\n' "$haystack" | grep -qxF -- "$needle"; then
+  if grep -qxF -- "$needle" <<<"$haystack"; then
     PASS_COUNT=$((PASS_COUNT + 1))
     echo "PASS: $name"
   else
@@ -37,7 +37,7 @@ assert_contains() {
 
 assert_not_contains() {
   local name="$1" needle="$2" haystack="$3"
-  if printf '%s\n' "$haystack" | grep -qxF -- "$needle"; then
+  if grep -qxF -- "$needle" <<<"$haystack"; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
     echo "FAIL: $name — '$needle' unexpectedly present in output"
   else

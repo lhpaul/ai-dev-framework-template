@@ -45,6 +45,7 @@ target_repo=""
 repo_root="$HUB_REPO_ROOT"
 base_branch_override=""
 merged_pr_number=""
+cleanup_repo_root_override=""
 
 require_option_value() {
   local option="$1"
@@ -75,6 +76,11 @@ while [ "$#" -gt 0 ]; do
     --pr)
       require_option_value "$@"
       merged_pr_number="$2"
+      shift 2
+      ;;
+    --cleanup-repo-root)
+      require_option_value "$@"
+      cleanup_repo_root_override="$2"
       shift 2
       ;;
     -h|--help)
@@ -204,6 +210,10 @@ if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementa
   fi
 fi
 
+if [ -n "$cleanup_repo_root_override" ]; then
+  CLEANUP_REPO_ROOT="$cleanup_repo_root_override"
+fi
+
 case "$TO_DELETE" in
   "$DEVELOP_BRANCH"|"$selected_product_default_branch"|main|master)
     echo "Refusing to delete protected branch '$TO_DELETE'." >&2
@@ -275,6 +285,61 @@ case "$branch_owner_kind" in
 esac
 
 cd "$CLEANUP_REPO_ROOT" || exit 1
+
+# Remember where this repository was pointing before we move it.
+#
+# This script has to check out the base branch to fast-forward it, but the caller
+# is frequently a worktree-isolated agent — and in that case CLEANUP_REPO_ROOT is
+# the shared main clone, not the agent's worktree. Leaving it parked on the base
+# branch is a side effect the caller never asked for, and it has two real costs:
+# a hand-run deploy from a clone parked on an integration branch ships unreleased
+# code, and a branch left checked out here cannot be checked out by any other
+# worktree. Capture the ref now and restore it on exit; the base branch still
+# gets fetched and fast-forwarded either way.
+ORIGINAL_REF=""
+ORIGINAL_REF_KIND=""
+if ORIGINAL_REF="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
+  ORIGINAL_REF_KIND="branch"
+elif ORIGINAL_REF="$(git rev-parse --quiet --verify HEAD 2>/dev/null)"; then
+  ORIGINAL_REF_KIND="detached"
+else
+  ORIGINAL_REF=""
+fi
+BASE_CHECKED_OUT=0
+
+# Best effort by contract: this must never change the script's exit status, so
+# every branch returns 0 and every git call is guarded.
+restore_original_ref() {
+  [ "$BASE_CHECKED_OUT" -eq 1 ] || return 0
+  [ -n "$ORIGINAL_REF" ] || return 0
+
+  # The branch we started on may be the very one we just deleted.
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ]; then
+    echo "Leaving $CLEANUP_REPO_ROOT on $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted)."
+    return 0
+  fi
+
+  if ! CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
+    if ! CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" rev-parse --quiet --verify HEAD 2>/dev/null)"; then
+      CURRENT_REF=""
+    fi
+  fi
+  [ "$CURRENT_REF" = "$ORIGINAL_REF" ] && return 0
+
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] \
+    && ! git -C "$CLEANUP_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ORIGINAL_REF"; then
+    echo "WARNING: cannot restore $CLEANUP_REPO_ROOT to '$ORIGINAL_REF' (branch no longer exists); it stays on $DEVELOP_BRANCH." >&2
+    return 0
+  fi
+
+  if git -C "$CLEANUP_REPO_ROOT" checkout --quiet "$ORIGINAL_REF" 2>/dev/null; then
+    echo "Restored $CLEANUP_REPO_ROOT to '$ORIGINAL_REF' (it was moved to $DEVELOP_BRANCH only to fast-forward it)."
+  else
+    echo "WARNING: could not restore $CLEANUP_REPO_ROOT to '$ORIGINAL_REF' (uncommitted changes?); it stays on $DEVELOP_BRANCH." >&2
+  fi
+  return 0
+}
+trap restore_original_ref EXIT
 
 remote_cleanup_repo_slug() {
   if [ -n "$TARGET_GITHUB_REPO" ]; then
@@ -437,7 +502,7 @@ fi
 echo ""
 
 reenter_base_worktree_if_needed() {
-  local current_root base_worktree script_path
+  local current_root base_worktree script_path script_dir_real tracker_repo_root tracker_repo_root_real
   local reenter_args=()
 
   # Git refuses to check out a branch that is already checked out in another
@@ -458,17 +523,36 @@ reenter_base_worktree_if_needed() {
     return 1
   fi
 
-  script_path="$base_worktree/scripts/development-workflow/post-merge-cleanup.sh"
+  script_path=""
+  script_dir_real=""
+  if [ -f "$SCRIPT_DIR/post-merge-cleanup.sh" ]; then
+    script_dir_real="$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)" || return 1
+    case "$script_dir_real" in
+      "$current_root"|"$current_root"/*)
+        ;;
+      *)
+        script_path="$SCRIPT_DIR/post-merge-cleanup.sh"
+        ;;
+    esac
+  fi
+  if [ -z "$script_path" ]; then
+    script_path="$base_worktree/scripts/development-workflow/post-merge-cleanup.sh"
+  fi
   if [ ! -f "$script_path" ]; then
-    echo "ERROR: base branch '$DEVELOP_BRANCH' is checked out at '$base_worktree', but cleanup helper is missing there: $script_path" >&2
+    echo "ERROR: cleanup helper is missing from the surviving checkout: $script_path" >&2
     return 1
   fi
 
-  echo "Base branch '$DEVELOP_BRANCH' is already checked out at '$base_worktree'. Re-entering cleanup from that worktree..."
+  echo "Base branch '$DEVELOP_BRANCH' is already checked out at '$base_worktree'. Re-entering cleanup through the workflow hub helper..."
   if [ -n "$target_repo" ]; then
     reenter_args+=(--repo "$target_repo")
   fi
-  reenter_args+=(--repo-root "$base_worktree" --base "$DEVELOP_BRANCH")
+  tracker_repo_root="$HUB_REPO_ROOT"
+  tracker_repo_root_real="$(CDPATH='' cd -- "$tracker_repo_root" && pwd -P)" || return 1
+  if [ "$tracker_repo_root_real" = "$current_root" ]; then
+    tracker_repo_root="$base_worktree"
+  fi
+  reenter_args+=(--repo-root "$tracker_repo_root" --cleanup-repo-root "$base_worktree" --base "$DEVELOP_BRANCH")
   if [ -n "$merged_pr_number" ]; then
     reenter_args+=(--pr "$merged_pr_number")
   fi
@@ -485,6 +569,7 @@ git fetch origin --prune
 
 echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
+BASE_CHECKED_OUT=1
 
 echo "Pulling $DEVELOP_BRANCH..."
 # Use explicit 'origin <branch>' so this works even when the local branch has no upstream
@@ -944,8 +1029,17 @@ else
 fi
 
 echo ""
+FINAL_REF_AFTER_CLEANUP="$DEVELOP_BRANCH"
+if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" != "$TO_DELETE" ] \
+    && git -C "$CLEANUP_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ORIGINAL_REF"; then
+    FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  elif [ "$ORIGINAL_REF_KIND" = "detached" ]; then
+    FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  fi
+fi
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
-  echo "Done. You are on $DEVELOP_BRANCH; local branch '$TO_DELETE' was already removed."
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
 else
-  echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' has been removed locally."
 fi

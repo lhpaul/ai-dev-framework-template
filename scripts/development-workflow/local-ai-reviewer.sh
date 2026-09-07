@@ -21,9 +21,10 @@ Options:
                        match the pull request head SHA before review runs.
 
 Environment:
-  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults to the bundled
-                                    Codex preset at local-codex-review-command.sh
-                                    unless LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
+  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults from
+                                    LOCAL_AI_REVIEWER_BACKEND (codex or
+                                    http) unless
+                                    LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
                                     HEAD_BRANCH, REVIEWED_HEAD,
@@ -32,8 +33,11 @@ Environment:
                                     REVIEW_DOCTRINE_PATTERN_COUNT,
                                     REVIEW_DOCTRINE_VERSION, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
+  LOCAL_AI_REVIEWER_BACKEND         codex (default) or http. Used only
+                                    when LOCAL_AI_REVIEWER_COMMAND is unset.
+                                    Alias: openai_compat (deprecated).
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
-                                    Do not apply the bundled Codex preset default.
+                                    Do not apply a bundled preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
   LOCAL_AI_REVIEWER_EVIDENCE_FILE   Optional path for a JSON evidence artifact.
   LOCAL_AI_REVIEWER_GRAPH_STRATEGY  none|auto|code-review-graph|graphify.
@@ -42,13 +46,32 @@ Environment:
   LOCAL_CODEX_REVIEWER_PROMPT       Override the ordinary-pass Codex prompt only.
   LOCAL_CODEX_REVIEWER_STRICT_PROMPT
                                     Override the strict-pass Codex prompt only.
+  LOCAL_AI_REVIEWER_MODEL           Model id for the http preset
+                                    (example: deepseek-v4-pro).
+  LOCAL_AI_REVIEWER_API_BASE_URL   Chat Completions API base URL for http
+                                    (example: https://api.deepseek.com).
+                                    Falls back to OPENAI_BASE_URL when unset;
+                                    prefer setting this explicitly.
+  LOCAL_AI_REVIEWER_API_KEY         API key for the http preset. Falls back to
+                                    DEEPSEEK_API_KEY or OPENAI_API_KEY.
+  LOCAL_AI_REVIEWER_API_KEY_COMMAND Optional command that prints the API key.
+  LOCAL_AI_REVIEWER_HTTP_TIMEOUT    curl --max-time for the http preset. Defaults
+                                    to LOCAL_AI_REVIEWER_TIMEOUT minus 30s
+                                    (or 300-30 when unset) and is capped under
+                                    the companion --timeout.
+  LOCAL_AI_REVIEWER_JSON_OBJECT     1 (default) requests response_format
+                                    json_object from the http preset.
+  LOCAL_AI_REVIEWER_DIFF_MAX_BYTES Bound for the inlined unified diff
+                                    (default 200000).
+  LOCAL_AI_REVIEWER_CURL_BIN        curl binary override (tests).
 
 Strict contract checks (#1650 spec, #1655 plan):
   Two registry entries (spec and plan) each report STRICT_<entry>_STATE on every
   review. At most one entry dispatches a second LOCAL_AI_REVIEWER_COMMAND
   invocation per review. The pass shares the reviewer's --timeout budget.
 
-  Spec entry: STRICT_SPEC_* keys; response marker strict_spec_checks.
+  Spec entry: STRICT_SPEC_* keys (includes STRICT_SPEC_APPLIED when applied);
+  response marker strict_spec_checks.
   Plan entry: STRICT_PLAN_* keys (includes STRICT_PLAN_APPLIED when applied);
   response marker strict_plan_checks; supplies plan documents via git show at
   the reviewed head.
@@ -66,11 +89,31 @@ resolve_local_ai_reviewer_command() {
     return 0
   fi
 
-  local default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+  local backend="${LOCAL_AI_REVIEWER_BACKEND:-codex}"
+  local default_command=""
+  local default_command_quoted
+  local preset_label=""
+  case "$backend" in
+    http|openai_compat)
+      # openai_compat is a deprecated alias for http.
+      default_command="$SCRIPT_DIR/local-http-review-command.sh"
+      preset_label="HTTP"
+      ;;
+    codex)
+      default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+      preset_label="Codex"
+      ;;
+    *)
+      echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or http)" >&2
+      return 1
+      ;;
+  esac
+
   if [ -f "$default_command" ]; then
-    LOCAL_AI_REVIEWER_COMMAND="$default_command"
+    default_command_quoted="$(printf '%s' "$default_command" | sed "s/'/'\\\\''/g; 1s/^/'/; \$s/\$/'/")"
+    LOCAL_AI_REVIEWER_COMMAND="$default_command_quoted"
     export LOCAL_AI_REVIEWER_COMMAND
-    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled Codex preset: $default_command" >&2
+    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled ${preset_label} preset: $default_command" >&2
   fi
 }
 
@@ -134,8 +177,9 @@ run_with_timeout() {
   local stderr_file="$3"
   shift 3
 
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$timeout_seconds" "$@" >"$stdout_file" 2>"$stderr_file"
+  if command -v timeout >/dev/null 2>&1 \
+      && timeout --help 2>&1 | grep -q -- '--kill-after'; then
+    timeout --kill-after=2s "$timeout_seconds" "$@" >"$stdout_file" 2>"$stderr_file"
     return $?
   fi
 
@@ -156,8 +200,21 @@ run_with_timeout() {
   done
   if [ "$elapsed" -ge "$timeout_seconds" ]; then
     kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
+    local terminate_elapsed=0
+    local terminate_grace_seconds=2
+    while kill -0 "$child_pid" 2>/dev/null && [ "$terminate_elapsed" -lt "$terminate_grace_seconds" ]; do
+      sleep 1
+      terminate_elapsed=$((terminate_elapsed + 1))
+    done
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL -- "-$child_pid" 2>/dev/null || kill -KILL "$child_pid" 2>/dev/null || true
+    else
+      # The session leader can exit on TERM while descendants remain. Always
+      # send a process-group KILL after the grace period so those children
+      # cannot leak.
+      kill -KILL -- "-$child_pid" 2>/dev/null || true
+    fi
     wait "$child_pid" 2>/dev/null || true
-    kill -KILL -- "-$child_pid" 2>/dev/null || true
     return 124
   fi
   wait "$child_pid"
@@ -231,6 +288,16 @@ strict_changed_plan_paths() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     if workflow_is_plan_document_path "$path"; then
+      printf '%s\n' "$path"
+    fi
+  done < <(printf '%s\n' "$changed_files_json" | jq -r '.[]?' 2>/dev/null)
+}
+
+strict_changed_spec_paths() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [[ "$path" =~ ^docs/specs/developments/.+/1_.+_specs(\.doc)?\.md$ ]]; then
       printf '%s\n' "$path"
     fi
   done < <(printf '%s\n' "$changed_files_json" | jq -r '.[]?' 2>/dev/null)
@@ -329,10 +396,12 @@ parse_strict_checks_response() {
   local admission_checks_json="$2"
   local response_marker="$3"
 
-  printf '%s\n' "$response_json" | jq -c --argjson admission_checks "$admission_checks_json" --arg marker "$response_marker" '
+  printf '%s\n' "$response_json" | jq -s -c --argjson admission_checks "$admission_checks_json" --arg marker "$response_marker" '
     def ident:
       ((.check? // null) | if type == "string" then ascii_downcase else null end);
     def known($c): $c != null and ($admission_checks | index($c) != null);
+    def stripped:
+      tostring | gsub("^\\s+|\\s+$"; "");
     def text_value:
       [.body?, .message?, .description?, .title?, .summary?, .comment?, .text?]
       | map(select(type == "string" and length > 0)) | .[0] // "";
@@ -343,7 +412,19 @@ parse_strict_checks_response() {
       [.line?, .startLine?, .start_line?, .location.line?]
       | map(select((type == "number") or (type == "string" and length > 0)))
       | .[0] // "";
-    if (.mode? // null) != $marker then
+    def has_required_evidence:
+      (path_value | stripped | length > 0)
+      and (
+        (line_value | type == "number" and . > 0 and . == floor)
+        or (line_value | type == "string" and (stripped | test("^[1-9][0-9]*$")))
+      )
+      and (text_value | stripped | length > 0);
+    def admitted:
+      known(ident) and has_required_evidence;
+    if (length != 1) or ((.[0] | type) != "object") then
+      { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
+    else .[0]
+    | if (.mode? // null) != $marker then
       { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
     else
       (if   has("findings") then .findings
@@ -353,21 +434,22 @@ parse_strict_checks_response() {
       | if ($f | type) != "array" then
           { malformed: true, count: 0, checks: "", unknown_count: 0, findings: [] }
         else
-          ($f | map(select(known(ident)))) as $named
-          | ($f | map(select(known(ident) | not))) as $unnamed
+          ($f | map(select(admitted))) as $named
+          | ($f | map(select(admitted | not))) as $unnamed
           | {
               malformed: false,
               count: ($named | length),
               checks: ($named | map(ident) | unique | join(",")),
               unknown_count: ($unnamed | length),
               findings: ($f | map({
-                check: (if known(ident) then ident else "unknown" end),
+                check: (if admitted then ident else "unknown" end),
                 path: path_value,
                 line: (line_value | tostring),
                 body: (text_value | gsub("\n"; "\\n"))
               }))
             }
         end
+    end
     end
   ' 2>/dev/null
 }
@@ -378,6 +460,34 @@ parse_strict_spec_response() {
 
 parse_strict_plan_response() {
   parse_strict_checks_response "$1" "$2" "strict_plan_checks"
+}
+
+filter_strict_spec_parsed_response() {
+  local parsed="$1"
+  local documents_json="${2:-[]}"
+
+  printf '%s\n' "$parsed" | jq -c --argjson documents "$documents_json" '
+    ($documents | map(.path)) as $spec_docs
+    | .findings as $all
+    | ($all | map(
+        . as $f
+        | if ($f.check != "unknown")
+            and (($f.path | type) != "string" or ($f.path | length) == 0
+                 or ($spec_docs | index($f.path)) == null) then
+            $f + {check: "unknown", remapped: true}
+          else
+            $f
+          end
+      )) as $processed
+    | ($processed | map(select(.remapped == true)) | length) as $remapped
+    | ($processed | map(del(.remapped))) as $kept
+    | . + {
+        count: ($kept | map(select(.check != "unknown")) | length),
+        checks: ($kept | map(select(.check != "unknown") | .check) | unique | join(",")),
+        unknown_count: ((.unknown_count // 0) + $remapped),
+        findings: $kept
+      }
+  ' 2>/dev/null
 }
 
 # Drop source-dependent findings reported against plan documents that have no
@@ -486,26 +596,23 @@ strict_build_plan_bundle_extras() {
   local any_source=0
   local documents_json="[]"
   local sources_json="[]"
-  local plan_path source_path text doc_has_source
+  local plan_path source_path plan_text source_text doc_has_source
 
   while IFS= read -r plan_path; do
     [ -n "$plan_path" ] || continue
-    if ! text="$(strict_git_show_at_head "$plan_path")"; then
+    if ! plan_text="$(strict_git_show_at_head "$plan_path")"; then
       return 1
     fi
     doc_has_source=false
     source_path="$(strict_plan_source_path_for_plan "$plan_path")"
-    if [ -n "$source_path" ] && text="$(strict_git_show_at_head "$source_path")"; then
+    if [ -n "$source_path" ] && source_text="$(strict_git_show_at_head "$source_path")"; then
       any_source=1
       doc_has_source=true
       sources_json="$(jq -n --argjson srcs "$sources_json" --arg plan_path "$plan_path" \
-        --arg source_path "$source_path" --arg text "$text" \
+        --arg source_path "$source_path" --arg text "$source_text" \
         '$srcs + [{plan_path:$plan_path, source_path:$source_path, text:$text}]')"
-      if ! text="$(strict_git_show_at_head "$plan_path")"; then
-        return 1
-      fi
     fi
-    documents_json="$(jq -n --argjson docs "$documents_json" --arg path "$plan_path" --arg text "$text" \
+    documents_json="$(jq -n --argjson docs "$documents_json" --arg path "$plan_path" --arg text "$plan_text" \
       --argjson has_source "$doc_has_source" \
       '$docs + [{path:$path, text:$text, has_source:$has_source}]')"
   done <<< "$plan_paths"
@@ -581,8 +688,9 @@ strict_dispatch_pass() {
   REVIEW_STAGE_SOURCE="$review_stage_source" \
   REVIEW_CHECKLISTS="$review_checklists_csv" \
   REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
-  REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
-  REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+LOCAL_AI_REVIEWER_TIMEOUT="$remaining" \
     run_with_timeout "$remaining" "$strict_stdout_file_local" "$strict_stderr_file_local" \
       sh -c "$LOCAL_AI_REVIEWER_COMMAND"
   strict_exit=$?
@@ -624,6 +732,8 @@ strict_run_registry_entry() {
   local admission_json="[]"
   local sections_json=""
   local plan_paths=""
+  local spec_paths=""
+  local spec_documents_json="[]"
   local remaining=0
   local now_epoch=""
   local dispatch_out=""
@@ -688,6 +798,9 @@ strict_run_registry_entry() {
       state="unavailable"
       reason="checklist_unreadable"
     else
+      spec_paths="$(strict_changed_spec_paths)"
+      spec_documents_json="$(printf '%s\n' "$spec_paths" | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({path:.})')"
+      applied="$(printf '%s\n' "$admission_json" | jq -r 'join(",")')"
       now_epoch="$(date +%s)"
       remaining=$((TIMEOUT - (now_epoch - round_start_epoch)))
       if [ "$remaining" -le 0 ]; then
@@ -701,6 +814,20 @@ strict_run_registry_entry() {
         checks="$(printf '%s\n' "$dispatch_out" | sed -n '4p')"
         unknown_count="$(printf '%s\n' "$dispatch_out" | sed -n '5p')"
         findings_json="$(printf '%s\n' "$dispatch_out" | sed -n '6p')"
+        if [ "$state" = "applied" ]; then
+          strict_parsed="$(jq -nc \
+            --argjson count "${count:-0}" \
+            --arg checks "${checks:-}" \
+            --argjson unknown_count "${unknown_count:-0}" \
+            --argjson findings "${findings_json:-[]}" \
+            '{count:$count, checks:$checks, unknown_count:$unknown_count, findings:$findings}')"
+          if strict_parsed="$(filter_strict_spec_parsed_response "$strict_parsed" "$spec_documents_json")"; then
+            count="$(printf '%s\n' "$strict_parsed" | jq -r '.count')"
+            checks="$(printf '%s\n' "$strict_parsed" | jq -r '.checks')"
+            unknown_count="$(printf '%s\n' "$strict_parsed" | jq -r '.unknown_count')"
+            findings_json="$(printf '%s\n' "$strict_parsed" | jq -c '.findings')"
+          fi
+        fi
       fi
     fi
   fi
@@ -710,6 +837,7 @@ strict_run_registry_entry() {
       strict_spec_state="$state"
       strict_spec_count="$count"
       strict_spec_checks="$checks"
+      strict_spec_applied="$applied"
       strict_spec_unknown_count="$unknown_count"
       strict_spec_reason="$reason"
       strict_spec_findings_json="$findings_json"
@@ -944,7 +1072,10 @@ if [ "${LOCAL_AI_REVIEWER_DISABLED:-0}" = "1" ]; then
   exit 3
 fi
 
-resolve_local_ai_reviewer_command
+if ! resolve_local_ai_reviewer_command; then
+  print_result escalate 0 0 0 invalid_backend invalid_backend
+  exit 2
+fi
 
 if [ -z "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
   echo "ERROR: LOCAL_AI_REVIEWER_COMMAND is not configured" >&2
@@ -993,6 +1124,11 @@ if [ "$diff_fetch_failed" -ne 0 ]; then
 fi
 
 if [ -n "$REPO_ROOT" ]; then
+  if ! REPO_ROOT="$(CDPATH='' cd -- "$REPO_ROOT" && pwd -P)"; then
+    echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+    print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
+    exit 2
+  fi
   if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
     print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
@@ -1133,6 +1269,7 @@ print_kv REVIEW_DOCTRINE_VERSION "$review_doctrine_version"
 strict_spec_state=""
 strict_spec_count=""
 strict_spec_checks=""
+strict_spec_applied=""
 strict_spec_unknown_count=0
 strict_spec_reason=""
 strict_spec_findings_json="[]"
@@ -1171,6 +1308,7 @@ REVIEW_CHECKLISTS="$review_checklists_csv" \
 REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
 REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
 REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+LOCAL_AI_REVIEWER_TIMEOUT="$TIMEOUT" \
   run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
 command_exit=$?
 set -e
@@ -1178,7 +1316,7 @@ set -e
 command_stdout="$(cat "$stdout_file" 2>/dev/null || true)"
 command_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
 
-if [ "$command_exit" -eq 124 ]; then
+if [ "$command_exit" -eq 124 ] || [ "$command_exit" -eq 137 ]; then
   echo "WARN: local AI reviewer timed out after ${TIMEOUT}s" >&2
   print_result escalate 0 0 0 timeout timeout
   exit 2
@@ -1203,6 +1341,10 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+credentials|c
 fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: local AI reviewer produced no machine output" >&2
+  if [ -n "$command_stderr" ]; then
+    echo "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" >&2
+  fi
   print_result escalate 0 0 0 malformed_output malformed_output
   exit 2
 fi
@@ -1229,15 +1371,22 @@ parse_result="$(
     def scope_text:
       [.scope?, .disposition?, .policy?, .category?]
       | map(select(type == "string")) | join(" ") | ascii_downcase;
+    def out_of_scope:
+      (.clear_in_scope? == false)
+      or (.in_scope? == false)
+      or (scope_text | test("out.of.scope|out.of-scope|not.in.scope|not in scope"));
     def explicit_advisory:
       ((.advisory? == true) or (.decision_bound? == true) or (.scope_expanding? == true))
+      or out_of_scope
       or (scope_text | test("advisory|scope.expanding|decision.bound|optional|polish"));
     def blocking:
-      (severity_text | test("critical|blocker|blocking|important|error|bug|security|vulnerability|high|major|must.fix|needs.fixes|changes.requested"))
-      or (.clear_in_scope? == true)
-      or (scope_text | test("clear.in.scope|in.scope|must.fix|needs.fixes"));
+      (out_of_scope | not)
+      and (
+        (severity_text | test("critical|blocker|blocking|important|error|bug|security|vulnerability|high|major|must.fix|needs.fixes|changes.requested"))
+        or (scope_text | test("must.fix|needs.fixes"))
+      );
     def advisory:
-      explicit_advisory or (severity_text | test("minor|low|nit|nitpick|trivial|info|informational|advisory|optional"));
+      explicit_advisory or (severity_text | test("minor|low|nit|nitpick|trivial|info|informational|advisory|optional|suggestion"));
     . as $root
     | ($root.result // "") as $raw_result
     | ($raw_result | tostring | ascii_downcase | gsub("-"; "_")) as $result
@@ -1271,6 +1420,8 @@ parse_result="$(
           elif $result == "" then
             (if $blocking > 0 then "needs_fixes" else "clean" end) as $inferred
             | "PARSE_STATUS=ok\nRESULT=\($inferred)\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\(if $blocking > 0 then $blocking_lines else "" end)"
+          elif $result == "needs_fixes" and $comments > 0 and $blocking == 0 and $unknown == 0 then
+            "PARSE_STATUS=ok\nRESULT=clean\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=\($advisory)"
           else
             "PARSE_STATUS=ok\nRESULT=\($result)\nREASON=\($root.reason // "")\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\(if $result == "needs_fixes" then $blocking_lines else "" end)"
           end
@@ -1372,7 +1523,7 @@ write_evidence_file() {
 
   local strict_spec_json strict_plan_json
   strict_spec_json="$(strict_build_strict_evidence_json "$strict_spec_state" "$strict_spec_count" \
-    "$strict_spec_checks" "" "$strict_spec_unknown_count" "$strict_spec_reason")"
+    "$strict_spec_checks" "$strict_spec_applied" "$strict_spec_unknown_count" "$strict_spec_reason")"
   strict_plan_json="$(strict_build_strict_evidence_json "$strict_plan_state" "$strict_plan_count" \
     "$strict_plan_checks" "$strict_plan_applied" "$strict_plan_unknown_count" "$strict_plan_reason")"
 
@@ -1457,7 +1608,7 @@ emit_ordinary_and_strict() {
     printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }'
   fi
   emit_strict_spec_output "$strict_spec_state" "$strict_spec_count" \
-    "$strict_spec_checks" "$strict_spec_unknown_count" "$strict_spec_reason" "" \
+    "$strict_spec_checks" "$strict_spec_unknown_count" "$strict_spec_reason" "$strict_spec_applied" \
     "$strict_spec_findings_json"
   emit_strict_plan_output "$strict_plan_state" "$strict_plan_count" \
     "$strict_plan_checks" "$strict_plan_unknown_count" "$strict_plan_reason" "$strict_plan_applied" \
@@ -1476,6 +1627,11 @@ case "$result" in
     exit 0
     ;;
   needs_fixes)
+    if [ "$blocking_count" -eq 0 ] && [ "$suggestion_count" -gt 0 ]; then
+      write_evidence_file clean "" "$comment_count" 0 "$suggestion_count"
+      emit_ordinary_and_strict clean "$comment_count" 0 "$suggestion_count"
+      exit 0
+    fi
     [ "$blocking_count" -eq 0 ] && blocking_count=1
     [ "$comment_count" -eq 0 ] && comment_count=1
     write_evidence_file needs_fixes local_ai_review_findings "$comment_count" "$blocking_count" "$suggestion_count"

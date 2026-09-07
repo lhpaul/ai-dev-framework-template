@@ -1067,7 +1067,7 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
 
    | Finding path | Blocking finding is small? |
    | --- | --- |
-   | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever its wording |
+   | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `.claude/**`, `.cursor/**`, `.codex/**`, `.agents/**`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever its wording |
    | Any other non-shipped path — `CHANGELOG.md`, fixtures, snapshots, and other non-shipped `*.md` outside the normative set | Small **unless** its body touches a contract surface (acceptance criteria, decision gates/matrices, parser/input behavior, scope/coverage, fail-closed semantics, state/status models, telemetry/contracts, proof obligations). Matching is case-insensitive on POSIX word boundaries; bare common words such as `gate`, `scope`, or `state` alone do not match. |
    | A shipped path | Never |
 

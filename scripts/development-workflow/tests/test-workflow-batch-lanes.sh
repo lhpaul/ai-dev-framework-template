@@ -231,7 +231,7 @@ Requires local dev server on localhost port 3000.
 MD
 
 export WORKFLOW_SKIP_FETCH=1
-runtime_plan_out="$(cd "$fixture_repo" && "$BATCH_PLAN" "$runtime_dev" 2>/dev/null | awk '/^LOCAL_RUNTIME=/{print; exit}')"
+runtime_plan_out="$(cd "$fixture_repo" && AI_DEV_WORKFLOW_CONFIG_FILE="$fixture_repo/.ai-dev-workflow.yaml" "$BATCH_PLAN" "$runtime_dev" 2>/dev/null | awk '/^LOCAL_RUNTIME=/{print; exit}')"
 run_test "local_runtime_exclusive_from_plan" "LOCAL_RUNTIME=exclusive" "$runtime_plan_out"
 
 git -C "$fixture_repo" init -q

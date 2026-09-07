@@ -910,10 +910,26 @@ unresolved-thread, regression, and readiness gates remain mandatory.
 
 ### 6.3 — Apply readiness labels
 
-Once the reviewer loop exits clean:
+Once the reviewer loop exits clean, apply the regression label and wait for CI:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
+```
+
+Do not apply `ready-for-human-review` or proceed to the terminal self-check
+until `pr-ci-loop.sh` exits with `RESULT=green` for the current PR head.
+Applying `ready-for-regression` can create or re-run regression checks
+asynchronously; the self-check is not a substitute for waiting through that
+CI loop.
+
+Once CI is green:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
 gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
 ```
 
@@ -923,6 +939,7 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
@@ -935,7 +952,8 @@ ISSUE_NUMBER="${ISSUE_NUMBER:-$PR_NUMBER}"
 SYNC_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 WORKTREE_PATH=$(pwd -P)
 REVIEW_SELF_CHECK_REQUIRED=false
-if workflow_config_review_platforms | grep -q .; then
+REVIEW_PLATFORM_LIST="$(workflow_config_review_platforms)"
+if [ -n "$REVIEW_PLATFORM_LIST" ]; then
   REVIEW_SELF_CHECK_REQUIRED=true
 fi
 
@@ -950,6 +968,7 @@ fi
   --expected-label ready-for-regression \
   --forbid-label needs-fixes \
   --tracker-required false \
+  --require-ci-green true \
   --require-review-summary "$REVIEW_SELF_CHECK_REQUIRED" \
   --require-review-threads "$REVIEW_SELF_CHECK_REQUIRED"
 ```

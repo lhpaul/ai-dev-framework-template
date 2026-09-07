@@ -58,6 +58,10 @@ assert_eq "$(rer_classify_payload "$(cat "$FIXTURE_DIR/unparseable.body")")" "un
 assert_eq "$(rer_classify_payload "$(cat "$FIXTURE_DIR/malformed-json.body")")" "unparseable_history" "malformed json is unparseable not unavailable"
 assert_eq "$(rer_classify_payload "$(wrap_body "$FIXTURE_DIR/unavailable.json")")" "history_unavailable" "scenario 3 unavailable"
 assert_eq "$(rer_classify_payload "$(wrap_body "$FIXTURE_DIR/today-schema.json")")" "included" "today schema included"
+large_marked_body="$(wrap_body "$FIXTURE_DIR/today-schema.json")"
+printf -v large_marked_padding '%70000s' ''
+large_marked_body="${large_marked_body}${large_marked_padding}"
+assert_eq "$(rer_classify_payload "$large_marked_body")" "included" "large marked body included"
 
 # --- measure 6 today schema ---
 today_json="$(wrap_body "$FIXTURE_DIR/today-schema.json" | reviewer_loop_history_extract_latest_json)"
@@ -68,10 +72,87 @@ assert_jq "$today_measures" '.blocking_findings.value' '3' 'blocking findings su
 assert_jq "$today_measures" '.codex_github_invocations.value' '2' 'codex invocations'
 assert_jq "$today_measures" '.final_current_head_evidence.availability' 'not_recorded' 'measure 7 not recorded'
 
+deferred_codex_json="$(jq -nc '
+  {
+    schema: "reviewer_loop_history.v1",
+    pr_number: 101,
+    history_status: "available",
+    entries: [
+      {
+        iteration: 1,
+        platforms: ["local-ai-reviewer (clean)", "codex-github (deferred (baseline_checks_pending))"],
+        platform_results: [{platform: "local-ai-reviewer", result: "clean"}],
+        blocking_count: 0
+      },
+      {
+        iteration: 2,
+        platforms: ["local-ai-reviewer (clean)", "codex-github (needs_fixes)"],
+        platform_results: [
+          {platform: "local-ai-reviewer", result: "clean"},
+          {platform: "codex-github", result: "needs_fixes"}
+        ],
+        blocking_count: 1
+      }
+    ]
+  }
+')"
+deferred_measures="$(rer_compute_measures_json "$deferred_codex_json")"
+assert_jq "$deferred_measures" '.codex_github_invocations.value' '1' 'deferred codex gate is not an invocation'
+assert_jq "$deferred_measures" '.external_blocking_rounds.value' '1' 'external blocking rounds count platform needs_fixes'
+
+external_without_attribution_json="$(jq -nc '
+  {
+    schema: "reviewer_loop_history.v1",
+    pr_number: 102,
+    history_status: "available",
+    entries: [
+      {
+        iteration: 1,
+        platforms: ["local-ai-reviewer (clean)", "codex-github (needs_fixes)"],
+        platform_results: [
+          {platform: "local-ai-reviewer", result: "clean"},
+          {platform: "codex-github", result: "needs_fixes"}
+        ],
+        missed_findings: [],
+        blocking_count: 2
+      }
+    ]
+  }
+')"
+external_without_attribution_measures="$(rer_compute_measures_json "$external_without_attribution_json")"
+assert_jq "$external_without_attribution_measures" '.external_blocking_rounds.value' '1' 'external blockers do not require attribution records'
+
+mixed_history_json="$(jq -nc '
+  {
+    schema: "reviewer_loop_history.v1",
+    pr_number: 103,
+    history_status: "available",
+    entries: [
+      {
+        iteration: 1,
+        platforms: ["local-ai-reviewer", "codex-github"],
+        missed_findings: [{reviewer: "codex-github"}],
+        blocking_count: 1
+      },
+      {
+        iteration: 2,
+        platforms: ["local-ai-reviewer (clean)", "codex-github (clean)"],
+        platform_results: [
+          {platform: "local-ai-reviewer", result: "clean"},
+          {platform: "codex-github", result: "clean"}
+        ],
+        blocking_count: 0
+      }
+    ]
+  }
+')"
+mixed_history_measures="$(rer_compute_measures_json "$mixed_history_json")"
+assert_jq "$mixed_history_measures" '.external_blocking_rounds.value' '1' 'mixed legacy and platform-result history preserves legacy external blockers'
+
 # --- full telemetry ---
 full_json="$(wrap_body "$FIXTURE_DIR/full-telemetry.json" | reviewer_loop_history_extract_latest_json)"
 full_measures="$(rer_compute_measures_json "$full_json")"
-assert_jq "$full_measures" '.external_blocking_rounds.value' '5' 'external blocking rounds total records'
+assert_jq "$full_measures" '.external_blocking_rounds.value' '4' 'external blocking rounds count rounds with findings'
 assert_jq "$full_measures" '.confirmed_miss_records.value' '3' 'confirmed misses'
 assert_jq "$full_measures" '.possible_miss_records.value' '1' 'possible misses'
 assert_jq "$full_measures" '.final_current_head_evidence.value' 'current' 'final head evidence'
@@ -85,11 +166,36 @@ assert_jq "$strict" '.checks[] | select(.check=="spec-ac-1") | .fired' '1' 'spec
 assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .fired' '1' 'plan check fired once per PR'
 assert_jq "$strict" '.checks[] | select(.check=="plan-ac-1") | .applied' '1' 'plan check applied denominator'
 
+spec_zero_json="$(jq -nc '
+  {
+    schema: "reviewer_loop_history.v1",
+    pr_number: 201,
+    history_status: "available",
+    entries: [
+      {
+        iteration: 1,
+        platforms: ["local-ai-reviewer"],
+        blocking_count: 0,
+        strict_spec: {state: "applied", count: 0, checks: [], applied: ["ac_consistency"]}
+      }
+    ]
+  }
+')"
+spec_zero_measures="$(rer_compute_measures_json "$spec_zero_json")"
+spec_zero_row="$(jq -nc --argjson pr 201 --arg state included --argjson measures "$spec_zero_measures" --argjson payload "$spec_zero_json" \
+  '{pr:$pr, state:$state, measures:$measures, _payload:$payload}')"
+spec_zero_rows_json="$(printf '%s\n' "$spec_zero_row" | jq -s '.')"
+spec_zero_strict="$(rer_strict_checks_json "$spec_zero_rows_json")"
+assert_jq "$spec_zero_strict" '.checks[] | select(.check=="ac_consistency") | .kind' 'spec' 'zero-firing spec check is listed'
+assert_jq "$spec_zero_strict" '.checks[] | select(.check=="ac_consistency") | .fired' '0' 'zero-firing spec check reports zero fired'
+assert_jq "$spec_zero_strict" '.checks[] | select(.check=="ac_consistency") | .applied' '1' 'zero-firing spec check keeps applied denominator'
+assert_jq "$spec_zero_strict" '[.checks[] | select(.kind=="spec")] | length' '1' 'recorded spec applied set avoids live-catalogue backfill'
+
 # --- partial telemetry: mixed field availability and measure 7 last entry ---
 partial_json="$(wrap_body "$FIXTURE_DIR/partial-telemetry.json" | reviewer_loop_history_extract_latest_json)"
 partial_measures="$(rer_compute_measures_json "$partial_json")"
 assert_jq "$partial_measures" '.rounds.value' '5' 'partial rounds counts all entries'
-assert_jq "$partial_measures" '.external_blocking_rounds.value' '2' 'partial external rounds count records'
+assert_jq "$partial_measures" '.external_blocking_rounds.value' '2' 'partial external rounds count rounds with findings'
 assert_jq "$partial_measures" '.confirmed_miss_records.value' '1' 'partial confirmed from later rounds'
 assert_jq "$partial_measures" '.possible_miss_records.value' '1' 'partial possible from later rounds'
 assert_jq "$partial_measures" '.final_current_head_evidence.availability' 'computed' 'measure7 available from last entry field'

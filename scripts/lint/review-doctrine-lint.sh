@@ -59,6 +59,7 @@ check_entry_well_formed() {
   local name="$2"
   local shape_count example_count detect_count
   local shape_line example_line detect_line
+  local section_label
 
   shape_count="$(printf '%s\n' "$entry_text" | grep -c '^\*\*Shape\*\*:' || true)"
   example_count="$(printf '%s\n' "$entry_text" | grep -c '^\*\*Example\*\*:' || true)"
@@ -76,7 +77,33 @@ check_entry_well_formed() {
     report_fail "review-doctrine well-formedness FAILED: entry \"$name\" must order **Shape**:, **Example**:, **Detect**: (found shape@$shape_line example@$example_line detect@$detect_line)"
     return 1
   fi
+  for section_label in Shape Example Detect; do
+    if ! section_has_content "$entry_text" "$section_label"; then
+      report_fail "review-doctrine well-formedness FAILED: entry \"$name\" section **$section_label**: must contain non-whitespace guidance"
+      return 1
+    fi
+  done
   return 0
+}
+
+section_has_content() {
+  local entry_text="$1"
+  local label="$2"
+  awk -v label="$label" '
+    BEGIN { marker = "**" label "**:" }
+    index($0, marker) == 1 {
+      in_section = 1
+      rest = substr($0, length(marker) + 1)
+      if (rest ~ /[^[:space:]]/) {
+        content = 1
+      }
+      next
+    }
+    in_section && $0 ~ /^\*\*(Shape|Example|Detect)\*\*:/ { exit }
+    in_section && $0 ~ /^### / { exit }
+    in_section && $0 ~ /[^[:space:]]/ { content = 1 }
+    END { exit content ? 0 : 1 }
+  ' <<<"$entry_text"
 }
 
 check_entry_incident_refs() {
@@ -108,12 +135,12 @@ if [ "${#entry_starts[@]}" -eq 0 ]; then
 else
   well_formed_ok=0
   incident_ok=0
-  total_lines="$(wc -l <"$FILE" | tr -d '[:space:]')"
+  total_lines="$(awk 'END { print NR }' "$FILE")"
   idx=0
   while [ "$idx" -lt "${#entry_starts[@]}" ]; do
     start="${entry_starts[$idx]}"
     if [ "$idx" -lt $((${#entry_starts[@]} - 1)) ]; then
-      end=$((entry_starts[$idx + 1] - 1))
+      end=$((entry_starts[idx + 1] - 1))
     else
       end="$total_lines"
     fi
