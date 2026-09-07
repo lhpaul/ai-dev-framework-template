@@ -1154,6 +1154,7 @@ MOCK_GH_CHECK_RUNS="$(
         name: "Haystack / Review",
         status: "completed",
         conclusion: "failure",
+        head_sha: "fallback-head-sha",
         details_url: "https://haystackeditor.com/review/owner/repo/123",
         started_at: "2026-07-12T15:26:22Z",
         output: {title: "Haystack found 3 issues", summary: $summary}
@@ -1171,6 +1172,7 @@ output=$(_run_reviewer 1 1)
 ec=$(cat "$_REVIEWER_EXIT_FILE")
 
 run_test "check_run_fallback_blocking_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_blocking_reviewed_head" "REVIEWED_HEAD=fallback-head-sha" "$(echo "$output" | grep '^REVIEWED_HEAD=')"
 run_test "check_run_fallback_blocking_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
 run_test "check_run_fallback_suggestion_count" "SUGGESTION_COUNT=2" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "check_run_fallback_conclusion" "CHECK_RUN_CONCLUSION=failure" "$(echo "$output" | grep '^CHECK_RUN_CONCLUSION=')"
@@ -1192,6 +1194,7 @@ MOCK_GH_CHECK_RUNS="$(
         name: "Haystack / Review",
         status: "completed",
         conclusion: "failure",
+        head_sha: "advisory-head-sha",
         details_url: "https://haystackeditor.com/review/owner/repo/123",
         started_at: "2026-07-12T15:26:22Z",
         output: {title: "Haystack found 2 issues", summary: $summary}
@@ -1209,6 +1212,8 @@ output=$(_run_reviewer 1 1)
 ec=$(cat "$_REVIEWER_EXIT_FILE")
 
 run_test "check_run_fallback_advisory_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_advisory_reviewed_head_once" "1" "$(echo "$output" | grep -c '^REVIEWED_HEAD=')"
+run_test "check_run_fallback_advisory_reviewed_head" "REVIEWED_HEAD=advisory-head-sha" "$(echo "$output" | grep '^REVIEWED_HEAD=')"
 run_test "check_run_fallback_advisory_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
 run_test "check_run_fallback_advisory_suggestions" "SUGGESTION_COUNT=2" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
 run_test "check_run_fallback_advisory_exit_code" "0" "$ec"
@@ -1336,6 +1341,7 @@ _file_limit_check_run="$(
         name: "Haystack / Review",
         status: "completed",
         conclusion: "action_required",
+        head_sha: "abc123sha",
         details_url: "https://haystackeditor.com/review/owner/repo/123",
         started_at: "2026-07-23T14:00:00Z",
         completed_at: "2026-07-23T14:00:02Z",
@@ -1360,6 +1366,7 @@ calls=$(_call_count)
 
 run_test "file_limit_skip_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
 run_test "file_limit_skip_reason" "REASON=analysis_skipped_file_limit" "$(echo "$output" | grep '^REASON=')"
+run_test "file_limit_skip_reviewed_head" "REVIEWED_HEAD=abc123sha" "$(echo "$output" | grep '^REVIEWED_HEAD=')"
 run_test "file_limit_skip_display" "DISPLAY_RESULT=skipped (analysis file limit)" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
 run_test "file_limit_skip_counts" "0,0,0" "$(printf '%s,%s,%s' \
   "$(echo "$output" | grep '^BLOCKING_COUNT=' | cut -d= -f2)" \
@@ -1420,6 +1427,7 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 calls=$(_call_count)
 run_test "file_limit_skip_after_transient_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
 run_test "file_limit_skip_after_transient_reason" "REASON=analysis_skipped_file_limit" "$(echo "$output" | grep '^REASON=')"
+run_test "file_limit_skip_after_transient_reviewed_head" "REVIEWED_HEAD=abc123sha" "$(echo "$output" | grep '^REVIEWED_HEAD=')"
 run_test "file_limit_skip_after_transient_exit_code" "3" "$ec"
 run_test "file_limit_skip_after_transient_single_triage" "1" "$calls"
 

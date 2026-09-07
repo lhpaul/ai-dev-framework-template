@@ -90,8 +90,9 @@ Recommended model tier: `balanced`
     — capture `pgrep`'s status **inside** the loop (do not use `$?` after
     `while pgrep ...; do sleep; done`; that is the last body command / `0`,
     not `pgrep`). Use Protocol 91's "Execution Discipline" pattern
-    (`while true; do pgrep -f "[p]r-review-loop.sh <PR>" >/dev/null;
-    pgrep_rc=$?; case $pgrep_rc in 0) sleep 20 ;; 1) break ;; *) break ;;
+    (`while true; do if pgrep -f "[p]r-review-loop.sh <PR>" >/dev/null;
+    then pgrep_rc=0; else pgrep_rc=$?; fi; case $pgrep_rc in 0) sleep 20 ;;
+    1) break ;; *) break ;;
     esac; done`, then inspect `$pgrep_rc`: `1` = done, `2`/`3`/`127` =
     polling failure; use `pgrep_rc` not `status` — zsh treats `status` as
     read-only). Keep `<cmd>` specific enough — e.g. the bracket trick
