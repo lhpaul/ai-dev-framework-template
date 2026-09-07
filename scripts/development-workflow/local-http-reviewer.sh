@@ -15,8 +15,14 @@ HTTP Chat Completions command in local-http-review-command.sh.
 
 Environment:
   LOCAL_AI_REVIEWER_MODEL            Required model id (example: deepseek-v4-pro).
-  LOCAL_AI_REVIEWER_API_BASE_URL    Required Chat Completions API base URL
+  LOCAL_AI_REVIEWER_API_BASE_URL    Preferred Chat Completions API base URL
                                      (example: https://api.deepseek.com).
+                                     Falls back to OPENAI_BASE_URL when unset.
+  OPENAI_BASE_URL                    Optional fallback base URL when
+                                     LOCAL_AI_REVIEWER_API_BASE_URL is unset.
+                                     Prefer setting LOCAL_AI_REVIEWER_API_BASE_URL
+                                     explicitly so a global OpenAI SDK env does
+                                     not silently redirect review traffic.
   LOCAL_AI_REVIEWER_API_KEY          API key. Falls back to DEEPSEEK_API_KEY or
                                      OPENAI_API_KEY.
   LOCAL_AI_REVIEWER_API_KEY_COMMAND  Optional command that prints the API key.

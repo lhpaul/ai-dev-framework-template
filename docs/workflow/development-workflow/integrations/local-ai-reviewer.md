@@ -49,6 +49,8 @@ export LOCAL_AI_REVIEWER_BACKEND='http'
 export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
 export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
 export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+# Prefer LOCAL_AI_REVIEWER_API_BASE_URL over a global OPENAI_BASE_URL fallback
+# so an unrelated OpenAI SDK env does not silently redirect review traffic.
 
 # Custom command instead of a bundled preset:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
@@ -103,14 +105,14 @@ the env so later assertions pass):
 
 | Check | Planted violation | Fail assertion | Guard / test lines |
 | --- | --- | --- | --- |
-| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `http_missing_base_branch_exits` | command L101; test L271 |
-| `git diff` failure | `MOCK_GIT_FAIL=1` | `http_git_diff_failure_exits` | command L107; test L250 |
-| missing credentials | unset API key vars | `http_missing_credentials` | command L66; test L184 |
-| missing `REVIEW.md` | rename `REVIEW.md` | `http_missing_review_md` | command L74; test L223 |
-| missing model / base URL / context | unset the env var | `http_missing_model`, `http_missing_base_url`, `http_missing_context_bundle` | command L58 / L62 / L70; tests L197 / L206 / L215 |
-| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `http_status_401_exits`, `http_status_500_exits` | command L179 / L183; tests L232 / L239 |
-| curl non-zero exit | `MOCK_CURL_EXIT=28` | `http_curl_failure_exits` | command L173; test (after status cases) |
-| empty message content | `MOCK_MODEL_CONTENT=''` | `http_empty_content_exits` | command L193; test (after curl failure) |
+| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `http_missing_base_branch_exits` | command L101; test L298 |
+| `git diff` failure | `MOCK_GIT_FAIL=1` | `http_git_diff_failure_exits` | command L107; test L279 |
+| missing credentials | unset API key vars | `http_missing_credentials` | command L66; test L197 |
+| missing `REVIEW.md` | rename `REVIEW.md` | `http_missing_review_md` | command L74; test L232 |
+| missing model / base URL / context | unset the env var | `http_missing_model`, `http_missing_base_url`, `http_missing_context_bundle` | command L58 / L62 / L70; tests L206 / L215 / L224 |
+| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `http_status_401_exits`, `http_status_500_exits` | command L179 / L183; tests L241 / L248 |
+| curl non-zero exit | `MOCK_CURL_EXIT=28` | `http_curl_failure_exits` | command L173; test L257 |
+| empty message content | `MOCK_MODEL_CONTENT=''` | `http_empty_content_exits` | command L193; test L266 |
 
 This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
 unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture

@@ -131,7 +131,8 @@ review:
   #   LOCAL_AI_REVIEWER_MODEL           — model id for http
   #                                      (example: deepseek-v4-pro)
   #   LOCAL_AI_REVIEWER_API_BASE_URL   — Chat Completions API base URL for http
-  #                                      (example: https://api.deepseek.com)
+  #                                      (example: https://api.deepseek.com;
+  #                                      falls back to OPENAI_BASE_URL when unset)
   #   LOCAL_AI_REVIEWER_API_KEY         — API key for http (or DEEPSEEK_API_KEY /
   #                                      OPENAI_API_KEY / LOCAL_AI_REVIEWER_API_KEY_COMMAND)
   #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout (default: 300)

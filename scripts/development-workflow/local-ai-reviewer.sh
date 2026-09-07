@@ -50,6 +50,8 @@ Environment:
                                     (example: deepseek-v4-pro).
   LOCAL_AI_REVIEWER_API_BASE_URL   Chat Completions API base URL for http
                                     (example: https://api.deepseek.com).
+                                    Falls back to OPENAI_BASE_URL when unset;
+                                    prefer setting this explicitly.
   LOCAL_AI_REVIEWER_API_KEY         API key for the http preset. Falls back to
                                     DEEPSEEK_API_KEY or OPENAI_API_KEY.
   LOCAL_AI_REVIEWER_API_KEY_COMMAND Optional command that prints the API key.

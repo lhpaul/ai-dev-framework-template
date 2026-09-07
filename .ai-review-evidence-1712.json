@@ -1,0 +1,54 @@
+{
+  "schema_version": "local_ai_reviewer_evidence.v1",
+  "result": "needs_fixes",
+  "reason": "local_ai_review_findings",
+  "pr_number": 1712,
+  "owner": "lhpaul",
+  "repo": "ai-dev-framework-template",
+  "base_branch": "develop",
+  "head_branch": "feature/1711-openai-compat-local-reviewer",
+  "reviewed_head": "feb9271463d061467443ec98fd6a7592fcc0ea93",
+  "graph_context": "none",
+  "counts": {
+    "comments": 2,
+    "blocking": 2,
+    "suggestions": 0
+  },
+  "context_summary": {
+    "changed_files": [
+      ".ai-dev-workflow.local.env.example",
+      ".ai-dev-workflow.yaml",
+      ".gitignore",
+      "changelog.d/1711.added.http-local-reviewer.md",
+      "docs/workflow/development-workflow/integrations/local-ai-reviewer.md",
+      "scripts/development-workflow/local-ai-reviewer.sh",
+      "scripts/development-workflow/local-http-review-command.sh",
+      "scripts/development-workflow/local-http-reviewer.sh",
+      "scripts/development-workflow/tests/test-local-ai-reviewer.sh",
+      "scripts/development-workflow/tests/test-local-http-review-command.sh"
+    ],
+    "pr_body": "## Summary\n- Add an opt-in `openai_compat` backend for `local-ai-reviewer` so Step 7 can call DeepSeek (or Qwen/GLM) when Codex quota is exhausted.\n- Keep Codex as the shared default. Same JSON review contract; the HTTP preset inlines `REVIEW.md`, the context bundle, and a bounded diff.\n- Closes #1711.\n\n\n## Planted-violation proof\n\nThis PR does not add a lint rule, CI job, or repo-wide file scanner. Fail-closed setup checks in `local-openai-review-command.sh` are proven by unit tests that plant the violation, assert failure, then restore the env:\n\n| Check | Planted violation | Fail assertion | Location |\n| --- | --- | --- | --- |\n| missing BASE_BRANCH | unset BASE_BRANCH | `openai_missing_base_branch_exits` | command L101; test L271 |\n| git diff failure | MOCK_GIT_FAIL=1 | `openai_git_diff_failure_exits` | command L107; test L250 |\n| missing credentials | unset API keys | `openai_missing_credentials` | command L66; test L184 |\n| missing REVIEW.md | rename REVIEW.md | `openai_missing_review_md` | command L74; test L223 |\n| missing model / base URL / context | unset env | matching `openai_missing_*` tests | command L58 / L62 / L70 |\n| HTTP 401 / 500 | MOCK_HTTP_CODE | `openai_http_401_exits`, `openai_http_500_exits` | command L179 / L183 |\n\nE2E fixture contract is not applicable (template placeholder E2E job).\n\n## Test plan\n- [x] `bash scripts/development-workflow/tests/test-local-openai-review-command.sh` (33 passed)\n- [x] `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` (exit 0)\n- [x] `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop` (`examined=6 files, 2 fences, 512 changed-lines; findings=0`)\n- [x] Live DeepSeek review against this draft PR via `local-openai-reviewer.sh` (fixer cycles applied)\n- [x] Codex default remains `codex` when `LOCAL_AI_REVIEWER_BACKEND` is unset\n\n<!-- CURSOR_SUMMARY -->\n---\n\n> [!NOTE]\n> **Medium Risk**\n> Changes the default resolution path for a core draft review gate and sends PR/diff content to external HTTP APIs when enabled, though behavior is opt-in and Codex remains the default.\n> \n> **Overview**\n> Adds an **opt-in OpenAI-compatible HTTP backend** for Step 7’s `local-ai-reviewer`, so draft reviews can run against DeepSeek (or any `/chat/completions` API) when Codex isn’t available. **Codex stays the default** when `LOCAL_AI_REVIEWER_BACKEND` is unset.\n> \n> `local-ai-reviewer.sh` now picks the bundled preset from **`LOCAL_AI_REVIEWER_BACKEND`** (`codex` vs `openai_compat`), rejects unknown values with **`RESULT=escalate`**, and documents new env vars (model, base URL, API key / key command).\n> \n> The new **`local-openai-review-command.sh`** preset POSTs to the remote API with **`REVIEW.md`**, the context bundle, and a **bounded unified diff** inlined in the prompt (remote models can’t read the repo). **`local-openai-reviewer.sh`** is a thin wrapper; **`.ai-dev-workflow.local.env.example`** and gitignore support local secrets. Docs, workflow YAML comments, changelog, and **`test-local-openai-review-command.sh`** cover setup and behavior.\n> \n> <sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit 5e74c08261584e6a322daa772e1dcc1221649ee8. Bugbot is set up for automated code reviews on this repo. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>\n<!-- /CURSOR_SUMMARY -->",
+    "diff_name_status": "A\t.ai-dev-workflow.local.env.example\nM\t.ai-dev-workflow.yaml\nM\t.gitignore\nA\tchangelog.d/1711.added.http-local-reviewer.md\nM\tdocs/workflow/development-workflow/integrations/local-ai-reviewer.md\nM\tscripts/development-workflow/local-ai-reviewer.sh\nA\tscripts/development-workflow/local-http-review-command.sh\nA\tscripts/development-workflow/local-http-reviewer.sh\nM\tscripts/development-workflow/tests/test-local-ai-reviewer.sh\nA\tscripts/development-workflow/tests/test-local-http-review-command.sh",
+    "diff_stat": " .ai-dev-workflow.local.env.example                 |  14 +\n .ai-dev-workflow.yaml                              |  15 +-\n .gitignore                                         |   1 +\n changelog.d/1711.added.http-local-reviewer.md      |   1 +\n .../integrations/local-ai-reviewer.md              |  47 ++-\n scripts/development-workflow/local-ai-reviewer.sh  |  65 +++-\n .../local-http-review-command.sh                   | 231 ++++++++++++\n .../development-workflow/local-http-reviewer.sh    |  54 +++\n .../tests/test-local-ai-reviewer.sh                |  10 +-\n .../tests/test-local-http-review-command.sh        | 394 +++++++++++++++++++++\n 10 files changed, 817 insertions(+), 15 deletions(-)"
+  },
+  "review_stage": {
+    "stage": "implementation",
+    "source": "branch+files",
+    "checklists": [
+      "Code Review Checklist",
+      "Workflow Policy Review Checklist"
+    ]
+  },
+  "review_doctrine": {
+    "state": "supplied",
+    "pattern_count": 5,
+    "version": "1237336397af"
+  },
+  "strict_spec": {
+    "state": "not_applicable"
+  },
+  "strict_plan": {
+    "state": "not_applicable",
+    "reason": "stage_not_plan"
+  }
+}
