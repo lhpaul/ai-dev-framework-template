@@ -124,15 +124,15 @@ review:
   #   LOCAL_AI_REVIEWER_COMMAND        — optional override; when unset,
   #                                      local-ai-reviewer.sh defaults from
   #                                      LOCAL_AI_REVIEWER_BACKEND
-  #   LOCAL_AI_REVIEWER_BACKEND         — codex (default) or openai_compat
+  #   LOCAL_AI_REVIEWER_BACKEND         — codex (default) or http (alias: openai_compat)
   #   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 — do not apply a bundled preset default
   #   LOCAL_CODEX_REVIEWER_BIN         — Codex binary for the bundled preset (default: codex)
   #   LOCAL_CODEX_REVIEWER_MODEL       — optional model for the bundled Codex preset
-  #   LOCAL_AI_REVIEWER_MODEL           — model id for openai_compat
+  #   LOCAL_AI_REVIEWER_MODEL           — model id for http
   #                                      (example: deepseek-v4-pro)
-  #   LOCAL_AI_REVIEWER_API_BASE_URL   — OpenAI-compatible base URL for openai_compat
+  #   LOCAL_AI_REVIEWER_API_BASE_URL   — Chat Completions API base URL for http
   #                                      (example: https://api.deepseek.com)
-  #   LOCAL_AI_REVIEWER_API_KEY         — API key for openai_compat (or DEEPSEEK_API_KEY /
+  #   LOCAL_AI_REVIEWER_API_KEY         — API key for http (or DEEPSEEK_API_KEY /
   #                                      OPENAI_API_KEY / LOCAL_AI_REVIEWER_API_KEY_COMMAND)
   #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout (default: 300)
   #   LOCAL_AI_REVIEWER_GRAPH_STRATEGY — none|auto|code-review-graph|graphify

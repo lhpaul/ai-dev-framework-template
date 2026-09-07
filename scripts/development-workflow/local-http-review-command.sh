@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# local-openai-review-command.sh - LOCAL_AI_REVIEWER_COMMAND preset for an
-# OpenAI-compatible HTTP backend (DeepSeek, Qwen, GLM, and similar).
+# local-http-review-command.sh - LOCAL_AI_REVIEWER_COMMAND preset for an
+# HTTP Chat Completions backend (DeepSeek, Qwen, GLM, OpenAI, and similar).
 #
 # Unlike the Codex preset, this command inlines REVIEW.md, the context bundle,
 # and a bounded diff because the remote model cannot read the local filesystem.
@@ -171,7 +171,7 @@ curl_exit=$?
 set -e
 
 if [ "$curl_exit" -ne 0 ]; then
-  echo "ERROR: openai-compatible reviewer HTTP request failed (curl exit ${curl_exit})" >&2
+  echo "ERROR: HTTP reviewer HTTP request failed (curl exit ${curl_exit})" >&2
   exit 1
 fi
 
@@ -180,7 +180,7 @@ if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
   exit 1
 fi
 if [ "$http_code" != "200" ]; then
-  echo "ERROR: openai-compatible reviewer HTTP ${http_code}" >&2
+  echo "ERROR: HTTP reviewer HTTP ${http_code}" >&2
   if grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' "$body_file"; then
     echo "ERROR: missing model access" >&2
   fi
@@ -191,7 +191,7 @@ fi
 
 content="$(jq -r '.choices[0].message.content // empty' "$body_file")"
 if [ -z "$content" ]; then
-  echo "ERROR: openai-compatible reviewer returned empty message content" >&2
+  echo "ERROR: HTTP reviewer returned empty message content" >&2
   head -c 2000 "$body_file" >&2 || true
   echo >&2
   exit 1
@@ -226,6 +226,6 @@ if brace:
         pass
 raise SystemExit(1)
 '; then
-  echo "ERROR: openai-compatible reviewer produced malformed JSON output" >&2
+  echo "ERROR: HTTP reviewer produced malformed JSON output" >&2
   exit 1
 fi

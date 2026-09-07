@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Unit tests for local-openai-review-command.sh.
-# covers: scripts/development-workflow/local-openai-review-command.sh
-# covers: scripts/development-workflow/local-openai-reviewer.sh
+# Unit tests for local-http-review-command.sh.
+# covers: scripts/development-workflow/local-http-review-command.sh
+# covers: scripts/development-workflow/local-http-reviewer.sh
 # covers: scripts/development-workflow/local-ai-reviewer.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
-COMMAND="$REPO_ROOT/scripts/development-workflow/local-openai-review-command.sh"
-WRAPPER="$REPO_ROOT/scripts/development-workflow/local-openai-reviewer.sh"
+COMMAND="$REPO_ROOT/scripts/development-workflow/local-http-review-command.sh"
+WRAPPER="$REPO_ROOT/scripts/development-workflow/local-http-reviewer.sh"
 REVIEWER="$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh"
 
 MOCK_BIN="$(mktemp -d)"
@@ -115,14 +115,14 @@ unset LOCAL_AI_REVIEWER_HTTP_TIMEOUT LOCAL_AI_REVIEWER_TIMEOUT
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
 
-run_test "openai_command_result" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
-run_test "openai_command_reviewed_head" "abc123" "$(jq -r '.reviewed_head' "$OUTPUT_FILE")"
-run_test "openai_posts_chat_completions" "yes" "$(grep -q 'https://api.deepseek.com/chat/completions' "$URL_FILE" && echo yes || echo no)"
-run_test "openai_inlines_context_bundle" "yes" "$(grep -q 'local_ai_reviewer_context.v1' "$REQUEST_FILE" && echo yes || echo no)"
-run_test "openai_inlines_review_md" "yes" "$(grep -q 'Review Contract' "$REQUEST_FILE" && echo yes || echo no)"
-run_test "openai_requests_json_object" "yes" "$(jq -e '.response_format.type == "json_object"' "$REQUEST_FILE" >/dev/null && echo yes || echo no)"
-run_test "openai_model_id" "deepseek-v4-pro" "$(jq -r '.model' "$REQUEST_FILE")"
-run_test "openai_http_timeout_default" "270" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
+run_test "http_command_result" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
+run_test "http_command_reviewed_head" "abc123" "$(jq -r '.reviewed_head' "$OUTPUT_FILE")"
+run_test "http_posts_chat_completions" "yes" "$(grep -q 'https://api.deepseek.com/chat/completions' "$URL_FILE" && echo yes || echo no)"
+run_test "http_inlines_context_bundle" "yes" "$(grep -q 'local_ai_reviewer_context.v1' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_inlines_review_md" "yes" "$(grep -q 'Review Contract' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_requests_json_object" "yes" "$(jq -e '.response_format.type == "json_object"' "$REQUEST_FILE" >/dev/null && echo yes || echo no)"
+run_test "http_model_id" "deepseek-v4-pro" "$(jq -r '.model' "$REQUEST_FILE")"
+run_test "http_timeout_default" "270" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
 
 LOCAL_AI_REVIEWER_HTTP_TIMEOUT=840
 LOCAL_AI_REVIEWER_TIMEOUT=300
@@ -131,7 +131,7 @@ export LOCAL_AI_REVIEWER_HTTP_TIMEOUT LOCAL_AI_REVIEWER_TIMEOUT
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
-run_test "openai_http_timeout_capped_to_companion" "300" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
+run_test "http_timeout_capped_to_companion" "300" "$(tr -d '[:space:]' < "$TIMEOUT_FILE")"
 unset LOCAL_AI_REVIEWER_HTTP_TIMEOUT LOCAL_AI_REVIEWER_TIMEOUT
 
 python3 - "$CONTEXT_BUNDLE_PATH" <<'PY'
@@ -145,8 +145,8 @@ PY
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
-run_test "openai_large_payload_via_rawfile" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
-run_test "openai_large_payload_inlined" "yes" "$(python3 -c 'import json,sys; print("yes" if "x"*32768 in json.load(open(sys.argv[1]))["messages"][1]["content"] else "no")' "$REQUEST_FILE")"
+run_test "http_large_payload_via_rawfile" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
+run_test "http_large_payload_inlined" "yes" "$(python3 -c 'import json,sys; print("yes" if "x"*32768 in json.load(open(sys.argv[1]))["messages"][1]["content"] else "no")' "$REQUEST_FILE")"
 cat > "$CONTEXT_BUNDLE_PATH" <<'EOF'
 {"schema_version":"local_ai_reviewer_context.v1","reviewed_head":"abc123"}
 EOF
@@ -158,8 +158,8 @@ export REVIEW_STAGE REVIEW_CHECKLISTS
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
-run_test "openai_stage_in_full" "yes" "$(grep -Fq 'in full' "$REQUEST_FILE" && echo yes || echo no)"
-run_test "openai_stage_names_sections" "yes" "$(grep -Fq 'Code Review Checklist,Workflow Policy Review Checklist' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_stage_in_full" "yes" "$(grep -Fq 'in full' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_stage_names_sections" "yes" "$(grep -Fq 'Code Review Checklist,Workflow Policy Review Checklist' "$REQUEST_FILE" && echo yes || echo no)"
 
 unset REVIEW_STAGE REVIEW_CHECKLISTS
 MOCK_MODEL_CONTENT=$'```json\n{"result":"needs_fixes","reviewed_head":"abc123","findings":[]}\n```'
@@ -168,7 +168,7 @@ export MOCK_MODEL_CONTENT
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
-run_test "openai_strips_markdown_fence" "needs_fixes" "$(jq -r '.result' "$OUTPUT_FILE")"
+run_test "http_strips_markdown_fence" "needs_fixes" "$(jq -r '.result' "$OUTPUT_FILE")"
 unset MOCK_MODEL_CONTENT
 
 MOCK_MODEL_CONTENT='not-json'
@@ -177,7 +177,7 @@ export MOCK_MODEL_CONTENT
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_malformed_json_exits" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_malformed_json_exits" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
 unset MOCK_MODEL_CONTENT
 
 unset LOCAL_AI_REVIEWER_API_KEY DEEPSEEK_API_KEY OPENAI_API_KEY LOCAL_AI_REVIEWER_API_KEY_COMMAND
@@ -185,7 +185,7 @@ unset LOCAL_AI_REVIEWER_API_KEY DEEPSEEK_API_KEY OPENAI_API_KEY LOCAL_AI_REVIEWE
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_missing_credentials" "yes" "$(grep -Eiq 'missing credentials' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_missing_credentials" "yes" "$(grep -Eiq 'missing credentials' "$STDERR_FILE" && echo yes || echo no)"
 export LOCAL_AI_REVIEWER_API_KEY=test-key
 
 saved_model="$LOCAL_AI_REVIEWER_MODEL"
@@ -194,7 +194,7 @@ unset LOCAL_AI_REVIEWER_MODEL
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_missing_model" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_MODEL is not set' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_missing_model" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_MODEL is not set' "$STDERR_FILE" && echo yes || echo no)"
 export LOCAL_AI_REVIEWER_MODEL="$saved_model"
 
 saved_base_url="$LOCAL_AI_REVIEWER_API_BASE_URL"
@@ -203,7 +203,7 @@ unset LOCAL_AI_REVIEWER_API_BASE_URL OPENAI_BASE_URL
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_missing_base_url" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_API_BASE_URL is not set' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_missing_base_url" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_API_BASE_URL is not set' "$STDERR_FILE" && echo yes || echo no)"
 export LOCAL_AI_REVIEWER_API_BASE_URL="$saved_base_url"
 
 saved_context="$CONTEXT_BUNDLE_PATH"
@@ -212,7 +212,7 @@ unset CONTEXT_BUNDLE_PATH
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_missing_context_bundle" "yes" "$(grep -q 'CONTEXT_BUNDLE_PATH is missing or unreadable' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_missing_context_bundle" "yes" "$(grep -q 'CONTEXT_BUNDLE_PATH is missing or unreadable' "$STDERR_FILE" && echo yes || echo no)"
 export CONTEXT_BUNDLE_PATH="$saved_context"
 
 mv "$WORK_DIR/REVIEW.md" "$WORK_DIR/REVIEW.md.bak"
@@ -220,7 +220,7 @@ mv "$WORK_DIR/REVIEW.md" "$WORK_DIR/REVIEW.md.bak"
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_missing_review_md" "yes" "$(grep -q 'REVIEW.md is missing or unreadable' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_missing_review_md" "yes" "$(grep -q 'REVIEW.md is missing or unreadable' "$STDERR_FILE" && echo yes || echo no)"
 mv "$WORK_DIR/REVIEW.md.bak" "$WORK_DIR/REVIEW.md"
 
 MOCK_HTTP_CODE=401
@@ -229,14 +229,14 @@ export MOCK_HTTP_CODE
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_http_401_exits" "yes" "$(grep -q 'unauthorized (401)' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_status_401_exits" "yes" "$(grep -q 'unauthorized (401)' "$STDERR_FILE" && echo yes || echo no)"
 MOCK_HTTP_CODE=500
 export MOCK_HTTP_CODE
 (
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_http_500_exits" "yes" "$(grep -q 'openai-compatible reviewer HTTP 500' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_status_500_exits" "yes" "$(grep -q 'HTTP reviewer HTTP 500' "$STDERR_FILE" && echo yes || echo no)"
 unset MOCK_HTTP_CODE
 
 run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
@@ -249,17 +249,17 @@ export MOCK_GIT_FAIL
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_git_diff_failure_exits" "yes" "$(grep -q 'git diff origin/develop...HEAD failed' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_git_diff_failure_exits" "yes" "$(grep -q 'git diff origin/develop...HEAD failed' "$STDERR_FILE" && echo yes || echo no)"
 unset MOCK_GIT_FAIL
 
 MOCK_GIT_DIFF='diff --git a/foo b/foo
-+openai-compat-diff-marker'
++http-diff-marker'
 export MOCK_GIT_DIFF
 (
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
-run_test "openai_inlines_bounded_diff" "yes" "$(grep -q 'openai-compat-diff-marker' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_inlines_bounded_diff" "yes" "$(grep -q 'http-diff-marker' "$REQUEST_FILE" && echo yes || echo no)"
 unset MOCK_GIT_DIFF
 
 saved_base_branch="$BASE_BRANCH"
@@ -268,19 +268,27 @@ unset BASE_BRANCH
   cd "$WORK_DIR"
   PATH="$MOCK_BIN:$PATH" "$COMMAND"
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
-run_test "openai_missing_base_branch_exits" "yes" "$(grep -q 'BASE_BRANCH is not set' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_missing_base_branch_exits" "yes" "$(grep -q 'BASE_BRANCH is not set' "$STDERR_FILE" && echo yes || echo no)"
 export BASE_BRANCH="$saved_base_branch"
 
 # Backend resolution through local-ai-reviewer.sh
 unset LOCAL_AI_REVIEWER_COMMAND
-LOCAL_AI_REVIEWER_BACKEND=openai_compat
+LOCAL_AI_REVIEWER_BACKEND=http
 export LOCAL_AI_REVIEWER_BACKEND
 # shellcheck source=scripts/development-workflow/local-ai-reviewer.sh
 HARNESS_MODE=1 source "$REVIEWER"
 resolve_stderr="$(mktemp)"
 resolve_local_ai_reviewer_command 2>"$resolve_stderr"
-run_test "backend_defaults_to_openai_preset" "yes" "$(printf '%s' "$LOCAL_AI_REVIEWER_COMMAND" | grep -q 'local-openai-review-command.sh' && echo yes || echo no)"
-run_test "backend_info_mentions_openai_preset" "yes" "$(grep -q 'bundled openai-compatible preset' "$resolve_stderr" && echo yes || echo no)"
+run_test "backend_defaults_to_http_preset" "yes" "$(printf '%s' "$LOCAL_AI_REVIEWER_COMMAND" | grep -q 'local-http-review-command.sh' && echo yes || echo no)"
+run_test "backend_info_mentions_http_preset" "yes" "$(grep -q 'bundled HTTP preset' "$resolve_stderr" && echo yes || echo no)"
+rm -f "$resolve_stderr"
+unset LOCAL_AI_REVIEWER_COMMAND
+# Deprecated alias still resolves to the HTTP preset.
+LOCAL_AI_REVIEWER_BACKEND=openai_compat
+export LOCAL_AI_REVIEWER_BACKEND
+resolve_stderr="$(mktemp)"
+resolve_local_ai_reviewer_command 2>"$resolve_stderr"
+run_test "backend_openai_compat_alias_still_works" "yes" "$(printf '%s' "$LOCAL_AI_REVIEWER_COMMAND" | grep -q 'local-http-review-command.sh' && echo yes || echo no)"
 rm -f "$resolve_stderr"
 unset LOCAL_AI_REVIEWER_COMMAND
 LOCAL_AI_REVIEWER_BACKEND=openai
@@ -289,8 +297,8 @@ set +e
 resolve_local_ai_reviewer_command 2>"$STDERR_FILE"
 alias_rc=$?
 set -e
-run_test "backend_rejects_openai_alias" "1" "$alias_rc"
-run_test "backend_alias_error_names_openai_compat" "yes" "$(grep -q 'expected codex or openai_compat' "$STDERR_FILE" && echo yes || echo no)"
+run_test "backend_rejects_bare_openai_alias" "1" "$alias_rc"
+run_test "backend_alias_error_names_http" "yes" "$(grep -q 'expected codex or http' "$STDERR_FILE" && echo yes || echo no)"
 unset LOCAL_AI_REVIEWER_BACKEND LOCAL_AI_REVIEWER_COMMAND
 
 LOCAL_AI_REVIEWER_BACKEND=not-a-backend

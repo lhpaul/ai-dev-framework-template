@@ -23,7 +23,7 @@ Options:
 Environment:
   LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults from
                                     LOCAL_AI_REVIEWER_BACKEND (codex or
-                                    openai_compat) unless
+                                    http) unless
                                     LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
@@ -33,8 +33,9 @@ Environment:
                                     REVIEW_DOCTRINE_PATTERN_COUNT,
                                     REVIEW_DOCTRINE_VERSION, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
-  LOCAL_AI_REVIEWER_BACKEND         codex (default) or openai_compat. Used only
+  LOCAL_AI_REVIEWER_BACKEND         codex (default) or http. Used only
                                     when LOCAL_AI_REVIEWER_COMMAND is unset.
+                                    Alias: openai_compat (deprecated).
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
                                     Do not apply a bundled preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
@@ -45,19 +46,19 @@ Environment:
   LOCAL_CODEX_REVIEWER_PROMPT       Override the ordinary-pass Codex prompt only.
   LOCAL_CODEX_REVIEWER_STRICT_PROMPT
                                     Override the strict-pass Codex prompt only.
-  LOCAL_AI_REVIEWER_MODEL           Model id for the openai_compat preset
+  LOCAL_AI_REVIEWER_MODEL           Model id for the http preset
                                     (example: deepseek-v4-pro).
-  LOCAL_AI_REVIEWER_API_BASE_URL   OpenAI-compatible base URL for openai_compat
+  LOCAL_AI_REVIEWER_API_BASE_URL   Chat Completions API base URL for http
                                     (example: https://api.deepseek.com).
-  LOCAL_AI_REVIEWER_API_KEY         API key for openai_compat. Falls back to
+  LOCAL_AI_REVIEWER_API_KEY         API key for the http preset. Falls back to
                                     DEEPSEEK_API_KEY or OPENAI_API_KEY.
   LOCAL_AI_REVIEWER_API_KEY_COMMAND Optional command that prints the API key.
-  LOCAL_AI_REVIEWER_HTTP_TIMEOUT    curl --max-time for openai_compat. Defaults
+  LOCAL_AI_REVIEWER_HTTP_TIMEOUT    curl --max-time for the http preset. Defaults
                                     to LOCAL_AI_REVIEWER_TIMEOUT minus 30s
                                     (or 300-30 when unset) and is capped under
                                     the companion --timeout.
   LOCAL_AI_REVIEWER_JSON_OBJECT     1 (default) requests response_format
-                                    json_object from openai_compat.
+                                    json_object from the http preset.
   LOCAL_AI_REVIEWER_DIFF_MAX_BYTES Bound for the inlined unified diff
                                     (default 200000).
   LOCAL_AI_REVIEWER_CURL_BIN        curl binary override (tests).
@@ -89,16 +90,17 @@ resolve_local_ai_reviewer_command() {
   local default_command=""
   local preset_label=""
   case "$backend" in
-    openai_compat)
-      default_command="$SCRIPT_DIR/local-openai-review-command.sh"
-      preset_label="openai-compatible"
+    http|chat_completions|openai_compat)
+      # openai_compat is a deprecated alias for http.
+      default_command="$SCRIPT_DIR/local-http-review-command.sh"
+      preset_label="HTTP"
       ;;
     codex)
       default_command="$SCRIPT_DIR/local-codex-review-command.sh"
       preset_label="Codex"
       ;;
     *)
-      echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or openai_compat)" >&2
+      echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or http)" >&2
       return 1
       ;;
   esac

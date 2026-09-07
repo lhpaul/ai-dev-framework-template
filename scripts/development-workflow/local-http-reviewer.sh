@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# local-openai-reviewer.sh - short OpenAI-compatible preset wrapper for
+# local-http-reviewer.sh - short HTTP Chat Completions preset wrapper for
 # local-ai-reviewer.sh.
 
 set -euo pipefail
@@ -8,14 +8,14 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<'EOF'
-Usage: local-openai-reviewer.sh <pr_number> <owner> <repo> [local-ai-reviewer options] [--evidence-file <path>]
+Usage: local-http-reviewer.sh <pr_number> <owner> <repo> [local-ai-reviewer options] [--evidence-file <path>]
 
 Runs local-ai-reviewer.sh with LOCAL_AI_REVIEWER_COMMAND preset to the
-OpenAI-compatible HTTP command in local-openai-review-command.sh.
+HTTP Chat Completions command in local-http-review-command.sh.
 
 Environment:
   LOCAL_AI_REVIEWER_MODEL            Required model id (example: deepseek-v4-pro).
-  LOCAL_AI_REVIEWER_API_BASE_URL    Required OpenAI-compatible base URL
+  LOCAL_AI_REVIEWER_API_BASE_URL    Required Chat Completions API base URL
                                      (example: https://api.deepseek.com).
   LOCAL_AI_REVIEWER_API_KEY          API key. Falls back to DEEPSEEK_API_KEY or
                                      OPENAI_API_KEY.
@@ -50,5 +50,5 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-export LOCAL_AI_REVIEWER_COMMAND="$SCRIPT_DIR/local-openai-review-command.sh"
+export LOCAL_AI_REVIEWER_COMMAND="$SCRIPT_DIR/local-http-review-command.sh"
 exec "$SCRIPT_DIR/local-ai-reviewer.sh" "${args[@]}"
