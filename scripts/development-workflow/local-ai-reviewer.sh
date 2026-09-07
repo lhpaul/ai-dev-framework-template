@@ -90,7 +90,7 @@ resolve_local_ai_reviewer_command() {
   local default_command=""
   local preset_label=""
   case "$backend" in
-    http|chat_completions|openai_compat)
+    http|openai_compat)
       # openai_compat is a deprecated alias for http.
       default_command="$SCRIPT_DIR/local-http-review-command.sh"
       preset_label="HTTP"

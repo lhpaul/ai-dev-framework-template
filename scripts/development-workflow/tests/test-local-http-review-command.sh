@@ -32,6 +32,9 @@ trap cleanup EXIT
 PASS_COUNT=0
 FAIL_COUNT=0
 
+# Avoid inherited MOCK_* env from a previous interactive shell.
+unset MOCK_MODEL_CONTENT MOCK_HTTP_CODE MOCK_GIT_FAIL MOCK_GIT_DIFF
+
 run_test() {
   local name="$1"
   local expected="$2"
@@ -80,7 +83,10 @@ printf '%s\n' "$url" > "${URL_FILE:?}"
 if [ -n "$data_file" ] && [ -f "$data_file" ]; then
   cat "$data_file" > "${REQUEST_FILE:?}"
 fi
-content="${MOCK_MODEL_CONTENT:-{\"result\":\"clean\",\"reviewed_head\":\"abc123\",\"findings\":[]}}"
+content='{"result":"clean","reviewed_head":"abc123","findings":[]}'
+if [ -n "${MOCK_MODEL_CONTENT+x}" ]; then
+  content="$MOCK_MODEL_CONTENT"
+fi
 printf '{"choices":[{"message":{"content":%s}}]}\n' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
 if [ "$write_fmt" = '%{http_code}' ]; then
   printf '%s' "${MOCK_HTTP_CODE:-200}"
@@ -271,6 +277,47 @@ unset BASE_BRANCH
 run_test "http_missing_base_branch_exits" "yes" "$(grep -q 'BASE_BRANCH is not set' "$STDERR_FILE" && echo yes || echo no)"
 export BASE_BRANCH="$saved_base_branch"
 
+# Strict mode prompt assembly for the HTTP preset (used by strict_dispatch_pass).
+LOCAL_AI_REVIEWER_MODE=strict
+export LOCAL_AI_REVIEWER_MODE
+cat > "$CONTEXT_BUNDLE_PATH" <<'EOF'
+{"schema_version":"local_ai_reviewer_context.v1","reviewed_head":"abc123","strict_spec_checks":{"checks":["source_declaration"]}}
+EOF
+MOCK_MODEL_CONTENT='{"mode":"strict_spec_checks","findings":[]}'
+export MOCK_MODEL_CONTENT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "http_strict_spec_mode_result" "strict_spec_checks" "$(jq -r '.mode' "$OUTPUT_FILE")"
+run_test "http_strict_spec_prompt" "yes" "$(grep -Fq 'strict_spec_checks' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_strict_spec_no_ordinary_verdict_prompt" "yes" "$(grep -Fq 'Do not return a review verdict' "$REQUEST_FILE" && echo yes || echo no)"
+
+cat > "$CONTEXT_BUNDLE_PATH" <<'EOF'
+{"schema_version":"local_ai_reviewer_context.v1","reviewed_head":"abc123","strict_plan_checks":{"checks":["phase_ordering"]},"strict_plan_documents":{},"strict_plan_sources":{}}
+EOF
+MOCK_MODEL_CONTENT='{"mode":"strict_plan_checks","findings":[]}'
+export MOCK_MODEL_CONTENT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "http_strict_plan_mode_result" "strict_plan_checks" "$(jq -r '.mode' "$OUTPUT_FILE")"
+run_test "http_strict_plan_prompt" "yes" "$(grep -Fq 'strict_plan_checks' "$REQUEST_FILE" && echo yes || echo no)"
+run_test "http_strict_plan_prefers_plan_over_spec" "yes" "$(grep -Fq 'strict_plan_documents' "$REQUEST_FILE" && echo yes || echo no)"
+
+LOCAL_AI_REVIEWER_STRICT_PROMPT='custom-strict-http-prompt'
+export LOCAL_AI_REVIEWER_STRICT_PROMPT
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "http_strict_prompt_override" "yes" "$(grep -Fq 'custom-strict-http-prompt' "$REQUEST_FILE" && echo yes || echo no)"
+unset LOCAL_AI_REVIEWER_STRICT_PROMPT LOCAL_AI_REVIEWER_MODE MOCK_MODEL_CONTENT
+cat > "$CONTEXT_BUNDLE_PATH" <<'EOF'
+{"schema_version":"local_ai_reviewer_context.v1","reviewed_head":"abc123"}
+EOF
+
 # Backend resolution through local-ai-reviewer.sh
 unset LOCAL_AI_REVIEWER_COMMAND
 LOCAL_AI_REVIEWER_BACKEND=http
@@ -299,6 +346,14 @@ alias_rc=$?
 set -e
 run_test "backend_rejects_bare_openai_alias" "1" "$alias_rc"
 run_test "backend_alias_error_names_http" "yes" "$(grep -q 'expected codex or http' "$STDERR_FILE" && echo yes || echo no)"
+unset LOCAL_AI_REVIEWER_COMMAND
+LOCAL_AI_REVIEWER_BACKEND=chat_completions
+export LOCAL_AI_REVIEWER_BACKEND
+set +e
+resolve_local_ai_reviewer_command 2>"$STDERR_FILE"
+chat_rc=$?
+set -e
+run_test "backend_rejects_undocumented_chat_completions_alias" "1" "$chat_rc"
 unset LOCAL_AI_REVIEWER_BACKEND LOCAL_AI_REVIEWER_COMMAND
 
 LOCAL_AI_REVIEWER_BACKEND=not-a-backend
