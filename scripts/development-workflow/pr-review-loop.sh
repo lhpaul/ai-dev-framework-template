@@ -338,6 +338,13 @@ _unlock_hint() {
   local pr="${3:-<pr>}"
   local hint="./scripts/development-workflow/pr-review-loop.sh unlock ${pr}"
 
+  # When the lock key came from WORKFLOW_TARGET_GITHUB_REPO (Protocol 91's usual
+  # invocation with no --repo flag), echo that slug so a later shell cannot
+  # re-resolve via a different checkout's origin and delete the wrong lock.
+  if [ -z "$selector" ] && [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    selector="$WORKFLOW_TARGET_GITHUB_REPO"
+  fi
+
   [ -n "$selector" ] && hint="$hint --repo \"$selector\""
   [ -n "$root" ] && hint="$hint --repo-root \"$root\""
   printf '%s\n' "$hint"

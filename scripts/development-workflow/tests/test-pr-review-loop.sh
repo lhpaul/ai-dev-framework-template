@@ -13019,6 +13019,32 @@ else
 fi
 run_test "lock_contention_hint_carries_repo" "yes" "$_lockkey_hint_seen"
 
+# When the lock key comes from WORKFLOW_TARGET_GITHUB_REPO (no --repo on the
+# command), the contention hint must echo that slug so a later shell cannot
+# re-resolve via cwd origin and delete another repository's lock.
+_lockenv_pr="80613$$"
+_lockenv_repo="lock-env-owner/lock-env-repo"
+_lockenv_dir="$(_lock_dir_for_repo "$_lockenv_pr" "$_lockenv_repo")"
+rm -rf "$_lockenv_dir"
+sleep 120 &
+_lockenv_live_pid=$!
+mkdir -p "$_lockenv_dir"
+printf '%s\n' "$_lockenv_live_pid" > "$_lockenv_dir/pid"
+printf '%s\n' "pr-review-loop.sh" > "$_lockenv_dir/cmd"
+_lockenv_exit=0
+_lockenv_output="$(WORKFLOW_TARGET_GITHUB_REPO="$_lockenv_repo" "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_lockenv_pr" 2>&1)" || _lockenv_exit=$?
+run_test "lock_env_repo_same_pr_contends_exit_75" "75" "$_lockenv_exit"
+if printf '%s\n' "$_lockenv_output" | grep -q -- "unlock ${_lockenv_pr} --repo \"${_lockenv_repo}\""; then
+  _lockenv_hint_seen="yes"
+else
+  _lockenv_hint_seen="no"
+fi
+run_test "lock_contention_hint_carries_env_repo" "yes" "$_lockenv_hint_seen"
+kill "$_lockenv_live_pid" 2>/dev/null || true
+wait "$_lockenv_live_pid" 2>/dev/null || true
+rm -rf "$_lockenv_dir"
+unset _lockenv_pr _lockenv_repo _lockenv_dir _lockenv_live_pid _lockenv_exit _lockenv_output _lockenv_hint_seen
+
 # Different repository, same PR number — must NOT contend. The run gets past the
 # guard on its own lock; whatever it exits with afterwards, it must not be
 # lock_contention, and it must not have taken repo A's lock dir.
