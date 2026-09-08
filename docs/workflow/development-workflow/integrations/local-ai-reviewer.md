@@ -375,6 +375,7 @@ The local reviewer fails closed:
 | Missing `LOCAL_AI_REVIEWER_COMMAND` | `RESULT=escalate`, `REASON=missing_command` |
 | Missing model access | `RESULT=escalate`, `REASON=missing_model_access` |
 | Missing credentials or auth failure | `RESULT=escalate`, `REASON=missing_credentials` |
+| Provider usage/quota refusal | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
 | Checkout head mismatch | `RESULT=escalate`, `REASON=head_mismatch` |
 | Missing `REVIEW.md` | `RESULT=escalate`, `REASON=review_contract_missing` |
 | Timeout | `RESULT=escalate`, `REASON=timeout` |
@@ -431,6 +432,8 @@ The companion script emits:
 - `BLOCKING_COUNT`
 - `SUGGESTION_COUNT`
 - `REASON` when the result is not plain clean
+- `QUOTA_RESET_AT` when `REASON=quota_exhausted` and the provider stderr includes
+  a `try again at …` reset hint (`pr-review-loop.sh` forwards it on escalate)
 
 Use `scripts/development-workflow/local-ai-reviewer-findings.py` to normalize
 and compare local findings against ready-phase reviewer findings when measuring

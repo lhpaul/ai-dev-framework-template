@@ -367,6 +367,38 @@ run_test "missing_credentials_reason" "REASON=missing_credentials" "$(line_for R
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR="$(printf '%s\n' \
+  "ERROR: You've hit your usage limit. Upgrade to Pro," \
+  "visit https://chatgpt.com/codex/settings/usage to purchase more credits" \
+  "or try again at Sep 7th, 2026 1:17 PM.")"
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "quota_exhausted_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "quota_exhausted_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+run_test "quota_exhausted_exit" "2" "$(exit_code)"
+run_test "quota_exhausted_reset" "QUOTA_RESET_AT=Sep 7th, 2026 1:17 PM" "$(line_for QUOTA_RESET_AT)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "quota_exhausted_without_reset_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+run_test "quota_exhausted_without_reset_absent" "" "$(line_for QUOTA_RESET_AT)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "empty_stdout_without_quota_stays_malformed_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "empty_stdout_without_quota_stays_malformed_reason" "REASON=malformed_output" "$(line_for REASON)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_PR_DIFF_EXIT=1
 set_mock_stdout '{"result":"clean","findings":[]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_PR_DIFF_EXIT MOCK_LOCAL_REVIEWER_STDOUT

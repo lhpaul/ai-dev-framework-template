@@ -4180,11 +4180,14 @@ run_local_ai_reviewer_review() {
     2)
       local local_ai_reason
       local local_ai_display_result
+      local local_ai_quota_reset_at
       local_ai_reason="$(kv_value_default REASON "$script_output" malformed_output)"
       local_ai_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      local_ai_quota_reset_at="$(kv_value_default QUOTA_RESET_AT "$script_output" "")"
       print_kv RESULT escalate
       print_kv REASON "$local_ai_reason"
       [ -n "$local_ai_display_result" ] && print_kv DISPLAY_RESULT "$local_ai_display_result"
+      [ -n "$local_ai_quota_reset_at" ] && print_kv QUOTA_RESET_AT "$local_ai_quota_reset_at"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
