@@ -1,0 +1,5 @@
+{
+  "name": "AI Dev Framework Template",
+  "user": "ubuntu",
+  "install": "bash ./scripts/cloud-agent-install.sh"
+}
