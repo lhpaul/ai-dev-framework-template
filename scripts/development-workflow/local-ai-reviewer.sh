@@ -1339,6 +1339,23 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+credentials|c
   print_result escalate 0 0 0 missing_credentials missing_credentials
   exit 2
 fi
+if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage' <<< "$setup_probe_output"; then
+  quota_reset_at="$(
+    printf '%s\n' "$setup_probe_output" \
+      | grep -Ei 'try again at .+' \
+      | head -n1 \
+      | sed -E 's/^.*[Tt]ry again at[[:space:]]+//; s/[[:space:].]+$//' \
+      || true
+  )"
+  echo "WARN: local AI reviewer provider quota exhausted" >&2
+  if [ -n "$command_stderr" ]; then
+    echo "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" >&2
+  fi
+  print_result escalate 0 0 0 quota_exhausted quota_exhausted
+  [ -n "$quota_reset_at" ] && print_kv QUOTA_RESET_AT "$quota_reset_at"
+  exit 2
+fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: local AI reviewer produced no machine output" >&2
   if [ -n "$command_stderr" ]; then
