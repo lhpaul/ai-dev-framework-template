@@ -1874,6 +1874,56 @@ unset MOCK_GH_OUTPUT _haystack_file_limit_overrides actual_output actual_exit
 workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
 # ---------------------------------------------------------------------------
+# Area 1710: local-ai-reviewer quota escalate forwarding
+# ---------------------------------------------------------------------------
+#
+# When the companion emits REASON=quota_exhausted with optional QUOTA_RESET_AT,
+# run_local_ai_reviewer_review must forward both on exit 2 so loop consumers
+# see the reset hint (not only the remapped REASON).
+echo ""
+echo "=== Area 1710: local-ai quota escalate forwarding ==="
+
+_local_ai_quota_overrides='
+  require_gh() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  reviewer_for_branch() { printf "developer\n"; }
+'
+_local_ai_reviewer_stub="$(mktemp -d)"
+mkdir -p "$_local_ai_reviewer_stub/scripts/development-workflow"
+cat > "$_local_ai_reviewer_stub/scripts/development-workflow/local-ai-reviewer.sh" <<'LOCAL_AI_STUB'
+#!/usr/bin/env bash
+printf 'RESULT=escalate\n'
+printf 'REASON=quota_exhausted\n'
+printf 'QUOTA_RESET_AT=Sep 7th, 2026 1:17 PM\n'
+printf 'BLOCKING_COUNT=0\nSUGGESTION_COUNT=0\nCOMMENT_COUNT=0\n'
+printf 'REVIEWED_HEAD=abc123\n'
+printf 'GRAPH_CONTEXT=none\n'
+exit 2
+LOCAL_AI_STUB
+chmod +x "$_local_ai_reviewer_stub/scripts/development-workflow/local-ai-reviewer.sh"
+_local_ai_prev_repo_root="${repo_root:-}"
+repo_root="$_local_ai_reviewer_stub"
+workflow_repo_root() { printf "%s\n" "$_local_ai_reviewer_stub"; }
+actual_output="$(
+  eval "$_local_ai_quota_overrides"
+  _ec=0
+  run_local_ai_reviewer_review "42" "fix/1710-quota-exhausted-reason" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "local_ai_quota_exhausted_reason_forwarded" "REASON=quota_exhausted" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "local_ai_quota_reset_at_forwarded" "QUOTA_RESET_AT=Sep 7th, 2026 1:17 PM" \
+  "$(printf '%s\n' "$actual_output" | grep "^QUOTA_RESET_AT=")"
+run_test "local_ai_quota_exhausted_maps_to_escalate" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "local_ai_quota_exhausted_exit_code" "2" "$actual_exit"
+rm -rf "$_local_ai_reviewer_stub"
+repo_root="$_local_ai_prev_repo_root"
+unset _local_ai_quota_overrides _local_ai_reviewer_stub _local_ai_prev_repo_root actual_output actual_exit
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
+
+# ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
 #
 # Tests that:
