@@ -381,6 +381,15 @@ run_test "quota_exhausted_reset" "QUOTA_RESET_AT=Sep 7th, 2026 1:17 PM" "$(line_
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "quota_exhausted_without_reset_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+run_test "quota_exhausted_without_reset_absent" "" "$(line_for QUOTA_RESET_AT)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
 MOCK_LOCAL_REVIEWER_EXIT=1
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
