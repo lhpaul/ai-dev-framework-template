@@ -147,6 +147,7 @@ The problem is recurrent, not hypothetical: four occurrences are on record for t
 - A configured entry that is not a supported reviewer value is classified Unreachable, is reported by name, and is never silently discarded.
 - The unavailable-reviewer policy keeps its existing meanings and its existing default. This feature changes what makes a reviewer unreachable, not what the gate does about it.
 - The shipped default reviewer list must name at least one reviewer that is reachable in any environment where a supported runner is driving the gate.
+- A reviewer invoked through a hosted review service rather than a local runtime — the Codex GitHub App review, alongside CodeRabbit — is a supported reviewer value, and the canonical list names it. Its availability is decided at runtime from whether the service is installed for the repository and can be reached, exactly as CodeRabbit's already is. This follows from capability rather than being an exception to it: such a reviewer needs no local runtime, so no runner is inherently barred from using it, and the identity of the driving runner tells the gate nothing about whether it can be invoked.
 - An availability determination that ends without a definite answer is Unreachable with the reason that the check did not complete, whether it ran out of time or ended early without one. It is never read as either a present or an absent runtime: an errored or refused prerequisite check has not shown the prerequisite to be missing, only that the question went unanswered, and reporting it as Prerequisite missing would send the operator to fix something that may be fine. This reason applies only to a determination the gate started and could not finish; a value it never had to check is covered by the supported-value rules instead.
 - Every workflow surface that states which reviewers this gate supports, or how their availability is decided, must agree with the canonical protocol statement. No surface may name a reviewer value the canonical protocol does not list, and no surface may attribute availability to runner identity.
 
@@ -248,7 +249,7 @@ An unreadable or unsupported policy combined with an absent, empty, or malformed
 | Surface                                                                  | Relationship                                                                    | Consistency requirement                                                                                             |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | The internal review gate section of the work item runner protocol        | **Canonical.** States the supported reviewer values and the availability rule    | Must state capability, not runner identity, and must carry the outcome and reason vocabulary defined here          |
-| The Claude and Cursor work item runner agent definitions                 | Restate reviewer dispatch, and today name a reviewer value the protocol does not | Must not name an unsupported reviewer value, and must not attribute availability to runner identity                |
+| The Claude and Cursor work item runner agent definitions                 | Restate reviewer dispatch, and today name the hosted-service reviewer value the protocol does not list | The value they name becomes canonical, so they must keep naming it and correct their claim that it is reachable from every runner regardless of runtime conditions |
 | The shipped repository configuration and its commentary                  | Ships the default list and explains it to operators                             | Must not describe blocking on a supported runner as expected behavior, and must match the default guarantee        |
 | The CodeRabbit integration guidance                                      | Already determines that reviewer's availability from runtime conditions          | Unchanged. This feature aligns the other reviewers with it rather than altering it                                 |
 | The Codex skills and the Cursor workflow rules                           | Point at the configuration key without restating the availability rule           | Must stay silent on the rule or match the canonical statement; pointing at the key is not a restatement            |
@@ -263,6 +264,8 @@ An unreadable or unsupported policy combined with an absent, empty, or malformed
 | The same, with the policy that forbids reduced coverage                                          | Blocked                         | The policy, not the classification, is the cause — and the report says so                  |
 | The machine-local override keeps one of two reviewers, and that one is reachable                 | Proceeded                       | The removed reviewer is Excluded by override, and produces no warning                     |
 | CodeRabbit configured, its app not installed on the repository                                   | Unreachable                     | Prerequisite missing — a different remedy from an absent runtime, so a different reason    |
+| The hosted Codex review configured, its app installed, driven from any supported runner          | Reachable                       | It needs no local runtime, so the driving runner's identity does not bear on invoking it   |
+| The hosted Codex review configured, its app not installed on the repository                      | Unreachable                     | Prerequisite missing — the same reason and remedy as any other uninstalled hosted service  |
 | A reviewer is reachable, is dispatched, and then errors partway through                          | Review failure                  | Availability and review outcome are separate; calling this unreachable would misdirect     |
 | The configured list contains a value the workflow does not support                               | Unreachable                     | Reported by name as Not a supported reviewer; dropping it would cut coverage invisibly     |
 
@@ -280,7 +283,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 | Eliminate the recurring block-and-escalate cycle on every run driven by a non-Codex supported runner               | Covered. Groups: *Reachability follows capability*, *The shipped default never traps*                                                                                                                                |
 | Keep the operator able to tell what happened when a reviewer really is unavailable                                 | Covered. Group: *The operator can tell why*                                                                                                                                                                          |
 | From the issue comments — record a standing decision to satisfy the gate by starting a second runner               | Out of Scope, item 2. It is a workaround for the defect this spec removes, and the comment itself scopes it to "until #1495 advances"                                                                                 |
-| Surfaces that contradict the canonical supported-reviewer list                                                     | Covered as a consistency requirement. Group: *Surfaces agree*. Which way to resolve the specific contradiction is Open Question 1                                                                                     |
+| Surfaces that contradict the canonical supported-reviewer list                                                     | Covered. Group: *Surfaces agree*. Resolved by human decision: the hosted-service reviewer is recognized canonically rather than struck from the surfaces that name it                                                 |
 
 ---
 
@@ -339,6 +342,8 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 
 - [ ] The supported reviewer values, and the rule for deciding each one's availability, are stated consistently across the canonical protocol and every workflow surface that restates them.
 - [ ] No workflow surface names a reviewer value that the canonical protocol does not list as supported.
+- [ ] The canonical protocol lists the hosted-service reviewer among its supported values, and states that its availability is decided at runtime from whether the service is installed and reachable.
+- [ ] No surface claims the hosted-service reviewer is available from every runner unconditionally: it is available where the service is installed and reachable, and unavailable with a named reason where it is not.
 - [ ] No workflow surface states or implies that availability is decided by the identity of the driving runner.
 - [ ] The guidance that determines CodeRabbit's availability from runtime conditions is unchanged, and does not contradict the general rule.
 
@@ -365,9 +370,3 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 9. **Changing which pipeline stages run this gate, or when.**
 
 10. **Re-opening or re-deciding runs that were already blocked by the current behavior.** The fix applies to runs from the change forward.
-
----
-
-## Open Questions
-
-1. One workflow surface names a reviewer value — a review triggered through the hosted service rather than a local runtime — that the canonical protocol does not list as supported, and describes it as reachable from every runner. Two resolutions both satisfy the *Surfaces agree* criteria: recognize the value canonically, with its availability decided at runtime like any other; or remove the claim from the surfaces that make it. Recognizing it is the recommendation, because the dispatch mechanism it refers to is already shipped in this repository and two surfaces already document it — but the choice is the human's, and either resolution unblocks the implementation plan. If no answer arrives before planning, the recommendation applies.
