@@ -242,10 +242,18 @@ fallback applied", and "The reviewer the fallback runs is the driving runner's o
 `OUTCOME=proceeded`, exit `0`. No run blocks, on any runner kind. Confirm the file you generated
 really has no `runner:` key before trusting the result.
 
-### Step 9: A malformed list blocks instead of falling back
+### Step 9: A malformed list blocks, and an unparseable file blocks on the policy input
 
 **Maps to**: *Configuration inputs* — "With a reviewer list that is defined but cannot be read as a
-list of values, the gate blocks … It does not fall back to the default reviewer."
+list of values, the gate blocks … It does not fall back to the default reviewer", and "With a
+configuration file that will not parse at all, the gate blocks and names that file."
+
+These are two distinct states with two distinct block causes, so the step tests both. Part 1 is a
+file that parses with a bad key; part 2 is a file that does not parse at all. The second blocks on
+the **policy** input, because the policy is read first and an unparseable file makes it unreadable —
+the file is still named, which is what the criterion asks for.
+
+**Part 1 — the key is present but is not a list**
 
 1. Make a fixture where `runner` is a scalar:
 
@@ -263,8 +271,30 @@ list of values, the gate blocks … It does not fall back to the default reviewe
    scalar where a list is required.
 
 **Expected result**: `CONFIG_LIST_STATE=malformed`, `OUTCOME=blocked`,
-`BLOCK_CAUSE=list-malformed`, `FALLBACK_APPLIED=false`, exit `1`, and the output names the file that
-could not be read.
+`BLOCK_CAUSE=list-malformed`, `FALLBACK_APPLIED=false`, exit `1`, and the output names the file and
+the `review.on_draft.runner` key.
+
+**Part 2 — the file does not parse at all**
+
+1. Truncate a copy of the configuration mid-mapping and run against it:
+
+   ```bash
+   mkdir -p "$SMOKE_TMP/unparseable"
+   head -60 .ai-dev-workflow.yaml > "$SMOKE_TMP/unparseable/.ai-dev-workflow.yaml"
+   printf '  on_draft:\n      badly: indented\n    runner\n' >> "$SMOKE_TMP/unparseable/.ai-dev-workflow.yaml"
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/unparseable" --owner "<owner>" --repo "<repo>" --runner-kind claude
+   echo "exit=$?"
+   ```
+
+   If the resolver reports a readable file instead, the truncation happened to produce valid YAML —
+   append another malformed line and re-run until it does not parse.
+
+**Expected result**: `OUTCOME=blocked`, `BLOCK_CAUSE=policy-unreadable`,
+`CONFIG_LIST_STATE=not-evaluated`, exit `1`, and the output names the file that could not be parsed.
+The `not-evaluated` value is the visible proof that the gate stopped at the policy rather than
+guessing at the list — and note the block cause differs from Part 1, which is the whole point of
+running both.
 
 ### Step 10: An unsupported policy blocks before the list is looked at
 
@@ -317,20 +347,22 @@ from the resolver rather than guessed.
 
 **Maps to**: *The shipped default never traps* — the operator is not asked to write an override file.
 
-1. Delete the override you created in Step 11 (or, if you moved a real one aside in Prerequisites,
-   decide whether you still need it):
+1. Retire the override you created in Step 11 by **moving it aside rather than deleting it**. The
+   file is gitignored and untracked, so no `git revert` can bring it back if this change is ever
+   rolled back — see the plan's **Reversal and Rollback** (c):
 
    ```bash
-   rm -f .ai-dev-workflow.local.yaml
+   mv .ai-dev-workflow.local.yaml .ai-dev-workflow.local.yaml.retired
    scripts/development-workflow/resolve-reviewer-availability.sh \
      --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
    ```
 
 **Expected result**: `LOCAL_OVERRIDE_STATE=none`, the shipped three-entry list is in `CONFIGURED`,
 and the run still reaches `OUTCOME=proceeded` or `proceeded-reduced` with exit `0`. This is the
-demonstration that an override written only to get past the gate can be deleted: an operator who
-wants to keep narrowing coverage keeps theirs, and an operator who wrote one to unblock removes the
-`review.on_draft.runner` key (and the file, if it holds nothing else).
+demonstration that an override written only to get past the gate can be retired: an operator who
+wants to keep narrowing coverage keeps theirs, and an operator who wrote one only to unblock removes
+the `review.on_draft.runner` key, or moves the whole file aside if it holds nothing else. A second
+`mv` restores it should the change ever be rolled back.
 
 ### Step 13: End-to-end on a real pull request
 
@@ -357,6 +389,7 @@ driving runner.
 
    ```bash
    rm -rf "$SMOKE_TMP"
+   rm -f .ai-dev-workflow.local.yaml.retired
    mv /tmp/ai-dev-workflow.local.yaml.bak .ai-dev-workflow.local.yaml 2>/dev/null || true
    ```
 
@@ -386,7 +419,11 @@ Each checkbox maps to one or more acceptance criteria from the spec.
       named in the report (Step 7).
 - [ ] An absent or empty list falls back to the driving runner's own stage reviewer and records that
       the fallback applied, on every supported runner (Step 8).
-- [ ] A malformed list blocks, names the file, and does not fall back (Step 9).
+- [ ] A malformed list blocks with `list-malformed`, names the file and the key, and does not fall
+      back (Step 9 Part 1).
+- [ ] A configuration file that will not parse at all blocks with `policy-unreadable`, names that
+      file, and prints `CONFIG_LIST_STATE=not-evaluated` rather than proceeding as though no list
+      were configured (Step 9 Part 2).
 - [ ] An unsupported or unreadable policy blocks before the list is resolved and names the offending
       value (Step 10).
 - [ ] Override-excluded reviewers are reported as such, produce no unreachability warning, and the
@@ -409,7 +446,8 @@ Each checkbox maps to one or more acceptance criteria from the spec.
 | Hanging reviewer binaries | Availability check does not complete | Step 6 |
 | Config with an unsupported entry | Value not supported | Step 7 |
 | Config with no `runner` key | Fallback | Step 8 |
-| Config with a scalar `runner` | Malformed list | Step 9 |
+| Config with a scalar `runner` | Malformed list | Step 9 Part 1 |
+| Config truncated so it will not parse | Unreadable policy input | Step 9 Part 2 |
 | Config with `internal_reviewers_unavailable_policy: maybe` and no list | Unsupported policy | Step 10 |
 | `.ai-dev-workflow.local.yaml` keeping one reviewer | Override exclusion | Step 11 |
 
