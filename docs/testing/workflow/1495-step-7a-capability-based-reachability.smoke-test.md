@@ -100,10 +100,12 @@ run reports `proceeded` with all three reachable.
 solely because a different runner is driving the gate."
 
 1. Run the resolver with `--runner-kind claude` while `codex` is on your `PATH`.
-2. Find the `REVIEWER codex` record.
+2. Find the indexed record for `codex` — the `REVIEWER_N_NAME=codex` line and the `REVIEWER_N_*`
+   fields beside it.
 
-**Expected result**: `REVIEWER codex reachable -`. The record carries no reason, and no line anywhere
-in the output mentions the driving runner as a cause. This is the exact condition the previous
+**Expected result**: `REVIEWER_N_STATUS=reachable` with `REVIEWER_N_REASON=` and
+`REVIEWER_N_REMEDY=` both empty, and no line anywhere in the output mentioning the driving runner as
+a cause. This is the exact condition the previous
 identity table classified as unreachable.
 
 ### Step 3: An absent runtime is Unreachable with the runtime reason
@@ -123,9 +125,9 @@ identity table classified as unreachable.
    echo "exit=$?"
    ```
 
-**Expected result**: `REVIEWER codex unreachable runtime-absent <detail>` and
-`REVIEWER cursor unreachable runtime-absent <detail>`, while `REVIEWER claude reachable -` holds by
-identity. `OUTCOME=proceeded-reduced`, exit `0`. The reason is `runtime-absent`, never
+**Expected result**: the `codex` and `cursor` records read `STATUS=unreachable` with
+`REASON=runtime-absent` and a non-empty `REMEDY`, while the `claude` record reads `STATUS=reachable`
+by identity. `OUTCOME=proceeded-reduced`, exit `0`. The reason is `runtime-absent`, never
 `prerequisite-missing` and never `check-inconclusive`.
 
 ### Step 4: The verdict is determined fresh on each run
@@ -150,8 +152,8 @@ the verdict … and removing it flips the verdict back."
      --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
    ```
 
-**Expected result**: the first run reports `REVIEWER codex reachable`, the second reports
-`REVIEWER codex unreachable runtime-absent`. No configuration file changed between the two runs, and
+**Expected result**: the first run reports `STATUS=reachable` for the `codex` record, the second
+reports `STATUS=unreachable` with `REASON=runtime-absent`. No configuration file changed between the two runs, and
 nothing was cached.
 
 ### Step 5: Determining availability changes nothing
@@ -215,9 +217,10 @@ classified Unreachable with the reason Not a supported reviewer, and the offendi
    Read the `grep` output first and confirm the list now reads `not-a-reviewer`, `claude`, `cursor`,
    `codex` before trusting the resolver's verdict.
 
-**Expected result**: `REVIEWER not-a-reviewer unreachable value-not-supported` names the value
-verbatim, `claude` is still `reachable`, and `OUTCOME=proceeded-reduced` with exit `0`. The entry was
-reported, not silently dropped.
+**Expected result**: one record has `REVIEWER_N_NAME=not-a-reviewer` with
+`REVIEWER_N_STATUS=unreachable` and `REVIEWER_N_REASON=value-not-supported`; `claude` is still
+`reachable`; `OUTCOME=proceeded-reduced` with exit `0`. The entry was reported by name, not silently
+dropped.
 
 ### Step 8: An absent list falls back to the driving runner's own stage reviewer
 
@@ -338,8 +341,8 @@ reported as Excluded by override and produces no unreachability warning."
    echo "exit=$?"
    ```
 
-**Expected result**: `OVERRIDE_EXCLUDED` lists `cursor` and `codex`; each has a
-`REVIEWER <name> override-excluded -` record with no reason; `UNREACHABLE` is empty;
+**Expected result**: `OVERRIDE_EXCLUDED` lists `cursor` and `codex`; each has an indexed record with
+`STATUS=override-excluded` and empty `REASON` and `REMEDY`; `UNREACHABLE` is empty;
 `OUTCOME=proceeded`, exit `0`. `LOCAL_OVERRIDE_STATE` names the override file and its origin, taken
 from the resolver rather than guessed.
 
@@ -489,6 +492,57 @@ therefore satisfied. If the pull request came back non-draft, the conversion is 
 the availability decision and six acceptance criteria are violated — report it as a blocking
 implementation failure. Remove the override afterwards.
 
+### Step 15: A configured value that contains a delimiter is still named
+
+**Maps to**: C4 and C7 — "the offending value is named in the report", "never silently discarded".
+This is the case a comma-joined or whitespace-delimited field could not represent (plan Decision 10).
+
+1. Build a fixture whose single configured entry contains a comma and a space:
+
+   ```bash
+   mkdir -p "$SMOKE_TMP/delimiter"
+   grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
+     | sed 's/^    runner:$/    runner: ["codex, my reviewer"]/' > "$SMOKE_TMP/delimiter/.ai-dev-workflow.yaml"
+   grep -n '^    runner' "$SMOKE_TMP/delimiter/.ai-dev-workflow.yaml"
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/delimiter" --owner "<owner>" --repo "<repo>" --runner-kind claude
+   echo "exit=$?"
+   ```
+
+**Expected result**: `REVIEWER_COUNT=1` — **one** entry, not two. `REVIEWER_1_NAME` reads
+`codex, my reviewer` exactly, comma and space intact. `REVIEWER_1_STATUS=unreachable` with
+`REVIEWER_1_REASON=value-not-supported`. `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable`, exit `1`.
+The display-only `CONFIGURED` field shows `<entry 1>` rather than the raw value — that is deliberate,
+not a truncation bug: the aggregate fields are summaries and the indexed record is where the value
+lives. If `REVIEWER_COUNT` reads `2`, the serialization contract has regressed and the gate can no
+longer name what it rejected.
+
+### Step 16: A stalled configuration resolver still reaches a verdict in time
+
+**Maps to**: C8 — "the gate reaches that verdict within ten seconds of starting to resolve the list".
+The configuration-resolver call happens before any probe, so it is the one call a per-probe bound
+cannot protect (plan Decision 11).
+
+1. Build a hermetic `PATH` whose `python3` hangs, and time the run:
+
+   ```bash
+   mkdir -p "$SMOKE_TMP/stall"
+   cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/stall/"
+   printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/stall/python3"
+   chmod +x "$SMOKE_TMP/stall/python3"
+   time PATH="$SMOKE_TMP/stall" scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
+   echo "exit=$?"
+   ```
+
+**Expected result**: the command returns in well under fifteen seconds rather than hanging, with
+exit `1`, `OUTCOME=blocked`, `BLOCK_CAUSE=config-resolution-inconclusive`,
+`POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, and `REVIEWER_COUNT=0`. There is
+**no** per-reviewer record and **no** reason category, because no reviewer was ever named. The report
+does not say the policy value is unreadable — that would send you to fix a file that is fine; it says
+the configuration could not be read in time. If the command hangs, the resolver call is unbounded and
+the ten-second ceiling is not being enforced.
+
 ### Last Step: Validate and clean up
 
 1. Work through the Assertions Checklist below.
@@ -569,6 +623,10 @@ gate ignores.
       as unreachable (Step 13 Part 1).
 - [ ] A block with a draft-restricting reviewer configured left the pull request draft — the
       draft-state conversion did not run ahead of the availability decision (Step 14 Part 5).
+- [ ] A configured value containing a comma and a space was reported as **one** entry, named byte for
+      byte, and not split (Step 15).
+- [ ] A stalled configuration resolver produced a verdict inside the budget, with block cause
+      `config-resolution-inconclusive` and no per-reviewer reason (Step 16).
 
 ---
 
@@ -582,6 +640,8 @@ gate ignores.
 | Config with an unsupported entry | Value not supported | Step 7 |
 | Config with no `runner` key | Fallback | Step 8 |
 | Config with a scalar `runner` | Malformed list | Step 9 Part 1 |
+| Config with `runner: ["codex, my reviewer"]` | Delimiter-bearing unsupported value | Step 15 |
+| Hermetic `PATH` whose `python3` hangs | Stalled configuration resolver | Step 16 |
 | Config truncated so it will not parse | Unreadable policy input | Step 9 Part 2 |
 | Config with `internal_reviewers_unavailable_policy: maybe` and no list | Unsupported policy | Step 10 |
 | `.ai-dev-workflow.local.yaml` keeping one reviewer | Override exclusion | Step 11 |
@@ -600,7 +660,8 @@ gate ignores.
 | Hosted reviewers report `check-inconclusive` | `gh` is missing from the hermetic `PATH`, or not authenticated | Symlink `gh` into the fixture `bin` directory and confirm `gh auth status` succeeds |
 | `codex-github` or `coderabbit` reports `prerequisite-missing` on a repository where the app is installed | The app has never commented on this repository, so the activity signal finds nothing | Expected — see Known Limitations. Trigger the app once on any pull request, or leave the reviewer out of the list |
 | A Step 7, 9, or 10 fixture edit changes nothing | The line the `awk` or `sed` pattern matches was reworded during implementation | Each of those steps prints the edited region with `grep` before running the resolver — read that output and adjust the pattern before trusting the verdict |
-| Step 6 takes noticeably longer than the budget | `timeout` is unavailable and the poll fallback is running at one-second granularity | Expected overhead; confirm `ELAPSED_SECONDS` in the output rather than wall-clock `time` |
+| Step 6 or Step 16 takes noticeably longer than the budget | `timeout` is unavailable and the poll fallback is running at one-second granularity | Expected overhead; confirm `ELAPSED_SECONDS` in the output rather than wall-clock `time`. A run that never returns at all is a different matter — report it |
+| Step 15 shows `CONFIGURED` containing `<entry 1>` instead of the configured value | Expected and deliberate. The aggregate fields are display-only and render an unsafe value as a pointer; the indexed `REVIEWER_1_NAME` field holds it verbatim | Read the indexed field. Do not report this as truncation |
 
 ---
 
