@@ -69,7 +69,7 @@ The problem is recurrent, not hypothetical: four occurrences are on record for t
 
 - Make the missing runtime or prerequisite available and re-run the gate.
 - Narrow the reviewer list for this machine through the machine-local override file.
-- Accept reduced coverage, when the policy in force allows it.
+- Let the reduced coverage stand. Where the policy in force allows it the gate has already dispatched the reachable reviewers and carried on, so this is the do-nothing path and not a confirmation the gate stops to collect. The warning is there to be read after the fact, not answered.
 
 **Considerations**:
 
