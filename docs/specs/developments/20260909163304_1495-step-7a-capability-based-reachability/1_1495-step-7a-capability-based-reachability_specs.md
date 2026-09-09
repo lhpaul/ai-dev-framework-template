@@ -217,6 +217,8 @@ Triggers are events. They decide when the gate runs, are never read as inputs, a
 
 Input states that are absent, empty, or malformed do not suppress the gate. No configured list in either file, and a defined list that resolves to no entries, both fall back to the stage-appropriate default reviewer. An unsupported value is classified Unreachable and reported by name. A determination that will not complete is bounded and classified Unreachable.
 
+A malformed reviewer list is treated differently from an absent or empty one, and the distinction is deliberate. Absent and empty are legible states: they say the operator configured no reviewers, and falling back to the default reviewer honours that. Malformed means the operator did configure something and the gate cannot tell what — the file will not parse, or the reviewer list is present but is not a list of values. Falling back there would silently substitute the gate's guess for an intent the operator expressed and got wrong, which is the same invisible loss of coverage this feature exists to prevent. So a malformed input blocks, names the file and the input that could not be read, and leaves the pull request draft. Nothing about a malformed input is inferred, and no reviewer is dispatched on the strength of a guess.
+
 ### Allowed outcomes and required next actions
 
 | Inputs                                                                                     | Outcome                          | What the gate does                                                                    | Operator's next action                                       |
@@ -227,6 +229,7 @@ Input states that are absent, empty, or malformed do not suppress the gate. No c
 | At least one reviewer unreachable, at least one reachable, policy allows reduced coverage  | Proceeded with reduced coverage  | Warns, naming each unreachable reviewer and its reason, then dispatches the rest       | Optionally restore the missing runtime or prerequisite       |
 | At least one reviewer unreachable, at least one reachable, policy forbids reduced coverage | Blocked                          | Dispatches nobody; reports the policy as the cause; pull request stays draft            | Restore the missing reviewer, or change the policy for this machine |
 | No reviewer reachable, under any policy                                                    | Blocked                          | Dispatches nobody; reports every reviewer and reason, and the override state           | Restore a runtime or prerequisite, or narrow the list locally |
+| The reviewer list is defined but cannot be read as a list of values, or its file will not parse | Blocked                          | Dispatches nobody; names the file and the input that could not be read; does not fall back to the default reviewer | Correct the malformed input                                  |
 | A configured value is not supported, and something else is reachable                       | Follows the policy rows above    | Reports the unsupported value by name alongside the other verdicts                     | Correct the configured value                                 |
 | A configured value is not supported, and it is the only entry                              | Blocked                          | Reports the unsupported value by name as the cause                                     | Correct the configured value                                 |
 | A reviewer is reachable, is dispatched, and then fails or errors                           | Not an availability outcome      | Reported as a review failure through the gate's existing review-outcome handling        | Address the review failure                                   |
@@ -262,7 +265,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 
 | Objective from issue #1495                                                                                        | Disposition                                                                                                                                                                                                          |
 | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Direction 1 — determine reachability from actual capability instead of a static identity-based classification      | Covered. Groups: *Reachability follows capability*, *Configuration inputs that are absent, empty, or unsupported*                                                                                                     |
+| Direction 1 — determine reachability from actual capability instead of a static identity-based classification      | Covered. Groups: *Reachability follows capability*, *Configuration inputs that are absent, empty, malformed, or unsupported*                                                                                                     |
 | Direction 1 — invoke the reviewer automatically when a working path exists, rather than escalating                 | Covered. Group: *Reachability follows capability* — a reachable reviewer is dispatched with no human step                                                                                                            |
 | Direction 2 — ship a default configuration that does not block a repository out of the box on a supported runner   | Covered. Group: *The shipped default never traps*                                                                                                                                                                    |
 | Direction 2 — the alternative of documented local-override guidance instead of a fixed default                     | Out of Scope, item 1. The human chose both directions, which makes the guidance-only alternative moot: an override the operator must write is the workaround this item exists to remove                              |
@@ -300,11 +303,13 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] A block report names which policy produced the block, and reports the machine-local override state from what was actually resolved — no override in effect, an override applied, or an override present but not resolved from this working directory — without guessing.
 - [ ] No reported message attributes a reviewer's unavailability to the identity of the driving runner.
 
-### Configuration inputs that are absent, empty, or unsupported
+### Configuration inputs that are absent, empty, malformed, or unsupported
 
 - [ ] With no reviewer list defined in either configuration file, the gate runs the stage-appropriate default reviewer once and records in its summary that the fallback applied.
 - [ ] With a reviewer list that resolves to no entries at all, the gate behaves as in the previous criterion. It never reports a successful gate having dispatched no reviewer.
 - [ ] A configured entry that is not a supported reviewer value is classified Unreachable with the reason Not a supported reviewer, and the offending value is named in the report.
+- [ ] With a reviewer list that is defined but cannot be read as a list of values, the gate blocks, dispatches nobody, leaves the pull request draft, and names the file and the input that could not be read. It does not fall back to the default reviewer.
+- [ ] With a configuration file that will not parse at all, the gate blocks and names that file, rather than proceeding as though no reviewer list were configured.
 - [ ] When an unsupported value is the only configured entry, the gate blocks and names that value as the cause.
 - [ ] An availability determination that cannot be completed within its bound yields Unreachable with the reason Availability check did not complete, and the gate still reaches a verdict rather than hanging.
 
