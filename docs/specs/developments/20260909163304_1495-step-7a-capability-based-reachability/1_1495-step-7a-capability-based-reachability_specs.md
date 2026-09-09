@@ -155,7 +155,7 @@ These are per-run classifications recorded for each configured reviewer. They de
 
 | Code value          | Display label        | Description                                                                                                    |
 | ------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `reachable`         | Reachable            | The gate can invoke this reviewer in the current environment, and will dispatch it.                            |
+| `reachable`         | Reachable            | The gate can invoke this reviewer in the current environment. Whether it is actually dispatched is decided afterwards by the policy outcome, not by this classification. |
 | `unreachable`       | Unreachable          | The gate cannot invoke this reviewer in the current environment. Always accompanied by a reason category.       |
 | `override-excluded` | Excluded by override | The machine-local override left this reviewer out. Not a failure, and never reported as unreachable.            |
 
@@ -205,6 +205,8 @@ The internal review gate is a workflow decision gate: its outcome depends on sev
 
 Every row is state the gate reads. A row it cannot read makes the affected reviewer Unreachable with the reason that the determination did not complete; it never makes the gate proceed as though the reviewer were fine.
 
+The unavailable-reviewer policy is itself one of these inputs, and its own absent, empty, malformed, and unsupported states are defined rather than left to inference. Absent or empty means no policy was expressed, so the shipped default applies: an unreachable reviewer warns and the reachable ones still run. A value that is present but is not one of the supported policy values, or a policy input the gate cannot read at all, is not treated as the default — the operator expressed a policy and the gate cannot tell which, and guessing the permissive one would let a run proceed with reduced coverage that the operator may have meant to forbid. Those states block the gate and name the offending value or the input that could not be read.
+
 That rule classifies a reviewer, so it applies only once there is a reviewer to classify. Which reviewers are configured is the row the others depend on: when it cannot be read, no reviewer has been identified yet and there is nothing to mark Unreachable. An unreadable reviewer list therefore blocks the gate outright, as set out under Triggers below, and takes precedence over this rule rather than being an exception to it.
 
 ### Triggers
@@ -231,6 +233,8 @@ A malformed reviewer list is treated differently from an absent or empty one, an
 | At least one reviewer unreachable, at least one reachable, policy allows reduced coverage  | Proceeded with reduced coverage  | Warns, naming each unreachable reviewer and its reason, then dispatches the rest       | Optionally restore the missing runtime or prerequisite       |
 | At least one reviewer unreachable, at least one reachable, policy forbids reduced coverage | Blocked                          | Dispatches nobody; reports the policy as the cause; pull request stays draft            | Restore the missing reviewer, or change the policy for this machine |
 | No reviewer reachable, under any policy                                                    | Blocked                          | Dispatches nobody; reports every reviewer and reason, and the override state           | Restore a runtime or prerequisite, or narrow the list locally |
+| No unavailable-reviewer policy configured anywhere, or a configured policy that resolves to nothing | Follows the policy rows above     | Applies the shipped default policy, under which an unreachable reviewer warns rather than blocks | None                                                         |
+| The unavailable-reviewer policy is set to an unsupported value, or cannot be read              | Blocked                          | Dispatches nobody; names the offending policy value or the input that could not be read          | Correct the policy value                                     |
 | The reviewer list is defined but cannot be read as a list of values, or its file will not parse | Blocked                          | Dispatches nobody; names the file and the input that could not be read; does not fall back to the default reviewer | Correct the malformed input                                  |
 | A configured value is not supported, and something else is reachable                       | Follows the policy rows above    | Reports the unsupported value by name alongside the other verdicts                     | Correct the configured value                                 |
 | A configured value is not supported, and it is the only entry                              | Blocked                          | Reports the unsupported value by name as the cause                                     | Correct the configured value                                 |
@@ -321,6 +325,9 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] With the policy that forbids reduced coverage in force and any reviewer unreachable, the gate blocks, dispatches nobody, leaves the pull request draft, and names the policy as the cause.
 - [ ] With no reviewer reachable, the gate blocks under either policy, leaves the pull request draft, does not convert it to ready, and escalates to a human.
 - [ ] With every configured reviewer reachable, the gate posts no unreachability warning and behaves exactly as it does today.
+- [ ] With no unavailable-reviewer policy configured in either file, the gate applies the shipped default under which an unreachable reviewer warns and the reachable reviewers still run.
+- [ ] With the unavailable-reviewer policy set to a value that is not one of the supported policy values, the gate blocks, dispatches nobody, and names the offending value. It does not silently apply the default policy.
+- [ ] With a reachable reviewer present but the policy forbidding reduced coverage, that reviewer is still classified Reachable in the report even though it is not dispatched, so the classification and the dispatch decision stay legible as separate facts.
 - [ ] The gate dispatches only reviewers the resolved configuration names: it does not install a missing runtime, provision a missing prerequisite, or substitute a different reviewer for an unreachable one.
 
 ### Surfaces agree
