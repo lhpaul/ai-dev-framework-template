@@ -205,6 +205,8 @@ The internal review gate is a workflow decision gate: its outcome depends on sev
 
 Every row is state the gate reads. A row it cannot read makes the affected reviewer Unreachable with the reason that the determination did not complete; it never makes the gate proceed as though the reviewer were fine.
 
+That rule classifies a reviewer, so it applies only once there is a reviewer to classify. Which reviewers are configured is the row the others depend on: when it cannot be read, no reviewer has been identified yet and there is nothing to mark Unreachable. An unreadable reviewer list therefore blocks the gate outright, as set out under Triggers below, and takes precedence over this rule rather than being an exception to it.
+
 ### Triggers
 
 Triggers are events. They decide when the gate runs, are never read as inputs, and their absence is not a failure.
