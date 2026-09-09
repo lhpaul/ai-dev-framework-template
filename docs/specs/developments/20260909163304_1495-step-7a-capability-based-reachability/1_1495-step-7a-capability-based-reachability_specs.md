@@ -142,9 +142,11 @@ The problem is recurrent, not hypothetical: four occurrences are on record for t
 - Evaluation order is fixed, and every outcome below is stated under it: resolve the configured list (machine-local override first, shipped configuration otherwise), mark the reviewers the override left out as Excluded by override, determine availability for each remaining reviewer, then apply the unavailable-reviewer policy to the result.
 - The resolved configuration is the single source of truth for which reviewers this gate runs. The unavailable-reviewer policy is the single source of truth for what happens when one of them is unreachable. Neither has a second source.
 - When neither the shipped configuration nor the machine-local override defines a reviewer list, and when a defined list resolves to no entries at all, the gate falls back to running the stage-appropriate default reviewer once and records that it did. The gate never reports success having dispatched nobody.
+- The stage-appropriate default reviewer is the reviewer the runner currently driving the gate provides for the pull request's stage — the spec reviewer for a spec pull request, the plan reviewer for an implementation plan, the code reviewer for an implementation change. It is selected by the stage and by the driving runner, never from a fixed reviewer name, so the fallback is reachable by construction: the runner asked to supply it is the one already running the gate. This is what makes the fallback safe to rely on rather than a second way to reach the same block.
 - A configured entry that is not a supported reviewer value is classified Unreachable, is reported by name, and is never silently discarded.
 - The unavailable-reviewer policy keeps its existing meanings and its existing default. This feature changes what makes a reviewer unreachable, not what the gate does about it.
 - The shipped default reviewer list must name at least one reviewer that is reachable in any environment where a supported runner is driving the gate.
+- An availability determination that ends without a definite answer is Unreachable with the reason that the check did not complete, whether it ran out of time or ended early without one. It is never read as either a present or an absent runtime: an errored or refused prerequisite check has not shown the prerequisite to be missing, only that the question went unanswered, and reporting it as Prerequisite missing would send the operator to fix something that may be fine. This reason applies only to a determination the gate started and could not finish; a value it never had to check is covered by the supported-value rules instead.
 - Every workflow surface that states which reviewers this gate supports, or how their availability is decided, must agree with the canonical protocol statement. No surface may name a reviewer value the canonical protocol does not list, and no surface may attribute availability to runner identity.
 
 ---
@@ -165,7 +167,7 @@ Reason categories, reported with every Unreachable classification:
 | ----------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `runtime-absent`        | Runtime not present              | The reviewer's runtime is not installed or not callable in this environment.                                    |
 | `prerequisite-missing`  | Prerequisite missing             | Something outside this environment that the reviewer needs — an installed app, an access grant — is not in place. |
-| `check-inconclusive`    | Availability check did not complete | The determination could not be completed within its bound.                                                       |
+| `check-inconclusive`    | Availability check did not complete | The determination did not reach a definite yes or no. Covers both a check that exceeds its time bound and one that ends promptly without an answer, such as a prerequisite check that errors or is refused. |
 | `value-not-supported`   | Not a supported reviewer         | The configured value is not a reviewer this workflow supports.                                                   |
 
 Gate outcomes for one run:
@@ -312,12 +314,14 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 ### Configuration inputs that are absent, empty, malformed, or unsupported
 
 - [ ] With no reviewer list defined in either configuration file, the gate runs the stage-appropriate default reviewer once and records in its summary that the fallback applied.
+- [ ] The reviewer the fallback runs is the driving runner's own reviewer for the pull request's stage, and it is reachable on every supported runner, so the fallback never produces a block.
 - [ ] With a reviewer list that resolves to no entries at all, the gate behaves as in the previous criterion. It never reports a successful gate having dispatched no reviewer.
 - [ ] A configured entry that is not a supported reviewer value is classified Unreachable with the reason Not a supported reviewer, and the offending value is named in the report.
 - [ ] With a reviewer list that is defined but cannot be read as a list of values, the gate blocks, dispatches nobody, leaves the pull request draft, and names the file and the input that could not be read. It does not fall back to the default reviewer.
 - [ ] With a configuration file that will not parse at all, the gate blocks and names that file, rather than proceeding as though no reviewer list were configured.
 - [ ] When an unsupported value is the only configured entry, the gate blocks and names that value as the cause.
 - [ ] An availability determination that cannot be completed within its bound yields Unreachable with the reason Availability check did not complete, and the gate still reaches a verdict rather than hanging.
+- [ ] An availability determination that ends promptly without an answer — a prerequisite check that errors or is refused — yields the same Unreachable classification and the same Availability check did not complete reason as one that times out, and is not reported as Runtime not present or Prerequisite missing.
 
 ### Policy behavior is preserved
 
