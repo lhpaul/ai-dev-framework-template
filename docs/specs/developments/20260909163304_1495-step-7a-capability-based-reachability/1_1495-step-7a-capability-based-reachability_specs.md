@@ -35,7 +35,7 @@ The problem is recurrent, not hypothetical: four occurrences are on record for t
 
 **Actions available**:
 
-- Nothing is required of the operator. The run continues to the next gate.
+- Nothing is required of the operator for availability: every configured reviewer was reachable, so the gate dispatches them all and this use case ends. What happens next is decided by the review verdicts they return, under the gate's existing rules — approval carries the run onward, a revision request or a failed review enters the fix or escalation path unchanged. This feature does not alter that.
 
 **Considerations**:
 
