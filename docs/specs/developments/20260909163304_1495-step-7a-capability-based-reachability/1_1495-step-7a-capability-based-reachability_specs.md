@@ -253,6 +253,7 @@ An unreadable or unsupported policy combined with an absent, empty, or malformed
 | The shipped repository configuration and its commentary                  | Ships the default list and explains it to operators                             | Must not describe blocking on a supported runner as expected behavior, and must match the default guarantee        |
 | The CodeRabbit integration guidance                                      | Already determines that reviewer's availability from runtime conditions          | Unchanged. This feature aligns the other reviewers with it rather than altering it                                 |
 | The Codex skills and the Cursor workflow rules                           | Point at the configuration key without restating the availability rule           | Must stay silent on the rule or match the canonical statement; pointing at the key is not a restatement            |
+| The workflow README's configuration reference                            | Restates the fallback, and today names a fixed reviewer for it                   | Must describe the fallback as the driving runner's own stage reviewer, not a named one, or the default guarantee reads as depending on a single runner |
 
 ### Examples
 
@@ -297,6 +298,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] With the same configuration on a machine where that reviewer's runtime is absent, the gate classifies it Unreachable and reports the reason as Runtime not present.
 - [ ] Availability is determined fresh on each run: making a runtime available between two runs on the same pull request flips the verdict from Unreachable to Reachable with no configuration change, and removing it flips the verdict back.
 - [ ] Determining availability posts no comment, changes no pull request state, and modifies no tracked file. Running the gate up to the point of dispatch on a clean checkout leaves the checkout clean.
+- [ ] Determining availability invokes no reviewer. With a configured reviewer whose runtime is present, nothing is dispatched and no review begins until availability has been decided for every configured reviewer and the policy has been applied — so a run that blocks on policy leaves no review to have started.
 - [ ] A reviewer that is classified Reachable, is dispatched, and then fails or errors is reported as a review failure and not as unreachable.
 
 ### The shipped default never traps
