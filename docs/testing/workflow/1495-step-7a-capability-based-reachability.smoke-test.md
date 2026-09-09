@@ -364,23 +364,114 @@ wants to keep narrowing coverage keeps theirs, and an operator who wrote one onl
 the `review.on_draft.runner` key, or moves the whole file aside if it holds nothing else. A second
 `mv` restores it should the change ever be rolled back.
 
-### Step 13: End-to-end on a real pull request
+### Step 13: The proceed path on a real pull request
 
-**Maps to**: *Reachability follows capability* first criterion, and *The operator can tell why* —
-"The gate summary lists every configured reviewer with its verdict, including reviewers that ran."
+Steps 1 to 12 exercise the **resolver** — the helper that prints a verdict and exits. Steps 13 and 14
+are the only steps that exercise the **gate**: what a real runner does with that verdict on a real
+pull request. Every criterion about dispatching, posting comments, and pull request state is settled
+here and nowhere else, so do not skip these two steps because the earlier ones passed.
+
+**Maps to**: R1, R7, S1, O1, O3, O6, C1, C2, C3, P1, P4, P10 — the proceed-path gate behavior in the
+plan's acceptance-criterion coverage map.
+
+**Part 1 — every reviewer reachable**
 
 1. Open a throwaway draft pull request on this branch, or reuse the implementation pull request for
    #1495.
-2. Run Protocol 91 Step 7a against it from a runner whose kind is **not** `codex`, with the shipped
-   default configuration and no local override.
-3. Read the Step 7a summary comment.
+2. Ensure no `.ai-dev-workflow.local.yaml` is in effect and every runtime in the shipped default list
+   is on your `PATH`.
+3. Run Protocol 91 Step 7a against it from a runner whose kind is **not** `codex`.
+4. Read the Step 7a summary comment and the run log.
 
-**Expected result**: the gate dispatched at least one reviewer and produced a verdict without a human
-choosing a workaround, without an override file being written, and without a second runner being
-started. The summary comment lists every configured reviewer with its display label — Reachable,
-Unreachable, or Excluded by override — and, for each Unreachable one, its reason category and a
-remedy. No message in the comment attributes any reviewer's unavailability to the identity of the
-driving runner.
+**Expected result**: the gate **dispatched** the reviewers — you can see each one's review activity,
+not merely a verdict block in the log — and produced a verdict, with no human choosing a workaround,
+no override file written, and no second runner started. The summary comment lists every configured
+reviewer with its display label, including the ones that ran. **No unreachability warning comment was
+posted**, because nothing was unreachable. No message attributes anything to the driving runner's
+identity.
+
+**Part 2 — the fallback**
+
+1. On a scratch branch, remove `review.on_draft.runner` from `.ai-dev-workflow.yaml`, commit, and
+   open a draft pull request from it.
+2. Run Step 7a against that pull request from a supported runner.
+3. Read the summary comment and count the dispatches in the run log.
+
+**Expected result**: the gate dispatched the driving runner's **own** stage reviewer — the plan
+reviewer for an `implementation-plan/*` branch — and dispatched it **exactly once**, not once per
+configured entry and not zero times. The summary comment records that the fallback applied. The gate
+did not report success having dispatched nobody. Discard the scratch branch afterwards.
+
+**Part 3 — reduced coverage under `warn`**
+
+1. On the pull request from Part 1, put a local override in place naming one reachable reviewer and
+   one reviewer whose runtime is not installed on this machine, keeping the policy at `warn`.
+2. Re-run Step 7a and read both the warning comment and the summary comment.
+
+**Expected result**: a warning comment was posted **before** any dispatch, naming the unreachable
+reviewer, its reason category, and a remedy, and stating which reviewers will run. The reachable
+subset was then dispatched. Nothing in the warning names a runner context. Remove the override
+afterwards.
+
+### Step 14: The block path on a real pull request
+
+**Maps to**: O1, O4, O5, O6, C4, C5, C6, C7, P2, P3, P6, P7, P8, P9, P10 — the block-path gate
+behavior. This is the step that proves the gate honours a `blocked` verdict rather than dispatching
+anyway; no resolver test can show that.
+
+Before each part, note the pull request's current state with
+`gh pr view <pr_number> --json isDraft,comments --jq '.isDraft'` so you can confirm it did not change.
+
+**Part 1 — nothing reachable**
+
+Run this part twice, once for each way a list can end up with nothing reachable.
+
+1. On the draft pull request from Step 13, put a local override in place naming only a reviewer whose
+   runtime is **not installed** on this machine. Run Step 7a.
+2. Then replace the override with one naming a single **unsupported** value such as
+   `not-a-reviewer`. Run Step 7a again.
+
+**Expected result**: in both runs **no reviewer was dispatched** — no review activity appears
+anywhere in the run log or on the pull request. `gh pr ready` was **not** called and the pull request
+is **still draft**. A hard-fail comment names the block cause, every configured reviewer with its
+verdict and reason, a remedy, and the machine-local override state — reported as the file and origin
+that were actually resolved, not guessed. The run escalated to a human rather than continuing.
+
+The two runs differ in the reason they report: the first says the runtime is not present, the second
+names `not-a-reviewer` verbatim as not a supported reviewer. The second run in particular must name
+the offending value — a report that merely says "no reviewer reachable" without naming it is a
+failure of this part, because a silently dropped value is invisible lost coverage.
+
+**Part 2 — a malformed list, then an unparseable file**
+
+1. Replace the override with one whose `review.on_draft.runner` is a scalar rather than a list, and
+   run Step 7a.
+2. Then replace it with a file that will not parse at all, and run Step 7a again.
+
+**Expected result**: both runs block, dispatch nobody, and leave the pull request draft. The first
+names the file and the `review.on_draft.runner` key with block cause `list-malformed`; the second
+names the file with block cause `policy-unreadable`. **The two comments state different causes** —
+if they read the same, the gate is collapsing two states the spec keeps apart. Neither run fell back
+to a default reviewer.
+
+**Part 3 — the policy forbids reduced coverage**
+
+1. Set the override to one reachable reviewer, one absent one, and
+   `internal_reviewers_unavailable_policy: fail-if-any-unavailable`. Run Step 7a.
+
+**Expected result**: the gate blocked, dispatched nobody, and left the pull request draft. The report
+names **the policy** as the cause, not the classification. The reachable reviewer is **still listed
+as Reachable** in the report even though it was not dispatched — classification and dispatch remain
+two legible facts.
+
+**Part 4 — an unsupported policy value**
+
+1. Set the override's policy to `maybe` and remove `review.on_draft.runner` entirely. Run Step 7a.
+
+**Expected result**: the gate blocked, dispatched nobody, and named the offending value `maybe`. It
+did **not** silently apply the default `warn`, and it did **not** reach the fallback reviewer despite
+there being no list configured — the policy is read first. Remove the override afterwards and confirm
+with `gh pr view <pr_number> --json isDraft` that the pull request is still draft.
 
 ### Last Step: Validate and clean up
 
@@ -431,9 +522,35 @@ Each checkbox maps to one or more acceptance criteria from the spec.
 - [ ] The shipped default reaches a dispatched reviewer on every supported runner with no override
       file present (Step 1, Step 12).
 - [ ] The gate summary lists every configured reviewer with its verdict, including the ones that ran
-      (Step 13).
+      (Step 13 Part 1).
 - [ ] No reported message attributes a reviewer's unavailability to the identity of the driving
-      runner (Step 3, Step 13, and Step 0's grep).
+      runner (Step 3, Step 13, Step 14, and Step 0's grep).
+
+Steps 1 to 12 above settle what the **resolver** computes. The remaining boxes are gate behavior —
+what a real runner does with that verdict — and are settled only by Steps 13 and 14. A run that
+skipped those two steps has not tested this feature's most likely failure: a correct verdict that the
+gate ignores.
+
+- [ ] On a proceed verdict the gate actually **dispatched** the reachable reviewers, and posted no
+      unreachability warning when nothing was unreachable (Step 13 Part 1).
+- [ ] With no reviewer list configured, the gate dispatched the driving runner's own stage reviewer
+      **exactly once** and recorded in its summary that the fallback applied (Step 13 Part 2).
+- [ ] Under `warn` with a mixed set, the warning was posted **before** dispatch, named each
+      unreachable reviewer with its reason and a remedy, and the reachable subset then ran
+      (Step 13 Part 3).
+- [ ] On a block verdict the gate dispatched **nobody**, did not call `gh pr ready`, and left the
+      pull request draft (Step 14, all parts).
+- [ ] The block report named the cause, every reviewer with its verdict, and the override state as
+      resolved rather than guessed; and where the only entry was an unsupported value, the report
+      named that value verbatim (Step 14 Part 1, both runs).
+- [ ] A malformed list and an unparseable file produced **different** block causes on the pull
+      request, and neither fell back to a default reviewer (Step 14 Part 2).
+- [ ] Under `fail-if-any-unavailable` the report named the policy as the cause and still listed the
+      reachable reviewer as Reachable (Step 14 Part 3).
+- [ ] An unsupported policy value blocked, was named, did not silently default to `warn`, and did not
+      reach the fallback even with no list configured (Step 14 Part 4).
+- [ ] A reviewer that was dispatched and then failed or errored was reported as a review failure, not
+      as unreachable (Step 13).
 
 ---
 
@@ -457,6 +574,7 @@ Each checkbox maps to one or more acceptance criteria from the spec.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Step 13 or 14 shows a verdict block in the log but no reviewer activity, or activity despite a block verdict | The gate is not honouring the resolver's exit code — the exact defect these two steps exist to catch | Stop and report it; this is a blocking implementation failure, not a runbook problem |
 | Every run reports `OUTCOME=blocked` with `BLOCK_CAUSE=zero-reachable` | A `.ai-dev-workflow.local.yaml` you forgot to move aside names reviewers this machine cannot reach | Check `LOCAL_OVERRIDE_STATE` in the verdict block; move the file aside and re-run |
 | `LOCAL_OVERRIDE_STATE` reports `present but unpropagated` | You are in a linked git worktree and the override lives in the main clone | Re-run with `--repo-root "$(pwd -P)"` from the worktree; do not copy the file in |
 | Hosted reviewers report `check-inconclusive` | `gh` is missing from the hermetic `PATH`, or not authenticated | Symlink `gh` into the fixture `bin` directory and confirm `gh auth status` succeeds |
@@ -472,7 +590,12 @@ Each checkbox maps to one or more acceptance criteria from the spec.
   installed but has never commented on the repository classifies as `prerequisite-missing`. The
   remedy the report offers is correct either way, and neither hosted reviewer is in the shipped
   default.
-- Step 13 requires a real pull request and a real runner, so it cannot be scripted. Every other step
-  runs offline against fixtures.
+- Steps 13 and 14 require a real pull request and a real runner, so they cannot be scripted. Every
+  other step runs offline against fixtures. They are also the only steps that observe gate behavior:
+  the plan's coverage map marks twenty-seven criteria as gate-level, and for those the automated
+  evidence proves only that Protocol 91 instructs the behavior, never that a runner produced it.
+- Step 13 Part 2 needs a scratch branch carrying a modified `.ai-dev-workflow.yaml`, because the
+  fallback path cannot be reached from a local override alone — an override that defines no list
+  leaves the shipped list in force.
 - This runbook exercises the availability decision, not review quality. What a dispatched reviewer
   then says about the change is out of scope for both the spec and this runbook.

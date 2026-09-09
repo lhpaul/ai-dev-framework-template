@@ -765,7 +765,15 @@ implementation and must be classified before readiness.
 
 ## Testing Strategy
 
-**Test types**: Unit (shell harnesses), Smoke (manual runbook).
+**Test types**: Unit (shell harnesses over the resolver), doc assertion (shell harness over the
+protocol and the other workflow surfaces), Smoke (manual runbook over the gate).
+
+**Two layers, and why the split matters.** The resolver
+(`resolve-reviewer-availability.sh`) computes a verdict and exits; the gate (Protocol 91 Step 7a,
+executed by the runner) acts on it. A unit test of the resolver can never be evidence for a criterion
+about what the gate then does — a perfect resolver and a gate that ignores it entirely would pass
+every resolver test in this plan. The **Acceptance-criterion coverage map** below assigns each
+criterion to the layer it constrains and names the evidence for each half.
 
 **How environment-dependent probing is tested without installing every runtime**: every unit test
 builds a hermetic `PATH` in a `mktemp -d` directory, symlinking the real coreutils the script needs
@@ -775,10 +783,11 @@ controls — exit status, stdout, and delay. This is the pattern already used by
 machine, and no test makes a network call: `gh` is always the fake. Runtime **absence** is tested by
 omitting the fake from the hermetic `PATH`, and runtime **presence** by adding it.
 
-The AC-group column in the tables below uses the spec's sub-headings under **Acceptance Criteria**,
-abbreviating one of them: *Configuration inputs* is the spec's *Configuration inputs that are absent,
-empty, malformed, or unsupported* group. *Contract completeness* is not a spec group — it marks a
-case that guards this plan's own exit-code contract rather than a criterion.
+The AC-group column in the two `T-` tables below records which spec group a case contributes to; it
+is an index, not a coverage claim — the per-criterion mapping is the coverage map. It abbreviates one
+group name: *Configuration inputs* is the spec's *Configuration inputs that are absent, empty,
+malformed, or unsupported*. *Contract completeness* is not a spec group at all — it marks a case that
+guards this plan's own exit-code contract.
 
 ### New suite: `scripts/development-workflow/tests/test-resolve-reviewer-availability.sh`
 
@@ -824,77 +833,117 @@ with no workflow edit (VL-10).
 ### Acceptance-criterion coverage map
 
 Every individual criterion in the merged spec is listed here with the named evidence that would fail
-if the behavior were absent — not the group it belongs to. Criterion IDs number the checkboxes under
-each **Acceptance Criteria** sub-heading in spec order: `R` for *Reachability follows capability*,
-`S` for *The shipped default never traps*, `O` for *The operator can tell why*, `C` for
-*Configuration inputs that are absent, empty, malformed, or unsupported*, `P` for *Policy behavior is
-preserved*, `A` for *Surfaces agree*. Forty-one criteria, all mapped.
+if the behavior were absent. Criterion IDs number the checkboxes under each **Acceptance Criteria**
+sub-heading in spec order: `R` for *Reachability follows capability*, `S` for *The shipped default
+never traps*, `O` for *The operator can tell why*, `C` for *Configuration inputs that are absent,
+empty, malformed, or unsupported*, `P` for *Policy behavior is preserved*, `A` for *Surfaces agree*.
+Forty-one criteria, all mapped.
 
-Three kinds of evidence appear. **Unit** is a numbered case in one of the three suites and is the
-preferred form. **Doc assertion** is a `D-` case in the surface-consistency suite, used where the
-criterion is a statement about what a surface says or about behavior that lives only in protocol
-prose. **Runbook** is a numbered step in the smoke runbook, used only where the criterion needs a
-real pull request, a real runner, or a real dispatched review — none of which a hermetic fixture can
-supply. Every runbook-only criterion says so explicitly and names the step.
+#### Which layer a criterion constrains, and what each kind of evidence can prove
 
-| ID | Criterion (abbreviated) | Evidence | Kind |
+This feature has two layers, and most criteria constrain the second one.
+
+- **The resolver** — `resolve-reviewer-availability.sh` reads configuration, probes the environment,
+  applies the policy, prints a verdict block, and exits. It dispatches nothing and posts nothing.
+- **The gate** — Protocol 91 Step 7a, executed by the runner. It calls the resolver and then acts on
+  the verdict: dispatches the reachable set or nobody, posts the warning or the hard-fail comment,
+  converts the pull request or leaves it draft, escalates or continues.
+
+A criterion such as "the gate blocks, dispatches nobody, leaves the pull request draft, and names the
+file" is a statement about the **gate**. A unit test of the resolver cannot be evidence for it: the
+resolver printing `OUTCOME=blocked` is consistent with a gate that ignores the verdict entirely and
+dispatches anyway, which is the most likely way this feature ships broken. Each criterion below is
+therefore mapped to the layer it actually constrains, with these three kinds of evidence:
+
+| Kind | What it is | What it proves | What it cannot prove |
 | --- | --- | --- | --- |
-| R1 | Runtime present, different runner driving → dispatched, verdict, no block or override | T-1 for the classification; runbook Step 13 for the dispatch and verdict on a real pull request | Unit + runbook |
-| R2 | Not Unreachable solely because a different runner drives; runtime present → Reachable | T-1, T-4 | Unit |
-| R3 | Runtime absent → Unreachable, reason `runtime-absent` | T-2, T-4 | Unit |
-| R4 | Fresh each run; the verdict flips both ways with the environment | T-32 (three consecutive runs, no config change); runbook Step 4 | Unit + runbook |
-| R5 | Posts no comment, changes no PR state, modifies no tracked file | T-14 (`git status --porcelain` empty after a run), T-15 (fake `gh` argv recording) | Unit |
-| R6 | Invokes no reviewer; nothing dispatched until availability is decided and the policy applied | T-15 (no dispatch call in the recorded argv), T-16 (a policy block leaves no review started) | Unit |
-| R7 | Reachable, dispatched, then fails → review failure, not unreachable | D-6 asserts Protocol 91 says so; runbook Step 13 observes it on a real dispatch. The resolver cannot prove this — it has already exited before dispatch — so the protocol text is the load-bearing artifact | Doc assertion + runbook |
-| S1 | Shipped default, no override → dispatched reviewer and a verdict on every supported runner | T-33 runs the repository's own configuration once per supported runner kind on a `PATH` holding **none** of the three runtimes, and requires a non-blocked verdict every time; runbook Step 1 repeats it on a real machine | Unit + runbook |
-| S2 | The shipped list names at least one reviewer reachable wherever a supported runner drives | T-33 — the same test, since a `PATH` with no runtimes is the worst case | Unit |
-| S3 | Shipped commentary does not call a hard-fail on a supported runner expected behavior | D-9 | Doc assertion |
-| O1 | Every Unreachable reviewer reported with name, exactly one reason, and at least one action | T-37 (reason is one of four, a `REMEDY` line exists for it), D-5 (the protocol's four remedies match the script's) | Unit + doc assertion |
-| O2 | The four reasons are distinguished and never reported in place of one another | T-25 (no cross-kind pairing), T-2 vs T-5 vs T-22 vs T-8 (one test per reason), T-23 | Unit |
-| O3 | The gate summary lists every configured reviewer with its verdict, including the ones that ran | T-19 (a `REVIEWER` record is emitted for reachable and override-excluded entries too); runbook Step 13 for the posted comment | Unit + runbook |
-| O4 | Override-removed reviewer is Excluded by override, no unreachability warning | T-19 | Unit |
-| O5 | Block report names the policy, and reports override state from what was resolved | T-16 (names the policy as `BLOCK_CAUSE`), T-20 (`applied` form), T-34 (`main_clone` form), T-13 (`none` form) | Unit |
-| O6 | No message attributes unavailability to the driving runner's identity | T-36 (no detail string contains the run's `RUNNER_KIND`), D-2, D-10 | Unit + doc assertion |
-| C1 | No list in either file → runs the stage default once and records the fallback | T-10 | Unit |
-| C2 | The fallback reviewer is the driving runner's own for the stage, so it never blocks | T-10 and T-12 for the mechanism (`FALLBACK_APPLIED=true` for a supported runner, `no-driving-runner` for `unknown`); D-7 asserts the protocol and README both name the driving runner rather than a fixed reviewer | Unit + doc assertion |
-| C3 | A list resolving to no entries behaves as C1; never reports success having dispatched nobody | T-11 | Unit |
-| C4 | Unsupported entry → Unreachable, reason `value-not-supported`, value named | T-8, T-9 | Unit |
-| C5 | List defined but not readable as a list → blocks, names file and input, does not fall back | T-13 | Unit |
-| C6 | A file that will not parse at all → blocks and names that file | T-31 (blocks with `policy-unreadable` and names the file), T-29 at the resolver level | Unit |
-| C7 | An unsupported value as the only entry → blocks and names it as the cause | T-8 | Unit |
-| C8 | A determination that cannot complete → `check-inconclusive`; verdict within ten seconds | T-6 (per-probe bound), T-7 (whole-list budget with every probe hanging) | Unit |
-| C9 | A determination that ends promptly without an answer → the same reason, not the other two | T-5 (`--version` exits non-zero), T-23 (`gh` absent) | Unit |
-| P1 | One unreachable, one reachable, `warn` → warns naming each, then dispatches the rest | T-9, T-37 for the warning's reason and remedy content | Unit |
-| P2 | `fail-if-any-unavailable` + any unreachable → blocks, dispatches nobody, PR stays draft | T-16 | Unit |
-| P3 | No reviewer reachable → blocks under either policy, PR not converted to ready, escalates | T-2 (exit `1` under `warn`), T-16 (under the strict policy); the draft-state and escalation half is protocol behavior, asserted by D-8 and observed in runbook Step 13 | Unit + doc assertion |
-| P4 | Every reviewer reachable → no warning, behaves exactly as today | T-1, T-19 (`OUTCOME=proceeded`, `UNREACHABLE` empty, no `REMEDY` line) | Unit |
-| P5 | No policy in either file → the shipped default `warn` applies | T-18 | Unit |
-| P6 | Unsupported policy value → blocks, names it, does not silently default | T-17 | Unit |
-| P7 | Unsupported or unreadable policy with an absent, empty, or malformed list → blocks on the policy | T-17 (unsupported policy with an absent list), T-31 (unreadable policy with a malformed list) | Unit |
-| P8 | Policy input present but unreadable → blocks and names the input | T-31 (file will not parse), T-35 (value is not a supported form) | Unit |
-| P9 | A reachable reviewer under a forbidding policy is still classified Reachable | T-16 | Unit |
-| P10 | Never installs, provisions, or substitutes; the fallback is not a substitution | T-15 (recorded `gh` argv contains no mutating call), T-2 (an absent runtime yields a block, never a stand-in), D-8 for the protocol statement | Unit + doc assertion |
-| A1 | Supported values and the availability rule stated consistently across surfaces | D-1, D-5, D-11 | Doc assertion |
-| A2 | No surface names a value the canonical protocol does not list | D-4 | Doc assertion |
-| A3 | The canonical protocol lists the hosted-service reviewer and states its runtime availability rule | D-1 | Doc assertion |
-| A4 | No surface claims the hosted-service reviewer is unconditionally available | D-3 | Doc assertion |
-| A5 | No surface states or implies availability is decided by runner identity | D-2, D-10 | Doc assertion |
-| A6 | CodeRabbit's runtime-conditions guidance is unchanged and does not contradict the rule | D-10 | Doc assertion |
+| **Resolver unit** | A numbered `T-` case in one of the two script suites | The resolver computes and prints the right verdict for a given environment and configuration | Anything about what the runner then does |
+| **Gate doc assertion** | A numbered `D-` case in the surface-consistency suite | Protocol 91 *instructs* the gate behavior, in text that will fail the suite if it is reworded away | That any runner actually followed the instruction |
+| **Gate runbook** | A numbered step in the smoke runbook | An operator *observed* the behavior happen on a real pull request with a real runner | Nothing automated re-checks it after the run |
 
-Five criteria — R1, R4, R7, S1, O3 — carry a runbook step alongside their unit or doc evidence
-because part of what they assert happens on a real pull request with a real runner. Only R7's
-behavioral half is runbook-and-protocol-only: by the time a dispatched reviewer fails, the
-availability resolver has already exited, so no unit test of this feature can observe it. Every
-other criterion has at least one automated case that fails if the behavior is absent.
+A gate-level criterion needs both gate kinds: the doc assertion keeps the instruction from silently
+disappearing between releases, and the runbook step is the only evidence that a runner honoured it.
+Neither substitutes for the other, and no `D-` case below should be read as proof of runtime
+behavior.
+
+#### The map
+
+| ID | Criterion (abbreviated) | Layer | Evidence |
+| --- | --- | --- | --- |
+| R1 | Runtime present, different runner driving → dispatched, verdict, no block or override | Both | Resolver unit T-1 for the classification; gate doc assertion D-12 for the instruction to dispatch `REACHABLE`; gate runbook Step 13 Part 1 for the dispatch and verdict |
+| R2 | Not Unreachable solely because a different runner drives; runtime present → Reachable | Resolver | T-1, T-4 |
+| R3 | Runtime absent → Unreachable, reason `runtime-absent` | Resolver | T-2, T-4 |
+| R4 | Fresh each run on the same pull request; the verdict flips both ways | Both | Resolver unit T-32 (three consecutive runs, no caching inside the resolver); gate doc assertion D-13 (the gate re-runs the resolver every cycle and may not reuse an earlier verdict); gate runbook Step 4 |
+| R5 | Posts no comment, changes no PR state, modifies no tracked file | Both | Resolver unit T-14, T-15; gate doc assertion D-14 (no mutating command anywhere in the protocol's availability phase); gate runbook Step 5 |
+| R6 | Invokes no reviewer; nothing dispatched until availability is decided and the policy applied | Both | Resolver unit T-15 (the resolver itself dispatches nothing); gate doc assertion D-15 (the resolver call precedes the dispatch map and no reviewer is dispatched until it returns) — this ordering is a property of the gate, and no resolver test can observe it; gate runbook Step 5 |
+| R7 | Reachable, dispatched, then fails → review failure, not unreachable | Gate | Gate doc assertion D-6; gate runbook Step 13 Part 1, whose expected result covers a dispatched reviewer that then fails. The resolver has already exited before dispatch, so no unit test of this feature can observe it |
+| S1 | Shipped default, no override → dispatched reviewer and a verdict on every supported runner | Both | Resolver unit T-33 (a non-blocked verdict for every supported runner kind on a `PATH` holding none of the three runtimes); gate doc assertion D-12; gate runbook Step 1 for the verdict on every supported runner kind and Step 13 Part 1 for the dispatch |
+| S2 | The shipped list names at least one reviewer reachable wherever a supported runner drives | Resolver | T-33 |
+| S3 | Shipped commentary does not call a hard-fail on a supported runner expected behavior | Surface text | D-9 |
+| O1 | Every Unreachable reviewer reported with name, exactly one reason, and at least one action | Both | Resolver unit T-37 (reason is one of four; a `REMEDY` line exists for it); gate doc assertions D-5 (the protocol's four remedies match the script's) and D-16 (the comment formats carry name, reason, and remedy per reviewer); gate runbook Step 13 Part 3 and Step 14 Part 1 read the posted comments |
+| O2 | The four reasons are distinguished and never reported in place of one another | Resolver | T-25 (no cross-kind pairing), T-2, T-5, T-8, T-22, T-23 (one per reason) |
+| O3 | The gate summary lists every configured reviewer with its verdict, including the ones that ran | Gate | Gate doc assertion D-16; gate runbook Step 13 Part 1. T-19 proves the resolver emits a record per entry, which is the input the summary needs — necessary, not sufficient, so it is not listed as evidence for this criterion |
+| O4 | Override-removed reviewer is Excluded by override, no unreachability warning | Both | Resolver unit T-19 (the record carries `override-excluded` with no reason); gate doc assertion D-16 (excluded entries appear in the summary and never in the warning); gate runbook Step 14, which runs the real gate with an override in effect |
+| O5 | Block report names the policy, and reports override state from what was resolved | Both | Resolver unit T-16, T-20, T-34, T-13 produce the four field values; gate doc assertion D-18 (the hard-fail formats carry `BLOCK_CAUSE` and `LOCAL_OVERRIDE_STATE` taken from the resolver, never inferred); gate runbook Step 14 Part 1 |
+| O6 | No message attributes unavailability to the driving runner's identity | Both | Resolver unit T-36 (no detail string contains the run's `RUNNER_KIND`); gate doc assertions D-17 and D-18 (neither comment template carries a runner-context field), plus D-2 and D-10 for the surrounding surfaces; gate runbook Step 13 Part 3 and Step 14 Part 1 |
+| C1 | No list in either file → runs the stage default **once** and records the fallback in the summary | Both | Resolver unit T-10 (`FALLBACK_APPLIED=true`); gate doc assertions D-12 (dispatch the driving runner's stage reviewer exactly once) and D-16 (the summary records that the fallback applied); gate runbook Step 13 Part 2 |
+| C2 | The fallback reviewer is the driving runner's own for the stage, so it never blocks | Both | Resolver unit T-10 and T-12 (`FALLBACK_APPLIED=true` for a supported runner, `no-driving-runner` for `unknown`); gate doc assertions D-7 and D-12; gate runbook Step 13 Part 2 |
+| C3 | A list resolving to no entries behaves as C1; never reports success having dispatched nobody | Both | Resolver unit T-11; gate doc assertions D-12 and D-16; gate runbook Step 13 Part 2 |
+| C4 | Unsupported entry → Unreachable, reason `value-not-supported`, value named in the report | Both | Resolver unit T-8, T-9 (classification and named value in the record); gate doc assertion D-18 (the offending value is named in the block report); gate runbook Step 14 Part 1, second run |
+| C5 | List defined but not readable as a list → blocks, names file and input, dispatches nobody, PR stays draft | Both | Resolver unit T-13 (`BLOCK_CAUSE=list-malformed`, exit `1`); gate doc assertions D-18 (the report names the file and the key) and D-19 (exit `1` maps to dispatch nobody, no `gh pr ready`, PR stays draft, escalate); gate runbook Step 14 Part 2 |
+| C6 | A file that will not parse at all → blocks and names that file | Both | Resolver unit T-31, T-29; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
+| C7 | An unsupported value as the only entry → blocks and names it as the cause | Both | Resolver unit T-8; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 1, second run |
+| C8 | A determination that cannot complete → `check-inconclusive`; verdict within ten seconds | Resolver | T-6 (per-probe bound), T-7 (whole-list budget with every probe hanging) |
+| C9 | A determination that ends promptly without an answer → the same reason, not the other two | Resolver | T-5, T-23 |
+| P1 | One unreachable, one reachable, `warn` → warns naming each, then dispatches the rest | Both | Resolver unit T-9 (`OUTCOME=proceeded-reduced`) and T-37 (reason and remedy available to quote); gate doc assertion D-17 (the warning names each unreachable reviewer with its reason and remedy and states the reachable subset) and D-12 (the reachable subset is then dispatched); gate runbook Step 13 Part 3 |
+| P2 | `fail-if-any-unavailable` + any unreachable → blocks, dispatches nobody, PR stays draft | Both | Resolver unit T-16; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 3 |
+| P3 | No reviewer reachable → blocks under either policy, PR not converted to ready, escalates | Both | Resolver unit T-2 (under `warn`) and T-16 (under the strict policy); gate doc assertion D-19 (exit `1` maps to no `gh pr ready`, draft preserved, escalation); gate runbook Step 14 Part 1 |
+| P4 | Every reviewer reachable → no warning, behaves exactly as today | Both | Resolver unit T-1, T-19 (`OUTCOME=proceeded`, `UNREACHABLE` empty, no `REMEDY` line); gate doc assertion D-17 (the warning is posted only when `OUTCOME=proceeded-reduced`); gate runbook Step 13 Part 1 |
+| P5 | No policy in either file → the shipped default `warn` applies | Resolver | T-18 |
+| P6 | Unsupported policy value → blocks, dispatches nobody, names it, does not silently default | Both | Resolver unit T-17 (`BLOCK_CAUSE=policy-unsupported`, the value carried in the output); gate doc assertions D-18 (the report names the offending value) and D-19 (nobody is dispatched); gate runbook Step 14 Part 4 |
+| P7 | Unsupported or unreadable policy with an absent, empty, or malformed list → blocks on the policy | Both | Resolver unit T-17, T-31 (`CONFIG_LIST_STATE=not-evaluated`); gate doc assertion D-18 (the report attributes the block to the policy); gate runbook Step 14 Part 4 |
+| P8 | Policy input present but unreadable → blocks and names the input | Both | Resolver unit T-31, T-35; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
+| P9 | A reachable reviewer under a forbidding policy is still classified Reachable in the report | Both | Resolver unit T-16 (the record still reads `reachable`); gate doc assertion D-18 (the block report lists every reviewer with its verdict, including the reachable ones); gate runbook Step 14 Part 3 |
+| P10 | Never installs, provisions, or substitutes; the fallback is not a substitution | Both | Resolver unit T-15 (no mutating call in the recorded `gh` argv), T-2 (an absent runtime yields a block, never a stand-in); gate doc assertion D-8; gate runbook Step 13 Part 2 (the fallback dispatches the runner's own reviewer, not a stand-in for an unreachable one) and Step 14 Part 1 (an unreachable reviewer produces a block, never a substitution) |
+| A1 | Supported values and the availability rule stated consistently across surfaces | Surface text | D-1, D-5, D-11 |
+| A2 | No surface names a value the canonical protocol does not list | Surface text | D-4 |
+| A3 | The canonical protocol lists the hosted-service reviewer and states its runtime availability rule | Surface text | D-1 |
+| A4 | No surface claims the hosted-service reviewer is unconditionally available | Surface text | D-3 |
+| A5 | No surface states or implies availability is decided by runner identity | Surface text | D-2, D-10 |
+| A6 | CodeRabbit's runtime-conditions guidance is unchanged and does not contradict the rule | Surface text | D-10 |
+
+#### What this map admits
+
+- **Seven criteria are resolver-only** — R2, R3, O2, S2, C8, C9, P5. Each asserts what the verdict
+  *is* for a given environment, which is exactly what a unit test can settle.
+- **Seven are statements about surface text** — S3 and A1 to A6. A doc assertion is not second-best
+  evidence for these; it is the right instrument, because the criterion is about what the text says.
+- **Twenty-seven are gate-level, wholly or in part** — every remaining ID: twenty-five marked
+  `Both`, plus R7 and O3, which constrain only the gate. For each, the resolver unit case (where one
+  exists) proves only that the verdict handed to the gate was correct. The doc assertion proves the
+  protocol instructs the right response, and the runbook step is the only evidence that a runner
+  produced it.
+- **One criterion, R7, has no achievable automated evidence** and says so: the resolver has exited
+  before dispatch, so a reviewer that then fails is observable only in the protocol text (D-6) and in
+  runbook Step 13.
+- **T-19 is deliberately not listed under O3.** It proves the resolver emits a per-reviewer record —
+  the input the summary comment needs — but a gate could receive those records and post a summary
+  that omits half of them. Where a resolver test is necessary-but-not-sufficient for a gate
+  criterion, it is left out rather than counted.
 
 ### New suite: `scripts/development-workflow/tests/test-step7a-surface-consistency.sh`
 
-Several acceptance criteria are statements about what the workflow surfaces say, or about behavior
-that lives only in protocol prose (the gate's handling of a dispatched reviewer that then fails, the
-prohibition on installing or substituting). A grep the implementer runs by hand is not evidence that
-survives the next edit, so those criteria get a doc-assertion suite. Precedent for the pattern:
+Several acceptance criteria are statements about what the workflow surfaces say, and many more
+constrain gate behavior that lives only in protocol prose — what the runner does with the resolver's
+verdict. A grep the implementer runs by hand is not evidence that survives the next edit, so both
+groups get a doc-assertion suite. Precedent for the pattern:
 `test-protocol-91-readiness-checklist.sh`, `test-protocol-02-portable-parser-guidance.sh`, and
 `test-workflow-agent-product-repo-guidance.sh`.
+
+Cases D-1 to D-11 assert what the surfaces **say about themselves**. Cases D-12 to D-19 assert that
+Protocol 91 **instructs** each gate behavior a criterion requires. Neither group proves a runner
+obeyed the instruction — the runbook steps are the only evidence of that, and the coverage map above
+names them criterion by criterion.
 
 Headers:
 
@@ -905,6 +954,8 @@ Headers:
 # covers: docs/workflow/development-workflow/integrations/coderabbit.md
 # covers: docs/workflow/development-workflow/integrations/codex-github.md
 ```
+
+**Surface-text assertions:**
 
 | ID | Assertion | AC |
 | --- | --- | --- |
@@ -919,6 +970,22 @@ Headers:
 | D-9 | `.ai-dev-workflow.yaml`'s `review.on_draft.runner` is exactly `claude`, `cursor`, `codex`, and the file contains no text describing a hard-fail of this gate on a supported runner as expected behavior | S3 |
 | D-10 | `coderabbit.md` still states both of its availability checks — the App activity signal and `reviews.auto_review.enabled: true` — and its Step 7a hard-fail remedy names no runner context | A6, A5 |
 | D-11 | The `codex-github` runner reviewer dispatch block is byte-identical in `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md` | A1 |
+
+**Gate-instruction assertions:**
+
+| ID | Assertion | AC |
+| --- | --- | --- |
+| D-12 | On resolver exit `0`, Protocol 91 instructs dispatching every reviewer named in `REACHABLE`, and where `FALLBACK_APPLIED=true` instructs dispatching the driving runner's own stage reviewer exactly once — the word "once" is asserted, because "runs it once" is the criterion | R1, S1, C1, C2, C3, P1 |
+| D-13 | Protocol 91 instructs running the availability resolver at the start of every Step 7a cycle, including re-runs after fixes, and states that a verdict from an earlier cycle is never reused | R4 |
+| D-14 | Between the resolver call and the dispatch step, Protocol 91's Step 7a text contains no `gh pr comment`, no `gh pr ready`, and no command that writes to the working tree | R5 |
+| D-15 | Protocol 91 places the resolver call before the reviewer dispatch map and states that no reviewer is dispatched until the resolver returns and the policy has been applied | R6 |
+| D-16 | The Step 7a summary comment format requires one line per configured reviewer with its display label; for each Unreachable one, its reason display label and its remedy; and, where `FALLBACK_APPLIED=true`, a line recording that the fallback applied. Override-excluded entries appear in the summary and never in the warning | O1, O3, O4, C1, C3 |
+| D-17 | The warning comment format carries no runner-context field, names each unreachable reviewer with its reason and its remedy, states the reachable subset that will run, and is posted only when `OUTCOME=proceeded-reduced` | O6, P1, P4 |
+| D-18 | Each hard-fail comment case names `BLOCK_CAUSE`; every configured reviewer with its verdict, including the reachable ones; the offending value or unreadable input where one exists; the policy where the policy is the cause; and `LOCAL_OVERRIDE_STATE` taken from the resolver rather than inferred. No case carries a runner-context field | O5, O6, C4, C5, C6, C7, P2, P6, P7, P8, P9 |
+| D-19 | Protocol 91 maps resolver exit `1` to: dispatch nobody, do not call `gh pr ready`, leave the pull request draft, escalate to a human — and maps exit `2` to the same treatment with cause `availability-resolver-failed` | C5, C6, C7, P2, P3, P6, P8 |
+
+Every case must be shown to fail before the suite is accepted; see Implementation Order step 8.
+
 
 ### Extended suite: `scripts/development-workflow/tests/test-workflow-config-resolver.sh`
 
@@ -1027,8 +1094,9 @@ following are the remaining documentation-only updates the developer must make:
 | R-5 | Re-adding `codex-github` to Step 7a revives the async race #486 moved it out for | Low | Medium | Decision 7: it is canonical but not default, and its dispatch goes through `codex-github-reviewer.sh`, whose pre-trigger wait, retrigger, and exit-code contract were built after #486. |
 | R-6 | `run_bounded` duplicates `run_with_timeout` from `local-ai-reviewer.sh` | High | Low | Deliberate, recorded in **Out-of-scope notes**. Extracting the reviewer script's variant would change a heavily used Step 7 path for a Step 7a benefit, which the spec places out of scope. |
 | R-7 | The budget test (T-7) is wall-clock sensitive and could flake on a loaded CI runner | Medium | Low | T-7 asserts an upper bound of budget plus one second on a 2-second test budget, not an exact duration, and asserts that every entry was classified — the property that matters is that the gate always reaches a verdict. |
-| R-8 | The doc-assertion suite (D-1 to D-11) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
+| R-8 | The doc-assertion suite (D-1 to D-19) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
 | R-9 | The change is reverted after operators retired their machine-local override on its advice, and the override file cannot be restored by any revert | Low | Medium | Retirement guidance says move the file aside rather than delete it, so a second `mv` restores it; the override is two keys and `.ai-dev-workflow.local.example.yaml` carries the shape. See **Reversal and Rollback** (c) — this is mitigated, not eliminated. |
+| R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 are the only evidence a runner honoured it, and the runbook's Troubleshooting table names the symptom as a blocking implementation failure rather than a runbook problem. The coverage map marks all twenty-seven gate-level criteria so no reviewer has to rediscover the distinction. |
 
 ---
 
@@ -1097,7 +1165,8 @@ source, so there is nothing for a reviewer to mistake for production code.
    reports no differences.
 
 8. **Write `tests/test-step7a-surface-consistency.sh`** with the `# covers:` headers and cases D-1 to
-   D-11. Write it **after** step 7, because every assertion targets text that step 7 produces.
+   D-19. Write it **after** steps 5 to 7, because D-1 to D-11 target text those steps produce on the
+   surrounding surfaces and D-12 to D-19 target the Step 7a gate instructions written in step 5.
    *Verify*: `bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh` — confirm
    every case reports PASS. Then revert one surface edit locally, re-run, and confirm the matching
    case reports FAIL before restoring it: a doc-assertion suite that cannot fail is worthless.
