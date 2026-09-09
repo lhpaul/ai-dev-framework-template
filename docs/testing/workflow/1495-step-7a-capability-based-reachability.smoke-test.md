@@ -473,6 +473,22 @@ did **not** silently apply the default `warn`, and it did **not** reach the fall
 there being no list configured — the policy is read first. Remove the override afterwards and confirm
 with `gh pr view <pr_number> --json isDraft` that the pull request is still draft.
 
+**Part 5 — a block with a draft-restricting reviewer configured**
+
+This part catches the ordering defect Decision 9 fixes: the draft-state pre-check used to convert the
+pull request to non-draft at the top of Step 7a, before the gate knew whether it would block.
+
+1. Confirm the pull request is currently draft.
+2. Set the override to `review.on_draft.runner: [coderabbit, not-a-reviewer]` — one draft-restricting
+   reviewer and one value guaranteed to be unsupported — and run Step 7a.
+3. Immediately re-check the pull request's draft state.
+
+**Expected result**: the gate blocked and the pull request is **still draft**. `gh pr ready` was not
+called, even though a draft-restricting reviewer was configured and the pre-check's condition was
+therefore satisfied. If the pull request came back non-draft, the conversion is still running before
+the availability decision and six acceptance criteria are violated — report it as a blocking
+implementation failure. Remove the override afterwards.
+
 ### Last Step: Validate and clean up
 
 1. Work through the Assertions Checklist below.
@@ -550,7 +566,9 @@ gate ignores.
 - [ ] An unsupported policy value blocked, was named, did not silently default to `warn`, and did not
       reach the fallback even with no list configured (Step 14 Part 4).
 - [ ] A reviewer that was dispatched and then failed or errored was reported as a review failure, not
-      as unreachable (Step 13).
+      as unreachable (Step 13 Part 1).
+- [ ] A block with a draft-restricting reviewer configured left the pull request draft — the
+      draft-state conversion did not run ahead of the availability decision (Step 14 Part 5).
 
 ---
 
@@ -575,6 +593,8 @@ gate ignores.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Step 13 or 14 shows a verdict block in the log but no reviewer activity, or activity despite a block verdict | The gate is not honouring the resolver's exit code — the exact defect these two steps exist to catch | Stop and report it; this is a blocking implementation failure, not a runbook problem |
+| A hosted reviewer was classified `reachable`, was dispatched, and then timed out without ever answering | Expected. The availability probe reads historical bot activity, which outlives an uninstalled, suspended, or access-revoked App — a **decided** limitation, not a defect. See the plan's Decision 8 | Confirm the App is still installed and has repository access. The timeout is already governed by `internal_reviewers_unavailable_policy`, so `warn` proceeds with reduced coverage and `fail-if-any-unavailable` blocks — no review was silently counted as clean |
+| `coderabbit` classifies `prerequisite-missing` in this repository even though you expect it to work | This repository ships `.coderabbit.yaml` with `auto_review.enabled: false`, which is one of the two checks. It is not configured as a Step 7a runner reviewer here | Expected. Do not "fix" it by enabling auto-review; add `coderabbit` to `review.on_draft.runner` only if you genuinely want it in this gate |
 | Every run reports `OUTCOME=blocked` with `BLOCK_CAUSE=zero-reachable` | A `.ai-dev-workflow.local.yaml` you forgot to move aside names reviewers this machine cannot reach | Check `LOCAL_OVERRIDE_STATE` in the verdict block; move the file aside and re-run |
 | `LOCAL_OVERRIDE_STATE` reports `present but unpropagated` | You are in a linked git worktree and the override lives in the main clone | Re-run with `--repo-root "$(pwd -P)"` from the worktree; do not copy the file in |
 | Hosted reviewers report `check-inconclusive` | `gh` is missing from the hermetic `PATH`, or not authenticated | Symlink `gh` into the fixture `bin` directory and confirm `gh auth status` succeeds |
@@ -586,10 +606,24 @@ gate ignores.
 
 ## Known Limitations
 
-- The hosted-service availability probe reads recent repository comment activity. An app that is
-  installed but has never commented on the repository classifies as `prerequisite-missing`. The
-  remedy the report offers is correct either way, and neither hosted reviewer is in the shipped
-  default.
+- **The hosted-service availability probe is a proxy, by decision.** The spec defines hosted
+  availability as the service being installed for the repository and enabled for this review; no
+  mechanism available to the gate's user-token credentials can establish that, so the probe reads
+  recent repository comment activity instead. It is wrong in two ways, both accepted under the plan's
+  Decision 8:
+  - An App installed but never active on this repository classifies `prerequisite-missing` even
+    though it would work.
+  - An App that has been uninstalled, suspended, or had its access revoked still shows historical
+    activity and classifies `reachable`. It is then dispatched and times out, and that timeout is
+    governed by the same `internal_reviewers_unavailable_policy` — so the residual is handled at
+    dispatch, never as a clean review that did not happen.
+
+  Neither hosted reviewer is in the shipped default, so you only meet this by opting one into
+  `review.on_draft.runner` deliberately. Do not report either behavior as a smoke-test failure.
+- Draft eligibility is **not** part of the availability probe. The draft-state pre-check guarantees a
+  non-draft pull request before dispatch, so `auto_review.drafts: false` is deliberately not an
+  unreachability condition. Step 14 Part 5 checks the one thing that ordering has to get right: the
+  conversion must not happen on a run that then blocks.
 - Steps 13 and 14 require a real pull request and a real runner, so they cannot be scripted. Every
   other step runs offline against fixtures. They are also the only steps that observe gate behavior:
   the plan's coverage map marks twenty-seven criteria as gate-level, and for those the automated
