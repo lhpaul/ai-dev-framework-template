@@ -1128,6 +1128,32 @@ def typed_value_from_path(data: dict[str, Any], path: list[str]) -> tuple[Any, b
     return value, True
 
 
+def review_effective_value_from_path(
+    data: dict[str, Any], path: list[str]
+) -> tuple[Any, bool, bool]:
+    """Read a review-effective field without hiding a non-mapping ancestor.
+
+    The legacy review-overrides reader intentionally treats this shape as
+    absent.  The new gate cannot: a present ``review: []`` or
+    ``review.on_draft: []`` is malformed configuration and policy resolution
+    must block before a shipped value can be used as a fallback.
+    """
+    value: Any = data
+    for index, key in enumerate(path):
+        if not isinstance(value, dict):
+            # An empty on_draft mapping (including one containing only a
+            # comment) retains the historic absent-list meaning. A bare review
+            # section remains malformed because it cannot contain either the
+            # list or the policy input.
+            if value is None and index == 2 and path[:2] == ["review", "on_draft"]:
+                return None, False, False
+            return None, False, True
+        if key not in value:
+            return None, False, False
+        value = value[key]
+    return value, True, False
+
+
 def review_runner_state(value: Any, present: bool) -> tuple[list[str], str]:
     if not present:
         return [], "absent"
@@ -1212,25 +1238,50 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         })
         return base
 
-    shipped_raw, shipped_present = typed_value_from_path(shared, ["review", "on_draft", "runner"])
+    shipped_raw, shipped_present, shipped_runner_structure_error = review_effective_value_from_path(
+        shared, ["review", "on_draft", "runner"]
+    )
     shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
-    local_runner_raw, local_runner_present = typed_value_from_path(local, ["review", "on_draft", "runner"])
+    local_runner_raw, local_runner_present, local_runner_structure_error = review_effective_value_from_path(
+        local, ["review", "on_draft", "runner"]
+    )
     runner_raw, runner_present, runner_source = (
         (local_runner_raw, True, str(local_path)) if local_runner_present else (shipped_raw, shipped_present, str(shared_path) if shipped_present else "")
     )
     effective_runner, effective_runner_state = review_runner_state(runner_raw, runner_present)
 
-    shipped_policy_raw, shipped_policy_present = typed_value_from_path(
+    shipped_policy_raw, shipped_policy_present, shipped_policy_structure_error = review_effective_value_from_path(
         shared, ["review", "internal_reviewers_unavailable_policy"]
     )
-    local_policy_raw, local_policy_present = typed_value_from_path(
+    local_policy_raw, local_policy_present, local_policy_structure_error = review_effective_value_from_path(
         local, ["review", "internal_reviewers_unavailable_policy"]
     )
     policy_raw, policy_present, policy_source = (
         (local_policy_raw, True, str(local_path)) if local_policy_present else (shipped_policy_raw, shipped_policy_present, str(shared_path) if shipped_policy_present else "")
     )
     effective_policy, policy_input, effective_policy_state = review_policy_state(policy_raw, policy_present)
-    if effective_policy_state == "unreadable":
+
+    runner_structure_error = local_runner_structure_error or (
+        not local_runner_present and shipped_runner_structure_error
+    )
+    # Policy is evaluated first. A malformed review/on_draft ancestor prevents
+    # that evaluation even though the policy key itself is a sibling of
+    # on_draft, so it is an unreadable policy input as well as a malformed list.
+    local_structure_error = local_runner_structure_error or local_policy_structure_error
+    shipped_structure_error = shipped_runner_structure_error or shipped_policy_structure_error
+    policy_structure_error = local_structure_error or (
+        not local_runner_present and not local_policy_present and shipped_structure_error
+    )
+    if runner_structure_error:
+        effective_runner_state = "malformed"
+    if policy_structure_error:
+        effective_policy_state = "unreadable"
+        policy_input = None
+        effective_policy = ""
+        unreadable_path = str(local_path) if local_structure_error else str(shared_path)
+        base["unreadable_file"] = unreadable_path
+        base["unreadable_detail"] = f"{unreadable_path}: review section must be a mapping"
+    if effective_policy_state == "unreadable" and not policy_structure_error:
         base["unreadable_file"] = policy_source
         base["unreadable_detail"] = (
             "review.internal_reviewers_unavailable_policy must be a scalar string; "
