@@ -1132,6 +1132,47 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex'
 assert_review_effective_states "E-32 unterminated flow sequence" malformed unreadable
 run_contains "review-effective E-32 unterminated flow sequence detail" "unterminated flow sequence" "$(review_effective_state unreadable_detail)"
 
+# The review-effective reader rejects omitted flow members and preserves numeric
+# YAML types, while the legacy reader retains its historical string/skip behavior.
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex,]'
+assert_review_effective_states "E-33 trailing flow comma" defined absent
+run_test "review-effective E-33 trailing flow comma entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [,]'
+assert_review_effective_states "E-34 shared missing first flow member" malformed unreadable
+run_contains "review-effective E-34 missing member detail" "empty item" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex,,cursor]'
+assert_review_effective_states "E-34 shared double comma" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex,,cursor]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-34 legacy double comma unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,cursor" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+assert_review_effective_states "E-34 local double comma" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, 0x10]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-35 legacy numeric member unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,0x10" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+assert_review_effective_states "E-35 local numeric member" malformed absent
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["123", '\''0x10'\'']' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-35 quoted numeric members" defined absent
+run_test "review-effective E-35 quoted numeric entries" '["123","0x10"]' "$(review_effective_json | jq -c '.effective_runner')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+printf '\377' > "$review_effective_dir/.ai-dev-workflow.yaml"
+utf8_json="$(review_effective_json)"
+run_test "review-effective E-36 invalid UTF-8 returns JSON" object "$(jq -r 'type' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '\377' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_fails_contains "review-effective E-36 legacy invalid UTF-8 behavior unchanged" "UnicodeDecodeError" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, .inf]'
+assert_review_effective_states "E-36 non-finite numeric member" malformed unreadable
+run_contains "review-effective E-36 non-finite numeric detail" "non-finite numeric scalar" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, 1e999]'
+assert_review_effective_states "E-36 overflowing numeric member" malformed unreadable
+run_contains "review-effective E-36 overflowing numeric detail" "non-finite numeric scalar" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, _123]'
+assert_review_effective_states "E-36 leading underscore stays string" defined absent
+run_test "review-effective E-36 leading underscore entry" '["codex","_123"]' "$(review_effective_json | jq -c '.effective_runner')"
+
 # Present non-mapping ancestors must not be mistaken for absent values and
 # silently fall through to another configuration file.
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"

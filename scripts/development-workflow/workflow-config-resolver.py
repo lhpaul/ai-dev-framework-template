@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -127,6 +128,16 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     # unsupported scalar, so reject unsupported non-empty flow mappings.
     if value.startswith("{") and value.endswith("}") and value != "{}":
         raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
+    if value.startswith("[") and value.endswith("]") and value[1:-1].strip():
+        items = split_inline_list(value[1:-1])
+        # YAML permits a trailing comma, but never an omitted first or middle
+        # item. The legacy reader historically skipped those items; the
+        # review-effective reader must reject them rather than changing the
+        # configured reviewer set.
+        if any(not item.strip() for item in items[:-1]) or (
+            len(items) == 1 and not items[0].strip()
+        ):
+            raise ConfigError(f"{path}:{line_no}: flow sequence contains an empty item")
     if not value.startswith(("'", '"')):
         return
 
@@ -144,6 +155,8 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
             in_double = not in_double
     if in_single or in_double:
         raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
+
+
 def parse_scalar(
     value: str, *, review_effective: bool = False, path: Path | None = None, line_no: int | None = None
 ) -> Any:
@@ -175,6 +188,37 @@ def parse_scalar(
         return False
     if value.lower() in {"null", "~"}:
         return None
+    if review_effective:
+        assert path is not None and line_no is not None
+        return parse_review_numeric_scalar(value, path, line_no)
+    return value
+
+
+def parse_review_numeric_scalar(value: str, path: Path, line_no: int) -> Any:
+    """Preserve numeric YAML scalars as non-strings for review-effective only."""
+    normalized = value.replace("_", "")
+    decimal = r"(?:0|[1-9](?:_?[0-9])*)"
+    if re.fullmatch(r"[+-]?\.(?:inf|nan)", value, re.IGNORECASE):
+        raise ConfigError(f"{path}:{line_no}: non-finite numeric scalar is not supported")
+    if re.fullmatch(r"[+-]?0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*", value):
+        return int(normalized, 0)
+    if re.fullmatch(r"[+-]?0[oO][0-7](?:_?[0-7])*", value):
+        return int(normalized, 0)
+    if re.fullmatch(r"[+-]?0[bB][01](?:_?[01])*", value):
+        return int(normalized, 0)
+    if re.fullmatch(r"[+-]?0[0-7](?:_?[0-7])*", value):
+        sign = -1 if normalized.startswith("-") else 1
+        return sign * int(normalized.lstrip("+-"), 8)
+    if re.fullmatch(rf"[+-]?{decimal}", value):
+        return int(normalized)
+    if re.fullmatch(
+        rf"[+-]?(?:(?:{decimal}\.(?:[0-9](?:_?[0-9])*)?|\.[0-9](?:_?[0-9])*)(?:[eE][+-]?{decimal})?|{decimal}[eE][+-]?{decimal})",
+        value,
+    ):
+        numeric = float(normalized)
+        if not math.isfinite(numeric):
+            raise ConfigError(f"{path}:{line_no}: non-finite numeric scalar is not supported")
+        return numeric
     return value
 
 
@@ -1212,7 +1256,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
-    except ConfigError as exc:
+    except (ConfigError, UnicodeDecodeError) as exc:
         base.update({
             "effective_policy_state": "unreadable",
             "unreadable_file": str(shared_path),
@@ -1233,7 +1277,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
                 local_file = str(local_path)
                 base["local_override_file"] = local_file
                 base["local_override_origin"] = local_origin
-    except ConfigError as exc:
+    except (ConfigError, UnicodeDecodeError) as exc:
         base.update({
             "effective_policy_state": "unreadable",
             "unreadable_file": str(parse_path),
