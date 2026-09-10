@@ -1083,6 +1083,9 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       - Lines 1822-1867 (*Step 7a summary comment*): require the per-reviewer verdict list — every
         configured reviewer with its display label, and its reason where Unreachable — plus the gate
         outcome. Update both worked examples so neither attributes a skip to a runner.
+      Add the marked normative `codex-github` availability block described by D-23.
+      Copy it verbatim to both item-orchestrator agent blocks and `integrations/codex-github.md`;
+      surrounding tool-specific dispatch prose remains outside the markers.
       *Covers*: every AC group.
 - [ ] `docs/workflow/development-workflow/README.md` line 561 — restate the fallback as the driving
       runner's own stage reviewer for the pull request's stage. Add one sentence naming the shipped
@@ -1294,9 +1297,9 @@ behavior.
 | R1 | Runtime present, different runner driving → dispatched, verdict, no block or override | Both | Resolver unit T-1 for the classification; gate doc assertion D-12 for the instruction to dispatch `REACHABLE`; gate runbook Step 13 Part 1 for the dispatch and verdict |
 | R2 | Not Unreachable solely because a different runner drives; runtime present → Reachable | Resolver | T-1, T-4 |
 | R3 | Runtime absent → Unreachable, reason `runtime-absent` | Resolver | T-2, T-4 |
-| R4 | Fresh each run on the same pull request; the verdict flips both ways | Both | Resolver unit T-32 (three consecutive runs, no caching inside the resolver); gate doc assertion D-13 (the gate re-runs the resolver every cycle and may not reuse an earlier verdict); gate runbook Step 4 |
-| R5 | Posts no comment, changes no PR state, modifies no tracked file | Both | Resolver unit T-14, T-15; gate doc assertion D-14 (no mutating command anywhere in the protocol's availability phase); gate runbook Step 5 |
-| R6 | Invokes no reviewer; nothing dispatched until availability is decided and the policy applied | Both | Resolver unit T-15 (the resolver itself dispatches nothing); gate doc assertion D-15 (the resolver call precedes the dispatch map and no reviewer is dispatched until it returns) — this ordering is a property of the gate, and no resolver test can observe it; gate runbook Step 5 |
+| R4 | Fresh each run on the same pull request; the verdict flips both ways | Both | Resolver unit T-32 (three consecutive runs, no caching inside the resolver); gate doc assertion D-13 (the gate re-runs the resolver every cycle and may not reuse an earlier verdict); gate runbook Step 13 Part 5 (three complete gate invocations on the same PR) |
+| R5 | Posts no comment, changes no PR state, modifies no tracked file | Both | Resolver unit T-14, T-15; gate doc assertion D-14 (no mutating command anywhere in the protocol's availability phase); gate runbook Step 13 Part 5 (timestamped gate command and side-effect evidence during determination) |
+| R6 | Invokes no reviewer; nothing dispatched until availability is decided and the policy applied | Both | Resolver unit T-15 (the resolver itself dispatches nothing); gate doc assertion D-15 (the resolver call precedes the dispatch map and no reviewer is dispatched until it returns) — this ordering is a property of the gate, and no resolver test can observe it; gate runbook Step 13 Part 5 (timestamped gate command and side-effect evidence during determination) |
 | R7 | Reachable, dispatched, then fails → review failure, not unreachable | Gate | Gate doc assertion D-6; gate runbook Step 13 Part 4 deliberately makes a callable reviewer fail only at dispatch. The resolver has already exited before dispatch, so no unit test of this feature can observe it |
 | S1 | Shipped default, no override → dispatched reviewer and a verdict on every supported runner | Both | Resolver unit T-33 (a non-blocked verdict for every supported runner kind on a `PATH` holding none of the three runtimes); gate doc assertion D-12; gate runbook Step 1 for the verdict on every supported runner kind and Step 13 Part 1 for the dispatch |
 | S2 | The shipped list names at least one reviewer reachable wherever a supported runner drives | Resolver | T-33, T-43 |
@@ -1326,7 +1329,7 @@ behavior.
 | P8 | Policy input present but unreadable → blocks and names the input | Both | Resolver unit T-31, T-35; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
 | P9 | A reachable reviewer under a forbidding policy is still classified Reachable in the report | Both | Resolver unit T-16 (the group still reads `REVIEWER_N_STATUS=reachable`); gate doc assertion D-18 (the block report lists every reviewer with its verdict, including the reachable ones); gate runbook Step 14 Part 3 |
 | P10 | Never installs, provisions, or substitutes; the fallback is not a substitution | Both | Resolver unit T-15 (no mutating call in the recorded `gh` argv), T-2 (an absent runtime yields a block, never a stand-in); gate doc assertion D-8; gate runbook Step 13 Part 2 (the fallback dispatches the runner's own reviewer, not a stand-in for an unreachable one) and Step 14 Part 1 (an unreachable reviewer produces a block, never a substitution) |
-| A1 | Supported values and the availability rule stated consistently across surfaces | Surface text | D-1, D-5, D-11 |
+| A1 | Supported values and the availability rule stated consistently across surfaces | Surface text | D-1, D-5, D-11, D-23 |
 | A2 | No surface names a value the canonical protocol does not list | Surface text | D-4 |
 | A3 | The canonical protocol lists the hosted-service reviewer and states its runtime availability rule | Surface text | D-1 |
 | A4 | No surface claims the hosted-service reviewer is unconditionally available | Surface text | D-3 |
@@ -1361,7 +1364,7 @@ groups get a doc-assertion suite. Precedent for the pattern:
 `test-protocol-91-readiness-checklist.sh`, `test-protocol-02-portable-parser-guidance.sh`, and
 `test-workflow-agent-product-repo-guidance.sh`.
 
-Cases D-1 to D-11 assert what the surfaces **say about themselves**. Cases D-12 to D-22 assert that
+Cases D-1 to D-11 and D-23 assert what the surfaces **say about themselves**. Cases D-12 to D-22 assert that
 Protocol 91 **instructs** each gate behavior a criterion requires, and that it records the decided
 hosted-probe limitation where an operator reading the protocol will see it. Neither group proves a runner
 obeyed the instruction — the runbook steps are the only evidence of that, and the coverage map above
@@ -1408,6 +1411,7 @@ Headers:
 | D-20 | Protocol 91 invokes the bounded availability helper before evaluating the draft pre-check; condition evaluation consumes its indexed records only after a proceed verdict, with no independent `review-effective` or `review-overrides` call. Conversion appears after that verdict and before dispatch. The draft-eligibility note says conversion guarantees non-draft at dispatch, not at availability time. Runbook Step 16 also exercises a stalled parser through the complete gate entry path | C5, P2, P3, P6, P7, P8, C8; Decision 9 |
 | D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and requires any resulting dispatch failure to remain a review failure under either policy, retaining the original availability classification | Decision 8 |
 | D-22 | Protocol 91 instructs the gate to read reviewer names, reasons, remedies, and details from the indexed `REVIEWER_N_*` fields, and states that the comma-joined aggregate fields are display-only. No instruction anywhere in Step 7a splits an aggregate field on commas or whitespace to recover a reviewer name | C4, C7; Decision 10 |
+| D-23 | Extract the normative `codex-github` availability block delimited by `<!-- step7a-codex-github-availability:start -->` and `<!-- step7a-codex-github-availability:end -->` from Protocol 91 and compare it byte-for-byte with the same marked block in both agent mirrors and `integrations/codex-github.md`. All four must occur exactly once and agree. The block states activity-based reachability, missing/incomplete evidence classifications, and the post-dispatch failure boundary | A1 |
 
 ### Planted-violation proofs
 
@@ -1422,7 +1426,7 @@ does not apply: every check here is new.
 
 What the rule does and does not reach is worth stating, because it bounds the work honestly:
 
-- **In scope — the 22 `D-` cases.** Each is an automated check over repository content, which is
+- **In scope — the 23 `D-` cases.** Each is an automated check over repository content, which is
   exactly what the clause names. Each gets its own plant, listed below.
 - **In scope — `resolve-reviewer-availability.sh` as a guard.** Its planted-violation evidence already
   exists in the `T-` suite as fail-and-pass pairs over the same fixture shape, and naming them is
@@ -1450,7 +1454,7 @@ plant applied and the passing run after reverting it.
 | D-8 | `91-orchestrate-work-protocol.md`, policy section | delete the never-installs-never-substitutes sentence |
 | D-9 | `.ai-dev-workflow.yaml`, commentary | re-add a sentence calling a hard-fail on a supported runner expected behaviour |
 | D-10 | `integrations/coderabbit.md`, availability check | delete the `reviews.auto_review.enabled: true` requirement |
-| D-11 | `.cursor/agents/item-orchestrator.md`, `codex-github` block | change one word so it no longer matches `.claude/agents/item-orchestrator.md` |
+| D-11 | `.cursor/agents/item-orchestrator.md`, `codex-github` dispatch prose outside the availability markers | change one word so it no longer matches `.claude/agents/item-orchestrator.md`, while D-23 remains unchanged |
 | D-12 | `91-orchestrate-work-protocol.md`, dispatch instruction | delete the word `once` from the fallback-dispatch sentence |
 | D-13 | `91-orchestrate-work-protocol.md`, Step 7a re-run rules | delete the instruction to re-run the resolver on every cycle |
 | D-14 | `91-orchestrate-work-protocol.md`, availability phase | insert an instruction to post `gh pr comment` while availability determination is still running, before the helper returns |
@@ -1462,8 +1466,9 @@ plant applied and the passing run after reverting it.
 | D-20 | `91-orchestrate-work-protocol.md`, draft-state pre-check | move the `gh pr ready` conversion back above the availability check |
 | D-21 | `91-orchestrate-work-protocol.md`, hosted-probe section | delete the sentence naming the activity signal a proxy |
 | D-22 | `91-orchestrate-work-protocol.md`, gate-consumption instruction | change it to split `CONFIGURED` on commas to recover reviewer names |
+| D-23 | Both `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md`, inside the marked block | Change the same activity-presence condition in both mirrors to its opposite while leaving Protocol 91 and the integration block intact; D-11 still passes because the mirrors match each other, but D-23 must fail |
 
-Sixteen of the twenty-two plant into Protocol 91 because that is the canonical surface the suite
+Sixteen of the twenty-three plant into Protocol 91 because that is the canonical surface the suite
 exists to protect; each targets a different sentence, so no plant is masked by another rule. Where two
 cases read nearby text, the plant is chosen to change only the one case's answer — the implementer
 must confirm that from the per-case output, not assume it. See Implementation Order step 8.
@@ -1590,8 +1595,8 @@ following are the remaining documentation-only updates the developer must make:
 | R-5 | Re-adding `codex-github` to Step 7a revives the async race #486 moved it out for | Low | Medium | Decision 7: it is canonical but not default, and its dispatch goes through `codex-github-reviewer.sh`, whose pre-trigger wait, retrigger, and exit-code contract were built after #486. |
 | R-6 | `run_bounded` duplicates `run_with_timeout` from `local-ai-reviewer.sh` | High | Low | Deliberate, recorded in **Out-of-scope notes**. Extracting the reviewer script's variant would change a heavily used Step 7 path for a Step 7a benefit, which the spec places out of scope. |
 | R-7 | The ceiling tests (T-7, T-40) assert a hard 10-second wall-clock bound and could flake on a heavily loaded CI runner | Medium | Low | The assertion is not loosened to accommodate load, because then it would stop testing the contract. Headroom comes from the budget instead: 8 seconds of work plus at most 2 seconds of documented cleanup equals the 10-second contract, so a run has to be delayed by more than two seconds of pure scheduling latency before it fails. If that proves too tight in practice the fix is to lower `AVAILABILITY_BUDGET_SECONDS`, which keeps the contract intact; raising the assertion would not. |
-| R-13 | The twenty-two planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Sixteen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
-| R-8 | The doc-assertion suite (D-1 to D-22) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
+| R-13 | The twenty-three planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Sixteen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
+| R-8 | The doc-assertion suite (D-1 to D-23) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
 | R-9 | The change is reverted after operators retired their machine-local override on its advice, and the override file cannot be restored by any revert | Low | Medium | Retirement guidance says move the file aside rather than delete it, so a second `mv` restores it; the override is two keys and `.ai-dev-workflow.local.example.yaml` carries the shape. See **Reversal and Rollback** (c) — this is mitigated, not eliminated. |
 | R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 observe a runner honouring it, while Step 16 verifies its bounded entry path. The runbook's Troubleshooting table names a mismatch as a blocking implementation failure. The coverage map marks all twenty-eight gate-level criteria so no reviewer has to rediscover the distinction. |
 
@@ -1678,7 +1683,7 @@ imposes it and why it applies here. No step is left untraced.
    reports no differences.
 
 8. *(Spec-derived — the gate-doc-assertion evidence named in the coverage map, covering* **Surfaces agree** *and the protocol-instruction half of every gate-level criterion.)* **Write `tests/test-step7a-surface-consistency.sh`** with the `# covers:` headers and cases D-1 to
-   D-22. Write it **after** steps 5 to 7, because D-1 to D-11 target text those steps produce on the
+   D-23. Write it **after** steps 5 to 7, because D-1 to D-11 target text those steps produce on the
    surrounding surfaces and D-12 to D-19 target the Step 7a gate instructions written in step 5.
    *Verify*: `bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh` — confirm
    every case reports PASS. Then work the **plant table** under *Planted-violation proofs* row by row:

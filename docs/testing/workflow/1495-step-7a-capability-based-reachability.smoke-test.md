@@ -15,24 +15,62 @@ seed.
 
 - [ ] You are on the implementation branch for #1495 with the change applied.
 - [ ] `gh` is installed and authenticated (`gh auth status` succeeds).
-- [ ] `python3`, `perl`, `jq`, `git`, and `bash` are available. Use Bash for the shell snippets below.
-- [ ] **No `.ai-dev-workflow.local.yaml` exists in this checkout** for Steps 1 to 7. If you have one,
-      move it aside first and restore it at the end:
+- [ ] `python3`, `perl`, `jq`, `git`, and `bash` are available. Start one dedicated Bash
+      session with `bash --noprofile --norc` from the repository root, then run all snippets in
+      that session. Every mutation fails closed; expected resolver exits are captured explicitly.
+- [ ] Preserve the checkout's original override before any fixture writes. The unique state
+      directory records whether the override was absent or successfully moved; a failed move
+      stops the session. An exit trap restores the original override even if a later step fails.
+      On interruption, retain the printed state-directory path for recovery.
 
+      <!-- workflow-shell-contract: bash -->
       ```bash
-      mv .ai-dev-workflow.local.yaml /tmp/ai-dev-workflow.local.yaml.bak 2>/dev/null || true
-      ```
-
-- [ ] A scratch directory for fixture checkouts:
-
-      ```bash
-      export SMOKE_TMP="$(mktemp -d)"
+      set -euo pipefail
+      SMOKE_REPO_ROOT="$(pwd -P)"
+      SMOKE_STATE="$(mktemp -d "${TMPDIR:-/tmp}/step7a-smoke.XXXXXX")"
+      SMOKE_TMP="$SMOKE_STATE/fixtures"
+      mkdir "$SMOKE_TMP"
+      export SMOKE_TMP
+      printf 'Smoke recovery directory: %s\n' "$SMOKE_STATE"
+      SMOKE_OVERRIDE_STATE=pending
+      smoke_restore_override() {
+        case "$SMOKE_OVERRIDE_STATE" in
+          absent|saved) ;;
+          pending|restored) return 0 ;;
+          *) return 1 ;;
+        esac
+        if [ "$SMOKE_OVERRIDE_STATE" = saved ]; then
+          if [ ! -e "$SMOKE_STATE/original-override" ] && [ ! -L "$SMOKE_STATE/original-override" ]; then
+            printf 'Original override missing; inspect %s\n' "$SMOKE_STATE" >&2
+            return 1
+          fi
+        fi
+        if [ -e "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" ] || [ -L "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" ]; then
+          smoke_leftover="$(mktemp -d "$SMOKE_STATE/leftover.XXXXXX")" || return 1
+          mv "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" "$smoke_leftover/test-override" || return 1
+        fi
+        if [ "$SMOKE_OVERRIDE_STATE" = saved ]; then
+          mv "$SMOKE_STATE/original-override" "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" || return 1
+        fi
+        SMOKE_OVERRIDE_STATE=restored
+        printf '%s\n' "$SMOKE_OVERRIDE_STATE" > "$SMOKE_STATE/override-state" || return 1
+      }
+      trap 'smoke_exit=$?; if ! smoke_restore_override; then printf "Override restoration failed; inspect %s\n" "$SMOKE_STATE" >&2; smoke_exit=1; fi; exit "$smoke_exit"' EXIT
+      if [ -e .ai-dev-workflow.local.yaml ] || [ -L .ai-dev-workflow.local.yaml ]; then
+        mv .ai-dev-workflow.local.yaml "$SMOKE_STATE/original-override"
+        SMOKE_OVERRIDE_STATE=saved
+      else
+        SMOKE_OVERRIDE_STATE=absent
+      fi
+      printf '%s\n' "$SMOKE_OVERRIDE_STATE" > "$SMOKE_STATE/override-state"
       ```
 
 - [ ] Note which of `claude`, `cursor-agent`, and `codex` are on your `PATH`. Several steps below
       depend on it:
 
+      <!-- workflow-shell-contract: bash -->
       ```bash
+      set -euo pipefail
       for b in claude cursor-agent codex; do printf '%s: %s\n' "$b" "$(command -v "$b" || echo absent)"; done
       ```
 
@@ -79,11 +117,15 @@ gate verdict on every supported runner."
 
 1. Run the resolver once for each supported runner kind:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    for kind in claude cursor codex; do
+     smoke_status=0
      scripts/development-workflow/resolve-reviewer-availability.sh \
-       --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind "$kind"
-     echo "exit=$?"
+       --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind "$kind" || smoke_status=$?
+     printf 'exit=%s\n' "$smoke_status"
+     [ "$smoke_status" -eq 0 ] || exit 1
    done
    ```
 
@@ -114,15 +156,16 @@ identity table classified as unreachable.
 
 1. Build a hermetic `PATH` that deliberately omits `codex`:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/bin"
    for c in awk bash cat cut date dirname git grep gh head jq mktemp perl printf python3 rm sed sleep sort tr wc; do
-     src="$(command -v "$c" || true)"
-     [ -n "$src" ] && ln -sf "$src" "$SMOKE_TMP/bin/$c"
+     src="$(type -P "$c")" || { printf 'Missing executable: %s\n' "$c" >&2; exit 1; }
+     ln -s "$src" "$SMOKE_TMP/bin/$c"
    done
    PATH="$SMOKE_TMP/bin" scripts/development-workflow/resolve-reviewer-availability.sh \
      --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
    ```
 
 **Expected result**: the `codex` and `cursor` records read `STATUS=unreachable` with
@@ -137,7 +180,9 @@ the verdict … and removing it flips the verdict back."
 
 1. From Step 3's hermetic `PATH`, add a stub `codex` that answers `--version`:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    printf '#!/bin/sh\necho "codex-cli 0.0.0-stub"\n' > "$SMOKE_TMP/bin/codex"
    chmod +x "$SMOKE_TMP/bin/codex"
    PATH="$SMOKE_TMP/bin" scripts/development-workflow/resolve-reviewer-availability.sh \
@@ -146,7 +191,9 @@ the verdict … and removing it flips the verdict back."
 
 2. Remove the stub and run the identical command again:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    rm "$SMOKE_TMP/bin/codex"
    PATH="$SMOKE_TMP/bin" scripts/development-workflow/resolve-reviewer-availability.sh \
      --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
@@ -180,7 +227,9 @@ intervention."
 
 1. Build a fixture whose reviewer binaries all hang:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/slow"
    cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/slow/"
    for b in claude cursor-agent codex; do
@@ -199,6 +248,7 @@ intervention."
    elapsed = time.monotonic() - started
    print(f"exit={result.returncode} elapsed={elapsed:.6f}s")
    print("CEILING PASS" if elapsed <= 10.0 else "CEILING FAIL")
+   sys.exit(0 if elapsed <= 10.0 and result.returncode == 1 else 1)
    PYTIME
    ```
 
@@ -218,13 +268,18 @@ classified Unreachable with the reason Not a supported reviewer, and the offendi
 
 1. Make a fixture checkout with a bad entry:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/badvalue"
    awk '{ if ($0 == "      - claude") print "      - not-a-reviewer"; print }' \
      .ai-dev-workflow.yaml > "$SMOKE_TMP/badvalue/.ai-dev-workflow.yaml"
    grep -n -A 4 '^    runner:$' "$SMOKE_TMP/badvalue/.ai-dev-workflow.yaml"
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$SMOKE_TMP/badvalue" --owner "<owner>" --repo "<repo>" --runner-kind claude
+     --repo-root "$SMOKE_TMP/badvalue" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ] || exit 1
    ```
 
    Read the `grep` output first and confirm the list now reads `not-a-reviewer`, `claude`, `cursor`,
@@ -243,14 +298,18 @@ fallback applied", and "The reviewer the fallback runs is the driving runner's o
 
 1. Make a fixture with the `runner` key removed entirely, then run once per supported runner kind:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/nolist"
    grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
      | grep -v '^    runner:$' > "$SMOKE_TMP/nolist/.ai-dev-workflow.yaml"
    for kind in claude cursor codex; do
+     smoke_status=0
      scripts/development-workflow/resolve-reviewer-availability.sh \
-       --repo-root "$SMOKE_TMP/nolist" --owner "<owner>" --repo "<repo>" --runner-kind "$kind"
-     echo "exit=$?"
+       --repo-root "$SMOKE_TMP/nolist" --owner "<owner>" --repo "<repo>" --runner-kind "$kind" || smoke_status=$?
+     printf 'exit=%s\n' "$smoke_status"
+     [ "$smoke_status" -eq 0 ] || exit 1
    done
    ```
 
@@ -273,14 +332,18 @@ the file is still named, which is what the criterion asks for.
 
 1. Make a fixture where `runner` is a scalar:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/scalar"
    grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
      | sed 's/^    runner:$/    runner: codex/' > "$SMOKE_TMP/scalar/.ai-dev-workflow.yaml"
    grep -n '^    runner' "$SMOKE_TMP/scalar/.ai-dev-workflow.yaml"
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$SMOKE_TMP/scalar" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
+     --repo-root "$SMOKE_TMP/scalar" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
    ```
 
    Read the `grep` output first and confirm the single remaining line is `    runner: codex` — a
@@ -294,13 +357,17 @@ the `review.on_draft.runner` key.
 
 1. Truncate a copy of the configuration mid-mapping and run against it:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/unparseable"
    head -60 .ai-dev-workflow.yaml > "$SMOKE_TMP/unparseable/.ai-dev-workflow.yaml"
    printf '  on_draft:\n      badly: indented\n    runner\n' >> "$SMOKE_TMP/unparseable/.ai-dev-workflow.yaml"
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$SMOKE_TMP/unparseable" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
+     --repo-root "$SMOKE_TMP/unparseable" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
    ```
 
    If the resolver reports a readable file instead, the truncation happened to produce valid YAML —
@@ -322,14 +389,18 @@ it as the cause. It does not reach the fallback reviewer."
    key the shipped file already carries, so the key lands inside the `review:` mapping at the right
    indentation rather than at the end of the file:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/badpolicy"
    sed 's/^  # internal_reviewers_unavailable_policy: warn$/  internal_reviewers_unavailable_policy: maybe/' \
      "$SMOKE_TMP/nolist/.ai-dev-workflow.yaml" > "$SMOKE_TMP/badpolicy/.ai-dev-workflow.yaml"
    grep -n '^  internal_reviewers_unavailable_policy' "$SMOKE_TMP/badpolicy/.ai-dev-workflow.yaml"
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$SMOKE_TMP/badpolicy" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
+     --repo-root "$SMOKE_TMP/badpolicy" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
    ```
 
    The `grep` must print exactly one line reading `  internal_reviewers_unavailable_policy: maybe`.
@@ -347,11 +418,15 @@ reported as Excluded by override and produces no unreachability warning."
 
 1. Write an override that keeps only the reviewer matching your session, then run:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    printf 'review:\n  on_draft:\n    runner:\n      - claude\n' > .ai-dev-workflow.local.yaml
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ] || exit 1
    ```
 
 **Expected result**: `OVERRIDE_EXCLUDED` lists `cursor` and `codex`; each has an indexed record with
@@ -372,10 +447,15 @@ Restore the one-reviewer override before Step 12.
    file is gitignored and untracked, so no `git revert` can bring it back if this change is ever
    rolled back — see the plan's **Reversal and Rollback** (c):
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
-   mv .ai-dev-workflow.local.yaml .ai-dev-workflow.local.yaml.retired
+   set -euo pipefail
+   mv .ai-dev-workflow.local.yaml "$SMOKE_TMP/override.retired"
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ] || exit 1
    ```
 
 **Expected result**: `LOCAL_OVERRIDE_STATE=none`, the shipped three-entry list is in `CONFIGURED`,
@@ -459,6 +539,39 @@ exit `2` (timeout), and then `3` (quota). Run each under both unavailable-review
 Verify review failure, original Reachable classification retained, and no reduced-coverage
 advancement. Exit `4` must instead remain waiting, with no approval. These fixtures must not contact
 a real hosted reviewer. Restore the dispatcher after recording the fixture and results.
+
+**Part 5 — full-gate freshness, purity, and ordering on the same PR**
+
+**Maps to**: R4, R5, R6. Steps 4 and 5 above exercise only the helper; this part verifies the
+orchestrating gate itself.
+
+1. Use one throwaway draft PR and the same supported non-Codex driving runner for three complete
+   Step 7a invocations. Keep the PR head, configured list `[codex]`, and `warn` policy unchanged.
+   Put a dedicated fixture directory first on the gate's PATH. Ensure no other `codex` is reachable
+   when the fixture is absent; the orchestration runner keeps its normal host environment.
+2. Run A with no Codex binary, run B with a fake Codex binary that succeeds for `--version` and
+   returns exactly `VERDICT: APPROVED` for `exec`, and run C after removing that binary again.
+   The fake records timestamped probe and dispatch arguments, never invokes another reviewer, and
+   never edits repository files. Between runs restore the PR to draft as setup, recording that
+   action separately. Each run starts a new complete Step 7a invocation; do not reuse a previous
+   helper output. Record the fixture body and PATH for reproducibility.
+3. Capture the complete runner tool/command trace, including API operations, and timestamp the
+   availability-helper entry, return, gate application of the returned policy outcome, and first dispatch. In run B let the
+   fake version probe pause briefly within its cap so the interval is observable. Snapshot the
+   PR draft state, comments, and tracked-file status immediately before helper entry and while
+   the probe is paused. Compare them again at helper return, before post-determination reporting.
+   An independent read-only observer may take the snapshots; the gate must not mutate them.
+4. Verify the trace contains a fresh helper invocation for each run, with no preliminary standalone
+   parser call. Require ordering `helper entry < helper return <= gate policy-outcome application < dispatch`
+   for run B. Runs A and C must contain no dispatch at all. A comment or state change after the
+   blocked/proceed verdict is allowed; any such operation during determination fails this part.
+
+**Expected result**: A and C classify Codex `runtime-absent`, block, and dispatch nobody. B classifies
+it Reachable and dispatches the fake once after policy application. All three runs leave comments,
+PR state, and tracked files unchanged throughout the determination interval; only subsequent gate
+reporting/conversion may mutate PR state. The three summaries match the fresh classifications.
+A cached verdict, early dispatch, or any determination-time mutation is a blocking smoke failure.
+Restore the normal PATH and local override through the prerequisite restoration procedure.
 
 ### Step 14: The block path on a real pull request
 
@@ -553,14 +666,18 @@ This is the case a comma-joined or whitespace-delimited field could not represen
 
 1. Build a fixture whose single configured entry contains a comma and a space:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/delimiter"
    grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
      | sed 's/^    runner:$/    runner: ["codex, my reviewer"]/' > "$SMOKE_TMP/delimiter/.ai-dev-workflow.yaml"
    grep -n '^    runner' "$SMOKE_TMP/delimiter/.ai-dev-workflow.yaml"
+   smoke_status=0
    scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$SMOKE_TMP/delimiter" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
+     --repo-root "$SMOKE_TMP/delimiter" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
    ```
 
 **Expected result**: `REVIEWER_COUNT=1` — **one** entry, not two. `REVIEWER_1_NAME` reads
@@ -579,7 +696,9 @@ cannot protect (plan Decision 11).
 
 1. Build a hermetic `PATH` whose `python3` hangs, and time the run:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
+   set -euo pipefail
    mkdir -p "$SMOKE_TMP/stall"
    cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/stall/"
    # Remove the copied symlink before writing the fake executable.
@@ -598,6 +717,7 @@ cannot protect (plan Decision 11).
    elapsed = time.monotonic() - started
    print(f"exit={result.returncode} elapsed={elapsed:.6f}s")
    print("CEILING PASS" if elapsed <= 10.0 else "CEILING FAIL")
+   sys.exit(0 if elapsed <= 10.0 and result.returncode == 1 else 1)
    PYTIME
    ```
 
@@ -627,10 +747,14 @@ fails this step even if the direct helper test above passed. Restore the origina
 1. Work through the Assertions Checklist below.
 2. Remove the fixtures and restore any override you moved aside:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
-   rm -rf "$SMOKE_TMP"
-   rm -f .ai-dev-workflow.local.yaml.retired
-   mv /tmp/ai-dev-workflow.local.yaml.bak .ai-dev-workflow.local.yaml 2>/dev/null || true
+   set -euo pipefail
+   smoke_restore_override
+   trap - EXIT
+   [ -d "$SMOKE_STATE" ] && [ "$SMOKE_TMP" = "$SMOKE_STATE/fixtures" ] || exit 1
+   rm -rf -- "$SMOKE_STATE"
+   unset SMOKE_TMP SMOKE_STATE SMOKE_OVERRIDE_STATE
    ```
 
 3. Run `git status --porcelain` and confirm the only entries are your intended implementation
@@ -680,6 +804,9 @@ what a real runner does with that verdict — and are settled only by Steps 13 a
 skipped those two steps has not tested this feature's most likely failure: a correct verdict that the
 gate ignores.
 
+- [ ] Three complete gate runs on the same PR observed absent → present → absent runtime changes,
+      with a fresh resolver call each time, no determination-time mutations, and dispatch only
+      after helper return and policy application (Step 13 Part 5).
 - [ ] On a proceed verdict the gate actually **dispatched** the reachable reviewers, and posted no
       unreachability warning when nothing was unreachable (Step 13 Part 1).
 - [ ] With no reviewer list configured, the gate dispatched the driving runner's own stage reviewer
