@@ -2,9 +2,9 @@
 # codex-github-reviewer.sh — Codex GitHub App reviewer path for Step 7a
 #
 # Implements the trigger/poll/parse loop for the Codex GitHub bot reviewer.
-# Classifies as universally reachable: requires only gh CLI access (no Codex
-# CLI runtime), so it works from Claude Code, Cursor, headless CI, and any
-# context where `gh` is authenticated.
+# This is a hosted-service reviewer. Availability is decided at runtime from
+# repository service evidence; it needs no local Codex CLI runtime, so no
+# driving runner is inherently barred.
 #
 # Usage:
 #   codex-github-reviewer.sh <pr_number> <owner> <repo> [options]
@@ -29,9 +29,8 @@
 # Exit codes:
 #   0 — APPROVED   (bot responded with no blocking findings)
 #   1 — NEEDS_REVISION (bot responded with blocking findings)
-#   2 — TIMED_OUT  (API/auth/setup failures while waiting; treat as unavailable
-#                   under configured internal_reviewers_unavailable_policy)
-#   3 — UNAVAILABLE (bot responded with review-capacity/quota exhaustion)
+#   2 — TIMED_OUT  (review failure after dispatch)
+#   3 — UNAVAILABLE (review failure after dispatch)
 #   4 — WAITING_ON_REVIEWER (current-head trigger exists, no bot review yet)
 #
 # Verdict parsing (three-path, blocking markers checked first per safe-fail):

@@ -27,14 +27,17 @@ product_repos:
 # Local reviewer/tool overrides. These are developer-specific and should not be
 # committed to the shared workflow config.
 #
-# Cursor pilot example:
+# Deliberate machine-local narrowing example:
 # - copy this file to `.ai-dev-workflow.local.yaml`
-# - set `review.on_draft.runner` to `cursor` while running `/run-work` from
-#   Cursor so Step 7a dispatches the Cursor review agents instead of Codex
+# - narrow `review.on_draft.runner` when this machine lacks some runtimes
 # - override GitHub/App reviewer lists to match the tools available on this
 #   machine, for example PR Agent during draft and Codex GitHub after ready
 # - keep `internal_reviewers_unavailable_policy: warn` unless you explicitly
 #   want unavailable local reviewers to hard-fail the gate
+# - if this override was only a former gate workaround, remove the runner key;
+#   or move the whole file aside, do not delete it: `mv .ai-dev-workflow.local.yaml
+#   .ai-dev-workflow.local.yaml.retired`. The gitignored file cannot be restored
+#   by a later rollback.
 review:
   on_draft:
     runner:

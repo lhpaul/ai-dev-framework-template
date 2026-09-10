@@ -49,13 +49,16 @@ schema_version: 2
 
 review:
   on_draft:
-    # Ordered list of in-runner internal reviewers for draft PRs (Step 7a).
+    # Ordered list of internal reviewers for draft PRs (Step 7a).
     # Supported values:
-    #   claude        — dispatches the stage-appropriate reviewer agent.
-    #   cursor        — dispatches the stage-appropriate Cursor reviewer agent.
-    #   codex         — dispatches the stage-appropriate Codex review skill.
-    #   coderabbit    — triggers CodeRabbit on the draft PR when reachable.
+    #   claude        — local-runtime reviewer.
+    #   cursor        — local-runtime reviewer.
+    #   codex         — local-runtime reviewer.
+    #   coderabbit    — hosted-service reviewer.
+    #   codex-github  — hosted-service reviewer.
     runner:
+      - claude
+      - cursor
       - codex
 
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
@@ -171,20 +174,10 @@ review:
   #   BUGBOT_TRIGGER_COMMENT  — override the trigger comment posted to start a run
   #                             (default: "bugbot run")
 
-  # Runner-context constraint:
-  #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
-  #   a direct CLI reviewer is NOT reliably reachable from automated subagent
-  #   runners (Claude Code subagents, Cursor subagents, or any headless
-  #   environment). It is typically only reachable when Codex is the top-level
-  #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
-  #   these contexts. Because 'codex' is the only default internal reviewer, that
-  #   means zero reviewers are reachable and the gate hard-fails until the run is
-  #   retried from Codex or a local override selects a reachable reviewer. This is
-  #   expected behaviour — not a misconfiguration.
-  #
-  # Local override: developers who need a different top-level review runner can
-  # override this list locally with .ai-dev-workflow.local.yaml (gitignored).
-  # Example for Cursor in .ai-dev-workflow.local.yaml:
+  # Each supported runner's own reviewer is reachable by construction. Other
+  # entries are probed against this machine at each gate run. A machine that
+  # intentionally lacks runtimes may narrow the list locally to avoid a
+  # reduced-coverage warning:
   #   review:
   #     on_draft:
   #       runner:
@@ -193,7 +186,7 @@ review:
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
 
-  # Optional: policy when a listed internal reviewer is unreachable from the current runner.
+  # Optional: policy for unavailable configured internal reviewers.
   # Protocol 91 Step 7a enforces this policy at runtime.
   #
   # Allowed values:

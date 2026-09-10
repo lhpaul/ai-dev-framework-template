@@ -132,11 +132,12 @@ review:
 
 All reviewers in the list must APPROVE before `gh pr ready` is called. Reviewers run sequentially in the listed order.
 
-### Draft-PR Requirement
+### Draft conversion
 
-`reviews.auto_review.enabled: true` must be set in `.coderabbit.yaml` for CodeRabbit to auto-review draft PRs. If the CodeRabbit App configuration filters out draft PRs, the runner classifies `coderabbit` as unreachable in Step 7a (BR-5).
-
-Ensure your `.coderabbit.yaml` is configured to allow draft PR reviews:
+`reviews.auto_review.enabled: true` must be set in `.coderabbit.yaml`. Draft
+restriction is not an unreachability condition: after availability and policy
+permit dispatch, Step 7a converts a draft PR when CodeRabbit is configured so
+that it can review before dispatch.
 
 ```yaml
 reviews:
@@ -161,7 +162,7 @@ CodeRabbit as an internal reviewer is subject to the same `max_internal_review_c
 Before dispatching, the runner performs a runtime availability check to classify `coderabbit` as `reachable` or `unreachable`:
 
 1. **App installation signal**: Check whether `coderabbitai[bot]` has any prior activity on the repository via `gh api repos/{owner}/{repo}/installation` or by inspecting recent PR comments for `coderabbitai[bot]` posts.
-2. **Draft-PR configuration check**: Verify that `.coderabbit.yaml` sets `reviews.auto_review.enabled: true` and does not otherwise restrict reviews to non-draft PRs.
+2. **Auto-review configuration check**: Verify that `.coderabbit.yaml` sets `reviews.auto_review.enabled: true`.
 
 If either check fails, `coderabbit` is classified as `unreachable`. The configured `internal_reviewers_unavailable_policy` then determines whether to proceed with the remaining reachable reviewers (`warn`, the default) or hard-fail the Step 7a gate (`fail-if-any-unavailable`).
 
@@ -171,8 +172,8 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `coderabbit` classified as `unreachable` — warning comment posted       | CodeRabbit GitHub App is not installed on the repository                 | Install the CodeRabbit GitHub App at [coderabbit.ai](https://www.coderabbit.ai) and verify it has access to the repository                                                               |
 | `coderabbit` classified as `unreachable` — `auto_review.enabled: false` | `.coderabbit.yaml` has auto-review disabled                              | Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`                                                                                                                            |
-| `coderabbit` classified as `unreachable` — draft PRs not enabled        | CodeRabbit App configuration or `.coderabbit.yaml` filters out draft PRs | Confirm the CodeRabbit App settings permit draft PR reviews and that `.coderabbit.yaml` does not restrict to non-draft only                                                              |
-| All Step 7a reviewers unreachable — hard-fail                           | No reachable runner reviewers available                                  | Run Step 7a from a context where at least one reviewer is reachable, or temporarily override `review.on_draft.runner` via `.ai-dev-workflow.local.yaml` to remove unreachable reviewers |
+| CodeRabbit does not review a draft                                      | `drafts: false` is configured                                             | Step 7a converts the PR after availability and policy succeed, immediately before dispatch. |
+| All Step 7a reviewers unreachable — hard-fail                           | Missing runtime or service prerequisite                                  | Make the missing runtime or prerequisite available, or narrow `review.on_draft.runner` locally. |
 | CodeRabbit does not post a review after push                            | App installed but auto-review trigger not firing                         | Push a new commit to the draft PR, confirm the App is active, and check the CodeRabbit dashboard for any rate limiting or quota issues                                                   |
 
 ---

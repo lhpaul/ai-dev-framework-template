@@ -140,6 +140,23 @@ addenda) for the full design history and rationale.
 
 ## Prerequisites
 
+## Step 7a runner reviewer
+
+`codex-github` is an opt-in Step 7a runner reviewer value; it is not in the
+shipped default list. Add it to `review.on_draft.runner` only when the Codex
+GitHub App is configured for the repository. Availability is decided at runtime
+by the bounded repository-activity proxy described in Protocol 91. That proxy
+does not prove installation: historical activity can be stale and a new or
+review-only installation can have no issue-comment activity. See the existing
+verification checklist below before opting in.
+
+<!-- codex-github runner reviewer dispatch -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently
+barred. Its bounded activity proxy reports `prerequisite-missing` for no bot
+activity on a complete short page and `check-inconclusive` for a full unmatched
+page; post-dispatch errors remain review failures.
+<!-- /codex-github runner reviewer dispatch -->
+
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
 
 1. The Codex GitHub integration is installed and enabled for the target
