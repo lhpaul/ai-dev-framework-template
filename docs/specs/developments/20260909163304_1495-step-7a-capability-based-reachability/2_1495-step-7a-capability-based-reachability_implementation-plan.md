@@ -289,7 +289,7 @@ classifications. It does not waive the spec's separate requirement that a dispat
 a review failure. D-6, D-21, and runbook Step 13 Part 4 verify that distinction.
 
 **Blast radius.** Small, and deliberately so. `codex-github` is canonical but **not** in the shipped
-default (Decision 4, Decision 7), and CodeRabbit's availability check is unchanged by this item (spec
+default (Decision 4, Decision 7), and CodeRabbit's runtime activity/enabled availability rule is retained; contradictory draft-eligibility guidance is reconciled with canonical conversion (spec
 Out of Scope item 5). A repository meets this behavior only by deliberately opting a hosted reviewer
 into `review.on_draft.runner`. The shipped default reaches this code path not at all.
 
@@ -403,7 +403,7 @@ downstream indexing could recover what was already merged. Every hop is therefor
 
 | Hop | Representation | Why it cannot lose or split a value |
 | --- | --- | --- |
-| YAML scalar → Python | `list[str]` from `parse_yaml_subset`, read through `typed_value_from_path` | The existing parser already returns one list element per YAML sequence entry. Nothing splits on a delimiter at any point, so `- "codex, claude"` arrives as one string |
+| YAML scalar → Python | `list[str]` from `parse_yaml_subset` with the opt-in parsing mode, read through `typed_value_from_path` | The opt-in quote-aware parser returns one list element per YAML sequence entry. Nothing splits on a delimiter at any point, so `- "codex, claude"` arrives as one string |
 | Python → stdout | **One JSON object**, reviewer lists as JSON arrays of strings | `json.dumps` escaping is a standard, not something this plan invents, and it round-trips any scalar including commas, whitespace, quotes, and control characters |
 | stdout → shell | `jq` writes NUL-delimited entries to a temporary file; a Bash 3.2 `while IFS= read -r -d ''` loop appends each entry to an array | NUL cannot occur in the supported YAML scalar input. Reading from a file keeps the loop in the current shell and allows checking `jq`'s exit status first. `select-test-suites.sh:65` and `batch-merge.sh:531` explicitly avoid `mapfile` for Bash 3.2 compatibility |
 | shell → verdict block | `print_kv_escaped` into `REVIEWER_N_NAME` | `KEY=value` to end of line, with control characters escaped by the existing helper |
@@ -865,7 +865,7 @@ request out of draft.
 | Protocol 91 Step 7a | Canonical | Rewritten to state capability, the supported values including `codex-github`, and the outcome and reason vocabulary above |
 | `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md` | Restate `codex-github` dispatch | Keep naming the value; the unconditional-reachability claim becomes a hosted-service statement. Both files carry byte-identical text, verified in Implementation Order step 7 |
 | `.ai-dev-workflow.yaml` and its commentary | Ships the default and explains it | New default list; the "expected behaviour — not a misconfiguration" block deleted |
-| `integrations/coderabbit.md` | Already decides availability from runtime conditions | The two checks are untouched; one remedy cell that implied identity is reworded |
+| `integrations/coderabbit.md` | Already decides availability from runtime conditions | Retain runtime activity and enabled checks; remove contradictory draft-restriction unreachability wording; explain conversion before dispatch and reword the identity-based remedy |
 | Codex skills, Cursor rules, `AGENTS.md`, `docs/workflow/setup/protocol.md` | Point at the key without restating the rule | Left unchanged, as the spec permits |
 | `README.md` configuration reference | Restates the fallback | Restated as the driving runner's own stage reviewer |
 
@@ -993,7 +993,12 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       Add a keyword-only `preserve_empty_values=False` option to `parse_yaml_subset`, `parse_mapping`,
       and `parse_list`, threading it through recursive calls. Only `review-effective` enables it:
       a bare key with no child becomes `None`, while an explicit `{}` stays a mapping. Existing
-      consumers retain the current `{}` representation for bare keys. For the new command, bare/null
+      consumers retain the current `{}` representation for bare keys. In this opt-in mode,
+      `parse_list` must recognize a wholly quoted scalar before looking for a mapping colon;
+      only a colon outside quotes followed by whitespace/end marks a mapping entry. Preserve
+      quoted colon-bearing scalars as one string. Apply the same quote-aware delimiter rule to
+      nested list mappings; other callers retain existing parsing. E-32 and T-49 verify this.
+      For the new command, bare/null
       reviewer values are `empty`, an empty mapping is `malformed`; bare/null policy values are
       `empty`, an empty mapping is `unreadable`. E-28 through E-31 and T-30 pin both modes.
       Leave `list_override_from_path`, `resolve_review_overrides`, and `cmd_review_overrides`
@@ -1028,6 +1033,10 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
 ### Backend / Protocol surfaces
 
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — **canonical**.
+      - *Determining which reviewers to run*: remove its standalone `review-overrides` invocation.
+        Resolve configuration only through the bounded availability helper; consume its override
+        and reviewer records for logging. No independent `review-overrides` or `review-effective`
+        invocation may precede that helper in Step 7a.
       - Line 1658: extend supported runner reviewer values to
         `claude`, `cursor`, `codex`, `coderabbit`, `codex-github`, each labelled local-runtime or
         hosted-service.
@@ -1049,7 +1058,7 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
         mapping, the posted `INFO` comment, and the "Why this matters" rationale unchanged. Move
         condition evaluation and `gh pr ready` conversion to immediately before the dispatch map,
         after the availability helper returns a proceed verdict. Evaluate the condition from the
-        helper's indexed reviewer records, with no independent `review-effective` call. Without this,
+        helper's indexed reviewer records, with no independent `review-effective` or `review-overrides` call. Without this,
         an unbounded preliminary parse can hang before the deadline, and a run that converts and then blocks
         leaves a non-draft pull request on a blocked gate, contradicting six acceptance criteria
         (Decision 9, asserted by D-20).
@@ -1079,8 +1088,11 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       *Covers*: AC "The reviewer the fallback runs is the driving runner's own reviewer for the pull
       request's stage."
 - [ ] `docs/workflow/development-workflow/integrations/coderabbit.md` — the *Availability Check*
-      section (lines 159-166) keeps its two checks unchanged. Add one clarifying sentence naming
-      recent-comment inspection as the signal the gate uses and why. In the Troubleshooting table,
+      section (lines 159-166) retains runtime activity and `auto_review.enabled: true` as its
+      two checks, using recent-comment inspection as the activity signal. Remove the contradictory
+      requirement that reviews permit draft PRs: `drafts: false` is handled by post-policy conversion
+      before dispatch, never by unreachability. Replace the draft-disabled troubleshooting row with
+      this conversion guidance. In the Troubleshooting table,
       rewrite the remedy in the "All Step 7a reviewers unreachable — hard-fail" row (line 175): drop
       "Run Step 7a from a context where at least one reviewer is reachable" and replace it with
       making the missing runtime or prerequisite available, or narrowing the list locally.
@@ -1133,7 +1145,7 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
 | `.claude/agents/item-orchestrator.md` | **Change** — unconditional-reachability claim |
 | `.cursor/agents/item-orchestrator.md` | **Change** — mirrored claim |
 | `docs/workflow/development-workflow/README.md` | **Change** — fallback names a fixed reviewer |
-| `docs/workflow/development-workflow/integrations/coderabbit.md` | **Change** — one remedy cell and one clarifying sentence; the check itself is untouched |
+| `docs/workflow/development-workflow/integrations/coderabbit.md` | **Change** — reconcile draft eligibility with canonical conversion and reword the identity-based remedy |
 | `.cursor/BUGBOT.md` | **Change** — names the stale default literal |
 | `.ai-dev-workflow.local.example.yaml` | **Change** — override framed as an identity-driven necessity |
 | `sync-manifest.yaml` | **Change** — new `product_repo_injection` entry (the line-208 mention of `internal_reviewers` is an unrelated example and stays) |
@@ -1234,6 +1246,7 @@ with no workflow edit (VL-10).
 | T-46 | Shipped-budget timeout case on a PATH with neither GNU `timeout` nor `setsid`; Perl present; fake local probe and fake hosted GET each spawn a TERM-ignoring descendant while the leader exits on TERM | Verdict within ten seconds; `ELAPSED_SECONDS <= 10`; descendant and leader both gone after cleanup, temporary output does not hold stdout open. Repeat under Bash 3.2 | Contract completeness |
 | T-47 | Hosted reviewer with fake `gh` whose `auth status` would hang; exercise a successful GET and a hanging GET | No auth-preflight invocation; success classifies reachable with activity, hanging GET yields `check-inconclusive` within ten seconds | Configuration inputs |
 | T-48 | Unsupported scalar policy containing whitespace/control characters, non-scalar policy, and unparseable file | `POLICY_INPUT`, `UNREADABLE_FILE`, and `UNREADABLE_DETAIL` preserve resolver diagnostics through escaped shell fields; `POLICY` is empty on invalid paths. Runbook Step 14 checks the same values reach the block comment | Policy behavior is preserved |
+| T-49 | Each scalar fixture from E-32 through `review-effective` and availability output | One configured value survives unchanged and is named with `value-not-supported`; no colon-bearing string becomes a policy parse failure. The real mapping fixture blocks as `list-malformed` | Configuration inputs |
 
 ### Acceptance-criterion coverage map
 
@@ -1374,7 +1387,7 @@ Headers:
 | D-7 | Protocol 91 and `README.md` both describe the fallback as the driving runner's own stage reviewer, and neither names a fixed reviewer for it | C2 |
 | D-8 | Protocol 91 states that the gate never installs a missing runtime, provisions a missing prerequisite, or substitutes a different reviewer | P10 |
 | D-9 | `.ai-dev-workflow.yaml`'s `review.on_draft.runner` is exactly `claude`, `cursor`, `codex`, and the file contains no text describing a hard-fail of this gate on a supported runner as expected behavior | S3 |
-| D-10 | `coderabbit.md` still states both of its availability checks — the App activity signal and `reviews.auto_review.enabled: true` — and its Step 7a hard-fail remedy names no runner context | A6, A5 |
+| D-10 | `coderabbit.md` still states both of its availability checks — the App activity signal and `reviews.auto_review.enabled: true` — and its Step 7a hard-fail remedy names no runner context. Draft restrictions are explicitly not unreachability; both availability and troubleshooting text point to conversion after policy, before dispatch | A6, A5 |
 | D-11 | The `codex-github` runner reviewer dispatch block is byte-identical in `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md` | A1 |
 
 **Gate-instruction assertions:**
@@ -1389,7 +1402,7 @@ Headers:
 | D-17 | The warning comment format carries no runner-context field, names each unreachable reviewer with its reason and its remedy, states the reachable subset that will run, and is posted only when `OUTCOME=proceeded-reduced` | O6, P1, P4 |
 | D-18 | Each hard-fail comment case names `BLOCK_CAUSE`; every configured reviewer with its verdict, including the reachable ones; the offending value or unreadable input where one exists; the policy where the policy is the cause; and `LOCAL_OVERRIDE_STATE` taken from the resolver rather than inferred. No case carries a runner-context field | O5, O6, C4, C5, C6, C7, P2, P6, P7, P8, P9 |
 | D-19 | Protocol 91 maps resolver exit `1` to: dispatch nobody, do not call `gh pr ready`, leave the pull request draft, escalate to a human — and maps exit `2` to the same treatment with cause `availability-resolver-failed` | C5, C6, C7, P2, P3, P6, P8 |
-| D-20 | Protocol 91 invokes the bounded availability helper before evaluating the draft pre-check; condition evaluation consumes its indexed records only after a proceed verdict, with no independent `review-effective` call. Conversion appears after that verdict and before dispatch. The draft-eligibility note says conversion guarantees non-draft at dispatch, not at availability time. Runbook Step 16 also exercises a stalled parser through the complete gate entry path | C5, P2, P3, P6, P7, P8, C8; Decision 9 |
+| D-20 | Protocol 91 invokes the bounded availability helper before evaluating the draft pre-check; condition evaluation consumes its indexed records only after a proceed verdict, with no independent `review-effective` or `review-overrides` call. Conversion appears after that verdict and before dispatch. The draft-eligibility note says conversion guarantees non-draft at dispatch, not at availability time. Runbook Step 16 also exercises a stalled parser through the complete gate entry path | C5, P2, P3, P6, P7, P8, C8; Decision 9 |
 | D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and requires any resulting dispatch failure to remain a review failure under either policy, retaining the original availability classification | Decision 8 |
 | D-22 | Protocol 91 instructs the gate to read reviewer names, reasons, remedies, and details from the indexed `REVIEWER_N_*` fields, and states that the comma-joined aggregate fields are display-only. No instruction anywhere in Step 7a splits an aggregate field on commas or whitespace to recover a reviewer name | C4, C7; Decision 10 |
 
@@ -1505,8 +1518,9 @@ policy scalar are the parsed constructs.
 | E-29 | `runner: null` and `runner: ~` | `empty`, matching the bare empty scalar |
 | E-30 | `internal_reviewers_unavailable_policy: {}` compared with the bare policy key | Mapping is `unreadable` with file/type diagnostics; bare value is `empty` |
 | E-31 | Policy value `null` and `~` | `empty`, default `warn`; legacy parser output remains unchanged |
+| E-32 | Block list entries `- "foo: bar"`, `- 'foo: bar'`, and unquoted `- https://example.test`; compare `- key: value` | Quoted/URL values are single strings, preserved verbatim; the actual mapping remains a mapping and the reviewer list is `malformed` |
 
-**Unit test mapping**: every case E-1 through E-31 gets one automated case in
+**Unit test mapping**: every case E-1 through E-32 gets one automated case in
 `scripts/development-workflow/tests/test-workflow-config-resolver.sh`, named `review-effective E-<n>`,
 asserting the exact expected state string. E-22 additionally asserts `LOCAL_OVERRIDE_ORIGIN=main_clone`.
 E-23 to E-27 each additionally assert the **entry count** — one, never two — and that the entry's
@@ -1547,8 +1561,8 @@ following are the remaining documentation-only updates the developer must make:
 
 - [ ] `docs/workflow/development-workflow/README.md` — the configuration-reference bullet at line 561
       (fallback wording plus the shipped-default guarantee sentence).
-- [ ] `docs/workflow/development-workflow/integrations/coderabbit.md` — the one clarifying sentence
-      and the one Troubleshooting remedy cell.
+- [ ] `docs/workflow/development-workflow/integrations/coderabbit.md` — the runtime-availability clarification
+      and the Troubleshooting rows for draft eligibility and unavailable reviewers.
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — the new Step 7a runner
       reviewer section.
 - [ ] `docs/testing/workflow/1495-step-7a-capability-based-reachability.smoke-test.md` — update in the
@@ -1609,7 +1623,7 @@ imposes it and why it applies here. No step is left untraced.
    through `jq .` and confirm it parses.
 
 2. *(Spec-derived — evidence for the same group, plus the parser-risk unit-test mapping this repository's plan protocol requires for a change that alters structured-text interpretation.)* **Extend `tests/test-workflow-config-resolver.sh`** with cases T-27 to T-30 and `review-effective E-1`
-   through `review-effective E-31`.
+   through `review-effective E-32`.
    *Verify*: `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh` — read the
    output and confirm every new case reports PASS and no pre-existing case regressed.
 
@@ -1622,13 +1636,13 @@ imposes it and why it applies here. No step is left untraced.
    match what is actually installed on the machine.
 
 4. *(Spec-derived — the resolver-layer evidence named in the acceptance-criterion coverage map.)* **Write `tests/test-resolve-reviewer-availability.sh`** with the `# covers:` header and cases T-1
-   to T-26 and T-31 to T-48, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
+   to T-26 and T-31 to T-49, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
    *Verify*: `bash scripts/development-workflow/tests/test-resolve-reviewer-availability.sh` — confirm
    every case reports PASS. Then run
    `bash scripts/development-workflow/select-test-suites.sh` against the change set and confirm the
    new suite appears in the selection, so no CI workflow edit is needed.
 
-5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-eight gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all seven regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
+5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-eight gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all enumerated regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
    *Verify*: `grep -n "runner identity is a sufficient proxy\|Reachability classification table\|default behavior: \`claude\`" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
    returns nothing; and read the Step 7a text end to end confirming the only `gh pr ready` before the
    dispatch map is the draft-state conversion, and that it now sits after the policy-application

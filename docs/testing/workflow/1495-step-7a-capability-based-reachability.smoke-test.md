@@ -614,12 +614,12 @@ the ten-second ceiling is not being enforced.
    the orchestration runner, and pass the hermetic `PATH` to every configuration/availability shell
    invocation it makes. Start the external timer at the first configuration-resolution command.
    Confirm from the command log that the gate invokes the availability helper once and never calls
-   `review-effective` independently for the draft pre-check.
+   `review-effective` or `review-overrides` independently before availability or for the draft pre-check.
 
 **Expected result for the gate run**: the resolver's blocked verdict appears within ten seconds of
 starting configuration resolution. The gate then reports `config-resolution-inconclusive`, dispatches
 nobody, and leaves the PR draft. Time the availability verdict separately from the subsequent network
-call posting the block report. A preliminary standalone parser call or a hang before the helper starts
+call posting the block report. A preliminary standalone `review-overrides` or `review-effective` parser call or a hang before the helper starts
 fails this step even if the direct helper test above passed. Restore the original environment.
 
 ### Last Step: Validate and clean up
