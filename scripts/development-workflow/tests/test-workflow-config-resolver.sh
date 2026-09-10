@@ -1146,6 +1146,23 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex,,cursor]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 run_test "review-effective E-34 legacy double comma unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,cursor" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
 assert_review_effective_states "E-34 local double comma" malformed unreadable
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, extra: value]'
+assert_review_effective_states "E-34 shared flow mapping member" malformed unreadable
+run_contains "review-effective E-34 flow mapping detail" "mapping item" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, ? extra]'
+assert_review_effective_states "E-34 shared explicit-key flow mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, extra:]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-34 legacy flow mapping unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,extra:" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+assert_review_effective_states "E-34 local empty-value flow mapping" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, "extra": value]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-34 local quoted-key flow mapping" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, : value]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-34 local explicit-value flow mapping" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, "foo: bar", https://example.test]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-34 quoted colon and URL flow strings" defined absent
+run_test "review-effective E-34 quoted colon and URL entries" '["codex","foo: bar","https://example.test"]' "$(review_effective_json | jq -c '.effective_runner')"
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, 0x10]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 run_test "review-effective E-35 legacy numeric member unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,0x10" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
 assert_review_effective_states "E-35 local numeric member" malformed absent

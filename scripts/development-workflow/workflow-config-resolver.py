@@ -138,6 +138,12 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
             len(items) == 1 and not items[0].strip()
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains an empty item")
+        if any(
+            item.strip().startswith(("? ", ": ")) or list_item_is_mapping(item.strip())
+            for item in items
+            if item.strip()
+        ):
+            raise ConfigError(f"{path}:{line_no}: flow sequence contains a mapping item")
     if not value.startswith(("'", '"')):
         return
 
