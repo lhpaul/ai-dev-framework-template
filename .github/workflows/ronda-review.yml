@@ -1,0 +1,23 @@
+name: Ronda review
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+concurrency:
+  group: ronda-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+jobs:
+  ronda:
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft != true) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+    uses: lhpaul/ronda/.github/workflows/ronda-review.yml@develop
+    with:
+      ronda_ref: develop
+    secrets:
+      model_api_key: ${{ secrets.RONDA_MODEL_API_KEY }}
