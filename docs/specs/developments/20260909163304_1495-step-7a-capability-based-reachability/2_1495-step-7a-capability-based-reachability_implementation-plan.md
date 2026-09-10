@@ -243,7 +243,7 @@ through `codex-github-reviewer.sh`, whose exit codes are already defined at
 
 **This is a decided product tradeoff, not an oversight, and it is a known gap between spec text and
 implementation.** It is recorded here in those words so no future reader concludes the spec is
-satisfied literally.
+satisfied literally. This exception applies to the source condition in A3 and both directions of A4 (spec lines 349–350), as well as the hosted-availability definition. The coverage map must show these as qualified/partial literal coverage, not as fully met acceptance criteria. The earlier human choice to accept the proxy is recorded in this PR's cycle-3 decision at `75d4f205`; this plan preserves that choice, and LH retains approval of the disclosed exception when merging the plan. T-38 is evidence of the accepted proxy behavior, not evidence of installation.
 
 **What the spec asks for.** Spec line 151: "For a hosted-service reviewer, availability means the
 service is installed for the repository **and enabled for this review**, decided the way
@@ -1102,7 +1102,7 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       Immediately before that block, include the source requirement: "Hosted-service availability is decided at runtime from whether
       the service is installed and reachable." Immediately distinguish that intended requirement
       from Decision 8's accepted activity proxy and its limitations; never claim the proxy verifies
-      installation. D-24 protects both the requirement statement and the explicit qualification.
+      installation. Include the source condition's other direction too: where the service is not installed and reachable it is unavailable with a named reason. State explicitly that Decision 8 waives literal verification of both directions for this implementation. D-24 protects the full requirement statement and the explicit qualification.
       Copy it verbatim to both item-orchestrator agent blocks and `integrations/codex-github.md`;
       surrounding tool-specific dispatch prose remains outside the markers.
       *Covers*: every AC group.
@@ -1254,12 +1254,12 @@ with no workflow edit (VL-10).
 | T-10 | No `runner` key in either file | `CONFIG_LIST_STATE=absent`, `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`, exit `0` | Configuration inputs |
 | T-11 | `runner: []` | `CONFIG_LIST_STATE=empty`, same outcome as T-10 | Configuration inputs |
 | T-12 | Fallback path with `--runner-kind unknown` | `OUTCOME=blocked`, `BLOCK_CAUSE=no-driving-runner`, exit `1` | Configuration inputs |
-| T-13 | `runner: codex` (scalar, not a list) | `CONFIG_LIST_STATE=malformed`, `BLOCK_CAUSE=list-malformed`, `FALLBACK_APPLIED=false`, exit `1` | Configuration inputs |
+| T-13 | Native Codex runner, no local override, `runner: codex` (scalar); then repair that same file to `runner: [codex]` and rerun the availability helper with identical arguments/environment | Scalar: `CONFIG_LIST_STATE=malformed`, `BLOCK_CAUSE=list-malformed`, `FALLBACK_APPLIED=false`, exit `1`. Repaired list: `REVIEWER_1_STATUS=reachable`, `OUTCOME=proceeded`, exit `0`. Capture both actual guard verdicts | Configuration inputs |
 | T-14 | Any run, executed inside a temporary git checkout | `git status --porcelain` is empty afterwards | Reachability follows capability (purity) |
 | T-15 | Fake `gh` records its argv to a file | no recorded invocation is `pr comment`, `pr ready`, or a non-GET `api` call | Reachability follows capability (purity) |
 | T-16 | Policy `fail-if-any-unavailable`, one reachable and one absent | `OUTCOME=blocked`, `BLOCK_CAUSE=policy-forbids-reduced-coverage`, the reachable reviewer still recorded `reachable`, exit `1` | Policy behavior is preserved |
 | T-17 | Policy `maybe` (unsupported), `runner` absent | `POLICY_STATE=unsupported`, `BLOCK_CAUSE=policy-unsupported`, `CONFIG_LIST_STATE=not-evaluated`, exit `1` | Policy behavior is preserved |
-| T-18 | Policy key absent from both files | `POLICY=warn`, `POLICY_SOURCE=default` | Policy behavior is preserved |
+| T-18 | Policy key absent from both files; use the same native-runner fixture and absent reviewer key as T-17, changing only removal of policy `maybe` | `POLICY=warn`, `POLICY_SOURCE=default`, `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`, exit `0`; pair with T-17 to prove the actual guard recovers | Policy behavior is preserved |
 | T-19 | Local override keeps `codex` of a shipped `[claude, cursor, codex]` | the two dropped entries have `REVIEWER_N_STATUS=override-excluded` with empty `REASON` and `REMEDY`, `UNREACHABLE` empty, `OUTCOME=proceeded` | The operator can tell why |
 | T-20 | Override in effect and one kept reviewer absent | `LOCAL_OVERRIDE_STATE` reports the file and origin from the resolver, not a guess | The operator can tell why |
 | T-21 | `runner: [coderabbit]`, fake `gh` returns comments containing `coderabbitai[bot]`, `.coderabbit.yaml` enables auto-review | `REVIEWER_1_STATUS=reachable` | Reachability follows capability |
@@ -1268,7 +1268,7 @@ with no workflow edit (VL-10).
 | T-24 | `runner: [codex-github]`, fake `gh` returns comments from the configured bot login | `REVIEWER_1_STATUS=reachable` regardless of `--runner-kind` | Reachability follows capability |
 | T-25 | Every scenario above, aggregate | no `REVIEWER_N_*` group ever pairs `runtime-absent` with a hosted-service name, or `prerequisite-missing` with a local-runtime name | The operator can tell why |
 | T-26 | Missing `--owner`/`--repo` | exit `2`, no `OUTCOME` line, message on stderr | Contract completeness |
-| T-31 | `.ai-dev-workflow.yaml` truncated mid-mapping so it will not parse | `POLICY_STATE=unreadable`, `BLOCK_CAUSE=policy-unreadable`, `CONFIG_LIST_STATE=not-evaluated`, the file named in the output, exit `1` | Configuration inputs |
+| T-31 | Start with valid `runner: [codex]`, native Codex runner and absent local override. Truncate that same `.ai-dev-workflow.yaml` mid-mapping, run the availability helper, restore the original bytes, and rerun the same helper with identical arguments/environment | Broken file: `POLICY_STATE=unreadable`, `BLOCK_CAUSE=policy-unreadable`, `CONFIG_LIST_STATE=not-evaluated`, file named, exit `1`. Repaired file: readable policy, `REVIEWER_1_STATUS=reachable`, `OUTCOME=proceeded`, exit `0`. Record both actual availability-helper runs as the guard proof; a JSON-parser success exit is not a passing guard verdict | Configuration inputs |
 | T-32 | The same fixture and command run three times: fake `codex` absent, then added, then removed | the `codex` record reads `unreachable runtime-absent`, then `reachable`, then `unreachable runtime-absent`, with no configuration file changed between runs | Reachability follows capability |
 | T-33 | The repository's own `.ai-dev-workflow.yaml`, hermetic `PATH` containing **none** of `claude`, `cursor-agent`, `codex`, and no local override; run once per `--runner-kind` in `claude`, `cursor`, `codex` | every run exits `0` with `OUTCOME` not `blocked`, and the reviewer matching `--runner-kind` is `reachable` | The shipped default never traps |
 | T-34 | Linked-worktree fixture: a `.git` **file** pointing at a main clone that holds the override | `LOCAL_OVERRIDE_STATE` reports the main clone's file with origin `main_clone`, taken from `review-effective`'s `local_override_origin` | The operator can tell why |
@@ -1367,7 +1367,7 @@ behavior.
 | A1 | Supported values and the availability rule stated consistently across surfaces | Surface text | D-1, D-5, D-11, D-23 |
 | A2 | No surface names a value the canonical protocol does not list | Surface text | D-4 |
 | A3 | The canonical protocol lists the hosted-service reviewer and states its runtime availability rule | Surface text | D-1 checks membership; D-24 requires the installed-and-reachable source statement plus explicit Decision 8 qualification. This is textual evidence only: it does not prove installation, and the accepted proxy deviation remains disclosed |
-| A4 | No surface claims the hosted-service reviewer is unconditionally available | Surface text | D-3 |
+| A4 | No unconditional availability claim; the spec additionally requires installed-and-reachable availability and a named reason otherwise | Surface text | D-3 removes unconditional claims; D-23 checks the shared runtime rule and named unavailable reasons; D-24 preserves the source condition and explicit exception. **Partial literal coverage, accepted exception under Decision 8:** historical activity cannot prove current installation, and T-38 intentionally permits the false-Reachable case. No test is claimed to prove the waived current-installation condition |
 | A5 | No surface states or implies availability is decided by runner identity | Surface text | D-2, D-10 |
 | A6 | CodeRabbit's runtime-conditions guidance is unchanged and does not contradict the rule | Surface text | D-10 |
 
@@ -1405,7 +1405,7 @@ hosted-probe limitation where an operator reading the protocol will see it. Neit
 obeyed the instruction — the runbook steps are the only evidence of that, and the coverage map above
 names them criterion by criterion.
 
-Headers:
+Headers (the inline heuristic suppression is limited to the selector-specific `**` syntax, whose slash-matching semantics are verified below):
 
 ```text
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
@@ -1413,7 +1413,13 @@ Headers:
 # covers: .claude/agents/item-orchestrator.md .cursor/agents/item-orchestrator.md
 # covers: docs/workflow/development-workflow/integrations/coderabbit.md
 # covers: docs/workflow/development-workflow/integrations/codex-github.md
+# covers: docs/workflow/development-workflow/README.md
+# covers: scripts/development-workflow/resolve-reviewer-availability.sh
+# <!-- markdown-heuristic-disable GLOB001 -->
+# covers: **.md **.sh **.yaml **.yml **.mdc
 ```
+
+The selector defines `**` as any characters including slashes; these suffix patterns therefore match root files and files at any depth. They cover D-3's repository-wide L1 search, including both reviewer script headers and hidden agent surfaces. The selector has no exclusion syntax, so it may also select this suite for historical files that L1 excludes; that conservative extra execution is intentional. Keep these headers within the selector's first 60 lines. During implementation, verify selection with separate one-file change lists for the workflow README, each reviewer script, the availability helper (D-5), and a nested hidden instructional file matching L1.
 
 **Surface-text assertions:**
 
@@ -1447,7 +1453,7 @@ Headers:
 | D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and requires any resulting dispatch failure to remain a review failure under either policy, retaining the original availability classification | Decision 8 |
 | D-22 | Protocol 91 instructs the gate to read reviewer names, reasons, remedies, and details from the indexed `REVIEWER_N_*` fields, and states that the comma-joined aggregate fields are display-only. No instruction anywhere in Step 7a splits an aggregate field on commas or whitespace to recover a reviewer name | C4, C7; Decision 10 |
 | D-23 | Extract the normative `codex-github` availability block delimited by `<!-- step7a-codex-github-availability:start -->` and `<!-- step7a-codex-github-availability:end -->` from Protocol 91 and compare it byte-for-byte with the same marked block in both agent mirrors and `integrations/codex-github.md`. All four must occur exactly once and agree. The block states activity-based reachability, missing/incomplete evidence classifications, and the post-dispatch failure boundary | A1 |
-| D-24 | Protocol 91 states that hosted-service availability is decided at runtime from whether the service is installed and reachable, and immediately discloses that the runtime activity proxy cannot establish installation/enablement. Require both the intended source condition and its accepted qualification; neither a reviewer-kind label nor the proxy description alone passes | A3 |
+| D-24 | Protocol 91 states that hosted-service availability is decided at runtime from whether the service is installed and reachable, and immediately discloses that the runtime activity proxy cannot establish installation/enablement. It also states the unavailable-with-named-reason direction when that condition is absent, and explicitly identifies literal runtime verification of both directions as the accepted Decision 8 exception. Require the full source condition and its accepted qualification; neither a reviewer-kind label nor the proxy description alone passes | A3, A4 |
 
 ### Planted-violation proofs
 
@@ -1466,8 +1472,8 @@ What the rule does and does not reach is worth stating, because it bounds the wo
   exactly what the clause names. Each gets its own plant, listed below.
 - **In scope — `resolve-reviewer-availability.sh` as a guard.** Its planted-violation evidence already
   exists in the `T-` suite as fail-and-pass pairs over the same fixture shape, and naming them is
-  enough: T-2/T-1 (reviewer absent then present), T-13/T-27 (malformed then well-formed list),
-  T-17/T-18 (unsupported then absent policy), T-31/T-29 (unparseable then parseable file),
+  enough: T-2/T-1 (reviewer absent then present), T-13 broken/repaired runs (malformed then well-formed list, both through the availability helper),
+  T-17/T-18 (unsupported then absent policy), T-31 broken/repaired runs (same file, availability helper blocks then proceeds; T-29 is diagnostic JSON only),
   T-16/T-9 (strict then permissive policy). The implementer records those pairs as the guard's proof
   rather than writing new cases.
 - **Out of scope — the `T-` and `E-` cases themselves.** A unit test of a script is not a check,
