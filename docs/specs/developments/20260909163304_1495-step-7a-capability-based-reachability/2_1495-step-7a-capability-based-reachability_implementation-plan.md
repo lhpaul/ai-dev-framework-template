@@ -267,8 +267,7 @@ CodeRabbit, `reviews.auto_review.enabled: true`. This is the second of the two a
   had its repository access revoked, or exhausted its quota. Historical activity outlives the
   installation, and nothing in a comment list says the App is still there.
 - **False Unreachable.** The App is installed and enabled but has never commented on this repository
-  — a fresh repository, or one newly added to an existing installation. Classified
-  `prerequisite-missing`; already recorded as R-3.
+  — a fresh repository, one newly added to an existing installation, **or a bot whose activity consists only of submitted pull-request reviews or inline review comments**. The repository issue-comment endpoint does not contain those other activity types. With a short unmatched page this is `prerequisite-missing`; with a full unmatched page it is `check-inconclusive` under the bounded-coverage rule. This comment-only limitation is part of the selected proxy, not a claim that the bot has never reviewed; already recorded as R-3.
 
 **The residual is handled as a review failure after dispatch.** A false Reachable does not
 become a silently skipped or approved review. Once dispatched, a reviewer that fails, errors,
@@ -512,7 +511,7 @@ scripts/development-workflow/resolve-reviewer-availability.sh \
   --repo-root <path> --owner <owner> --repo <repo> [--runner-kind claude|cursor|codex|unknown]
 ```
 
-`--runner-kind` defaults to `$WORKFLOW_RUNNER_KIND`, then to `unknown`. There is no budget flag: the
+`--runner-kind` defaults to `$WORKFLOW_RUNNER_KIND`, then to `unknown` for standalone callers. Protocol 91 must always pass it explicitly from the actual driving session (`claude`, `cursor`, or `codex`), along with artifact repo root and target owner/repo. It must not infer the driver from the configured reviewer list or executable discovery, and must not rely on an inherited environment variable. Unsupported drivers pass `unknown`. This handoff is protected by D-15 and smoke Step 13 Part 1. There is no budget flag: the
 availability budget is a fixed property of the gate, and the internal override
 `WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS` is honoured **only** when
 `WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE=1` is also set, so no operator can shorten or lengthen it
@@ -662,16 +661,14 @@ inspection; the gate uses the second because the first only answers under GitHub
 which the gate does not hold. Selecting between two already-documented alternatives is not a change
 to CodeRabbit's determination.
 
-Request newest comments explicitly: GitHub otherwise defaults to ascending IDs ([API reference](https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository), verified 2026-09-10). A matching login on this page establishes the activity proxy. With no match, fewer than 100 records establish absent activity; a full 100-record page is conservatively incomplete and yields `check-inconclusive`, detail `activity coverage incomplete`, never `prerequisite-missing`. Do not paginate beyond this bounded probe. T-50 checks ordering and incomplete coverage.
+Request newest comments explicitly: GitHub otherwise defaults to ascending IDs ([API reference](https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository), verified 2026-09-10). A matching login on this page establishes the activity proxy. With no match, fewer than 100 records establish absent activity; a full 100-record page is conservatively incomplete and yields `check-inconclusive`, detail `activity coverage incomplete`, never `prerequisite-missing`. Do not paginate beyond this bounded probe. Submitted reviews and inline review comments are separate API resources and are not queried by this comment-only proxy. They remain valid dispatch-result signals; availability does not claim to enumerate all review activity. T-50 checks ordering, incomplete coverage, and a review-only bot with an empty issue-comment page (false Unreachable by Decision 8).
 
 **Known limitation — this probe is a proxy, by decision.** Spec line 151 defines hosted availability
 as the service being "installed for the repository and enabled for this review". No mechanism
 available to the gate's credentials establishes that, so the activity signal stands in for it. It is
 wrong in two ways, both accepted under **Decision 8**:
 
-- **False Unreachable**: an app installed but never active on this repository classifies
-  `prerequisite-missing`. The remedy the report offers — verify the app is installed for this
-  repository — is the correct action either way. **Risks & Mitigations** R-3.
+- **False Unreachable**: an installed app with no visible issue comments, including a review-only bot, classifies `prerequisite-missing` on a short unmatched page. Verify installation first, but do not claim reinstalling or triggering another review necessarily repairs this signal. An actual bot-authored issue comment is needed if the service supports it; otherwise narrow the hosted reviewer out locally. A full unmatched page remains inconclusive. **Risks & Mitigations** R-3.
 - **False Reachable**: an app that was installed, commented, and has since been uninstalled,
   suspended, or had its access revoked still shows historical activity and classifies `reachable`.
   It is then dispatched and may time out. That is a review failure under either policy,
@@ -1049,7 +1046,7 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
 
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — **canonical**.
       - *Determining which reviewers to run*: remove its standalone `review-overrides` invocation.
-        Resolve configuration only through the bounded availability helper; consume its override
+        Resolve configuration only through the bounded availability helper, explicitly passing `--repo-root <artifact-repo-root> --owner <target-owner> --repo <target-repo> --runner-kind <actual-driving-session-kind>` on every cycle. Supported driving sessions pass their own `claude`, `cursor`, or `codex` value, even when their CLI is absent; only unsupported/unknown sessions pass `unknown`. Never derive this argument from the reviewer list, PATH, or inherited `WORKFLOW_RUNNER_KIND`. Consume its override
         and reviewer records for logging. No independent `review-overrides` or `review-effective`
         invocation may precede that helper in Step 7a.
       - Line 1658: extend supported runner reviewer values to
@@ -1259,7 +1256,7 @@ with no workflow edit (VL-10).
 | T-15 | Fake `gh` records its argv to a file | no recorded invocation is `pr comment`, `pr ready`, or a non-GET `api` call | Reachability follows capability (purity) |
 | T-16 | Policy `fail-if-any-unavailable`, one reachable and one absent | `OUTCOME=blocked`, `BLOCK_CAUSE=policy-forbids-reduced-coverage`, the reachable reviewer still recorded `reachable`, exit `1` | Policy behavior is preserved |
 | T-17 | Policy `maybe` (unsupported), `runner` absent | `POLICY_STATE=unsupported`, `BLOCK_CAUSE=policy-unsupported`, `CONFIG_LIST_STATE=not-evaluated`, exit `1` | Policy behavior is preserved |
-| T-18 | Policy key absent from both files; use the same native-runner fixture and absent reviewer key as T-17, changing only removal of policy `maybe` | `POLICY=warn`, `POLICY_SOURCE=default`, `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`, exit `0`; pair with T-17 to prove the actual guard recovers | Policy behavior is preserved |
+| T-18 | Policy key absent from both files. Part 1: same native-runner fixture and absent reviewer key as T-17, changing only removal of policy `maybe`. Part 2: configure native `codex` plus absent cross-runtime `cursor`, still with no policy key in either file | Both parts: `POLICY=warn`, `POLICY_SOURCE=default`, exit `0`. Part 1: `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`; pair with T-17 to prove guard recovery. Part 2: `OUTCOME=proceeded-reduced`, Codex Reachable, Cursor Unreachable with `runtime-absent` and remedy, reachable subset Codex; blocking instead of warning fails | Policy behavior is preserved |
 | T-19 | Local override keeps `codex` of a shipped `[claude, cursor, codex]` | the two dropped entries have `REVIEWER_N_STATUS=override-excluded` with empty `REASON` and `REMEDY`, `UNREACHABLE` empty, `OUTCOME=proceeded` | The operator can tell why |
 | T-20 | Override in effect and one kept reviewer absent | `LOCAL_OVERRIDE_STATE` reports the file and origin from the resolver, not a guess | The operator can tell why |
 | T-21 | `runner: [coderabbit]`, fake `gh` returns comments containing `coderabbitai[bot]`, `.coderabbit.yaml` enables auto-review | `REVIEWER_1_STATUS=reachable` | Reachability follows capability |
@@ -1287,7 +1284,7 @@ with no workflow edit (VL-10).
 | T-47 | Hosted reviewer with fake `gh` whose `auth status` would hang; exercise a successful GET and a hanging GET | No auth-preflight invocation; success classifies reachable with activity, hanging GET yields `check-inconclusive` within ten seconds | Configuration inputs |
 | T-48 | Unsupported scalar policy containing whitespace/control characters, non-scalar policy, and unparseable file | `POLICY_INPUT`, `UNREADABLE_FILE`, and `UNREADABLE_DETAIL` preserve resolver diagnostics through escaped shell fields; `POLICY` is empty on invalid paths. Runbook Step 14 checks the same values reach the block comment | Policy behavior is preserved |
 | T-49 | Each scalar fixture from E-32 through `review-effective` and availability output | One configured value survives unchanged and is named with `value-not-supported`; no colon-bearing string becomes a policy parse failure. The real mapping fixture blocks as `list-malformed` | Configuration inputs |
-| T-50 | Fake repository with over 100 old non-bot comments and newer bot activity; fake API honors requested sort/direction. Also a full newest page without a bot and a short page without a bot; run for both hosted names with CodeRabbit enabled | Command requests `sort=created&direction=desc`; recent bot yields Reachable. Full unmatched page yields `check-inconclusive` and `activity coverage incomplete`; short unmatched page yields `prerequisite-missing`. Only one bounded GET occurs | Reachability follows capability |
+| T-50 | Fake repository with over 100 old non-bot comments and newer bot activity; fake API honors requested sort/direction. Also a full newest page without a bot and a short page without a bot; run for both hosted names with CodeRabbit enabled | Command requests `sort=created&direction=desc`; recent bot yields Reachable. Full unmatched page yields `check-inconclusive` and `activity coverage incomplete`; short unmatched page yields `prerequisite-missing`. A bot with submitted reviews but no issue comments is the same documented false-Unreachable case; assert no review endpoint is queried. Only one bounded GET occurs | Reachability follows capability |
 
 ### Acceptance-criterion coverage map
 
@@ -1358,7 +1355,7 @@ behavior.
 | P2 | `fail-if-any-unavailable` + any unreachable → blocks, dispatches nobody, PR stays draft | Both | Resolver unit T-16; gate doc assertions D-18, D-19 and D-20; gate runbook Step 14 Part 3, with Part 5 for the draft-conversion ordering |
 | P3 | No reviewer reachable → blocks under either policy, PR not converted to ready, escalates | Both | Resolver unit T-2 (under `warn`) and T-16 (under the strict policy); gate doc assertions D-19 (exit `1` maps to no conversion to ready, draft restored if needed after determination, escalation) and D-20 (the draft-state pre-check's conversion cannot precede the block); gate runbook Step 14 Part 1 and Part 5 |
 | P4 | Every reviewer reachable → no warning, behaves exactly as today | Both | Resolver unit T-1, T-19 (`OUTCOME=proceeded`, `UNREACHABLE` empty, every `REVIEWER_N_REMEDY` empty); gate doc assertion D-17 (the warning is posted only when `OUTCOME=proceeded-reduced`); gate runbook Step 13 Part 1 |
-| P5 | No policy in either file → the shipped default `warn` applies | Resolver | T-18 |
+| P5 | No policy in either file → the shipped default `warn` applies, including warning and proceeding with a reduced reachable subset | Both | T-18 Part 2 verifies the mixed-reachability outcome with policy absent; D-17 requires the warning; gate runbook Step 13 Part 3 repeats the mixed-reviewer run with the policy key absent from both files |
 | P6 | Unsupported policy value → blocks, dispatches nobody, names it, does not silently default | Both | Resolver unit T-17 (`BLOCK_CAUSE=policy-unsupported`, the value carried in the output); gate doc assertions D-18 (the report names the offending value) and D-19 (nobody is dispatched); gate runbook Step 14 Part 4 |
 | P7 | Unsupported or unreadable policy with an absent, empty, or malformed list → blocks on the policy | Both | Resolver unit T-17, T-31 (`CONFIG_LIST_STATE=not-evaluated`); gate doc assertion D-18 (the report attributes the block to the policy); gate runbook Step 14 Part 4 |
 | P8 | Policy input present but unreadable → blocks and names the input | Both | Resolver unit T-31, T-35; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
@@ -1373,11 +1370,11 @@ behavior.
 
 #### What this map admits
 
-- **Six criteria are resolver-only** — R2, R3, O2, S2, C9, P5. Each asserts what the verdict
+- **Five criteria are resolver-only** — R2, R3, O2, S2, C9. Each asserts what the verdict
   *is* for a given environment, which is exactly what a unit test can settle.
 - **Seven are statements about surface text** — S3 and A1 to A6. A doc assertion is not second-best
   evidence for these; it is the right instrument, because the criterion is about what the text says.
-- **Twenty-eight are gate-level, wholly or in part** — every remaining ID: twenty-six marked
+- **Twenty-nine are gate-level, wholly or in part** — every remaining ID: twenty-seven marked
   `Both`, plus R7 and O3, which constrain only the gate. For each, the resolver unit case (where one
   exists) proves only that the verdict handed to the gate was correct. The doc assertion proves the
   protocol instructs the right response, and the runbook step is the only evidence that a runner
@@ -1444,7 +1441,7 @@ The selector defines `**` as any characters including slashes; these suffix patt
 | D-12 | On resolver exit `0`, Protocol 91 instructs dispatching each indexed `REVIEWER_N_NAME` whose `REVIEWER_N_STATUS` is `reachable`, and where `FALLBACK_APPLIED=true` instructs dispatching the driving runner's own stage reviewer exactly once — the word "once" is asserted, because "runs it once" is the criterion | R1, S1, C1, C2, C3, P1 |
 | D-13 | Protocol 91 instructs running the availability resolver at the start of every Step 7a cycle, including re-runs after fixes, and states that a verdict from an earlier cycle is never reused | R4 |
 | D-14 | During availability determination, from helper invocation until its return, Protocol 91 instructs no `gh pr comment`, no `gh pr ready`, and no command that writes to the working tree. After it returns, policy warning/block comments and the proceed path's conditional conversion to ready or a blocked rerun's restoration to draft are permitted after determination | R5 |
-| D-15 | Protocol 91 places the resolver call before the reviewer dispatch map and states that no reviewer is dispatched until the resolver returns and the policy has been applied | R6 |
+| D-15 | Protocol 91 places the resolver call before the reviewer dispatch map and states that no reviewer is dispatched until the resolver returns and the policy has been applied. The invocation explicitly passes artifact repo root, target owner/repo and the actual driving session kind via `--runner-kind` on every cycle; the driver is never inferred from PATH, reviewer list, or inherited environment | R6, R1, S2 |
 | D-16 | The Step 7a summary comment format requires one line per configured reviewer with its display label; for each Unreachable one, its reason display label and its remedy; and, where `FALLBACK_APPLIED=true`, a line recording that the fallback applied. Override-excluded entries appear in the summary and never in the warning | O1, O3, O4, C1, C3 |
 | D-17 | The warning comment format carries no runner-context field, names each unreachable reviewer with its reason and its remedy, states the reachable subset that will run, and is posted only when `OUTCOME=proceeded-reduced` | O6, P1, P4 |
 | D-18 | Each hard-fail comment case names `BLOCK_CAUSE`; every configured reviewer with its verdict, including the reachable ones; the offending value or unreadable input where one exists; the policy where the policy is the cause; and `LOCAL_OVERRIDE_STATE` taken from the resolver rather than inferred. No case carries a runner-context field | O5, O6, C4, C5, C6, C7, P2, P6, P7, P8, P9 |
@@ -1480,8 +1477,8 @@ What the rule does and does not reach is worth stating, because it bounds the wo
   guard, lint rule, or CI job; it is the test of one. Treating each as requiring its own planted
   violation would recurse without end.
 
-**Plant table.** Each row is a one-line mutation at a real location that flips exactly one case. The
-harness reports per-case `PASS`/`FAIL`, so the implementer records, per row, the failing run with the
+**Plant table.** The 24 cases require 25 independent planted runs: D-15 has two; each other row has one. Each mutation at a real location flips the named case. The
+harness reports per-case `PASS`/`FAIL`, so the implementer records, per mutation, the failing run with the
 plant applied and the passing run after reverting it.
 
 | Case | File to plant in | Mutation that flips it |
@@ -1500,7 +1497,7 @@ plant applied and the passing run after reverting it.
 | D-12 | `91-orchestrate-work-protocol.md`, dispatch instruction | delete the word `once` from the fallback-dispatch sentence |
 | D-13 | `91-orchestrate-work-protocol.md`, Step 7a re-run rules | delete the instruction to re-run the resolver on every cycle |
 | D-14 | `91-orchestrate-work-protocol.md`, availability phase | insert an instruction to post `gh pr comment` while availability determination is still running, before the helper returns |
-| D-15 | `91-orchestrate-work-protocol.md` | move the resolver-call block below the dispatch map |
+| D-15 | `91-orchestrate-work-protocol.md` | Two independent plants, restored between runs: move the resolver call below dispatch; then remove the explicit `--runner-kind` handoff while leaving ordering intact. Each must fail D-15 and pass after restoration |
 | D-16 | `91-orchestrate-work-protocol.md`, summary-comment format | delete the required per-reviewer verdict line |
 | D-17 | `91-orchestrate-work-protocol.md`, warning format | re-add a `(<runner-context>)` field |
 | D-18 | `91-orchestrate-work-protocol.md`, hard-fail Case A | delete `Local override:` from the template |
@@ -1511,7 +1508,7 @@ plant applied and the passing run after reverting it.
 | D-23 | Both `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md`, inside the marked block | Change the same activity-presence condition in both mirrors to its opposite while leaving Protocol 91 and the integration block intact; D-11 still passes because the mirrors match each other, but D-23 must fail |
 | D-24 | Protocol 91, source-condition statement outside the mirrored availability block | Remove the installed-and-reachable requirement while preserving the adjacent proxy qualification; D-24 must fail, and restoring the statement must pass |
 
-Seventeen of the twenty-four plant into Protocol 91 because that is the canonical surface the suite
+Seventeen of the twenty-four cases (eighteen planted runs) target Protocol 91 because that is the canonical surface the suite
 exists to protect; each targets a different sentence, so no plant is masked by another rule. Where two
 cases read nearby text, the plant is chosen to change only the one case's answer — the implementer
 must confirm that from the per-case output, not assume it. See Implementation Order step 8.
@@ -1631,17 +1628,17 @@ following are the remaining documentation-only updates the developer must make:
 | --- | --- | --- | --- | --- |
 | R-1 | The three-entry default produces a reduced-coverage warning on machines missing a runtime, and operators read routine warnings as noise | High | Low | The warning names a reason and a remedy and never blocks; `.ai-dev-workflow.local.example.yaml` documents narrowing as the supported response. Decision 4 records the tradeoff explicitly. |
 | R-2 | Cross-runner `codex` dispatch returns free-form text and the verdict cannot be parsed | Medium | Medium | Decision 5 fixes a single-line `VERDICT:` contract and classifies any parse failure as a review failure, not unreachability. The invocation shape is already shipped and exercised (VL-6). |
-| R-3 | A hosted service installed but silent on the repository classifies `prerequisite-missing` (false Unreachable) | Medium | Low | Neither hosted reviewer is in the shipped default; the offered remedy (verify the app is installed) is correct either way. Recorded in the probe table, the runbook's Troubleshooting table, and the runbook's Known Limitations. |
+| R-3 | A hosted service with no visible issue comments, including review-only activity, can classify `prerequisite-missing` (false Unreachable) | Medium | Low | Neither hosted reviewer is in the shipped default. Verifying installation is a diagnostic, not proof that the signal will be repaired; the runbook names the comment-only limitation and local narrowing remedy. Recorded in the probe table, the runbook's Troubleshooting table, and the runbook's Known Limitations. |
 | R-12 | The gate re-derives reviewer names by splitting a display-only aggregate field, reintroducing the delimiter hole one layer up | Medium | Medium | D-22 asserts Protocol 91 instructs reading the indexed fields and never splitting the aggregates, and the contract labels the aggregates display-only at the point of definition. The aggregates render an unsafe value as `<entry N>` precisely so a gate that splits them anyway produces something obviously wrong rather than something plausibly wrong. |
 | R-11 | A hosted service that was uninstalled, suspended, or had its access revoked still shows historical activity and classifies `reachable` (false Reachable), so the gate dispatches a reviewer that is not there | Medium | Medium | **Decided tradeoff, not a defect to fix later — see Decision 8.** No mechanism available to the gate's user-token credentials can establish current installation and per-review enablement. The residual is handled at dispatch as a review failure under either policy, retaining its Reachable classification and preventing advancement on reduced coverage; correct the old header and mirrored Step 7a caller guidance that instead treated the timeout as unavailable. Blast radius is limited to repositories that opt a hosted reviewer into `review.on_draft.runner`, which the shipped default does not. Visible to operators in the probe table, the runbook's Troubleshooting table, and its Known Limitations; pinned by T-38 and D-21. |
 | R-4 | Two config readers now coexist — the Python resolver for Step 7a and the awk helpers for Step 7 — and could drift | Medium | Medium | Decision 2 names the resolver as authoritative for Step 7a and records the non-unification as deliberate; **Out-of-scope notes** carries it forward as a follow-up candidate. |
 | R-5 | Re-adding `codex-github` to Step 7a revives the async race #486 moved it out for | Low | Medium | Decision 7: it is canonical but not default, and its dispatch goes through `codex-github-reviewer.sh`, whose pre-trigger wait, retrigger, and exit-code contract were built after #486. |
 | R-6 | `run_bounded` duplicates `run_with_timeout` from `local-ai-reviewer.sh` | High | Low | Deliberate, recorded in **Out-of-scope notes**. Extracting the reviewer script's variant would change a heavily used Step 7 path for a Step 7a benefit, which the spec places out of scope. |
 | R-7 | The ceiling tests (T-7, T-40) assert a hard 10-second wall-clock bound and could flake on a heavily loaded CI runner | Medium | Low | The assertion is not loosened to accommodate load, because then it would stop testing the contract. Headroom comes from the budget instead: 8 seconds of work plus at most 2 seconds of documented cleanup equals the 10-second contract, so a run has to be delayed by more than two seconds of pure scheduling latency before it fails. If that proves too tight in practice the fix is to lower `AVAILABILITY_BUDGET_SECONDS`, which keeps the contract intact; raising the assertion would not. |
-| R-13 | The twenty-four planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Seventeen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
+| R-13 | The planted-violation proofs for all twenty-four cases are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Eighteen planted runs land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
 | R-8 | The doc-assertion suite (D-1 to D-24) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
 | R-9 | The change is reverted after operators retired their machine-local override on its advice, and the override file cannot be restored by any revert | Low | Medium | Retirement guidance says move the file aside rather than delete it, so a second `mv` restores it; the override is two keys and `.ai-dev-workflow.local.example.yaml` carries the shape. See **Reversal and Rollback** (c) — this is mitigated, not eliminated. |
-| R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 observe a runner honouring it, while Step 16 verifies its bounded entry path. The runbook's Troubleshooting table names a mismatch as a blocking implementation failure. The coverage map marks all twenty-eight gate-level criteria so no reviewer has to rediscover the distinction. |
+| R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 observe a runner honouring it, while Step 16 verifies its bounded entry path. The runbook's Troubleshooting table names a mismatch as a blocking implementation failure. The coverage map marks all twenty-nine gate-level criteria so no reviewer has to rediscover the distinction. |
 
 ---
 
@@ -1694,7 +1691,7 @@ imposes it and why it applies here. No step is left untraced.
    `bash scripts/development-workflow/select-test-suites.sh` against the change set and confirm the
    new suite appears in the selection, so no CI workflow edit is needed.
 
-5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-eight gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all enumerated regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
+5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-nine gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all enumerated regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
    *Verify*: `grep -n "runner identity is a sufficient proxy\|Reachability classification table\|default behavior: \`claude\`" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
    returns nothing; and read the Step 7a text end to end confirming every PR-state mutation follows determination: conversion to ready occurs only on
    proceed, and `gh pr ready --undo` occurs only to restore an already-ready blocked rerun.
@@ -1740,7 +1737,7 @@ imposes it and why it applies here. No step is left untraced.
 9. *(Repository process — `02-generate-implementation-plan-protocol.md` requires a sweep or pattern-completeness plan to name a residual verification strategy and produce its evidence before `ready-for-human-review`. It applies here because the* **Surfaces agree** *group is a pattern-completeness claim over a live file set that can grow between plan time and implementation time.)* **Re-run the residual verification** (VL-2 and L1) at the implementation head and record both
    outputs in the pull request, per **Residual verification strategy**.
 
-10. *(Both — `02-generate-implementation-plan-protocol.md` Step 4 requires a smoke runbook for every plan, and here it is also the only evidence for the twenty-eight gate-level criteria, which no automated suite can observe.)* **Execute the smoke test runbook**
+10. *(Both — `02-generate-implementation-plan-protocol.md` Step 4 requires a smoke runbook for every plan, and here it is also the only evidence for the twenty-nine gate-level criteria, which no automated suite can observe.)* **Execute the smoke test runbook**
    `docs/testing/workflow/1495-step-7a-capability-based-reachability.smoke-test.md` end to end and
    record the assertion results in the pull request.
 

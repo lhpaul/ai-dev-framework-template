@@ -489,7 +489,7 @@ pull request. Every criterion about dispatching, posting comments, and pull requ
 here, while Step 16 additionally checks the gate's bounded entry path. Do not skip these steps
 because the earlier resolver checks passed.
 
-**Maps to**: R1, R7, S1, O1, O3, O6, C1, C2, C3, P1, P4, P10 — the proceed-path gate behavior in the
+**Maps to**: R1, R7, S1, O1, O3, O6, C1, C2, C3, P1, P4, P5, P10 — the proceed-path gate behavior in the
 plan's acceptance-criterion coverage map.
 
 **Part 1 — every reviewer reachable**
@@ -510,6 +510,8 @@ reviewer with its display label, including the ones that ran. **No unreachabilit
 posted**, because nothing was unreachable. No message attributes anything to the driving runner's
 identity.
 
+Repeat the native-availability check for each supported driving session with `WORKFLOW_RUNNER_KIND` unset and its own CLI absent from the child process PATH. Use the shipped default and no local override. Inspect the real helper invocation: it must explicitly pass the actual session kind, artifact repo root, and target owner/repo. The native reviewer must remain Reachable and the gate must proceed (reduced coverage is expected for other absent runtimes). An `unknown` driver or zero-reachable block fails this handoff check. Restore PATH afterwards.
+
 **Part 2 — the fallback**
 
 1. On a scratch branch, remove `review.on_draft.runner` from `.ai-dev-workflow.yaml`, commit, and
@@ -522,13 +524,14 @@ reviewer for an `implementation-plan/*` branch — and dispatched it **exactly o
 configured entry and not zero times. The summary comment records that the fallback applied. The gate
 did not report success having dispatched nobody. Discard the scratch branch afterwards.
 
-**Part 3 — reduced coverage under `warn`**
+**Part 3 — reduced coverage under explicit and default `warn`**
 
 1. On the pull request from Part 1, put a local override in place naming one reachable reviewer and
    one reviewer whose runtime is not installed on this machine, keeping the policy at `warn`.
 2. Re-run Step 7a and read both the warning comment and the summary comment.
+3. Create another throwaway branch and pull request using Part 2's setup, and repeat with the same mixed reviewer list but remove only `internal_reviewers_unavailable_policy` from both the repository configuration and local override. Save their pre-part contents under `SMOKE_STATE` first and verify the backups before editing. Confirm the resolved record reports `POLICY=warn` and `POLICY_SOURCE=default`, then run the complete gate and check the same warning-before-dispatch behavior. Restore both pre-part configurations afterwards and discard this scratch branch; keep the original override backup pending until the Last Step or exit.
 
-**Expected result**: a warning comment was posted **before** any dispatch, naming the unreachable
+**Expected result, for both explicit and absent policy**: a warning comment was posted **before** any dispatch, naming the unreachable
 reviewer, its reason category, and a remedy, and stating which reviewers will run. The reachable
 subset was then dispatched. Nothing in the warning names a runner context. Remove the override
 afterwards.
@@ -896,7 +899,7 @@ gate ignores.
 | Every run reports `OUTCOME=blocked` with `BLOCK_CAUSE=zero-reachable` | A `.ai-dev-workflow.local.yaml` you forgot to move aside names reviewers this machine cannot reach | Check `LOCAL_OVERRIDE_STATE` in the verdict block; move the file aside and re-run |
 | `LOCAL_OVERRIDE_STATE` reports `present but unpropagated` | You are in a linked git worktree and the override lives in the main clone | Re-run with `--repo-root "$(pwd -P)"` from the worktree; do not copy the file in |
 | Hosted reviewers report `check-inconclusive` | `gh` is missing from the hermetic `PATH`, or not authenticated | Symlink `gh` into the fixture `bin` directory and confirm `gh auth status` succeeds |
-| `codex-github` or `coderabbit` reports `prerequisite-missing` on a repository where the app is installed | The app has never commented on this repository, so the activity signal finds nothing | Expected — see Known Limitations. Trigger the app once on any pull request, or leave the reviewer out of the list |
+| `codex-github` or `coderabbit` reports `prerequisite-missing` on a repository where the app is installed | No issue-comment activity is visible; the bot may be new or may only submit reviews/inline comments, which this endpoint omits | Expected — see Known Limitations. Arrange for a real bot-authored issue comment if the service supports it, or leave the reviewer out of the list; a review-only trigger does not repair this signal |
 | A Step 7, 9, or 10 fixture edit changes nothing | The line the `awk` or `sed` pattern matches was reworded during implementation | Each of those steps prints the edited region with `grep` before running the resolver — read that output and adjust the pattern before trusting the verdict |
 | Step 6 or Step 16 prints `CEILING FAIL` | The ten-second contract was exceeded. On a host without GNU `timeout` the poll fallback adds up to one second and the `SIGTERM`-to-`SIGKILL` grace adds one more, which is why the internal budget is eight | Report it. Do not widen the assertion — the fix is to lower `AVAILABILITY_BUDGET_SECONDS` so cleanup fits inside ten, per the plan's budget arithmetic |
 | Step 6 or Step 16 never returns at all | A call is unbounded — the defect Decision 11 exists to close | Report it as a blocking implementation failure |
@@ -911,7 +914,7 @@ gate ignores.
   mechanism available to the gate's user-token credentials can establish that, so the probe reads
   recent repository comment activity instead. It is wrong in two ways, both accepted under the plan's
   Decision 8:
-  - An App installed but never active on this repository classifies `prerequisite-missing` even
+  - An App installed but with no visible issue comments (including one that only posts reviews or inline review comments) classifies `prerequisite-missing` on a short unmatched page even
     though it would work.
   - An App that has been uninstalled, suspended, or had its access revoked still shows historical
     activity and classifies `reachable`. It is then dispatched and times out, and that timeout is
@@ -931,7 +934,7 @@ gate ignores.
   conversion must not happen on a run that then blocks.
 - Steps 13 and 14 require a real pull request and a real runner, so they cannot be scripted. Step 16 also requires the real gate for its second part; the other
   resolver checks run against fixtures. These are the steps that observe gate behavior:
-  the plan's coverage map marks twenty-eight criteria as gate-level, and for those the automated
+  the plan's coverage map marks twenty-nine criteria as gate-level, and for those the automated
   evidence proves only that Protocol 91 instructs the behavior, never that a runner produced it.
 - Step 13 Part 2 needs a scratch branch carrying a modified `.ai-dev-workflow.yaml`, because the
   fallback path cannot be reached from a local override alone — an override that defines no list
