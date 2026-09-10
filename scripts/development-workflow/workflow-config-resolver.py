@@ -116,12 +116,44 @@ def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | 
     return key, value if value != "" else None
 
 
-def parse_scalar(value: str) -> Any:
+def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
+    """Reject syntax the review-effective reader must not reinterpret."""
+    in_single = False
+    in_double = False
+    escaped = False
+    for char in value:
+        if escaped:
+            escaped = False
+        elif char == "\\" and in_double:
+            escaped = True
+        elif char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+    if in_single or in_double:
+        raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
+    # The legacy subset never interpreted flow mappings.  Treating one as a
+    # string in review-effective would turn a non-scalar policy into an
+    # unsupported scalar, so reject unsupported non-empty flow mappings.
+    if value.startswith("{") and value.endswith("}") and value != "{}":
+        raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
+
+
+def parse_scalar(
+    value: str, *, review_effective: bool = False, path: Path | None = None, line_no: int | None = None
+) -> Any:
+    if review_effective:
+        assert path is not None and line_no is not None
+        validate_review_scalar(value, path, line_no)
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
         if not inner:
             return []
-        return [parse_scalar(item.strip()) for item in split_inline_list(inner) if item.strip()]
+        return [
+            parse_scalar(item.strip(), review_effective=review_effective, path=path, line_no=line_no)
+            for item in split_inline_list(inner)
+            if item.strip()
+        ]
     if value in {"''", '""'}:
         return ""
     if (value.startswith("'") and value.endswith("'")) or (
@@ -190,7 +222,9 @@ def parse_mapping(
         key, value = split_key_value(content, path, line_no)
         index += 1
         if value is not None:
-            result[key] = parse_scalar(value)
+            result[key] = parse_scalar(
+                value, review_effective=preserve_empty_values, path=path, line_no=line_no
+            )
             continue
         if index >= len(lines) or lines[index][0] <= indent:
             result[key] = None if preserve_empty_values else {}
@@ -275,14 +309,20 @@ def parse_list(
                     child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
                 item_map = {key: child}
             else:
-                item_map = {key: parse_scalar(value) if value is not None else {}}
+                item_map = {
+                    key: parse_scalar(
+                        value, review_effective=preserve_empty_values, path=path, line_no=line_no
+                    ) if value is not None else {}
+                }
             if value is not None and index < len(lines) and lines[index][0] == indent + 2:
                 continuation, index = parse_mapping(lines, index, indent + 2, path, preserve_empty_values=preserve_empty_values)
                 for continuation_key, continuation_value in continuation.items():
                     item_map[continuation_key] = continuation_value
             result.append(item_map)
         else:
-            result.append(parse_scalar(item))
+            result.append(
+                parse_scalar(item, review_effective=preserve_empty_values, path=path, line_no=line_no)
+            )
     return result, index
 
 
@@ -1110,7 +1150,7 @@ def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
 def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     """Resolve the Step 7a config without collapsing parse-state distinctions."""
     repo_root = repo_root_from_args(args.repo_root)
-    if not repo_root.is_dir():
+    if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
         raise ConfigError(f"{repo_root}: repository root is not a readable directory")
 
     shared_path = repo_root / ".ai-dev-workflow.yaml"
@@ -1146,11 +1186,13 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         })
         return base
 
+    parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
         # A linked worktree's product-repos-only local file must not mask the
         # main clone's review settings (#1560).
         if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
+            parse_path = main_clone_file
             main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
             if "review" in main_local:
                 local_path, local_origin, local = main_clone_file, "main_clone", main_local
@@ -1160,7 +1202,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     except ConfigError as exc:
         base.update({
             "effective_policy_state": "unreadable",
-            "unreadable_file": str(local_path),
+            "unreadable_file": str(parse_path),
             "unreadable_detail": str(exc),
         })
         return base
@@ -1183,6 +1225,12 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         (local_policy_raw, True, str(local_path)) if local_policy_present else (shipped_policy_raw, shipped_policy_present, str(shared_path) if shipped_policy_present else "")
     )
     effective_policy, policy_input, effective_policy_state = review_policy_state(policy_raw, policy_present)
+    if effective_policy_state == "unreadable":
+        base["unreadable_file"] = policy_source
+        base["unreadable_detail"] = (
+            "review.internal_reviewers_unavailable_policy must be a scalar string; "
+            f"received {type(policy_raw).__name__}"
+        )
 
     base.update({
         "effective_runner": effective_runner,

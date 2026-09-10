@@ -1035,7 +1035,8 @@ assert_review_effective_states "E-5" defined absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex'
 assert_review_effective_states "E-6" malformed absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: {a: b}'
-assert_review_effective_states "E-7" malformed absent
+assert_review_effective_states "E-7" malformed unreadable
+run_contains "review-effective E-7 flow mapping detail" "flow mappings" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '    # no entries' '    github: []'
 assert_review_effective_states "E-8" empty absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [ claude , codex ]'
@@ -1103,6 +1104,11 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: ~'
 assert_review_effective_states "E-29 tilde" empty absent
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {}'
 assert_review_effective_states "E-30 mapping" absent unreadable
+run_test "review-effective E-30 type-error file" "$review_effective_dir/.ai-dev-workflow.yaml" "$(review_effective_state unreadable_file)"
+run_contains "review-effective E-30 type-error detail" "must be a scalar string" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {mode: warn}'
+assert_review_effective_states "E-30 flow mapping" malformed unreadable
+run_contains "review-effective E-30 flow mapping detail" "flow mappings" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:'
 assert_review_effective_states "E-30 bare" absent empty
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: null'
@@ -1115,6 +1121,9 @@ assert_review_effective_states "E-32 scalar colons" defined absent
 run_test "review-effective E-32 scalar colons values" '["foo: bar","foo: bar","https://example.test"]' "$(review_effective_json | jq -c '.effective_runner')"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - key: value'
 assert_review_effective_states "E-32 mapping" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["codex]'
+assert_review_effective_states "E-32 unterminated quote" malformed unreadable
+run_contains "review-effective E-32 unterminated quote detail" "unterminated quoted scalar" "$(review_effective_state unreadable_detail)"
 
 echo ""
 echo "Passed: $PASS_COUNT"
