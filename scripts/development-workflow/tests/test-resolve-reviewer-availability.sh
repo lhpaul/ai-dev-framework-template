@@ -226,6 +226,9 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     for scalar in ('"foo: bar"', "'foo: bar'", 'https://example.test'):
         reset('[codex, '+scalar+']');d=run('codex')
         check(f'T-49 flow scalar preserved {scalar}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_2_NAME']==scalar.strip("\"'") and d['REVIEWER_2_REASON']=='value-not-supported',d)
+    for scalar in ("it's", 'a"b', "'quoted, name'", '"quoted, name"'):
+        reset('['+scalar+', codex]');d=run('codex')
+        check(f'T-49 flow entry boundaries preserved {scalar}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_COUNT']=='2' and d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_2_NAME']=='codex' and d['REVIEWER_2_STATUS']=='reachable',d)
     for reviewer,login in (('codex-github','chatgpt-codex-connector[bot]'),('coderabbit','coderabbitai[bot]')):
         reset(f'[{reviewer}]')
         new=[{'user':{'login':login}}]+[{'user':{'login':'other'}}]*99
