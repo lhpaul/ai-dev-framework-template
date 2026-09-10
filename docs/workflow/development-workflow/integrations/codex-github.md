@@ -150,12 +150,9 @@ does not prove installation: historical activity can be stale and a new or
 review-only installation can have no issue-comment activity. See the existing
 verification checklist below before opting in.
 
-<!-- codex-github runner reviewer dispatch -->
-`codex-github` needs no local Codex runtime, so no driving runner is inherently
-barred. Its bounded activity proxy reports `prerequisite-missing` for no bot
-activity on a complete short page and `check-inconclusive` for a full unmatched
-page; post-dispatch errors remain review failures.
-<!-- /codex-github runner reviewer dispatch -->
+<!-- step7a-codex-github-availability:start -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
+<!-- step7a-codex-github-availability:end -->
 
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
 

@@ -1499,6 +1499,7 @@ Do not read configuration or mutate PR state before the availability helper has
 returned a proceed verdict. Its indexed reviewer records are the sole source for
 this check. This keeps configuration resolution within the bounded availability
 window and leaves a blocked draft PR draft.
+There is no independent `review-effective` or `review-overrides` call.
 
 After a proceed verdict, check draft state with `gh pr view <pr_number> --json
 isDraft --jq '.isDraft'`. If it is draft and the indexed records include the
@@ -1621,6 +1622,13 @@ display-only and must never be split or `eval`ed. The helper reports local
 override state and `override-excluded` records, which are deliberate omissions
 and never unreachability warnings.
 
+On exit `0`, dispatch each indexed reachable reviewer. When
+`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer
+exactly once. No reviewer is dispatched until the resolver returns and the
+policy has been applied; a verdict from an earlier cycle is never reused.
+The invocation passes `--runner-kind <actual-driving-session-kind>` and is
+never a value inferred from PATH, the reviewer list, or inherited environment.
+
 ### Runtime-availability check
 
 Availability follows capability at the moment of the run. A matching driving
@@ -1632,6 +1640,13 @@ unreachable. The helper finishes within its fixed ten-second budget and emits
 is read-only: do not review, post a comment, alter the PR, install software, or
 substitute a reviewer while it runs.
 
+| Reason | Remedy |
+| --- | --- |
+| `runtime-absent` | Make the required runtime available. |
+| `prerequisite-missing` | Satisfy the named repository prerequisite. |
+| `check-inconclusive` | Retry after the bounded check can complete. |
+| `value-not-supported` | Correct the configured reviewer value. |
+
 Hosted-service availability is decided at runtime from whether the service is
 installed and reachable. Where the service is not installed and reachable it is
 unavailable with a named reason. The repository-activity signal used for
@@ -1641,13 +1656,12 @@ new or review-only installation can be false Unreachable. Decision 8 waives
 literal verification of both directions for this implementation. A reviewer
 that then fails, errors, times out, or has no verdict is a review failure under
 either policy, never an unreachability reclassification.
+This accepted proxy, not proof of installation, retains its false Reachable
+case and the review failure under either policy boundary.
 
-<!-- codex-github runner reviewer dispatch -->
-`codex-github` needs no local Codex runtime, so no driving runner is inherently
-barred. Its bounded activity proxy reports `prerequisite-missing` for no bot
-activity on a complete short page and `check-inconclusive` for a full unmatched
-page; retain the false-classification and post-dispatch review-failure rules.
-<!-- /codex-github runner reviewer dispatch -->
+<!-- step7a-codex-github-availability:start -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
+<!-- step7a-codex-github-availability:end -->
 
 #### Policy resolution
 
@@ -1677,7 +1691,7 @@ Allowed values: `warn` (default), `fail-if-any-unavailable`.
 | Reviewer list malformed                                   | Any                       | **Hard-fail** with `BLOCK_CAUSE=list-malformed`; dispatch nobody and restore an already-ready PR to draft. |
 | No configured list and no driving runner                  | Any                       | **Hard-fail** with `BLOCK_CAUSE=no-driving-runner`. |
 | Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
-| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
+| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post the reason-and-remedy warning, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
 | Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
 | All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
 
@@ -1720,6 +1734,10 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case C — blocking configuration input:** report `BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`, or `no-driving-runner`), the resolver's local override state, the named file or value, and a corrective action. On every block path, including helper exit `2`, read current draft state after determination; if already ready, run `gh pr ready <pr_number> --undo`, verify `isDraft: true`, then post the block report. Do not dispatch a reviewer or convert a draft PR on a block path.
 
+Every configured reviewer with its verdict is included in each hard-fail report.
+
+Treat helper exit `1` and exit `2` (`availability-resolver-failed`) alike: dispatch nobody, never convert to ready, restore an already-ready PR only after determination, and escalate to a human.
+
 ### Reviewer dispatch map
 
 For each reviewer in the resolved list, dispatch the stage-appropriate agent:
@@ -1751,6 +1769,7 @@ For `codex-github`, exit `0` approves, `1` enters revision, `2` and `3` are
 review failures, and `4` waits for the reviewer. A non-zero CLI exit, timeout,
 permission denial, or missing/ambiguous verdict is a review failure, not an
 availability result.
+Every dispatched failure is a review failure under either policy.
 
 ### Branch-type detection
 
@@ -1808,6 +1827,7 @@ A Step 7a summary comment **must always be posted to the PR** when the gate exit
 
 Include a per-reviewer verdict for every configured reviewer, with its display
 label and its reason and remedy when unreachable, plus the gate outcome.
+Override-excluded entries appear in the summary and never in the warning.
 
 Required fields:
 

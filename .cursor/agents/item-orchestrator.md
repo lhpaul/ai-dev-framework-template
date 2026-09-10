@@ -202,9 +202,11 @@ resetting, restoring, stashing, committing, or deleting suspect changes.
 
 This rule prevents Protocol 90 Step 5.2 from firing the "wrong branch + clean" auto-correct on every item in a batch. Omitting this return step was the root cause of repeated Step 5.2 violations in serial batches.
 
-<!-- codex-github runner reviewer dispatch -->
-**`codex-github` runner reviewer dispatch**: When `codex-github` is listed in `review.on_draft.runner`, invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>`. It needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page, subject to documented false classifications. Exit `0` approves, `1` enters revision, `2` and `3` are post-dispatch review failures, and `4` remains waiting; do not reclassify a dispatch failure as unavailable.
-<!-- /codex-github runner reviewer dispatch -->
+<!-- step7a-codex-github-availability:start -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
+<!-- step7a-codex-github-availability:end -->
+
+**`codex-github` runner reviewer dispatch**: invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>`. Exit `0` approves, `1` enters revision, `2` and `3` are review failures, and `4` remains waiting.
 
 **Permission-denial protocol (subagent runs only)**: If the `Edit` or `Write` tool is denied for **any path** — including `.claude/agents/**`, `.cursor/agents/**`, or any other file — the subagent MUST immediately stop all further work and return:
 
