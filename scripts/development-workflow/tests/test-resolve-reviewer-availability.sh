@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# covers: scripts/development-workflow/resolve-reviewer-availability.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py scripts/development-workflow/workflow-lib.sh
+# Hermetic PATHs; all reviewer commands and GitHub calls are fake.
+set -euo pipefail
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+python3 - "$SCRIPT_DIR/.." <<'PY'
+import json, os, pathlib, shutil, subprocess, sys, tempfile, time
+
+scripts = pathlib.Path(sys.argv[1]).resolve()
+helper = scripts / 'resolve-reviewer-availability.sh'
+real_python = sys.executable
+bash = '/bin/bash'
+passed = 0
+outputs = []
+
+def check(name, condition, detail=''):
+    global passed
+    if not condition:
+        raise AssertionError(f'{name}: {detail}')
+    passed += 1
+    print(f'PASS: {name}', flush=True)
+
+with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
+    root = pathlib.Path(tmp).resolve()
+    repo = root / 'repository with spaces'
+    repo.mkdir()
+    bins = root / 'bin'
+    bins.mkdir()
+    for command in ('bash','sh','cat','chmod','date','dirname','jq','mktemp','perl','rm','sleep','touch'):
+        executable = shutil.which(command)
+        if executable:
+            (bins / command).symlink_to(executable)
+    (bins / 'python3').symlink_to(real_python)
+    env = {**os.environ, 'PATH':str(bins), 'TMPDIR':str(root)}
+    for key in list(env):
+        if key.startswith(('WORKFLOW_REVIEWER_AVAILABILITY_', 'CODEX_GITHUB_')) or key == 'WORKFLOW_RUNNER_KIND':
+            del env[key]
+    cfg = repo / '.ai-dev-workflow.yaml'
+    local = repo / '.ai-dev-workflow.local.yaml'
+    log = root / 'gh.log'
+    activity = root / 'activity.json'
+
+    def fake(command, body):
+        path = bins / command
+        path.unlink(missing_ok=True)  # Never follow a dependency symlink when writing a fake.
+        path.write_text('#!/bin/bash\n'+body+'\n')
+        path.chmod(0o755)
+
+    def reset(runners='[codex]', policy=None):
+        for command in ('claude','cursor-agent','codex','gh','python3'):
+            (bins / command).unlink(missing_ok=True)
+        (bins / 'python3').symlink_to(real_python)
+        local.unlink(missing_ok=True)
+        (repo / '.git').unlink(missing_ok=True) if (repo / '.git').is_file() else None
+        (repo / '.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n')
+        cfg.write_text('review:\n' + (f'  on_draft:\n    runner: {runners}\n' if runners is not None else '') + (f'  internal_reviewers_unavailable_policy: {policy}\n' if policy is not None else ''))
+        log.write_text('')
+        activity.write_text('[]')
+
+    def gh(comments=None, body=None):
+        if comments is not None:
+            activity.write_text(json.dumps(comments))
+        fake('gh', f'printf "%s\\n" "$*" >> {str(log)!r}\n'+ (body or f'cat {str(activity)!r}'))
+
+    def run(driver='claude', expected=0, extra_env=None, arguments=None):
+        started = time.monotonic()
+        result = subprocess.run([bash,str(helper), '--repo-root',str(repo), '--owner','example','--repo','test', '--runner-kind',driver] if arguments is None else [bash,str(helper),*arguments], env={**env,**(extra_env or {})}, text=True, capture_output=True, timeout=12)
+        elapsed = time.monotonic()-started
+        assert elapsed <= 10.0, (elapsed,result.stdout,result.stderr)
+        assert result.returncode == expected, (result.returncode,expected,result.stdout,result.stderr)
+        rows = result.stdout.splitlines()
+        assert all('=' in row for row in rows), result.stdout
+        data = dict(row.split('=',1) for row in rows)
+        assert len(data)==len(rows), result.stdout
+        if 'OUTCOME' in data:
+            assert float(data['ELAPSED_SECONDS']) <= 10.0
+            outputs.append(data)
+        return data
+
+    def value(data, key, expected):
+        assert data.get(key)==expected, (key,data.get(key),expected,data)
+
+    reset(); fake('codex','exit 0'); d=run()
+    check('T-1 cross-runtime callable', d['REVIEWER_1_STATUS']=='reachable' and d['REVIEWER_1_REASON']==d['REVIEWER_1_REMEDY']=='' and d['REVIEWER_COUNT']=='1')
+    (bins/'codex').unlink();d=run(expected=1)
+    check('T-2 runtime absent / guard plant', d['REVIEWER_1_REASON']=='runtime-absent' and d['BLOCK_CAUSE']=='zero-reachable')
+    fake('codex','exit 0');check('T-2 repaired guard', run()['OUTCOME']=='proceeded')
+    reset('[claude]');check('T-3 native without CLI', run()['REVIEWER_1_STATUS']=='reachable')
+    check('T-4 other runner absent',run('cursor',1)['REVIEWER_1_REASON']=='runtime-absent')
+    reset();fake('codex','exit 1');check('T-5 error is inconclusive',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
+    fake('codex','sleep 30');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
+    check('T-6 probe bound', 'bound' in d['REVIEWER_1_DETAIL'])
+    reset('[claude, cursor, codex, coderabbit, codex-github]')
+    for binary in ('claude','cursor-agent','codex'): fake(binary,'sleep 30')
+    gh(body='sleep 30');d=run('unknown',1)
+    check('T-7 exact ten-second ceiling',d['REVIEWER_COUNT']=='5' and d['BUDGET_SECONDS']=='8')
+    reset('[not-a-reviewer]');d=run(expected=1)
+    check('T-8 unsupported',d['REVIEWER_1_NAME']=='not-a-reviewer' and d['REVIEWER_1_REASON']=='value-not-supported')
+    reset('[not-a-reviewer, codex]');fake('codex','exit 0');d=run();check('T-9 reduced',d['OUTCOME']=='proceeded-reduced')
+    reset(None);check('T-10 absent fallback',run()['FALLBACK_APPLIED']=='true')
+    reset('[]');check('T-11 empty fallback',run()['CONFIG_LIST_STATE']=='empty')
+    check('T-12 unknown fallback blocked',run('unknown',1)['BLOCK_CAUSE']=='no-driving-runner')
+    reset('codex');check('T-13 malformed plant',run('codex',1)['BLOCK_CAUSE']=='list-malformed')
+    reset('[codex]');check('T-13 repaired guard',run('codex')['OUTCOME']=='proceeded')
+    # A genuinely clean git fixture, with outputs/temporary artifacts outside it.
+    subprocess.run(['git','init','-q',str(repo)],check=True)
+    subprocess.run(['git','-C',str(repo),'add','.'],check=True)
+    subprocess.run(['git','-C',str(repo),'-c','user.name=Test','-c','user.email=test@example.test','commit','-qm','fixture'],check=True)
+    run('codex')
+    check('T-14 tracked checkout purity',subprocess.check_output(['git','-C',str(repo),'status','--porcelain'])==b'')
+    shutil.rmtree(repo/'.git')
+    reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}]);run()
+    check('T-15 GET-only purity', log.read_text().splitlines()==['api repos/example/test/issues/comments?per_page=100&sort=created&direction=desc'])
+    reset('[not-a-reviewer, codex]','fail-if-any-unavailable');fake('codex','exit 0');d=run(expected=1)
+    check('T-16 strict plant',d['BLOCK_CAUSE']=='policy-forbids-reduced-coverage' and d['REVIEWER_2_STATUS']=='reachable')
+    cfg.write_text(cfg.read_text().replace('fail-if-any-unavailable','warn'));check('T-16 repaired policy',run()['OUTCOME']=='proceeded-reduced')
+    reset(None,'maybe');d=run('codex',1);check('T-17 policy before fallback',d['CONFIG_LIST_STATE']=='not-evaluated' and d['POLICY']=='')
+    reset(None);d=run('codex');check('T-18 default repair',d['POLICY_SOURCE']=='default' and d['OUTCOME']=='proceeded')
+    reset('[codex, cursor]');d=run('codex');check('T-18 mixed default',d['POLICY_SOURCE']=='default' and d['OUTCOME']=='proceeded-reduced')
+    reset('[claude, cursor, codex]');local.write_text('review:\n  on_draft:\n    runner: [codex]\n');d=run('codex')
+    check('T-19 override exclusions',d['OVERRIDE_EXCLUDED']=='claude,cursor' and d['UNREACHABLE']=='')
+    d=run('unknown',1);check('T-20 resolved override origin',str(local) in d['LOCAL_OVERRIDE_STATE'] and 'applied' in d['LOCAL_OVERRIDE_STATE'])
+    reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}]);check('T-21 hosted enabled',run()['REVIEWER_1_STATUS']=='reachable')
+    gh([]);check('T-22 hosted missing',run(expected=1)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
+    reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
+    d=run(expected=2,arguments=['--repo-root',str(repo)])
+    check('T-26 invocation failure has no verdict','OUTCOME' not in d)
+    reset();cfg.write_text('review:\n  broken mapping\n');d=run('codex',1)
+    check('T-31 broken file plant',d['BLOCK_CAUSE']=='policy-unreadable' and d['CONFIG_LIST_STATE']=='not-evaluated')
+    reset();check('T-31 repaired availability guard',run('codex')['OUTCOME']=='proceeded')
+    reset();a=run(expected=1);fake('codex','exit 0');b=run();(bins/'codex').unlink();c=run(expected=1)
+    check('T-32 fresh absent/present/absent',[x['REVIEWER_1_STATUS'] for x in (a,b,c)]==['unreachable','reachable','unreachable'])
+    shipped=(scripts.parent.parent/'.ai-dev-workflow.yaml').read_text()
+    for driver in ('claude','cursor','codex'):
+        reset();cfg.write_text(shipped);d=run(driver)
+        check(f'T-33 / T-44 shipped native {driver}',d['OUTCOME']!='blocked' and driver in d['REACHABLE'].split(','))
+    reset('[claude,cursor,codex]');main=root/'main';wtgit=main/'.git/worktrees/linked';wtgit.mkdir(parents=True)
+    (wtgit/'commondir').write_text('../..\n');(repo/'.git').write_text(f'gitdir: {wtgit}\n')
+    (main/'.ai-dev-workflow.local.yaml').write_text('review:\n  on_draft:\n    runner: [codex]\n')
+    d=run('codex');check('T-34 main-clone override', 'main_clone' in d['LOCAL_OVERRIDE_STATE'])
+    reset('[codex]','[warn]');d=run('codex',1);check('T-35 non-scalar policy',d['POLICY_STATE']=='unreadable' and d['POLICY']=='')
+    reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'},'created_at':'2000-01-01T00:00:00Z'}]);check('T-38 historical proxy',run()['REVIEWER_1_STATUS']=='reachable')
+    for name in ('codex, claude','my reviewer','a, b c',"it's",''):
+        reset(json.dumps([name]));d=run(expected=1)
+        check(f'T-39 / T-44 lossless {name!r}',d['REVIEWER_COUNT']=='1' and d['REVIEWER_1_NAME']==name and d['CONFIGURED']=='<entry 1>')
+    reset();fake('python3','sleep 30');d=run(expected=1)
+    check('T-40 config timeout ceiling',d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0' and d['POLICY_STATE']==d['CONFIG_LIST_STATE']=='not-evaluated')
+    fake('python3','echo deliberate-parser-error >&2; exit 2');check('T-41 config invocation error','OUTCOME' not in run(expected=2))
+    reset();payload=json.loads(subprocess.check_output([real_python,str(scripts/'workflow-config-resolver.py'),'review-effective','--repo-root',str(repo)]))
+    name='bad\tname\nOUTCOME=forged\\tail';payload['effective_runner']=[name]
+    payload_file=root/'payload.json';payload_file.write_text(json.dumps(payload));fake('python3',f'cat {str(payload_file)!r}')
+    d=run(expected=1);check('T-42 escaped JSON transport',d['REVIEWER_1_NAME']=='bad\\tname\\nOUTCOME=forged\\\\tail' and d['OUTCOME']=='blocked')
+    for driver in ('claude','cursor','codex'):
+        earlier=[x for x in ('claude','cursor','codex') if x!=driver]
+        reset(json.dumps(earlier+[driver,'not-a-reviewer']))
+        for binary in ('claude','cursor-agent','codex'):fake(binary,'sleep 30')
+        d=run(driver,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
+        check(f'T-43 native survives budget {driver}',d['REVIEWER_3_STATUS']=='reachable' and d['REVIEWER_4_REASON']=='value-not-supported' and d['OUTCOME']=='proceeded-reduced')
+    reset('[claude,cursor,codex]');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('codex')
+    check('T-45 empty override fallback',d['REVIEWER_COUNT']=='3' and d['OVERRIDE_EXCLUDED']=='claude,cursor,codex' and d['FALLBACK_APPLIED']=='true' and not d['UNREACHABLE'])
+    for engine in ('fallback', 'timeout-leader-exit'):
+        if engine == 'timeout-leader-exit':
+            # Mimic GNU timeout's owned group and immediate return when the
+            # monitored leader exits on TERM, leaving its descendant alive.
+            fake('timeout', """shift
+bound=$1
+shift
+exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid=fork(); die unless defined $pid; if (!$pid) {$SIG{TERM}="DEFAULT"; exec @ARGV; die;} my $timed=0; $SIG{ALRM}=sub {$timed=1; kill "TERM", -$$;}; alarm $bound; while (waitpid($pid,0) < 0) {} exit($timed ? 124 : ($? >> 8));' -- "$bound" "$@""" + '"')
+        for command,reviewer in (('codex','codex'),('gh','codex-github')):
+            reset(f'[{reviewer}]');pidfile=root/'descendant.pid'
+            fake(command, f'trap "exit 0" TERM\n( trap "" TERM; sleep 30 ) &\nprintf "%s\\n" "$!" > {str(pidfile)!r}\nwait')
+            d=run(expected=1)
+            pid=int(pidfile.read_text());gone=False
+            for _ in range(30):
+                try:os.kill(pid,0)
+                except ProcessLookupError:gone=True;break
+                time.sleep(.05)
+            check(f'T-46 {engine} descendant cleanup {command}',gone and d['REVIEWER_1_REASON']=='check-inconclusive')
+    (bins/'timeout').unlink(missing_ok=True)
+    reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}],body=f'if [ "$1" = auth ]; then sleep 30; else cat {str(activity)!r}; fi')
+    run();gh(body='if [ "$1" = auth ]; then sleep 30; else sleep 30; fi');run(expected=1)
+    check('T-47 no auth preflight','auth' not in log.read_text())
+    reset('[codex]','"bad policy"');d=run(expected=1)
+    check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
+    reset('[codex]','{}');d=run(expected=1)
+    check('T-48 collection diagnostics',d['POLICY_INPUT']=='{}' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']), d)
+    reset('[codex]','{foo: bar}');d=run(expected=1)
+    check('T-48 nonempty flow-map diagnostics',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
+    for malformed in ('["codex]', '[codex'):
+        reset(malformed);d=run(expected=1)
+        check(f'T-31 malformed YAML {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'] and d['CONFIG_LIST_STATE']=='not-evaluated',d)
+    for scalar in ('"foo: bar"',"'foo: bar'",'https://example.test'):
+        reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - '+scalar+'\n');d=run(expected=1)
+        check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_1_REASON']=='value-not-supported')
+    cfg.write_text('review:\n  on_draft:\n    runner:\n      - key: value\n');check('T-49 mapping',run(expected=1)['BLOCK_CAUSE']=='list-malformed')
+    for reviewer,login in (('codex-github','chatgpt-codex-connector[bot]'),('coderabbit','coderabbitai[bot]')):
+        reset(f'[{reviewer}]')
+        new=[{'user':{'login':login}}]+[{'user':{'login':'other'}}]*99
+        activity.write_text(json.dumps(new));gh(body=f'case "$*" in *"sort=created&direction=desc"*) cat {str(activity)!r} ;; *) printf "[]" ;; esac')
+        check(f'T-50 newest activity {reviewer}',run()['REVIEWER_1_STATUS']=='reachable')
+        gh([{'user':{'login':'other'}}]*100);d=run(expected=1);check(f'T-50 incomplete {reviewer}',d['REVIEWER_1_REASON']=='check-inconclusive' and d['REVIEWER_1_DETAIL']=='activity coverage incomplete')
+        gh([]);d=run(expected=1);check(f'T-50 review-only absent {reviewer}',d['REVIEWER_1_REASON']=='prerequisite-missing' and all('/issues/comments?' in line for line in log.read_text().splitlines()))
+    # Cross-case invariant checks include successes, policy blocks, and exclusions.
+    for d in outputs:
+        for n in range(1,int(d['REVIEWER_COUNT'])+1):
+            name=d[f'REVIEWER_{n}_NAME'];status=d[f'REVIEWER_{n}_STATUS'];reason=d[f'REVIEWER_{n}_REASON'];remedy=d[f'REVIEWER_{n}_REMEDY']
+            assert not(name in ('coderabbit','codex-github') and reason=='runtime-absent')
+            assert not(name in ('claude','cursor','codex') and reason=='prerequisite-missing')
+            if status=='unreachable':assert reason in ('runtime-absent','prerequisite-missing','check-inconclusive','value-not-supported') and remedy
+            else:assert reason==remedy==''
+            assert d['RUNNER_KIND'] not in d[f'REVIEWER_{n}_DETAIL'], d
+    check('T-25 / T-36 / T-37 reason and remedy invariants',True)
+print(f'{passed} availability assertions passed')
+PY
