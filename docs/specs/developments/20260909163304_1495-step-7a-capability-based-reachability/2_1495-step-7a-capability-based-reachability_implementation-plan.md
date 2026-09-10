@@ -458,6 +458,7 @@ control character is transported verbatim with no delimiter anywhere in the path
 | `shipped_runner` | array of strings — the `.ai-dev-workflow.yaml` list, for reporting what an override replaced |
 | `override_excluded` | array of strings — entries in `shipped_runner` that the override left out; `[]` when no override is in effect |
 | `effective_policy` | string — `warn` / `fail-if-any-unavailable` / the offending raw value / `""` |
+| `policy_input` | JSON value — original policy scalar or collection; `null` when absent or not evaluated. Preserve type so the shell can report malformed collections as JSON |
 | `effective_policy_state` | string — `defined` / `absent` / `empty` / `unsupported` / `unreadable` |
 | `effective_policy_source` | string — absolute path of the file the policy came from, `""` when none |
 | `unreadable_file` | string — absolute path of the configuration file that would not parse, `""` when none |
@@ -523,10 +524,13 @@ REVIEWER_1_DETAIL=<what the probe saw>
 ...one such group per configured entry, numbered from 1 in configured order...
 RUNNER_KIND=<claude|cursor|codex|unknown>
 BUDGET_SECONDS=8
-ELAPSED_SECONDS=<integer>
-POLICY=<warn|fail-if-any-unavailable>
+ELAPSED_SECONDS=<decimal seconds including cleanup>
+POLICY=<warn|fail-if-any-unavailable|>
+POLICY_INPUT=<raw scalar, or JSON for a non-scalar; empty when absent or not evaluated>
 POLICY_SOURCE=<path|default>
 POLICY_STATE=<defined|absent|empty|unsupported|unreadable|not-evaluated>
+UNREADABLE_FILE=<configuration path, empty unless unreadable>
+UNREADABLE_DETAIL=<parse/type error, empty unless unreadable>
 CONFIG_LIST_STATE=<defined|absent|empty|malformed|not-evaluated>
 CONFIG_LIST_SOURCE=<path|>
 LOCAL_OVERRIDE_STATE=<none|<file> (<origin>), applied|present but unpropagated: <file>>
@@ -543,8 +547,13 @@ BLOCK_CAUSE=<none|config-resolution-inconclusive|policy-unreadable|policy-unsupp
 value containing commas or whitespace needs no escaping and cannot split a field. Every value is
 written with `print_kv_escaped` (`workflow-lib.sh:543`), which escapes backslash, carriage return,
 newline, and tab, so no configured value can forge a line break or a second field either. A consumer
-that needs a reviewer's name, status, reason, remedy, or detail reads the indexed fields; nothing
-else in the block is a parsing surface (Decision 10).
+that needs a reviewer's name, status, reason, remedy, or detail reads the indexed fields.
+The scalar state and diagnostic fields are also parsing surfaces; only the four aggregate reviewer
+lists are display-only (Decision 10). `POLICY` is empty on unsupported, unreadable, or not-evaluated
+paths. Preserve `POLICY_INPUT` from the JSON resolver's `policy_input` value and render non-scalars as JSON.
+Carry `UNREADABLE_FILE` and `UNREADABLE_DETAIL` from the resolver, including type errors at a known
+policy path. The gate quotes these fields in its block report, without rerunning configuration
+resolution. T-48 and D-18 verify the diagnostic path end to end to the gate instructions.
 
 - `REVIEWER_N_NAME` is the configured value **verbatim**, including one that contains a comma, a
   space, or both. It is what the report names, which is how "reported by name, never silently
@@ -736,16 +745,18 @@ assert it is at most ten seconds. `BUDGET_SECONDS=8` is only the internal schedu
 ceiling is asserted from outside the script against wall-clock time, because a script that
 mis-measured its own elapsed time would otherwise report a compliance it did not achieve.
 
-Bounding mechanism: `gh_api_bounded` from `workflow-lib.sh` for hosted probes, exporting
-`WORKFLOW_GH_API_TIMEOUT_SECONDS` set to the computed bound (it already returns `124` on timeout,
-VL-7); a local `run_bounded` helper of the same shape — GNU `timeout --kill-after` when available,
-otherwise a process-group-plus-poll fallback — for `--version` probes and configuration resolution.
+Bounding mechanism: one new `run_bounded` helper — GNU `timeout --kill-after` when available,
+otherwise a process-group-plus-poll fallback — for configuration resolution, local `--version`
+probes, and hosted `gh api` GETs. Do not call `gh_api_bounded` here: its existing fallback lacks
+process-group isolation without `setsid` and may leave descendants alive when the leader exits.
+Keep that shared helper unchanged for its existing callers; the new helper returns `124` on timeout.
 Use `setsid` when available, otherwise `perl -e 'setpgrp; exec @ARGV' --`, following
 `local-ai-reviewer.sh`'s existing portable launch mechanism. The new helper uses a **one-second**
 TERM-to-KILL grace (not that script's two seconds), redirects child output to temporary files,
 and always kills the process group after the grace even if its leader already exited. Check for
 Perl when both GNU `timeout` and `setsid` are absent; missing launch support is exit `2`.
-T-46 exercises a TERM-ignoring descendant with neither GNU `timeout` nor `setsid` present.
+T-46 exercises a TERM-ignoring descendant with neither GNU `timeout` nor `setsid` present,
+for both local probes and hosted GETs, including a leader that exits on TERM before its child.
 
 Do not call `gh_available`: `workflow-lib.sh:186` runs an unbounded `gh auth status`.
 Use `have_cmd gh` followed directly by the bounded GET instead; its auth/API failure already maps
@@ -979,12 +990,19 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       subcommand and its `cmd_review_effective` handler per **Contracts**. Add
       `typed_value_from_path(data, path) -> tuple[Any, bool]` returning the raw value and whether the
       key was present, so `defined` / `absent` / `empty` / `malformed` can be told apart (VL-9).
+      Add a keyword-only `preserve_empty_values=False` option to `parse_yaml_subset`, `parse_mapping`,
+      and `parse_list`, threading it through recursive calls. Only `review-effective` enables it:
+      a bare key with no child becomes `None`, while an explicit `{}` stays a mapping. Existing
+      consumers retain the current `{}` representation for bare keys. For the new command, bare/null
+      reviewer values are `empty`, an empty mapping is `malformed`; bare/null policy values are
+      `empty`, an empty mapping is `unreadable`. E-28 through E-31 and T-30 pin both modes.
       Leave `list_override_from_path`, `resolve_review_overrides`, and `cmd_review_overrides`
       behaviorally unchanged — other callers depend on them.
       *Covers*: AC group *Configuration inputs that are absent, empty, malformed, or unsupported*.
 - [ ] `scripts/development-workflow/resolve-reviewer-availability.sh` — **new**. Implements the
       contract, the probe table, the budget, and the fixed evaluation order above. Sources
-      `workflow-lib.sh` for `have_cmd` and `gh_api_bounded` (VL-7); never call the
+      `workflow-lib.sh` for `have_cmd` and output helpers (VL-7); hosted GETs use the new
+      `run_bounded` wrapper, never the shared `gh_api_bounded`. Never call the
       unbounded `gh_available` authentication preflight. Executable bit
       set; passes `shellcheck --severity=warning`.
       *Covers*: AC groups *Reachability follows capability*, *The operator can tell why*,
@@ -1178,7 +1196,7 @@ with no workflow edit (VL-10).
 | T-4 | `runner: [claude]`, `--runner-kind cursor`, no `claude` on `PATH` | `REVIEWER_1_STATUS=unreachable` with `REVIEWER_1_REASON=runtime-absent` — identity never causes unreachability, absence does | Reachability follows capability |
 | T-5 | Fake `codex` present but `--version` exits `1` | `REVIEWER_1_REASON=check-inconclusive`, not `runtime-absent` | Configuration inputs |
 | T-6 | Fake `codex` present but sleeps past `LOCAL_PROBE_CAP_SECONDS`, under `WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE=1` with a shortened budget so the per-probe bound is what the case exercises | `REVIEWER_1_REASON=check-inconclusive`, `REVIEWER_1_DETAIL` names the bound | Configuration inputs |
-| T-7 | Five configured entries, every fake binary sleeping, run at the **shipped** budget with no test-mode override | measured wall time, captured outside the script, is **at most 10 seconds**: the harness records `start=$(date +%s)` and `end=$(date +%s)` around the call and fails when `end - start > 10`, with no tolerance added. Every entry is classified, `ELAPSED_SECONDS` is at most ten seconds including cleanup, and the exit status is `0` or `1` but never a hang | Configuration inputs (ten-second ceiling) |
+| T-7 | Five configured entries, every fake binary sleeping, run at the **shipped** budget with no test-mode override | measured wall time, captured outside the script, is **at most 10 seconds**: a host Python supervisor records `time.monotonic()` before and after `subprocess.run`, passing the hermetic PATH only to the child, and fails when the unrounded elapsed value exceeds `10.0`, with no tolerance added. Every entry is classified, `ELAPSED_SECONDS` is at most ten seconds including cleanup, and the exit status is `0` or `1` but never a hang | Configuration inputs (ten-second ceiling) |
 | T-8 | `runner: [not-a-reviewer]` | `REVIEWER_1_NAME=not-a-reviewer` with `REVIEWER_1_STATUS=unreachable` and `REVIEWER_1_REASON=value-not-supported`, `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable` | Configuration inputs |
 | T-9 | `runner: [not-a-reviewer, codex]` with `codex` present, policy `warn` | `OUTCOME=proceeded-reduced`, both records present, exit `0` | Configuration inputs |
 | T-10 | No `runner` key in either file | `CONFIG_LIST_STATE=absent`, `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`, exit `0` | Configuration inputs |
@@ -1213,8 +1231,9 @@ with no workflow edit (VL-10).
 | T-43 | `runner: [claude, cursor, codex, not-a-reviewer]`, driving runner `codex`; earlier fake runtimes hang and exhaust a shortened test-mode budget before the last two entries | `codex` remains `reachable`, `not-a-reviewer` has reason `value-not-supported`, and default `warn` yields `proceeded-reduced`, never `zero-reachable`. Repeat the native-last case for each supported runner kind | The shipped default never traps |
 | T-44 | Run the delimiter fixtures T-39 and the normal/default cases T-1 and T-33 under Bash 3.2, including `/bin/bash` on macOS | Same exit codes and indexed values; no `mapfile`/`readarray` dependency, no lost empty entry, and no array state lost in a pipeline subshell | Contract completeness |
 | T-45 | Shipped `[claude, cursor, codex]`, local `runner: []`, supported driving runner | Fallback proceeds; all three shipped entries remain `override-excluded` with empty reason/remedy, `UNREACHABLE` empty, and fallback is dispatched only by the gate | The operator can tell why |
-| T-46 | Shipped-budget timeout case on a PATH with neither GNU `timeout` nor `setsid`; Perl present; fake probe spawns a TERM-ignoring descendant | Verdict within ten seconds; `ELAPSED_SECONDS <= 10`; descendant and leader both gone after cleanup, temporary output does not hold stdout open. Repeat under Bash 3.2 | Contract completeness |
+| T-46 | Shipped-budget timeout case on a PATH with neither GNU `timeout` nor `setsid`; Perl present; fake local probe and fake hosted GET each spawn a TERM-ignoring descendant while the leader exits on TERM | Verdict within ten seconds; `ELAPSED_SECONDS <= 10`; descendant and leader both gone after cleanup, temporary output does not hold stdout open. Repeat under Bash 3.2 | Contract completeness |
 | T-47 | Hosted reviewer with fake `gh` whose `auth status` would hang; exercise a successful GET and a hanging GET | No auth-preflight invocation; success classifies reachable with activity, hanging GET yields `check-inconclusive` within ten seconds | Configuration inputs |
+| T-48 | Unsupported scalar policy containing whitespace/control characters, non-scalar policy, and unparseable file | `POLICY_INPUT`, `UNREADABLE_FILE`, and `UNREADABLE_DETAIL` preserve resolver diagnostics through escaped shell fields; `POLICY` is empty on invalid paths. Runbook Step 14 checks the same values reach the block comment | Policy behavior is preserved |
 
 ### Acceptance-criterion coverage map
 
@@ -1482,8 +1501,12 @@ policy scalar are the parsed constructs.
 | E-25 | `runner: ["a, b c"]` — one entry containing both a comma and whitespace | `defined`, one entry, value verbatim |
 | E-26 | `runner: [""]` — one empty-string entry | `defined`, one entry whose value is the empty string. Not `empty`: the list has an entry, and that entry is unsupported |
 | E-27 | `runner: ["it's"]` — one entry containing a single quote | `defined`, one entry, value verbatim. The apostrophe survives because the field is `KEY=value` to end of line rather than shell-quoted (Decision 10) |
+| E-28 | `runner: {}` compared with bare `runner:` | Mapping is `malformed`; bare value is `empty`; legacy parser mode retains its original outputs |
+| E-29 | `runner: null` and `runner: ~` | `empty`, matching the bare empty scalar |
+| E-30 | `internal_reviewers_unavailable_policy: {}` compared with the bare policy key | Mapping is `unreadable` with file/type diagnostics; bare value is `empty` |
+| E-31 | Policy value `null` and `~` | `empty`, default `warn`; legacy parser output remains unchanged |
 
-**Unit test mapping**: every case E-1 through E-27 gets one automated case in
+**Unit test mapping**: every case E-1 through E-31 gets one automated case in
 `scripts/development-workflow/tests/test-workflow-config-resolver.sh`, named `review-effective E-<n>`,
 asserting the exact expected state string. E-22 additionally asserts `LOCAL_OVERRIDE_ORIGIN=main_clone`.
 E-23 to E-27 each additionally assert the **entry count** — one, never two — and that the entry's
@@ -1575,7 +1598,8 @@ are obligations this repository places on every change of this kind, and each sa
 imposes it and why it applies here. No step is left untraced.
 
 1. *(Spec-derived — AC group* **Configuration inputs that are absent, empty, malformed, or unsupported***; the absent / empty / malformed / unreadable distinction the gate needs, plus the verbatim entry values Decision 10 requires.)* **`workflow-config-resolver.py`**: add `typed_value_from_path`, `resolve_review_effective`,
-   `cmd_review_effective`, and the `review-effective` subparser per **Contracts**. Do not touch
+   `cmd_review_effective`, and the `review-effective` subparser per **Contracts**, including the
+   opt-in `preserve_empty_values` parser mode specified under **Shared Packages / Libraries**. Do not change
    `list_override_from_path`, `resolve_review_overrides`, or `cmd_review_overrides`.
    *Verify*: run
    `python3 scripts/development-workflow/workflow-config-resolver.py review-effective --repo-root "$(pwd -P)"`
@@ -1585,7 +1609,7 @@ imposes it and why it applies here. No step is left untraced.
    through `jq .` and confirm it parses.
 
 2. *(Spec-derived — evidence for the same group, plus the parser-risk unit-test mapping this repository's plan protocol requires for a change that alters structured-text interpretation.)* **Extend `tests/test-workflow-config-resolver.sh`** with cases T-27 to T-30 and `review-effective E-1`
-   through `review-effective E-27`.
+   through `review-effective E-31`.
    *Verify*: `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh` — read the
    output and confirm every new case reports PASS and no pre-existing case regressed.
 
@@ -1598,7 +1622,7 @@ imposes it and why it applies here. No step is left untraced.
    match what is actually installed on the machine.
 
 4. *(Spec-derived — the resolver-layer evidence named in the acceptance-criterion coverage map.)* **Write `tests/test-resolve-reviewer-availability.sh`** with the `# covers:` header and cases T-1
-   to T-26 and T-31 to T-47, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
+   to T-26 and T-31 to T-48, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
    *Verify*: `bash scripts/development-workflow/tests/test-resolve-reviewer-availability.sh` — confirm
    every case reports PASS. Then run
    `bash scripts/development-workflow/select-test-suites.sh` against the change set and confirm the

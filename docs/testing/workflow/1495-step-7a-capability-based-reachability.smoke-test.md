@@ -15,7 +15,7 @@ seed.
 
 - [ ] You are on the implementation branch for #1495 with the change applied.
 - [ ] `gh` is installed and authenticated (`gh auth status` succeeds).
-- [ ] `python3`, `git`, and `bash` are available.
+- [ ] `python3`, `perl`, `jq`, `git`, and `bash` are available. Use Bash for the shell snippets below.
 - [ ] **No `.ai-dev-workflow.local.yaml` exists in this checkout** for Steps 1 to 7. If you have one,
       move it aside first and restore it at the end:
 
@@ -116,7 +116,7 @@ identity table classified as unreachable.
 
    ```bash
    mkdir -p "$SMOKE_TMP/bin"
-   for c in awk bash cat cut date dirname git grep gh head jq mktemp printf python3 rm sed sleep sort tr wc; do
+   for c in awk bash cat cut date dirname git grep gh head jq mktemp perl printf python3 rm sed sleep sort tr wc; do
      src="$(command -v "$c" || true)"
      [ -n "$src" ] && ln -sf "$src" "$SMOKE_TMP/bin/$c"
    done
@@ -187,13 +187,19 @@ intervention."
      printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/slow/$b"
      chmod +x "$SMOKE_TMP/slow/$b"
    done
-   start=$(date +%s)
-   PATH="$SMOKE_TMP/slow" scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind unknown
-   status=$?
-   elapsed=$(( $(date +%s) - start ))
-   printf 'exit=%s elapsed=%ss\n' "$status" "$elapsed"
-   [ "$elapsed" -le 10 ] && echo "CEILING PASS" || echo "CEILING FAIL"
+   python3 - "$SMOKE_TMP/slow" "$(pwd -P)" <<'PYTIME'
+   import os, subprocess, sys, time
+   child_env = dict(os.environ, PATH=sys.argv[1])
+   started = time.monotonic()
+   result = subprocess.run([
+       "scripts/development-workflow/resolve-reviewer-availability.sh",
+       "--repo-root", sys.argv[2], "--owner", "<owner>", "--repo", "<repo>",
+       "--runner-kind", "unknown",
+   ], env=child_env)
+   elapsed = time.monotonic() - started
+   print(f"exit={result.returncode} elapsed={elapsed:.6f}s")
+   print("CEILING PASS" if elapsed <= 10.0 else "CEILING FAIL")
+   PYTIME
    ```
 
 **Expected result**: `CEILING PASS` — measured wall time is **at most ten seconds**, which is the
@@ -517,6 +523,11 @@ did **not** silently apply the default `warn`, and it did **not** reach the fall
 there being no list configured — the policy is read first. Remove the override afterwards and confirm
 with `gh pr view <pr_number> --json isDraft` that the pull request is still draft.
 
+Repeat with an unsupported scalar containing whitespace, a non-scalar policy `{}`, and a file
+that fails to parse. Compare `POLICY_INPUT`, `UNREADABLE_FILE`, and `UNREADABLE_DETAIL` with the
+block comment: it must retain the offending value or file/type diagnostic, render escaped control
+characters safely, and never substitute an empty default. Invalid paths have `POLICY=`.
+
 **Part 5 — a block with a draft-restricting reviewer configured**
 
 This part catches the ordering defect Decision 9 fixes: the draft-state pre-check used to convert the
@@ -571,15 +582,23 @@ cannot protect (plan Decision 11).
    ```bash
    mkdir -p "$SMOKE_TMP/stall"
    cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/stall/"
+   # Remove the copied symlink before writing the fake executable.
+   rm -f "$SMOKE_TMP/stall/python3"
    printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/stall/python3"
    chmod +x "$SMOKE_TMP/stall/python3"
-   start=$(date +%s)
-   PATH="$SMOKE_TMP/stall" scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   status=$?
-   elapsed=$(( $(date +%s) - start ))
-   printf 'exit=%s elapsed=%ss\n' "$status" "$elapsed"
-   [ "$elapsed" -le 10 ] && echo "CEILING PASS" || echo "CEILING FAIL"
+   python3 - "$SMOKE_TMP/stall" "$(pwd -P)" <<'PYTIME'
+   import os, subprocess, sys, time
+   child_env = dict(os.environ, PATH=sys.argv[1])
+   started = time.monotonic()
+   result = subprocess.run([
+       "scripts/development-workflow/resolve-reviewer-availability.sh",
+       "--repo-root", sys.argv[2], "--owner", "<owner>", "--repo", "<repo>",
+       "--runner-kind", "claude",
+   ], env=child_env)
+   elapsed = time.monotonic() - started
+   print(f"exit={result.returncode} elapsed={elapsed:.6f}s")
+   print("CEILING PASS" if elapsed <= 10.0 else "CEILING FAIL")
+   PYTIME
    ```
 
 **Expected result**: `CEILING PASS` — measured wall time at most ten seconds — with
