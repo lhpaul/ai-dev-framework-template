@@ -1502,8 +1502,9 @@ window and leaves a blocked draft PR draft.
 There is no independent `review-effective` or `review-overrides` call.
 
 After a proceed verdict, check draft state with `gh pr view <pr_number> --json
-isDraft --jq '.isDraft'`. If it is draft and the indexed records include the
-draft-restricting `coderabbit` reviewer, convert it immediately before dispatch:
+isDraft --jq '.isDraft'`. If it is draft and the indexed records select a
+Reachable `coderabbit` reviewer for dispatch, convert it immediately before
+that dispatch. An Unreachable or Excluded by override record never triggers conversion:
 
 ```bash
 gh pr ready <pr_number>

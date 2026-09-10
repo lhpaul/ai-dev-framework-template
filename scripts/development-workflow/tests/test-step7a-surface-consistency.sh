@@ -95,6 +95,8 @@ def checks(base):
     recovery=section(hard,'Treat helper','After a proceed verdict')
     out['D-19']=contains(recovery,'exit `1` and exit `2` (`availability-resolver-failed`)','dispatch nobody, never convert to ready','After determination','gh pr ready <pr_number> --undo','verify `isDraft: true`','missing_required_secret_or_permission','do not claim the PR is draft')
     out['D-20']=contains(entry,'no independent `review-effective` or `review-overrides` call','stalled parser is verified by smoke Step 16') and contains(hard,'After a proceed verdict, if a Reachable `coderabbit` is selected','only if needed','after availability and policy but before dispatch') and contains(policy,'Neither reviewer is classified unavailable because the PR is draft.')
+    precheck=section(p,'### Draft-state pre-check (after availability, before dispatch)','### Determining which reviewers to run')
+    out['D-20']=out['D-20'] and contains(precheck,'indexed records select a Reachable `coderabbit` reviewer for dispatch','An Unreachable or Excluded by override record never triggers conversion')
     out['D-21']=contains(runtime,'historical activity can be a false Reachable after removal','new or review-only installation can be false Unreachable','review failure under either policy, never an unreachability reclassification')
     unsafe_aggregate_lines=[line for line in gate.splitlines() if re.search(r'\b(?:CONFIGURED|REACHABLE|UNREACHABLE|OVERRIDE_EXCLUDED)\b',line) and re.search(r'\b(?:split|splitting|tokenize|eval)\b',line,re.I) and not re.search(r'never|must not|do not',line,re.I)]
     out['D-22']=not unsafe_aggregate_lines and contains(entry,'names only from its indexed `REVIEWER_N_*` fields','display-only and must never be split or `eval`ed') and contains(summary,'names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields')
@@ -148,6 +150,7 @@ if sys.argv[2]=='--prove-plants':
             ('D-18',protocol,'Every configured reviewer with its verdict is included in each hard-fail report.','Only unreachable reviewers are included in each hard-fail report.'),
             ('D-19',protocol,'verify `isDraft: true` before completing the block report','assume the PR is draft'),
             ('D-20',protocol,'After a proceed verdict, if a Reachable `coderabbit` is selected','After a proceed verdict, regardless of whether `coderabbit` is Reachable'),
+            ('D-20',protocol,'indexed records select a\nReachable `coderabbit` reviewer for dispatch','indexed records include any `coderabbit` reviewer'),
             ('D-21',protocol,'historical activity can be a false Reachable after removal','historical activity proves the service remains installed'),
             ('D-22',protocol,'### Branch-type detection','Split `CONFIGURED` on commas to recover reviewer names.\n\n### Branch-type detection'),
             ('D-23',agents,'complete short page','incomplete short page'),
