@@ -581,7 +581,7 @@ override saved in `SMOKE_STATE`; do not call `smoke_restore_override` until the 
 behavior. This is the step that proves the gate honours a `blocked` verdict rather than dispatching
 anyway; no resolver test can show that.
 
-Before **each run** in this step, restore the throwaway pull request to draft with
+Before **each run in Parts 1–5** in this step, restore the throwaway pull request to draft with
 `gh pr ready <pr_number> --undo` when it is currently ready, then verify
 `gh pr view <pr_number> --json isDraft --jq '.isDraft'` returns `true`. Step 13's successful gate
 normally converts its PR to ready, so merely reading its state is insufficient. Record this setup
@@ -660,6 +660,19 @@ called, even though a draft-restricting reviewer was configured and the pre-chec
 therefore satisfied. If the pull request came back non-draft, the conversion is still running before
 the availability decision and six acceptance criteria are violated — report it as a blocking
 implementation failure. Remove the override afterwards.
+
+**Part 6 — a blocked rerun begins on an already-ready PR**
+
+Use the same throwaway PR and gate setup as Step 13 Part 5. First make the fake Codex available,
+run the complete gate successfully, and verify the PR is ready. Now remove the fake binary and run
+Step 7a again on the same head, without manually restoring draft. Capture the complete tool trace.
+
+**Expected result**: availability finishes read-only while the PR remains ready; the gate then
+blocks, dispatches nobody, invokes `gh pr ready <pr_number> --undo`, and verifies draft state before
+claiming that outcome. Repeat from ready with invalid policy and with a helper invocation failure
+(exit `2`) to exercise those recovery paths. A failed undo or unreadable draft state must escalate
+and report the actual uncertainty rather than claiming draft restoration. No path converts a blocked
+PR to ready. Keep final override restoration deferred until the Last Step or exit.
 
 ### Step 15: A configured value that contains a delimiter is still named
 
@@ -816,8 +829,8 @@ gate ignores.
 - [ ] Under `warn` with a mixed set, the warning was posted **before** dispatch, named each
       unreachable reviewer with its reason and a remedy, and the reachable subset then ran
       (Step 13 Part 3).
-- [ ] On a block verdict the gate dispatched **nobody**, did not call `gh pr ready`, and left the
-      pull request draft (Step 14, all parts).
+- [ ] On a block verdict the gate dispatched **nobody**, never converted to ready, and left the
+      pull request draft, restoring it after determination when a rerun began ready (Step 14, all parts).
 - [ ] The block report named the cause, every reviewer with its verdict, and the override state as
       resolved rather than guessed; and where the only entry was an unsupported value, the report
       named that value verbatim (Step 14 Part 1, both runs).

@@ -352,6 +352,15 @@ within Step 7a and which already-resolved records supply the condition. It is fo
 it does not touch which pipeline stages run this gate or when (spec Out of Scope item 9). Asserted by
 D-20 and observed in runbook Step 14 Part 5.
 
+**Already-ready reruns:** Step 7a also runs after external-review fixes, when the PR may already be
+ready. Availability remains read-only throughout determination. After a blocked outcome (or helper
+exit `2`), dispatch nobody and read the current draft state. If already ready, run
+`gh pr ready <pr_number> --undo`, verify `isDraft: true`, then post the block report. An already-draft
+PR needs no conversion. A failed state read, undo, or verification is a named
+`missing_required_secret_or_permission` escalation; do not claim the PR is draft. This is a
+post-determination recovery action, never conversion to ready, and applies to every block cause.
+D-19 and runbook Step 14 Part 6 exercise a ready-to-blocked rerun without manual draft reset.
+
 ### Decision 10 — Per-entry indexed `KEY=value` fields, escaped with the repository's existing helper
 
 A configured value is an arbitrary YAML scalar. `- "codex, claude"` and `- "my reviewer"` are each
@@ -603,8 +612,8 @@ failure the operator is being asked to act on.
 | Exit | Meaning | `OUTCOME` printed | What the gate does |
 | --- | --- | --- | --- |
 | `0` | The gate may dispatch | `proceeded` or `proceeded-reduced` | Dispatch `REACHABLE`, or the driving runner's stage reviewer when `FALLBACK_APPLIED=true`. Post the reduced-coverage warning first when `OUTCOME=proceeded-reduced`. |
-| `1` | The gate must block | `blocked` | Dispatch nobody, leave the pull request draft, post the hard-fail comment naming `BLOCK_CAUSE`, escalate to a human |
-| `2` | The availability resolver could not run at all — a usage error, a missing dependency, an unreadable `--repo-root`, or `review-effective` reporting an invocation error of its own | none | Treat as blocked with cause `availability-resolver-failed`; the hard-fail comment quotes the resolver's stderr. This is not a reviewer verdict — no reviewer was classified. |
+| `1` | The gate must block | `blocked` | Dispatch nobody, restore draft after determination if already ready and verify it, post the hard-fail comment naming `BLOCK_CAUSE`, escalate to a human |
+| `2` | The availability resolver could not run at all — a usage error, a missing dependency, an unreadable `--repo-root`, or `review-effective` reporting an invocation error of its own | none | Treat as blocked, restore/verify draft as for exit `1`, with cause `availability-resolver-failed`; the hard-fail comment quotes the resolver's stderr. This is not a reviewer verdict — no reviewer was classified. |
 
 **Why a stalled configuration resolver gets its own block cause.** When the `review-effective` call
 exceeds its bound, the run blocks with `BLOCK_CAUSE=config-resolution-inconclusive`, exit `1`,
@@ -814,6 +823,10 @@ carries it.
 | The driving runner's kind | `--runner-kind` / `$WORKFLOW_RUNNER_KIND` | `RUNNER_KIND` |
 
 ### Allowed outcomes and required next actions
+
+Every blocked row below, including helper exit `2`, inherits Decision 9's post-determination
+draft-restoration and verification rule before the block report. The determination itself never
+mutates PR state.
 
 Every row is reachable under the fixed evaluation order. Combinations that the order makes
 unreachable are listed under the table so their absence is not read as an omission.
@@ -1083,7 +1096,13 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       - Lines 1822-1867 (*Step 7a summary comment*): require the per-reviewer verdict list — every
         configured reviewer with its display label, and its reason where Unreachable — plus the gate
         outcome. Update both worked examples so neither attributes a skip to a runner.
+      Apply Decision 9's already-ready recovery to every block path after determination, including
+      helper exit `2`; do not skip availability or draft restoration merely because the PR is ready.
       Add the marked normative `codex-github` availability block described by D-23.
+      Immediately before that block, include the source requirement: "Hosted-service availability is decided at runtime from whether
+      the service is installed and reachable." Immediately distinguish that intended requirement
+      from Decision 8's accepted activity proxy and its limitations; never claim the proxy verifies
+      installation. D-24 protects both the requirement statement and the explicit qualification.
       Copy it verbatim to both item-orchestrator agent blocks and `integrations/codex-github.md`;
       surrounding tool-specific dispatch prose remains outside the markers.
       *Covers*: every AC group.
@@ -1314,14 +1333,14 @@ behavior.
 | C2 | The fallback reviewer is the driving runner's own for the stage, so it never blocks | Both | Resolver unit T-10 and T-12 (`FALLBACK_APPLIED=true` for a supported runner, `no-driving-runner` for `unknown`); gate doc assertions D-7 and D-12; gate runbook Step 13 Part 2 |
 | C3 | A list resolving to no entries behaves as C1; never reports success having dispatched nobody | Both | Resolver unit T-11; gate doc assertions D-12 and D-16; gate runbook Step 13 Part 2 |
 | C4 | Unsupported entry → Unreachable, reason `value-not-supported`, value named in the report | Both | Resolver unit T-8, T-9 (classification and named value in the `REVIEWER_N_NAME` field) and T-39 (a value containing a comma, whitespace, both, an apostrophe, or nothing at all still round-trips byte for byte and is named, never split or dropped — Decision 10); gate doc assertion D-18 (the offending value is named in the block report); gate runbook Step 14 Part 1, second run, and Step 15 |
-| C5 | List defined but not readable as a list → blocks, names file and input, dispatches nobody, PR stays draft | Both | Resolver unit T-13 (`BLOCK_CAUSE=list-malformed`, exit `1`); gate doc assertions D-18 (the report names the file and the key), D-19 (exit `1` maps to dispatch nobody, no `gh pr ready`, PR stays draft, escalate) and D-20 (no draft conversion can precede the block); gate runbook Step 14 Part 2, with Part 5 for the draft-conversion ordering |
+| C5 | List defined but not readable as a list → blocks, names file and input, dispatches nobody, PR stays draft | Both | Resolver unit T-13 (`BLOCK_CAUSE=list-malformed`, exit `1`); gate doc assertions D-18 (the report names the file and the key), D-19 (exit `1` maps to dispatch nobody, no conversion to ready, draft restored if needed after determination, escalate) and D-20 (no draft conversion can precede the block); gate runbook Step 14 Part 2, with Part 5 for the draft-conversion ordering |
 | C6 | A file that will not parse at all → blocks and names that file | Both | Resolver unit T-31, T-29; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
 | C7 | An unsupported value as the only entry → blocks and names it as the cause | Both | Resolver unit T-8 and T-39; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 1, second run, and Step 15 |
 | C8 | A determination that cannot complete → `check-inconclusive`; verdict within ten seconds | Both | T-6 (per-probe bound), T-7 (whole-list budget with every probe hanging), T-40 (the configuration-resolver call bounded too, so the ceiling holds for the one call that precedes every probe — Decision 11); D-20 excludes an unbounded pre-check; gate runbook Step 6 and Step 16, including the complete gate entry path |
 | C9 | A determination that ends promptly without an answer → the same reason, not the other two | Resolver | T-5, T-23 |
 | P1 | One unreachable, one reachable, `warn` → warns naming each, then dispatches the rest | Both | Resolver unit T-9 (`OUTCOME=proceeded-reduced`) and T-37 (reason and remedy available to quote); gate doc assertion D-17 (the warning names each unreachable reviewer with its reason and remedy and states the reachable subset) and D-12 (the reachable subset is then dispatched); gate runbook Step 13 Part 3 |
 | P2 | `fail-if-any-unavailable` + any unreachable → blocks, dispatches nobody, PR stays draft | Both | Resolver unit T-16; gate doc assertions D-18, D-19 and D-20; gate runbook Step 14 Part 3, with Part 5 for the draft-conversion ordering |
-| P3 | No reviewer reachable → blocks under either policy, PR not converted to ready, escalates | Both | Resolver unit T-2 (under `warn`) and T-16 (under the strict policy); gate doc assertions D-19 (exit `1` maps to no `gh pr ready`, draft preserved, escalation) and D-20 (the draft-state pre-check's conversion cannot precede the block); gate runbook Step 14 Part 1 and Part 5 |
+| P3 | No reviewer reachable → blocks under either policy, PR not converted to ready, escalates | Both | Resolver unit T-2 (under `warn`) and T-16 (under the strict policy); gate doc assertions D-19 (exit `1` maps to no conversion to ready, draft restored if needed after determination, escalation) and D-20 (the draft-state pre-check's conversion cannot precede the block); gate runbook Step 14 Part 1 and Part 5 |
 | P4 | Every reviewer reachable → no warning, behaves exactly as today | Both | Resolver unit T-1, T-19 (`OUTCOME=proceeded`, `UNREACHABLE` empty, every `REVIEWER_N_REMEDY` empty); gate doc assertion D-17 (the warning is posted only when `OUTCOME=proceeded-reduced`); gate runbook Step 13 Part 1 |
 | P5 | No policy in either file → the shipped default `warn` applies | Resolver | T-18 |
 | P6 | Unsupported policy value → blocks, dispatches nobody, names it, does not silently default | Both | Resolver unit T-17 (`BLOCK_CAUSE=policy-unsupported`, the value carried in the output); gate doc assertions D-18 (the report names the offending value) and D-19 (nobody is dispatched); gate runbook Step 14 Part 4 |
@@ -1331,7 +1350,7 @@ behavior.
 | P10 | Never installs, provisions, or substitutes; the fallback is not a substitution | Both | Resolver unit T-15 (no mutating call in the recorded `gh` argv), T-2 (an absent runtime yields a block, never a stand-in); gate doc assertion D-8; gate runbook Step 13 Part 2 (the fallback dispatches the runner's own reviewer, not a stand-in for an unreachable one) and Step 14 Part 1 (an unreachable reviewer produces a block, never a substitution) |
 | A1 | Supported values and the availability rule stated consistently across surfaces | Surface text | D-1, D-5, D-11, D-23 |
 | A2 | No surface names a value the canonical protocol does not list | Surface text | D-4 |
-| A3 | The canonical protocol lists the hosted-service reviewer and states its runtime availability rule | Surface text | D-1 |
+| A3 | The canonical protocol lists the hosted-service reviewer and states its runtime availability rule | Surface text | D-1 checks membership; D-24 requires the installed-and-reachable source statement plus explicit Decision 8 qualification. This is textual evidence only: it does not prove installation, and the accepted proxy deviation remains disclosed |
 | A4 | No surface claims the hosted-service reviewer is unconditionally available | Surface text | D-3 |
 | A5 | No surface states or implies availability is decided by runner identity | Surface text | D-2, D-10 |
 | A6 | CodeRabbit's runtime-conditions guidance is unchanged and does not contradict the rule | Surface text | D-10 |
@@ -1364,7 +1383,7 @@ groups get a doc-assertion suite. Precedent for the pattern:
 `test-protocol-91-readiness-checklist.sh`, `test-protocol-02-portable-parser-guidance.sh`, and
 `test-workflow-agent-product-repo-guidance.sh`.
 
-Cases D-1 to D-11 and D-23 assert what the surfaces **say about themselves**. Cases D-12 to D-22 assert that
+Cases D-1 to D-11, D-23, and D-24 assert what the surfaces **say about themselves**. Cases D-12 to D-22 assert that
 Protocol 91 **instructs** each gate behavior a criterion requires, and that it records the decided
 hosted-probe limitation where an operator reading the protocol will see it. Neither group proves a runner
 obeyed the instruction — the runbook steps are the only evidence of that, and the coverage map above
@@ -1402,16 +1421,17 @@ Headers:
 | --- | --- | --- |
 | D-12 | On resolver exit `0`, Protocol 91 instructs dispatching each indexed `REVIEWER_N_NAME` whose `REVIEWER_N_STATUS` is `reachable`, and where `FALLBACK_APPLIED=true` instructs dispatching the driving runner's own stage reviewer exactly once — the word "once" is asserted, because "runs it once" is the criterion | R1, S1, C1, C2, C3, P1 |
 | D-13 | Protocol 91 instructs running the availability resolver at the start of every Step 7a cycle, including re-runs after fixes, and states that a verdict from an earlier cycle is never reused | R4 |
-| D-14 | During availability determination, from helper invocation until its return, Protocol 91 instructs no `gh pr comment`, no `gh pr ready`, and no command that writes to the working tree. After it returns, policy warning/block comments and the proceed path's conditional draft conversion are permitted before dispatch | R5 |
+| D-14 | During availability determination, from helper invocation until its return, Protocol 91 instructs no `gh pr comment`, no `gh pr ready`, and no command that writes to the working tree. After it returns, policy warning/block comments and the proceed path's conditional conversion to ready or a blocked rerun's restoration to draft are permitted after determination | R5 |
 | D-15 | Protocol 91 places the resolver call before the reviewer dispatch map and states that no reviewer is dispatched until the resolver returns and the policy has been applied | R6 |
 | D-16 | The Step 7a summary comment format requires one line per configured reviewer with its display label; for each Unreachable one, its reason display label and its remedy; and, where `FALLBACK_APPLIED=true`, a line recording that the fallback applied. Override-excluded entries appear in the summary and never in the warning | O1, O3, O4, C1, C3 |
 | D-17 | The warning comment format carries no runner-context field, names each unreachable reviewer with its reason and its remedy, states the reachable subset that will run, and is posted only when `OUTCOME=proceeded-reduced` | O6, P1, P4 |
 | D-18 | Each hard-fail comment case names `BLOCK_CAUSE`; every configured reviewer with its verdict, including the reachable ones; the offending value or unreadable input where one exists; the policy where the policy is the cause; and `LOCAL_OVERRIDE_STATE` taken from the resolver rather than inferred. No case carries a runner-context field | O5, O6, C4, C5, C6, C7, P2, P6, P7, P8, P9 |
-| D-19 | Protocol 91 maps resolver exit `1` to: dispatch nobody, do not call `gh pr ready`, leave the pull request draft, escalate to a human — and maps exit `2` to the same treatment with cause `availability-resolver-failed` | C5, C6, C7, P2, P3, P6, P8 |
+| D-19 | Protocol 91 maps resolver exit `1` to: dispatch nobody, never convert to ready, restore an already-ready PR with `gh pr ready --undo` only after determination and verify draft state, escalate to a human — and maps exit `2` to the same treatment with cause `availability-resolver-failed` | C5, C6, C7, P2, P3, P6, P8 |
 | D-20 | Protocol 91 invokes the bounded availability helper before evaluating the draft pre-check; condition evaluation consumes its indexed records only after a proceed verdict, with no independent `review-effective` or `review-overrides` call. Conversion appears after that verdict and before dispatch. The draft-eligibility note says conversion guarantees non-draft at dispatch, not at availability time. Runbook Step 16 also exercises a stalled parser through the complete gate entry path | C5, P2, P3, P6, P7, P8, C8; Decision 9 |
 | D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and requires any resulting dispatch failure to remain a review failure under either policy, retaining the original availability classification | Decision 8 |
 | D-22 | Protocol 91 instructs the gate to read reviewer names, reasons, remedies, and details from the indexed `REVIEWER_N_*` fields, and states that the comma-joined aggregate fields are display-only. No instruction anywhere in Step 7a splits an aggregate field on commas or whitespace to recover a reviewer name | C4, C7; Decision 10 |
 | D-23 | Extract the normative `codex-github` availability block delimited by `<!-- step7a-codex-github-availability:start -->` and `<!-- step7a-codex-github-availability:end -->` from Protocol 91 and compare it byte-for-byte with the same marked block in both agent mirrors and `integrations/codex-github.md`. All four must occur exactly once and agree. The block states activity-based reachability, missing/incomplete evidence classifications, and the post-dispatch failure boundary | A1 |
+| D-24 | Protocol 91 states that hosted-service availability is decided at runtime from whether the service is installed and reachable, and immediately discloses that the runtime activity proxy cannot establish installation/enablement. Require both the intended source condition and its accepted qualification; neither a reviewer-kind label nor the proxy description alone passes | A3 |
 
 ### Planted-violation proofs
 
@@ -1426,7 +1446,7 @@ does not apply: every check here is new.
 
 What the rule does and does not reach is worth stating, because it bounds the work honestly:
 
-- **In scope — the 23 `D-` cases.** Each is an automated check over repository content, which is
+- **In scope — the 24 `D-` cases.** Each is an automated check over repository content, which is
   exactly what the clause names. Each gets its own plant, listed below.
 - **In scope — `resolve-reviewer-availability.sh` as a guard.** Its planted-violation evidence already
   exists in the `T-` suite as fail-and-pass pairs over the same fixture shape, and naming them is
@@ -1467,8 +1487,9 @@ plant applied and the passing run after reverting it.
 | D-21 | `91-orchestrate-work-protocol.md`, hosted-probe section | delete the sentence naming the activity signal a proxy |
 | D-22 | `91-orchestrate-work-protocol.md`, gate-consumption instruction | change it to split `CONFIGURED` on commas to recover reviewer names |
 | D-23 | Both `.claude/agents/item-orchestrator.md` and `.cursor/agents/item-orchestrator.md`, inside the marked block | Change the same activity-presence condition in both mirrors to its opposite while leaving Protocol 91 and the integration block intact; D-11 still passes because the mirrors match each other, but D-23 must fail |
+| D-24 | Protocol 91, source-condition statement outside the mirrored availability block | Remove the installed-and-reachable requirement while preserving the adjacent proxy qualification; D-24 must fail, and restoring the statement must pass |
 
-Sixteen of the twenty-three plant into Protocol 91 because that is the canonical surface the suite
+Seventeen of the twenty-four plant into Protocol 91 because that is the canonical surface the suite
 exists to protect; each targets a different sentence, so no plant is masked by another rule. Where two
 cases read nearby text, the plant is chosen to change only the one case's answer — the implementer
 must confirm that from the per-case output, not assume it. See Implementation Order step 8.
@@ -1595,8 +1616,8 @@ following are the remaining documentation-only updates the developer must make:
 | R-5 | Re-adding `codex-github` to Step 7a revives the async race #486 moved it out for | Low | Medium | Decision 7: it is canonical but not default, and its dispatch goes through `codex-github-reviewer.sh`, whose pre-trigger wait, retrigger, and exit-code contract were built after #486. |
 | R-6 | `run_bounded` duplicates `run_with_timeout` from `local-ai-reviewer.sh` | High | Low | Deliberate, recorded in **Out-of-scope notes**. Extracting the reviewer script's variant would change a heavily used Step 7 path for a Step 7a benefit, which the spec places out of scope. |
 | R-7 | The ceiling tests (T-7, T-40) assert a hard 10-second wall-clock bound and could flake on a heavily loaded CI runner | Medium | Low | The assertion is not loosened to accommodate load, because then it would stop testing the contract. Headroom comes from the budget instead: 8 seconds of work plus at most 2 seconds of documented cleanup equals the 10-second contract, so a run has to be delayed by more than two seconds of pure scheduling latency before it fails. If that proves too tight in practice the fix is to lower `AVAILABILITY_BUDGET_SECONDS`, which keeps the contract intact; raising the assertion would not. |
-| R-13 | The twenty-three planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Sixteen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
-| R-8 | The doc-assertion suite (D-1 to D-23) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
+| R-13 | The twenty-four planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Seventeen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
+| R-8 | The doc-assertion suite (D-1 to D-24) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
 | R-9 | The change is reverted after operators retired their machine-local override on its advice, and the override file cannot be restored by any revert | Low | Medium | Retirement guidance says move the file aside rather than delete it, so a second `mv` restores it; the override is two keys and `.ai-dev-workflow.local.example.yaml` carries the shape. See **Reversal and Rollback** (c) — this is mitigated, not eliminated. |
 | R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 observe a runner honouring it, while Step 16 verifies its bounded entry path. The runbook's Troubleshooting table names a mismatch as a blocking implementation failure. The coverage map marks all twenty-eight gate-level criteria so no reviewer has to rediscover the distinction. |
 
@@ -1653,9 +1674,8 @@ imposes it and why it applies here. No step is left untraced.
 
 5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-eight gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all enumerated regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
    *Verify*: `grep -n "runner identity is a sufficient proxy\|Reachability classification table\|default behavior: \`claude\`" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-   returns nothing; and read the Step 7a text end to end confirming the only `gh pr ready` before the
-   dispatch map is the draft-state conversion, and that it now sits after the policy-application
-   step rather than at the top of the section.
+   returns nothing; and read the Step 7a text end to end confirming every PR-state mutation follows determination: conversion to ready occurs only on
+   proceed, and `gh pr ready --undo` occurs only to restore an already-ready blocked rerun.
 
 6. *(Spec-derived — AC group* **The shipped default never traps***; Use Case 3.)* **Change `.ai-dev-workflow.yaml`**: the default list, the supported-values comment, the deleted
    Runner-context constraint block and its replacement, and the policy comment.
@@ -1683,7 +1703,7 @@ imposes it and why it applies here. No step is left untraced.
    reports no differences.
 
 8. *(Spec-derived — the gate-doc-assertion evidence named in the coverage map, covering* **Surfaces agree** *and the protocol-instruction half of every gate-level criterion.)* **Write `tests/test-step7a-surface-consistency.sh`** with the `# covers:` headers and cases D-1 to
-   D-23. Write it **after** steps 5 to 7, because D-1 to D-11 target text those steps produce on the
+   D-24. Write it **after** steps 5 to 7, because D-1 to D-11 target text those steps produce on the
    surrounding surfaces and D-12 to D-19 target the Step 7a gate instructions written in step 5.
    *Verify*: `bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh` — confirm
    every case reports PASS. Then work the **plant table** under *Planted-violation proofs* row by row:
