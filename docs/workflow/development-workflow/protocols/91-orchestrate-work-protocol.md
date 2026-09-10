@@ -1608,6 +1608,12 @@ helper. Run it on every cycle, before dispatch, passing the actual driving
 session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
 from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
+The resolver accepts the transition-release `review.internal_reviewers` alias
+when `review.on_draft.runner` is absent in that file. An explicitly present modern
+key takes precedence, including empty or malformed values. Resolve each file's
+reviewer key before applying local-over-shared precedence; an alias must never
+turn configured reviewers into an absent-list fallback.
+
 <!-- workflow-shell-contract: bash -->
 ```bash
 bash scripts/development-workflow/resolve-reviewer-availability.sh \
