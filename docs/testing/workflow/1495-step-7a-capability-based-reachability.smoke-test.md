@@ -531,7 +531,8 @@ afterwards.
 invocation occurred after the successful probe. The gate reports the non-zero dispatch as a
 **review failure**, not `runtime-absent`, `check-inconclusive`, or an unavailable-reviewer skip. It
 does not claim approval or proceed on reduced coverage under `warn`. Restore the original `PATH`
-and local override after recording the result.
+and the pre-part test-override state after recording the result; keep the original override
+saved until the Last Step or exit.
 
 Repeat Part 4 with a fake hosted-review dispatch result: feed the gate a Reachable
 `codex-github` availability record, then replace only its dispatch helper with a fixture returning
@@ -571,7 +572,8 @@ it Reachable and dispatches the fake once after policy application. All three ru
 PR state, and tracked files unchanged throughout the determination interval; only subsequent gate
 reporting/conversion may mutate PR state. The three summaries match the fresh classifications.
 A cached verdict, early dispatch, or any determination-time mutation is a blocking smoke failure.
-Restore the normal PATH and local override through the prerequisite restoration procedure.
+Restore the normal PATH and remove only this part's temporary test override. Keep the original
+override saved in `SMOKE_STATE`; do not call `smoke_restore_override` until the Last Step or exit.
 
 ### Step 14: The block path on a real pull request
 
