@@ -246,19 +246,8 @@ import pathlib, re, sys
 path = pathlib.Path(sys.argv[1])
 
 def scalar_before_comment(value):
-    quote = None
-    escaped = False
     for index, char in enumerate(value):
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-        elif char in "\"\x27":
-            quote = char
-        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+        if char == "#" and (index == 0 or value[index - 1].isspace()):
             return value[:index].rstrip()
     return value.rstrip()
 
@@ -281,7 +270,7 @@ try:
     enabled = None
     for number, indent, key, value in fields(path.read_text(encoding="utf-8")):
         if reviews_indent is None:
-            if key == "reviews":
+            if indent == 0 and key == "reviews":
                 if value:
                     raise ValueError(f"reviews must be a mapping on line {number}")
                 reviews_indent = indent

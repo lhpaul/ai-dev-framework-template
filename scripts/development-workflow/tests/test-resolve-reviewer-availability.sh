@@ -175,6 +175,23 @@ exec "$@"''')
         enabled: true
 ''')
     check('T-22 literal fake enabled cannot create missing target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (repo/'.coderabbit.yaml').write_text('''instructions: |
+  reviews:
+    auto_review:
+      enabled: true
+reviews:
+  auto_review:
+    enabled: false
+''')
+    check('T-22 nested fake reviews cannot override root false target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (repo/'.coderabbit.yaml').write_text('''instructions: |
+  reviews:
+    auto_review:
+      enabled: true
+reviews:
+  auto_review:
+''')
+    check('T-22 nested fake reviews cannot create root target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: "true"\n')
     check('T-22 text enabled fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review: [\n')
