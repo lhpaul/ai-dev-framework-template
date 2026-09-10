@@ -193,6 +193,18 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     for malformed in ('review: []\n','review:\n  on_draft: []\n'):
         reset();local.write_text(malformed);d=run('codex',1)
         check(f'T-31 malformed ancestor {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and str(local)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
+    for malformed in ('[,]', '[codex,,cursor]', '[,codex]'):
+        reset(malformed);d=run('codex',1)
+        check(f'T-31 missing flow element {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'],d)
+    for numeric in ('123','-4','1.5','1e3','0xFF','0o77'):
+        reset('[codex, '+numeric+']');d=run('codex',1)
+        check(f'T-13 numeric member {numeric}',d['BLOCK_CAUSE']=='list-malformed' and d['REVIEWER_COUNT']=='0',d)
+    reset('[codex,]');check('T-31 valid trailing comma remains defined',run('codex')['CONFIG_LIST_STATE']=='defined')
+    reset('["123"]');d=run('codex',1)
+    check('T-13 quoted numeric remains unsupported string',d['REVIEWER_1_NAME']=='123' and d['REVIEWER_1_REASON']=='value-not-supported',d)
+    for badfile in (cfg,local):
+        reset();badfile.write_bytes(b'review: \xff\n');d=run('codex',1)
+        check(f'T-31 invalid UTF-8 {badfile.name}',d['BLOCK_CAUSE']=='policy-unreadable' and str(badfile)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
     reset('[codex]','{foo: bar}');d=run(expected=1)
     check('T-48 nonempty flow-map diagnostics',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
     for malformed in ('["codex]', '[codex'):
