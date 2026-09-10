@@ -136,6 +136,49 @@ exec "$@"''')
     gh([{'user':{'login':'coderabbitai[bot]'}}]);check('T-22 hosted enabled with closed stdin via GNU timeout',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
     gh([]);check('T-22 hosted disabled with closed stdin via GNU timeout',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
     (bins/'timeout').unlink()
+    # The enablement reader follows only the target mapping path. Valid
+    # CodeRabbit block scalars elsewhere must not make that path unreadable.
+    (repo/'.coderabbit.yaml').write_text('''reviews:
+  path_instructions:
+    - path: src/**
+      instructions: |
+        Explain the module.
+        Keep this indentation intact.
+  auto_review:
+    enabled: true
+''')
+    gh([{'user':{'login':'coderabbitai[bot]'}}]);check('T-22 multiline path instructions before target',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
+    (repo/'.coderabbit.yaml').write_text('''reviews:
+  auto_review:
+    enabled: true
+  path_instructions:
+    - path: src/**
+      instructions: |
+        Explain the module.
+        Keep this indentation intact.
+''')
+    check('T-22 multiline path instructions after target',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
+    (repo/'.coderabbit.yaml').write_text('''reviews:
+  auto_review:
+    enabled: false
+  path_instructions:
+    - path: src/**
+      instructions: |
+        enabled: true
+''')
+    check('T-22 literal fake enabled cannot override false target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (repo/'.coderabbit.yaml').write_text('''reviews:
+  auto_review:
+  path_instructions:
+    - path: src/**
+      instructions: |
+        enabled: true
+''')
+    check('T-22 literal fake enabled cannot create missing target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: "true"\n')
+    check('T-22 text enabled fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
+    (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review: [\n')
+    check('T-22 malformed target fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])

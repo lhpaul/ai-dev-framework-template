@@ -241,18 +241,84 @@ probe_hosted() {
   if [ "$entry" = coderabbit ]; then
     clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
     run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B -c '
-import importlib.util, pathlib, sys
-spec = importlib.util.spec_from_file_location("workflow_config", sys.argv[1])
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
-p = pathlib.Path(sys.argv[2])
+import pathlib, re, sys
+
+path = pathlib.Path(sys.argv[1])
+
+def scalar_before_comment(value):
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in "\"\x27":
+            quote = char
+        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value.rstrip()
+
+def fields(text):
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.match(r"^( *)([A-Za-z_][A-Za-z0-9_-]*):(.*)$", line)
+        if match:
+            yield number, len(match.group(1)), match.group(2), scalar_before_comment(match.group(3).lstrip())
+        elif "\t" in line[:len(line) - len(line.lstrip())]:
+            raise ValueError(f"tab indentation on line {number}")
+
 try:
-    d = m.parse_yaml_subset(p) if p.is_file() else {}
-    print("true" if d.get("reviews", {}).get("auto_review", {}).get("enabled") is True else "false")
-except (m.ConfigError, AttributeError) as e:
-    print(str(e), file=sys.stderr)
+    if not path.is_file():
+        print("false")
+        raise SystemExit(0)
+    reviews_indent = reviews_children = auto_indent = auto_children = None
+    auto_closed = False
+    enabled = None
+    for number, indent, key, value in fields(path.read_text(encoding="utf-8")):
+        if reviews_indent is None:
+            if key == "reviews":
+                if value:
+                    raise ValueError(f"reviews must be a mapping on line {number}")
+                reviews_indent = indent
+            continue
+        if indent <= reviews_indent:
+            if key == "reviews":
+                raise ValueError(f"duplicate reviews mapping on line {number}")
+            break
+        if reviews_children is None:
+            reviews_children = indent
+        if indent == reviews_children and key == "auto_review":
+            if auto_indent is not None:
+                raise ValueError(f"duplicate auto_review mapping on line {number}")
+            if value:
+                raise ValueError(f"auto_review must be a mapping on line {number}")
+            auto_indent = indent
+            continue
+        if auto_indent is None:
+            continue
+        if indent <= auto_indent:
+            auto_closed = True
+            continue
+        if auto_closed:
+            continue
+        if auto_children is None:
+            auto_children = indent
+        if indent == auto_children and key == "enabled":
+            if enabled is not None:
+                raise ValueError(f"duplicate enabled value on line {number}")
+            if value not in ("true", "false"):
+                raise ValueError(f"enabled must be a boolean on line {number}")
+            enabled = value == "true"
+    print("true" if enabled is True else "false")
+except (OSError, UnicodeDecodeError, ValueError) as error:
+    print(str(error), file=sys.stderr)
     sys.exit(1)
-' "$SCRIPT_DIR/workflow-config-resolver.py" "$repo_root/.coderabbit.yaml" || rc=$?
+' "$repo_root/.coderabbit.yaml" || rc=$?
     if [ "$rc" != 0 ]; then detail='CodeRabbit enablement check did not complete'; return; fi
     if [ "$(cat "$work_dir/enabled")" != true ]; then reason=prerequisite-missing; detail='reviews.auto_review.enabled is not true'; return; fi
     login='coderabbitai[bot]'
