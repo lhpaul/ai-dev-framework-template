@@ -176,7 +176,7 @@ def split_inline_list(value: str) -> list[str]:
 
 
 def parse_mapping(
-    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path
+    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path, *, preserve_empty_values: bool = False
 ) -> tuple[dict[str, Any], int]:
     result: dict[str, Any] = {}
     while index < len(lines):
@@ -193,21 +193,48 @@ def parse_mapping(
             result[key] = parse_scalar(value)
             continue
         if index >= len(lines) or lines[index][0] <= indent:
-            result[key] = {}
+            result[key] = None if preserve_empty_values else {}
             continue
         child_indent, child_content, _ = lines[index]
         if child_indent != indent + 2:
             raise ConfigError(f"{path}:{lines[index][2]}: expected child indentation of {indent + 2}")
         if child_content.startswith("- "):
-            child, index = parse_list(lines, index, child_indent, path)
+            child, index = parse_list(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
         else:
-            child, index = parse_mapping(lines, index, child_indent, path)
+            child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
         result[key] = child
     return result, index
 
 
+def list_item_is_mapping(item: str) -> bool:
+    """Return whether a list item has a YAML mapping delimiter.
+
+    The legacy parser treats every colon as a mapping delimiter.  The effective
+    review reader needs quoted strings and URL-like values to remain scalars.
+    """
+    in_single = False
+    in_double = False
+    escaped = False
+    for index, char in enumerate(item):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_double:
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if char == ":" and not in_single and not in_double:
+            return index + 1 == len(item) or item[index + 1].isspace()
+    return False
+
+
 def parse_list(
-    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path
+    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path, *, preserve_empty_values: bool = False
 ) -> tuple[list[Any], int]:
     result: list[Any] = []
     while index < len(lines):
@@ -228,12 +255,14 @@ def parse_list(
             if child_indent != indent + 2:
                 raise ConfigError(f"{path}:{lines[index][2]}: expected child indentation of {indent + 2}")
             if child_content.startswith("- "):
-                child, index = parse_list(lines, index, child_indent, path)
+                child, index = parse_list(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
             else:
-                child, index = parse_mapping(lines, index, child_indent, path)
+                child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
             result.append(child)
             continue
-        if ":" in item:
+        if (not preserve_empty_values and ":" in item) or (
+            preserve_empty_values and list_item_is_mapping(item)
+        ):
             key, value = split_key_value(item, path, line_no)
             if value is None and index < len(lines) and lines[index][0] > indent:
                 # For `- key:` items, the following indented block is the value
@@ -241,14 +270,14 @@ def parse_list(
                 child_indent = lines[index][0]
                 child_content = lines[index][1]
                 if child_content.startswith("- "):
-                    child, index = parse_list(lines, index, child_indent, path)
+                    child, index = parse_list(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
                 else:
-                    child, index = parse_mapping(lines, index, child_indent, path)
+                    child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
                 item_map = {key: child}
             else:
                 item_map = {key: parse_scalar(value) if value is not None else {}}
             if value is not None and index < len(lines) and lines[index][0] == indent + 2:
-                continuation, index = parse_mapping(lines, index, indent + 2, path)
+                continuation, index = parse_mapping(lines, index, indent + 2, path, preserve_empty_values=preserve_empty_values)
                 for continuation_key, continuation_value in continuation.items():
                     item_map[continuation_key] = continuation_value
             result.append(item_map)
@@ -257,7 +286,7 @@ def parse_list(
     return result, index
 
 
-def parse_yaml_subset(path: Path) -> dict[str, Any]:
+def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
     if not path.exists():
         return {}
     lines = preprocess_yaml(path)
@@ -265,7 +294,7 @@ def parse_yaml_subset(path: Path) -> dict[str, Any]:
         return {}
     if lines[0][0] != 0:
         raise ConfigError(f"{path}:{lines[0][2]}: top-level keys must not be indented")
-    data, index = parse_mapping(lines, 0, lines[0][0], path)
+    data, index = parse_mapping(lines, 0, lines[0][0], path, preserve_empty_values=preserve_empty_values)
     if index != len(lines):
         _, _, line_no = lines[index]
         raise ConfigError(f"{path}:{line_no}: could not parse remaining YAML")
@@ -1044,6 +1073,131 @@ def list_override_from_path(data: dict[str, Any], path: list[str]) -> tuple[list
     return [], False
 
 
+def typed_value_from_path(data: dict[str, Any], path: list[str]) -> tuple[Any, bool]:
+    """Return a raw nested value and whether its final key was present."""
+    value: Any = data
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None, False
+        value = value[key]
+    return value, True
+
+
+def review_runner_state(value: Any, present: bool) -> tuple[list[str], str]:
+    if not present:
+        return [], "absent"
+    if value is None or value == []:
+        return [], "empty"
+    if not isinstance(value, list):
+        return [], "malformed"
+    if not all(isinstance(item, str) for item in value):
+        return [], "malformed"
+    return value, "defined"
+
+
+def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
+    if not present:
+        return "", None, "absent"
+    if value is None or value == "":
+        return "", value, "empty"
+    if not isinstance(value, str):
+        return "", value, "unreadable"
+    if value in {"warn", "fail-if-any-unavailable"}:
+        return value, value, "defined"
+    return value, value, "unsupported"
+
+
+def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve the Step 7a config without collapsing parse-state distinctions."""
+    repo_root = repo_root_from_args(args.repo_root)
+    if not repo_root.is_dir():
+        raise ConfigError(f"{repo_root}: repository root is not a readable directory")
+
+    shared_path = repo_root / ".ai-dev-workflow.yaml"
+    local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
+    local_file = str(local_path) if local_path.is_file() else ""
+    if not local_file:
+        local_origin = ""
+
+    base = {
+        "effective_runner": [],
+        "effective_runner_state": "malformed",
+        "effective_runner_source": "",
+        "shipped_runner": [],
+        "override_excluded": [],
+        "effective_policy": "",
+        "policy_input": None,
+        "effective_policy_state": "unreadable",
+        "effective_policy_source": "",
+        "unreadable_file": "",
+        "unreadable_detail": "",
+        "local_override_file": local_file,
+        "local_override_origin": local_origin,
+        "main_clone_local_override_file": str(main_clone_file) if main_clone_file else "",
+    }
+
+    try:
+        shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
+    except ConfigError as exc:
+        base.update({
+            "effective_policy_state": "unreadable",
+            "unreadable_file": str(shared_path),
+            "unreadable_detail": str(exc),
+        })
+        return base
+
+    try:
+        local = parse_yaml_subset(local_path, preserve_empty_values=True)
+        # A linked worktree's product-repos-only local file must not mask the
+        # main clone's review settings (#1560).
+        if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
+            main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
+            if "review" in main_local:
+                local_path, local_origin, local = main_clone_file, "main_clone", main_local
+                local_file = str(local_path)
+                base["local_override_file"] = local_file
+                base["local_override_origin"] = local_origin
+    except ConfigError as exc:
+        base.update({
+            "effective_policy_state": "unreadable",
+            "unreadable_file": str(local_path),
+            "unreadable_detail": str(exc),
+        })
+        return base
+
+    shipped_raw, shipped_present = typed_value_from_path(shared, ["review", "on_draft", "runner"])
+    shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
+    local_runner_raw, local_runner_present = typed_value_from_path(local, ["review", "on_draft", "runner"])
+    runner_raw, runner_present, runner_source = (
+        (local_runner_raw, True, str(local_path)) if local_runner_present else (shipped_raw, shipped_present, str(shared_path) if shipped_present else "")
+    )
+    effective_runner, effective_runner_state = review_runner_state(runner_raw, runner_present)
+
+    shipped_policy_raw, shipped_policy_present = typed_value_from_path(
+        shared, ["review", "internal_reviewers_unavailable_policy"]
+    )
+    local_policy_raw, local_policy_present = typed_value_from_path(
+        local, ["review", "internal_reviewers_unavailable_policy"]
+    )
+    policy_raw, policy_present, policy_source = (
+        (local_policy_raw, True, str(local_path)) if local_policy_present else (shipped_policy_raw, shipped_policy_present, str(shared_path) if shipped_policy_present else "")
+    )
+    effective_policy, policy_input, effective_policy_state = review_policy_state(policy_raw, policy_present)
+
+    base.update({
+        "effective_runner": effective_runner,
+        "effective_runner_state": effective_runner_state,
+        "effective_runner_source": runner_source,
+        "shipped_runner": shipped_runner,
+        "override_excluded": [entry for entry in shipped_runner if local_runner_present and entry not in effective_runner],
+        "effective_policy": effective_policy,
+        "policy_input": policy_input,
+        "effective_policy_state": effective_policy_state,
+        "effective_policy_source": policy_source,
+    })
+    return base
+
+
 def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
     value: Any = data
     for key in path:
@@ -1194,6 +1348,13 @@ def cmd_review_overrides(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review_effective(args: argparse.Namespace) -> int:
+    # JSON is the sole form: a shell key/value list would lose delimiter-bearing
+    # reviewer names before the availability gate can classify them.
+    print(json.dumps(resolve_review_effective(args), sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -1246,6 +1407,12 @@ def build_parser() -> argparse.ArgumentParser:
     overrides.add_argument("--repo-root")
     overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)
+
+    effective = subcommands.add_parser(
+        "review-effective", help="print effective Step 7a reviewer configuration as JSON"
+    )
+    effective.add_argument("--repo-root")
+    effective.set_defaults(func=cmd_review_effective)
     return parser
 
 

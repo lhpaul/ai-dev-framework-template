@@ -975,6 +975,147 @@ run_contains "set_local_path_from_worktree_resolves_correctly" "TARGET_LOCAL_PAT
 git -C "$hub_worktree_main" worktree remove --force "$hub_worktree_linked"
 unset hub_worktree_main hub_worktree_linked worktree_resolve_output
 
+# review-effective is deliberately JSON-only.  These parser-risk fixtures pin
+# the state distinctions that review-overrides historically collapses.
+review_effective_dir="$(fixture_dir review-effective)"
+write_review_effective_fixture() {
+  printf '%s\n' "$@" > "$review_effective_dir/.ai-dev-workflow.yaml"
+}
+review_effective_json() {
+  python3 "$RESOLVER" review-effective --repo-root "$review_effective_dir"
+}
+review_effective_state() {
+  local field="$1"
+  review_effective_json | jq -r ".$field"
+}
+assert_review_effective_states() {
+  local name="$1" runner_state="$2" policy_state="$3"
+  run_test "review-effective $name runner state" "$runner_state" "$(review_effective_state effective_runner_state)"
+  run_test "review-effective $name policy state" "$policy_state" "$(review_effective_state effective_policy_state)"
+}
+
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
+t27_json="$(review_effective_json)"
+run_test "review-effective T-27 is one JSON object" "object" "$(jq -r 'type' <<< "$t27_json")"
+run_test "review-effective T-27 shipped list" '["claude","codex"]' "$(jq -c '.effective_runner' <<< "$t27_json")"
+run_test "review-effective T-27 state" "defined" "$(jq -r '.effective_runner_state' <<< "$t27_json")"
+run_test "review-effective T-27 exclusions" '[]' "$(jq -c '.override_excluded' <<< "$t27_json")"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+t28_json="$(review_effective_json)"
+run_test "review-effective T-28 local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.effective_runner_source' <<< "$t28_json")"
+run_test "review-effective T-28 retains shipped list" '["claude","codex"]' "$(jq -c '.shipped_runner' <<< "$t28_json")"
+run_test "review-effective T-28 exclusions" '["claude"]' "$(jq -c '.override_excluded' <<< "$t28_json")"
+mv "$review_effective_dir/.ai-dev-workflow.local.yaml" "$review_effective_dir/local-saved.yaml"
+printf '%s\n' 'review:' '  on_draft:' '    runner' > "$review_effective_dir/.ai-dev-workflow.yaml"
+t29_json="$(review_effective_json)"
+run_test "review-effective T-29 parse failure exits zero" "object" "$(jq -r 'type' <<< "$t29_json")"
+run_test "review-effective T-29 policy unreadable" "unreadable" "$(jq -r '.effective_policy_state' <<< "$t29_json")"
+run_test "review-effective T-29 runner malformed" "malformed" "$(jq -r '.effective_runner_state' <<< "$t29_json")"
+run_test "review-effective T-29 names unreadable file" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$t29_json")"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.yaml"
+cp "$review_effective_dir/local-saved.yaml" "$review_effective_dir/.ai-dev-workflow.local.yaml"
+legacy_overrides="$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir")"
+run_contains "review-effective T-30 legacy review-overrides runner unchanged" "REVIEW_ON_DRAFT_RUNNER=codex" "$legacy_overrides"
+
+# E-1 through E-32: each assertion is named separately to make a parser
+# regression obvious in the harness output.
+unset WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+mv "$review_effective_dir/.ai-dev-workflow.local.yaml" "$review_effective_dir/local-restored.yaml"
+write_review_effective_fixture 'review:' '  on_draft: {}'
+assert_review_effective_states "E-1" absent absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:'
+assert_review_effective_states "E-2" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: []'
+assert_review_effective_states "E-3" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
+assert_review_effective_states "E-4" defined absent
+run_test "review-effective E-4 entries" '["claude","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - claude'
+assert_review_effective_states "E-5" defined absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex'
+assert_review_effective_states "E-6" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: {a: b}'
+assert_review_effective_states "E-7" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '    # no entries' '    github: []'
+assert_review_effective_states "E-8" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [ claude , codex ]'
+assert_review_effective_states "E-9" defined absent
+run_test "review-effective E-9 trims entries" '["claude","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["claude", '\''codex'\'']'
+assert_review_effective_states "E-10" defined absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude] # ignored'
+assert_review_effective_states "E-11" defined absent
+write_review_effective_fixture 'review:' '  on_draft:' '    # runner: [codex]'
+assert_review_effective_states "E-12" absent absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner_extra: [codex]'
+assert_review_effective_states "E-13" absent absent
+write_review_effective_fixture 'review:' '  on_ready:' '    runner: [codex]'
+assert_review_effective_states "E-14" absent absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner'
+assert_review_effective_states "E-15" malformed unreadable
+run_test "review-effective E-15 unreadable file" "$review_effective_dir/.ai-dev-workflow.yaml" "$(review_effective_state unreadable_file)"
+write_review_effective_fixture $'review:\n\ton_draft:\n    runner: [codex]'
+assert_review_effective_states "E-16" malformed unreadable
+run_contains "review-effective E-16 detail names line" ":2:" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: warn'
+assert_review_effective_states "E-17" absent defined
+run_test "review-effective E-17 policy" warn "$(review_effective_state effective_policy)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:'
+assert_review_effective_states "E-18" absent empty
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: Warn'
+assert_review_effective_states "E-19" absent unsupported
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: [warn]'
+assert_review_effective_states "E-20" absent unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  internal_reviewers_unavailable_policy: bogus'
+assert_review_effective_states "E-21" defined unsupported
+
+# E-22 uses a real linked worktree because the origin field is the contract.
+effective_main="$TMP_ROOT/effective-main"; mkdir -p "$effective_main"; git -C "$effective_main" init -q
+printf '%s\n' 'review:' '  on_draft:' '    runner: [claude]' > "$effective_main/.ai-dev-workflow.yaml"
+git -C "$effective_main" add .ai-dev-workflow.yaml
+git -C "$effective_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$effective_main/.ai-dev-workflow.local.yaml"
+effective_linked="$TMP_ROOT/effective-linked"; git -C "$effective_main" worktree add -q "$effective_linked" -b fixture/effective-linked HEAD
+printf '%s\n' 'product_repos: []' > "$effective_linked/.ai-dev-workflow.local.yaml"
+e22_json="$(python3 "$RESOLVER" review-effective --repo-root "$effective_linked")"
+run_test "review-effective E-22 runner state" defined "$(jq -r '.effective_runner_state' <<< "$e22_json")"
+run_test "review-effective E-22 origin" main_clone "$(jq -r '.local_override_origin' <<< "$e22_json")"
+git -C "$effective_main" worktree remove --force "$effective_linked"
+
+for e_case in 23 24 25 26 27; do
+  case "$e_case" in
+    23) entry='codex, claude' ;;
+    24) entry='my reviewer' ;;
+    25) entry='a, b c' ;;
+    26) entry='' ;;
+    27) entry="it's" ;;
+  esac
+  write_review_effective_fixture 'review:' '  on_draft:' "    runner: [\"$entry\"]"
+  assert_review_effective_states "E-$e_case" defined absent
+  run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
+done
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: {}'
+assert_review_effective_states "E-28" malformed absent
+run_test "review-effective E-28 legacy bare runner stays empty" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: null'
+assert_review_effective_states "E-29 null" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ~'
+assert_review_effective_states "E-29 tilde" empty absent
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {}'
+assert_review_effective_states "E-30 mapping" absent unreadable
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:'
+assert_review_effective_states "E-30 bare" absent empty
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: null'
+assert_review_effective_states "E-31 null" absent empty
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: ~'
+assert_review_effective_states "E-31 tilde" absent empty
+run_test "review-effective E-31 legacy null policy stays empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=/p')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - "foo: bar"' "      - 'foo: bar'" '      - https://example.test'
+assert_review_effective_states "E-32 scalar colons" defined absent
+run_test "review-effective E-32 scalar colons values" '["foo: bar","foo: bar","https://example.test"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - key: value'
+assert_review_effective_states "E-32 mapping" malformed absent
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
