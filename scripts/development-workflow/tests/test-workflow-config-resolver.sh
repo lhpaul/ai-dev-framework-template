@@ -1097,17 +1097,47 @@ assert_review_effective_states "E-21 apostrophe runner and comment" defined abse
 run_test "review-effective E-21 apostrophe runner value" '["it'"'"'s"]' "$(review_effective_json | jq -c '.effective_runner')"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# `review.internal_reviewers` remains a supported transition alias for the
+# review-effective gate. A present modern key always wins inside each file.
+write_review_effective_fixture 'review:' '  internal_reviewers: [codex-github]'
+assert_review_effective_states "E-21 legacy runner alias" defined absent
+run_test "review-effective E-21 legacy runner alias entries" '["codex-github"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  internal_reviewers:'
+assert_review_effective_states "E-21 empty legacy runner alias" empty absent
+write_review_effective_fixture 'review:' '  internal_reviewers: codex'
+assert_review_effective_states "E-21 malformed legacy runner alias" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude]' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 modern runner wins shared alias" defined absent
+run_test "review-effective E-21 modern runner shared alias entries" '["claude"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: []' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 empty modern runner wins alias" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: null' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 null modern runner wins alias" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 malformed modern runner wins alias" malformed absent
+write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 malformed modern ancestor wins alias" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
+printf '%s\n' 'review:' '  internal_reviewers: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 local legacy runner alias" defined absent
+run_test "review-effective E-21 local legacy alias entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+run_test "review-effective E-21 local legacy alias exclusions" '["claude"]' "$(review_effective_json | jq -c '.override_excluded')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: []' '  internal_reviewers: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 local empty modern wins alias" empty absent
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 # E-22 uses a real linked worktree because the origin field is the contract.
 effective_main="$TMP_ROOT/effective-main"; mkdir -p "$effective_main"; git -C "$effective_main" init -q
 printf '%s\n' 'review:' '  on_draft:' '    runner: [claude]' > "$effective_main/.ai-dev-workflow.yaml"
 git -C "$effective_main" add .ai-dev-workflow.yaml
 git -C "$effective_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
-printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$effective_main/.ai-dev-workflow.local.yaml"
+printf '%s\n' 'review:' '  internal_reviewers: [codex]' > "$effective_main/.ai-dev-workflow.local.yaml"
 effective_linked="$TMP_ROOT/effective-linked"; git -C "$effective_main" worktree add -q "$effective_linked" -b fixture/effective-linked HEAD
 printf '%s\n' 'product_repos: []' > "$effective_linked/.ai-dev-workflow.local.yaml"
 e22_json="$(python3 "$RESOLVER" review-effective --repo-root "$effective_linked")"
 run_test "review-effective E-22 runner state" defined "$(jq -r '.effective_runner_state' <<< "$e22_json")"
 run_test "review-effective E-22 origin" main_clone "$(jq -r '.local_override_origin' <<< "$e22_json")"
+run_test "review-effective E-22 main clone legacy alias" '["codex"]' "$(jq -c '.effective_runner' <<< "$e22_json")"
 git -C "$effective_main" worktree remove --force "$effective_linked"
 
 for e_case in 23 24 25 26 27; do

@@ -1237,6 +1237,23 @@ def review_runner_state(value: Any, present: bool) -> tuple[list[str], str]:
     return value, "defined"
 
 
+def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
+    """Resolve modern runner config before the supported legacy alias.
+
+    A present modern key wins even when empty or malformed. Its malformed
+    ancestors must also block rather than letting the alias change coverage.
+    """
+    modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
+        data, ["review", "on_draft", "runner"]
+    )
+    legacy_raw, legacy_present, legacy_structure_error = review_effective_value_from_path(
+        data, ["review", "internal_reviewers"]
+    )
+    if modern_present or modern_structure_error:
+        return modern_raw, modern_present, modern_structure_error
+    return legacy_raw, legacy_present, legacy_structure_error
+
+
 def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
     if not present:
         return "", None, "absent"
@@ -1309,13 +1326,9 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         })
         return base
 
-    shipped_raw, shipped_present, shipped_runner_structure_error = review_effective_value_from_path(
-        shared, ["review", "on_draft", "runner"]
-    )
+    shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_value(shared)
     shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
-    local_runner_raw, local_runner_present, local_runner_structure_error = review_effective_value_from_path(
-        local, ["review", "on_draft", "runner"]
-    )
+    local_runner_raw, local_runner_present, local_runner_structure_error = review_runner_value(local)
     runner_raw, runner_present, runner_source = (
         (local_runner_raw, True, str(local_path)) if local_runner_present else (shipped_raw, shipped_present, str(shared_path) if shipped_present else "")
     )
