@@ -240,7 +240,7 @@ probe_hosted() {
   have_cmd gh || { detail='gh is not on PATH'; return; }
   if [ "$entry" = coderabbit ]; then
     clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
-    run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B - "$SCRIPT_DIR/workflow-config-resolver.py" "$repo_root/.coderabbit.yaml" <<'PY' || rc=$?
+    run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B -c '
 import importlib.util, pathlib, sys
 spec = importlib.util.spec_from_file_location("workflow_config", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
@@ -252,7 +252,7 @@ try:
 except (m.ConfigError, AttributeError) as e:
     print(str(e), file=sys.stderr)
     sys.exit(1)
-PY
+' "$SCRIPT_DIR/workflow-config-resolver.py" "$repo_root/.coderabbit.yaml" || rc=$?
     if [ "$rc" != 0 ]; then detail='CodeRabbit enablement check did not complete'; return; fi
     if [ "$(cat "$work_dir/enabled")" != true ]; then reason=prerequisite-missing; detail='reviews.auto_review.enabled is not true'; return; fi
     login='coderabbitai[bot]'

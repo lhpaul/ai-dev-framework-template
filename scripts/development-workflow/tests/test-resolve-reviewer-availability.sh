@@ -63,9 +63,13 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
             activity.write_text(json.dumps(comments))
         fake('gh', f'printf "%s\\n" "$*" >> {str(log)!r}\n'+ (body or f'cat {str(activity)!r}'))
 
-    def run(driver='claude', expected=0, extra_env=None, arguments=None):
+    def run(driver='claude', expected=0, extra_env=None, arguments=None, closed_stdin=False):
         started = time.monotonic()
-        result = subprocess.run([bash,str(helper), '--repo-root',str(repo), '--owner','example','--repo','test', '--runner-kind',driver] if arguments is None else [bash,str(helper),*arguments], env={**env,**(extra_env or {})}, text=True, capture_output=True, timeout=12)
+        result = subprocess.run(
+            [bash,str(helper), '--repo-root',str(repo), '--owner','example','--repo','test', '--runner-kind',driver] if arguments is None else [bash,str(helper),*arguments],
+            env={**env,**(extra_env or {})}, text=True, capture_output=True, timeout=12,
+            stdin=subprocess.DEVNULL if closed_stdin else None,
+        )
         elapsed = time.monotonic()-started
         assert elapsed <= 10.0, (elapsed,result.stdout,result.stderr)
         assert result.returncode == expected, (result.returncode,expected,result.stdout,result.stderr)
@@ -121,8 +125,17 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     reset('[claude, cursor, codex]');local.write_text('review:\n  on_draft:\n    runner: [codex]\n');d=run('codex')
     check('T-19 override exclusions',d['OVERRIDE_EXCLUDED']=='claude,cursor' and d['UNREACHABLE']=='')
     d=run('unknown',1);check('T-20 resolved override origin',str(local) in d['LOCAL_OVERRIDE_STATE'] and 'applied' in d['LOCAL_OVERRIDE_STATE'])
-    reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}]);check('T-21 hosted enabled',run()['REVIEWER_1_STATUS']=='reachable')
-    gh([]);check('T-22 hosted missing',run(expected=1)['REVIEWER_1_REASON']=='prerequisite-missing')
+    reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}]);check('T-21 hosted enabled with closed stdin via fallback',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
+    gh([]);check('T-22 hosted disabled with closed stdin via fallback',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    # A GNU timeout path backgrounds the bounded command too. The enablement
+    # program must not rely on the caller's stdin in either launch strategy.
+    fake('timeout', '''if [ "$1" = --version ]; then echo 'timeout (GNU coreutils) fixture'; exit 0; fi
+case "$1" in --kill-after=*) shift ;; esac
+shift
+exec "$@"''')
+    gh([{'user':{'login':'coderabbitai[bot]'}}]);check('T-22 hosted enabled with closed stdin via GNU timeout',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
+    gh([]);check('T-22 hosted disabled with closed stdin via GNU timeout',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (bins/'timeout').unlink()
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])
