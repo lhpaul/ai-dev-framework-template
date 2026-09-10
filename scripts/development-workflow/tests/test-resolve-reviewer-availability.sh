@@ -214,6 +214,12 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - '+scalar+'\n');d=run(expected=1)
         check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_1_REASON']=='value-not-supported')
     cfg.write_text('review:\n  on_draft:\n    runner:\n      - key: value\n');check('T-49 mapping',run(expected=1)['BLOCK_CAUSE']=='list-malformed')
+    for mapping in ('extra: value', 'extra:', '"extra": value', '? extra', ': value'):
+        reset('[codex, '+mapping+']');d=run('codex',1)
+        check(f'T-49 flow mapping blocks {mapping}',d['OUTCOME']=='blocked' and d['BLOCK_CAUSE'] in ('list-malformed','policy-unreadable') and d['REVIEWER_COUNT']=='0',d)
+    for scalar in ('"foo: bar"', "'foo: bar'", 'https://example.test'):
+        reset('[codex, '+scalar+']');d=run('codex')
+        check(f'T-49 flow scalar preserved {scalar}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_2_NAME']==scalar.strip("\"'") and d['REVIEWER_2_REASON']=='value-not-supported',d)
     for reviewer,login in (('codex-github','chatgpt-codex-connector[bot]'),('coderabbit','coderabbitai[bot]')):
         reset(f'[{reviewer}]')
         new=[{'user':{'login':login}}]+[{'user':{'login':'other'}}]*99
