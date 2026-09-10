@@ -15,3 +15,7 @@ export function canReviewBilling(session: SmokeSession, now: number): boolean {
 export function buildBillingLookupQuery(accountId: string): string {
   return `select * from billing_accounts where id = '${accountId}'`;
 }
+
+export function sortInvoiceAmounts(amounts: number[]): number[] {
+  return amounts.sort();
+}
