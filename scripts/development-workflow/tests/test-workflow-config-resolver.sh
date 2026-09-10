@@ -1070,6 +1070,33 @@ assert_review_effective_states "E-20" absent unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  internal_reviewers_unavailable_policy: bogus'
 assert_review_effective_states "E-21" defined unsupported
 
+# The review-effective parser follows YAML's whitespace-delimited comment rule;
+# legacy callers retain their historic unconditional-hash stripping behavior.
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: warn#typo'
+assert_review_effective_states "E-21 policy hash suffix" absent unsupported
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-21 legacy hash suffix unchanged" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=warn" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=/p')"
+assert_review_effective_states "E-21 local policy hash suffix" defined unsupported
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn # intended comment' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 whitespace policy comment" defined defined
+run_test "review-effective E-21 whitespace policy comment value" warn "$(review_effective_state effective_policy)"
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: '\''warn'\''#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 quoted policy suffix" defined unsupported
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn\#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 escaped policy suffix" defined unsupported
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: &policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 policy anchor" defined unsupported
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: !policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 policy tag" defined unsupported
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex#typo]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 runner hash suffix" defined absent
+run_test "review-effective E-21 runner hash suffix value" '["codex#typo"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [it'\''s] # intended comment' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 apostrophe runner and comment" defined absent
+run_test "review-effective E-21 apostrophe runner value" '["it'"'"'s"]' "$(review_effective_json | jq -c '.effective_runner')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 # E-22 uses a real linked worktree because the origin field is the contract.
 effective_main="$TMP_ROOT/effective-main"; mkdir -p "$effective_main"; git -C "$effective_main" init -q
 printf '%s\n' 'review:' '  on_draft:' '    runner: [claude]' > "$effective_main/.ai-dev-workflow.yaml"

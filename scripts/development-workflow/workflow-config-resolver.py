@@ -58,7 +58,7 @@ class ConfigError(Exception):
     """Configuration problem with a human-readable message."""
 
 
-def strip_inline_comment(line: str) -> str:
+def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> str:
     in_single = False
     in_double = False
     escaped = False
@@ -73,20 +73,35 @@ def strip_inline_comment(line: str) -> str:
             escaped = True
             continue
         if char == "'" and not in_double:
-            in_single = not in_single
+            if (
+                not strict_yaml_comments
+                or in_single
+                or not result
+                or result[-1].isspace()
+                or result[-1] in ":,[{"
+            ):
+                in_single = not in_single
             result.append(char)
             continue
         if char == '"' and not in_single:
-            in_double = not in_double
+            if (
+                not strict_yaml_comments
+                or in_double
+                or not result
+                or result[-1].isspace()
+                or result[-1] in ":,[{"
+            ):
+                in_double = not in_double
             result.append(char)
             continue
         if char == "#" and not in_single and not in_double:
-            break
+            if not strict_yaml_comments or not result or result[-1].isspace():
+                break
         result.append(char)
     return "".join(result).rstrip()
 
 
-def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
+def preprocess_yaml(path: Path, *, strict_yaml_comments: bool = False) -> list[tuple[int, str, int]]:
     try:
         raw_lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -96,7 +111,7 @@ def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
     for line_no, raw in enumerate(raw_lines, start=1):
         if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
             raise ConfigError(f"{path}:{line_no}: tabs are not supported for indentation")
-        stripped_comment = strip_inline_comment(raw)
+        stripped_comment = strip_inline_comment(raw, strict_yaml_comments=strict_yaml_comments)
         if not stripped_comment.strip():
             continue
         indent = len(stripped_comment) - len(stripped_comment.lstrip(" "))
@@ -384,7 +399,7 @@ def parse_list(
 def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
     if not path.exists():
         return {}
-    lines = preprocess_yaml(path)
+    lines = preprocess_yaml(path, strict_yaml_comments=preserve_empty_values)
     if not lines:
         return {}
     if lines[0][0] != 0:
