@@ -760,6 +760,10 @@ gate ignores.
     a review failure under either unavailable-reviewer policy. The original classification remains
     Reachable; the gate must not proceed on reduced coverage or report approval for that failure.
 
+  A full newest-comments page without matching bot activity is incomplete evidence, so the probe
+  reports `check-inconclusive` rather than absence. Only a shorter unmatched page reports
+  `prerequisite-missing`; the bounded probe does not paginate.
+
   Neither hosted reviewer is in the shipped default, so you only meet this by opting one into
   `review.on_draft.runner` deliberately. The proxy classification itself is accepted; treating a
   subsequent failure as an unavailable skip is a smoke-test failure.

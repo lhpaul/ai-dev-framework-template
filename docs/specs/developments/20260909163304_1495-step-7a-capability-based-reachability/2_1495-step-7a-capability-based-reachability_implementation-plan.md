@@ -634,8 +634,8 @@ ever produced for a hosted-service reviewer. Both invariants are asserted by tes
 | `claude` | local-runtime | `RUNNER_KIND=claude`, or `claude` resolves on `PATH` and `claude --version` exits `0` within its bound | not on `PATH` and `RUNNER_KIND` is not `claude` | never | on `PATH` but `--version` exits non-zero, or the bound elapsed |
 | `cursor` | local-runtime | `RUNNER_KIND=cursor`, or `cursor-agent` resolves on `PATH` and `cursor-agent --version` exits `0` within its bound | not on `PATH` and `RUNNER_KIND` is not `cursor` | never | on `PATH` but `--version` exits non-zero, or the bound elapsed |
 | `codex` | local-runtime | `RUNNER_KIND=codex`, or `codex` resolves on `PATH` and `codex --version` exits `0` within its bound | not on `PATH` and `RUNNER_KIND` is not `codex` | never | on `PATH` but `--version` exits non-zero, or the bound elapsed |
-| `coderabbit` | hosted-service | the repository shows `coderabbitai[bot]` activity **and** `.coderabbit.yaml` sets `reviews.auto_review.enabled: true` | never | the activity signal is definitively absent, or `auto_review.enabled` is not `true` | `gh` is missing or unauthenticated, the API call errored, or the bound elapsed |
-| `codex-github` | hosted-service | the repository shows activity from `${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}` | never | the activity signal is definitively absent | `gh` is missing or unauthenticated, the API call errored, or the bound elapsed |
+| `coderabbit` | hosted-service | the repository shows `coderabbitai[bot]` activity **and** `.coderabbit.yaml` sets `reviews.auto_review.enabled: true` | never | the activity signal is absent from a complete page, or `auto_review.enabled` is not `true` | `gh` is missing or unauthenticated, the API call errored, the bound elapsed, or the page is full with no matching activity |
+| `codex-github` | hosted-service | the repository shows activity from `${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}` | never | the activity signal is absent from a complete page | `gh` is missing or unauthenticated, the API call errored, the bound elapsed, or the page is full with no matching activity |
 | any other value | unsupported | never | never | never | never — the entry is `unreachable` with reason `value-not-supported` and no probe is run |
 
 **Why an absent `gh` is `check-inconclusive` and not `runtime-absent`**: `gh` is not the hosted
@@ -645,13 +645,15 @@ service installed for this repository" was never asked, let alone answered, so r
 perfectly fine. That is exactly the case the spec assigns to `check-inconclusive`.
 
 **Hosted-service activity probe**: one bounded call,
-`gh api "repos/<owner>/<repo>/issues/comments?per_page=100"`, matching the bot login with and
+`gh api "repos/<owner>/<repo>/issues/comments?per_page=100&sort=created&direction=desc"`, matching the bot login with and
 without its `[bot]` suffix (GraphQL omits the suffix; the REST login carries it — the repository
 already documents this at Protocol 91 and in `codex-github-reviewer.sh`). `coderabbit.md` documents
 two alternatives for this signal, `gh api repos/{owner}/{repo}/installation` **or** recent-comment
 inspection; the gate uses the second because the first only answers under GitHub App authentication,
 which the gate does not hold. Selecting between two already-documented alternatives is not a change
 to CodeRabbit's determination.
+
+Request newest comments explicitly: GitHub otherwise defaults to ascending IDs ([API reference](https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository), verified 2026-09-10). A matching login on this page establishes the activity proxy. With no match, fewer than 100 records establish absent activity; a full 100-record page is conservatively incomplete and yields `check-inconclusive`, detail `activity coverage incomplete`, never `prerequisite-missing`. Do not paginate beyond this bounded probe. T-50 checks ordering and incomplete coverage.
 
 **Known limitation — this probe is a proxy, by decision.** Spec line 151 defines hosted availability
 as the service being "installed for the repository and enabled for this review". No mechanism
@@ -1111,7 +1113,7 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       (Claude Code, Cursor, Codex, headless CI) because it uses only `gh` CLI — no Codex CLI runtime
       is needed" with a hosted-service statement: it needs no local Codex runtime, so no runner is
       inherently barred, and its availability uses the repository-activity proxy from Decision 8 — unavailable with
-      reason `prerequisite-missing` when activity is absent, subject to the documented false
+      reason `prerequisite-missing` when activity is absent from a complete (short) page, or `check-inconclusive` for a full unmatched page, subject to the documented false
       classifications. Keep the post-dispatch review-failure rule explicit.
       *Covers*: AC "No surface claims the hosted-service reviewer is available from every runner
       unconditionally."
@@ -1247,6 +1249,7 @@ with no workflow edit (VL-10).
 | T-47 | Hosted reviewer with fake `gh` whose `auth status` would hang; exercise a successful GET and a hanging GET | No auth-preflight invocation; success classifies reachable with activity, hanging GET yields `check-inconclusive` within ten seconds | Configuration inputs |
 | T-48 | Unsupported scalar policy containing whitespace/control characters, non-scalar policy, and unparseable file | `POLICY_INPUT`, `UNREADABLE_FILE`, and `UNREADABLE_DETAIL` preserve resolver diagnostics through escaped shell fields; `POLICY` is empty on invalid paths. Runbook Step 14 checks the same values reach the block comment | Policy behavior is preserved |
 | T-49 | Each scalar fixture from E-32 through `review-effective` and availability output | One configured value survives unchanged and is named with `value-not-supported`; no colon-bearing string becomes a policy parse failure. The real mapping fixture blocks as `list-malformed` | Configuration inputs |
+| T-50 | Fake repository with over 100 old non-bot comments and newer bot activity; fake API honors requested sort/direction. Also a full newest page without a bot and a short page without a bot; run for both hosted names with CodeRabbit enabled | Command requests `sort=created&direction=desc`; recent bot yields Reachable. Full unmatched page yields `check-inconclusive` and `activity coverage incomplete`; short unmatched page yields `prerequisite-missing`. Only one bounded GET occurs | Reachability follows capability |
 
 ### Acceptance-criterion coverage map
 
@@ -1636,9 +1639,10 @@ imposes it and why it applies here. No step is left untraced.
    match what is actually installed on the machine.
 
 4. *(Spec-derived — the resolver-layer evidence named in the acceptance-criterion coverage map.)* **Write `tests/test-resolve-reviewer-availability.sh`** with the `# covers:` header and cases T-1
-   to T-26 and T-31 to T-49, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
-   *Verify*: `bash scripts/development-workflow/tests/test-resolve-reviewer-availability.sh` — confirm
-   every case reports PASS. Then run
+   to T-26 and T-31 to T-50, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
+   *Verify now*: `bash -n scripts/development-workflow/tests/test-resolve-reviewer-availability.sh`.
+   Defer execution of this suite until step 6 changes the shipped default: T-33 and its T-44
+   repetition require that configuration. No passing runtime result is claimed at this step. Run
    `bash scripts/development-workflow/select-test-suites.sh` against the change set and confirm the
    new suite appears in the selection, so no CI workflow edit is needed.
 
@@ -1652,7 +1656,10 @@ imposes it and why it applies here. No step is left untraced.
    Runner-context constraint block and its replacement, and the policy comment.
    *Verify*: re-run the step-1 command and confirm `effective_runner` reports the new default
    when no local override is in effect; and
-   `grep -n "expected behaviour" .ai-dev-workflow.yaml` returns nothing.
+   `grep -n "expected behaviour" .ai-dev-workflow.yaml` returns nothing. Then run
+   `bash scripts/development-workflow/tests/test-resolve-reviewer-availability.sh` and confirm
+   every case passes, including T-33 and T-44 against the actual shipped default. This completes
+   the runtime verification deferred from step 4 before subsequent steps begin.
 
 7. *(Spec-derived — AC group* **Surfaces agree***.)* **Update the remaining surfaces**, all ten: `README.md`, `integrations/coderabbit.md`,
    `integrations/codex-github.md`, `.claude/agents/item-orchestrator.md`,
