@@ -1153,9 +1153,18 @@ printf '%s\n' 'review:' '  on_draft: []' > "$review_effective_dir/.ai-dev-workfl
 local_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective local on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_on_draft_list_json")"
 run_test "review-effective local on_draft list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$local_on_draft_list_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:'
 nullable_review_json="$(review_effective_json)"
-run_test "review-effective bare review key structural policy error" unreadable "$(jq -r '.effective_policy_state' <<< "$nullable_review_json")"
+run_test "review-effective bare review key policy absent" absent "$(jq -r '.effective_policy_state' <<< "$nullable_review_json")"
+run_test "review-effective bare review key runner absent" absent "$(jq -r '.effective_runner_state' <<< "$nullable_review_json")"
+
+
+write_review_effective_fixture 'review: []'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective runner-only override cannot hide malformed policy ancestor" unreadable "$(review_effective_state effective_policy_state)"
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective policy-only override cannot hide malformed runner ancestor" unreadable "$(review_effective_state effective_policy_state)"
 
 echo ""
 echo "Passed: $PASS_COUNT"

@@ -43,9 +43,9 @@ for dependency in python3 jq mktemp rm sleep cat; do
   have_cmd "$dependency" || fail "missing dependency: $dependency"
 done
 launch_kind=
-if have_cmd timeout; then launch_kind=timeout
-elif have_cmd setsid; then launch_kind=setsid
+if have_cmd setsid; then launch_kind=setsid
 elif have_cmd perl; then launch_kind=perl
+elif have_cmd timeout; then launch_kind=timeout
 else fail 'bounded launch requires timeout, setsid, or perl'
 fi
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-availability.XXXXXX") || fail 'cannot create temporary directory'
@@ -107,6 +107,20 @@ clamp_bound() {
   bound=$((DEADLINE - SECONDS))
   [ "$bound" -le "$1" ] || bound=$1
 }
+
+# A binary named timeout is not necessarily GNU timeout (e.g. BusyBox).
+# Identify it under a bound; prefer an owned-group fallback for this check.
+# A host with only timeout must successfully prove its GNU self-bounding path.
+if have_cmd timeout; then
+  clamp_bound 1
+  timeout_check=0
+  run_bounded "$bound" "$work_dir/timeout-version" "$work_dir/timeout-error" timeout --version || timeout_check=$?
+  if [ "$timeout_check" = 0 ] && [[ "$(cat "$work_dir/timeout-version")" == *'GNU coreutils'* ]]; then
+    launch_kind=timeout
+  elif [ "$launch_kind" = timeout ]; then
+    fail 'GNU timeout, setsid, or perl is required for bounded launch'
+  fi
+fi
 
 policy= policy_input= policy_source= policy_state=not-evaluated
 unreadable_file= unreadable_detail= list_state=not-evaluated list_source=
@@ -212,7 +226,7 @@ fi
 
 probe_local() {
   local entry=$1 binary=$1 rc=0
-  [ "$entry" != cursor ] || binary=cursor-agent
+  [ "$entry" != cursor ] || binary='cursor-agent'
   if ! have_cmd "$binary"; then reason=runtime-absent; detail="$binary is not on PATH"; return; fi
   clamp_bound "$LOCAL_PROBE_CAP_SECONDS"
   run_bounded "$bound" "$work_dir/probe.out" "$work_dir/probe.err" "$binary" --version || rc=$?
@@ -279,7 +293,7 @@ while IFS= read -r -d '' entry; do
       if [ "$SECONDS" -ge "$DEADLINE" ]; then detail='availability budget exhausted before this check started'
       else probe_hosted "$entry"
       fi ;;
-    *) reason=value-not-supported; detail='value is not a supported reviewer' ;;
+    *) reason='value-not-supported'; detail='value is not a supported reviewer' ;;
   esac
   add_record "$entry" "$verdict" "$reason" "$detail"
 done <"$work_dir/entries"

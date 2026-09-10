@@ -164,7 +164,8 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         if engine == 'timeout-leader-exit':
             # Mimic GNU timeout's owned group and immediate return when the
             # monitored leader exits on TERM, leaving its descendant alive.
-            fake('timeout', """shift
+            fake('timeout', """if [ \"$1\" = --version ]; then echo 'timeout (GNU coreutils) fixture'; exit 0; fi
+shift
 bound=$1
 shift
 exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid=fork(); die unless defined $pid; if (!$pid) {$SIG{TERM}="DEFAULT"; exec @ARGV; die;} my $timed=0; $SIG{ALRM}=sub {$timed=1; kill "TERM", -$$;}; alarm $bound; while (waitpid($pid,0) < 0) {} exit($timed ? 124 : ($? >> 8));' -- "$bound" "$@""" + '"')
@@ -179,6 +180,9 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
                 time.sleep(.05)
             check(f'T-46 {engine} descendant cleanup {command}',gone and d['REVIEWER_1_REASON']=='check-inconclusive')
     (bins/'timeout').unlink(missing_ok=True)
+    reset();fake('codex','exit 0');fake('timeout','echo "BusyBox timeout"; exit 1')
+    check('T-46 non-GNU timeout uses owned-group fallback',run()['REVIEWER_1_STATUS']=='reachable')
+    (bins/'timeout').unlink()
     reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}],body=f'if [ "$1" = auth ]; then sleep 30; else cat {str(activity)!r}; fi')
     run();gh(body='if [ "$1" = auth ]; then sleep 30; else sleep 30; fi');run(expected=1)
     check('T-47 no auth preflight','auth' not in log.read_text())
@@ -186,6 +190,9 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
     reset('[codex]','{}');d=run(expected=1)
     check('T-48 collection diagnostics',d['POLICY_INPUT']=='{}' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']), d)
+    for malformed in ('review: []\n','review:\n  on_draft: []\n'):
+        reset();local.write_text(malformed);d=run('codex',1)
+        check(f'T-31 malformed ancestor {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and str(local)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
     reset('[codex]','{foo: bar}');d=run(expected=1)
     check('T-48 nonempty flow-map diagnostics',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
     for malformed in ('["codex]', '[codex'):

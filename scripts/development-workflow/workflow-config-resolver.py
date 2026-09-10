@@ -1141,11 +1141,14 @@ def review_effective_value_from_path(
     value: Any = data
     for index, key in enumerate(path):
         if not isinstance(value, dict):
-            # An empty on_draft mapping (including one containing only a
-            # comment) retains the historic absent-list meaning. A bare review
-            # section remains malformed because it cannot contain either the
-            # list or the policy input.
-            if value is None and index == 2 and path[:2] == ["review", "on_draft"]:
+            # Empty optional review/on_draft sections (including sections that
+            # contain only comments) retain the historic absent-field meaning.
+            # A list, scalar, or mapping in the wrong position remains a
+            # structural error and cannot fall through to another file.
+            if value is None and (
+                (index == 1 and path[:1] == ["review"])
+                or (index == 2 and path[:2] == ["review", "on_draft"])
+            ):
                 return None, False, False
             return None, False, True
         if key not in value:
@@ -1268,9 +1271,10 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     # that evaluation even though the policy key itself is a sibling of
     # on_draft, so it is an unreadable policy input as well as a malformed list.
     local_structure_error = local_runner_structure_error or local_policy_structure_error
-    shipped_structure_error = shipped_runner_structure_error or shipped_policy_structure_error
-    policy_structure_error = local_structure_error or (
-        not local_runner_present and not local_policy_present and shipped_structure_error
+    policy_structure_error = (
+        local_structure_error
+        or (not local_runner_present and shipped_runner_structure_error)
+        or (not local_policy_present and shipped_policy_structure_error)
     )
     if runner_structure_error:
         effective_runner_state = "malformed"
