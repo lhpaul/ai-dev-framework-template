@@ -188,6 +188,12 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-47 no auth preflight','auth' not in log.read_text())
     reset('[codex]','"bad policy"');d=run(expected=1)
     check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
+    reset('[codex]','warn#typo');d=run('codex',1)
+    check('T-48 hash without separation remains unsupported policy',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='warn#typo' and d['REVIEWER_COUNT']=='0',d)
+    reset('[codex#typo]');d=run('codex',1)
+    check('T-48 hash without separation remains reviewer value',d['REVIEWER_1_NAME']=='codex#typo' and d['REVIEWER_1_REASON']=='value-not-supported',d)
+    reset('[codex]','warn # ordinary comment');d=run('codex')
+    check('T-48 separated comment remains valid policy',d['OUTCOME']=='proceeded' and d['POLICY']=='warn',d)
     reset('[codex]','{}');d=run(expected=1)
     check('T-48 collection diagnostics',d['POLICY_INPUT']=='{}' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']), d)
     for malformed in ('review: []\n','review:\n  on_draft: []\n'):
