@@ -73,7 +73,8 @@ def checks(base):
         m=re.match(r'\s*([a-z-]+)\) remedies\[\$count\]=([\'"])(.*)\2 ;;',line)
         if m: code[m[1]]=m[3]
     out['D-5']=set(doc)==set(code)==reasons and doc==code
-    out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
+    out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','Request a read-only review and exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','The parent applies deterministic fixes, commits and pushes them','never add permission-bypass flags','approval requires exit `0` and exactly one valid terminal verdict','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
+    out['D-6']=out['D-6'] and contains(gate,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.')
     out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
     out['D-8']=contains(runtime,'is read-only: do not review, post a comment, alter the PR, install software, or substitute a reviewer','Do not provision services or write tracked files.')
     out['D-9']=lists[0]==[['claude','cursor','codex']] and not re.search(r'expected behavio[u]?r.*hard.fail',read(shared),re.I)
@@ -130,6 +131,8 @@ if sys.argv[2]=='--prove-plants':
             ('D-4',local,'      - cursor','      - greptile'),
             ('D-5',protocol,"| `runtime-absent` | Install the reviewer's runtime","| `runtime-absent` | Acquire the reviewer's runtime"),
             ('D-6',protocol,'Every dispatched failure is a review failure under either policy.','Every dispatched failure is skipped under warn.'),
+            ('D-6',protocol,'Request a read-only review and exactly one','Request a mutating review and exactly one'),
+            ('D-6',protocol,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.','Cross-runner CLI reviewers apply fixes directly.'),
             ('D-7',readme,"driving runner's own stage reviewer",'fixed Claude reviewer'),
             ('D-8',protocol,'install software, or\nsubstitute a reviewer','install software, or\nreplace a reviewer'),
             ('D-9',shared,'      - claude\n      - cursor\n      - codex','      - codex'),
@@ -166,5 +169,5 @@ if sys.argv[2]=='--prove-plants':
                 for file,s in originals.items(): (fixture/file).write_text(s)
             assert checks(fixture)==baseline,(case,'repaired fixture must pass every check')
             print(f'PROOF {number:02d} {case}: PASS after repair',flush=True)
-        print('25 isolated planted violations failed and repaired; source checkout untouched.',flush=True)
+        print(f'{len(plants)} isolated planted violations failed and repaired; source checkout untouched.',flush=True)
 PY

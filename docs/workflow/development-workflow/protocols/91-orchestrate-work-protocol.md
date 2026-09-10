@@ -1807,8 +1807,14 @@ For each indexed Reachable reviewer selected by the proceed verdict, dispatch th
 When a local-runtime reviewer does not match the driving runner, invoke its
 installed CLI from the artifact root: `claude -p --output-format text`,
 `cursor-agent --print --output-format text`, or `codex exec --sandbox read-only`.
-The prompt names the stage protocol, `REVIEW.md`, reviewed base/head, and active
-pass and requires exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`.
+The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
+reviewed base/head, and active pass. Request a read-only review and exactly one
+`VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
+fixes, commits and pushes them, and re-runs the required reviewers after the push.
+Preserve existing CLI permission controls; never add permission-bypass flags or
+substitute another runtime. The read-only prompt is an instruction; the Codex
+command additionally enforces a read-only sandbox. Capture the exit status and
+complete response; approval requires exit `0` and exactly one valid terminal verdict.
 For `codex-github`, exit `0` approves, `1` enters revision, `2` and `3` are
 review failures, and `4` waits for the reviewer. A non-zero CLI exit, timeout,
 permission denial, or missing/ambiguous verdict is a review failure, not an
@@ -1824,7 +1830,7 @@ Before running any reviewers, classify the PR branch to determine which executio
 
 ### Multi-reviewer execution rules
 
-Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
+Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
