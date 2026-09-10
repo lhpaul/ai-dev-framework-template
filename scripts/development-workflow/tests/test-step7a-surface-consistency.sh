@@ -23,7 +23,7 @@ check D-10 'reviews.auto_review.enabled: true' docs/workflow/development-workflo
 cmp -s <(sed -n '/codex-github runner reviewer dispatch/,/\/codex-github runner reviewer dispatch/p' "$ROOT/.claude/agents/item-orchestrator.md") <(sed -n '/codex-github runner reviewer dispatch/,/\/codex-github runner reviewer dispatch/p' "$ROOT/.cursor/agents/item-orchestrator.md") && { echo 'PASS: D-11'; PASS=$((PASS+1)); } || { echo 'FAIL: D-11'; FAIL=$((FAIL+1)); }
 check D-12 'exactly one `VERDICT: APPROVED`' "$P"
 check D-13 'Run it on every cycle' "$P"
-check D-14 'determination is read-only' "$P"
+check D-14 'is read-only: do not review' "$P"
 check D-15 'resolve-reviewer-availability.sh' "$P"
 check D-16 'per-reviewer verdict' "$P"
 absent D-17 '(<runner-context>)' "$P"
