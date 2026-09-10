@@ -1,0 +1,943 @@
+# Smoke Test Runbook: Step 7a Capability-Based Reviewer Reachability
+
+**Feature**: Step 7a capability-based reviewer reachability
+**Spec**: [`1_1495-step-7a-capability-based-reachability_specs.md`](../../specs/developments/20260909163304_1495-step-7a-capability-based-reachability/1_1495-step-7a-capability-based-reachability_specs.md)
+**Implementation plan**: [`2_1495-step-7a-capability-based-reachability_implementation-plan.md`](../../specs/developments/20260909163304_1495-step-7a-capability-based-reachability/2_1495-step-7a-capability-based-reachability_implementation-plan.md)
+**Created in**: Plan Ready stage
+**Updated in**: In Development stage
+
+---
+
+## Prerequisites
+
+This feature is workflow tooling, not an application. There is no server to start and no database to
+seed.
+
+- [ ] You are on the implementation branch for #1495 with the change applied.
+- [ ] `gh` is installed and authenticated (`gh auth status` succeeds).
+- [ ] `python3`, `perl`, `jq`, `git`, and `bash` are available. Start one dedicated Bash
+      session with `bash --noprofile --norc` from the repository root, then run all snippets in
+      that session. Every mutation fails closed; expected resolver exits are captured explicitly.
+- [ ] Preserve the checkout's original override before any fixture writes. The unique state
+      directory records whether the override was absent or successfully moved; a failed move
+      stops the session. An exit trap restores the original override even if a later step fails.
+      On interruption, retain the printed state-directory path for recovery.
+
+      <!-- workflow-shell-contract: bash -->
+      ```bash
+      set -euo pipefail
+      SMOKE_REPO_ROOT="$(pwd -P)"
+      SMOKE_STATE="$(mktemp -d "${TMPDIR:-/tmp}/step7a-smoke.XXXXXX")"
+      SMOKE_TMP="$SMOKE_STATE/fixtures"
+      mkdir "$SMOKE_TMP"
+      export SMOKE_TMP
+      printf 'Smoke recovery directory: %s\n' "$SMOKE_STATE"
+      SMOKE_OVERRIDE_STATE=pending
+      smoke_restore_override() {
+        case "$SMOKE_OVERRIDE_STATE" in
+          absent|saved) ;;
+          pending|restored) return 0 ;;
+          *) return 1 ;;
+        esac
+        if [ "$SMOKE_OVERRIDE_STATE" = saved ]; then
+          if [ ! -e "$SMOKE_STATE/original-override" ] && [ ! -L "$SMOKE_STATE/original-override" ]; then
+            printf 'Original override missing; inspect %s\n' "$SMOKE_STATE" >&2
+            return 1
+          fi
+        fi
+        if [ -e "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" ] || [ -L "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" ]; then
+          smoke_leftover="$(mktemp -d "$SMOKE_STATE/leftover.XXXXXX")" || return 1
+          mv "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" "$smoke_leftover/test-override" || return 1
+        fi
+        if [ "$SMOKE_OVERRIDE_STATE" = saved ]; then
+          mv "$SMOKE_STATE/original-override" "$SMOKE_REPO_ROOT/.ai-dev-workflow.local.yaml" || return 1
+        fi
+        SMOKE_OVERRIDE_STATE=restored
+        printf '%s\n' "$SMOKE_OVERRIDE_STATE" > "$SMOKE_STATE/override-state" || return 1
+      }
+      trap 'smoke_exit=$?; if ! smoke_restore_override; then printf "Override restoration failed; inspect %s\n" "$SMOKE_STATE" >&2; smoke_exit=1; fi; exit "$smoke_exit"' EXIT
+      if [ -e .ai-dev-workflow.local.yaml ] || [ -L .ai-dev-workflow.local.yaml ]; then
+        mv .ai-dev-workflow.local.yaml "$SMOKE_STATE/original-override"
+        SMOKE_OVERRIDE_STATE=saved
+      else
+        SMOKE_OVERRIDE_STATE=absent
+      fi
+      printf '%s\n' "$SMOKE_OVERRIDE_STATE" > "$SMOKE_STATE/override-state"
+      ```
+
+- [ ] Note which of `claude`, `cursor-agent`, and `codex` are on your `PATH`. Several steps below
+      depend on it:
+
+      <!-- workflow-shell-contract: bash -->
+      ```bash
+      set -euo pipefail
+      for b in claude cursor-agent codex; do printf '%s: %s\n' "$b" "$(command -v "$b" || echo absent)"; done
+      ```
+
+No design assets exist for this item — it changes no user interface — so this runbook contains no
+design-fidelity step.
+
+---
+
+## Test Data
+
+| Item | Value |
+| --- | --- |
+| Repository root | the checkout you are testing in |
+| Availability resolver | `scripts/development-workflow/resolve-reviewer-availability.sh` |
+| Config resolver | `scripts/development-workflow/workflow-config-resolver.py` |
+| Owner / repo | your fork or the template repository, as `--owner <owner> --repo <repo>` |
+| Fixture root | `$SMOKE_TMP` |
+| Shipped default list | `claude, cursor, codex` |
+
+Throughout, "the verdict block" means the `KEY=value` summary the availability resolver prints after
+its `REVIEWER` records.
+
+---
+
+## Smoke Test Steps
+
+### Step 0: Confirm the starting state
+
+1. Run `git status --porcelain` and confirm the output is empty.
+2. Run `grep -n "runner:" -A 4 .ai-dev-workflow.yaml` and confirm the shipped list is
+   `claude`, `cursor`, `codex`.
+3. Run the plan's L1 live-surface search. This exact scope is shared with D-3 and residual
+   verification; plan/runbook examples and test fixtures are excluded, production headers remain:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   live_status=0
+   git grep -n -i -F 'universally reachable' -- \
+     '*.md' '*.sh' '*.yaml' '*.yml' '*.mdc' \
+     ':(exclude)CHANGELOG.md' \
+     ':(exclude)docs/specs/developments/**' \
+     ':(exclude)docs/testing/**' \
+     ':(exclude)scripts/**/tests/**' || live_status=$?
+   case "$live_status" in
+     1) printf 'L1 PASS: no live matches\n' ;;
+     0) printf 'L1 FAIL: live claims remain\n' >&2; exit 1 ;;
+     *) printf 'L1 ERROR: git grep exited %s\n' "$live_status" >&2; exit 1 ;;
+   esac
+   ```
+
+**Expected result**: a clean tree, the new shipped default, and no live surface claiming
+unconditional reachability.
+
+### Step 1: The shipped default reaches a reviewer on this machine
+
+**Maps to**: *The shipped default never traps* — "A repository using the shipped default
+configuration unchanged, with no machine-local override file, reaches a dispatched reviewer and a
+gate verdict on every supported runner."
+
+1. Run the resolver once for each supported runner kind:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   for kind in claude cursor codex; do
+     smoke_status=0
+     scripts/development-workflow/resolve-reviewer-availability.sh \
+       --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind "$kind" || smoke_status=$?
+     printf 'exit=%s\n' "$smoke_status"
+     [ "$smoke_status" -eq 0 ] || exit 1
+   done
+   ```
+
+2. Read each verdict block.
+
+**Expected result**: for every one of the three runs, `OUTCOME` is `proceeded` or
+`proceeded-reduced`, the exit status is `0`, and `REACHABLE` contains at least the reviewer matching
+`--runner-kind`. No run reports `OUTCOME=blocked`. If all three runtimes are on your `PATH`, every
+run reports `proceeded` with all three reachable.
+
+### Step 2: Identity alone never makes a reviewer unreachable
+
+**Maps to**: *Reachability follows capability* — "A configured reviewer is not classified Unreachable
+solely because a different runner is driving the gate."
+
+1. Run the resolver with `--runner-kind claude` while `codex` is on your `PATH`.
+2. Find the indexed record for `codex` — the `REVIEWER_N_NAME=codex` line and the `REVIEWER_N_*`
+   fields beside it.
+
+**Expected result**: `REVIEWER_N_STATUS=reachable` with `REVIEWER_N_REASON=` and
+`REVIEWER_N_REMEDY=` both empty, and no line anywhere in the output mentioning the driving runner as
+a cause. This is the exact condition the previous
+identity table classified as unreachable.
+
+### Step 3: An absent runtime is Unreachable with the runtime reason
+
+**Maps to**: *Reachability follows capability* and *The operator can tell why*.
+
+1. Build a hermetic `PATH` that deliberately omits `codex`:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/bin"
+   for c in awk bash cat cut date dirname git grep gh head jq mktemp perl printf python3 rm sed sleep sort tr wc; do
+     src="$(type -P "$c")" || { printf 'Missing executable: %s\n' "$c" >&2; exit 1; }
+     ln -s "$src" "$SMOKE_TMP/bin/$c"
+   done
+   PATH="$SMOKE_TMP/bin" scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
+   ```
+
+**Expected result**: the `codex` and `cursor` records read `STATUS=unreachable` with
+`REASON=runtime-absent` and a non-empty `REMEDY`, while the `claude` record reads `STATUS=reachable`
+by identity. `OUTCOME=proceeded-reduced`, exit `0`. The reason is `runtime-absent`, never
+`prerequisite-missing` and never `check-inconclusive`.
+
+### Step 4: The verdict is determined fresh on each run
+
+**Maps to**: *Reachability follows capability* — "making a runtime available between two runs flips
+the verdict … and removing it flips the verdict back."
+
+1. From Step 3's hermetic `PATH`, add a stub `codex` that answers `--version`:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   printf '#!/bin/sh\necho "codex-cli 0.0.0-stub"\n' > "$SMOKE_TMP/bin/codex"
+   chmod +x "$SMOKE_TMP/bin/codex"
+   PATH="$SMOKE_TMP/bin" scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
+   ```
+
+2. Remove the stub and run the identical command again:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   rm "$SMOKE_TMP/bin/codex"
+   PATH="$SMOKE_TMP/bin" scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
+   ```
+
+**Expected result**: the first run reports `STATUS=reachable` for the `codex` record, the second
+reports `STATUS=unreachable` with `REASON=runtime-absent`. No configuration file changed between the two runs, and
+nothing was cached.
+
+### Step 5: Determining availability changes nothing
+
+**Maps to**: *Reachability follows capability* — "Determining availability posts no comment, changes
+no pull request state, and modifies no tracked file … leaves the checkout clean", and "Determining
+availability invokes no reviewer."
+
+1. Run `git status --porcelain` and note the output.
+2. Run the resolver once.
+3. Run `git status --porcelain` again.
+4. Watch the elapsed time of the run and check the repository's open pull requests for any new
+   comment.
+
+**Expected result**: the two `git status` outputs are identical. No pull request comment was posted,
+no pull request changed draft state, and no review started — the run finishes in seconds, far short
+of the minutes a real review takes.
+
+### Step 6: The gate reaches a verdict within the availability budget
+
+**Maps to**: *Configuration inputs that are absent, empty, malformed, or unsupported* — "the gate
+reaches that verdict within ten seconds of starting to resolve the list, without operator
+intervention."
+
+1. Build a fixture whose reviewer binaries all hang:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/slow"
+   cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/slow/"
+   for b in claude cursor-agent codex; do
+     printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/slow/$b"
+     chmod +x "$SMOKE_TMP/slow/$b"
+   done
+   python3 - "$SMOKE_TMP/slow" "$(pwd -P)" <<'PYTIME'
+   import os, subprocess, sys, time
+   child_env = dict(os.environ, PATH=sys.argv[1])
+   started = time.monotonic()
+   result = subprocess.run([
+       "scripts/development-workflow/resolve-reviewer-availability.sh",
+       "--repo-root", sys.argv[2], "--owner", "<owner>", "--repo", "<repo>",
+       "--runner-kind", "unknown",
+   ], env=child_env)
+   elapsed = time.monotonic() - started
+   print(f"exit={result.returncode} elapsed={elapsed:.6f}s")
+   print("CEILING PASS" if elapsed <= 10.0 else "CEILING FAIL")
+   sys.exit(0 if elapsed <= 10.0 and result.returncode == 1 else 1)
+   PYTIME
+   ```
+
+**Expected result**: `CEILING PASS` — measured wall time is **at most ten seconds**, which is the
+spec's contract. Ten is the assertion, not a guideline: an eleven-second run is a failure to report,
+not rounding. The script's internal budget is eight seconds precisely so that timeout and poll cleanup
+fit inside ten (see the plan's *The contract is ten seconds; the budget is eight*). Every reviewer is
+classified, the hanging ones as `check-inconclusive`, and the run exits `1` with `OUTCOME=blocked` and
+`BLOCK_CAUSE=zero-reachable`. Also read `ELAPSED_SECONDS` and confirm it does not exceed
+ten seconds including cleanup — that is the script's own measurement, a separate check from the wall-clock one
+above.
+
+### Step 7: An unsupported value is reported by name
+
+**Maps to**: *Configuration inputs* — "A configured entry that is not a supported reviewer value is
+classified Unreachable with the reason Not a supported reviewer, and the offending value is named."
+
+1. Make a fixture checkout with a bad entry:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/badvalue"
+   awk '{ if ($0 == "      - claude") print "      - not-a-reviewer"; print }' \
+     .ai-dev-workflow.yaml > "$SMOKE_TMP/badvalue/.ai-dev-workflow.yaml"
+   grep -n -A 4 '^    runner:$' "$SMOKE_TMP/badvalue/.ai-dev-workflow.yaml"
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/badvalue" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ] || exit 1
+   ```
+
+   Read the `grep` output first and confirm the list now reads `not-a-reviewer`, `claude`, `cursor`,
+   `codex` before trusting the resolver's verdict.
+
+**Expected result**: one record has `REVIEWER_N_NAME=not-a-reviewer` with
+`REVIEWER_N_STATUS=unreachable` and `REVIEWER_N_REASON=value-not-supported`; `claude` is still
+`reachable`; `OUTCOME=proceeded-reduced` with exit `0`. The entry was reported by name, not silently
+dropped.
+
+### Step 8: An absent list falls back to the driving runner's own stage reviewer
+
+**Maps to**: *Configuration inputs* — "With no reviewer list defined in either configuration file,
+the gate runs the stage-appropriate default reviewer once and records in its summary that the
+fallback applied", and "The reviewer the fallback runs is the driving runner's own reviewer."
+
+1. Make a fixture with the `runner` key removed entirely, then run once per supported runner kind:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/nolist"
+   grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
+     | grep -v '^    runner:$' > "$SMOKE_TMP/nolist/.ai-dev-workflow.yaml"
+   for kind in claude cursor codex; do
+     smoke_status=0
+     scripts/development-workflow/resolve-reviewer-availability.sh \
+       --repo-root "$SMOKE_TMP/nolist" --owner "<owner>" --repo "<repo>" --runner-kind "$kind" || smoke_status=$?
+     printf 'exit=%s\n' "$smoke_status"
+     [ "$smoke_status" -eq 0 ] || exit 1
+   done
+   ```
+
+**Expected result**: every run reports `CONFIG_LIST_STATE=absent`, `FALLBACK_APPLIED=true`,
+`OUTCOME=proceeded`, exit `0`. No run blocks, on any runner kind. Confirm the file you generated
+really has no `runner:` key before trusting the result.
+
+### Step 9: A malformed list blocks, and an unparseable file blocks on the policy input
+
+**Maps to**: *Configuration inputs* — "With a reviewer list that is defined but cannot be read as a
+list of values, the gate blocks … It does not fall back to the default reviewer", and "With a
+configuration file that will not parse at all, the gate blocks and names that file."
+
+These are two distinct states with two distinct block causes, so the step tests both. Part 1 is a
+file that parses with a bad key; part 2 is a file that does not parse at all. The second blocks on
+the **policy** input, because the policy is read first and an unparseable file makes it unreadable —
+the file is still named, which is what the criterion asks for.
+
+**Part 1 — the key is present but is not a list**
+
+1. Make a fixture where `runner` is a scalar:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/scalar"
+   grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
+     | sed 's/^    runner:$/    runner: codex/' > "$SMOKE_TMP/scalar/.ai-dev-workflow.yaml"
+   grep -n '^    runner' "$SMOKE_TMP/scalar/.ai-dev-workflow.yaml"
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/scalar" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
+   ```
+
+   Read the `grep` output first and confirm the single remaining line is `    runner: codex` — a
+   scalar where a list is required.
+
+**Expected result**: `CONFIG_LIST_STATE=malformed`, `OUTCOME=blocked`,
+`BLOCK_CAUSE=list-malformed`, `FALLBACK_APPLIED=false`, exit `1`, and the output names the file and
+the `review.on_draft.runner` key.
+
+**Part 2 — the file does not parse at all**
+
+1. Truncate a copy of the configuration mid-mapping and run against it:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/unparseable"
+   head -60 .ai-dev-workflow.yaml > "$SMOKE_TMP/unparseable/.ai-dev-workflow.yaml"
+   printf '  on_draft:\n      badly: indented\n    runner\n' >> "$SMOKE_TMP/unparseable/.ai-dev-workflow.yaml"
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/unparseable" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
+   ```
+
+   If the resolver reports a readable file instead, the truncation happened to produce valid YAML —
+   append another malformed line and re-run until it does not parse.
+
+**Expected result**: `OUTCOME=blocked`, `BLOCK_CAUSE=policy-unreadable`,
+`CONFIG_LIST_STATE=not-evaluated`, exit `1`, and the output names the file that could not be parsed.
+The `not-evaluated` value is the visible proof that the gate stopped at the policy rather than
+guessing at the list — and note the block cause differs from Part 1, which is the whole point of
+running both.
+
+### Step 10: An unsupported policy blocks before the list is looked at
+
+**Maps to**: *Policy behavior is preserved* — "With the policy unsupported or unreadable and the
+reviewer list absent, empty, or malformed at the same time, the gate blocks on the policy and reports
+it as the cause. It does not reach the fallback reviewer."
+
+1. Take the Step 8 fixture (no list at all) and set a bad policy value by uncommenting the policy
+   key the shipped file already carries, so the key lands inside the `review:` mapping at the right
+   indentation rather than at the end of the file:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/badpolicy"
+   sed 's/^  # internal_reviewers_unavailable_policy: warn$/  internal_reviewers_unavailable_policy: maybe/' \
+     "$SMOKE_TMP/nolist/.ai-dev-workflow.yaml" > "$SMOKE_TMP/badpolicy/.ai-dev-workflow.yaml"
+   grep -n '^  internal_reviewers_unavailable_policy' "$SMOKE_TMP/badpolicy/.ai-dev-workflow.yaml"
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/badpolicy" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
+   ```
+
+   The `grep` must print exactly one line reading `  internal_reviewers_unavailable_policy: maybe`.
+   If it prints nothing, the commented template line was reworded during implementation — add the
+   key by hand under `review:` at two-space indentation instead.
+
+**Expected result**: `POLICY_STATE=unsupported`, `BLOCK_CAUSE=policy-unsupported`,
+`CONFIG_LIST_STATE=not-evaluated`, `FALLBACK_APPLIED=false`, exit `1`, and the offending value
+`maybe` is named. The `not-evaluated` value is the visible proof that the policy was read first.
+
+### Step 11: A machine-local override narrows without warning about what it removed
+
+**Maps to**: *The operator can tell why* — "A reviewer removed by the machine-local override is
+reported as Excluded by override and produces no unreachability warning."
+
+1. Write an override that keeps only the reviewer matching your session, then run:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   printf 'review:\n  on_draft:\n    runner:\n      - claude\n' > .ai-dev-workflow.local.yaml
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ] || exit 1
+   ```
+
+**Expected result**: `OVERRIDE_EXCLUDED` lists `cursor` and `codex`; each has an indexed record with
+`STATUS=override-excluded` and empty `REASON` and `REMEDY`; `UNREACHABLE` is empty;
+`OUTCOME=proceeded`, exit `0`. `LOCAL_OVERRIDE_STATE` names the override file and its origin, taken
+from the resolver rather than guessed.
+
+Repeat with `review.on_draft.runner: []` in the local override. Expect the fallback to be
+selected, every shipped reviewer still reported Excluded by override, and no unreachability warning.
+When exercising the gate, verify its summary records those exclusions and one fallback dispatch.
+Restore the one-reviewer override before Step 12.
+
+### Step 12: Retiring an override that only existed to unblock the gate
+
+**Maps to**: *The shipped default never traps* — the operator is not asked to write an override file.
+
+1. Retire the override you created in Step 11 by **moving it aside rather than deleting it**. The
+   file is gitignored and untracked, so no `git revert` can bring it back if this change is ever
+   rolled back — see the plan's **Reversal and Rollback** (c):
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mv .ai-dev-workflow.local.yaml "$SMOKE_TMP/override.retired"
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ] || exit 1
+   ```
+
+**Expected result**: `LOCAL_OVERRIDE_STATE=none`, the shipped three-entry list is in `CONFIGURED`,
+and the run still reaches `OUTCOME=proceeded` or `proceeded-reduced` with exit `0`. This is the
+demonstration that an override written only to get past the gate can be retired: an operator who
+wants to keep narrowing coverage keeps theirs, and an operator who wrote one only to unblock removes
+the `review.on_draft.runner` key, or moves the whole file aside if it holds nothing else. A second
+`mv` restores it should the change ever be rolled back.
+
+### Step 13: The proceed path on a real pull request
+
+Steps 1 to 12 exercise the **resolver** — the helper that prints a verdict and exits. Steps 13 and 14
+exercise the **gate**: what a real runner does with that verdict on a real
+pull request. Every criterion about dispatching, posting comments, and pull request state is settled
+here, while Step 16 additionally checks the gate's bounded entry path. Do not skip these steps
+because the earlier resolver checks passed.
+
+**Maps to**: R1, R7, S1, O1, O3, O6, C1, C2, C3, P1, P4, P5, P10 — the proceed-path gate behavior in the
+plan's acceptance-criterion coverage map.
+
+**Part 1 — every reviewer reachable**
+
+1. Open a throwaway draft pull request on this branch, or reuse the implementation pull request for
+   #1495.
+2. Ensure no `.ai-dev-workflow.local.yaml` is in effect and every runtime in the shipped default list
+   is on your `PATH`.
+3. Run Protocol 91 Step 7a against it from each supported driving runner in turn.
+4. Read the Step 7a summary comment and the run log. For each local reviewer, record at least one
+   cross-runner CLI invocation using Decision 5, its exit status, and its terminal verdict. A native
+   same-runner dispatch does not prove the cross-runner path.
+
+**Expected result**: the gate **dispatched** the reviewers — you can see each one's review activity,
+not merely a verdict block in the log — and produced a verdict, with no human choosing a workaround,
+no override file written, and no second runner started. The summary comment lists every configured
+reviewer with its display label, including the ones that ran. **No unreachability warning comment was
+posted**, because nothing was unreachable. No message attributes anything to the driving runner's
+identity.
+
+Repeat the native-availability check for each supported driving session with `WORKFLOW_RUNNER_KIND` unset and its own CLI absent from the child process PATH. Use the shipped default and no local override. Inspect the real helper invocation: it must explicitly pass the actual session kind, artifact repo root, and target owner/repo. The native reviewer must remain Reachable and the gate must proceed (reduced coverage is expected for other absent runtimes). An `unknown` driver or zero-reachable block fails this handoff check. Restore PATH afterwards.
+
+**Part 2 — the fallback**
+
+1. On a scratch branch, remove `review.on_draft.runner` from `.ai-dev-workflow.yaml`, commit, and
+   open a draft pull request from it.
+2. Run Step 7a against that pull request from a supported runner.
+3. Read the summary comment and count the dispatches in the run log.
+
+**Expected result**: the gate dispatched the driving runner's **own** stage reviewer — the plan
+reviewer for an `implementation-plan/*` branch — and dispatched it **exactly once**, not once per
+configured entry and not zero times. The summary comment records that the fallback applied. The gate
+did not report success having dispatched nobody. Discard the scratch branch afterwards.
+
+**Part 3 — reduced coverage under explicit and default `warn`**
+
+1. On the pull request from Part 1, put a local override in place naming one reachable reviewer and
+   one reviewer whose runtime is not installed on this machine, keeping the policy at `warn`.
+2. Re-run Step 7a and read both the warning comment and the summary comment.
+3. Create another throwaway branch and pull request using Part 2's setup, and repeat with the same mixed reviewer list but remove only `internal_reviewers_unavailable_policy` from both the repository configuration and local override. Save their pre-part contents under `SMOKE_STATE` first and verify the backups before editing. Confirm the resolved record reports `POLICY=warn` and `POLICY_SOURCE=default`, then run the complete gate and check the same warning-before-dispatch behavior. Restore both pre-part configurations afterwards and discard this scratch branch; keep the original override backup pending until the Last Step or exit.
+
+**Expected result, for both explicit and absent policy**: a warning comment was posted **before** any dispatch, naming the unreachable
+reviewer, its reason category, and a remedy, and stating which reviewers will run. The reachable
+subset was then dispatched. Nothing in the warning names a runner context. Remove the override
+afterwards.
+
+**Part 4 — a reviewer fails after availability succeeds**
+
+1. Use a throwaway draft pull request and a supported driving runner other than Codex. Configure
+   only `codex` in its local runner-reviewer override.
+2. Put an executable fake `codex` first on that invocation's `PATH`. It must exit `0` with a version
+   string for `--version`, but append its arguments to a temporary dispatch log, print a distinctive
+   `intentional dispatch failure` message, and exit `1` for `exec`. Record the fixture path and body
+   in the smoke evidence. It must not invoke a real reviewer or alter any repository file.
+3. Run the complete Step 7a gate. Inspect the availability record, dispatch log, and gate report.
+
+**Expected result**: availability reports `codex` as Reachable; the dispatch log proves an `exec`
+invocation occurred after the successful probe. The gate reports the non-zero dispatch as a
+**review failure**, not `runtime-absent`, `check-inconclusive`, or an unavailable-reviewer skip. It
+does not claim approval or proceed on reduced coverage under `warn`. Restore the original `PATH`
+and the pre-part test-override state after recording the result; keep the original override
+saved until the Last Step or exit.
+
+Repeat Part 4 with a fake hosted-review dispatch result: feed the gate a Reachable
+`codex-github` availability record, then replace only its dispatch helper with a fixture returning
+exit `2` (timeout), and then `3` (quota). Run each under both unavailable-reviewer policies.
+Verify review failure, original Reachable classification retained, and no reduced-coverage
+advancement. Exit `4` must instead remain waiting, with no approval. These fixtures must not contact
+a real hosted reviewer. Restore the dispatcher after recording the fixture and results.
+
+**Part 5 — full-gate freshness, purity, and ordering on the same PR**
+
+**Maps to**: R4, R5, R6. Steps 4 and 5 above exercise only the helper; this part verifies the
+orchestrating gate itself.
+
+1. Use one throwaway draft PR and the same supported non-Codex driving runner for three complete
+   Step 7a invocations. Keep the PR head, configured list `[codex]`, and `warn` policy unchanged.
+   Put a dedicated fixture directory first on the gate's PATH. Ensure no other `codex` is reachable
+   when the fixture is absent; the orchestration runner keeps its normal host environment.
+2. Run A with no Codex binary, run B with a fake Codex binary that succeeds for `--version` and
+   returns exactly `VERDICT: APPROVED` for `exec`, and run C after removing that binary again.
+   The fake records timestamped probe and dispatch arguments, never invokes another reviewer, and
+   never edits repository files. Between runs restore the PR to draft as setup, recording that
+   action separately. Each run starts a new complete Step 7a invocation; do not reuse a previous
+   helper output. Record the fixture body and PATH for reproducibility.
+3. Capture the complete runner tool/command trace, including API operations, and timestamp the
+   availability-helper entry, return, gate application of the returned policy outcome, and first dispatch. In run B let the
+   fake version probe pause briefly within its cap so the interval is observable. Snapshot the
+   PR draft state, comments, and tracked-file status immediately before helper entry and while
+   the probe is paused. Compare them again at helper return, before post-determination reporting.
+   An independent read-only observer may take the snapshots; the gate must not mutate them.
+4. Verify the trace contains a fresh helper invocation for each run, with no preliminary standalone
+   parser call. Require ordering `helper entry < helper return <= gate policy-outcome application < dispatch`
+   for run B. Runs A and C must contain no dispatch at all. A comment or state change after the
+   blocked/proceed verdict is allowed; any such operation during determination fails this part.
+
+**Expected result**: A and C classify Codex `runtime-absent`, block, and dispatch nobody. B classifies
+it Reachable and dispatches the fake once after policy application. All three runs leave comments,
+PR state, and tracked files unchanged throughout the determination interval; only subsequent gate
+reporting/conversion may mutate PR state. The three summaries match the fresh classifications.
+A cached verdict, early dispatch, or any determination-time mutation is a blocking smoke failure.
+Restore the normal PATH and remove only this part's temporary test override. Keep the original
+override saved in `SMOKE_STATE`; do not call `smoke_restore_override` until the Last Step or exit.
+
+### Step 14: The block path on a real pull request
+
+**Maps to**: O1, O4, O5, O6, C4, C5, C6, C7, P2, P3, P6, P7, P8, P9, P10 — the block-path gate
+behavior. This is the step that proves the gate honours a `blocked` verdict rather than dispatching
+anyway; no resolver test can show that.
+
+Before **each run in Parts 1–5** in this step, restore the throwaway pull request to draft with
+`gh pr ready <pr_number> --undo` when it is currently ready, then verify
+`gh pr view <pr_number> --json isDraft --jq '.isDraft'` returns `true`. Step 13's successful gate
+normally converts its PR to ready, so merely reading its state is insufficient. Record this setup
+conversion separately from the gate invocation so it cannot be mistaken for gate behavior.
+
+**Part 1 — nothing reachable**
+
+Run this part twice, once for each way a list can end up with nothing reachable.
+
+1. On the draft pull request from Step 13, put a local override in place naming only a reviewer whose
+   runtime is **not installed** on this machine. Run Step 7a.
+2. Then replace the override with one naming a single **unsupported** value such as
+   `not-a-reviewer`. Run Step 7a again.
+
+**Expected result**: in both runs **no reviewer was dispatched** — no review activity appears
+anywhere in the run log or on the pull request. `gh pr ready` was **not** called and the pull request
+is **still draft**. A hard-fail comment names the block cause, every configured reviewer with its
+verdict and reason, a remedy, and the machine-local override state — reported as the file and origin
+that were actually resolved, not guessed. The run escalated to a human rather than continuing.
+
+The two runs differ in the reason they report: the first says the runtime is not present, the second
+names `not-a-reviewer` verbatim as not a supported reviewer. The second run in particular must name
+the offending value — a report that merely says "no reviewer reachable" without naming it is a
+failure of this part, because a silently dropped value is invisible lost coverage.
+
+**Part 2 — a malformed list, then an unparseable file**
+
+1. Replace the override with one whose `review.on_draft.runner` is a scalar rather than a list, and
+   run Step 7a.
+2. Then replace it with a file that will not parse at all, and run Step 7a again.
+
+**Expected result**: both runs block, dispatch nobody, and leave the pull request draft. The first
+names the file and the `review.on_draft.runner` key with block cause `list-malformed`; the second
+names the file with block cause `policy-unreadable`. **The two comments state different causes** —
+if they read the same, the gate is collapsing two states the spec keeps apart. Neither run fell back
+to a default reviewer.
+
+**Part 3 — the policy forbids reduced coverage**
+
+1. Set the override to one reachable reviewer, one absent one, and
+   `internal_reviewers_unavailable_policy: fail-if-any-unavailable`. Run Step 7a.
+
+**Expected result**: the gate blocked, dispatched nobody, and left the pull request draft. The report
+names **the policy** as the cause, not the classification. The reachable reviewer is **still listed
+as Reachable** in the report even though it was not dispatched — classification and dispatch remain
+two legible facts.
+
+**Part 4 — an unsupported policy value**
+
+1. Set the override's policy to `maybe` and remove `review.on_draft.runner` entirely. Run Step 7a.
+
+**Expected result**: the gate blocked, dispatched nobody, and named the offending value `maybe`. It
+did **not** silently apply the default `warn`, and it did **not** reach the fallback reviewer despite
+there being no list configured — the policy is read first. Remove the override afterwards and confirm
+with `gh pr view <pr_number> --json isDraft` that the pull request is still draft.
+
+Repeat with an unsupported scalar containing whitespace, a non-scalar policy `{}`, and a file
+that fails to parse. Compare `POLICY_INPUT`, `UNREADABLE_FILE`, and `UNREADABLE_DETAIL` with the
+block comment: it must retain the offending value or file/type diagnostic, render escaped control
+characters safely, and never substitute an empty default. Invalid paths have `POLICY=`.
+
+**Part 5 — a block with a draft-restricting reviewer configured**
+
+This part catches the ordering defect Decision 9 fixes: the draft-state pre-check used to convert the
+pull request to non-draft at the top of Step 7a, before the gate knew whether it would block.
+
+1. Confirm the pull request is currently draft.
+2. Set the override to `review.on_draft.runner: [coderabbit, not-a-reviewer]` and
+   `review.internal_reviewers_unavailable_policy: fail-if-any-unavailable` — one draft-restricting
+   reviewer and one value guaranteed to be unsupported — and run Step 7a. The explicit strict policy
+   guarantees a block even on a repository where CodeRabbit is enabled and reachable.
+3. Immediately re-check the pull request's draft state.
+
+**Expected result**: the gate blocked and the pull request is **still draft**. `gh pr ready` was not
+called, even though a draft-restricting reviewer was configured and the pre-check's condition was
+therefore satisfied. If the pull request came back non-draft, the conversion is still running before
+the availability decision and six acceptance criteria are violated — report it as a blocking
+implementation failure. Remove the override afterwards.
+
+**Part 6 — a blocked rerun begins on an already-ready PR**
+
+Use the same throwaway PR and gate setup as Step 13 Part 5. First make the fake Codex available,
+run the complete gate successfully, and verify the PR is ready. Now remove the fake binary and run
+Step 7a again on the same head, without manually restoring draft. Capture the complete tool trace.
+
+**Expected result**: availability finishes read-only while the PR remains ready; the gate then
+blocks, dispatches nobody, invokes `gh pr ready <pr_number> --undo`, and verifies draft state before
+claiming that outcome. Repeat from ready with invalid policy and with a helper invocation failure
+(exit `2`) to exercise those recovery paths. A failed undo or unreadable draft state must escalate
+and report the actual uncertainty rather than claiming draft restoration. No path converts a blocked
+PR to ready. Keep final override restoration deferred until the Last Step or exit.
+
+### Step 15: A configured value that contains a delimiter is still named
+
+**Maps to**: C4 and C7 — "the offending value is named in the report", "never silently discarded".
+This is the case a comma-joined or whitespace-delimited field could not represent (plan Decision 10).
+
+1. Build a fixture whose single configured entry contains a comma and a space:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/delimiter"
+   grep -v '^      - \(claude\|cursor\|codex\)$' .ai-dev-workflow.yaml \
+     | sed 's/^    runner:$/    runner: ["codex, my reviewer"]/' > "$SMOKE_TMP/delimiter/.ai-dev-workflow.yaml"
+   grep -n '^    runner' "$SMOKE_TMP/delimiter/.ai-dev-workflow.yaml"
+   smoke_status=0
+   scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$SMOKE_TMP/delimiter" --owner "<owner>" --repo "<repo>" --runner-kind claude || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ] || exit 1
+   ```
+
+**Expected result**: `REVIEWER_COUNT=1` — **one** entry, not two. `REVIEWER_1_NAME` reads
+`codex, my reviewer` exactly, comma and space intact. `REVIEWER_1_STATUS=unreachable` with
+`REVIEWER_1_REASON=value-not-supported`. `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable`, exit `1`.
+The display-only `CONFIGURED` field shows `<entry 1>` rather than the raw value — that is deliberate,
+not a truncation bug: the aggregate fields are summaries and the indexed record is where the value
+lives. If `REVIEWER_COUNT` reads `2`, the serialization contract has regressed and the gate can no
+longer name what it rejected.
+
+### Step 16: A stalled configuration resolver still reaches a verdict in time
+
+**Maps to**: C8 — "the gate reaches that verdict within ten seconds of starting to resolve the list".
+The configuration-resolver call happens before any probe, so it is the one call a per-probe bound
+cannot protect (plan Decision 11).
+
+1. Build a hermetic `PATH` whose `python3` hangs, and time the run:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/stall"
+   cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/stall/"
+   # Remove the copied symlink before writing the fake executable.
+   rm -f "$SMOKE_TMP/stall/python3"
+   printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/stall/python3"
+   chmod +x "$SMOKE_TMP/stall/python3"
+   python3 - "$SMOKE_TMP/stall" "$(pwd -P)" <<'PYTIME'
+   import os, subprocess, sys, time
+   child_env = dict(os.environ, PATH=sys.argv[1])
+   started = time.monotonic()
+   result = subprocess.run([
+       "scripts/development-workflow/resolve-reviewer-availability.sh",
+       "--repo-root", sys.argv[2], "--owner", "<owner>", "--repo", "<repo>",
+       "--runner-kind", "claude",
+   ], env=child_env)
+   elapsed = time.monotonic() - started
+   print(f"exit={result.returncode} elapsed={elapsed:.6f}s")
+   print("CEILING PASS" if elapsed <= 10.0 else "CEILING FAIL")
+   sys.exit(0 if elapsed <= 10.0 and result.returncode == 1 else 1)
+   PYTIME
+   ```
+
+**Expected result**: `CEILING PASS` — measured wall time at most ten seconds — with
+exit `1`, `OUTCOME=blocked`, `BLOCK_CAUSE=config-resolution-inconclusive`,
+`POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, and `REVIEWER_COUNT=0`. There is
+**no** per-reviewer record and **no** reason category, because no reviewer was ever named. The report
+does not say the policy value is unreadable — that would send you to fix a file that is fine; it says
+the configuration could not be read in time. If the command hangs, the resolver call is unbounded and
+the ten-second ceiling is not being enforced.
+
+2. Exercise the **complete gate entry path** against a throwaway draft PR using the same hanging
+   `python3` fixture, rather than invoking only the helper. Keep a normal host `PATH` available for
+   the orchestration runner, and pass the hermetic `PATH` to every configuration/availability shell
+   invocation it makes. Start the external timer at the first configuration-resolution command.
+   Confirm from the command log that the gate invokes the availability helper once and never calls
+   `review-effective` or `review-overrides` independently before availability or for the draft pre-check.
+
+**Expected result for the gate run**: the resolver's blocked verdict appears within ten seconds of
+starting configuration resolution. The gate then reports `config-resolution-inconclusive`, dispatches
+nobody, and leaves the PR draft. Time the availability verdict separately from the subsequent network
+call posting the block report. A preliminary standalone `review-overrides` or `review-effective` parser call or a hang before the helper starts
+fails this step even if the direct helper test above passed. Restore the original environment.
+
+### Last Step: Validate and clean up
+
+1. Work through the Assertions Checklist below.
+2. Remove the fixtures and restore any override you moved aside:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   smoke_restore_override
+   trap - EXIT
+   [ -d "$SMOKE_STATE" ] && [ "$SMOKE_TMP" = "$SMOKE_STATE/fixtures" ] || exit 1
+   rm -rf -- "$SMOKE_STATE"
+   unset SMOKE_TMP SMOKE_STATE SMOKE_OVERRIDE_STATE
+   ```
+
+3. Run `git status --porcelain` and confirm the only entries are your intended implementation
+   changes — in particular that `.ai-dev-workflow.local.yaml` does not appear.
+
+---
+
+## Assertions Checklist
+
+Each checkbox maps to one or more acceptance criteria from the spec.
+
+- [ ] A configured reviewer whose runtime is present is dispatched even when a different supported
+      runner is driving the gate — no block, no escalation, no override file (Step 1, Step 2,
+      Step 13).
+- [ ] No reviewer is classified Unreachable solely because a different runner is driving the gate
+      (Step 2).
+- [ ] An absent runtime yields Unreachable with reason `runtime-absent` (Step 3).
+- [ ] The verdict is determined fresh on each run and flips both ways with the environment (Step 4).
+- [ ] Determining availability posts no comment, changes no pull request state, modifies no tracked
+      file, and invokes no reviewer (Step 5).
+- [ ] The gate reaches a verdict in **at most ten seconds of measured wall time** with every probe
+      hanging — `CEILING PASS`, not a judgement call (Step 6).
+- [ ] The four reason categories are reported distinctly and never in place of one another
+      (Steps 3, 6, 7, and the CodeRabbit note under Known Limitations).
+- [ ] An unsupported configured value is classified Unreachable with reason `value-not-supported` and
+      named in the report (Step 7).
+- [ ] An absent or empty list falls back to the driving runner's own stage reviewer and records that
+      the fallback applied, on every supported runner (Step 8).
+- [ ] A malformed list blocks with `list-malformed`, names the file and the key, and does not fall
+      back (Step 9 Part 1).
+- [ ] A configuration file that will not parse at all blocks with `policy-unreadable`, names that
+      file, and prints `CONFIG_LIST_STATE=not-evaluated` rather than proceeding as though no list
+      were configured (Step 9 Part 2).
+- [ ] An unsupported or unreadable policy blocks before the list is resolved and names the offending
+      value (Step 10).
+- [ ] Override-excluded reviewers are reported as such, produce no unreachability warning, and the
+      override state is reported from what was resolved (Step 11).
+- [ ] The shipped default reaches a dispatched reviewer on every supported runner with no override
+      file present (Step 1, Step 12).
+- [ ] The gate summary lists every configured reviewer with its verdict, including the ones that ran
+      (Step 13 Part 1).
+- [ ] No reported message attributes a reviewer's unavailability to the identity of the driving
+      runner (Step 3, Step 13, Step 14, and Step 0's grep).
+
+Steps 1 to 12 above settle what the **resolver** computes. The remaining boxes are gate behavior —
+what a real runner does with that verdict — and are settled only by Steps 13 and 14. A run that
+skipped those two steps has not tested this feature's most likely failure: a correct verdict that the
+gate ignores.
+
+- [ ] Three complete gate runs on the same PR observed absent → present → absent runtime changes,
+      with a fresh resolver call each time, no determination-time mutations, and dispatch only
+      after helper return and policy application (Step 13 Part 5).
+- [ ] On a proceed verdict the gate actually **dispatched** the reachable reviewers, and posted no
+      unreachability warning when nothing was unreachable (Step 13 Part 1).
+- [ ] With no reviewer list configured, the gate dispatched the driving runner's own stage reviewer
+      **exactly once** and recorded in its summary that the fallback applied (Step 13 Part 2).
+- [ ] Under `warn` with a mixed set, the warning was posted **before** dispatch, named each
+      unreachable reviewer with its reason and a remedy, and the reachable subset then ran
+      (Step 13 Part 3).
+- [ ] On a block verdict the gate dispatched **nobody**, never converted to ready, and left the
+      pull request draft, restoring it after determination when a rerun began ready (Step 14, all parts).
+- [ ] The block report named the cause, every reviewer with its verdict, and the override state as
+      resolved rather than guessed; and where the only entry was an unsupported value, the report
+      named that value verbatim (Step 14 Part 1, both runs).
+- [ ] A malformed list and an unparseable file produced **different** block causes on the pull
+      request, and neither fell back to a default reviewer (Step 14 Part 2).
+- [ ] Under `fail-if-any-unavailable` the report named the policy as the cause and still listed the
+      reachable reviewer as Reachable (Step 14 Part 3).
+- [ ] An unsupported policy value blocked, was named, did not silently default to `warn`, and did not
+      reach the fallback even with no list configured (Step 14 Part 4).
+- [ ] A reviewer that was dispatched and then failed or errored was reported as a review failure, not
+      as unreachable (Step 13 Part 4).
+- [ ] A block with a draft-restricting reviewer configured left the pull request draft — the
+      draft-state conversion did not run ahead of the availability decision (Step 14 Part 5).
+- [ ] A configured value containing a comma and a space was reported as **one** entry, named byte for
+      byte, and not split (Step 15).
+- [ ] A stalled configuration resolver produced a verdict inside the budget, with block cause
+      `config-resolution-inconclusive` and no per-reviewer reason, both directly and through the
+      complete gate entry path with no preliminary unbounded parse (Step 16).
+
+---
+
+## Seed Data Reference
+
+| Entity | Scenario | How to load |
+| --- | --- | --- |
+| Hermetic `PATH` without `codex` | Runtime absent | Step 3 |
+| Stub `codex` answering `--version` | Runtime present | Step 4 |
+| Hanging reviewer binaries | Availability check does not complete | Step 6 |
+| Config with an unsupported entry | Value not supported | Step 7 |
+| Config with no `runner` key | Fallback | Step 8 |
+| Config with a scalar `runner` | Malformed list | Step 9 Part 1 |
+| Config with `runner: ["codex, my reviewer"]` | Delimiter-bearing unsupported value | Step 15 |
+| Hermetic `PATH` whose `python3` hangs | Stalled configuration resolver | Step 16 |
+| Config truncated so it will not parse | Unreadable policy input | Step 9 Part 2 |
+| Config with `internal_reviewers_unavailable_policy: maybe` and no list | Unsupported policy | Step 10 |
+| `.ai-dev-workflow.local.yaml` keeping one reviewer | Override exclusion | Step 11 |
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Step 13 or 14 shows a verdict block in the log but no reviewer activity, or activity despite a block verdict | The gate is not honouring the resolver's exit code — the exact defect these two steps exist to catch | Stop and report it; this is a blocking implementation failure, not a runbook problem |
+| A hosted reviewer was classified `reachable`, was dispatched, and then timed out without ever answering | Expected. The availability probe reads historical bot activity, which outlives an uninstalled, suspended, or access-revoked App — a **decided** limitation, not a defect. See the plan's Decision 8 | Confirm the App is still installed and has repository access. The gate must report a review failure under either policy, retain the Reachable classification, and never advance on reduced coverage because of that failure |
+| `coderabbit` classifies `prerequisite-missing` in this repository even though you expect it to work | This repository ships `.coderabbit.yaml` with `auto_review.enabled: false`, which is one of the two checks. It is not configured as a Step 7a runner reviewer here | Expected. Do not "fix" it by enabling auto-review; add `coderabbit` to `review.on_draft.runner` only if you genuinely want it in this gate |
+| Every run reports `OUTCOME=blocked` with `BLOCK_CAUSE=zero-reachable` | A `.ai-dev-workflow.local.yaml` you forgot to move aside names reviewers this machine cannot reach | Check `LOCAL_OVERRIDE_STATE` in the verdict block; move the file aside and re-run |
+| `LOCAL_OVERRIDE_STATE` reports `present but unpropagated` | You are in a linked git worktree and the override lives in the main clone | Re-run with `--repo-root "$(pwd -P)"` from the worktree; do not copy the file in |
+| Hosted reviewers report `check-inconclusive` | `gh` is missing from the hermetic `PATH`, or not authenticated | Symlink `gh` into the fixture `bin` directory and confirm `gh auth status` succeeds |
+| `codex-github` or `coderabbit` reports `prerequisite-missing` on a repository where the app is installed | No issue-comment activity is visible; the bot may be new or may only submit reviews/inline comments, which this endpoint omits | Expected — see Known Limitations. Arrange for a real bot-authored issue comment if the service supports it, or leave the reviewer out of the list; a review-only trigger does not repair this signal |
+| A Step 7, 9, or 10 fixture edit changes nothing | The line the `awk` or `sed` pattern matches was reworded during implementation | Each of those steps prints the edited region with `grep` before running the resolver — read that output and adjust the pattern before trusting the verdict |
+| Step 6 or Step 16 prints `CEILING FAIL` | The ten-second contract was exceeded. On a host without GNU `timeout` the poll fallback adds up to one second and the `SIGTERM`-to-`SIGKILL` grace adds one more, which is why the internal budget is eight | Report it. Do not widen the assertion — the fix is to lower `AVAILABILITY_BUDGET_SECONDS` so cleanup fits inside ten, per the plan's budget arithmetic |
+| Step 6 or Step 16 never returns at all | A call is unbounded — the defect Decision 11 exists to close | Report it as a blocking implementation failure |
+| Step 15 shows `CONFIGURED` containing `<entry 1>` instead of the configured value | Expected and deliberate. The aggregate fields are display-only and render an unsafe value as a pointer; the indexed `REVIEWER_1_NAME` field holds it verbatim | Read the indexed field. Do not report this as truncation |
+
+---
+
+## Known Limitations
+
+- **The hosted-service availability probe is a proxy, by decision.** The spec defines hosted
+  availability as the service being installed for the repository and enabled for this review; no
+  mechanism available to the gate's user-token credentials can establish that, so the probe reads
+  recent repository comment activity instead. It is wrong in two ways, both accepted under the plan's
+  Decision 8:
+  - An App installed but with no visible issue comments (including one that only posts reviews or inline review comments) classifies `prerequisite-missing` on a short unmatched page even
+    though it would work.
+  - An App that has been uninstalled, suspended, or had its access revoked still shows historical
+    activity and classifies `reachable`. It is then dispatched and times out, and that timeout is
+    a review failure under either unavailable-reviewer policy. The original classification remains
+    Reachable; the gate must not proceed on reduced coverage or report approval for that failure.
+
+  A full newest-comments page without matching bot activity is incomplete evidence, so the probe
+  reports `check-inconclusive` rather than absence. Only a shorter unmatched page reports
+  `prerequisite-missing`; the bounded probe does not paginate.
+
+  Neither hosted reviewer is in the shipped default, so you only meet this by opting one into
+  `review.on_draft.runner` deliberately. The proxy classification itself is accepted; treating a
+  subsequent failure as an unavailable skip is a smoke-test failure.
+- Draft eligibility is **not** part of the availability probe. The draft-state pre-check guarantees a
+  non-draft pull request before dispatch, so `auto_review.drafts: false` is deliberately not an
+  unreachability condition. Step 14 Part 5 checks the one thing that ordering has to get right: the
+  conversion must not happen on a run that then blocks.
+- Steps 13 and 14 require a real pull request and a real runner, so they cannot be scripted. Step 16 also requires the real gate for its second part; the other
+  resolver checks run against fixtures. These are the steps that observe gate behavior:
+  the plan's coverage map marks twenty-nine criteria as gate-level, and for those the automated
+  evidence proves only that Protocol 91 instructs the behavior, never that a runner produced it.
+- Step 13 Part 2 needs a scratch branch carrying a modified `.ai-dev-workflow.yaml`, because the
+  fallback path cannot be reached from a local override alone — an override that defines no list
+  leaves the shipped list in force.
+- This runbook exercises the availability decision, not review quality. What a dispatched reviewer
+  then says about the change is out of scope for both the spec and this runbook.
