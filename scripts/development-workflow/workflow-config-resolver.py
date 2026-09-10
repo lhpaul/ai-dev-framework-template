@@ -58,6 +58,16 @@ class ConfigError(Exception):
     """Configuration problem with a human-readable message."""
 
 
+def quote_starts_here(prefix: list[str], *, strict_quotes: bool) -> bool:
+    """Return whether a quote can delimit a YAML scalar at this position."""
+    return (
+        not strict_quotes
+        or not prefix
+        or prefix[-1].isspace()
+        or prefix[-1] in ":,[{"
+    )
+
+
 def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> str:
     in_single = False
     in_double = False
@@ -73,24 +83,12 @@ def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> st
             escaped = True
             continue
         if char == "'" and not in_double:
-            if (
-                not strict_yaml_comments
-                or in_single
-                or not result
-                or result[-1].isspace()
-                or result[-1] in ":,[{"
-            ):
+            if in_single or quote_starts_here(result, strict_quotes=strict_yaml_comments):
                 in_single = not in_single
             result.append(char)
             continue
         if char == '"' and not in_single:
-            if (
-                not strict_yaml_comments
-                or in_double
-                or not result
-                or result[-1].isspace()
-                or result[-1] in ":,[{"
-            ):
+            if in_double or quote_starts_here(result, strict_quotes=strict_yaml_comments):
                 in_double = not in_double
             result.append(char)
             continue
@@ -144,7 +142,7 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     if value.startswith("{") and value.endswith("}") and value != "{}":
         raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
     if value.startswith("[") and value.endswith("]") and value[1:-1].strip():
-        items = split_inline_list(value[1:-1])
+        items = split_inline_list(value[1:-1], strict_quotes=True)
         # YAML permits a trailing comma, but never an omitted first or middle
         # item. The legacy reader historically skipped those items; the
         # review-effective reader must reject them rather than changing the
@@ -154,7 +152,8 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains an empty item")
         if any(
-            item.strip().startswith(("? ", ": ")) or list_item_is_mapping(item.strip())
+            item.strip().startswith(("? ", ": "))
+            or list_item_is_mapping(item.strip(), strict_quotes=True)
             for item in items
             if item.strip()
         ):
@@ -190,7 +189,7 @@ def parse_scalar(
             return []
         return [
             parse_scalar(item.strip(), review_effective=review_effective, path=path, line_no=line_no)
-            for item in split_inline_list(inner)
+            for item in split_inline_list(inner, strict_quotes=review_effective)
             if item.strip()
         ]
     if value in {"''", '""'}:
@@ -243,7 +242,7 @@ def parse_review_numeric_scalar(value: str, path: Path, line_no: int) -> Any:
     return value
 
 
-def split_inline_list(value: str) -> list[str]:
+def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
     items: list[str] = []
     current: list[str] = []
     in_single = False
@@ -260,11 +259,13 @@ def split_inline_list(value: str) -> list[str]:
             escaped = True
             continue
         if char == "'" and not in_double:
-            in_single = not in_single
+            if in_single or quote_starts_here(current, strict_quotes=strict_quotes):
+                in_single = not in_single
             current.append(char)
             continue
         if char == '"' and not in_single:
-            in_double = not in_double
+            if in_double or quote_starts_here(current, strict_quotes=strict_quotes):
+                in_double = not in_double
             current.append(char)
             continue
         if char == "," and not in_single and not in_double:
@@ -310,7 +311,7 @@ def parse_mapping(
     return result, index
 
 
-def list_item_is_mapping(item: str) -> bool:
+def list_item_is_mapping(item: str, *, strict_quotes: bool = False) -> bool:
     """Return whether a list item has a YAML mapping delimiter.
 
     The legacy parser treats every colon as a mapping delimiter.  The effective
@@ -327,10 +328,12 @@ def list_item_is_mapping(item: str) -> bool:
             escaped = True
             continue
         if char == "'" and not in_double:
-            in_single = not in_single
+            if in_single or quote_starts_here(list(item[:index]), strict_quotes=strict_quotes):
+                in_single = not in_single
             continue
         if char == '"' and not in_single:
-            in_double = not in_double
+            if in_double or quote_starts_here(list(item[:index]), strict_quotes=strict_quotes):
+                in_double = not in_double
             continue
         if char == ":" and not in_single and not in_double:
             return index + 1 == len(item) or item[index + 1].isspace()
@@ -365,7 +368,7 @@ def parse_list(
             result.append(child)
             continue
         if (not preserve_empty_values and ":" in item) or (
-            preserve_empty_values and list_item_is_mapping(item)
+            preserve_empty_values and list_item_is_mapping(item, strict_quotes=True)
         ):
             key, value = split_key_value(item, path, line_no)
             if value is None and index < len(lines) and lines[index][0] > indent:

@@ -1126,6 +1126,26 @@ for e_case in 23 24 25 26 27; do
   assert_review_effective_states "E-$e_case" defined absent
   run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
 done
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [it'\''s, codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 multi-entry plain apostrophe" defined absent
+run_test "review-effective E-27 multi-entry plain apostrophe values" '["it'"'"'s","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+legacy_apostrophe_runner="$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+run_contains "review-effective E-27 legacy apostrophe output retained" "REVIEW_ON_DRAFT_RUNNER=" "$legacy_apostrophe_runner"
+run_contains "review-effective E-27 legacy apostrophe still joins comma" "codex" "$legacy_apostrophe_runner"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [he"llo, codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 multi-entry plain double quote" defined absent
+run_test "review-effective E-27 multi-entry plain double quote values" '["he\"llo","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["it'\''s, codex", "a,b", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 quoted commas" defined absent
+run_test "review-effective E-27 quoted comma values" '["it'"'"'s, codex","a,b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["a\",b", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 escaped quoted comma" defined absent
+run_test "review-effective E-27 escaped quoted comma values" '["a\\\",b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["extra: value", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 quoted mapping-shaped scalar" defined absent
+run_test "review-effective E-27 quoted mapping-shaped scalar values" '["extra: value","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: {}'
 assert_review_effective_states "E-28" malformed absent
 run_test "review-effective E-28 legacy bare runner stays empty" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
