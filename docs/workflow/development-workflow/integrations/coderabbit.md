@@ -116,7 +116,11 @@ run summary.
 
 ## Step 7a — Internal Reviewer (Draft PRs)
 
-CodeRabbit can act as a Step 7a internal reviewer, running on a draft PR before it is converted to non-draft. This uses the same GitHub App auto-review mechanism as Step 7, but is triggered on a draft PR during the internal review gate.
+CodeRabbit can act as a Step 7a internal reviewer. Step 7a determines
+availability and applies policy while the PR is still draft, then converts a
+draft PR immediately before dispatch when CodeRabbit is configured. This keeps
+the availability decision read-only and prevents a blocked gate from changing
+the PR state.
 
 ### Configuration
 
@@ -147,7 +151,11 @@ reviews:
 
 ### Invocation
 
-CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true`. No trigger comment is needed. The runner waits for a `coderabbitai[bot]` review posted after the HEAD commit timestamp. This is identical to the Step 7 mechanism but applied to a draft PR.
+After the proceed decision and any required conversion, CodeRabbit auto-reviews
+on push when `auto_review.enabled` is `true`. No trigger comment is needed.
+The runner waits for a `coderabbitai[bot]` review posted after the HEAD commit
+timestamp. This is the Step 7a dispatch path; the Step 7 external-review loop
+remains separate.
 
 ### Severity Classification
 
@@ -159,12 +167,19 @@ CodeRabbit as an internal reviewer is subject to the same `max_internal_review_c
 
 ### Availability Check
 
-Before dispatching, the runner performs a runtime availability check to classify `coderabbit` as `reachable` or `unreachable`:
+Step 7a calls `resolve-reviewer-availability.sh` once, under its fixed bounded
+budget, before dispatching anybody. For CodeRabbit the helper checks
+`reviews.auto_review.enabled: true` and reads the newest repository issue
+comments page for `coderabbitai[bot]`. Bot activity is a bounded
+repository-activity proxy, not proof of current installation or per-review
+enablement: a complete short unmatched page is `prerequisite-missing`, while a
+full unmatched page is `check-inconclusive`. The gate applies the configured
+policy only after all configured reviewers have a verdict.
 
-1. **App installation signal**: Check whether `coderabbitai[bot]` has any prior activity on the repository via `gh api repos/{owner}/{repo}/installation` or by inspecting recent PR comments for `coderabbitai[bot]` posts.
-2. **Auto-review configuration check**: Verify that `.coderabbit.yaml` sets `reviews.auto_review.enabled: true`.
-
-If either check fails, `coderabbit` is classified as `unreachable`. The configured `internal_reviewers_unavailable_policy` then determines whether to proceed with the remaining reachable reviewers (`warn`, the default) or hard-fail the Step 7a gate (`fail-if-any-unavailable`).
+The proxy can be false Reachable after an App is removed and false Unreachable
+for a new or review-only installation. If CodeRabbit was classified reachable
+and dispatch then fails, errors, exhausts quota, or times out, report a review
+failure under either policy; do not reclassify it as unavailable.
 
 ### Troubleshooting
 
