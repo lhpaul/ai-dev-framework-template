@@ -24,7 +24,7 @@ identity.
 a best-effort **proxy** for the spec's "installed for the repository and enabled for this review"
 clause, because no mechanism available to the gate's user-token credentials can establish that
 clause. The residual — an App that was uninstalled after commenting still reads as reachable — is
-handled at dispatch under the same unavailable-reviewer policy rather than at availability. Stated in
+handled at dispatch as a review failure rather than as a new availability verdict. Stated in
 full, with what the proxy gets wrong and the alternatives rejected, as **Decision 8**; the limitation
 is repeated in the probe table, R-3 and R-11, and the runbook's Troubleshooting and Known
 Limitations sections, so an operator meets it where they would hit it.
@@ -35,8 +35,8 @@ Limitations sections, so an operator meets it where they would hit it.
 
 **Rationale**: One new ~350-line shell script with a fully enumerated output contract, one new
 Python subcommand with parse-state detection, three test suites, one shipped configuration change,
-and edits to twelve documentation, agent, configuration, and script-header surfaces. No new runtime
-dependency and no new concurrency. The bulk of the risk is in getting the state enumeration and the reason
+and edits to twelve documentation, agent, configuration, and script-header surfaces. The portable timeout fallback uses the existing Perl dependency when GNU `timeout` and
+`setsid` are absent; no other runtime dependency or new concurrency is introduced. The bulk of the risk is in getting the state enumeration and the reason
 categories exactly right, not in the volume of code. Cross-runner Codex invocation — the piece that
 would normally be the unknown — is already shipped and exercised in this repository (see Decision 5
 and VL-6).
@@ -46,7 +46,7 @@ and VL-6).
 **Precondition at implementation start**: this plan is written against the spec as merged at
 `8971ba12`. Before the first file edit, re-read
 [`1_1495-step-7a-capability-based-reachability_specs.md`](1_1495-step-7a-capability-based-reachability_specs.md)
-at the current `develop` head and confirm it still carries the five acceptance-criteria groups and
+at the current `develop` head and confirm it still carries the six acceptance-criteria groups and
 the decision-gate matrix this plan maps to. If the spec has been amended, reconcile the affected plan
 sections first and record the reconciliation in the pull request. If it has been reverted,
 superseded, or its acceptance criteria materially changed, stop with `unclear_requirements` and
@@ -193,19 +193,33 @@ configured intent genuinely was not fully met — and Use Case 4's override is t
 narrow it. It never blocks. On the authoring machine all three runtimes are present (VL-14), so the
 warning does not fire there at all.
 
-### Decision 5 — Cross-runner `codex` dispatch uses `codex exec --sandbox read-only`
+### Decision 5 — Every reachable local runtime has an explicit dispatch path
 
-When the driving runner is Codex, the `codex` reviewer is dispatched as the Codex review skill
-exactly as today. When the driving runner is not Codex and the `codex` binary is callable, the same
-stage reviewer is dispatched through `codex exec --sandbox read-only`, which is the invocation shape
-already shipped in `local-codex-review-command.sh` and already exercised from non-Codex sessions
-(VL-6). The prompt names the stage reviewer's protocol and `REVIEW.md`, and requires the response to
-end with a single line `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`.
+When reviewer kind matches the driving runner, use that runner's native stage reviewer as today.
+Otherwise, invoke the installed CLI from the artifact repository root, after availability and policy
+have both completed. Dispatch sequentially using these argument shapes:
 
-A non-zero exit, a missing verdict line, or an unparseable response is a **review failure**, never an
-unreachability verdict — availability was already settled before dispatch. This is protocol prose,
-not a new script: `claude` and `cursor` dispatch are prose in the same table, and building a fourth
-dispatcher would exceed the spec.
+| Reviewer | Cross-runner command | Evidence |
+| --- | --- | --- |
+| `codex` | `codex exec --sandbox read-only "$review_prompt"` | Existing `local-codex-review-command.sh` invocation (VL-6) |
+| `claude` | `claude -p --output-format text "$review_prompt"` | [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), verified 2026-09-10 |
+| `cursor` | `cursor-agent --print --output-format text "$review_prompt"` | [Cursor headless CLI](https://docs.cursor.com/en/cli/headless), verified 2026-09-10; the executable is the same one the availability probe checks |
+
+The prompt names the exact stage protocol, `REVIEW.md`, the spec/brief and plan paths, the reviewed
+head and base, and the active review pass when applicable. Request a read-only review and a final
+single line `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic fixes
+and re-runs the required reviewers after a push. Preserve the CLI's existing permission controls;
+do not add permission-bypass flags or substitute another runtime when dispatch cannot complete.
+The read-only request is an instruction; only the Codex command above additionally enforces a
+read-only sandbox.
+
+Capture exit status and the complete response. A non-zero exit, denied required operation,
+missing/ambiguous verdict, or dispatch timeout is a **review failure**, never an unreachability
+verdict. Approval requires exit `0` and exactly one valid terminal verdict. Availability was already
+settled before dispatch. This remains protocol guidance, not a new dispatcher script; it fills the
+cross-runtime cases the new capability rule makes possible. D-6 checks all three invocation paths,
+and runbook Step 13 verifies each using a different driving runner. CLI shapes are documented here;
+their real authenticated dispatch is not claimed tested at plan stage.
 
 ### Decision 6 — Probes are sequential, not parallel
 
@@ -256,18 +270,23 @@ CodeRabbit, `reviews.auto_review.enabled: true`. This is the second of the two a
   — a fresh repository, or one newly added to an existing installation. Classified
   `prerequisite-missing`; already recorded as R-3.
 
-**Why accepting this is defensible — the residual is handled at dispatch, not at availability.**
-A false Reachable does not become a silently skipped review. `codex-github-reviewer.sh:32` documents
-exit `2` as `TIMED_OUT`: "API/auth/setup failures while waiting; treat as unavailable under
-configured `internal_reviewers_unavailable_policy`". So a reviewer wrongly classified Reachable is
-dispatched, fails to answer, and is then governed by **the same policy** that would have governed the
-unreachability verdict — `warn` proceeds with reduced coverage and says so in the summary,
-`fail-if-any-unavailable` blocks. What the gate never does is report a clean review that did not
-happen or advance a pull request to ready on the strength of an absent reviewer. The failure mode is
-a slower, noisier version of the correct outcome, not a wrong one.
+**The residual is handled as a review failure after dispatch.** A false Reachable does not
+become a silently skipped or approved review. Once dispatched, a reviewer that fails, errors,
+exhausts quota, times out, or supplies no parseable verdict is a **review failure**, under either
+unavailable-reviewer policy. The gate retains its original Reachable classification, reports the
+failure separately, and does not advance on reduced coverage because that reviewer failed.
 
-This also keeps the spec's own boundary intact, which the same spec line draws: "availability asks
-whether the reviewer can be invoked, never whether invoking it will go well."
+The historical `codex-github-reviewer.sh:32` header instead says to treat exit `2` as unavailable.
+That is existing caller guidance, not policy enforcement in the script, and conflicts with the
+merged spec's post-dispatch boundary. Update that header and both mirrored caller blocks for Step 7a:
+exit `0` is approval, exit `1` enters the revision path, exits `2` and `3` are review failures,
+and exit `4` remains waiting on the reviewer, never approval or an unavailable skip. The script's
+exit numbers and runtime behavior remain unchanged. Protocol 91 must apply the same failure rule
+to CodeRabbit after dispatch. No Step 7 external-reviewer policy changes are included.
+
+The accepted product tradeoff is the availability proxy's false-positive and false-negative
+classifications. It does not waive the spec's separate requirement that a dispatched failure remain
+a review failure. D-6, D-21, and runbook Step 13 Part 4 verify that distinction.
 
 **Blast radius.** Small, and deliberately so. `codex-github` is canonical but **not** in the shipped
 default (Decision 4, Decision 7), and CodeRabbit's availability check is unchanged by this item (spec
@@ -305,8 +324,8 @@ Protocol 91's Runtime-availability check carries an explicit note (line 1686 at 
 is handled upstream by the 'Draft-state pre-check' at the top of Step 7a, which converts any draft PR
 to non-draft before this reachability check runs." Draft eligibility is therefore **guaranteed by
 conversion, not tested by probing**, and CodeRabbit's check reading only `auto_review.enabled` is
-correct rather than incomplete. This plan adds no draft-eligibility term to the probe, and the
-existing note is kept.
+correct rather than incomplete. This plan adds no draft-eligibility term to the probe. Update the
+note's timing language: conversion guarantees eligibility before dispatch, not before availability.
 
 **But verifying that surfaced a real ordering defect, and this plan fixes it.** The conversion runs
 at the *top* of Step 7a, before "Determining which reviewers to run". The block decision runs *after*
@@ -317,10 +336,10 @@ which under the fixed evaluation order happens before the reviewer list is even 
 
 **The fix**: split the pre-check's two halves.
 
-- Its **condition evaluation** stays where it is — reading the resolved list to learn whether a
-  draft-restricting reviewer is configured. That reading is config-only, through
-  `workflow-config-resolver.py review-effective`, so no probing and no `gh` call happens before the
-  policy is read.
+- Its **condition evaluation** moves after the availability helper returns a proceed verdict. It
+  reads the helper's indexed reviewer records to learn whether a draft-restricting reviewer is
+  configured. The pre-check never invokes `review-effective` separately: the helper's bounded call
+  is the sole configuration resolution, so a stalled parser cannot hang before its deadline starts.
 - Its **`gh pr ready` conversion** moves to immediately before dispatch, after the policy has been
   applied and the gate has decided to proceed.
 
@@ -329,7 +348,7 @@ dispatched, which is the whole purpose of the pre-check. Block path: nothing was
 nothing was dispatched, and the pull request is still draft as the spec requires.
 
 **Scope note**: this changes neither *whether* the conversion happens nor its condition — only *when*
-within Step 7a. It is forced by this feature's own acceptance criteria rather than added to them, and
+within Step 7a and which already-resolved records supply the condition. It is forced by this feature's own acceptance criteria rather than added to them, and
 it does not touch which pipeline stages run this gate or when (spec Out of Scope item 9). Asserted by
 D-20 and observed in runbook Step 14 Part 5.
 
@@ -386,7 +405,7 @@ downstream indexing could recover what was already merged. Every hop is therefor
 | --- | --- | --- |
 | YAML scalar → Python | `list[str]` from `parse_yaml_subset`, read through `typed_value_from_path` | The existing parser already returns one list element per YAML sequence entry. Nothing splits on a delimiter at any point, so `- "codex, claude"` arrives as one string |
 | Python → stdout | **One JSON object**, reviewer lists as JSON arrays of strings | `json.dumps` escaping is a standard, not something this plan invents, and it round-trips any scalar including commas, whitespace, quotes, and control characters |
-| stdout → shell | `jq` reads the scalars; array entries are read NUL-delimited into a bash array (`mapfile -d ''`) | NUL cannot occur in a YAML scalar, so it is the one delimiter that is safe by construction. `mapfile` is already used by `select-test-suites.sh` and `batch-merge.sh`, so the bash level it needs is already assumed in this repository |
+| stdout → shell | `jq` writes NUL-delimited entries to a temporary file; a Bash 3.2 `while IFS= read -r -d ''` loop appends each entry to an array | NUL cannot occur in the supported YAML scalar input. Reading from a file keeps the loop in the current shell and allows checking `jq`'s exit status first. `select-test-suites.sh:65` and `batch-merge.sh:531` explicitly avoid `mapfile` for Bash 3.2 compatibility |
 | shell → verdict block | `print_kv_escaped` into `REVIEWER_N_NAME` | `KEY=value` to end of line, with control characters escaped by the existing helper |
 
 **`review-effective` emits JSON only — there is no shell `KEY=value` form for this subcommand.** That
@@ -450,8 +469,13 @@ YAML scalar cannot contain:
 
 <!-- workflow-shell-contract: bash -->
 ```bash
-# Illustrative — adapt during implementation.
-mapfile -d '' configured < <(jq -j '.effective_runner[] | . + "\u0000"' "$resolver_output")
+# Illustrative — adapt during implementation; both paths are temporary files.
+set -euo pipefail
+jq -j '.effective_runner[] | . + "\u0000"' "$resolver_output" > "$entries_file" || exit 2
+configured=()
+while IFS= read -r -d '' entry; do
+  configured+=("$entry")
+done < "$entries_file"
 ```
 
 Exit codes: `0` always when the command ran, including for `malformed`, `unsupported`, and
@@ -535,8 +559,9 @@ else in the block is a parsing surface (Decision 10).
   them as `<entry N>` rather than inline, so a summary never claims to contain a value it cannot
   represent. The indexed record always holds the real value.
 
-`CONFIG_LIST_STATE=not-evaluated` appears only when the run blocked on the policy before resolving
-the list, which is what makes the fixed evaluation order visible in the output.
+`CONFIG_LIST_STATE=not-evaluated` appears when configuration resolution did not complete or
+when the run blocked on the policy before evaluating the list. This makes the fixed evaluation
+order visible in the output.
 `CONFIG_LIST_STATE=malformed` means the `review.on_draft.runner` key is present in a file that
 **does** parse but its value is not a list. A configuration file that does not parse at all never
 reaches that value: it makes the policy input unreadable, so the run blocks in phase 1 with
@@ -629,9 +654,9 @@ wrong in two ways, both accepted under **Decision 8**:
   repository — is the correct action either way. **Risks & Mitigations** R-3.
 - **False Reachable**: an app that was installed, commented, and has since been uninstalled,
   suspended, or had its access revoked still shows historical activity and classifies `reachable`.
-  It is then dispatched and times out, and `codex-github-reviewer.sh:32` maps that timeout back onto
-  the same `internal_reviewers_unavailable_policy` — so the residual is handled at dispatch rather
-  than at availability, and never as a clean review that did not happen. **Risks & Mitigations**
+  It is then dispatched and may time out. That is a review failure under either policy,
+  with its original Reachable classification retained; it cannot become an unavailable skip or
+  approval. The gate reports the failure and does not advance on reduced coverage. **Risks & Mitigations**
   R-11.
 
 Neither hosted reviewer is in the shipped default, so a repository meets this behavior only by
@@ -644,7 +669,7 @@ fixes the ordering defect it exposed.
 
 ### The availability budget
 
-Three constants, named once and used with these names everywhere:
+Four constants, named once and used with these names everywhere:
 
 | Constant | Value | Role |
 | --- | --- | --- |
@@ -665,9 +690,15 @@ Enforcement:
    run blocks immediately with `BLOCK_CAUSE=config-resolution-inconclusive`, exit `1`,
    `POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, `REVIEWER_COUNT=0`, and no
    per-reviewer reason — no reviewer was named, so none can be classified. Asserted by T-40.
-3. Before each probe, `remaining = deadline - now`. If `remaining <= 0`, that reviewer and every one
-   after it is recorded `unreachable` / `check-inconclusive` with detail
-   `availability budget exhausted before this check started`, and no probe runs.
+3. For each entry, resolve classifications that need no probe first: an unsupported value is
+   `unreachable` / `value-not-supported`, and the driving runner's own reviewer is `reachable`.
+   These classifications remain valid after the budget is exhausted. For every other entry,
+   compute `remaining = deadline - now`. If `remaining <= 0`, record that entry as
+   `unreachable` / `check-inconclusive` with detail
+   `availability budget exhausted before this check started`, and run no probe. Continue through
+   the remaining entries so a later native reviewer or unsupported value receives its own correct
+   classification. This ordering preserves the shipped default guarantee even when earlier probes
+   hang; T-43 exercises that case.
 4. Otherwise the probe runs with bound `min(remaining, cap)` for its kind. If it does not finish, the
    reviewer is `unreachable` / `check-inconclusive` with detail `check exceeded its <n>s bound`.
 5. `ELAPSED_SECONDS` is printed so a run that came close to the ceiling is visible in the log.
@@ -700,15 +731,26 @@ cleanup slower than two seconds, the correct response is to lower `AVAILABILITY_
 again, never to raise the assertion: the assertion is the spec's contract, and the budget is the
 implementation's problem.
 
-`ELAPSED_SECONDS` reports the script's own measurement of its internal budget window, and the tests
-assert it is at most `BUDGET_SECONDS`. That is an additional check, not the ceiling check — the
+`ELAPSED_SECONDS` reports the full elapsed window, including cleanup, and the tests
+assert it is at most ten seconds. `BUDGET_SECONDS=8` is only the internal scheduling budget. That is an additional check, not the ceiling check — the
 ceiling is asserted from outside the script against wall-clock time, because a script that
 mis-measured its own elapsed time would otherwise report a compliance it did not achieve.
 
 Bounding mechanism: `gh_api_bounded` from `workflow-lib.sh` for hosted probes, exporting
 `WORKFLOW_GH_API_TIMEOUT_SECONDS` set to the computed bound (it already returns `124` on timeout,
 VL-7); a local `run_bounded` helper of the same shape — GNU `timeout --kill-after` when available,
-otherwise a `setsid`-plus-poll fallback — for `--version` probes. `run_bounded` is a new function in
+otherwise a process-group-plus-poll fallback — for `--version` probes and configuration resolution.
+Use `setsid` when available, otherwise `perl -e 'setpgrp; exec @ARGV' --`, following
+`local-ai-reviewer.sh`'s existing portable launch mechanism. The new helper uses a **one-second**
+TERM-to-KILL grace (not that script's two seconds), redirects child output to temporary files,
+and always kills the process group after the grace even if its leader already exited. Check for
+Perl when both GNU `timeout` and `setsid` are absent; missing launch support is exit `2`.
+T-46 exercises a TERM-ignoring descendant with neither GNU `timeout` nor `setsid` present.
+
+Do not call `gh_available`: `workflow-lib.sh:186` runs an unbounded `gh auth status`.
+Use `have_cmd gh` followed directly by the bounded GET instead; its auth/API failure already maps
+to `check-inconclusive`. There is no separate authentication preflight to hang. T-47 asserts that
+`gh auth status` is never invoked and that a stalled GET stays bounded. `run_bounded` is a new function in
 `resolve-reviewer-availability.sh` rather than an extraction from `local-ai-reviewer.sh`; see
 **Out-of-scope notes** for why that duplication is deliberate.
 
@@ -727,10 +769,11 @@ The script executes exactly these phases, in this order, and the output makes th
    parsed, because a file that did not would have made the policy input unreadable in phase 1. So
    `malformed` here means only one thing: the `review.on_draft.runner` key is present and readable
    and its value is not a list. That → block, `BLOCK_CAUSE=list-malformed`. `absent` or `empty` →
-   `FALLBACK_APPLIED=true`, jump to phase 6.
+   `FALLBACK_APPLIED=true`, continue to phase 3 before reporting the fallback.
 3. **Mark override exclusions.** Entries in `shipped_runner` absent from the `effective_runner` list
    become `override-excluded`. They are never probed, which is why "excluded and also unreachable"
-   is not a reachable combination.
+   is not a reachable combination. After recording them, a fallback run jumps to phase 6; an empty
+   override therefore still reports every removed shipped reviewer (T-45).
 4. **Probe** each remaining entry under the budget.
 5. **Apply the policy** to the resulting classification set.
 6. **Report** the verdict block and exit.
@@ -941,7 +984,8 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       *Covers*: AC group *Configuration inputs that are absent, empty, malformed, or unsupported*.
 - [ ] `scripts/development-workflow/resolve-reviewer-availability.sh` — **new**. Implements the
       contract, the probe table, the budget, and the fixed evaluation order above. Sources
-      `workflow-lib.sh` for `have_cmd`, `gh_available`, and `gh_api_bounded` (VL-7). Executable bit
+      `workflow-lib.sh` for `have_cmd` and `gh_api_bounded` (VL-7); never call the
+      unbounded `gh_available` authentication preflight. Executable bit
       set; passes `shellcheck --severity=warning`.
       *Covers*: AC groups *Reachability follows capability*, *The operator can tell why*,
       *Policy behavior is preserved*.
@@ -949,7 +993,8 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       "Classifies as universally reachable: requires only gh CLI access" (lines 5-7) with a statement
       that it is a hosted-service reviewer whose availability is decided at runtime from whether the
       Codex GitHub App is installed for the repository, and that no runner is inherently barred
-      because it needs no local Codex runtime. No behavior change.
+      because it needs no local Codex runtime. Correct the exit `2`/`3` caller guidance per
+      Decision 8; no script runtime behavior or exit number changes.
       *Covers*: AC "No surface claims the hosted-service reviewer is available from every runner
       unconditionally."
 - [ ] `scripts/development-workflow/claude-code-action-reviewer.sh` — header comment only. Line 9
@@ -975,17 +1020,19 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
         invocation, its exit-code table, the probe table, the budget constants, and the
         status/reason vocabulary (`reachable`, `unreachable`, `override-excluded`;
         `runtime-absent`, `prerequisite-missing`, `check-inconclusive`, `value-not-supported`).
-        Keep the existing note that `auto_review.drafts: false` is handled upstream by the
-        draft-state pre-check and is not an unreachability condition (Decision 9). State that the
+        Keep the rule that `auto_review.drafts: false` is not an unreachability condition, but update
+        its note to say the draft pre-check guarantees eligibility before dispatch, after the
+        availability decision (Decision 9). State that the
         hosted-service activity signal is a **proxy** for the spec's installed-and-enabled clause,
-        name the false-Reachable case, and point at the dispatch-time
-        `internal_reviewers_unavailable_policy` treatment as where that residual is handled
+        name the false-Reachable case, and require post-dispatch failures to remain review
+        failures under either unavailable-reviewer policy
         (Decision 8, asserted by D-21).
       - Lines 1496-1556 (*Draft-state pre-check*): keep the condition, the reviewer-to-draft-restriction
-        mapping, the posted `INFO` comment, and the "Why this matters" rationale unchanged. Change
-        only **where the `gh pr ready` conversion happens**: the condition is still evaluated here,
-        from `review-effective`, but the conversion itself moves to immediately before the dispatch
-        map, after the policy has been applied. Without this, a run that converts and then blocks
+        mapping, the posted `INFO` comment, and the "Why this matters" rationale unchanged. Move
+        condition evaluation and `gh pr ready` conversion to immediately before the dispatch map,
+        after the availability helper returns a proceed verdict. Evaluate the condition from the
+        helper's indexed reviewer records, with no independent `review-effective` call. Without this,
+        an unbounded preliminary parse can hang before the deadline, and a run that converts and then blocks
         leaves a non-draft pull request on a blocked gate, contradicting six acceptance criteria
         (Decision 9, asserted by D-20).
       - Lines 1688-1716 (*Policy resolution*): keep both allowed policy values, their meanings, and
@@ -1003,7 +1050,7 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
         configured reviewers" as the leading remedy — it attributes the block to identity.
       - Lines 1753-1770 (*Reviewer dispatch map*): add three `codex-github` rows (one per branch
         class) dispatching `codex-github-reviewer.sh <pr_number> <owner> <repo>` with its documented
-        exit codes; add the cross-runner `codex` dispatch note from Decision 5.
+        exit codes; add all three cross-runner local CLI dispatch paths and verdict handling from Decision 5.
       - Lines 1822-1867 (*Step 7a summary comment*): require the per-reviewer verdict list — every
         configured reviewer with its display label, and its reason where Unreachable — plus the gate
         outcome. Update both worked examples so neither attributes a skip to a runner.
@@ -1024,17 +1071,18 @@ No mitigation makes a deleted untracked file recoverable, and the plan does not 
       implies that availability is decided by the identity of the driving runner."
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — add a short "Step 7a runner
       reviewer" section: `codex-github` is a supported runner reviewer value, its availability is
-      decided at runtime from whether the Codex GitHub App is installed for the repository, it is not
+      decided by the bounded repository-activity proxy from Decision 8, it is not
       in the shipped default, and opting in means adding it to `review.on_draft.runner`. Cross-link
       the existing verification checklist at line 143.
       *Covers*: AC "The canonical protocol lists the hosted-service reviewer among its supported
       values, and states that its availability is decided at runtime."
-- [ ] `.claude/agents/item-orchestrator.md` line 198 — keep the `codex-github` dispatch block and its
-      exit-code semantics; replace "This script is universally reachable from all runner contexts
+- [ ] `.claude/agents/item-orchestrator.md` line 198 — keep the `codex-github` dispatch block and exit numbers, but align its
+      post-dispatch failure handling with Decision 8; replace "This script is universally reachable from all runner contexts
       (Claude Code, Cursor, Codex, headless CI) because it uses only `gh` CLI — no Codex CLI runtime
       is needed" with a hosted-service statement: it needs no local Codex runtime, so no runner is
-      inherently barred, and its availability is decided at runtime from whether the app is installed
-      for the repository — unavailable with reason `prerequisite-missing` when it is not.
+      inherently barred, and its availability uses the repository-activity proxy from Decision 8 — unavailable with
+      reason `prerequisite-missing` when activity is absent, subject to the documented false
+      classifications. Keep the post-dispatch review-failure rule explicit.
       *Covers*: AC "No surface claims the hosted-service reviewer is available from every runner
       unconditionally."
 - [ ] `.cursor/agents/item-orchestrator.md` line 205 — apply the identical replacement. These two
@@ -1130,7 +1178,7 @@ with no workflow edit (VL-10).
 | T-4 | `runner: [claude]`, `--runner-kind cursor`, no `claude` on `PATH` | `REVIEWER_1_STATUS=unreachable` with `REVIEWER_1_REASON=runtime-absent` — identity never causes unreachability, absence does | Reachability follows capability |
 | T-5 | Fake `codex` present but `--version` exits `1` | `REVIEWER_1_REASON=check-inconclusive`, not `runtime-absent` | Configuration inputs |
 | T-6 | Fake `codex` present but sleeps past `LOCAL_PROBE_CAP_SECONDS`, under `WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE=1` with a shortened budget so the per-probe bound is what the case exercises | `REVIEWER_1_REASON=check-inconclusive`, `REVIEWER_1_DETAIL` names the bound | Configuration inputs |
-| T-7 | Five configured entries, every fake binary sleeping, run at the **shipped** budget with no test-mode override | measured wall time, captured outside the script, is **at most 10 seconds**: the harness records `start=$(date +%s)` and `end=$(date +%s)` around the call and fails when `end - start > 10`, with no tolerance added. Every entry is classified, `ELAPSED_SECONDS` is at most `BUDGET_SECONDS`, and the exit status is `0` or `1` but never a hang | Configuration inputs (ten-second ceiling) |
+| T-7 | Five configured entries, every fake binary sleeping, run at the **shipped** budget with no test-mode override | measured wall time, captured outside the script, is **at most 10 seconds**: the harness records `start=$(date +%s)` and `end=$(date +%s)` around the call and fails when `end - start > 10`, with no tolerance added. Every entry is classified, `ELAPSED_SECONDS` is at most ten seconds including cleanup, and the exit status is `0` or `1` but never a hang | Configuration inputs (ten-second ceiling) |
 | T-8 | `runner: [not-a-reviewer]` | `REVIEWER_1_NAME=not-a-reviewer` with `REVIEWER_1_STATUS=unreachable` and `REVIEWER_1_REASON=value-not-supported`, `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable` | Configuration inputs |
 | T-9 | `runner: [not-a-reviewer, codex]` with `codex` present, policy `warn` | `OUTCOME=proceeded-reduced`, both records present, exit `0` | Configuration inputs |
 | T-10 | No `runner` key in either file | `CONFIG_LIST_STATE=absent`, `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`, exit `0` | Configuration inputs |
@@ -1162,6 +1210,11 @@ with no workflow edit (VL-10).
 | T-40 | Fake `python3` on the hermetic `PATH` that sleeps past `CONFIG_RESOLVE_CAP_SECONDS`, run at the shipped budget | exit `1`, `BLOCK_CAUSE=config-resolution-inconclusive`, `POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, `REVIEWER_COUNT=0`, no `REVIEWER_*` group, and measured wall time **at most 10 seconds**, asserted exactly as in T-7. This is the case a deadline-without-a-bound would hang on | Configuration inputs |
 | T-41 | Fake `python3` that exits `2` immediately | exit `2`, no `OUTCOME` line, the resolver's stderr on stderr — an invocation failure, not a configuration state | Contract completeness |
 | T-42 | A reviewer name or detail containing a tab and a newline, injected through a fixture | the emitted block still has exactly one line per field: `print_kv_escaped` escaped them, so no value forged a line break or a second field. `review-effective`'s JSON carries the same value and the shell reads it NUL-delimited, so the round-trip is asserted end to end | Configuration inputs |
+| T-43 | `runner: [claude, cursor, codex, not-a-reviewer]`, driving runner `codex`; earlier fake runtimes hang and exhaust a shortened test-mode budget before the last two entries | `codex` remains `reachable`, `not-a-reviewer` has reason `value-not-supported`, and default `warn` yields `proceeded-reduced`, never `zero-reachable`. Repeat the native-last case for each supported runner kind | The shipped default never traps |
+| T-44 | Run the delimiter fixtures T-39 and the normal/default cases T-1 and T-33 under Bash 3.2, including `/bin/bash` on macOS | Same exit codes and indexed values; no `mapfile`/`readarray` dependency, no lost empty entry, and no array state lost in a pipeline subshell | Contract completeness |
+| T-45 | Shipped `[claude, cursor, codex]`, local `runner: []`, supported driving runner | Fallback proceeds; all three shipped entries remain `override-excluded` with empty reason/remedy, `UNREACHABLE` empty, and fallback is dispatched only by the gate | The operator can tell why |
+| T-46 | Shipped-budget timeout case on a PATH with neither GNU `timeout` nor `setsid`; Perl present; fake probe spawns a TERM-ignoring descendant | Verdict within ten seconds; `ELAPSED_SECONDS <= 10`; descendant and leader both gone after cleanup, temporary output does not hold stdout open. Repeat under Bash 3.2 | Contract completeness |
+| T-47 | Hosted reviewer with fake `gh` whose `auth status` would hang; exercise a successful GET and a hanging GET | No auth-preflight invocation; success classifies reachable with activity, hanging GET yields `check-inconclusive` within ten seconds | Configuration inputs |
 
 ### Acceptance-criterion coverage map
 
@@ -1209,14 +1262,14 @@ behavior.
 | R4 | Fresh each run on the same pull request; the verdict flips both ways | Both | Resolver unit T-32 (three consecutive runs, no caching inside the resolver); gate doc assertion D-13 (the gate re-runs the resolver every cycle and may not reuse an earlier verdict); gate runbook Step 4 |
 | R5 | Posts no comment, changes no PR state, modifies no tracked file | Both | Resolver unit T-14, T-15; gate doc assertion D-14 (no mutating command anywhere in the protocol's availability phase); gate runbook Step 5 |
 | R6 | Invokes no reviewer; nothing dispatched until availability is decided and the policy applied | Both | Resolver unit T-15 (the resolver itself dispatches nothing); gate doc assertion D-15 (the resolver call precedes the dispatch map and no reviewer is dispatched until it returns) — this ordering is a property of the gate, and no resolver test can observe it; gate runbook Step 5 |
-| R7 | Reachable, dispatched, then fails → review failure, not unreachable | Gate | Gate doc assertion D-6; gate runbook Step 13 Part 1, whose expected result covers a dispatched reviewer that then fails. The resolver has already exited before dispatch, so no unit test of this feature can observe it |
+| R7 | Reachable, dispatched, then fails → review failure, not unreachable | Gate | Gate doc assertion D-6; gate runbook Step 13 Part 4 deliberately makes a callable reviewer fail only at dispatch. The resolver has already exited before dispatch, so no unit test of this feature can observe it |
 | S1 | Shipped default, no override → dispatched reviewer and a verdict on every supported runner | Both | Resolver unit T-33 (a non-blocked verdict for every supported runner kind on a `PATH` holding none of the three runtimes); gate doc assertion D-12; gate runbook Step 1 for the verdict on every supported runner kind and Step 13 Part 1 for the dispatch |
-| S2 | The shipped list names at least one reviewer reachable wherever a supported runner drives | Resolver | T-33 |
+| S2 | The shipped list names at least one reviewer reachable wherever a supported runner drives | Resolver | T-33, T-43 |
 | S3 | Shipped commentary does not call a hard-fail on a supported runner expected behavior | Surface text | D-9 |
 | O1 | Every Unreachable reviewer reported with name, exactly one reason, and at least one action | Both | Resolver unit T-37 (the reason is one of four and `REVIEWER_N_REMEDY` is non-empty); gate doc assertions D-5 (the protocol's four remedies match the script's) and D-16 (the comment formats carry name, reason, and remedy per reviewer); gate runbook Step 13 Part 3 and Step 14 Part 1 read the posted comments |
 | O2 | The four reasons are distinguished and never reported in place of one another | Resolver | T-25 (no cross-kind pairing), T-2, T-5, T-8, T-22, T-23 (one per reason) |
 | O3 | The gate summary lists every configured reviewer with its verdict, including the ones that ran | Gate | Gate doc assertion D-16; gate runbook Step 13 Part 1. T-19 proves the resolver emits a `REVIEWER_N_*` group per entry, which is the input the summary needs — necessary, not sufficient, so it is not listed as evidence for this criterion |
-| O4 | Override-removed reviewer is Excluded by override, no unreachability warning | Both | Resolver unit T-19 (the group carries `REVIEWER_N_STATUS=override-excluded` with empty reason); gate doc assertion D-16 (excluded entries appear in the summary and never in the warning); gate runbook Step 14, which runs the real gate with an override in effect |
+| O4 | Override-removed reviewer is Excluded by override, no unreachability warning | Both | Resolver units T-19 and T-45 (the group carries `REVIEWER_N_STATUS=override-excluded` with empty reason); gate doc assertion D-16 (excluded entries appear in the summary and never in the warning); gate runbook Step 14, which runs the real gate with an override in effect |
 | O5 | Block report names the policy, and reports override state from what was resolved | Both | Resolver unit T-16, T-20, T-34, T-13 produce the four field values; gate doc assertion D-18 (the hard-fail formats carry `BLOCK_CAUSE` and `LOCAL_OVERRIDE_STATE` taken from the resolver, never inferred); gate runbook Step 14 Part 1 |
 | O6 | No message attributes unavailability to the driving runner's identity | Both | Resolver unit T-36 (no detail string contains the run's `RUNNER_KIND`); gate doc assertions D-17 and D-18 (neither comment template carries a runner-context field), plus D-2 and D-10 for the surrounding surfaces; gate runbook Step 13 Part 3 and Step 14 Part 1 |
 | C1 | No list in either file → runs the stage default **once** and records the fallback in the summary | Both | Resolver unit T-10 (`FALLBACK_APPLIED=true`); gate doc assertions D-12 (dispatch the driving runner's stage reviewer exactly once) and D-16 (the summary records that the fallback applied); gate runbook Step 13 Part 2 |
@@ -1226,7 +1279,7 @@ behavior.
 | C5 | List defined but not readable as a list → blocks, names file and input, dispatches nobody, PR stays draft | Both | Resolver unit T-13 (`BLOCK_CAUSE=list-malformed`, exit `1`); gate doc assertions D-18 (the report names the file and the key), D-19 (exit `1` maps to dispatch nobody, no `gh pr ready`, PR stays draft, escalate) and D-20 (no draft conversion can precede the block); gate runbook Step 14 Part 2, with Part 5 for the draft-conversion ordering |
 | C6 | A file that will not parse at all → blocks and names that file | Both | Resolver unit T-31, T-29; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
 | C7 | An unsupported value as the only entry → blocks and names it as the cause | Both | Resolver unit T-8 and T-39; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 1, second run, and Step 15 |
-| C8 | A determination that cannot complete → `check-inconclusive`; verdict within ten seconds | Resolver | T-6 (per-probe bound), T-7 (whole-list budget with every probe hanging), T-40 (the configuration-resolver call bounded too, so the ceiling holds for the one call that precedes every probe — Decision 11); gate runbook Step 6 and Step 16 |
+| C8 | A determination that cannot complete → `check-inconclusive`; verdict within ten seconds | Both | T-6 (per-probe bound), T-7 (whole-list budget with every probe hanging), T-40 (the configuration-resolver call bounded too, so the ceiling holds for the one call that precedes every probe — Decision 11); D-20 excludes an unbounded pre-check; gate runbook Step 6 and Step 16, including the complete gate entry path |
 | C9 | A determination that ends promptly without an answer → the same reason, not the other two | Resolver | T-5, T-23 |
 | P1 | One unreachable, one reachable, `warn` → warns naming each, then dispatches the rest | Both | Resolver unit T-9 (`OUTCOME=proceeded-reduced`) and T-37 (reason and remedy available to quote); gate doc assertion D-17 (the warning names each unreachable reviewer with its reason and remedy and states the reachable subset) and D-12 (the reachable subset is then dispatched); gate runbook Step 13 Part 3 |
 | P2 | `fail-if-any-unavailable` + any unreachable → blocks, dispatches nobody, PR stays draft | Both | Resolver unit T-16; gate doc assertions D-18, D-19 and D-20; gate runbook Step 14 Part 3, with Part 5 for the draft-conversion ordering |
@@ -1247,11 +1300,11 @@ behavior.
 
 #### What this map admits
 
-- **Seven criteria are resolver-only** — R2, R3, O2, S2, C8, C9, P5. Each asserts what the verdict
+- **Six criteria are resolver-only** — R2, R3, O2, S2, C9, P5. Each asserts what the verdict
   *is* for a given environment, which is exactly what a unit test can settle.
 - **Seven are statements about surface text** — S3 and A1 to A6. A doc assertion is not second-best
   evidence for these; it is the right instrument, because the criterion is about what the text says.
-- **Twenty-seven are gate-level, wholly or in part** — every remaining ID: twenty-five marked
+- **Twenty-eight are gate-level, wholly or in part** — every remaining ID: twenty-six marked
   `Both`, plus R7 and O3, which constrain only the gate. For each, the resolver unit case (where one
   exists) proves only that the verdict handed to the gate was correct. The doc assertion proves the
   protocol instructs the right response, and the runbook step is the only evidence that a runner
@@ -1298,7 +1351,7 @@ Headers:
 | D-3 | No live surface contains `universally reachable` — the search excludes `CHANGELOG.md` and `docs/specs/developments/**`, which are historical records | A4 |
 | D-4 | Every reviewer value named in `review.on_draft.runner` in `.ai-dev-workflow.yaml` and `.ai-dev-workflow.local.example.yaml` is one of Protocol 91's five | A2 |
 | D-5 | Protocol 91 carries a remedy for each of the four reason categories, and the four remedy strings match `resolve-reviewer-availability.sh`'s `REMEDY` mapping character for character | O1 |
-| D-6 | Protocol 91 states that a reviewer classified Reachable, dispatched, and then failing, erroring, or timing out is a review failure and not an availability verdict | R7 |
+| D-6 | Protocol 91 states that a reviewer classified Reachable, dispatched, and then failing, erroring, or timing out is a review failure and not an availability verdict; its dispatch guidance includes all three local CLI paths and terminal-verdict validation from Decision 5 | R7, R1 |
 | D-7 | Protocol 91 and `README.md` both describe the fallback as the driving runner's own stage reviewer, and neither names a fixed reviewer for it | C2 |
 | D-8 | Protocol 91 states that the gate never installs a missing runtime, provisions a missing prerequisite, or substitutes a different reviewer | P10 |
 | D-9 | `.ai-dev-workflow.yaml`'s `review.on_draft.runner` is exactly `claude`, `cursor`, `codex`, and the file contains no text describing a hard-fail of this gate on a supported runner as expected behavior | S3 |
@@ -1309,16 +1362,16 @@ Headers:
 
 | ID | Assertion | AC |
 | --- | --- | --- |
-| D-12 | On resolver exit `0`, Protocol 91 instructs dispatching every reviewer named in `REACHABLE`, and where `FALLBACK_APPLIED=true` instructs dispatching the driving runner's own stage reviewer exactly once — the word "once" is asserted, because "runs it once" is the criterion | R1, S1, C1, C2, C3, P1 |
+| D-12 | On resolver exit `0`, Protocol 91 instructs dispatching each indexed `REVIEWER_N_NAME` whose `REVIEWER_N_STATUS` is `reachable`, and where `FALLBACK_APPLIED=true` instructs dispatching the driving runner's own stage reviewer exactly once — the word "once" is asserted, because "runs it once" is the criterion | R1, S1, C1, C2, C3, P1 |
 | D-13 | Protocol 91 instructs running the availability resolver at the start of every Step 7a cycle, including re-runs after fixes, and states that a verdict from an earlier cycle is never reused | R4 |
-| D-14 | Between the resolver call and the dispatch step, Protocol 91's Step 7a text contains no `gh pr comment`, no `gh pr ready`, and no command that writes to the working tree | R5 |
+| D-14 | During availability determination, from helper invocation until its return, Protocol 91 instructs no `gh pr comment`, no `gh pr ready`, and no command that writes to the working tree. After it returns, policy warning/block comments and the proceed path's conditional draft conversion are permitted before dispatch | R5 |
 | D-15 | Protocol 91 places the resolver call before the reviewer dispatch map and states that no reviewer is dispatched until the resolver returns and the policy has been applied | R6 |
 | D-16 | The Step 7a summary comment format requires one line per configured reviewer with its display label; for each Unreachable one, its reason display label and its remedy; and, where `FALLBACK_APPLIED=true`, a line recording that the fallback applied. Override-excluded entries appear in the summary and never in the warning | O1, O3, O4, C1, C3 |
 | D-17 | The warning comment format carries no runner-context field, names each unreachable reviewer with its reason and its remedy, states the reachable subset that will run, and is posted only when `OUTCOME=proceeded-reduced` | O6, P1, P4 |
 | D-18 | Each hard-fail comment case names `BLOCK_CAUSE`; every configured reviewer with its verdict, including the reachable ones; the offending value or unreadable input where one exists; the policy where the policy is the cause; and `LOCAL_OVERRIDE_STATE` taken from the resolver rather than inferred. No case carries a runner-context field | O5, O6, C4, C5, C6, C7, P2, P6, P7, P8, P9 |
 | D-19 | Protocol 91 maps resolver exit `1` to: dispatch nobody, do not call `gh pr ready`, leave the pull request draft, escalate to a human — and maps exit `2` to the same treatment with cause `availability-resolver-failed` | C5, C6, C7, P2, P3, P6, P8 |
-| D-20 | Protocol 91's draft-state pre-check evaluates its condition from `review-effective` before the availability check, but its `gh pr ready` conversion appears **after** the policy-application step and before the dispatch map — so no block path can leave a converted pull request behind. The existing note keeping `auto_review.drafts: false` out of the unreachability conditions is still present | C5, P2, P3, P6, P7, P8; Decision 9 |
-| D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and points at the dispatch-time `internal_reviewers_unavailable_policy` treatment as where the residual is handled | Decision 8 |
+| D-20 | Protocol 91 invokes the bounded availability helper before evaluating the draft pre-check; condition evaluation consumes its indexed records only after a proceed verdict, with no independent `review-effective` call. Conversion appears after that verdict and before dispatch. The draft-eligibility note says conversion guarantees non-draft at dispatch, not at availability time. Runbook Step 16 also exercises a stalled parser through the complete gate entry path | C5, P2, P3, P6, P7, P8, C8; Decision 9 |
+| D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and requires any resulting dispatch failure to remain a review failure under either policy, retaining the original availability classification | Decision 8 |
 | D-22 | Protocol 91 instructs the gate to read reviewer names, reasons, remedies, and details from the indexed `REVIEWER_N_*` fields, and states that the comma-joined aggregate fields are display-only. No instruction anywhere in Step 7a splits an aggregate field on commas or whitespace to recover a reviewer name | C4, C7; Decision 10 |
 
 ### Planted-violation proofs
@@ -1355,7 +1408,7 @@ plant applied and the passing run after reverting it.
 | D-1 | `91-orchestrate-work-protocol.md`, supported-values line | delete `codex-github` from the list |
 | D-2 | `91-orchestrate-work-protocol.md`, availability section | re-insert the sentence `runner identity is a sufficient proxy for reviewer reachability` |
 | D-3 | `codex-github-reviewer.sh` header | restore the words `universally reachable` |
-| D-4 | `.ai-dev-workflow.yaml`, `review.on_draft.runner` | add an entry `greptile`, which the canonical protocol does not list as a runner reviewer |
+| D-4 | `.ai-dev-workflow.local.example.yaml`, `review.on_draft.runner` | add an entry `greptile`, which the canonical protocol does not list as a runner reviewer; leave the shipped default unchanged so D-9 still passes |
 | D-5 | `91-orchestrate-work-protocol.md`, reason-to-remedy table | change one word of the `runtime-absent` remedy so it no longer matches the script's string |
 | D-6 | `91-orchestrate-work-protocol.md`, dispatch section | delete the sentence classifying a dispatched-then-failed reviewer as a review failure |
 | D-7 | `README.md`, configuration-reference bullet | reintroduce `the stage-appropriate \`claude\` reviewer` as the fallback |
@@ -1365,7 +1418,7 @@ plant applied and the passing run after reverting it.
 | D-11 | `.cursor/agents/item-orchestrator.md`, `codex-github` block | change one word so it no longer matches `.claude/agents/item-orchestrator.md` |
 | D-12 | `91-orchestrate-work-protocol.md`, dispatch instruction | delete the word `once` from the fallback-dispatch sentence |
 | D-13 | `91-orchestrate-work-protocol.md`, Step 7a re-run rules | delete the instruction to re-run the resolver on every cycle |
-| D-14 | `91-orchestrate-work-protocol.md`, availability phase | insert a `gh pr comment` call between the resolver call and the dispatch map |
+| D-14 | `91-orchestrate-work-protocol.md`, availability phase | insert an instruction to post `gh pr comment` while availability determination is still running, before the helper returns |
 | D-15 | `91-orchestrate-work-protocol.md` | move the resolver-call block below the dispatch map |
 | D-16 | `91-orchestrate-work-protocol.md`, summary-comment format | delete the required per-reviewer verdict line |
 | D-17 | `91-orchestrate-work-protocol.md`, warning format | re-add a `(<runner-context>)` field |
@@ -1375,7 +1428,7 @@ plant applied and the passing run after reverting it.
 | D-21 | `91-orchestrate-work-protocol.md`, hosted-probe section | delete the sentence naming the activity signal a proxy |
 | D-22 | `91-orchestrate-work-protocol.md`, gate-consumption instruction | change it to split `CONFIGURED` on commas to recover reviewer names |
 
-Nineteen of the twenty-two plant into Protocol 91 because that is the canonical surface the suite
+Sixteen of the twenty-two plant into Protocol 91 because that is the canonical surface the suite
 exists to protect; each targets a different sentence, so no plant is masked by another rule. Where two
 cases read nearby text, the plant is chosen to change only the one case's answer — the implementer
 must confirm that from the per-case output, not assume it. See Implementation Order step 8.
@@ -1492,22 +1545,23 @@ following are the remaining documentation-only updates the developer must make:
 | R-2 | Cross-runner `codex` dispatch returns free-form text and the verdict cannot be parsed | Medium | Medium | Decision 5 fixes a single-line `VERDICT:` contract and classifies any parse failure as a review failure, not unreachability. The invocation shape is already shipped and exercised (VL-6). |
 | R-3 | A hosted service installed but silent on the repository classifies `prerequisite-missing` (false Unreachable) | Medium | Low | Neither hosted reviewer is in the shipped default; the offered remedy (verify the app is installed) is correct either way. Recorded in the probe table, the runbook's Troubleshooting table, and the runbook's Known Limitations. |
 | R-12 | The gate re-derives reviewer names by splitting a display-only aggregate field, reintroducing the delimiter hole one layer up | Medium | Medium | D-22 asserts Protocol 91 instructs reading the indexed fields and never splitting the aggregates, and the contract labels the aggregates display-only at the point of definition. The aggregates render an unsafe value as `<entry N>` precisely so a gate that splits them anyway produces something obviously wrong rather than something plausibly wrong. |
-| R-11 | A hosted service that was uninstalled, suspended, or had its access revoked still shows historical activity and classifies `reachable` (false Reachable), so the gate dispatches a reviewer that is not there | Medium | Medium | **Decided tradeoff, not a defect to fix later — see Decision 8.** No mechanism available to the gate's user-token credentials can establish current installation and per-review enablement. The residual is handled at dispatch: `codex-github-reviewer.sh:32` maps the resulting timeout onto the same `internal_reviewers_unavailable_policy`, so `warn` proceeds with reduced coverage and says so and `fail-if-any-unavailable` blocks — never a clean review that did not happen. Blast radius is limited to repositories that opt a hosted reviewer into `review.on_draft.runner`, which the shipped default does not. Visible to operators in the probe table, the runbook's Troubleshooting table, and its Known Limitations; pinned by T-38 and D-21. |
+| R-11 | A hosted service that was uninstalled, suspended, or had its access revoked still shows historical activity and classifies `reachable` (false Reachable), so the gate dispatches a reviewer that is not there | Medium | Medium | **Decided tradeoff, not a defect to fix later — see Decision 8.** No mechanism available to the gate's user-token credentials can establish current installation and per-review enablement. The residual is handled at dispatch as a review failure under either policy, retaining its Reachable classification and preventing advancement on reduced coverage; correct the old header and mirrored Step 7a caller guidance that instead treated the timeout as unavailable. Blast radius is limited to repositories that opt a hosted reviewer into `review.on_draft.runner`, which the shipped default does not. Visible to operators in the probe table, the runbook's Troubleshooting table, and its Known Limitations; pinned by T-38 and D-21. |
 | R-4 | Two config readers now coexist — the Python resolver for Step 7a and the awk helpers for Step 7 — and could drift | Medium | Medium | Decision 2 names the resolver as authoritative for Step 7a and records the non-unification as deliberate; **Out-of-scope notes** carries it forward as a follow-up candidate. |
 | R-5 | Re-adding `codex-github` to Step 7a revives the async race #486 moved it out for | Low | Medium | Decision 7: it is canonical but not default, and its dispatch goes through `codex-github-reviewer.sh`, whose pre-trigger wait, retrigger, and exit-code contract were built after #486. |
 | R-6 | `run_bounded` duplicates `run_with_timeout` from `local-ai-reviewer.sh` | High | Low | Deliberate, recorded in **Out-of-scope notes**. Extracting the reviewer script's variant would change a heavily used Step 7 path for a Step 7a benefit, which the spec places out of scope. |
 | R-7 | The ceiling tests (T-7, T-40) assert a hard 10-second wall-clock bound and could flake on a heavily loaded CI runner | Medium | Low | The assertion is not loosened to accommodate load, because then it would stop testing the contract. Headroom comes from the budget instead: 8 seconds of work plus at most 2 seconds of documented cleanup equals the 10-second contract, so a run has to be delayed by more than two seconds of pure scheduling latency before it fails. If that proves too tight in practice the fix is to lower `AVAILABILITY_BUDGET_SECONDS`, which keeps the contract intact; raising the assertion would not. |
-| R-13 | The twenty-two planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Nineteen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
+| R-13 | The twenty-two planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Sixteen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
 | R-8 | The doc-assertion suite (D-1 to D-22) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
 | R-9 | The change is reverted after operators retired their machine-local override on its advice, and the override file cannot be restored by any revert | Low | Medium | Retirement guidance says move the file aside rather than delete it, so a second `mv` restores it; the override is two keys and `.ai-dev-workflow.local.example.yaml` carries the shape. See **Reversal and Rollback** (c) — this is mitigated, not eliminated. |
-| R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 are the only evidence a runner honoured it, and the runbook's Troubleshooting table names the symptom as a blocking implementation failure rather than a runbook problem. The coverage map marks all twenty-seven gate-level criteria so no reviewer has to rediscover the distinction. |
+| R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 observe a runner honouring it, while Step 16 verifies its bounded entry path. The runbook's Troubleshooting table names a mismatch as a blocking implementation failure. The coverage map marks all twenty-eight gate-level criteria so no reviewer has to rediscover the distinction. |
 
 ---
 
 ## Code Samples
 
-None. Every contract in this plan is expressed as a table or a command signature rather than as
-source, so there is nothing for a reviewer to mistake for production code.
+The illustrative Bash 3.2 array-reading snippet under **Contracts** demonstrates lossless entry
+transport. It is not production implementation; the implementer supplies the temporary paths and
+verifies it with T-44. Other contracts use tables and command signatures.
 
 ---
 
@@ -1531,7 +1585,7 @@ imposes it and why it applies here. No step is left untraced.
    through `jq .` and confirm it parses.
 
 2. *(Spec-derived — evidence for the same group, plus the parser-risk unit-test mapping this repository's plan protocol requires for a change that alters structured-text interpretation.)* **Extend `tests/test-workflow-config-resolver.sh`** with cases T-27 to T-30 and `review-effective E-1`
-   through `review-effective E-22`.
+   through `review-effective E-27`.
    *Verify*: `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh` — read the
    output and confirm every new case reports PASS and no pre-existing case regressed.
 
@@ -1544,13 +1598,13 @@ imposes it and why it applies here. No step is left untraced.
    match what is actually installed on the machine.
 
 4. *(Spec-derived — the resolver-layer evidence named in the acceptance-criterion coverage map.)* **Write `tests/test-resolve-reviewer-availability.sh`** with the `# covers:` header and cases T-1
-   to T-26 and T-31 to T-42, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
+   to T-26 and T-31 to T-47, using the hermetic-`PATH` pattern from `test-local-ai-reviewer.sh`.
    *Verify*: `bash scripts/development-workflow/tests/test-resolve-reviewer-availability.sh` — confirm
    every case reports PASS. Then run
    `bash scripts/development-workflow/select-test-suites.sh` against the change set and confirm the
    new suite appears in the selection, so no CI workflow edit is needed.
 
-5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-seven gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all seven regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
+5. *(Spec-derived — every AC group; this is the canonical surface, and it carries all twenty-eight gate-level criteria.)* **Rewrite Protocol 91 Step 7a** (all seven regions listed under **Backend / Protocol surfaces**, including moving the draft-state pre-check's `gh pr ready` conversion to after policy application per Decision 9).
    *Verify*: `grep -n "runner identity is a sufficient proxy\|Reachability classification table\|default behavior: \`claude\`" docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
    returns nothing; and read the Step 7a text end to end confirming the only `gh pr ready` before the
    dispatch map is the draft-state conversion, and that it now sits after the policy-application
@@ -1596,7 +1650,7 @@ imposes it and why it applies here. No step is left untraced.
 9. *(Repository process — `02-generate-implementation-plan-protocol.md` requires a sweep or pattern-completeness plan to name a residual verification strategy and produce its evidence before `ready-for-human-review`. It applies here because the* **Surfaces agree** *group is a pattern-completeness claim over a live file set that can grow between plan time and implementation time.)* **Re-run the residual verification** (VL-2 and VL-4) at the implementation head and record both
    outputs in the pull request, per **Residual verification strategy**.
 
-10. *(Both — `02-generate-implementation-plan-protocol.md` Step 4 requires a smoke runbook for every plan, and here it is also the only evidence for the twenty-seven gate-level criteria, which no automated suite can observe.)* **Execute the smoke test runbook**
+10. *(Both — `02-generate-implementation-plan-protocol.md` Step 4 requires a smoke runbook for every plan, and here it is also the only evidence for the twenty-eight gate-level criteria, which no automated suite can observe.)* **Execute the smoke test runbook**
    `docs/testing/workflow/1495-step-7a-capability-based-reachability.smoke-test.md` end to end and
    record the assertion results in the pull request.
 
@@ -1606,7 +1660,7 @@ imposes it and why it applies here. No step is left untraced.
     with exactly this body:
 
     ```markdown
-    - **Step 7a decides reviewer reachability from capability, not runner identity** (#1495): the internal review gate used to consult a fixed table that called the Codex reviewer unreachable whenever a different runner was driving the gate, even on a machine where the Codex command was installed and about to be used successfully by the next gate in the same pipeline — and since the shipped configuration named Codex as the only internal reviewer, the gate found nothing to dispatch and blocked. The gate now probes each configured reviewer against the environment it is actually running in, under a fixed ten-second ceiling, and reports each one as Reachable, Unreachable with one of four named reasons and a remedy, or Excluded by override. The shipped default reviewer list changed so that whichever supported runner drives the gate, that runner's own reviewer is reachable by construction, and the Codex GitHub App review is supported as a hosted-service reviewer whose availability is decided from whether the app is installed for the repository.
+    - **Step 7a decides reviewer reachability from capability, not runner identity** (#1495): the internal review gate used to consult a fixed table that called the Codex reviewer unreachable whenever a different runner was driving the gate, even on a machine where the Codex command was installed and about to be used successfully by the next gate in the same pipeline — and since the shipped configuration named Codex as the only internal reviewer, the gate found nothing to dispatch and blocked. The gate now probes each configured reviewer against the environment it is actually running in, under a fixed ten-second ceiling, and reports each one as Reachable, Unreachable with one of four named reasons and a remedy, or Excluded by override. The shipped default reviewer list changed so that whichever supported runner drives the gate, that runner's own reviewer is reachable by construction, and the Codex GitHub App review is supported as a hosted-service reviewer whose availability uses a bounded repository-activity proxy, with its limitations and dispatch-time failure handling documented.
     ```
 
 ---

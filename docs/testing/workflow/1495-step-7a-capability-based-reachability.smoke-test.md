@@ -202,7 +202,7 @@ not rounding. The script's internal budget is eight seconds precisely so that ti
 fit inside ten (see the plan's *The contract is ten seconds; the budget is eight*). Every reviewer is
 classified, the hanging ones as `check-inconclusive`, and the run exits `1` with `OUTCOME=blocked` and
 `BLOCK_CAUSE=zero-reachable`. Also read `ELAPSED_SECONDS` and confirm it does not exceed
-`BUDGET_SECONDS` — that is the script's own measurement, a separate check from the wall-clock one
+ten seconds including cleanup — that is the script's own measurement, a separate check from the wall-clock one
 above.
 
 ### Step 7: An unsupported value is reported by name
@@ -353,6 +353,11 @@ reported as Excluded by override and produces no unreachability warning."
 `OUTCOME=proceeded`, exit `0`. `LOCAL_OVERRIDE_STATE` names the override file and its origin, taken
 from the resolver rather than guessed.
 
+Repeat with `review.on_draft.runner: []` in the local override. Expect the fallback to be
+selected, every shipped reviewer still reported Excluded by override, and no unreachability warning.
+When exercising the gate, verify its summary records those exclusions and one fallback dispatch.
+Restore the one-reviewer override before Step 12.
+
 ### Step 12: Retiring an override that only existed to unblock the gate
 
 **Maps to**: *The shipped default never traps* — the operator is not asked to write an override file.
@@ -377,9 +382,10 @@ the `review.on_draft.runner` key, or moves the whole file aside if it holds noth
 ### Step 13: The proceed path on a real pull request
 
 Steps 1 to 12 exercise the **resolver** — the helper that prints a verdict and exits. Steps 13 and 14
-are the only steps that exercise the **gate**: what a real runner does with that verdict on a real
+exercise the **gate**: what a real runner does with that verdict on a real
 pull request. Every criterion about dispatching, posting comments, and pull request state is settled
-here and nowhere else, so do not skip these two steps because the earlier ones passed.
+here, while Step 16 additionally checks the gate's bounded entry path. Do not skip these steps
+because the earlier resolver checks passed.
 
 **Maps to**: R1, R7, S1, O1, O3, O6, C1, C2, C3, P1, P4, P10 — the proceed-path gate behavior in the
 plan's acceptance-criterion coverage map.
@@ -390,8 +396,10 @@ plan's acceptance-criterion coverage map.
    #1495.
 2. Ensure no `.ai-dev-workflow.local.yaml` is in effect and every runtime in the shipped default list
    is on your `PATH`.
-3. Run Protocol 91 Step 7a against it from a runner whose kind is **not** `codex`.
-4. Read the Step 7a summary comment and the run log.
+3. Run Protocol 91 Step 7a against it from each supported driving runner in turn.
+4. Read the Step 7a summary comment and the run log. For each local reviewer, record at least one
+   cross-runner CLI invocation using Decision 5, its exit status, and its terminal verdict. A native
+   same-runner dispatch does not prove the cross-runner path.
 
 **Expected result**: the gate **dispatched** the reviewers — you can see each one's review activity,
 not merely a verdict block in the log — and produced a verdict, with no human choosing a workaround,
@@ -423,14 +431,40 @@ reviewer, its reason category, and a remedy, and stating which reviewers will ru
 subset was then dispatched. Nothing in the warning names a runner context. Remove the override
 afterwards.
 
+**Part 4 — a reviewer fails after availability succeeds**
+
+1. Use a throwaway draft pull request and a supported driving runner other than Codex. Configure
+   only `codex` in its local runner-reviewer override.
+2. Put an executable fake `codex` first on that invocation's `PATH`. It must exit `0` with a version
+   string for `--version`, but append its arguments to a temporary dispatch log, print a distinctive
+   `intentional dispatch failure` message, and exit `1` for `exec`. Record the fixture path and body
+   in the smoke evidence. It must not invoke a real reviewer or alter any repository file.
+3. Run the complete Step 7a gate. Inspect the availability record, dispatch log, and gate report.
+
+**Expected result**: availability reports `codex` as Reachable; the dispatch log proves an `exec`
+invocation occurred after the successful probe. The gate reports the non-zero dispatch as a
+**review failure**, not `runtime-absent`, `check-inconclusive`, or an unavailable-reviewer skip. It
+does not claim approval or proceed on reduced coverage under `warn`. Restore the original `PATH`
+and local override after recording the result.
+
+Repeat Part 4 with a fake hosted-review dispatch result: feed the gate a Reachable
+`codex-github` availability record, then replace only its dispatch helper with a fixture returning
+exit `2` (timeout), and then `3` (quota). Run each under both unavailable-reviewer policies.
+Verify review failure, original Reachable classification retained, and no reduced-coverage
+advancement. Exit `4` must instead remain waiting, with no approval. These fixtures must not contact
+a real hosted reviewer. Restore the dispatcher after recording the fixture and results.
+
 ### Step 14: The block path on a real pull request
 
 **Maps to**: O1, O4, O5, O6, C4, C5, C6, C7, P2, P3, P6, P7, P8, P9, P10 — the block-path gate
 behavior. This is the step that proves the gate honours a `blocked` verdict rather than dispatching
 anyway; no resolver test can show that.
 
-Before each part, note the pull request's current state with
-`gh pr view <pr_number> --json isDraft,comments --jq '.isDraft'` so you can confirm it did not change.
+Before **each run** in this step, restore the throwaway pull request to draft with
+`gh pr ready <pr_number> --undo` when it is currently ready, then verify
+`gh pr view <pr_number> --json isDraft --jq '.isDraft'` returns `true`. Step 13's successful gate
+normally converts its PR to ready, so merely reading its state is insufficient. Record this setup
+conversion separately from the gate invocation so it cannot be mistaken for gate behavior.
 
 **Part 1 — nothing reachable**
 
@@ -489,8 +523,10 @@ This part catches the ordering defect Decision 9 fixes: the draft-state pre-chec
 pull request to non-draft at the top of Step 7a, before the gate knew whether it would block.
 
 1. Confirm the pull request is currently draft.
-2. Set the override to `review.on_draft.runner: [coderabbit, not-a-reviewer]` — one draft-restricting
-   reviewer and one value guaranteed to be unsupported — and run Step 7a.
+2. Set the override to `review.on_draft.runner: [coderabbit, not-a-reviewer]` and
+   `review.internal_reviewers_unavailable_policy: fail-if-any-unavailable` — one draft-restricting
+   reviewer and one value guaranteed to be unsupported — and run Step 7a. The explicit strict policy
+   guarantees a block even on a repository where CodeRabbit is enabled and reachable.
 3. Immediately re-check the pull request's draft state.
 
 **Expected result**: the gate blocked and the pull request is **still draft**. `gh pr ready` was not
@@ -553,6 +589,19 @@ exit `1`, `OUTCOME=blocked`, `BLOCK_CAUSE=config-resolution-inconclusive`,
 does not say the policy value is unreadable — that would send you to fix a file that is fine; it says
 the configuration could not be read in time. If the command hangs, the resolver call is unbounded and
 the ten-second ceiling is not being enforced.
+
+2. Exercise the **complete gate entry path** against a throwaway draft PR using the same hanging
+   `python3` fixture, rather than invoking only the helper. Keep a normal host `PATH` available for
+   the orchestration runner, and pass the hermetic `PATH` to every configuration/availability shell
+   invocation it makes. Start the external timer at the first configuration-resolution command.
+   Confirm from the command log that the gate invokes the availability helper once and never calls
+   `review-effective` independently for the draft pre-check.
+
+**Expected result for the gate run**: the resolver's blocked verdict appears within ten seconds of
+starting configuration resolution. The gate then reports `config-resolution-inconclusive`, dispatches
+nobody, and leaves the PR draft. Time the availability verdict separately from the subsequent network
+call posting the block report. A preliminary standalone parser call or a hang before the helper starts
+fails this step even if the direct helper test above passed. Restore the original environment.
 
 ### Last Step: Validate and clean up
 
@@ -631,13 +680,14 @@ gate ignores.
 - [ ] An unsupported policy value blocked, was named, did not silently default to `warn`, and did not
       reach the fallback even with no list configured (Step 14 Part 4).
 - [ ] A reviewer that was dispatched and then failed or errored was reported as a review failure, not
-      as unreachable (Step 13 Part 1).
+      as unreachable (Step 13 Part 4).
 - [ ] A block with a draft-restricting reviewer configured left the pull request draft — the
       draft-state conversion did not run ahead of the availability decision (Step 14 Part 5).
 - [ ] A configured value containing a comma and a space was reported as **one** entry, named byte for
       byte, and not split (Step 15).
 - [ ] A stalled configuration resolver produced a verdict inside the budget, with block cause
-      `config-resolution-inconclusive` and no per-reviewer reason (Step 16).
+      `config-resolution-inconclusive` and no per-reviewer reason, both directly and through the
+      complete gate entry path with no preliminary unbounded parse (Step 16).
 
 ---
 
@@ -664,7 +714,7 @@ gate ignores.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Step 13 or 14 shows a verdict block in the log but no reviewer activity, or activity despite a block verdict | The gate is not honouring the resolver's exit code — the exact defect these two steps exist to catch | Stop and report it; this is a blocking implementation failure, not a runbook problem |
-| A hosted reviewer was classified `reachable`, was dispatched, and then timed out without ever answering | Expected. The availability probe reads historical bot activity, which outlives an uninstalled, suspended, or access-revoked App — a **decided** limitation, not a defect. See the plan's Decision 8 | Confirm the App is still installed and has repository access. The timeout is already governed by `internal_reviewers_unavailable_policy`, so `warn` proceeds with reduced coverage and `fail-if-any-unavailable` blocks — no review was silently counted as clean |
+| A hosted reviewer was classified `reachable`, was dispatched, and then timed out without ever answering | Expected. The availability probe reads historical bot activity, which outlives an uninstalled, suspended, or access-revoked App — a **decided** limitation, not a defect. See the plan's Decision 8 | Confirm the App is still installed and has repository access. The gate must report a review failure under either policy, retain the Reachable classification, and never advance on reduced coverage because of that failure |
 | `coderabbit` classifies `prerequisite-missing` in this repository even though you expect it to work | This repository ships `.coderabbit.yaml` with `auto_review.enabled: false`, which is one of the two checks. It is not configured as a Step 7a runner reviewer here | Expected. Do not "fix" it by enabling auto-review; add `coderabbit` to `review.on_draft.runner` only if you genuinely want it in this gate |
 | Every run reports `OUTCOME=blocked` with `BLOCK_CAUSE=zero-reachable` | A `.ai-dev-workflow.local.yaml` you forgot to move aside names reviewers this machine cannot reach | Check `LOCAL_OVERRIDE_STATE` in the verdict block; move the file aside and re-run |
 | `LOCAL_OVERRIDE_STATE` reports `present but unpropagated` | You are in a linked git worktree and the override lives in the main clone | Re-run with `--repo-root "$(pwd -P)"` from the worktree; do not copy the file in |
@@ -688,18 +738,19 @@ gate ignores.
     though it would work.
   - An App that has been uninstalled, suspended, or had its access revoked still shows historical
     activity and classifies `reachable`. It is then dispatched and times out, and that timeout is
-    governed by the same `internal_reviewers_unavailable_policy` — so the residual is handled at
-    dispatch, never as a clean review that did not happen.
+    a review failure under either unavailable-reviewer policy. The original classification remains
+    Reachable; the gate must not proceed on reduced coverage or report approval for that failure.
 
   Neither hosted reviewer is in the shipped default, so you only meet this by opting one into
-  `review.on_draft.runner` deliberately. Do not report either behavior as a smoke-test failure.
+  `review.on_draft.runner` deliberately. The proxy classification itself is accepted; treating a
+  subsequent failure as an unavailable skip is a smoke-test failure.
 - Draft eligibility is **not** part of the availability probe. The draft-state pre-check guarantees a
   non-draft pull request before dispatch, so `auto_review.drafts: false` is deliberately not an
   unreachability condition. Step 14 Part 5 checks the one thing that ordering has to get right: the
   conversion must not happen on a run that then blocks.
-- Steps 13 and 14 require a real pull request and a real runner, so they cannot be scripted. Every
-  other step runs offline against fixtures. They are also the only steps that observe gate behavior:
-  the plan's coverage map marks twenty-seven criteria as gate-level, and for those the automated
+- Steps 13 and 14 require a real pull request and a real runner, so they cannot be scripted. Step 16 also requires the real gate for its second part; the other
+  resolver checks run against fixtures. These are the steps that observe gate behavior:
+  the plan's coverage map marks twenty-eight criteria as gate-level, and for those the automated
   evidence proves only that Protocol 91 instructs the behavior, never that a runner produced it.
 - Step 13 Part 2 needs a scratch branch carrying a modified `.ai-dev-workflow.yaml`, because the
   fallback path cannot be reached from a local override alone — an override that defines no list
