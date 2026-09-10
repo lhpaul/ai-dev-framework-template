@@ -1186,10 +1186,26 @@ Three further paths are changed although VL-2 does not match them:
 and `docs/workflow/development-workflow/integrations/codex-github.md` (needs the Step 7a section).
 
 **Residual verification strategy** (evidence for AC group *Surfaces agree*): before
-`ready-for-human-review`, the implementation re-runs VL-2 and VL-4 at the implementation head and records the output in the pull request. VL-4 must return
-only the two historical records named in VL-4. Every VL-2 path must appear in the disposition table
+`ready-for-human-review`, the implementation re-runs VL-2 and the L1 live-surface search below
+at the implementation head and records the output in the pull request. L1 must return no matches.
+VL-4 remains historical evidence, not the post-implementation command: it includes instructional
+examples added by this plan and runbook. Every VL-2 path must appear in the disposition table
 above with its recorded disposition unchanged; a new path means a surface appeared during
 implementation and must be classified before readiness.
+
+**L1 — shared live-surface search scope:** D-3, residual verification, Implementation Order step 7,
+and smoke Step 0 use exactly the same scope: Git-tracked `*.md`, `*.sh`, `*.yaml`, `*.yml`, and
+`*.mdc` files at any depth, excluding `CHANGELOG.md`, `docs/specs/developments/**`, `docs/testing/**`,
+and `scripts/**/tests/**`. The exclusions remove historical artifacts and instructional/test examples;
+Git's tracked-file scope excludes temporary files and installed dependencies. Production script
+headers, canonical workflow docs, and hidden agent/skill directories remain included.
+Search case-insensitively for the literal `universally reachable` using the command in smoke Step 0.
+Exit `1` means the required empty result; exit `0` is a residual, and any other exit is a failed check.
+The D-3 plant in the production `codex-github-reviewer.sh` header must still be detected.
+
+Rechecked on 2026-09-10 at `272e23d7`: L1 finds exactly the four planned live targets (both agent
+blocks and both reviewer script headers), with no plan, runbook, or test-example matches. Their
+presence is expected before implementation; all four require removal in the future implementation.
 
 ---
 
@@ -1405,7 +1421,7 @@ Headers:
 | --- | --- | --- |
 | D-1 | Protocol 91's supported runner reviewer values are exactly `claude`, `cursor`, `codex`, `coderabbit`, `codex-github`, and each is labelled local-runtime or hosted-service | A1, A3 |
 | D-2 | Protocol 91 contains neither the phrase `runner identity is a sufficient proxy` nor a `Reachability classification table` heading | A5 |
-| D-3 | No live surface contains `universally reachable` — the search excludes `CHANGELOG.md` and `docs/specs/developments/**`, which are historical records | A4 |
+| D-3 | No match for `universally reachable` in exactly the L1 tracked-file scope defined under Residual verification strategy and used by smoke Step 0; distinguish empty result from search failure and retain the production-header plant | A4 |
 | D-4 | Every reviewer value named in `review.on_draft.runner` in `.ai-dev-workflow.yaml` and `.ai-dev-workflow.local.example.yaml` is one of Protocol 91's five | A2 |
 | D-5 | Protocol 91 carries a remedy for each of the four reason categories, and the four remedy strings match `resolve-reviewer-availability.sh`'s `REMEDY` mapping character for character | O1 |
 | D-6 | Protocol 91 states that a reviewer classified Reachable, dispatched, and then failing, erroring, or timing out is a review failure and not an availability verdict; its dispatch guidance includes all three local CLI paths and terminal-verdict validation from Decision 5 | R7, R1 |
@@ -1697,9 +1713,7 @@ imposes it and why it applies here. No step is left untraced.
    "Classifies as universally reachable" sentence at line 9 with the hosted-service statement. Do not
    change its stage attribution, its options, its exit codes, or any behavior: it is dispatched
    through `review.on_ready.github`, which is Step 7 and out of scope.
-   *Verify*: `grep -rn "universally reachable" --include="*.md" --include="*.sh" . | grep -v node_modules`
-   returns only the two historical records named in VL-4 (`CHANGELOG.md` and the 2026-05 development
-   artifact) and no live surface; and `diff <(sed -n '/codex-github. runner reviewer dispatch/,/^$/p' .claude/agents/item-orchestrator.md) <(sed -n '/codex-github. runner reviewer dispatch/,/^$/p' .cursor/agents/item-orchestrator.md)`
+   *Verify*: run L1 from smoke Step 0 and confirm no live match (exit `1` from `git grep`); and `diff <(sed -n '/codex-github. runner reviewer dispatch/,/^$/p' .claude/agents/item-orchestrator.md) <(sed -n '/codex-github. runner reviewer dispatch/,/^$/p' .cursor/agents/item-orchestrator.md)`
    reports no differences.
 
 8. *(Spec-derived — the gate-doc-assertion evidence named in the coverage map, covering* **Surfaces agree** *and the protocol-instruction half of every gate-level criterion.)* **Write `tests/test-step7a-surface-consistency.sh`** with the `# covers:` headers and cases D-1 to
@@ -1717,7 +1731,7 @@ imposes it and why it applies here. No step is left untraced.
    Where two cases read nearby text and one plant moves both, the plant is too coarse: narrow it until
    exactly one case flips, and record the narrowed mutation rather than the one from the table.
 
-9. *(Repository process — `02-generate-implementation-plan-protocol.md` requires a sweep or pattern-completeness plan to name a residual verification strategy and produce its evidence before `ready-for-human-review`. It applies here because the* **Surfaces agree** *group is a pattern-completeness claim over a live file set that can grow between plan time and implementation time.)* **Re-run the residual verification** (VL-2 and VL-4) at the implementation head and record both
+9. *(Repository process — `02-generate-implementation-plan-protocol.md` requires a sweep or pattern-completeness plan to name a residual verification strategy and produce its evidence before `ready-for-human-review`. It applies here because the* **Surfaces agree** *group is a pattern-completeness claim over a live file set that can grow between plan time and implementation time.)* **Re-run the residual verification** (VL-2 and L1) at the implementation head and record both
    outputs in the pull request, per **Residual verification strategy**.
 
 10. *(Both — `02-generate-implementation-plan-protocol.md` Step 4 requires a smoke runbook for every plan, and here it is also the only evidence for the twenty-eight gate-level criteria, which no automated suite can observe.)* **Execute the smoke test runbook**

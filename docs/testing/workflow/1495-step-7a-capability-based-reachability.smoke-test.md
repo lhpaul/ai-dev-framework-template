@@ -102,9 +102,25 @@ its `REVIEWER` records.
 1. Run `git status --porcelain` and confirm the output is empty.
 2. Run `grep -n "runner:" -A 4 .ai-dev-workflow.yaml` and confirm the shipped list is
    `claude`, `cursor`, `codex`.
-3. Run `grep -rn "universally reachable" --include="*.md" --include="*.sh" . | grep -v node_modules`
-   and confirm no live surface appears — only the CHANGELOG entry and the 2026-05 development
-   artifact, both historical records.
+3. Run the plan's L1 live-surface search. This exact scope is shared with D-3 and residual
+   verification; plan/runbook examples and test fixtures are excluded, production headers remain:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   live_status=0
+   git grep -n -i -F 'universally reachable' -- \
+     '*.md' '*.sh' '*.yaml' '*.yml' '*.mdc' \
+     ':(exclude)CHANGELOG.md' \
+     ':(exclude)docs/specs/developments/**' \
+     ':(exclude)docs/testing/**' \
+     ':(exclude)scripts/**/tests/**' || live_status=$?
+   case "$live_status" in
+     1) printf 'L1 PASS: no live matches\n' ;;
+     0) printf 'L1 FAIL: live claims remain\n' >&2; exit 1 ;;
+     *) printf 'L1 ERROR: git grep exited %s\n' "$live_status" >&2; exit 1 ;;
+   esac
+   ```
 
 **Expected result**: a clean tree, the new shipped default, and no live surface claiming
 unconditional reachability.
