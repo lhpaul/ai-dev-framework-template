@@ -1091,7 +1091,11 @@ for e_case in 23 24 25 26 27; do
     26) entry='' ;;
     27) entry="it's" ;;
   esac
-  write_review_effective_fixture 'review:' '  on_draft:' "    runner: [\"$entry\"]"
+  if [ "$e_case" = 27 ]; then
+    write_review_effective_fixture 'review:' '  on_draft:' "    runner: [$entry]"
+  else
+    write_review_effective_fixture 'review:' '  on_draft:' "    runner: [\"$entry\"]"
+  fi
   assert_review_effective_states "E-$e_case" defined absent
   run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
 done
@@ -1124,6 +1128,9 @@ assert_review_effective_states "E-32 mapping" malformed absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["codex]'
 assert_review_effective_states "E-32 unterminated quote" malformed unreadable
 run_contains "review-effective E-32 unterminated quote detail" "unterminated quoted scalar" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex'
+assert_review_effective_states "E-32 unterminated flow sequence" malformed unreadable
+run_contains "review-effective E-32 unterminated flow sequence detail" "unterminated flow sequence" "$(review_effective_state unreadable_detail)"
 
 echo ""
 echo "Passed: $PASS_COUNT"

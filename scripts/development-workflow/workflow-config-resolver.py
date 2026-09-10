@@ -118,6 +118,18 @@ def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | 
 
 def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     """Reject syntax the review-effective reader must not reinterpret."""
+    if value.startswith("[") != value.endswith("]"):
+        raise ConfigError(f"{path}:{line_no}: unterminated flow sequence")
+    if value.startswith("{") != value.endswith("}"):
+        raise ConfigError(f"{path}:{line_no}: unterminated flow mapping")
+    # The legacy subset never interpreted flow mappings.  Treating one as a
+    # string in review-effective would turn a non-scalar policy into an
+    # unsupported scalar, so reject unsupported non-empty flow mappings.
+    if value.startswith("{") and value.endswith("}") and value != "{}":
+        raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
+    if not value.startswith(("'", '"')):
+        return
+
     in_single = False
     in_double = False
     escaped = False
@@ -132,13 +144,6 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
             in_double = not in_double
     if in_single or in_double:
         raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
-    # The legacy subset never interpreted flow mappings.  Treating one as a
-    # string in review-effective would turn a non-scalar policy into an
-    # unsupported scalar, so reject unsupported non-empty flow mappings.
-    if value.startswith("{") and value.endswith("}") and value != "{}":
-        raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
-
-
 def parse_scalar(
     value: str, *, review_effective: bool = False, path: Path | None = None, line_no: int | None = None
 ) -> Any:
