@@ -376,6 +376,27 @@ The aggregate fields (`CONFIGURED`, `REACHABLE`, `UNREACHABLE`, `OVERRIDE_EXCLUD
 they cannot represent, any entry whose name does not match `^[a-z][a-z0-9-]*$` is rendered in them as
 `<entry N>`, pointing at the indexed record that holds the real value.
 
+#### The transport is lossless at every hop, not only at the last one
+
+A contract that is lossless only where the values are printed is not lossless. The entries enter the
+pipeline in the Python resolver, so that is where a comma-joined field would destroy them — and no
+downstream indexing could recover what was already merged. Every hop is therefore named:
+
+| Hop | Representation | Why it cannot lose or split a value |
+| --- | --- | --- |
+| YAML scalar → Python | `list[str]` from `parse_yaml_subset`, read through `typed_value_from_path` | The existing parser already returns one list element per YAML sequence entry. Nothing splits on a delimiter at any point, so `- "codex, claude"` arrives as one string |
+| Python → stdout | **One JSON object**, reviewer lists as JSON arrays of strings | `json.dumps` escaping is a standard, not something this plan invents, and it round-trips any scalar including commas, whitespace, quotes, and control characters |
+| stdout → shell | `jq` reads the scalars; array entries are read NUL-delimited into a bash array (`mapfile -d ''`) | NUL cannot occur in a YAML scalar, so it is the one delimiter that is safe by construction. `mapfile` is already used by `select-test-suites.sh` and `batch-merge.sh`, so the bash level it needs is already assumed in this repository |
+| shell → verdict block | `print_kv_escaped` into `REVIEWER_N_NAME` | `KEY=value` to end of line, with control characters escaped by the existing helper |
+
+**`review-effective` emits JSON only — there is no shell `KEY=value` form for this subcommand.** That
+is a deliberate divergence from the resolver's other subcommands, whose shell form exists so callers
+can `eval` it. A flat `KEY=value` map cannot carry a list losslessly without a delimiter, which is the
+exact defect being closed; and this subcommand has one consumer, which already requires `jq` — a hard
+dependency of `pr-review-loop.sh`, `local-ai-reviewer.sh`, and `workflow-lib.sh` alike. One
+representation cannot drift from itself, so JSON is the only one. `review-overrides` keeps its
+existing shell and `--json` forms unchanged, because other callers depend on them (T-30).
+
 ### Decision 11 — The availability budget covers the configuration-resolver call, because that call is inside the spec's window
 
 The spec measures the ten-second ceiling from "starting to resolve the list". The
@@ -402,30 +423,44 @@ block cause** under the contract below.
 
 ```text
 python3 scripts/development-workflow/workflow-config-resolver.py review-effective \
-  --repo-root <path> [--json]
+  --repo-root <path>
 ```
 
-Read-only. Never invokes `git` or `gh`. Emits `KEY=value` lines (or one JSON object with `--json`):
+Read-only. Never invokes `git` or `gh`. Emits **one JSON object on stdout and nothing else** — there
+is no shell `KEY=value` form and no `--json` flag, because JSON is the only form (Decision 10).
+Reviewer lists are JSON arrays of strings, so an entry containing a comma, whitespace, a quote, or a
+control character is transported verbatim with no delimiter anywhere in the path.
 
-| Key | Values |
+| Field | Type and values |
 | --- | --- |
-| `EFFECTIVE_RUNNER_LIST` | comma-joined reviewer values, empty when none resolve |
-| `EFFECTIVE_RUNNER_STATE` | `defined` / `absent` / `empty` / `malformed` |
-| `EFFECTIVE_RUNNER_SOURCE` | absolute path of the file the list came from, or empty |
-| `SHIPPED_RUNNER_LIST` | the `.ai-dev-workflow.yaml` list, for reporting what an override replaced |
-| `OVERRIDE_EXCLUDED_LIST` | entries in `SHIPPED_RUNNER_LIST` that the override left out, empty when no override is in effect |
-| `EFFECTIVE_POLICY` | `warn` / `fail-if-any-unavailable` / the offending raw value / empty |
-| `EFFECTIVE_POLICY_STATE` | `defined` / `absent` / `empty` / `unsupported` / `unreadable` |
-| `EFFECTIVE_POLICY_SOURCE` | absolute path of the file the policy came from, or empty |
-| `UNREADABLE_FILE` | absolute path of the configuration file that would not parse, or empty |
-| `UNREADABLE_DETAIL` | the parser's message, or empty |
-| `LOCAL_OVERRIDE_FILE`, `LOCAL_OVERRIDE_ORIGIN`, `MAIN_CLONE_LOCAL_OVERRIDE_FILE` | reused verbatim from the existing `review-overrides` output, so the `<local-override-state>` reporting introduced by #1560 keeps working unchanged |
+| `effective_runner` | array of strings — the resolved reviewer entries, verbatim and in configured order. `[]` when none resolve |
+| `effective_runner_state` | string — `defined` / `absent` / `empty` / `malformed` |
+| `effective_runner_source` | string — absolute path of the file the list came from, `""` when none |
+| `shipped_runner` | array of strings — the `.ai-dev-workflow.yaml` list, for reporting what an override replaced |
+| `override_excluded` | array of strings — entries in `shipped_runner` that the override left out; `[]` when no override is in effect |
+| `effective_policy` | string — `warn` / `fail-if-any-unavailable` / the offending raw value / `""` |
+| `effective_policy_state` | string — `defined` / `absent` / `empty` / `unsupported` / `unreadable` |
+| `effective_policy_source` | string — absolute path of the file the policy came from, `""` when none |
+| `unreadable_file` | string — absolute path of the configuration file that would not parse, `""` when none |
+| `unreadable_detail` | string — the parser's message, `""` when none |
+| `local_override_file`, `local_override_origin`, `main_clone_local_override_file` | strings — the same three values `review-overrides` already emits, so the `<local-override-state>` reporting introduced by #1560 keeps working unchanged |
+
+The consuming side reads scalars with `jq -r` and arrays NUL-delimited, which is the one delimiter a
+YAML scalar cannot contain:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+# Illustrative — adapt during implementation.
+mapfile -d '' configured < <(jq -j '.effective_runner[] | . + "\u0000"' "$resolver_output")
+```
 
 Exit codes: `0` always when the command ran, including for `malformed`, `unsupported`, and
 `unreadable` states — those are **data**, reported in the state fields, not crashes. `2` only for
-argument errors or an unreadable `--repo-root`. A `ConfigError` raised while parsing either
-configuration file is caught and reported as `EFFECTIVE_POLICY_STATE=unreadable` plus
-`EFFECTIVE_RUNNER_STATE=malformed` with `UNREADABLE_FILE` naming the file — the existing
+argument errors or an unreadable `--repo-root`, in which case stdout is empty and the message goes to
+stderr, so a consumer never has to distinguish a partial object from a complete one. A `ConfigError`
+raised while parsing either configuration file is caught and reported as
+`effective_policy_state: "unreadable"` plus `effective_runner_state: "malformed"` with
+`unreadable_file` naming the file — the existing
 `review-overrides` behavior of exiting `2` on `ConfigError` is unchanged, because other callers
 depend on it.
 
@@ -447,7 +482,9 @@ scripts/development-workflow/resolve-reviewer-availability.sh \
 availability budget is a fixed property of the gate, and the internal override
 `WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS` is honoured **only** when
 `WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE=1` is also set, so no operator can shorten or lengthen it
-on a real run.
+on a real run. The two tests that assert the ten-second contract — T-7 and T-40 — deliberately do
+**not** use that override: they run at the shipped budget, because a ceiling asserted against a
+shortened budget proves nothing about the shipped one.
 
 Emits one `REVIEWER` record per configured entry, in configured order, followed by the summary
 block:
@@ -461,7 +498,7 @@ REVIEWER_1_REMEDY=<remedy text, empty unless REASON is set>
 REVIEWER_1_DETAIL=<what the probe saw>
 ...one such group per configured entry, numbered from 1 in configured order...
 RUNNER_KIND=<claude|cursor|codex|unknown>
-BUDGET_SECONDS=10
+BUDGET_SECONDS=8
 ELAPSED_SECONDS=<integer>
 POLICY=<warn|fail-if-any-unavailable>
 POLICY_SOURCE=<path|default>
@@ -611,10 +648,10 @@ Three constants, named once and used with these names everywhere:
 
 | Constant | Value | Role |
 | --- | --- | --- |
-| `AVAILABILITY_BUDGET_SECONDS` | `10` | Wall-clock ceiling for resolving the whole configured list |
-| `CONFIG_RESOLVE_CAP_SECONDS` | `3` | Cap for the `review-effective` call. Generous for pure local file parsing; it exists so a hung filesystem or a `python3` that will not start cannot consume the whole budget before any probe runs |
+| `AVAILABILITY_BUDGET_SECONDS` | `8` | The **internal** budget the script allots itself. Deliberately below the spec's ten-second contract so that timeout and poll cleanup overhead fits inside the contract rather than being excused by a loosened assertion — see **The contract is ten seconds; the budget is eight** below |
+| `CONFIG_RESOLVE_CAP_SECONDS` | `2` | Cap for the `review-effective` call. Generous for pure local file parsing; it exists so a hung filesystem or a `python3` that will not start cannot consume the whole budget before any probe runs |
 | `LOCAL_PROBE_CAP_SECONDS` | `3` | Per-probe cap for a local-runtime reviewer |
-| `HOSTED_PROBE_CAP_SECONDS` | `5` | Per-probe cap for a hosted-service reviewer |
+| `HOSTED_PROBE_CAP_SECONDS` | `4` | Per-probe cap for a hosted-service reviewer |
 
 Enforcement:
 
@@ -637,10 +674,36 @@ Enforcement:
 
 Because the deadline is absolute and **every** call the script makes — the configuration resolution
 as well as each probe — runs under a bound clamped to the remaining budget, total wall-clock time
-cannot exceed `AVAILABILITY_BUDGET_SECONDS` for any list length or any configuration state. The
-per-call caps are subordinate to the ceiling, never additive to it. There is no unbounded call
-between the moment the deadline is set and the moment the verdict is printed; that is the property
-T-7 and T-40 exist to hold, and it is the property a deadline alone would not have given.
+cannot exceed `AVAILABILITY_BUDGET_SECONDS` plus cleanup for any list length or any configuration
+state. The per-call caps are subordinate to the budget, never additive to it. There is no unbounded
+call between the moment the deadline is set and the moment the verdict is printed.
+
+#### The contract is ten seconds; the budget is eight
+
+The spec says resolving the whole configured list takes **at most ten seconds**. That is the
+assertion, and it is asserted with no tolerance: T-7, T-40, and runbook Steps 6 and 16 fail when
+measured wall time exceeds ten seconds. A test that passed at 10.9 seconds would not be testing the
+contract, and a runbook step that accepted "well under fifteen" would be testing nothing.
+
+Cleanup overhead is real, so it is absorbed by the **implementation's** budget rather than by a
+loosened assertion. The arithmetic, worst case:
+
+| Component | Worst case | Source |
+| --- | --- | --- |
+| `AVAILABILITY_BUDGET_SECONDS` | 8 s | this plan |
+| Poll-loop granularity on a host without GNU `timeout` | +1 s | the fallbacks in `gh_api_bounded` and `run_with_timeout` sleep in one-second steps, so an elapsed bound can be noticed up to a second late |
+| `SIGTERM` → `SIGKILL` grace for a child that ignores the first signal | +1 s | `gh_api_bounded` sleeps 1 s between the two signals; GNU `timeout` is invoked with `--kill-after=1` |
+| **Total** | **10 s** | equals the contract, with nothing left over |
+
+The budget is 8 rather than 10 precisely so the contract can be asserted hard. If a future host makes
+cleanup slower than two seconds, the correct response is to lower `AVAILABILITY_BUDGET_SECONDS`
+again, never to raise the assertion: the assertion is the spec's contract, and the budget is the
+implementation's problem.
+
+`ELAPSED_SECONDS` reports the script's own measurement of its internal budget window, and the tests
+assert it is at most `BUDGET_SECONDS`. That is an additional check, not the ceiling check — the
+ceiling is asserted from outside the script against wall-clock time, because a script that
+mis-measured its own elapsed time would otherwise report a compliance it did not achieve.
 
 Bounding mechanism: `gh_api_bounded` from `workflow-lib.sh` for hosted probes, exporting
 `WORKFLOW_GH_API_TIMEOUT_SECONDS` set to the computed bound (it already returns `124` on timeout,
@@ -665,7 +728,7 @@ The script executes exactly these phases, in this order, and the output makes th
    `malformed` here means only one thing: the `review.on_draft.runner` key is present and readable
    and its value is not a list. That → block, `BLOCK_CAUSE=list-malformed`. `absent` or `empty` →
    `FALLBACK_APPLIED=true`, jump to phase 6.
-3. **Mark override exclusions.** Entries in `SHIPPED_RUNNER_LIST` absent from the override list
+3. **Mark override exclusions.** Entries in `shipped_runner` absent from the `effective_runner` list
    become `override-excluded`. They are never probed, which is why "excluded and also unreachable"
    is not a reachable combination.
 4. **Probe** each remaining entry under the budget.
@@ -686,11 +749,11 @@ carries it.
 
 | Input | Where the implementation reads it | Field that carries it |
 | --- | --- | --- |
-| The configured reviewer list | `review-effective` `EFFECTIVE_RUNNER_LIST` | `REVIEWER_COUNT` and each `REVIEWER_N_NAME`; `CONFIGURED` is the display-only summary of the same set |
-| Which reviewers the override left out | `review-effective` `OVERRIDE_EXCLUDED_LIST` | `REVIEWER_N_STATUS=override-excluded`; `OVERRIDE_EXCLUDED` is the display-only summary |
+| The configured reviewer list | `review-effective` `effective_runner` (JSON array) | `REVIEWER_COUNT` and each `REVIEWER_N_NAME`; `CONFIGURED` is the display-only summary of the same set |
+| Which reviewers the override left out | `review-effective` `override_excluded` (JSON array) | `REVIEWER_N_STATUS=override-excluded`; `OVERRIDE_EXCLUDED` is the display-only summary |
 | Whether each reviewer can be invoked here | The availability probe table. **Changed by this feature**: was the driving runner's identity, is now capability | `REVIEWER_N_STATUS` |
 | The reason a reviewer cannot be invoked | The same probe | `REVIEWER_N_REASON`, with `REVIEWER_N_REMEDY` beside it |
-| The unavailable-reviewer policy | `review-effective` `EFFECTIVE_POLICY` and `EFFECTIVE_POLICY_STATE` | `POLICY`, `POLICY_STATE` |
+| The unavailable-reviewer policy | `review-effective` `effective_policy` and `effective_policy_state` | `POLICY`, `POLICY_STATE` |
 | Whether each configured value is supported | The probe table's final row | `value-not-supported` reason |
 | The driving runner's kind | `--runner-kind` / `$WORKFLOW_RUNNER_KIND` | `RUNNER_KIND` |
 
@@ -1061,14 +1124,14 @@ with no workflow edit (VL-10).
 
 | ID | Scenario | Asserts | AC group |
 | --- | --- | --- | --- |
-| T-1 | `runner: [codex]`, `--runner-kind claude`, fake `codex` present | `REVIEWER codex reachable -`, `OUTCOME=proceeded`, exit `0` | Reachability follows capability |
-| T-2 | Same config, fake `codex` removed from `PATH` | `REVIEWER codex unreachable runtime-absent`, `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable`, exit `1` | Reachability follows capability |
-| T-3 | `runner: [claude]`, `--runner-kind claude`, no `claude` on `PATH` | `reachable` by identity (Decision 3) | Reachability follows capability |
-| T-4 | `runner: [claude]`, `--runner-kind cursor`, no `claude` on `PATH` | `unreachable runtime-absent` — identity never causes unreachability, absence does | Reachability follows capability |
-| T-5 | Fake `codex` present but `--version` exits `1` | `unreachable check-inconclusive`, not `runtime-absent` | Configuration inputs |
-| T-6 | Fake `codex` present but sleeps past `LOCAL_PROBE_CAP_SECONDS` | `unreachable check-inconclusive`, detail names the bound | Configuration inputs |
-| T-7 | Five configured entries, every fake binary sleeping; `WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE=1` with a 2s budget | wall-clock duration under the budget plus one second, all entries classified, `ELAPSED_SECONDS` printed, exit is `0` or `1` but never a hang | Configuration inputs (ten-second ceiling) |
-| T-8 | `runner: [not-a-reviewer]` | `unreachable value-not-supported`, the value named in the record, `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable` | Configuration inputs |
+| T-1 | `runner: [codex]`, `--runner-kind claude`, fake `codex` present | `REVIEWER_COUNT=1`, `REVIEWER_1_NAME=codex`, `REVIEWER_1_STATUS=reachable`, `REVIEWER_1_REASON=` and `REVIEWER_1_REMEDY=` both empty, `OUTCOME=proceeded`, exit `0` | Reachability follows capability |
+| T-2 | Same config, fake `codex` removed from `PATH` | `REVIEWER_1_STATUS=unreachable`, `REVIEWER_1_REASON=runtime-absent`, `REVIEWER_1_REMEDY` non-empty, `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable`, exit `1` | Reachability follows capability |
+| T-3 | `runner: [claude]`, `--runner-kind claude`, no `claude` on `PATH` | `REVIEWER_1_STATUS=reachable` by identity (Decision 3) | Reachability follows capability |
+| T-4 | `runner: [claude]`, `--runner-kind cursor`, no `claude` on `PATH` | `REVIEWER_1_STATUS=unreachable` with `REVIEWER_1_REASON=runtime-absent` — identity never causes unreachability, absence does | Reachability follows capability |
+| T-5 | Fake `codex` present but `--version` exits `1` | `REVIEWER_1_REASON=check-inconclusive`, not `runtime-absent` | Configuration inputs |
+| T-6 | Fake `codex` present but sleeps past `LOCAL_PROBE_CAP_SECONDS`, under `WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE=1` with a shortened budget so the per-probe bound is what the case exercises | `REVIEWER_1_REASON=check-inconclusive`, `REVIEWER_1_DETAIL` names the bound | Configuration inputs |
+| T-7 | Five configured entries, every fake binary sleeping, run at the **shipped** budget with no test-mode override | measured wall time, captured outside the script, is **at most 10 seconds**: the harness records `start=$(date +%s)` and `end=$(date +%s)` around the call and fails when `end - start > 10`, with no tolerance added. Every entry is classified, `ELAPSED_SECONDS` is at most `BUDGET_SECONDS`, and the exit status is `0` or `1` but never a hang | Configuration inputs (ten-second ceiling) |
+| T-8 | `runner: [not-a-reviewer]` | `REVIEWER_1_NAME=not-a-reviewer` with `REVIEWER_1_STATUS=unreachable` and `REVIEWER_1_REASON=value-not-supported`, `OUTCOME=blocked`, `BLOCK_CAUSE=zero-reachable` | Configuration inputs |
 | T-9 | `runner: [not-a-reviewer, codex]` with `codex` present, policy `warn` | `OUTCOME=proceeded-reduced`, both records present, exit `0` | Configuration inputs |
 | T-10 | No `runner` key in either file | `CONFIG_LIST_STATE=absent`, `FALLBACK_APPLIED=true`, `OUTCOME=proceeded`, exit `0` | Configuration inputs |
 | T-11 | `runner: []` | `CONFIG_LIST_STATE=empty`, same outcome as T-10 | Configuration inputs |
@@ -1079,26 +1142,26 @@ with no workflow edit (VL-10).
 | T-16 | Policy `fail-if-any-unavailable`, one reachable and one absent | `OUTCOME=blocked`, `BLOCK_CAUSE=policy-forbids-reduced-coverage`, the reachable reviewer still recorded `reachable`, exit `1` | Policy behavior is preserved |
 | T-17 | Policy `maybe` (unsupported), `runner` absent | `POLICY_STATE=unsupported`, `BLOCK_CAUSE=policy-unsupported`, `CONFIG_LIST_STATE=not-evaluated`, exit `1` | Policy behavior is preserved |
 | T-18 | Policy key absent from both files | `POLICY=warn`, `POLICY_SOURCE=default` | Policy behavior is preserved |
-| T-19 | Local override keeps `codex` of a shipped `[claude, cursor, codex]` | the two dropped entries are `override-excluded` with no reason, `UNREACHABLE` empty, `OUTCOME=proceeded` | The operator can tell why |
+| T-19 | Local override keeps `codex` of a shipped `[claude, cursor, codex]` | the two dropped entries have `REVIEWER_N_STATUS=override-excluded` with empty `REASON` and `REMEDY`, `UNREACHABLE` empty, `OUTCOME=proceeded` | The operator can tell why |
 | T-20 | Override in effect and one kept reviewer absent | `LOCAL_OVERRIDE_STATE` reports the file and origin from the resolver, not a guess | The operator can tell why |
-| T-21 | `runner: [coderabbit]`, fake `gh` returns comments containing `coderabbitai[bot]`, `.coderabbit.yaml` enables auto-review | `reachable` | Reachability follows capability |
-| T-22 | Same, fake `gh` returns comments with no bot activity | `unreachable prerequisite-missing`, never `runtime-absent` | The operator can tell why |
-| T-23 | Same, no `gh` on the hermetic `PATH` | `unreachable check-inconclusive`, never `prerequisite-missing` | Configuration inputs |
-| T-24 | `runner: [codex-github]`, fake `gh` returns comments from the configured bot login | `reachable` regardless of `--runner-kind` | Reachability follows capability |
-| T-25 | Every scenario above, aggregate | no record ever pairs `runtime-absent` with a hosted-service value, or `prerequisite-missing` with a local-runtime value | The operator can tell why |
+| T-21 | `runner: [coderabbit]`, fake `gh` returns comments containing `coderabbitai[bot]`, `.coderabbit.yaml` enables auto-review | `REVIEWER_1_STATUS=reachable` | Reachability follows capability |
+| T-22 | Same, fake `gh` returns comments with no bot activity | `REVIEWER_1_REASON=prerequisite-missing`, never `runtime-absent` | The operator can tell why |
+| T-23 | Same, no `gh` on the hermetic `PATH` | `REVIEWER_1_REASON=check-inconclusive`, never `prerequisite-missing` | Configuration inputs |
+| T-24 | `runner: [codex-github]`, fake `gh` returns comments from the configured bot login | `REVIEWER_1_STATUS=reachable` regardless of `--runner-kind` | Reachability follows capability |
+| T-25 | Every scenario above, aggregate | no `REVIEWER_N_*` group ever pairs `runtime-absent` with a hosted-service name, or `prerequisite-missing` with a local-runtime name | The operator can tell why |
 | T-26 | Missing `--owner`/`--repo` | exit `2`, no `OUTCOME` line, message on stderr | Contract completeness |
 | T-31 | `.ai-dev-workflow.yaml` truncated mid-mapping so it will not parse | `POLICY_STATE=unreadable`, `BLOCK_CAUSE=policy-unreadable`, `CONFIG_LIST_STATE=not-evaluated`, the file named in the output, exit `1` | Configuration inputs |
 | T-32 | The same fixture and command run three times: fake `codex` absent, then added, then removed | the `codex` record reads `unreachable runtime-absent`, then `reachable`, then `unreachable runtime-absent`, with no configuration file changed between runs | Reachability follows capability |
 | T-33 | The repository's own `.ai-dev-workflow.yaml`, hermetic `PATH` containing **none** of `claude`, `cursor-agent`, `codex`, and no local override; run once per `--runner-kind` in `claude`, `cursor`, `codex` | every run exits `0` with `OUTCOME` not `blocked`, and the reviewer matching `--runner-kind` is `reachable` | The shipped default never traps |
-| T-34 | Linked-worktree fixture: a `.git` **file** pointing at a main clone that holds the override | `LOCAL_OVERRIDE_STATE` reports the main clone's file with origin `main_clone`, taken from the resolver output | The operator can tell why |
+| T-34 | Linked-worktree fixture: a `.git` **file** pointing at a main clone that holds the override | `LOCAL_OVERRIDE_STATE` reports the main clone's file with origin `main_clone`, taken from `review-effective`'s `local_override_origin` | The operator can tell why |
 | T-35 | `internal_reviewers_unavailable_policy: [warn]` (a list where a scalar is required) | `POLICY_STATE=unreadable`, `BLOCK_CAUSE=policy-unreadable`, exit `1`; the default policy is not silently applied | Policy behavior is preserved |
-| T-36 | Every fixture above, aggregate | no `REVIEWER` detail string contains the run's `RUNNER_KIND` value — no unreachability is attributed to the driving runner | The operator can tell why |
-| T-37 | Every fixture above, aggregate | each `unreachable` record's reason is exactly one of the four, and a `REMEDY` line is present for every distinct reason in the run | The operator can tell why |
-| T-38 | `runner: [codex-github]`, fake `gh` returning **only historical** bot comments (no other installation signal available to a user token) | `reachable`. This pins the decided behavior of **Decision 8**: historical activity alone is sufficient, and the residual false-Reachable case is handled at dispatch. A later change that silently tightens or loosens the proxy fails here instead of passing unnoticed | Decided-tradeoff guard |
+| T-36 | Every fixture above, aggregate | no `REVIEWER_N_DETAIL` contains the run's `RUNNER_KIND` value — no unreachability is attributed to the driving runner | The operator can tell why |
+| T-37 | Every fixture above, aggregate | every `REVIEWER_N_STATUS=unreachable` group has a `REVIEWER_N_REASON` that is exactly one of the four and a non-empty `REVIEWER_N_REMEDY`; every `reachable` and `override-excluded` group has both empty | The operator can tell why |
+| T-38 | `runner: [codex-github]`, fake `gh` returning **only historical** bot comments (no other installation signal available to a user token) | `REVIEWER_1_STATUS=reachable`. This pins the decided behavior of **Decision 8**: historical activity alone is sufficient, and the residual false-Reachable case is handled at dispatch. A later change that silently tightens or loosens the proxy fails here instead of passing unnoticed | Decided-tradeoff guard |
 | T-39 | Each of the five delimiter-bearing fixtures from E-23 to E-27, one run per fixture | `REVIEWER_COUNT=1`; `REVIEWER_1_NAME` equals the configured value byte for byte; `REVIEWER_1_STATUS=unreachable` with `REVIEWER_1_REASON=value-not-supported`; and the display-only `CONFIGURED` field renders it as `<entry 1>` rather than splitting it. E-26's empty entry additionally asserts `REVIEWER_1_NAME=` with the record still present | Configuration inputs |
-| T-40 | Fake `python3` on the hermetic `PATH` that sleeps past `CONFIG_RESOLVE_CAP_SECONDS` | exit `1`, `BLOCK_CAUSE=config-resolution-inconclusive`, `POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, `REVIEWER_COUNT=0`, no `REVIEWER_*` record, and total wall-clock under `AVAILABILITY_BUDGET_SECONDS` plus one second. This is the case a deadline-without-a-bound would hang on | Configuration inputs |
+| T-40 | Fake `python3` on the hermetic `PATH` that sleeps past `CONFIG_RESOLVE_CAP_SECONDS`, run at the shipped budget | exit `1`, `BLOCK_CAUSE=config-resolution-inconclusive`, `POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, `REVIEWER_COUNT=0`, no `REVIEWER_*` group, and measured wall time **at most 10 seconds**, asserted exactly as in T-7. This is the case a deadline-without-a-bound would hang on | Configuration inputs |
 | T-41 | Fake `python3` that exits `2` immediately | exit `2`, no `OUTCOME` line, the resolver's stderr on stderr — an invocation failure, not a configuration state | Contract completeness |
-| T-42 | A reviewer name or detail containing a tab and a newline, injected through a fixture | the emitted block still has exactly one line per field: `print_kv_escaped` escaped them, so no value forged a line break or a second field | Configuration inputs |
+| T-42 | A reviewer name or detail containing a tab and a newline, injected through a fixture | the emitted block still has exactly one line per field: `print_kv_escaped` escaped them, so no value forged a line break or a second field. `review-effective`'s JSON carries the same value and the shell reads it NUL-delimited, so the round-trip is asserted end to end | Configuration inputs |
 
 ### Acceptance-criterion coverage map
 
@@ -1150,16 +1213,16 @@ behavior.
 | S1 | Shipped default, no override → dispatched reviewer and a verdict on every supported runner | Both | Resolver unit T-33 (a non-blocked verdict for every supported runner kind on a `PATH` holding none of the three runtimes); gate doc assertion D-12; gate runbook Step 1 for the verdict on every supported runner kind and Step 13 Part 1 for the dispatch |
 | S2 | The shipped list names at least one reviewer reachable wherever a supported runner drives | Resolver | T-33 |
 | S3 | Shipped commentary does not call a hard-fail on a supported runner expected behavior | Surface text | D-9 |
-| O1 | Every Unreachable reviewer reported with name, exactly one reason, and at least one action | Both | Resolver unit T-37 (reason is one of four; a `REMEDY` line exists for it); gate doc assertions D-5 (the protocol's four remedies match the script's) and D-16 (the comment formats carry name, reason, and remedy per reviewer); gate runbook Step 13 Part 3 and Step 14 Part 1 read the posted comments |
+| O1 | Every Unreachable reviewer reported with name, exactly one reason, and at least one action | Both | Resolver unit T-37 (the reason is one of four and `REVIEWER_N_REMEDY` is non-empty); gate doc assertions D-5 (the protocol's four remedies match the script's) and D-16 (the comment formats carry name, reason, and remedy per reviewer); gate runbook Step 13 Part 3 and Step 14 Part 1 read the posted comments |
 | O2 | The four reasons are distinguished and never reported in place of one another | Resolver | T-25 (no cross-kind pairing), T-2, T-5, T-8, T-22, T-23 (one per reason) |
-| O3 | The gate summary lists every configured reviewer with its verdict, including the ones that ran | Gate | Gate doc assertion D-16; gate runbook Step 13 Part 1. T-19 proves the resolver emits a record per entry, which is the input the summary needs — necessary, not sufficient, so it is not listed as evidence for this criterion |
-| O4 | Override-removed reviewer is Excluded by override, no unreachability warning | Both | Resolver unit T-19 (the record carries `override-excluded` with no reason); gate doc assertion D-16 (excluded entries appear in the summary and never in the warning); gate runbook Step 14, which runs the real gate with an override in effect |
+| O3 | The gate summary lists every configured reviewer with its verdict, including the ones that ran | Gate | Gate doc assertion D-16; gate runbook Step 13 Part 1. T-19 proves the resolver emits a `REVIEWER_N_*` group per entry, which is the input the summary needs — necessary, not sufficient, so it is not listed as evidence for this criterion |
+| O4 | Override-removed reviewer is Excluded by override, no unreachability warning | Both | Resolver unit T-19 (the group carries `REVIEWER_N_STATUS=override-excluded` with empty reason); gate doc assertion D-16 (excluded entries appear in the summary and never in the warning); gate runbook Step 14, which runs the real gate with an override in effect |
 | O5 | Block report names the policy, and reports override state from what was resolved | Both | Resolver unit T-16, T-20, T-34, T-13 produce the four field values; gate doc assertion D-18 (the hard-fail formats carry `BLOCK_CAUSE` and `LOCAL_OVERRIDE_STATE` taken from the resolver, never inferred); gate runbook Step 14 Part 1 |
 | O6 | No message attributes unavailability to the driving runner's identity | Both | Resolver unit T-36 (no detail string contains the run's `RUNNER_KIND`); gate doc assertions D-17 and D-18 (neither comment template carries a runner-context field), plus D-2 and D-10 for the surrounding surfaces; gate runbook Step 13 Part 3 and Step 14 Part 1 |
 | C1 | No list in either file → runs the stage default **once** and records the fallback in the summary | Both | Resolver unit T-10 (`FALLBACK_APPLIED=true`); gate doc assertions D-12 (dispatch the driving runner's stage reviewer exactly once) and D-16 (the summary records that the fallback applied); gate runbook Step 13 Part 2 |
 | C2 | The fallback reviewer is the driving runner's own for the stage, so it never blocks | Both | Resolver unit T-10 and T-12 (`FALLBACK_APPLIED=true` for a supported runner, `no-driving-runner` for `unknown`); gate doc assertions D-7 and D-12; gate runbook Step 13 Part 2 |
 | C3 | A list resolving to no entries behaves as C1; never reports success having dispatched nobody | Both | Resolver unit T-11; gate doc assertions D-12 and D-16; gate runbook Step 13 Part 2 |
-| C4 | Unsupported entry → Unreachable, reason `value-not-supported`, value named in the report | Both | Resolver unit T-8, T-9 (classification and named value in the record) and T-39 (a value containing a comma, whitespace, both, an apostrophe, or nothing at all still round-trips byte for byte and is named, never split or dropped — Decision 10); gate doc assertion D-18 (the offending value is named in the block report); gate runbook Step 14 Part 1, second run, and Step 15 |
+| C4 | Unsupported entry → Unreachable, reason `value-not-supported`, value named in the report | Both | Resolver unit T-8, T-9 (classification and named value in the `REVIEWER_N_NAME` field) and T-39 (a value containing a comma, whitespace, both, an apostrophe, or nothing at all still round-trips byte for byte and is named, never split or dropped — Decision 10); gate doc assertion D-18 (the offending value is named in the block report); gate runbook Step 14 Part 1, second run, and Step 15 |
 | C5 | List defined but not readable as a list → blocks, names file and input, dispatches nobody, PR stays draft | Both | Resolver unit T-13 (`BLOCK_CAUSE=list-malformed`, exit `1`); gate doc assertions D-18 (the report names the file and the key), D-19 (exit `1` maps to dispatch nobody, no `gh pr ready`, PR stays draft, escalate) and D-20 (no draft conversion can precede the block); gate runbook Step 14 Part 2, with Part 5 for the draft-conversion ordering |
 | C6 | A file that will not parse at all → blocks and names that file | Both | Resolver unit T-31, T-29; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
 | C7 | An unsupported value as the only entry → blocks and names it as the cause | Both | Resolver unit T-8 and T-39; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 1, second run, and Step 15 |
@@ -1168,12 +1231,12 @@ behavior.
 | P1 | One unreachable, one reachable, `warn` → warns naming each, then dispatches the rest | Both | Resolver unit T-9 (`OUTCOME=proceeded-reduced`) and T-37 (reason and remedy available to quote); gate doc assertion D-17 (the warning names each unreachable reviewer with its reason and remedy and states the reachable subset) and D-12 (the reachable subset is then dispatched); gate runbook Step 13 Part 3 |
 | P2 | `fail-if-any-unavailable` + any unreachable → blocks, dispatches nobody, PR stays draft | Both | Resolver unit T-16; gate doc assertions D-18, D-19 and D-20; gate runbook Step 14 Part 3, with Part 5 for the draft-conversion ordering |
 | P3 | No reviewer reachable → blocks under either policy, PR not converted to ready, escalates | Both | Resolver unit T-2 (under `warn`) and T-16 (under the strict policy); gate doc assertions D-19 (exit `1` maps to no `gh pr ready`, draft preserved, escalation) and D-20 (the draft-state pre-check's conversion cannot precede the block); gate runbook Step 14 Part 1 and Part 5 |
-| P4 | Every reviewer reachable → no warning, behaves exactly as today | Both | Resolver unit T-1, T-19 (`OUTCOME=proceeded`, `UNREACHABLE` empty, no `REMEDY` line); gate doc assertion D-17 (the warning is posted only when `OUTCOME=proceeded-reduced`); gate runbook Step 13 Part 1 |
+| P4 | Every reviewer reachable → no warning, behaves exactly as today | Both | Resolver unit T-1, T-19 (`OUTCOME=proceeded`, `UNREACHABLE` empty, every `REVIEWER_N_REMEDY` empty); gate doc assertion D-17 (the warning is posted only when `OUTCOME=proceeded-reduced`); gate runbook Step 13 Part 1 |
 | P5 | No policy in either file → the shipped default `warn` applies | Resolver | T-18 |
 | P6 | Unsupported policy value → blocks, dispatches nobody, names it, does not silently default | Both | Resolver unit T-17 (`BLOCK_CAUSE=policy-unsupported`, the value carried in the output); gate doc assertions D-18 (the report names the offending value) and D-19 (nobody is dispatched); gate runbook Step 14 Part 4 |
 | P7 | Unsupported or unreadable policy with an absent, empty, or malformed list → blocks on the policy | Both | Resolver unit T-17, T-31 (`CONFIG_LIST_STATE=not-evaluated`); gate doc assertion D-18 (the report attributes the block to the policy); gate runbook Step 14 Part 4 |
 | P8 | Policy input present but unreadable → blocks and names the input | Both | Resolver unit T-31, T-35; gate doc assertions D-18 and D-19; gate runbook Step 14 Part 2 |
-| P9 | A reachable reviewer under a forbidding policy is still classified Reachable in the report | Both | Resolver unit T-16 (the record still reads `reachable`); gate doc assertion D-18 (the block report lists every reviewer with its verdict, including the reachable ones); gate runbook Step 14 Part 3 |
+| P9 | A reachable reviewer under a forbidding policy is still classified Reachable in the report | Both | Resolver unit T-16 (the group still reads `REVIEWER_N_STATUS=reachable`); gate doc assertion D-18 (the block report lists every reviewer with its verdict, including the reachable ones); gate runbook Step 14 Part 3 |
 | P10 | Never installs, provisions, or substitutes; the fallback is not a substitution | Both | Resolver unit T-15 (no mutating call in the recorded `gh` argv), T-2 (an absent runtime yields a block, never a stand-in); gate doc assertion D-8; gate runbook Step 13 Part 2 (the fallback dispatches the runner's own reviewer, not a stand-in for an unreachable one) and Step 14 Part 1 (an unreachable reviewer produces a block, never a substitution) |
 | A1 | Supported values and the availability rule stated consistently across surfaces | Surface text | D-1, D-5, D-11 |
 | A2 | No surface names a value the canonical protocol does not list | Surface text | D-4 |
@@ -1196,7 +1259,7 @@ behavior.
 - **One criterion, R7, has no achievable automated evidence** and says so: the resolver has exited
   before dispatch, so a reviewer that then fails is observable only in the protocol text (D-6) and in
   runbook Step 13.
-- **T-19 is deliberately not listed under O3.** It proves the resolver emits a per-reviewer record —
+- **T-19 is deliberately not listed under O3.** It proves the resolver emits a per-reviewer `REVIEWER_N_*` group —
   the input the summary comment needs — but a gate could receive those records and post a summary
   that omits half of them. Where a resolver test is necessary-but-not-sufficient for a gate
   criterion, it is left out rather than counted.
@@ -1258,16 +1321,73 @@ Headers:
 | D-21 | Protocol 91's hosted-service probe section states that the activity signal is a proxy for the spec's installed-and-enabled clause, names the false-Reachable case, and points at the dispatch-time `internal_reviewers_unavailable_policy` treatment as where the residual is handled | Decision 8 |
 | D-22 | Protocol 91 instructs the gate to read reviewer names, reasons, remedies, and details from the indexed `REVIEWER_N_*` fields, and states that the comma-joined aggregate fields are display-only. No instruction anywhere in Step 7a splits an aggregate field on commas or whitespace to recover a reviewer name | C4, C7; Decision 10 |
 
-Every case must be shown to fail before the suite is accepted; see Implementation Order step 8.
+### Planted-violation proofs
+
+`REVIEW.md` line 325 is explicit and I am not going to argue it down: *"Planted-violation proof
+presence (blocking): confirm the PR evidence includes, **for each new or materially modified check**, a
+demonstrated run at a concrete file and line showing (a) the check fails when the targeted violation is
+present at that location, and (b) the check passes once the violation is removed."* Line 400 adds that
+the plant must be able to change that check's answer — *"a proof whose plant is masked by an earlier
+rule is not a proof"*. One plant per assertion *mechanism* would not satisfy either clause, so the
+plan commits to per-check proofs. The exemption at line 328 (pure refactors of already-proven logic)
+does not apply: every check here is new.
+
+What the rule does and does not reach is worth stating, because it bounds the work honestly:
+
+- **In scope — the 22 `D-` cases.** Each is an automated check over repository content, which is
+  exactly what the clause names. Each gets its own plant, listed below.
+- **In scope — `resolve-reviewer-availability.sh` as a guard.** Its planted-violation evidence already
+  exists in the `T-` suite as fail-and-pass pairs over the same fixture shape, and naming them is
+  enough: T-2/T-1 (reviewer absent then present), T-13/T-27 (malformed then well-formed list),
+  T-17/T-18 (unsupported then absent policy), T-31/T-29 (unparseable then parseable file),
+  T-16/T-9 (strict then permissive policy). The implementer records those pairs as the guard's proof
+  rather than writing new cases.
+- **Out of scope — the `T-` and `E-` cases themselves.** A unit test of a script is not a check,
+  guard, lint rule, or CI job; it is the test of one. Treating each as requiring its own planted
+  violation would recurse without end.
+
+**Plant table.** Each row is a one-line mutation at a real location that flips exactly one case. The
+harness reports per-case `PASS`/`FAIL`, so the implementer records, per row, the failing run with the
+plant applied and the passing run after reverting it.
+
+| Case | File to plant in | Mutation that flips it |
+| --- | --- | --- |
+| D-1 | `91-orchestrate-work-protocol.md`, supported-values line | delete `codex-github` from the list |
+| D-2 | `91-orchestrate-work-protocol.md`, availability section | re-insert the sentence `runner identity is a sufficient proxy for reviewer reachability` |
+| D-3 | `codex-github-reviewer.sh` header | restore the words `universally reachable` |
+| D-4 | `.ai-dev-workflow.yaml`, `review.on_draft.runner` | add an entry `greptile`, which the canonical protocol does not list as a runner reviewer |
+| D-5 | `91-orchestrate-work-protocol.md`, reason-to-remedy table | change one word of the `runtime-absent` remedy so it no longer matches the script's string |
+| D-6 | `91-orchestrate-work-protocol.md`, dispatch section | delete the sentence classifying a dispatched-then-failed reviewer as a review failure |
+| D-7 | `README.md`, configuration-reference bullet | reintroduce `the stage-appropriate \`claude\` reviewer` as the fallback |
+| D-8 | `91-orchestrate-work-protocol.md`, policy section | delete the never-installs-never-substitutes sentence |
+| D-9 | `.ai-dev-workflow.yaml`, commentary | re-add a sentence calling a hard-fail on a supported runner expected behaviour |
+| D-10 | `integrations/coderabbit.md`, availability check | delete the `reviews.auto_review.enabled: true` requirement |
+| D-11 | `.cursor/agents/item-orchestrator.md`, `codex-github` block | change one word so it no longer matches `.claude/agents/item-orchestrator.md` |
+| D-12 | `91-orchestrate-work-protocol.md`, dispatch instruction | delete the word `once` from the fallback-dispatch sentence |
+| D-13 | `91-orchestrate-work-protocol.md`, Step 7a re-run rules | delete the instruction to re-run the resolver on every cycle |
+| D-14 | `91-orchestrate-work-protocol.md`, availability phase | insert a `gh pr comment` call between the resolver call and the dispatch map |
+| D-15 | `91-orchestrate-work-protocol.md` | move the resolver-call block below the dispatch map |
+| D-16 | `91-orchestrate-work-protocol.md`, summary-comment format | delete the required per-reviewer verdict line |
+| D-17 | `91-orchestrate-work-protocol.md`, warning format | re-add a `(<runner-context>)` field |
+| D-18 | `91-orchestrate-work-protocol.md`, hard-fail Case A | delete `Local override:` from the template |
+| D-19 | `91-orchestrate-work-protocol.md`, exit-code mapping | change the exit `1` row to call `gh pr ready` |
+| D-20 | `91-orchestrate-work-protocol.md`, draft-state pre-check | move the `gh pr ready` conversion back above the availability check |
+| D-21 | `91-orchestrate-work-protocol.md`, hosted-probe section | delete the sentence naming the activity signal a proxy |
+| D-22 | `91-orchestrate-work-protocol.md`, gate-consumption instruction | change it to split `CONFIGURED` on commas to recover reviewer names |
+
+Nineteen of the twenty-two plant into Protocol 91 because that is the canonical surface the suite
+exists to protect; each targets a different sentence, so no plant is masked by another rule. Where two
+cases read nearby text, the plant is chosen to change only the one case's answer — the implementer
+must confirm that from the per-case output, not assume it. See Implementation Order step 8.
 
 
 ### Extended suite: `scripts/development-workflow/tests/test-workflow-config-resolver.sh`
 
 | ID | Scenario | Asserts | AC group |
 | --- | --- | --- | --- |
-| T-27 | `review-effective` with a shipped list and no local file | `EFFECTIVE_RUNNER_LIST` from `.ai-dev-workflow.yaml`, `EFFECTIVE_RUNNER_STATE=defined`, `OVERRIDE_EXCLUDED_LIST` empty | Configuration inputs |
-| T-28 | Local file overrides the list | `EFFECTIVE_RUNNER_SOURCE` names the local file; `SHIPPED_RUNNER_LIST` still reports the shipped list; `OVERRIDE_EXCLUDED_LIST` is the set difference | Configuration inputs |
-| T-29 | `.ai-dev-workflow.yaml` truncated mid-mapping so it will not parse | `EFFECTIVE_POLICY_STATE=unreadable`, `EFFECTIVE_RUNNER_STATE=malformed`, `UNREADABLE_FILE` names the file, exit `0` | Configuration inputs |
+| T-27 | `review-effective` with a shipped list and no local file | stdout parses as a single JSON object; `effective_runner` equals the `.ai-dev-workflow.yaml` list as an array, `effective_runner_state` is `defined`, `override_excluded` is `[]` | Configuration inputs |
+| T-28 | Local file overrides the list | `effective_runner_source` names the local file; `shipped_runner` still reports the shipped list; `override_excluded` is the set difference | Configuration inputs |
+| T-29 | `.ai-dev-workflow.yaml` truncated mid-mapping so it will not parse | `effective_policy_state` is `unreadable`, `effective_runner_state` is `malformed`, `unreadable_file` names the file, exit `0` with valid JSON on stdout | Configuration inputs |
 | T-30 | `review-overrides` output on the same fixtures | byte-identical to the pre-change output — the existing subcommand is unchanged | Regression guard |
 
 ### Parser-risk addendum
@@ -1304,7 +1424,7 @@ policy scalar are the parsed constructs.
 | E-20 | `internal_reviewers_unavailable_policy: [warn]` (list where a scalar is required) | policy `unreadable` |
 | E-21 | Both `runner: [codex]` and `internal_reviewers_unavailable_policy: bogus` present | policy `unsupported`; the list is still parsed by the resolver but the script prints `CONFIG_LIST_STATE=not-evaluated` because the gate stops at the policy |
 | E-22 | Local file present with a `product_repos` section but no `review` section, in a linked worktree | the main clone's `review` section applies (existing #1560 behavior, must not regress) |
-| E-23 | `runner: ["codex, claude"]` — one quoted entry containing a comma | `defined`, **one** entry whose value is `codex, claude` verbatim. Never two entries |
+| E-23 | `runner: ["codex, claude"]` — one quoted entry containing a comma | `defined`, and `effective_runner` is a one-element array whose element is `codex, claude` verbatim. Never two elements |
 | E-24 | `runner: ["my reviewer"]` — one quoted entry containing whitespace | `defined`, one entry whose value is `my reviewer` verbatim, internal space preserved |
 | E-25 | `runner: ["a, b c"]` — one entry containing both a comma and whitespace | `defined`, one entry, value verbatim |
 | E-26 | `runner: [""]` — one empty-string entry | `defined`, one entry whose value is the empty string. Not `empty`: the list has an entry, and that entry is unsupported |
@@ -1376,7 +1496,8 @@ following are the remaining documentation-only updates the developer must make:
 | R-4 | Two config readers now coexist — the Python resolver for Step 7a and the awk helpers for Step 7 — and could drift | Medium | Medium | Decision 2 names the resolver as authoritative for Step 7a and records the non-unification as deliberate; **Out-of-scope notes** carries it forward as a follow-up candidate. |
 | R-5 | Re-adding `codex-github` to Step 7a revives the async race #486 moved it out for | Low | Medium | Decision 7: it is canonical but not default, and its dispatch goes through `codex-github-reviewer.sh`, whose pre-trigger wait, retrigger, and exit-code contract were built after #486. |
 | R-6 | `run_bounded` duplicates `run_with_timeout` from `local-ai-reviewer.sh` | High | Low | Deliberate, recorded in **Out-of-scope notes**. Extracting the reviewer script's variant would change a heavily used Step 7 path for a Step 7a benefit, which the spec places out of scope. |
-| R-7 | The budget test (T-7) is wall-clock sensitive and could flake on a loaded CI runner | Medium | Low | T-7 asserts an upper bound of budget plus one second on a 2-second test budget, not an exact duration, and asserts that every entry was classified — the property that matters is that the gate always reaches a verdict. |
+| R-7 | The ceiling tests (T-7, T-40) assert a hard 10-second wall-clock bound and could flake on a heavily loaded CI runner | Medium | Low | The assertion is not loosened to accommodate load, because then it would stop testing the contract. Headroom comes from the budget instead: 8 seconds of work plus at most 2 seconds of documented cleanup equals the 10-second contract, so a run has to be delayed by more than two seconds of pure scheduling latency before it fails. If that proves too tight in practice the fix is to lower `AVAILABILITY_BUDGET_SECONDS`, which keeps the contract intact; raising the assertion would not. |
+| R-13 | The twenty-two planted-violation proofs are mechanical and an implementer may batch them carelessly, producing plants that do not actually change the cited case's answer | Medium | Medium | The plant table names a different sentence per case and the verification step requires confirming that no other case changed answer, which is the specific failure `REVIEW.md` line 400 calls out. Nineteen plants land in one file, so the per-case output is the only way to tell them apart — the step says to read it rather than assume. |
 | R-8 | The doc-assertion suite (D-1 to D-22) breaks on innocent rewording of the surfaces it greps | Medium | Low | Each case asserts a short stable phrase or a structural fact (a value list, a byte-for-byte block comparison), never a whole sentence. Implementation Order step 8 requires proving each case can fail before the suite is accepted, so a case that has silently stopped asserting anything is caught at authoring time rather than months later. |
 | R-9 | The change is reverted after operators retired their machine-local override on its advice, and the override file cannot be restored by any revert | Low | Medium | Retirement guidance says move the file aside rather than delete it, so a second `mv` restores it; the override is two keys and `.ai-dev-workflow.local.example.yaml` carries the shape. See **Reversal and Rollback** (c) — this is mitigated, not eliminated. |
 | R-10 | The resolver is implemented correctly and the gate ignores its verdict — dispatching on a block, or skipping dispatch on a proceed | Medium | High | This is the feature's most likely failure and no resolver test can see it. D-12 and D-19 assert the protocol instructs the exit-code mapping; runbook Steps 13 and 14 are the only evidence a runner honoured it, and the runbook's Troubleshooting table names the symptom as a blocking implementation failure rather than a runbook problem. The coverage map marks all twenty-seven gate-level criteria so no reviewer has to rediscover the distinction. |
@@ -1404,9 +1525,10 @@ imposes it and why it applies here. No step is left untraced.
    `list_override_from_path`, `resolve_review_overrides`, or `cmd_review_overrides`.
    *Verify*: run
    `python3 scripts/development-workflow/workflow-config-resolver.py review-effective --repo-root "$(pwd -P)"`
-   and confirm the output lists every key in the contract table, that
-   `EFFECTIVE_RUNNER_STATE` is `defined`, and that the reported list matches what
-   `.ai-dev-workflow.yaml` (or the local override, if one is in effect) actually contains.
+   and confirm the output is a single JSON object carrying every field in the contract table, that
+   `effective_runner_state` is `defined`, and that `effective_runner` matches what
+   `.ai-dev-workflow.yaml` (or the local override, if one is in effect) actually contains. Pipe it
+   through `jq .` and confirm it parses.
 
 2. *(Spec-derived — evidence for the same group, plus the parser-risk unit-test mapping this repository's plan protocol requires for a change that alters structured-text interpretation.)* **Extend `tests/test-workflow-config-resolver.sh`** with cases T-27 to T-30 and `review-effective E-1`
    through `review-effective E-22`.
@@ -1436,7 +1558,7 @@ imposes it and why it applies here. No step is left untraced.
 
 6. *(Spec-derived — AC group* **The shipped default never traps***; Use Case 3.)* **Change `.ai-dev-workflow.yaml`**: the default list, the supported-values comment, the deleted
    Runner-context constraint block and its replacement, and the policy comment.
-   *Verify*: re-run the step-1 command and confirm `EFFECTIVE_RUNNER_LIST` reports the new default
+   *Verify*: re-run the step-1 command and confirm `effective_runner` reports the new default
    when no local override is in effect; and
    `grep -n "expected behaviour" .ai-dev-workflow.yaml` returns nothing.
 
@@ -1460,8 +1582,16 @@ imposes it and why it applies here. No step is left untraced.
    D-22. Write it **after** steps 5 to 7, because D-1 to D-11 target text those steps produce on the
    surrounding surfaces and D-12 to D-19 target the Step 7a gate instructions written in step 5.
    *Verify*: `bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh` — confirm
-   every case reports PASS. Then revert one surface edit locally, re-run, and confirm the matching
-   case reports FAIL before restoring it: a doc-assertion suite that cannot fail is worthless.
+   every case reports PASS. Then work the **plant table** under *Planted-violation proofs* row by row:
+   apply the listed one-line mutation, re-run, confirm **that** case reports FAIL and that no other
+   case changed answer, revert, and re-run to confirm PASS. Record both runs per case in the pull
+   request, citing the file and line the plant went in at. `REVIEW.md` line 325 requires this for each
+   check and line 400 requires the plant to be able to change that check's answer, so a single
+   representative plant does not satisfy it. Also record the `T-` fail-and-pass pairs named in that
+   section as the availability resolver's own planted-violation proof.
+
+   Where two cases read nearby text and one plant moves both, the plant is too coarse: narrow it until
+   exactly one case flips, and record the narrowed mutation rather than the one from the table.
 
 9. *(Repository process — `02-generate-implementation-plan-protocol.md` requires a sweep or pattern-completeness plan to name a residual verification strategy and produce its evidence before `ready-for-human-review`. It applies here because the* **Surfaces agree** *group is a pattern-completeness claim over a live file set that can grow between plan time and implementation time.)* **Re-run the residual verification** (VL-2 and VL-4) at the implementation head and record both
    outputs in the pull request, per **Residual verification strategy**.

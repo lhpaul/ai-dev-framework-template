@@ -187,16 +187,23 @@ intervention."
      printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/slow/$b"
      chmod +x "$SMOKE_TMP/slow/$b"
    done
-   time PATH="$SMOKE_TMP/slow" scripts/development-workflow/resolve-reviewer-availability.sh \
+   start=$(date +%s)
+   PATH="$SMOKE_TMP/slow" scripts/development-workflow/resolve-reviewer-availability.sh \
      --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind unknown
-   echo "exit=$?"
+   status=$?
+   elapsed=$(( $(date +%s) - start ))
+   printf 'exit=%s elapsed=%ss\n' "$status" "$elapsed"
+   [ "$elapsed" -le 10 ] && echo "CEILING PASS" || echo "CEILING FAIL"
    ```
 
-**Expected result**: the command returns in well under fifteen seconds — the ten-second budget plus
-process overhead — rather than hanging. Every reviewer is classified, the hanging ones as
-`unreachable check-inconclusive`, `ELAPSED_SECONDS` is printed, and the run exits `1` with
-`OUTCOME=blocked` and `BLOCK_CAUSE=zero-reachable`. Read `ELAPSED_SECONDS` and confirm it does not
-exceed `BUDGET_SECONDS`.
+**Expected result**: `CEILING PASS` — measured wall time is **at most ten seconds**, which is the
+spec's contract. Ten is the assertion, not a guideline: an eleven-second run is a failure to report,
+not rounding. The script's internal budget is eight seconds precisely so that timeout and poll cleanup
+fit inside ten (see the plan's *The contract is ten seconds; the budget is eight*). Every reviewer is
+classified, the hanging ones as `check-inconclusive`, and the run exits `1` with `OUTCOME=blocked` and
+`BLOCK_CAUSE=zero-reachable`. Also read `ELAPSED_SECONDS` and confirm it does not exceed
+`BUDGET_SECONDS` — that is the script's own measurement, a separate check from the wall-clock one
+above.
 
 ### Step 7: An unsupported value is reported by name
 
@@ -530,12 +537,16 @@ cannot protect (plan Decision 11).
    cp -R "$SMOKE_TMP/bin/." "$SMOKE_TMP/stall/"
    printf '#!/bin/sh\nsleep 120\n' > "$SMOKE_TMP/stall/python3"
    chmod +x "$SMOKE_TMP/stall/python3"
-   time PATH="$SMOKE_TMP/stall" scripts/development-workflow/resolve-reviewer-availability.sh \
+   start=$(date +%s)
+   PATH="$SMOKE_TMP/stall" scripts/development-workflow/resolve-reviewer-availability.sh \
      --repo-root "$(pwd -P)" --owner "<owner>" --repo "<repo>" --runner-kind claude
-   echo "exit=$?"
+   status=$?
+   elapsed=$(( $(date +%s) - start ))
+   printf 'exit=%s elapsed=%ss\n' "$status" "$elapsed"
+   [ "$elapsed" -le 10 ] && echo "CEILING PASS" || echo "CEILING FAIL"
    ```
 
-**Expected result**: the command returns in well under fifteen seconds rather than hanging, with
+**Expected result**: `CEILING PASS` — measured wall time at most ten seconds — with
 exit `1`, `OUTCOME=blocked`, `BLOCK_CAUSE=config-resolution-inconclusive`,
 `POLICY_STATE=not-evaluated`, `CONFIG_LIST_STATE=not-evaluated`, and `REVIEWER_COUNT=0`. There is
 **no** per-reviewer record and **no** reason category, because no reviewer was ever named. The report
@@ -572,8 +583,8 @@ Each checkbox maps to one or more acceptance criteria from the spec.
 - [ ] The verdict is determined fresh on each run and flips both ways with the environment (Step 4).
 - [ ] Determining availability posts no comment, changes no pull request state, modifies no tracked
       file, and invokes no reviewer (Step 5).
-- [ ] The gate always reaches a verdict within the availability budget, even with an unresponsive
-      reviewer (Step 6).
+- [ ] The gate reaches a verdict in **at most ten seconds of measured wall time** with every probe
+      hanging — `CEILING PASS`, not a judgement call (Step 6).
 - [ ] The four reason categories are reported distinctly and never in place of one another
       (Steps 3, 6, 7, and the CodeRabbit note under Known Limitations).
 - [ ] An unsupported configured value is classified Unreachable with reason `value-not-supported` and
@@ -660,7 +671,8 @@ gate ignores.
 | Hosted reviewers report `check-inconclusive` | `gh` is missing from the hermetic `PATH`, or not authenticated | Symlink `gh` into the fixture `bin` directory and confirm `gh auth status` succeeds |
 | `codex-github` or `coderabbit` reports `prerequisite-missing` on a repository where the app is installed | The app has never commented on this repository, so the activity signal finds nothing | Expected — see Known Limitations. Trigger the app once on any pull request, or leave the reviewer out of the list |
 | A Step 7, 9, or 10 fixture edit changes nothing | The line the `awk` or `sed` pattern matches was reworded during implementation | Each of those steps prints the edited region with `grep` before running the resolver — read that output and adjust the pattern before trusting the verdict |
-| Step 6 or Step 16 takes noticeably longer than the budget | `timeout` is unavailable and the poll fallback is running at one-second granularity | Expected overhead; confirm `ELAPSED_SECONDS` in the output rather than wall-clock `time`. A run that never returns at all is a different matter — report it |
+| Step 6 or Step 16 prints `CEILING FAIL` | The ten-second contract was exceeded. On a host without GNU `timeout` the poll fallback adds up to one second and the `SIGTERM`-to-`SIGKILL` grace adds one more, which is why the internal budget is eight | Report it. Do not widen the assertion — the fix is to lower `AVAILABILITY_BUDGET_SECONDS` so cleanup fits inside ten, per the plan's budget arithmetic |
+| Step 6 or Step 16 never returns at all | A call is unbounded — the defect Decision 11 exists to close | Report it as a blocking implementation failure |
 | Step 15 shows `CONFIGURED` containing `<entry 1>` instead of the configured value | Expected and deliberate. The aggregate fields are display-only and render an unsafe value as a pointer; the indexed `REVIEWER_1_NAME` field holds it verbatim | Read the indexed field. Do not report this as truncation |
 
 ---
