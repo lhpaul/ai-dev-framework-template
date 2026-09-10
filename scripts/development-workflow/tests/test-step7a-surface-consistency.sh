@@ -2,68 +2,169 @@
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 # covers: .ai-dev-workflow.yaml .ai-dev-workflow.local.example.yaml .claude/agents/item-orchestrator.md .cursor/agents/item-orchestrator.md
 # covers: docs/workflow/development-workflow/integrations/coderabbit.md docs/workflow/development-workflow/integrations/codex-github.md docs/workflow/development-workflow/README.md
+# covers: scripts/development-workflow/resolve-reviewer-availability.sh
+# covers: **.md **.sh **.yaml **.yml **.mdc
+# The selector's ** matches root and nested files; D-3 deliberately scans all live surfaces.
 set -euo pipefail
-ROOT=${SURFACE_ROOT:-"$(CDPATH='' cd -- "$(dirname -- "$0")/../../.." && pwd)"}; P="$ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"; PASS=0; FAIL=0
-ok(){ echo "PASS: $1"; PASS=$((PASS+1)); }; no(){ echo "FAIL: $1"; FAIL=$((FAIL+1)); }
-all(){ local id="$1"; shift; local x; for x in "$@"; do grep -Fq -- "$x" "$P" || { no "$id"; return; }; done; ok "$id"; }
-none(){ ! grep -Fiq -- "$2" "$ROOT/$3" && ok "$1" || no "$1"; }
-block(){ sed -n '/step7a-codex-github-availability:start/,/step7a-codex-github-availability:end/p' "$1"; }
-all D-1 'Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and' '`coderabbit`, `codex-github` (hosted-service)'
-none D-2 'runner identity is a sufficient proxy' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md; none D-2b 'Reachability classification table' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
-if ! git -C "$ROOT" grep -in 'universally reachable' -- ':!CHANGELOG.md' ':!docs/specs/developments/**' ':!docs/testing/**' ':!scripts/**/tests/**' >/dev/null; then ok D-3; else no D-3; fi
-if awk '/^[[:space:]]*runner:/{in_runner=1;next} in_runner&&/^[[:space:]]*-[[:space:]]/{if($2 !~ /^(claude|cursor|codex|coderabbit|codex-github)$/) exit 1; next} in_runner{in_runner=0}' "$ROOT/.ai-dev-workflow.yaml" "$ROOT/.ai-dev-workflow.local.example.yaml"; then ok D-4; else no D-4; fi
-protocol_remedies=$(sed -n '/| `runtime-absent` |/,/| `value-not-supported` |/p' "$P" | sed -E 's/^\| `([^`]+)` \| (.*) \|$/\1=\2/')
-helper_remedies=$(sed -n '/runtime-absent) remedies/,/value-not-supported) remedies/p' "$ROOT/scripts/development-workflow/resolve-reviewer-availability.sh" | awk '{name=$1; sub(/\).*/, "", name); value=$0; sub(/^.*=/, "", value); sub(/^['\''"]/, "", value); sub(/['\''"][[:space:]]*;;$/, "", value); print name "=" value}')
-if [ "$protocol_remedies" = "$helper_remedies" ]; then ok D-5; else no D-5; fi
-all D-6 'review failure under either policy' 'claude -p --output-format text' 'cursor-agent --print --output-format text' 'codex exec --sandbox read-only' 'exactly one `VERDICT: APPROVED`'
-if grep -Fq "driving runner's own stage reviewer" "$P" && grep -Fq "driving runner's own stage reviewer" "$ROOT/docs/workflow/development-workflow/README.md"; then ok D-7; else no D-7; fi
-all D-8 'install software, or' 'substitute a reviewer'
-if [ "$(awk '/runner:/{on=1;next} on&&/- /{print $2;next} on{exit}' "$ROOT/.ai-dev-workflow.yaml"|tr '\n' ' ')" = 'claude cursor codex ' ] && ! grep -Fiq 'expected behaviour' "$ROOT/.ai-dev-workflow.yaml"; then ok D-9; else no D-9; fi
-if grep -Fq 'coderabbitai[bot]' "$ROOT/docs/workflow/development-workflow/integrations/coderabbit.md" && grep -Fq 'reviews.auto_review.enabled: true' "$ROOT/docs/workflow/development-workflow/integrations/coderabbit.md" && grep -Fq 'after availability and policy' "$ROOT/docs/workflow/development-workflow/integrations/coderabbit.md"; then ok D-10; else no D-10; fi
-cmp -s <(block "$ROOT/.claude/agents/item-orchestrator.md") <(block "$ROOT/.cursor/agents/item-orchestrator.md") && ok D-11 || no D-11
-all D-12 'indexed `REVIEWER_N_*` fields' 'exactly once'; all D-13 'Run it on every cycle' 'verdict from an earlier cycle is never reused'; all D-14 'is read-only: do not review' 'after determination'; all D-15 'No reviewer is dispatched until the resolver returns' '--runner-kind <actual-driving-session-kind>' 'never a value inferred'; all D-16 'per-reviewer verdict' 'Override-excluded entries appear in the summary'; none D-17 '(<runner-context>)' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md; all D-18 'BLOCK_CAUSE' 'Local override:' 'Every configured reviewer with its verdict'; all D-19 'availability-resolver-failed' 'gh pr ready <pr_number> --undo' 'dispatch nobody'; all D-20 'no independent `review-effective` or `review-overrides` call' 'After a proceed verdict'; all D-21 'accepted proxy, not proof' 'false Reachable' 'review failure under either policy'; all D-22 'display-only and must never be split or `eval`ed'
-canon=$(block "$P"); if [ -n "$canon" ] && [ "$canon" = "$(block "$ROOT/.claude/agents/item-orchestrator.md")" ] && [ "$canon" = "$(block "$ROOT/.cursor/agents/item-orchestrator.md")" ] && [ "$canon" = "$(block "$ROOT/docs/workflow/development-workflow/integrations/codex-github.md")" ]; then ok D-23; else no D-23; fi
-all D-24 'installed and reachable' 'not proof of that source' 'Decision 8 waives' 'unavailable with a named reason'
-echo "Passed: $PASS"; echo "Failed: $FAIL"; [ "$FAIL" -eq 0 ] || exit 1
+ROOT=${SURFACE_ROOT:-"$(CDPATH='' cd -- "$(dirname -- "$0")/../../.." && pwd)"}
+python3 - "$ROOT" "${1:-}" <<'PY'
+import pathlib, re, shutil, subprocess, sys, tempfile
+root = pathlib.Path(sys.argv[1]).resolve()
+protocol = 'docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md'
+shared = '.ai-dev-workflow.yaml'
+local = '.ai-dev-workflow.local.example.yaml'
+agents = ['.claude/agents/item-orchestrator.md', '.cursor/agents/item-orchestrator.md']
+cr = 'docs/workflow/development-workflow/integrations/coderabbit.md'
+cg = 'docs/workflow/development-workflow/integrations/codex-github.md'
+readme = 'docs/workflow/development-workflow/README.md'
+helper = 'scripts/development-workflow/resolve-reviewer-availability.sh'
+header = 'scripts/development-workflow/codex-github-reviewer.sh'
+supported = {'claude','cursor','codex','coderabbit','codex-github'}
+start = '<!-- step7a-codex-github-availability:start -->'
+end = '<!-- step7a-codex-github-availability:end -->'
 
-if [ "${1:-}" = --prove-plants ]; then
-  TMP=$(mktemp -d); trap 'rm -rf -- "$TMP"' EXIT
-  cp -R "$ROOT/." "$TMP"
-  prove() {
-    local id="$1" file="$2" needle="$3" replacement="$4" output
-    cp -R "$TMP" "$TMP-case" 2>/dev/null || { echo "FAIL: plant $id fixture"; exit 1; }
-    perl -0pi -e "s/\Q$needle\E/$replacement/" "$TMP-case/$file"
-    output=$(SURFACE_ROOT="$TMP-case" bash "$TMP-case/scripts/development-workflow/tests/test-step7a-surface-consistency.sh" 2>&1 || true)
-    if grep -Fq "FAIL: $id" <<< "$output" && [ "$(grep -c '^FAIL:' <<< "$output")" -eq 1 ]; then
-      echo "PASS: plant $id ($file)"
-    else
-      echo "FAIL: plant $id ($file)"; printf '%s\n' "$output"; exit 1
-    fi
-    rm -rf -- "$TMP-case"
-  }
-  prove D-1 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'codex-github` (hosted-service)' 'gone` (hosted-service)'
-  prove D-2 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'Availability follows capability' 'runner identity is a sufficient proxy'
-  prove D-3 scripts/development-workflow/codex-github-reviewer.sh 'This is a hosted-service reviewer.' 'This is universally reachable.'
-  prove D-4 .ai-dev-workflow.local.example.yaml '      - cursor' '      - greptile'
-  prove D-5 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md "Install the reviewer's runtime" 'Acquire the runtime'
-  prove D-6 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'Every dispatched failure is a review failure under either policy.' 'Every dispatched failure is handled.'
-  prove D-7 docs/workflow/development-workflow/README.md "driving runner's own stage reviewer" 'stage-appropriate `claude` reviewer'
-  prove D-8 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'substitute a reviewer while it runs.' 'continue while it runs.'
-  prove D-9 .ai-dev-workflow.yaml 'entries are probed against this machine' 'expected behaviour is to hard-fail on a supported runner'
-  prove D-10 docs/workflow/development-workflow/integrations/coderabbit.md 'reviews.auto_review.enabled: true' 'reviews.auto_review.enabled: false'
-  prove D-11 .cursor/agents/item-orchestrator.md 'Exit `0` approves' 'Exit `0` accepts'
-  prove D-12 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'exactly once' 'repeatedly'
-  prove D-13 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'verdict from an earlier cycle is never reused' 'verdict from an earlier cycle is reused'
-  prove D-14 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'is read-only: do not review' 'may post gh pr comment while running'
-  prove D-15 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'No reviewer is dispatched until the resolver returns' 'Dispatch reviewers before resolver returns'
-  prove D-15 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md '--runner-kind <actual-driving-session-kind>' '--runner-kind omitted'
-  prove D-16 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'per-reviewer verdict' 'aggregate verdict'
-  prove D-17 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md '<reason-display-label>' '(<runner-context>)'
-  prove D-18 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'Local override:' 'Override:'
-  prove D-19 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'availability-resolver-failed' 'resolver-failed'
-  prove D-20 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'After a proceed verdict' 'Before availability'
-  prove D-21 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'accepted proxy, not proof' 'accepted implementation'
-  prove D-22 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'must never be split or `eval`ed' 'split CONFIGURED on commas'
-  prove D-23 .claude/agents/item-orchestrator.md 'complete short page' 'incomplete short page'
-  prove D-24 docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md 'installed and reachable' 'available at runtime'
-fi
+def normalized(s): return ' '.join(s.split())
+def contains(s, *parts):
+    s = normalized(s)
+    return all(normalized(p) in s for p in parts)
+def section(s, first, last):
+    return s.split(first,1)[1].split(last,1)[0] if first in s and last in s.split(first,1)[1] else ''
+def availability(s):
+    if s.count(start)!=1 or s.count(end)!=1: return None
+    return start + section(s,start,end) + end
+
+def runner_lists(s):
+    # Read every block-list runner field in the two shipped config examples.
+    result=[]; lines=s.splitlines()
+    for i,line in enumerate(lines):
+        if re.match(r'^\s*runner:\s*(?:#.*)?$',line):
+            depth=len(line)-len(line.lstrip()); entries=[]
+            for child in lines[i+1:]:
+                if not child.strip() or child.lstrip().startswith('#'): continue
+                if len(child)-len(child.lstrip())<=depth: break
+                match=re.fullmatch(r'\s*-\s+([a-z][a-z0-9-]*)\s*(?:#.*)?',child)
+                if not match: return None
+                entries.append(match[1])
+            result.append(entries)
+    return result
+
+def checks(base):
+    def read(path): return (base/path).read_text()
+    p=read(protocol); gate=section(p,'### Determining which reviewers to run','### Step 7a loop parameters')
+    entry=section(gate,'The only configuration resolution','### Runtime-availability check')
+    runtime=section(gate,'### Runtime-availability check','#### Policy resolution')
+    policy=section(gate,'#### Policy resolution','#### Warning comment format')
+    warning=section(gate,'#### Warning comment format','#### Hard-fail comment format')
+    hard=section(gate,'#### Hard-fail comment format','### Reviewer dispatch map')
+    dispatch=section(gate,'### Reviewer dispatch map','### Branch-type detection')
+    summary=gate.split('#### Step 7a summary comment (mandatory)',1)[-1]
+    out={}
+    declared=section(entry,'Supported reviewer values are ','. If no list')
+    out['D-1']=set(re.findall(r'`([^`]+)`',declared))==supported and contains(entry,'Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and','`coderabbit`, `codex-github` (hosted-service)')
+    out['D-2']=not any(x in gate.lower() for x in ('runner identity is a sufficient proxy','reachability classification table'))
+    grep=subprocess.run(['git','-C',str(base),'grep','-n','-i','-F','universally reachable','--','*.md','*.sh','*.yaml','*.yml','*.mdc',':(exclude)CHANGELOG.md',':(exclude)docs/specs/developments/**',':(exclude)docs/testing/**',':(exclude)scripts/**/tests/**'],capture_output=True)
+    out['D-3']=grep.returncode==1 # search errors must never count as an empty result
+    lists=[runner_lists(read(path)) for path in (shared,local)]
+    out['D-4']=all(groups is not None and groups and all(set(group)<=supported for group in groups) for groups in lists)
+    reasons={'runtime-absent','prerequisite-missing','check-inconclusive','value-not-supported'}
+    doc=dict(re.findall(r'^\| `([^`]+)` \| (.+) \|$',runtime,re.M))
+    code={}
+    for line in read(helper).splitlines():
+        m=re.match(r'\s*([a-z-]+)\) remedies\[\$count\]=([\'"])(.*)\2 ;;',line)
+        if m: code[m[1]]=m[3]
+    out['D-5']=set(doc)==set(code)==reasons and doc==code
+    out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
+    out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
+    out['D-8']=contains(runtime,'is read-only: do not review, post a comment, alter the PR, install software, or substitute a reviewer','Do not provision services or write tracked files.')
+    out['D-9']=lists[0]==[['claude','cursor','codex']] and not re.search(r'expected behavio[u]?r.*hard.fail',read(shared),re.I)
+    c=read(cr)
+    out['D-10']=contains(section(c,'### Draft conversion','### Invocation'),'reviews.auto_review.enabled: true','after availability and policy') and 'coderabbitai[bot]' in c and contains(hard,'CodeRabbit draft-eligibility precondition','before its dispatch') and 'Switch to Claude' not in c
+    def dispatch_block(s):
+        return re.findall(r'^\*\*`codex-github` runner reviewer dispatch\*\*:.*$',s,re.M)
+    da,db=[dispatch_block(read(a)) for a in agents]
+    out['D-11']=len(da)==len(db)==1 and da==db
+    out['D-12']=contains(entry,'On exit `0`, dispatch each indexed reachable reviewer','Never dispatch unreachable or override-excluded records.','When `FALLBACK_APPLIED=true`, dispatch the driving runner\'s own stage reviewer exactly once.')
+    out['D-13']=contains(entry,'Run it on every cycle','a verdict from an earlier cycle is never reused.')
+    out['D-14']=contains(runtime,'This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.','is read-only: do not review, post a comment, alter the PR','Do not provision services or write tracked files.')
+    invocation=section(entry,'```bash','```')
+    out['D-15']=contains(entry,'No reviewer is dispatched until the resolver returns and the policy has been applied') and contains(invocation,'resolve-reviewer-availability.sh','--repo-root <artifact-repo-root> --owner <target-owner> --repo <target-repo>','--runner-kind <actual-driving-session-kind>') and contains(entry,'never a value inferred from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`')
+    out['D-16']=contains(summary,'per-reviewer verdict for every configured reviewer','display labels Reachable, Unreachable, or Excluded by override','Override-excluded entries appear in the summary and never in the warning.','Record `FALLBACK_APPLIED` and the own-stage dispatch')
+    out['D-17']=contains(warning,'only when `OUTCOME=proceeded-reduced`','before dispatching any reviewer','indexed names, reasons, and remedies','reachable subset','never name runner context') and '(<runner-context>)' not in warning
+    out['D-18']=contains(hard,'Every configured reviewer with its verdict','including Reachable and Excluded by override','reason and remedy','`BLOCK_CAUSE`','`LOCAL_OVERRIDE_STATE`','`POLICY_INPUT`','`UNREADABLE_FILE` / `UNREADABLE_DETAIL`','Case B names `fail-if-any-unavailable`','do not attribute a block to runner identity') and '(<runner-context>)' not in hard
+    recovery=section(hard,'Treat helper','After a proceed verdict')
+    out['D-19']=contains(recovery,'exit `1` and exit `2` (`availability-resolver-failed`)','dispatch nobody, never convert to ready','After determination','gh pr ready <pr_number> --undo','verify `isDraft: true`','missing_required_secret_or_permission','do not claim the PR is draft')
+    out['D-20']=contains(entry,'no independent `review-effective` or `review-overrides` call','stalled parser is verified by smoke Step 16') and contains(hard,'After a proceed verdict, if a Reachable `coderabbit` is selected','only if needed','after availability and policy but before dispatch') and contains(policy,'Neither reviewer is classified unavailable because the PR is draft.')
+    out['D-21']=contains(runtime,'historical activity can be a false Reachable after removal','new or review-only installation can be false Unreachable','review failure under either policy, never an unreachability reclassification')
+    unsafe_aggregate_lines=[line for line in gate.splitlines() if re.search(r'\b(?:CONFIGURED|REACHABLE|UNREACHABLE|OVERRIDE_EXCLUDED)\b',line) and re.search(r'\b(?:split|splitting|tokenize|eval)\b',line,re.I) and not re.search(r'never|must not|do not',line,re.I)]
+    out['D-22']=not unsafe_aggregate_lines and contains(entry,'names only from its indexed `REVIEWER_N_*` fields','display-only and must never be split or `eval`ed') and contains(summary,'names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields')
+    blocks=[availability(read(x)) for x in [protocol,*agents,cg]]
+    out['D-23']=all(blocks) and len(set(blocks))==1 and contains(blocks[0],'repository-activity proxy','`prerequisite-missing`','complete short page','`check-inconclusive`','full unmatched page','Post-dispatch errors remain review failures')
+    outside=runtime.replace(availability(p) or '', '')
+    out['D-24']=contains(outside,'availability is decided at runtime from whether the service is installed and reachable.','Where the service is not installed and reachable it is unavailable with a named reason.','Decision 8 waives literal verification of both directions')
+    return out
+
+def report(result):
+    for name,passed in result.items(): print(('PASS' if passed else 'FAIL')+': '+name,flush=True)
+    print(f'{sum(result.values())} passed; {len(result)-sum(result.values())} failed',flush=True)
+
+baseline=checks(root);report(baseline)
+if not all(baseline.values()): raise SystemExit(1)
+if sys.argv[2] not in ('','--prove-plants'): raise SystemExit('unknown argument: '+sys.argv[2])
+if sys.argv[2]=='--prove-plants':
+    # Copy only versioned input files; never copy .git, credentials, local
+    # overrides, dependencies, or unrelated ignored state into a fixture.
+    with tempfile.TemporaryDirectory(prefix='step7a-surfaces-') as tmp:
+        fixture=pathlib.Path(tmp)
+        paths=subprocess.check_output(['git','-C',str(root),'ls-files','-z']).decode().split('\0')
+        for name in paths:
+            if not name or not (root/name).is_file(): continue
+            dest=fixture/name;dest.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(root/name,dest)
+        subprocess.run(['git','init','-q',str(fixture)],check=True)
+        subprocess.run(['git','-C',str(fixture),'add','.'],check=True)
+        assert all(checks(fixture).values()), 'clean copied fixture must pass'
+        plants=[
+            ('D-1',protocol,'`coderabbit`, `codex-github` (hosted-service). If no list','`coderabbit`, `codex-github` (hosted-service), `greptile`. If no list'),
+            ('D-2',protocol,'### Runtime-availability check','### Runtime-availability check\n\nRunner identity is a sufficient proxy.'),
+            ('D-3',header,'# This is a hosted-service reviewer.','# This is universally reachable.'),
+            ('D-4',local,'      - cursor','      - greptile'),
+            ('D-5',protocol,"| `runtime-absent` | Install the reviewer's runtime","| `runtime-absent` | Acquire the reviewer's runtime"),
+            ('D-6',protocol,'Every dispatched failure is a review failure under either policy.','Every dispatched failure is skipped under warn.'),
+            ('D-7',readme,"driving runner's own stage reviewer",'fixed Claude reviewer'),
+            ('D-8',protocol,'install software, or\nsubstitute a reviewer','install software, or\nreplace a reviewer'),
+            ('D-9',shared,'      - claude\n      - cursor\n      - codex','      - codex'),
+            ('D-10',cr,'`reviews.auto_review.enabled: true` must be set','`reviews.auto_review.enabled: false` must be set'),
+            ('D-11',agents[1],'Exit `0` approves','Exit `0` accepts'),
+            ('D-12',protocol,"`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer\nexactly once.","`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer\nzero times."),
+            ('D-13',protocol,'a verdict from an earlier cycle is never reused.','a verdict from an earlier cycle is reused.'),
+            ('D-14',protocol,'This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.','Reporting may run during determination.'),
+            ('D-15',protocol,'No reviewer is dispatched until the resolver returns and the\npolicy has been applied','Dispatch all reviewers before determination'),
+            ('D-15',protocol,'  --runner-kind <actual-driving-session-kind>\n```','  --runner-kind omitted\n```'),
+            ('D-16',protocol,'per-reviewer verdict for every configured reviewer','verdict for dispatched reviewers only'),
+            ('D-17',protocol,'only when `OUTCOME=proceeded-reduced`','for every outcome'),
+            ('D-18',protocol,'Every configured reviewer with its verdict is included in each hard-fail report.','Only unreachable reviewers are included in each hard-fail report.'),
+            ('D-19',protocol,'verify `isDraft: true` before completing the block report','assume the PR is draft'),
+            ('D-20',protocol,'After a proceed verdict, if a Reachable `coderabbit` is selected','After a proceed verdict, regardless of whether `coderabbit` is Reachable'),
+            ('D-21',protocol,'historical activity can be a false Reachable after removal','historical activity proves the service remains installed'),
+            ('D-22',protocol,'### Branch-type detection','Split `CONFIGURED` on commas to recover reviewer names.\n\n### Branch-type detection'),
+            ('D-23',agents,'complete short page','incomplete short page'),
+            ('D-24',protocol,'Where the service is not installed and reachable it is\nunavailable with a named reason.','No source condition applies when the service is absent.'),
+        ]
+        for number,(case,files,needle,replacement) in enumerate(plants,1):
+            files=[files] if isinstance(files,str) else files
+            originals={};evidence=[]
+            try:
+                for file in files:
+                    target=fixture/file;s=target.read_text(); originals[file]=s
+                    assert s.count(needle)==1,(case,file,'plant must identify one unique location',s.count(needle))
+                    line=s[:s.index(needle)].count('\n')+1;evidence.append(f'{file}:{line}')
+                    target.write_text(s.replace(needle,replacement,1))
+                result=checks(fixture)
+                assert [k for k,v in result.items() if not v]==[case],(case,'plant must change only its check',result)
+                print(f'PROOF {number:02d} {case}: FAIL at '+', '.join(evidence),flush=True)
+            finally:
+                for file,s in originals.items(): (fixture/file).write_text(s)
+            assert checks(fixture)==baseline,(case,'repaired fixture must pass every check')
+            print(f'PROOF {number:02d} {case}: PASS after repair',flush=True)
+        print('25 isolated planted violations failed and repaired; source checkout untouched.',flush=True)
+PY

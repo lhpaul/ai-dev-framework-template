@@ -1606,10 +1606,11 @@ The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For 
 The only configuration resolution for Step 7a is the bounded availability
 helper. Run it on every cycle, before dispatch, passing the actual driving
 session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
-from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`:
+from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-scripts/development-workflow/resolve-reviewer-availability.sh \
+bash scripts/development-workflow/resolve-reviewer-availability.sh \
   --repo-root <artifact-repo-root> --owner <target-owner> --repo <target-repo> \
   --runner-kind <actual-driving-session-kind>
 ```
@@ -1622,7 +1623,7 @@ display-only and must never be split or `eval`ed. The helper reports local
 override state and `override-excluded` records, which are deliberate omissions
 and never unreachability warnings.
 
-On exit `0`, dispatch each indexed reachable reviewer. When
+On exit `0`, dispatch each indexed reachable reviewer, in configured order, only after applying the returned `OUTCOME`. Never dispatch unreachable or override-excluded records. When
 `FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer
 exactly once. No reviewer is dispatched until the resolver returns and the
 policy has been applied; a verdict from an earlier cycle is never reused.
@@ -1638,14 +1639,14 @@ unreachable. The helper finishes within its fixed ten-second budget and emits
 `runtime-absent`, `prerequisite-missing`, `check-inconclusive`, or
 `value-not-supported` and a remedy for every unreachable entry. Determination
 is read-only: do not review, post a comment, alter the PR, install software, or
-substitute a reviewer while it runs.
+substitute a reviewer while it runs. Do not provision services or write tracked files. This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.
 
 | Reason | Remedy |
 | --- | --- |
-| `runtime-absent` | Make the required runtime available. |
-| `prerequisite-missing` | Satisfy the named repository prerequisite. |
-| `check-inconclusive` | Retry after the bounded check can complete. |
-| `value-not-supported` | Correct the configured reviewer value. |
+| `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
+| `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
+| `check-inconclusive` | Re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository. |
+| `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
 
 Hosted-service availability is decided at runtime from whether the service is
 installed and reachable. Where the service is not installed and reachable it is
@@ -1656,8 +1657,6 @@ new or review-only installation can be false Unreachable. Decision 8 waives
 literal verification of both directions for this implementation. A reviewer
 that then fails, errors, times out, or has no verdict is a review failure under
 either policy, never an unreachability reclassification.
-This accepted proxy, not proof of installation, retains its false Reachable
-case and the review failure under either policy boundary.
 
 <!-- step7a-codex-github-availability:start -->
 `codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
@@ -1665,11 +1664,35 @@ case and the review failure under either policy boundary.
 
 #### Policy resolution
 
-After classifying each reviewer, apply the configured policy. Read
-`internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
-local override in `.ai-dev-workflow.local.yaml`). This policy key is retained
-for compatibility even though the reviewer list moved to
-`review.on_draft.runner`. If the key is absent, the default is `warn`.
+Consume the helper's resolved policy and outcome; do not re-read configuration.
+The helper resolves repository defaults and the machine-local override once,
+validates policy before evaluating the reviewer list, then classifies capability
+and applies policy. Absent, null, bare, or empty policy means `warn` with
+`POLICY_SOURCE=default`. A non-empty unsupported string blocks before list
+fallback; a non-scalar policy or unreadable config file is `policy-unreadable`.
+An absent or empty list falls back to the driving runner's own stage reviewer;
+a malformed non-list or list with non-string members never falls back.
+
+The fixed external ceiling is ten seconds, with an eight-second internal budget
+including configuration resolution and probe cleanup. Configuration gets at
+most two seconds, each local probe at most three, and each hosted check at most
+four, clamped to the remaining global budget. Native positive evidence and
+unsupported-value classification still apply after budget exhaustion. An
+unstarted bounded probe is `check-inconclusive`. A config timeout reports
+`config-resolution-inconclusive`, with both input states `not-evaluated` and
+zero reviewer records. Exit `2` means invocation/execution failure and provides
+no policy verdict.
+
+For hosted checks, `gh` absence, authentication failure, transport error, invalid
+response, or timeout is `check-inconclusive`. There is no authentication preflight.
+One bounded GET reads the newest repository issue comments with
+`per_page=100&sort=created&direction=desc`. A bot match is positive proxy evidence;
+a full unmatched page is incomplete (`check-inconclusive`), and a short unmatched
+page is `prerequisite-missing`. CodeRabbit additionally requires
+`reviews.auto_review.enabled: true`; its login is `coderabbitai[bot]`.
+`codex-github` uses `CODEX_GITHUB_BOT_LOGIN` or
+`chatgpt-codex-connector[bot]`. Matching accepts the optional `[bot]` suffix.
+Neither reviewer is classified unavailable because the PR is draft.
 
 To override the policy locally without changing shared config, prefer
 `.ai-dev-workflow.local.yaml`:
@@ -1689,6 +1712,7 @@ Allowed values: `warn` (default), `fail-if-any-unavailable`.
 | Policy unreadable                                         | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unreadable`; dispatch nobody and restore an already-ready PR to draft. |
 | Policy unsupported                                        | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unsupported`; dispatch nobody and restore an already-ready PR to draft. |
 | Reviewer list malformed                                   | Any                       | **Hard-fail** with `BLOCK_CAUSE=list-malformed`; dispatch nobody and restore an already-ready PR to draft. |
+| Config resolution timed out | Any | **Hard-fail** with `BLOCK_CAUSE=config-resolution-inconclusive`; do not evaluate the list or dispatch. |
 | No configured list and no driving runner                  | Any                       | **Hard-fail** with `BLOCK_CAUSE=no-driving-runner`. |
 | Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
 | One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post the reason-and-remedy warning, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
@@ -1697,14 +1721,14 @@ Allowed values: `warn` (default), `fail-if-any-unavailable`.
 
 #### Warning comment format (one or more unreachable, `warn` policy)
 
-Post via `gh pr comment` before dispatching any reviewer. Use the following wording for each unreachable reviewer:
+Post via `gh pr comment` only when `OUTCOME=proceeded-reduced`, after determination and before dispatching any reviewer. Use indexed names, reasons, and remedies to render each unreachable reviewer and the reachable subset; never name runner context or include override-excluded records in this warning. Use the following wording for each unreachable reviewer:
 
 > `WARNING: internal_reviewer '<reviewer>' unreachable — <reason-display-label>. Remedy: <remedy>. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
 
-Example for `codex` unreachable from a Claude Code subagent with
+Example when the Codex runtime is absent and the configured list is
 `review.on_draft.runner: [claude, codex]`:
 
-> `WARNING: internal_reviewer 'codex' unreachable — runtime absent. Remedy: make the codex runtime available. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
+> `WARNING: internal_reviewer 'codex' unreachable — runtime absent. Remedy: Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
 
 #### Hard-fail comment format
 
@@ -1714,33 +1738,53 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 > `Step 7a BLOCKED: BLOCK_CAUSE=zero-reachable. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (<reason-display-label>; Remedy: <remedy>), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: make the missing runtime or prerequisite available, correct the configured value, or narrow 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
 
-`<local-override-state>` comes from the resolver output, never from a guess
-(#1560 AC-3):
-
-- `none` — `LOCAL_OVERRIDE_FILE` and `MAIN_CLONE_LOCAL_OVERRIDE_FILE` are both
-  empty. This is a genuine configuration-policy block.
-- `<LOCAL_OVERRIDE_FILE> (<LOCAL_OVERRIDE_ORIGIN>), applied` — an override was
-  resolved and still left zero reachable reviewers; the override itself names
-  reviewers this runner cannot reach.
-- `present but unpropagated: <MAIN_CLONE_LOCAL_OVERRIDE_FILE>` —
-  `LOCAL_OVERRIDE_FILE` is empty while the main clone has a file. This is
-  almost always a worktree resolving the wrong file rather than a policy
-  decision: re-run the resolver from the worktree path (`pwd -P`) and report
-  the discrepancy instead of treating the block as final.
+Render `<local-override-state>` directly from `LOCAL_OVERRIDE_STATE`, without
+reconstructing it from legacy reader fields. It is `none`, an applied override
+path and origin, or a present-but-unpropagated path diagnostic. Investigate an
+unpropagated override from the artifact worktree before treating it as final.
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 
 > `Step 7a BLOCKED: BLOCK_CAUSE=policy-forbids-reduced-coverage. No reviewers were dispatched. Reachable: [<reachable-list>]. Unreachable: [<reviewer> (<reason-display-label>; Remedy: <remedy>), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: make a runtime available, set the policy to 'warn', or narrow the local list.`
 
-**Case C — blocking configuration input:** report `BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`, or `no-driving-runner`), the resolver's local override state, the named file or value, and a corrective action. On every block path, including helper exit `2`, read current draft state after determination; if already ready, run `gh pr ready <pr_number> --undo`, verify `isDraft: true`, then post the block report. Do not dispatch a reviewer or convert a draft PR on a block path.
+**Case C — blocking configuration input or resolver failure:** report
+`BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`,
+`no-driving-runner`, or `config-resolution-inconclusive`), `POLICY_STATE`,
+`POLICY_SOURCE`, the exact `POLICY_INPUT` for an unsupported value, and
+`UNREADABLE_FILE` / `UNREADABLE_DETAIL` for unreadable input. For a malformed
+list, name `CONFIG_LIST_SOURCE` and its malformed state. Explain the corrective
+action without guessing classifications for entries that were not evaluated.
+For exit `2`, report `availability-resolver-failed`, exit status, and stderr;
+there is no returned policy verdict to invent.
 
 Every configured reviewer with its verdict is included in each hard-fail report.
+Use the available indexed records, including Reachable and Excluded by override
+records; state that none was dispatched. Include each Unreachable record's named
+reason and remedy, `BLOCK_CAUSE`, and `LOCAL_OVERRIDE_STATE`. When policy caused
+the block, explicitly name that policy (Case B names
+`fail-if-any-unavailable`); do not attribute a block to runner identity. When
+input validation precluded classification, state `not-evaluated` rather than
+claiming no reviewers were configured.
 
-Treat helper exit `1` and exit `2` (`availability-resolver-failed`) alike: dispatch nobody, never convert to ready, restore an already-ready PR only after determination, and escalate to a human.
+Treat helper exit `1` and exit `2` (`availability-resolver-failed`) alike:
+dispatch nobody, never convert to ready, and escalate. After determination, read
+current draft state. If already ready, run `gh pr ready <pr_number> --undo`, then
+verify `isDraft: true` before completing the block report. If restoration or
+verification fails, escalate as `missing_required_secret_or_permission` and do
+not claim the PR is draft. A PR that was draft remains draft. Post the hard-fail
+summary only after this recovery attempt, including any recovery failure.
+
+After a proceed verdict, if a Reachable `coderabbit` is selected, read the PR's
+draft state and convert with `gh pr ready <pr_number>` only if needed, then verify
+non-draft state before its dispatch. This conversion occurs after availability
+and policy but before dispatch; it is a CodeRabbit draft-eligibility precondition,
+not availability evidence. Other reviewer paths retain conversion after approval.
+A conversion/verification failure escalates as `missing_required_secret_or_permission`
+and dispatches nobody. The CodeRabbit exception below never applies on a block.
 
 ### Reviewer dispatch map
 
-For each reviewer in the resolved list, dispatch the stage-appropriate agent:
+For each indexed Reachable reviewer selected by the proceed verdict, dispatch the stage-appropriate agent:
 
 | Reviewer     | PR branch prefix                                  | Agent / protocol to dispatch                                                                                           |
 | ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -1780,7 +1824,7 @@ Before running any reviewers, classify the PR branch to determine which executio
 
 ### Multi-reviewer execution rules
 
-Run all configured internal reviewers **sequentially** in the order listed. Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
+Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
@@ -1793,11 +1837,11 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 | Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                        |
 | Any reviewer returns `NEEDS REVISION` (product/design decision)                                           | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding                                        |
 
-All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
+Except for the conditional CodeRabbit conversion above, all selected internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
 
 #### Implementation PRs (feature/_, fix/_, refactor/_, hotfix/_): two-pass
 
-Implementation PRs run two sequential passes before `gh pr ready` is called. Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
+Implementation PRs run two sequential passes before final approval (with the conditional pre-dispatch CodeRabbit conversion above when needed). Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
 
 **Pass 1 (Spec Compliance)**: each reviewer evaluates only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 1: Spec Compliance`) in the dispatch prompt so the reviewer scopes its findings accordingly.
 
@@ -1819,7 +1863,7 @@ Implementation PRs run two sequential passes before `gh pr ready` is called. Pas
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision)                                                                                                        | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human                                                                                                                                                                    |
 
-Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
+Both passes must complete with all selected reviewers `APPROVED` before final advancement. The conditional CodeRabbit conversion above is not approval. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
 
 #### Step 7a summary comment (mandatory)
 
@@ -1827,7 +1871,7 @@ A Step 7a summary comment **must always be posted to the PR** when the gate exit
 
 Include a per-reviewer verdict for every configured reviewer, with its display
 label and its reason and remedy when unreachable, plus the gate outcome.
-Override-excluded entries appear in the summary and never in the warning.
+Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED` and the own-stage dispatch when fallback applies; do not report success with no reviewer dispatched.
 
 Required fields:
 

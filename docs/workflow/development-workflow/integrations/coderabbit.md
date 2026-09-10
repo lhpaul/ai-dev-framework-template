@@ -134,7 +134,7 @@ review:
       - coderabbit
 ```
 
-All reviewers in the list must APPROVE before `gh pr ready` is called. Reviewers run sequentially in the listed order.
+The conditional draft conversion below enables CodeRabbit dispatch; it does not approve the gate. All selected reviewers must APPROVE before final advancement. Reviewers run sequentially in configured order.
 
 ### Draft conversion
 
@@ -173,8 +173,9 @@ budget, before dispatching anybody. For CodeRabbit the helper checks
 comments page for `coderabbitai[bot]`. Bot activity is a bounded
 repository-activity proxy, not proof of current installation or per-review
 enablement: a complete short unmatched page is `prerequisite-missing`, while a
-full unmatched page is `check-inconclusive`. The gate applies the configured
-policy only after all configured reviewers have a verdict.
+full unmatched page is `check-inconclusive`. The helper validates policy and configuration first and blocks invalid inputs
+before any probe. For valid configuration it classifies capability, then applies
+the resolved reachability policy; the gate consumes that returned outcome.
 
 The proxy can be false Reachable after an App is removed and false Unreachable
 for a new or review-only installation. If CodeRabbit was classified reachable
