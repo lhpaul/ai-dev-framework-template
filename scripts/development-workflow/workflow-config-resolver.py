@@ -79,6 +79,8 @@ def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> st
     in_double = False
     escaped = False
     result: list[str] = []
+    node_started = False
+    flow_depth = 0
     index = 0
     while index < len(line):
         char = line[index]
@@ -97,20 +99,39 @@ def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> st
                 result.extend((char, "'"))
                 index += 2
                 continue
-            if in_single or quote_starts_here(result, strict_quotes=strict_yaml_comments):
+            if in_single or not strict_yaml_comments or not node_started:
                 in_single = not in_single
+            node_started = True
             result.append(char)
             index += 1
             continue
         if char == '"' and not in_single:
-            if in_double or quote_starts_here(result, strict_quotes=strict_yaml_comments):
+            if in_double or not strict_yaml_comments or not node_started:
                 in_double = not in_double
+            node_started = True
             result.append(char)
             index += 1
             continue
         if char == "#" and not in_single and not in_double:
             if not strict_yaml_comments or not result or result[-1] in YAML_INLINE_WHITESPACE:
                 break
+        if strict_yaml_comments and not in_single and not in_double:
+            # Whitespace within a plain scalar never starts a quoted scalar.
+            # Only mapping/list boundaries can start a new node, matching the
+            # flow splitter's treatment of literal quotes in plain values.
+            separated = index + 1 == len(line) or line[index + 1] in YAML_INLINE_WHITESPACE
+            if char in "[{" and (flow_depth > 0 or not node_started):
+                flow_depth += 1
+                node_started = False
+            elif char in "]}" and flow_depth > 0:
+                flow_depth -= 1
+                node_started = True
+            elif (char == "," and flow_depth > 0) or (char == ":" and separated):
+                node_started = False
+            elif char == "-" and not node_started and separated:
+                pass
+            elif char not in YAML_INLINE_WHITESPACE:
+                node_started = True
         result.append(char)
         index += 1
     return "".join(result).rstrip(YAML_INLINE_WHITESPACE if strict_yaml_comments else None)

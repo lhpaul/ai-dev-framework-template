@@ -395,6 +395,16 @@ reviews:
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
     for source in (cfg, local):
+        for token in ('foo "', "foo '", 'foo "#literal', "foo '#literal"):
+            for suffix in ('', ' # comment', '\t# comment'):
+                reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]'+suffix+'\n')
+                d=run('codex')
+                check(f'T-31 plain quote preserves comment {source.name} {token!r} {suffix!r}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_NAME']==token and d['REVIEWER_2_NAME']=='codex' and d['REVIEWER_2_STATUS']=='reachable',d)
+        for node, expected in ((r'"escaped\" #literal"', 'escaped" #literal'), ("'doubled'' #literal'", "doubled' #literal")):
+            reset();source.write_text('review:\n  on_draft:\n    runner: ['+node+', codex] # comment\n')
+            d=run('codex')
+            check(f'T-31 quoted literal hash preserves comment {source.name} {node}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_NAME']==expected,d)
+    for source in (cfg, local):
         for char in ('\x00', '\x07', '\x0b', '\x7f', '\x9f', '\ufffe', '\uffff'):
             for extra in ('# comment '+char, 'other: x'+char, 'other: "x'+char+'"'):
                 reset();source.write_text(extra+'\nreview:\n  on_draft:\n    runner: [codex]\n')

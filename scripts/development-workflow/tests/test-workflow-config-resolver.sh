@@ -1337,6 +1337,42 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Literal quotes inside started plain nodes cannot hide trailing comments.
+plain_quote_result=$(python3 - "$RESOLVER" <<'PY_PLAIN_QUOTE'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for token in ('foo "', "foo '", 'foo \t"', "foo \t'", 'foo "#literal', "foo '#literal"):
+            for suffix in ("", " # comment", "\t# comment"):
+                for node in ("["+token+", codex]"+suffix, "\n      - "+token+suffix+"\n      - codex"):
+                    local.unlink(missing_ok=True)
+                    shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                    source.write_text("review:\n  on_draft:\n    runner: "+node+"\n")
+                    d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                    assert d["effective_runner_state"] == "defined" and d["effective_runner"] == [token, "codex"], d
+                    checks += 1
+        for token in ('foo [ "', "foo { '", 'foo, "', 'foo:bar "'):
+            source.write_text("other: "+token+" # comment\n")
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == token
+            checks += 1
+        for node, expected in ((r'"escaped\" #literal"', 'escaped" #literal'), ("'doubled'' #literal'", "doubled' #literal"), ('"#literal"', '#literal')):
+            for value, want in ((node, expected), ("["+node+"]", [expected]), ("[["+node+"]]", [[expected]])):
+                source.write_text("other: "+value+" # comment\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == want
+                checks += 1
+    assert module.strip_inline_comment('other: foo " # legacy') == 'other: foo " # legacy'
+    checks += 1
+print(f"{checks} plain quote and comment controls passed")
+PY_PLAIN_QUOTE
+)
+run_test "strict plain quote comment boundaries" '99 plain quote and comment controls passed' "$plain_quote_result"
+
 # Validate raw YAML before removing comments or interpreting quoted escapes.
 raw_character_result=$(python3 - "$RESOLVER" <<'PY_RAW'
 import importlib.util, json, pathlib, subprocess, sys, tempfile
