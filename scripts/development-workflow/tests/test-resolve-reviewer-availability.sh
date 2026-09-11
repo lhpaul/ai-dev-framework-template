@@ -382,6 +382,15 @@ reviews:
             reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]\n')
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
+    for source in (cfg, local):
+        for scalar in ('%reserved', '%', '[%reserved]', '[[%reserved]]'):
+            reset();source.write_text('other: '+scalar+'\nreview:\n  on_draft:\n    runner: [codex]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n')
+            d=run('codex',1)
+            check(f'T-31 reserved percent blocks {source.name} {scalar}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+        for scalar in ('"%reserved"', "'%reserved'", '["%reserved"]', 'value%part', 'https://example.test/%20'):
+            reset();source.write_text('other: '+scalar+'\nreview:\n  on_draft:\n    runner: [codex]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n')
+            d=run('codex')
+            check(f'T-31 valid percent proceeds {source.name} {scalar}',d['OUTCOME']=='proceeded' and d['REVIEWER_1_STATUS']=='reachable',d)
     reset();cfg.write_text('review:\n  broken mapping\n');d=run('codex',1)
     check('T-31 broken file plant',d['BLOCK_CAUSE']=='policy-unreadable' and d['CONFIG_LIST_STATE']=='not-evaluated')
     reset();check('T-31 repaired availability guard',run('codex')['OUTCOME']=='proceeded')

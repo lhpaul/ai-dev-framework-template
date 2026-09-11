@@ -1337,6 +1337,32 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Reserved percent indicators are invalid nodes, but quoted/interior percent is text.
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for scalar in '%reserved' '%' '[%reserved]' '[[%reserved]]'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "reserved percent $config_name $scalar" malformed unreadable
+  done
+  for scalar in '"%reserved"' "'%reserved'" '["%reserved"]' 'value%part' 'https://example.test/%20'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "valid percent $config_name $scalar" defined absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+legacy_percent=$(python3 - "$RESOLVER" <<'PY_PERCENT'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+assert module.parse_scalar("%reserved") == "%reserved"
+assert module.parse_scalar("[%reserved]") == ["%reserved"]
+print("legacy percent unchanged")
+PY_PERCENT
+)
+run_test "legacy percent parsing" 'legacy percent unchanged' "$legacy_percent"
+
 # Review-effective uses YAML's required separator after every mapping colon.
 # The legacy override reader keeps accepting its historic compact forms.
 write_review_effective_fixture 'review:{}'

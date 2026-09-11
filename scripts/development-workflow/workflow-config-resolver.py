@@ -281,7 +281,7 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         if not value.startswith(("[", "{")) and re.search(r":(?:\s|$)", value):
             raise ConfigError(f"{path}:{line_no}: mapping delimiter in plain scalar")
         if (
-            value.startswith(("!", "&", "*", "|", ">", "@", "`", "]", "}", ","))
+            value.startswith(("!", "&", "*", "|", ">", "@", "`", "%", "]", "}", ","))
             or value == "?"
             or value.startswith("? ")
             or value == "-"
