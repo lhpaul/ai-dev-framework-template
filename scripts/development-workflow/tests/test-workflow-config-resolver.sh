@@ -1082,7 +1082,7 @@ printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn # intende
 assert_review_effective_states "E-21 whitespace policy comment" defined defined
 run_test "review-effective E-21 whitespace policy comment value" warn "$(review_effective_state effective_policy)"
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: '\''warn'\''#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-assert_review_effective_states "E-21 quoted policy suffix" defined unsupported
+assert_review_effective_states "E-21 quoted policy suffix" malformed unreadable
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn\#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-21 escaped policy suffix" defined unsupported
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: &policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
@@ -1172,6 +1172,18 @@ run_test "review-effective E-27 quoted comma values" '["it'"'"'s, codex","a,b","
 printf '%s\n' 'review:' '  on_draft:' '    runner: ["a\",b", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-27 escaped quoted comma" defined absent
 run_test "review-effective E-27 escaped quoted comma values" '["a\\\",b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["claude\"x", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 escaped quoted scalar" defined absent
+run_test "review-effective E-27 escaped quoted scalar values" '["claude\\\"x","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' "    runner: ['claude''s, cursor', codex]" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 doubled single quote" defined absent
+run_test "review-effective E-27 doubled single quote values" '["claude'"'"'s, cursor","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, "claude" "cursor"]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 adjacent double quoted values" malformed unreadable
+run_contains "review-effective E-27 adjacent double quoted detail" "trailing content after quoted scalar" "$(review_effective_state unreadable_detail)"
+printf '%s\n' 'review:' '  on_draft:' "    runner: [codex, 'claude' 'cursor']" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 adjacent single quoted values" malformed unreadable
+run_contains "review-effective E-27 adjacent single quoted detail" "trailing content after quoted scalar" "$(review_effective_state unreadable_detail)"
 printf '%s\n' 'review:' '  on_draft:' '    runner: ["extra: value", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-27 quoted mapping-shaped scalar" defined absent
 run_test "review-effective E-27 quoted mapping-shaped scalar values" '["extra: value","codex"]' "$(review_effective_json | jq -c '.effective_runner')"

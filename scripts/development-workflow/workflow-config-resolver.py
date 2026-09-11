@@ -73,29 +73,40 @@ def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> st
     in_double = False
     escaped = False
     result: list[str] = []
-    for char in line:
+    index = 0
+    while index < len(line):
+        char = line[index]
         if escaped:
             result.append(char)
             escaped = False
+            index += 1
             continue
         if char == "\\" and in_double:
             result.append(char)
             escaped = True
+            index += 1
             continue
         if char == "'" and not in_double:
+            if strict_yaml_comments and in_single and index + 1 < len(line) and line[index + 1] == "'":
+                result.extend((char, "'"))
+                index += 2
+                continue
             if in_single or quote_starts_here(result, strict_quotes=strict_yaml_comments):
                 in_single = not in_single
             result.append(char)
+            index += 1
             continue
         if char == '"' and not in_single:
             if in_double or quote_starts_here(result, strict_quotes=strict_yaml_comments):
                 in_double = not in_double
             result.append(char)
+            index += 1
             continue
         if char == "#" and not in_single and not in_double:
             if not strict_yaml_comments or not result or result[-1].isspace():
                 break
         result.append(char)
+        index += 1
     return "".join(result).rstrip()
 
 
@@ -161,20 +172,27 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     if not value.startswith(("'", '"')):
         return
 
-    in_single = False
-    in_double = False
-    escaped = False
-    for char in value:
-        if escaped:
-            escaped = False
-        elif char == "\\" and in_double:
-            escaped = True
-        elif char == "'" and not in_double:
-            in_single = not in_single
-        elif char == '"' and not in_single:
-            in_double = not in_double
-    if in_single or in_double:
+    quote = value[0]
+    index = 1
+    while index < len(value):
+        char = value[index]
+        if quote == "'" and char == "'":
+            if index + 1 < len(value) and value[index + 1] == "'":
+                index += 2
+                continue
+            index += 1
+            break
+        if quote == '"' and char == "\\":
+            index += 2
+            continue
+        if quote == '"' and char == '"':
+            index += 1
+            break
+        index += 1
+    else:
         raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
+    if value[index:]:
+        raise ConfigError(f"{path}:{line_no}: trailing content after quoted scalar")
 
 
 def parse_scalar(
@@ -197,6 +215,8 @@ def parse_scalar(
     if (value.startswith("'") and value.endswith("'")) or (
         value.startswith('"') and value.endswith('"')
     ):
+        if review_effective and value.startswith("'"):
+            return value[1:-1].replace("''", "'")
         return value[1:-1]
     if value == "[]":
         return []
@@ -249,30 +269,42 @@ def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
     in_double = False
     escaped = False
 
-    for char in value:
+    index = 0
+    while index < len(value):
+        char = value[index]
         if escaped:
             current.append(char)
             escaped = False
+            index += 1
             continue
         if char == "\\" and in_double:
             current.append(char)
             escaped = True
+            index += 1
             continue
         if char == "'" and not in_double:
+            if strict_quotes and in_single and index + 1 < len(value) and value[index + 1] == "'":
+                current.extend((char, "'"))
+                index += 2
+                continue
             if in_single or quote_starts_here(current, strict_quotes=strict_quotes):
                 in_single = not in_single
             current.append(char)
+            index += 1
             continue
         if char == '"' and not in_single:
             if in_double or quote_starts_here(current, strict_quotes=strict_quotes):
                 in_double = not in_double
             current.append(char)
+            index += 1
             continue
         if char == "," and not in_single and not in_double:
             items.append("".join(current))
             current = []
+            index += 1
             continue
         current.append(char)
+        index += 1
 
     items.append("".join(current))
     return items
@@ -320,23 +352,33 @@ def list_item_is_mapping(item: str, *, strict_quotes: bool = False) -> bool:
     in_single = False
     in_double = False
     escaped = False
-    for index, char in enumerate(item):
+    index = 0
+    while index < len(item):
+        char = item[index]
         if escaped:
             escaped = False
+            index += 1
             continue
         if char == "\\" and in_double:
             escaped = True
+            index += 1
             continue
         if char == "'" and not in_double:
+            if strict_quotes and in_single and index + 1 < len(item) and item[index + 1] == "'":
+                index += 2
+                continue
             if in_single or quote_starts_here(list(item[:index]), strict_quotes=strict_quotes):
                 in_single = not in_single
+            index += 1
             continue
         if char == '"' and not in_single:
             if in_double or quote_starts_here(list(item[:index]), strict_quotes=strict_quotes):
                 in_double = not in_double
+            index += 1
             continue
         if char == ":" and not in_single and not in_double:
             return index + 1 == len(item) or item[index + 1].isspace()
+        index += 1
     return False
 
 
