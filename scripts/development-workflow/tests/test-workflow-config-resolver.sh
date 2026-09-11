@@ -1337,6 +1337,58 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Strict YAML separation is ASCII space/tab, not Python's Unicode whitespace.
+unicode_whitespace_result=$(python3 - "$RESOLVER" <<'PY_WHITESPACE'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared = root / ".ai-dev-workflow.yaml"
+    local = root / ".ai-dev-workflow.local.yaml"
+    for source in (shared, local):
+        for space in ("\u00a0", "\u2003", "\u3000", "\u2028"):
+            for token in (space, "warn"+space+"#literal", space+"warn", "warn"+space):
+                local.unlink(missing_ok=True)
+                shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                source.write_text("review:\n  internal_reviewers_unavailable_policy: "+token+"\n")
+                d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                assert d["effective_policy_state"] == "unsupported" and d["policy_input"] == token, d
+                checks += 1
+            for value in (space, "codex"+space+"#literal", "x:"+space+"y", "x"+space+'"y#z'):
+                for node in (value, "["+value+"]"):
+                    source.write_text("other: "+node+"\n")
+                    parsed = module.parse_yaml_subset(source, preserve_empty_values=True)
+                    expected = [value] if node.startswith("[") else value
+                    assert parsed["other"] == expected, (node, parsed)
+                    checks += 1
+                source.write_text("other:\n  - "+value+"\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == [value]
+                checks += 1
+            for invalid in ("other:"+space+"value", "other: [codex]"+space, 'other: "codex"'+space):
+                source.write_text(invalid+"\n")
+                try:
+                    module.parse_yaml_subset(source, preserve_empty_values=True)
+                except module.ConfigError:
+                    checks += 1
+                else:
+                    raise AssertionError(invalid)
+        for value, expected in (("warn #comment", "warn"), ("warn\t#comment", "warn"), ('"warn #literal"', "warn #literal"), ("https://example.test/#part", "https://example.test/#part")):
+            source.write_text("other: \t"+value+" \t\n")
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == expected
+            checks += 1
+    shared.write_text("other: \u00a0\n")
+    assert module.parse_yaml_subset(shared)["other"] == {}
+    shared.write_text("other: warn\u00a0#literal\n")
+    assert module.parse_yaml_subset(shared)["other"] == "warn"
+    checks += 2
+print(f"{checks} strict whitespace and legacy controls passed")
+PY_WHITESPACE
+)
+run_test "strict YAML whitespace classification" '162 strict whitespace and legacy controls passed' "$unicode_whitespace_result"
+
 # Reserved percent indicators are invalid nodes, but quoted/interior percent is text.
 for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
   for scalar in '%reserved' '%' '[%reserved]' '[[%reserved]]'; do

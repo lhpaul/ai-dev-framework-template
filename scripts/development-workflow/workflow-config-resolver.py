@@ -54,6 +54,9 @@ LOCAL_ONLY_KEYS = {
 }
 
 
+YAML_INLINE_WHITESPACE = " \t"
+
+
 class ConfigError(Exception):
     """Configuration problem with a human-readable message."""
 
@@ -63,7 +66,7 @@ def quote_starts_here(prefix: list[str], *, strict_quotes: bool) -> bool:
     return (
         not strict_quotes
         or not prefix
-        or prefix[-1].isspace()
+        or prefix[-1] in YAML_INLINE_WHITESPACE
         or prefix[-1] in ":,[{"
     )
 
@@ -103,30 +106,34 @@ def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> st
             index += 1
             continue
         if char == "#" and not in_single and not in_double:
-            if not strict_yaml_comments or not result or result[-1].isspace():
+            if not strict_yaml_comments or not result or result[-1] in YAML_INLINE_WHITESPACE:
                 break
         result.append(char)
         index += 1
-    return "".join(result).rstrip()
+    return "".join(result).rstrip(YAML_INLINE_WHITESPACE if strict_yaml_comments else None)
 
 
 def preprocess_yaml(path: Path, *, strict_yaml_comments: bool = False) -> list[tuple[int, str, int]]:
     try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
+        raw_text = path.read_text(encoding="utf-8")
+        # read_text normalizes CR/CRLF; Unicode whitespace is scalar content,
+        # not indentation, separation, or an additional physical line break.
+        raw_lines = raw_text.split("\n") if strict_yaml_comments else raw_text.splitlines()
     except OSError as exc:
         raise ConfigError(f"{path}: could not read config: {exc}") from exc
 
+    whitespace = YAML_INLINE_WHITESPACE if strict_yaml_comments else None
     lines: list[tuple[int, str, int]] = []
     for line_no, raw in enumerate(raw_lines, start=1):
         if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
             raise ConfigError(f"{path}:{line_no}: tabs are not supported for indentation")
         stripped_comment = strip_inline_comment(raw, strict_yaml_comments=strict_yaml_comments)
-        if not stripped_comment.strip():
+        if not stripped_comment.strip(whitespace):
             continue
         indent = len(stripped_comment) - len(stripped_comment.lstrip(" "))
         if indent % 2 != 0:
             raise ConfigError(f"{path}:{line_no}: indentation must use multiples of two spaces")
-        lines.append((indent, stripped_comment.strip(), line_no))
+        lines.append((indent, stripped_comment.strip(whitespace), line_no))
     return lines
 
 
@@ -136,13 +143,14 @@ def split_key_value(
     if ":" not in content:
         raise ConfigError(f"{path}:{line_no}: expected '<key>: <value>'")
     delimiter = content.index(":")
-    if require_mapping_separator and delimiter + 1 < len(content) and not content[delimiter + 1].isspace():
+    if require_mapping_separator and delimiter + 1 < len(content) and content[delimiter + 1] not in YAML_INLINE_WHITESPACE:
         raise ConfigError(f"{path}:{line_no}: mapping colon must be followed by whitespace or end of line")
     key, value = content[:delimiter], content[delimiter + 1:]
-    key = key.strip()
+    whitespace = YAML_INLINE_WHITESPACE if require_mapping_separator else None
+    key = key.strip(whitespace)
     if not re.match(r"^[A-Za-z0-9_.-]+$", key):
         raise ConfigError(f"{path}:{line_no}: unsupported key '{key}'")
-    value = value.strip()
+    value = value.strip(whitespace)
     return key, value if value != "" else None
 
 
@@ -212,14 +220,14 @@ def validate_review_flow(value: str, path: Path, line_no: int) -> None:
                 closed = "quoted scalar"
             index += 1
             continue
-        if char.isspace():
+        if char in YAML_INLINE_WHITESPACE:
             index += 1
             continue
         if char in "]}":
             if not stack or stack.pop() != {"]": "[", "}": "{"}[char]:
                 raise ConfigError(f"{path}:{line_no}: mismatched flow delimiter")
             if not stack:
-                if value[index + 1:].strip():
+                if value[index + 1:].strip(YAML_INLINE_WHITESPACE):
                     raise ConfigError(f"{path}:{line_no}: trailing content after flow collection")
                 return
             started = True
@@ -257,28 +265,28 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     # unsupported scalar, so reject unsupported non-empty flow mappings.
     if value.startswith("{") and value.endswith("}") and value != "{}":
         raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
-    if value.startswith("[") and value.endswith("]") and value[1:-1].strip():
+    if value.startswith("[") and value.endswith("]") and value[1:-1].strip(YAML_INLINE_WHITESPACE):
         items = split_inline_list(value[1:-1], strict_quotes=True)
         # YAML permits a trailing comma, but never an omitted first or middle
         # item. The legacy reader historically skipped those items; the
         # review-effective reader must reject them rather than changing the
         # configured reviewer set.
-        if any(not item.strip() for item in items[:-1]) or (
-            len(items) == 1 and not items[0].strip()
+        if any(not item.strip(YAML_INLINE_WHITESPACE) for item in items[:-1]) or (
+            len(items) == 1 and not items[0].strip(YAML_INLINE_WHITESPACE)
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains an empty item")
         if any(
-            item.strip().startswith(("? ", ": "))
-            or list_item_is_mapping(item.strip(), strict_quotes=True)
+            item.strip(YAML_INLINE_WHITESPACE).startswith(("? ", ": "))
+            or list_item_is_mapping(item.strip(YAML_INLINE_WHITESPACE), strict_quotes=True)
             for item in items
-            if item.strip()
+            if item.strip(YAML_INLINE_WHITESPACE)
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains a mapping item")
     if not value.startswith(("'", '"')):
         # Plain scalar values cannot contain a mapping delimiter, even when
         # the malformed field is unrelated to review settings. Flow lists are
         # validated element by element so quoted colons remain valid strings.
-        if not value.startswith(("[", "{")) and re.search(r":(?:\s|$)", value):
+        if not value.startswith(("[", "{")) and re.search(r":(?:[ \t]|$)", value):
             raise ConfigError(f"{path}:{line_no}: mapping delimiter in plain scalar")
         if (
             value.startswith(("!", "&", "*", "|", ">", "@", "`", "%", "]", "}", ","))
@@ -313,17 +321,18 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
 def parse_scalar(
     value: str, *, review_effective: bool = False, path: Path | None = None, line_no: int | None = None
 ) -> Any:
+    whitespace = YAML_INLINE_WHITESPACE if review_effective else None
     if review_effective:
         assert path is not None and line_no is not None
         validate_review_scalar(value, path, line_no)
     if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
+        inner = value[1:-1].strip(whitespace)
         if not inner:
             return []
         return [
-            parse_scalar(item.strip(), review_effective=review_effective, path=path, line_no=line_no)
+            parse_scalar(item.strip(whitespace), review_effective=review_effective, path=path, line_no=line_no)
             for item in split_inline_list(inner, strict_quotes=review_effective)
-            if item.strip()
+            if item.strip(whitespace)
         ]
     if value in {"''", '""'}:
         return ""
@@ -432,7 +441,7 @@ def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
                 node_started = True
             elif char == ",":
                 node_started = False
-            elif not char.isspace():
+            elif char not in YAML_INLINE_WHITESPACE:
                 node_started = True
         if char == "," and not in_single and not in_double and (not strict_quotes or depth == 0):
             items.append("".join(current))
@@ -518,7 +527,9 @@ def list_item_is_mapping(item: str, *, strict_quotes: bool = False) -> bool:
             index += 1
             continue
         if char == ":" and not in_single and not in_double:
-            if index + 1 == len(item) or item[index + 1].isspace():
+            if index + 1 == len(item) or (
+                item[index + 1] in YAML_INLINE_WHITESPACE if strict_quotes else item[index + 1].isspace()
+            ):
                 return True
         index += 1
     return False
@@ -536,7 +547,7 @@ def parse_list(
             raise ConfigError(f"{path}:{line_no}: unexpected indentation")
         if not content.startswith("- "):
             break
-        item = content[2:].strip()
+        item = content[2:].strip(YAML_INLINE_WHITESPACE if preserve_empty_values else None)
         index += 1
         if not item:
             if index >= len(lines) or lines[index][0] <= indent:

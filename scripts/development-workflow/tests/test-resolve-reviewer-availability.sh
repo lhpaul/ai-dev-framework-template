@@ -383,6 +383,20 @@ reviews:
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
     for source in (cfg, local):
+        for space in ('\u00a0', '\u2003', '\u3000'):
+            for token in (space, 'warn'+space+'#literal', space+'warn', 'warn'+space):
+                reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
+                d=run('codex',1)
+                check(f'T-31 Unicode policy stays unsupported {source.name} {token!r}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==token,d)
+            for token in (space, 'codex'+space+'#literal'):
+                reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+']\n')
+                d=run('codex',1)
+                check(f'T-31 Unicode runner stays unsupported {source.name} {token!r}',any(d[f'REVIEWER_{n}_NAME']==token and d[f'REVIEWER_{n}_REASON']=='value-not-supported' for n in range(1,int(d['REVIEWER_COUNT'])+1)) and d['FALLBACK_APPLIED']=='false',d)
+        for token in ('warn #comment', 'warn\t#comment', '"warn" #comment'):
+            reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
+            d=run('codex')
+            check(f'T-31 ASCII policy comment {source.name} {token!r}',d['POLICY']=='warn' and d['POLICY_STATE']=='defined',d)
+    for source in (cfg, local):
         for scalar in ('%reserved', '%', '[%reserved]', '[[%reserved]]'):
             reset();source.write_text('other: '+scalar+'\nreview:\n  on_draft:\n    runner: [codex]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n')
             d=run('codex',1)
