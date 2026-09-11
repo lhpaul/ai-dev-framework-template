@@ -1086,9 +1086,9 @@ assert_review_effective_states "E-21 quoted policy suffix" malformed unreadable
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn\#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-21 escaped policy suffix" defined unsupported
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: &policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-assert_review_effective_states "E-21 policy anchor" defined unsupported
+assert_review_effective_states "E-21 policy anchor" malformed unreadable
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: !policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-assert_review_effective_states "E-21 policy tag" defined unsupported
+assert_review_effective_states "E-21 policy tag" malformed unreadable
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex#typo]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-21 runner hash suffix" defined absent
 run_test "review-effective E-21 runner hash suffix value" '["codex#typo"]' "$(review_effective_json | jq -c '.effective_runner')"
@@ -1241,6 +1241,20 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner:[codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner:[codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 run_test "review-effective E-32 legacy compact runner unchanged" "REVIEW_ON_DRAFT_RUNNER=codex" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# Unsupported YAML node indicators cannot be silently converted to reviewer
+# names. Their quoted counterparts remain ordinary, lossless strings.
+for node_value in '!local codex' '&local codex' '*local' '? codex' '- codex' '|' '>' '@codex' '`codex'; do
+  write_review_effective_fixture 'review:' '  on_draft:' "    runner: [codex, $node_value]"
+  assert_review_effective_states "E-32 flow node indicator $node_value" malformed unreadable
+  write_review_effective_fixture 'review:' '  on_draft:' '    runner:' "      - $node_value"
+  assert_review_effective_states "E-32 block node indicator $node_value" malformed unreadable
+done
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: - codex'
+assert_review_effective_states "E-32 inline sequence indicator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["!local codex", "&local codex", "*local", "? codex", "- codex", "|", ">", "@codex", "`codex"]'
+assert_review_effective_states "E-32 quoted node indicators" defined absent
+run_test "review-effective E-32 quoted node indicator values" '["!local codex","&local codex","*local","? codex","- codex","|",">","@codex","`codex"]' "$(review_effective_json | jq -c '.effective_runner')"
 
 # The review-effective reader rejects omitted flow members and preserves numeric
 # YAML types, while the legacy reader retains its historical string/skip behavior.

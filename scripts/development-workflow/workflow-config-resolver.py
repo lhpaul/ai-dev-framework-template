@@ -175,6 +175,14 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains a mapping item")
     if not value.startswith(("'", '"')):
+        if (
+            value.startswith(("!", "&", "*", "|", ">", "@", "`"))
+            or value == "?"
+            or value.startswith("? ")
+            or value == "-"
+            or value.startswith("- ")
+        ):
+            raise ConfigError(f"{path}:{line_no}: unsupported YAML node indicator")
         return
 
     quote = value[0]
