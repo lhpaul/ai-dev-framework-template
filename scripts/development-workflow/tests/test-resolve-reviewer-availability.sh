@@ -220,6 +220,23 @@ reviews:
     for enabled,expected,reason in (('true',0,''),('false',1,'prerequisite-missing')):
         (repo/'.coderabbit.yaml').write_text(f'reviews:\n  auto_review:\n    enabled: {enabled}\nother:\n  reviews:\n    auto_review:\n      enabled: true\n')
         check(f'T-22 unrelated nested reviews preserves {enabled}',run(expected=expected)['REVIEWER_1_REASON']==reason)
+    for malformed in (
+        'reviews:\n  - invalid\n  auto_review:\n    enabled: true\n',
+        'reviews:\n- invalid\n  auto_review:\n    enabled: true\n',
+        'reviews:\n  auto_review:\n    enabled: true\n  - invalid\n',
+        'reviews:\n  auto_review:\n    - invalid\n    enabled: true\n',
+        'reviews:\n  auto_review:\n  - invalid\n    enabled: true\n',
+        'reviews:\n  auto_review:\n    enabled: true\n    - invalid\n',
+        'reviews:\n  broken mapping\n  auto_review:\n    enabled: true\n',
+    ):
+        (repo/'.coderabbit.yaml').write_text(malformed)
+        log.write_text('')
+        d=run(expected=1)
+        check(f'T-22 malformed mapping blocks strict policy {malformed!r}',d['OUTCOME']=='blocked' and d['POLICY']=='fail-if-any-unavailable' and d['REVIEWER_1_REASON']=='check-inconclusive' and not log.read_text(),d)
+    for indentation in ('', '  '):
+        for enabled,expected,reason in (('true',0,''),('false',1,'prerequisite-missing')):
+            (repo/'.coderabbit.yaml').write_text(f'reviews:\n  path_filters:\n  {indentation}- "src/**"\n  auto_review:\n    enabled: {enabled}\n    labels:\n    {indentation}- ready\n  path_instructions:\n  {indentation}- path: src/**\n    {indentation}instructions: |\n      {indentation}\tenabled: false\n')
+            check(f'T-22 valid sibling lists {indentation!r} preserve {enabled}',run(expected=expected)['REVIEWER_1_REASON']==reason)
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])

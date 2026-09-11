@@ -348,6 +348,10 @@ def fields(text):
             if re.fullmatch(r"[|>][1-9+-]*", value):
                 block_indent = len(match.group(1))
             yield number, len(match.group(1)), match.group(2), value
+        else:
+            # Preserve nonmapping tokens so malformed target containers cannot
+            # disappear. Unrelated sequence contents are handled by their scope.
+            yield number, leading, None, line.lstrip()
 
 try:
     if not path.is_file():
@@ -355,6 +359,7 @@ try:
         raise SystemExit(0)
     reviews_indent = reviews_children = auto_indent = auto_children = None
     reviews_closed = auto_closed = False
+    reviews_list_allowed = auto_list_allowed = False
     enabled = None
     for number, indent, key, value in fields(path.read_text(encoding="utf-8")):
         if reviews_indent is None:
@@ -364,6 +369,8 @@ try:
                 reviews_indent = indent
             continue
         if indent <= reviews_indent:
+            if not reviews_closed and key is None and re.match(r"-(?:\s|$)", value):
+                raise ValueError(f"reviews must be a mapping on line {number}")
             if key == "reviews":
                 raise ValueError(f"duplicate reviews mapping on line {number}")
             reviews_closed = True
@@ -372,6 +379,14 @@ try:
             continue
         if reviews_children is None:
             reviews_children = indent
+        if indent == reviews_children:
+            if key is None:
+                # YAML allows an indentless sequence as the value of a sibling
+                # field such as path_filters; it cannot be the reviews mapping.
+                if reviews_list_allowed and re.match(r"-(?:\s|$)", value):
+                    continue
+                raise ValueError(f"expected reviews mapping field on line {number}")
+            reviews_list_allowed = key != "auto_review" and not value
         if indent == reviews_children and key == "auto_review":
             if auto_indent is not None:
                 raise ValueError(f"duplicate auto_review mapping on line {number}")
@@ -388,6 +403,12 @@ try:
             continue
         if auto_children is None:
             auto_children = indent
+        if indent == auto_children:
+            if key is None:
+                if auto_list_allowed and re.match(r"-(?:\s|$)", value):
+                    continue
+                raise ValueError(f"expected auto_review mapping field on line {number}")
+            auto_list_allowed = key != "enabled" and not value
         if indent == auto_children and key == "enabled":
             if enabled is not None:
                 raise ValueError(f"duplicate enabled value on line {number}")
