@@ -405,7 +405,16 @@ try:
     reviews_closed = auto_closed = False
     reviews_list_allowed = auto_list_allowed = False
     enabled = None
+    scalar_field = None
     for number, indent, key, value in fields(path.read_text(encoding="utf-8")):
+        if scalar_field is not None:
+            scalar_indent, scalar_key, scalar_value = scalar_field
+            if indent <= scalar_indent:
+                scalar_field = None
+            elif (scalar_key == "enabled" or key is not None
+                  or re.match(r"-(?:\s|$)", value)
+                  or scalar_value.startswith(("[", "{"))):
+                raise ValueError(f"unexpected nesting beneath {scalar_key} on line {number}")
         if reviews_indent is None:
             if indent == 0 and key == "reviews":
                 if value:
@@ -423,6 +432,8 @@ try:
             continue
         if reviews_children is None:
             reviews_children = indent
+        if indent < reviews_children:
+            raise ValueError(f"unexpected reviews dedent on line {number}")
         if indent == reviews_children:
             if key is None:
                 # YAML allows an indentless sequence as the value of a sibling
@@ -431,6 +442,8 @@ try:
                     continue
                 raise ValueError(f"expected reviews mapping field on line {number}")
             reviews_list_allowed = key != "auto_review" and not value
+            if value:
+                scalar_field = (indent, key, value)
         if indent == reviews_children and key == "auto_review":
             if auto_indent is not None:
                 raise ValueError(f"duplicate auto_review mapping on line {number}")
@@ -447,12 +460,16 @@ try:
             continue
         if auto_children is None:
             auto_children = indent
+        if indent < auto_children:
+            raise ValueError(f"unexpected auto_review dedent on line {number}")
         if indent == auto_children:
             if key is None:
                 if auto_list_allowed and re.match(r"-(?:\s|$)", value):
                     continue
                 raise ValueError(f"expected auto_review mapping field on line {number}")
             auto_list_allowed = key != "enabled" and not value
+            if value:
+                scalar_field = (indent, key, value)
         if indent == auto_children and key == "enabled":
             if enabled is not None:
                 raise ValueError(f"duplicate enabled value on line {number}")

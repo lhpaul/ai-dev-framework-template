@@ -257,6 +257,30 @@ reviews:
     (repo/'.coderabbit.yaml').write_text('reviews:\n  - invalid\n  auto_review:\n    enabled: true\n')
     d=run(expected=1)
     check('T-22 parse error identifies config and actionable repair', '.coderabbit.yaml' in d['REVIEWER_1_DETAIL'] and 'line 2' in d['REVIEWER_1_DETAIL'] and 'Repair' in d['REVIEWER_1_REMEDY'],d)
+    for invalid_nesting in (
+        'reviews:\n  auto_review:\n    enabled: true\n      invalid: value\n',
+        'reviews:\n  auto_review:\n    enabled: true\n      - invalid\n',
+        'reviews:\n  auto_review:\n    enabled: true\n      continuation\n',
+        'reviews:\n  auto_review:\n    enabled: true\n   invalid: value\n',
+        'reviews:\n  auto_review:\n    enabled: true\n invalid: value\n',
+        'reviews:\n  profile: chill\n    invalid: value\n  auto_review:\n    enabled: true\n',
+        'reviews:\n  auto_review:\n    enabled: true\n    drafts: false\n      invalid: value\n',
+        'reviews:\n  auto_review:\n    enabled: true\n    labels: [ready]\n      invalid: value\n',
+    ):
+        for activity_rows in ([], [{'user':{'login':'coderabbitai[bot]'}}]):
+            gh(activity_rows);log.write_text('')
+            (repo/'.coderabbit.yaml').write_text(invalid_nesting)
+            d=run(expected=1)
+            check(f'T-22 invalid scalar nesting blocks before activity {invalid_nesting!r} {bool(activity_rows)}', d['REVIEWER_1_REASON']=='check-inconclusive' and d['OUTCOME']=='blocked' and not log.read_text(),d)
+    gh([{'user':{'login':'coderabbitai[bot]'}}])
+    for valid_nesting in (
+        'reviews:\n  profile: a plain\n    multiline scalar\n  auto_review:\n    enabled: true\n    drafts: false\n',
+        'reviews:\n  profile: "a quoted\n    multiline scalar"\n  auto_review:\n    enabled: true\n',
+        'reviews:\n  auto_review:\n    enabled: true\n    nested:\n      key: value\n  other:\n    nested: true\n',
+        'reviews:\n    auto_review:\n        enabled: true\n        drafts: false\n    other: value\n',
+    ):
+        (repo/'.coderabbit.yaml').write_text(valid_nesting)
+        check(f'T-22 valid target nesting preserved {valid_nesting!r}',run()['REVIEWER_1_STATUS']=='reachable')
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])
