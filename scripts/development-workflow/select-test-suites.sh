@@ -141,10 +141,9 @@ COVERS_HEADER_LINES=60
 # piled onto a shard that is already the critical path.
 DEFAULT_SUITE_SECONDS=5
 
-# Mirrors workflow-tests.yml's SUITE_TIMEOUT_SECONDS default. The workflow
-# exports that env var before calling this selector, so matrix timeouts stay in
-# step with the per-suite guard without asking GitHub expressions to do
-# arithmetic.
+# Mirrors workflow-tests.yml's per-suite timeout defaults. The workflow exports
+# these env vars before calling this selector, so matrix timeouts stay in step
+# with the per-suite guard without asking GitHub expressions to do arithmetic.
 SHARD_SUITE_TIMEOUT_SECONDS="${SUITE_TIMEOUT_SECONDS:-600}"
 case "$SHARD_SUITE_TIMEOUT_SECONDS" in
   '' | *[!0-9]*) die "SUITE_TIMEOUT_SECONDS must be a positive integer, got '$SHARD_SUITE_TIMEOUT_SECONDS'" ;;
@@ -152,7 +151,13 @@ esac
 SHARD_SUITE_TIMEOUT_SECONDS=$((10#$SHARD_SUITE_TIMEOUT_SECONDS))
 [ "$SHARD_SUITE_TIMEOUT_SECONDS" -gt 0 ] \
   || die "SUITE_TIMEOUT_SECONDS must be a positive integer, got '$SHARD_SUITE_TIMEOUT_SECONDS'"
-SHARD_TIMEOUT_KILL_AFTER_SECONDS=30
+SHARD_TIMEOUT_KILL_AFTER_SECONDS="${SUITE_TIMEOUT_KILL_AFTER_SECONDS:-30}"
+case "$SHARD_TIMEOUT_KILL_AFTER_SECONDS" in
+  '' | *[!0-9]*) die "SUITE_TIMEOUT_KILL_AFTER_SECONDS must be a positive integer, got '$SHARD_TIMEOUT_KILL_AFTER_SECONDS'" ;;
+esac
+SHARD_TIMEOUT_KILL_AFTER_SECONDS=$((10#$SHARD_TIMEOUT_KILL_AFTER_SECONDS))
+[ "$SHARD_TIMEOUT_KILL_AFTER_SECONDS" -gt 0 ] \
+  || die "SUITE_TIMEOUT_KILL_AFTER_SECONDS must be a positive integer, got '$SHARD_TIMEOUT_KILL_AFTER_SECONDS'"
 SHARD_TIMEOUT_OVERHEAD_MINUTES=5
 GITHUB_JOB_TIMEOUT_LIMIT_MINUTES=360
 

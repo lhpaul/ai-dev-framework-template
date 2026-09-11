@@ -369,12 +369,13 @@ if [ -f "$WORKFLOW_FILE" ]; then
   # the check passing on the prose that describes it. A structural assertion
   # that cannot fail is worse than none, because it reads as coverage.
   workflow_code="$(grep -vE '^[[:space:]]*#' "$WORKFLOW_FILE")"
-  if printf '%s\n' "$workflow_code" | grep -qE 'timeout --signal=TERM --kill-after' \
-    && printf '%s\n' "$workflow_code" | grep -qF "\"\$SUITE_TIMEOUT_SECONDS\" bash \"\$suite\""; then
+  if printf '%s\n' "$workflow_code" | grep -qF 'start_new_session=True' \
+    && printf '%s\n' "$workflow_code" | grep -qF 'os.killpg(process.pid, signal.SIGKILL)' \
+    && printf '%s\n' "$workflow_code" | grep -qF 'process.wait(timeout=timeout_seconds)'; then
     PASS_COUNT=$((PASS_COUNT + 1)); echo "PASS: workflow_has_per_suite_timeout"
   else
     FAIL_COUNT=$((FAIL_COUNT + 1))
-    echo "FAIL: workflow_has_per_suite_timeout — a hang would suppress the rest of its shard"
+    echo "FAIL: workflow_has_per_suite_timeout — a hang or leaked child would corrupt the rest of its shard"
   fi
   if printf '%s\n' "$workflow_code" | grep -qF '|| status=$?'; then
     PASS_COUNT=$((PASS_COUNT + 1)); echo "PASS: workflow_keeps_failure_isolation"
@@ -510,7 +511,10 @@ with open(os.environ["SELECTOR"], encoding="utf-8") as selector:
     selector_source = selector.read()
 default_timeout = int(re.search(r"^SHARD_SUITE_TIMEOUT_SECONDS=\"\$\{SUITE_TIMEOUT_SECONDS:-([0-9]+)\}\"$", selector_source, re.M).group(1))
 suite_timeout = int(os.environ.get("SUITE_TIMEOUT_SECONDS", default_timeout))
-kill_after = int(re.search(r"^SHARD_TIMEOUT_KILL_AFTER_SECONDS=([0-9]+)$", selector_source, re.M).group(1))
+if (match := re.search(r"^SHARD_TIMEOUT_KILL_AFTER_SECONDS=\"\$\{SUITE_TIMEOUT_KILL_AFTER_SECONDS:-([0-9]+)\}\"$", selector_source, re.M)):
+    kill_after = int(os.environ.get("SUITE_TIMEOUT_KILL_AFTER_SECONDS", match.group(1)))
+else:
+    kill_after = int(re.search(r"^SHARD_TIMEOUT_KILL_AFTER_SECONDS=([0-9]+)$", selector_source, re.M).group(1))
 overhead = int(re.search(r"^SHARD_TIMEOUT_OVERHEAD_MINUTES=([0-9]+)$", selector_source, re.M).group(1))
 per_suite_timeout = (suite_timeout + kill_after + 59) // 60
 ok = True
@@ -529,7 +533,10 @@ with open(os.environ["SELECTOR"], encoding="utf-8") as selector:
     selector_source = selector.read()
 default_timeout = int(re.search(r"^SHARD_SUITE_TIMEOUT_SECONDS=\"\$\{SUITE_TIMEOUT_SECONDS:-([0-9]+)\}\"$", selector_source, re.M).group(1))
 suite_timeout = int(os.environ.get("SUITE_TIMEOUT_SECONDS", default_timeout))
-kill_after = int(re.search(r"^SHARD_TIMEOUT_KILL_AFTER_SECONDS=([0-9]+)$", selector_source, re.M).group(1))
+if (match := re.search(r"^SHARD_TIMEOUT_KILL_AFTER_SECONDS=\"\$\{SUITE_TIMEOUT_KILL_AFTER_SECONDS:-([0-9]+)\}\"$", selector_source, re.M)):
+    kill_after = int(os.environ.get("SUITE_TIMEOUT_KILL_AFTER_SECONDS", match.group(1)))
+else:
+    kill_after = int(re.search(r"^SHARD_TIMEOUT_KILL_AFTER_SECONDS=([0-9]+)$", selector_source, re.M).group(1))
 overhead = int(re.search(r"^SHARD_TIMEOUT_OVERHEAD_MINUTES=([0-9]+)$", selector_source, re.M).group(1))
 limit = int(re.search(r"^GITHUB_JOB_TIMEOUT_LIMIT_MINUTES=([0-9]+)$", selector_source, re.M).group(1))
 per_suite_timeout = (suite_timeout + kill_after + 59) // 60
@@ -698,19 +705,17 @@ if len(run) != 1:
 open(sys.argv[2], "w").write(run[0])
 EXTRACT
 then
-  # The extracted step calls 'timeout' by name. When only 'gtimeout' is
-  # present, shim it in on PATH rather than rewriting the step — the whole
-  # point of extracting it is that it runs unmodified.
-  mkdir -p "$SHARD_PROBE_DIR/bin"
-  printf '#!/usr/bin/env bash\nexec %s "$@"\n' \
-    "$(command -v "$SHARD_PROBE_TIMEOUT")" > "$SHARD_PROBE_DIR/bin/timeout"
-  chmod +x "$SHARD_PROBE_DIR/bin/timeout"
-
-	  printf '#!/usr/bin/env bash\necho hanging; sleep 120\n' > "$SHARD_PROBE_DIR/s_hang.sh"
-	  printf '#!/usr/bin/env bash\necho failing; exit 1\n'    > "$SHARD_PROBE_DIR/s_fail.sh"
-	  printf '#!/usr/bin/env bash\nexit 124\n'                > "$SHARD_PROBE_DIR/s_124.sh"
-	  printf '#!/usr/bin/env bash\nkill -9 "$$"\n'            > "$SHARD_PROBE_DIR/s_kill.sh"
-	  printf '#!/usr/bin/env bash\necho passing\n'            > "$SHARD_PROBE_DIR/s_pass.sh"
+  printf '#!/usr/bin/env bash\necho hanging; sleep 120\n' > "$SHARD_PROBE_DIR/s_hang.sh"
+  printf '#!/usr/bin/env bash\necho failing; exit 1\n'    > "$SHARD_PROBE_DIR/s_fail.sh"
+  printf '#!/usr/bin/env bash\nexit 124\n'                > "$SHARD_PROBE_DIR/s_124.sh"
+  printf '#!/usr/bin/env bash\nkill -9 "$$"\n'            > "$SHARD_PROBE_DIR/s_kill.sh"
+  printf '#!/usr/bin/env bash\necho passing\n'            > "$SHARD_PROBE_DIR/s_pass.sh"
+  cat > "$SHARD_PROBE_DIR/s_leak.sh" <<'LEAK'
+#!/usr/bin/env bash
+(trap '' TERM; sleep 120) &
+echo "$!" > leak-child.pid
+wait
+LEAK
 
   # The hang is first on purpose: if the per-suite timeout is ever removed,
   # nothing after it would run. The outer 'timeout 90' keeps that regression a
@@ -720,8 +725,9 @@ then
     && PATH="$SHARD_PROBE_DIR/bin:$PATH" \
 	       GITHUB_STEP_SUMMARY="$SHARD_PROBE_DIR/summary.md" \
 	       SHARD_ID="probe" \
-	       SHARD_SUITES="s_hang.sh s_fail.sh s_124.sh s_kill.sh s_pass.sh" \
+	       SHARD_SUITES="s_hang.sh s_fail.sh s_124.sh s_kill.sh s_pass.sh s_leak.sh" \
 	       SUITE_TIMEOUT_SECONDS=3 \
+	       SUITE_TIMEOUT_KILL_AFTER_SECONDS=1 \
 	       "$SHARD_PROBE_TIMEOUT_ABS" 90 bash -eo pipefail "$SHARD_PROBE_DIR/step.sh" ) \
     > "$SHARD_PROBE_DIR/out.txt" 2>&1
   shard_ec=$?
@@ -744,12 +750,26 @@ then
   # loop, which is what GitHub's inherited 'bash -e' would otherwise do.
   run_test "shard_loop_reports_fail" "yes" \
     "$(printf '%s' "$shard_summary" | grep -q 's_fail.sh.*FAIL' && echo yes || echo no)"
-	  run_test "shard_loop_reports_sigkill_as_fail" "yes" \
-	    "$(printf '%s' "$shard_summary" | grep -q 's_kill.sh.*FAIL' && echo yes || echo no)"
-	  run_test "shard_loop_reports_command_124_as_fail" "yes" \
-	    "$(printf '%s' "$shard_summary" | grep -q 's_124.sh.*FAIL' && echo yes || echo no)"
-	  run_test "shard_loop_runs_all_five_suites" "5" \
-	    "$(printf '%s' "$shard_summary" | grep -c '^| `s_' || true)"
+  run_test "shard_loop_reports_sigkill_as_fail" "yes" \
+    "$(printf '%s' "$shard_summary" | grep -q 's_kill.sh.*FAIL' && echo yes || echo no)"
+  run_test "shard_loop_reports_command_124_as_fail" "yes" \
+    "$(printf '%s' "$shard_summary" | grep -q 's_124.sh.*FAIL' && echo yes || echo no)"
+  run_test "shard_loop_runs_all_six_suites" "6" \
+    "$(printf '%s' "$shard_summary" | grep -c '^| `s_' || true)"
+  if [ -s "$SHARD_PROBE_DIR/leak-child.pid" ]; then
+    leak_pid="$(cat "$SHARD_PROBE_DIR/leak-child.pid")"
+    if kill -0 "$leak_pid" 2>/dev/null; then
+      leak_alive=yes
+      kill "$leak_pid" 2>/dev/null || true
+      sleep 0.1
+      kill -9 "$leak_pid" 2>/dev/null || true
+    else
+      leak_alive=no
+    fi
+  else
+    leak_alive=missing
+  fi
+  run_test "shard_loop_kills_timeout_descendants" "no" "$leak_alive"
 
   shard_output="$(cat "$SHARD_PROBE_DIR/out.txt" 2>/dev/null || true)"
   run_test "shard_loop_stderr_names_timeout_suite" "yes" \

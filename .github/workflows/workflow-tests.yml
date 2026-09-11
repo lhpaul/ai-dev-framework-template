@@ -72,6 +72,7 @@ env:
   # 600s gives headroom for a genuinely slow suite and a tight bound on a stuck
   # one.
   SUITE_TIMEOUT_SECONDS: '600'
+  SUITE_TIMEOUT_KILL_AFTER_SECONDS: '30'
 
 jobs:
   select:
@@ -214,7 +215,7 @@ jobs:
 
       - name: Run shard ${{ matrix.shard.id }}
         # Computed by select-test-suites.sh as:
-        # suite count * ceil((SUITE_TIMEOUT_SECONDS + kill-after grace) / 60)
+        # suite count * ceil((SUITE_TIMEOUT_SECONDS + SUITE_TIMEOUT_KILL_AFTER_SECONDS) / 60)
         # + setup/reporting overhead. A fixed shard deadline can still suppress
         # later suites when several earlier suites time out.
         timeout-minutes: ${{ matrix.shard.timeout_minutes }}
@@ -234,9 +235,10 @@ jobs:
           # ever runs.
           #
           # Hang isolation: the job-level timeout-minutes bounds the shard, not
-          # the suite, so without the per-suite 'timeout' below one stuck
-          # harness would suppress every suite after it in this shard while the
-          # workflow still claimed all selected suites ran.
+          # the suite, so a stuck harness must be killed before the loop moves
+          # on. The Python supervisor starts every suite in a new session and
+          # cleans up its whole process group; a plain 'timeout bash "$suite"'
+          # can leave TERM-ignoring grandchildren alive after bash exits.
           set -uo pipefail
 
           failed=0
@@ -251,8 +253,54 @@ jobs:
             started=$SECONDS
             printf '::group::%s\n' "$suite"
             status=0
-            timeout --signal=TERM --kill-after=30s \
-              "$SUITE_TIMEOUT_SECONDS" bash "$suite" || status=$?
+          python3 - "$SUITE_TIMEOUT_SECONDS" "$suite" <<'PY' || status=$?
+          import os
+          import signal
+          import subprocess
+          import sys
+          import time
+
+          timeout_seconds = int(sys.argv[1])
+          suite = sys.argv[2]
+          kill_after_seconds = int(os.environ.get("SUITE_TIMEOUT_KILL_AFTER_SECONDS", "30"))
+
+          process = subprocess.Popen(["bash", suite], start_new_session=True)
+          timed_out = False
+
+          try:
+              returncode = process.wait(timeout=timeout_seconds)
+          except subprocess.TimeoutExpired:
+              timed_out = True
+              returncode = 124
+              try:
+                  os.killpg(process.pid, signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
+              try:
+                  process.wait(timeout=kill_after_seconds)
+              except subprocess.TimeoutExpired:
+                  try:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+                  process.wait()
+          finally:
+              # A suite shell can exit while background descendants keep running. Clean
+              # the process group even on non-timeout exits so later suites start clean.
+              for sig in (signal.SIGTERM, signal.SIGKILL):
+                  try:
+                      os.killpg(process.pid, sig)
+                  except ProcessLookupError:
+                      break
+                  if sig == signal.SIGTERM:
+                      time.sleep(0.2)
+
+          if timed_out:
+              sys.exit(124)
+          if returncode < 0:
+              sys.exit(128 - returncode)
+          sys.exit(returncode)
+          PY
             duration_seconds=$((SECONDS - started))
             case "$status" in
               0) result='pass' ;;
