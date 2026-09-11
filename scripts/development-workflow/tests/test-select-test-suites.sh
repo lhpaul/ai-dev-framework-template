@@ -10,6 +10,41 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 SELECTOR="$REPO_ROOT/scripts/development-workflow/select-test-suites.sh"
 WORKFLOW_FILE="$REPO_ROOT/.github/workflows/workflow-tests.yml"
 
+# Exact selection counts belong to a fixed repository, not the changing set of
+# cross-cutting suites in this checkout. Keep workflow wiring checked against
+# the real repository and run selection behavior in this owned fixture.
+SOURCE_REPO_ROOT="$REPO_ROOT"
+REPO_ROOT="$(mktemp -d)"
+cleanup_fixture() {
+  chmod -R u+rwX "$REPO_ROOT"
+  rm -rf -- "$REPO_ROOT"
+}
+trap cleanup_fixture EXIT
+export SELECT_TEST_SUITES_REPO_ROOT="$REPO_ROOT"
+mkdir -p "$REPO_ROOT/scripts/development-workflow/tests"
+fixture_suite() {
+  local name="$1" coverage="${2:-}"
+  printf '#!/usr/bin/env bash\n' > "$REPO_ROOT/scripts/development-workflow/tests/test-$name.sh"
+  if [ -n "$coverage" ]; then
+    printf '# covers: %s\n' "$coverage" >> "$REPO_ROOT/scripts/development-workflow/tests/test-$name.sh"
+  fi
+}
+for name in run-epic-policy-recommender pr-review-loop workflow-config-resolver \
+            add-backlog-item run-epic-risk-classifier run-item-scope-resolver; do
+  fixture_suite "$name"
+done
+for name in changelog-race checkpoints recheck-remaining; do
+  fixture_suite "batch-merge-$name" scripts/development-workflow/batch-merge.sh
+done
+fixture_suite haystack-commit-msg-hook hooks/commit-msg
+fixture_suite workflow-hub-product-repo-commands 'scripts/development-workflow/hub-*.sh'
+fixture_suite sync-template-apply-modes '.codex/skills/**'
+for name in run-epic-policy-recommender pr-review-loop add-backlog-item \
+            run-epic-risk-classifier run-item-scope-resolver batch-merge hub-status codex-github-reviewer; do
+  printf '#!/usr/bin/env bash\n' > "$REPO_ROOT/scripts/development-workflow/$name.sh"
+done
+printf '# fixture Python script\n' > "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py"
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -156,14 +191,12 @@ run_test "all_matches_disk_count" "$on_disk" "$total_suites"
 
 # AC-2: a suite dropped into the directory is picked up with no workflow edit.
 NEW_SUITE="$REPO_ROOT/$T/test-zzz-ac2-probe.sh"
-# This probe writes into the real tests directory, so refuse to run if anything
-# already occupies that path rather than clobbering a developer's file.
+# Refuse to overwrite an existing fixture when exercising suite discovery.
 if [ -e "$NEW_SUITE" ] || [ -L "$NEW_SUITE" ]; then
   printf 'ERROR: probe path already exists, refusing to overwrite: %s\n' "$NEW_SUITE" >&2
   exit 2
 fi
 cleanup_probe() { rm -f -- "$NEW_SUITE"; }
-trap cleanup_probe EXIT
 cat > "$NEW_SUITE" <<'PROBE'
 #!/usr/bin/env bash
 # test-zzz-ac2-probe.sh - temporary probe suite.
@@ -174,7 +207,6 @@ assert_contains "ac2_new_suite_in_all" "$T/test-zzz-ac2-probe.sh" "$(bash "$SELE
 assert_contains "ac2_new_suite_selected_by_covers" "$T/test-zzz-ac2-probe.sh" \
   "$(select_for "$S/zzz-ac2-probe.sh")"
 cleanup_probe
-trap - EXIT
 assert_not_contains "ac2_probe_removed" "$T/test-zzz-ac2-probe.sh" "$(bash "$SELECTOR" --all)"
 
 # ---------------------------------------------------------------------------
@@ -228,7 +260,6 @@ if [ -e "$UNREADABLE" ] || [ -L "$UNREADABLE" ]; then
   exit 2
 fi
 cleanup_unreadable() { chmod u+rw -- "$UNREADABLE" 2>/dev/null || true; rm -f -- "$UNREADABLE"; }
-trap cleanup_unreadable EXIT
 printf '#!/usr/bin/env bash\n# covers: scripts/development-workflow/zzz-unreadable-probe.sh\n' \
   > "$UNREADABLE"
 chmod 000 "$UNREADABLE"
@@ -254,7 +285,6 @@ else
 fi
 
 cleanup_unreadable
-trap - EXIT
 
 # ---------------------------------------------------------------------------
 # Area 8: glob semantics
@@ -344,6 +374,16 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
   echo "FAIL: workflow_exists — $WORKFLOW_FILE not found"
 fi
+
+# Repository integration checks are inclusion-based: additional cross-cutting
+# coverage is legitimate and must not make these exact fixture tests brittle.
+real_selection="$(printf '%s\n' "$S/resolve-reviewer-availability.sh" \
+  | SELECT_TEST_SUITES_REPO_ROOT="$SOURCE_REPO_ROOT" bash "$SELECTOR" --changed-files - 2>/dev/null)"
+assert_contains "real_availability_suite_is_selected" "$T/test-resolve-reviewer-availability.sh" "$real_selection"
+assert_contains "real_step7a_surface_suite_is_selected" "$T/test-step7a-surface-consistency.sh" "$real_selection"
+real_count="$(SELECT_TEST_SUITES_REPO_ROOT="$SOURCE_REPO_ROOT" bash "$SELECTOR" --all | grep -c .)"
+real_on_disk="$(find "$SOURCE_REPO_ROOT/$T" -maxdepth 1 -type f -name 'test-*.sh' | wc -l | tr -d ' ')"
+run_test "real_all_matches_disk_count" "$real_on_disk" "$real_count"
 
 # ---------------------------------------------------------------------------
 echo ""
