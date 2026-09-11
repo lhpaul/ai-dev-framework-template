@@ -955,3 +955,9 @@ required on Linux.
 If the Linux kernel or container policy denies `PR_SET_CHILD_SUBREAPER`, the
 helper must stop with an invocation-error diagnostic. It must not silently
 fall back to cleanup that can leave adopted zombie descendants.
+
+The Linux cases also launch local and hosted probe descendants in new sessions
+and let the original probe leader exit successfully. Those descendants must be
+killed and reaped before return. The supervisor reads its own `/proc` child
+list to find adopted children outside the original group; unavailable `/proc`
+child-list access is an invocation error before a probe is launched.

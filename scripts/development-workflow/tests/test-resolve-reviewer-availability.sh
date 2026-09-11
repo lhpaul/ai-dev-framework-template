@@ -5,7 +5,7 @@
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$SCRIPT_DIR/.." <<'PY'
-import json, os, pathlib, shutil, subprocess, sys, tempfile, time
+import json, os, pathlib, shlex, shutil, subprocess, sys, tempfile, time
 
 scripts = pathlib.Path(sys.argv[1]).resolve()
 helper = scripts / 'resolve-reviewer-availability.sh'
@@ -228,6 +228,10 @@ reviews:
     (wtgit/'commondir').write_text('../..\n');(repo/'.git').write_text(f'gitdir: {wtgit}\n')
     (main/'.ai-dev-workflow.local.yaml').write_text('review:\n  on_draft:\n    runner: [codex]\n')
     d=run('codex');check('T-34 main-clone override', 'main_clone' in d['LOCAL_OVERRIDE_STATE'])
+    (repo/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  checkout_root: ../linked-product\n')
+    (main/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  checkout_root: ../main-product\n')
+    d=run('codex');check('T-34 linked product-only local files are not review overrides',d['LOCAL_OVERRIDE_STATE']=='none' and d['OUTCOME']=='proceeded-reduced',d)
+    (repo/'.ai-dev-workflow.local.yaml').unlink()
     reset('[codex]','[warn]');d=run('codex',1);check('T-35 non-scalar policy',d['POLICY_STATE']=='unreadable' and d['POLICY']=='')
     reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'},'created_at':'2000-01-01T00:00:00Z'}]);check('T-38 historical proxy',run()['REVIEWER_1_STATUS']=='reachable')
     for name in ('codex, claude','my reviewer','a, b c',"it's",''):
@@ -268,6 +272,18 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
                 time.sleep(.05)
             check(f'T-46 {engine} descendant cleanup {command}',gone and d['REVIEWER_1_REASON']=='check-inconclusive')
     (bins/'timeout').unlink(missing_ok=True)
+    if sys.platform.startswith('linux'):
+        for command,reviewer in (('codex','codex'),('gh','codex-github')):
+            reset(f'[{reviewer}]');pidfile=root/'detached.pid'
+            pidfile.unlink(missing_ok=True)
+            detached = f"import os,pathlib,time; os.setsid(); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
+            # Wait until the child has actually left the original group, then
+            # exit the leader successfully. Cleanup must still reap that child.
+            fake(command, f'{shlex.quote(real_python)} -c {shlex.quote(detached)} &\nwhile [ ! -s {str(pidfile)!r} ]; do sleep .01; done\nprintf \'%s\\n\' \'[{{"user":{{"login":"chatgpt-codex-connector[bot]"}}}}]\'\nexit 0')
+            d=run();pid=int(pidfile.read_text());gone=False
+            try:os.kill(pid,0)
+            except ProcessLookupError:gone=True
+            check(f'T-46 detached-session descendant cleanup {command}',gone and d['REVIEWER_1_STATUS']=='reachable')
     reset();fake('codex','exit 0');fake('timeout','echo "BusyBox timeout"; exit 1')
     check('T-46 non-GNU timeout uses owned-group fallback',run()['REVIEWER_1_STATUS']=='reachable')
     (bins/'timeout').unlink()
@@ -299,6 +315,12 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-48 explicit modern empty overrides legacy alias',d['FALLBACK_APPLIED']=='true' and d['CONFIG_LIST_STATE']=='empty',d)
     reset();local.write_text('review:\n  internal_reviewers: [cursor]\n');d=run('codex',1)
     check('T-48 local legacy alias overrides shipped reviewer',d['OVERRIDE_EXCLUDED']=='codex' and d['REVIEWER_2_NAME']=='cursor' and d['REVIEWER_2_REASON']=='runtime-absent',d)
+    reset();local.write_text('product_repos:\n  checkout_root: ../product-checkout\n');d=run('codex')
+    check('T-48 unrelated local config is not an applied review override',d['LOCAL_OVERRIDE_STATE']=='none' and d['OUTCOME']=='proceeded',d)
+    reset();local.write_text('review: {}\n');d=run('codex')
+    check('T-48 empty local review is not an applied override',d['LOCAL_OVERRIDE_STATE']=='none' and d['OUTCOME']=='proceeded',d)
+    reset();local.write_text('review: []\n');d=run('codex',1)
+    check('T-48 malformed local review remains an applied diagnostic',str(local) in d['LOCAL_OVERRIDE_STATE'] and 'applied' in d['LOCAL_OVERRIDE_STATE'] and d['BLOCK_CAUSE']=='policy-unreadable',d)
     reset();cfg.write_text('review:\n  internal_reviewers: codex\n');d=run('codex',1)
     check('T-48 malformed legacy alias blocks fallback',d['BLOCK_CAUSE']=='list-malformed' and d['REVIEWER_COUNT']=='0',d)
     reset('[codex]','{}');d=run(expected=1)

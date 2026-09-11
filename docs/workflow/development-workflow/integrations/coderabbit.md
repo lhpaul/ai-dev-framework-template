@@ -141,7 +141,9 @@ The conditional draft conversion below enables CodeRabbit dispatch; it does not 
 `reviews.auto_review.enabled: true` must be set in `.coderabbit.yaml`. Draft
 restriction is not an unreachability condition: after availability and policy
 permit dispatch, Step 7a converts a draft PR when CodeRabbit is configured so
-that it can review before dispatch.
+that it cannot review drafts (`reviews.auto_review.drafts: false`, or the
+absent default). When `drafts: true`, Step 7a preserves the draft state until
+normal approval.
 
 ```yaml
 reviews:
@@ -188,7 +190,7 @@ failure under either policy; do not reclassify it as unavailable.
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `coderabbit` classified as `unreachable` — warning comment posted       | CodeRabbit GitHub App is not installed on the repository                 | Install the CodeRabbit GitHub App at [coderabbit.ai](https://www.coderabbit.ai) and verify it has access to the repository                                                               |
 | `coderabbit` classified as `unreachable` — `auto_review.enabled: false` | `.coderabbit.yaml` has auto-review disabled                              | Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`                                                                                                                            |
-| CodeRabbit does not review a draft                                      | `drafts: false` is configured                                             | Step 7a converts the PR after availability and policy succeed, immediately before dispatch. |
+| CodeRabbit does not review a draft                                      | `drafts: false` is configured                                             | Step 7a converts the PR after availability and policy succeed, immediately before dispatch. `drafts: true` instead preserves draft state until normal approval. |
 | All Step 7a reviewers unreachable — hard-fail                           | Missing runtime or service prerequisite                                  | Make the missing runtime or prerequisite available, or narrow `review.on_draft.runner` locally. |
 | CodeRabbit does not post a review after push                            | App installed but auto-review trigger not firing                         | Push a new commit to the draft PR, confirm the App is active, and check the CodeRabbit dashboard for any rate limiting or quota issues                                                   |
 

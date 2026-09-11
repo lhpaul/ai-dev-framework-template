@@ -1673,8 +1673,10 @@ not claim the PR is draft. A PR that was draft remains draft. Post the hard-fail
 summary only after this recovery attempt, including any recovery failure.
 
 After a proceed verdict, if a Reachable `coderabbit` is selected, read the PR's
-draft state and convert with `gh pr ready <pr_number>` only if needed, then verify
-non-draft state before its dispatch. This conversion occurs after availability
+draft state and `.coderabbit.yaml` `reviews.auto_review.drafts` setting. Convert
+with `gh pr ready <pr_number>` only if needed, when that setting is `false` or absent; when
+it is `true`, preserve the draft state until normal approval. Verify non-draft
+state before its dispatch only on the conversion path. This conversion occurs after availability
 and policy but before dispatch; it is a CodeRabbit draft-eligibility precondition,
 not availability evidence. Other reviewer paths retain conversion after approval.
 A conversion/verification failure escalates as `missing_required_secret_or_permission`
@@ -1684,14 +1686,16 @@ and dispatches nobody. The CodeRabbit exception below never applies on a block.
 
 Do not read configuration or mutate PR state before the availability helper has
 returned a proceed verdict. Its indexed reviewer records are the sole source for
-this check. This keeps configuration resolution within the bounded availability
+reviewer selection in this check. This keeps configuration resolution within the bounded availability
 window and leaves a blocked draft PR draft.
 There is no independent `review-effective` or `review-overrides` call.
 
 After a proceed verdict, check draft state with `gh pr view <pr_number> --json
 isDraft --jq '.isDraft'`. If it is draft and the indexed records select a
-Reachable `coderabbit` reviewer for dispatch, convert it immediately before
-that dispatch. An Unreachable or Excluded by override record never triggers conversion:
+Reachable `coderabbit` reviewer for dispatch, read only
+`.coderabbit.yaml`'s `reviews.auto_review.drafts` setting. Convert immediately
+before dispatch when it is `false` or absent; preserve draft state when it is
+`true`. An Unreachable or Excluded by override record never triggers conversion:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -1717,14 +1721,13 @@ internal review gate would silently pass with reduced coverage.
 | `claude`     | Never — Claude Code agents always review regardless of draft state          |
 | `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
 
-To check whether `.coderabbit.yaml` restricts draft PRs:
-
-<!-- workflow-shell-contract: bash-zsh -->
-```bash
-grep -E '^\s*drafts:\s*false' .coderabbit.yaml
-```
-
-If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
+Read `.coderabbit.yaml` as YAML and select only the root
+`reviews.auto_review.drafts` field; similarly named keys or instruction text do
+not determine eligibility. If the file or field is absent, CodeRabbit defaults
+to `drafts: false`. A boolean `true` permits draft review, while boolean `false`
+requires conversion. If the file cannot be read or the field is not a boolean,
+stop before conversion and report the draft-eligibility error; do not guess or
+reclassify the reviewer as unreachable.
 
 **Important**: `auto_review.drafts: false` is not an unreachability condition.
 The availability decision happens first; this conversion guarantees eligibility

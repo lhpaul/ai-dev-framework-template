@@ -1405,6 +1405,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         "unreadable_detail": "",
         "local_override_file": local_file,
         "local_override_origin": local_origin,
+        "local_review_override_applied": False,
         "main_clone_local_override_file": str(main_clone_file) if main_clone_file else "",
     }
 
@@ -1462,6 +1463,12 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     local_policy_raw, local_policy_present, local_policy_structure_error = review_effective_value_from_path(
         local, ["review", "internal_reviewers_unavailable_policy"]
     )
+    local_review_override_applied = (
+        local_runner_present
+        or local_runner_structure_error
+        or local_policy_present
+        or local_policy_structure_error
+    )
     policy_raw, policy_present, policy_source = (
         (local_policy_raw, True, str(local_path)) if local_policy_present else (shipped_policy_raw, shipped_policy_present, str(shared_path) if shipped_policy_present else "")
     )
@@ -1512,6 +1519,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         "policy_input": policy_input,
         "effective_policy_state": effective_policy_state,
         "effective_policy_source": policy_source,
+        "local_review_override_applied": local_review_override_applied,
     })
     return base
 

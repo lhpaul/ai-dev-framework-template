@@ -69,10 +69,12 @@ trap 'exit 2' INT TERM
 # launcher remains an outer watchdog, including for a hung Python executable.
 linux_probe_supervisor=$(cat <<'PY_SUPERVISOR'
 # Step 7a Linux probe supervisor
-import ctypes, os, signal, subprocess, sys, time
+import ctypes, os, pathlib, signal, subprocess, sys, time
 libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
     raise OSError(ctypes.get_errno(), "cannot enable probe child subreaper")
+children_path = pathlib.Path(f"/proc/self/task/{os.getpid()}/children")
+children_path.read_text()  # Check the cleanup capability before launching a probe.
 interrupted = False
 def interrupt(_signum, _frame):
     global interrupted
@@ -96,12 +98,21 @@ finally:
         pass
     child.wait()
     while True:
+        # A descendant can escape killpg by starting a new session. The
+        # subreaper adopts it; only signal our own still-unreaped children.
+        for pid in map(int, children_path.read_text().split()):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         try:
-            os.waitpid(-1, 0)
+            reaped, _status = os.waitpid(-1, os.WNOHANG)
         except InterruptedError:
             continue
         except ChildProcessError:
             break
+        if reaped == 0:
+            time.sleep(0.01)
 raise SystemExit(124 if timed_out or interrupted else (child.returncode if child.returncode >= 0 else 128 - child.returncode))
 PY_SUPERVISOR
 )
@@ -238,7 +249,8 @@ if [ "$config_rc" != 0 ]; then cat "$work_dir/config.err" >&2; fail "review-effe
 # Validate before reading: malformed helper output is execution failure, not configuration data.
 jq -e 'type == "object" and
   ([.effective_runner,.override_excluded,.shipped_runner] | all(.[]; type == "array" and all(.[]; type == "string" and (contains("\u0000")|not)))) and
-  ([.effective_runner_state,.effective_runner_source,.effective_policy,.effective_policy_state,.effective_policy_source,.unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file] | all(.[]; type == "string"))' \
+  ([.effective_runner_state,.effective_runner_source,.effective_policy,.effective_policy_state,.effective_policy_source,.unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file] | all(.[]; type == "string")) and
+  (.local_review_override_applied | type == "boolean")' \
   "$work_dir/config.json" >/dev/null || fail 'invalid review-effective JSON contract'
 jq -j '[.effective_policy_state,.effective_policy_source,
   (if .policy_input == null then "" elif (.policy_input|type)=="string" then .policy_input else (.policy_input|tojson) end),
@@ -246,10 +258,11 @@ jq -j '[.effective_policy_state,.effective_policy_source,
   "$work_dir/config.json" >"$work_dir/fields" || fail 'cannot decode config fields'
 fields=()
 while IFS= read -r -d '' field; do fields+=("$field"); done <"$work_dir/fields"
+local_review_override_applied=$(jq -r '.local_review_override_applied' "$work_dir/config.json") || fail 'cannot decode local override state'
 policy_state=${fields[0]} policy_source=${fields[1]} policy_input=${fields[2]}
 unreadable_file=${fields[3]} unreadable_detail=${fields[4]}
-if [ -n "${fields[5]}" ]; then local_state="${fields[5]} (${fields[6]}), applied"
-elif [ -n "${fields[7]}" ]; then local_state="present but unpropagated: ${fields[7]}"
+if [ "$local_review_override_applied" = true ] && [ -n "${fields[5]}" ]; then local_state="${fields[5]} (${fields[6]}), applied"
+elif [ -z "${fields[5]}" ] && [ -n "${fields[7]}" ]; then local_state="present but unpropagated: ${fields[7]}"
 fi
 case "$policy_state" in
   unreadable) block policy-unreadable ;; unsupported) block policy-unsupported ;;
