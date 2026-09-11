@@ -1414,14 +1414,21 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     runner_structure_error = local_runner_structure_error or (
         not local_runner_present and shipped_runner_structure_error
     )
-    # Policy is evaluated first. A malformed review/on_draft ancestor prevents
-    # that evaluation even though the policy key itself is a sibling of
-    # on_draft, so it is an unreadable policy input as well as a malformed list.
-    local_structure_error = local_runner_structure_error or local_policy_structure_error
+    # Policy is evaluated first, but its sibling runner tree is independent.
+    # A malformed ``review.on_draft`` affects the reviewer list only; a
+    # readable ``review.internal_reviewers_unavailable_policy`` still decides
+    # how that malformed list is reported. A malformed shared ``review``
+    # ancestor is reported by both field paths and remains policy-unreadable
+    # when the local file did not replace the runner tree.
+    local_structure_error = local_policy_structure_error
     policy_structure_error = (
         local_structure_error
-        or (not local_runner_present and shipped_runner_structure_error)
         or (not local_policy_present and shipped_policy_structure_error)
+        or (
+            not local_runner_present
+            and shipped_runner_structure_error
+            and shipped_policy_structure_error
+        )
     )
     if runner_structure_error:
         effective_runner_state = "malformed"

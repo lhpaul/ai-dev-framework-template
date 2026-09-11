@@ -1491,116 +1491,7 @@ for this stage. Per `guardrails-enforcement.md` section 3 Gate 4:
 - Otherwise: leave the PR at its normal `ready-for-human-review` handoff — do
   not make the review decision autonomously.
 
-Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
-
-### Draft-state pre-check (after availability, before dispatch)
-
-Do not read configuration or mutate PR state before the availability helper has
-returned a proceed verdict. Its indexed reviewer records are the sole source for
-this check. This keeps configuration resolution within the bounded availability
-window and leaves a blocked draft PR draft.
-There is no independent `review-effective` or `review-overrides` call.
-
-After a proceed verdict, check draft state with `gh pr view <pr_number> --json
-isDraft --jq '.isDraft'`. If it is draft and the indexed records select a
-Reachable `coderabbit` reviewer for dispatch, convert it immediately before
-that dispatch. An Unreachable or Excluded by override record never triggers conversion:
-
-```bash
-gh pr ready <pr_number>
-```
-
-Post this explanation:
-
-> `INFO: PR converted from draft to non-draft before Step 7a internal review. Reason: CodeRabbit is configured as an internal reviewer and '.coderabbit.yaml' sets 'auto_review.drafts: false' — CodeRabbit silently skips draft PRs. Converting now to ensure full reviewer coverage.`
-
-**Why this matters**: CodeRabbit (and similar tools) configured with
-`auto_review.drafts: false` do not post any skip notice when they bypass a draft
-PR. That behavior is useful when CodeRabbit is intentionally configured as an
-a ready-phase reviewer, because it lets the draft GitHub gate clear first. It is
-unsafe when CodeRabbit is configured as a Step 7a runner reviewer, because the
-internal review gate would silently pass with reduced coverage.
-
-**Reviewer-to-draft-restriction mapping**:
-
-| Reviewer     | Skips draft PRs when...                                                     |
-| ------------ | --------------------------------------------------------------------------- |
-| `coderabbit` | `.coderabbit.yaml` has `reviews.auto_review.drafts: false` (the default)    |
-| `claude`     | Never — Claude Code agents always review regardless of draft state          |
-| `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
-
-To check whether `.coderabbit.yaml` restricts draft PRs:
-
-```bash
-grep -E '^\s*drafts:\s*false' .coderabbit.yaml
-```
-
-If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
-
-**Important**: `auto_review.drafts: false` is not an unreachability condition.
-The availability decision happens first; this conversion guarantees eligibility
-before dispatch only on the proceed path.
-
-If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
-
-### Design Review Gate (implementation PRs only)
-
-This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Determining which reviewers to run" for those PR types.
-
-#### Frontend-file detection
-
-Inspect the PR's changed files:
-
-```bash
-gh pr diff <pr_number> --name-only
-```
-
-A file is **frontend** if any of the following conditions hold:
-
-- Its extension is one of: `.html`, `.css`, `.scss`, `.sass`, `.less`, `.jsx`, `.tsx`, `.vue`, `.svelte` (BR-2)
-- Its extension is `.js` or `.ts` **and** its path starts with one of these directory prefixes: `src/`, `app/`, `pages/`, `components/`, `public/`, `static/`, or `assets/` (BR-2)
-
-`.js` and `.ts` files at the repository root or under `scripts/` are **not** treated as frontend.
-
-These detection rules are extensible — downstream teams that need additional extensions or paths must update this list (and keep `.claude/agents/design-reviewer.md` and `.cursor/agents/design-reviewer.md` in sync).
-
-#### Three execution paths
-
-**Path A — No frontend changes detected (Use Case 2):**
-
-Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Determining which reviewers to run". This skip is not a failure (BR-10).
-
-**Path B — Frontend changes detected, provider available (Use Case 1):**
-
-Invoke the `design-reviewer` agent, passing:
-
-- The PR number
-- The list of changed frontend files
-- The `PREVIEW_URL` environment variable (if set) or instructions to start the development server
-
-After the agent posts its PR comment, parse the verdict from the comment header (the comment must begin with `## Design Review Summary` and the verdict must appear as `**Verdict**: <value>` — BR-9):
-
-| Verdict          | Action                                                                                                                            |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `Approved`       | Proceed normally to "Determining which reviewers to run"                                                                          |
-| `Needs Revision` | Treat as a review finding. Do not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted (BR-5) |
-| `Skipped`        | Development server was unreachable; log the skip and continue without blocking (BR-4)                                             |
-
-**Path C — Frontend changes detected, provider unavailable (Use Case 3):**
-
-Invoke the `design-reviewer` agent; it will detect provider unavailability, post a skip notice, and exit with verdict `Skipped`. Parse the `Skipped` verdict and continue without blocking the PR (BR-3).
-
-#### Preview URL resolution
-
-The design-reviewer agent resolves the preview base URL in this order (BR-11):
-
-1. `PREVIEW_URL` environment variable, treated as the base URL (file-relative paths are appended).
-2. Local development server started by the agent (the server address becomes the base URL).
-3. If neither is available, the agent skips preview navigation and falls back to a report noting that no live preview was accessible.
-
-#### Browser automation provider
-
-The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider value (BR-8).
+Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings. Resolve availability and apply policy first. Only a proceed verdict permits the draft-state pre-check, Design Review Gate, and configured-reviewer dispatch below; a blocking result dispatches no reviewer, including `design-reviewer`.
 
 ### Determining which reviewers to run
 
@@ -1788,6 +1679,118 @@ and policy but before dispatch; it is a CodeRabbit draft-eligibility preconditio
 not availability evidence. Other reviewer paths retain conversion after approval.
 A conversion/verification failure escalates as `missing_required_secret_or_permission`
 and dispatches nobody. The CodeRabbit exception below never applies on a block.
+
+### Draft-state pre-check (after availability, before dispatch)
+
+Do not read configuration or mutate PR state before the availability helper has
+returned a proceed verdict. Its indexed reviewer records are the sole source for
+this check. This keeps configuration resolution within the bounded availability
+window and leaves a blocked draft PR draft.
+There is no independent `review-effective` or `review-overrides` call.
+
+After a proceed verdict, check draft state with `gh pr view <pr_number> --json
+isDraft --jq '.isDraft'`. If it is draft and the indexed records select a
+Reachable `coderabbit` reviewer for dispatch, convert it immediately before
+that dispatch. An Unreachable or Excluded by override record never triggers conversion:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+gh pr ready <pr_number>
+```
+
+Post this explanation:
+
+> `INFO: PR converted from draft to non-draft before Step 7a internal review. Reason: CodeRabbit is configured as an internal reviewer and '.coderabbit.yaml' sets 'auto_review.drafts: false' — CodeRabbit silently skips draft PRs. Converting now to ensure full reviewer coverage.`
+
+**Why this matters**: CodeRabbit (and similar tools) configured with
+`auto_review.drafts: false` do not post any skip notice when they bypass a draft
+PR. That behavior is useful when CodeRabbit is intentionally configured as an
+a ready-phase reviewer, because it lets the draft GitHub gate clear first. It is
+unsafe when CodeRabbit is configured as a Step 7a runner reviewer, because the
+internal review gate would silently pass with reduced coverage.
+
+**Reviewer-to-draft-restriction mapping**:
+
+| Reviewer     | Skips draft PRs when...                                                     |
+| ------------ | --------------------------------------------------------------------------- |
+| `coderabbit` | `.coderabbit.yaml` has `reviews.auto_review.drafts: false` (the default)    |
+| `claude`     | Never — Claude Code agents always review regardless of draft state          |
+| `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
+
+To check whether `.coderabbit.yaml` restricts draft PRs:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+grep -E '^\s*drafts:\s*false' .coderabbit.yaml
+```
+
+If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
+
+**Important**: `auto_review.drafts: false` is not an unreachability condition.
+The availability decision happens first; this conversion guarantees eligibility
+before dispatch only on the proceed path.
+
+If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
+
+### Design Review Gate (implementation PRs only)
+
+This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Reviewer dispatch map" for those PR types.
+
+#### Frontend-file detection
+
+Inspect the PR's changed files:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+gh pr diff <pr_number> --name-only
+```
+
+A file is **frontend** if any of the following conditions hold:
+
+- Its extension is one of: `.html`, `.css`, `.scss`, `.sass`, `.less`, `.jsx`, `.tsx`, `.vue`, `.svelte` (BR-2)
+- Its extension is `.js` or `.ts` **and** its path starts with one of these directory prefixes: `src/`, `app/`, `pages/`, `components/`, `public/`, `static/`, or `assets/` (BR-2)
+
+`.js` and `.ts` files at the repository root or under `scripts/` are **not** treated as frontend.
+
+These detection rules are extensible — downstream teams that need additional extensions or paths must update this list (and keep `.claude/agents/design-reviewer.md` and `.cursor/agents/design-reviewer.md` in sync).
+
+#### Three execution paths
+
+**Path A — No frontend changes detected (Use Case 2):**
+
+Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Reviewer dispatch map". This skip is not a failure (BR-10).
+
+**Path B — Frontend changes detected, provider available (Use Case 1):**
+
+Invoke the `design-reviewer` agent, passing:
+
+- The PR number
+- The list of changed frontend files
+- The `PREVIEW_URL` environment variable (if set) or instructions to start the development server
+
+After the agent posts its PR comment, parse the verdict from the comment header (the comment must begin with `## Design Review Summary` and the verdict must appear as `**Verdict**: <value>` — BR-9):
+
+| Verdict          | Action                                                                                                                            |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Approved`       | Proceed normally to "Reviewer dispatch map"                                                                          |
+| `Needs Revision` | Treat as a review finding. Do not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted (BR-5) |
+| `Skipped`        | Development server was unreachable; log the skip and continue without blocking (BR-4)                                             |
+
+**Path C — Frontend changes detected, provider unavailable (Use Case 3):**
+
+Invoke the `design-reviewer` agent; it will detect provider unavailability, post a skip notice, and exit with verdict `Skipped`. Parse the `Skipped` verdict and continue without blocking the PR (BR-3).
+
+#### Preview URL resolution
+
+The design-reviewer agent resolves the preview base URL in this order (BR-11):
+
+1. `PREVIEW_URL` environment variable, treated as the base URL (file-relative paths are appended).
+2. Local development server started by the agent (the server address becomes the base URL).
+3. If neither is available, the agent skips preview navigation and falls back to a report noting that no live preview was accessible.
+
+#### Browser automation provider
+
+The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider value (BR-8).
 
 ### Reviewer dispatch map
 

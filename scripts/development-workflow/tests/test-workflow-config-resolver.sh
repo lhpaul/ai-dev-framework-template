@@ -1116,7 +1116,7 @@ assert_review_effective_states "E-21 null modern runner wins alias" empty absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex' '  internal_reviewers: [codex]'
 assert_review_effective_states "E-21 malformed modern runner wins alias" malformed absent
 write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers: [codex]'
-assert_review_effective_states "E-21 malformed modern ancestor wins alias" malformed unreadable
+assert_review_effective_states "E-21 malformed modern ancestor wins alias" malformed absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
 printf '%s\n' 'review:' '  internal_reviewers: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-21 local legacy runner alias" defined absent
@@ -1325,16 +1325,26 @@ run_test "review-effective shared review list diagnostic" "$review_effective_dir
 write_review_effective_fixture 'review:' '  on_draft: []'
 shared_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective shared on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_on_draft_list_json")"
-run_test "review-effective shared on_draft list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$shared_on_draft_list_json")"
+run_test "review-effective shared on_draft list policy remains absent" absent "$(jq -r '.effective_policy_state' <<< "$shared_on_draft_list_json")"
+write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers_unavailable_policy: warn'
+shared_on_draft_policy_json="$(review_effective_json)"
+run_test "review-effective shared on_draft list keeps readable policy" defined "$(jq -r '.effective_policy_state' <<< "$shared_on_draft_policy_json")"
+run_test "review-effective shared on_draft list keeps policy value" warn "$(jq -r '.effective_policy' <<< "$shared_on_draft_policy_json")"
 printf '%s\n' 'review: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_review_list_json="$(review_effective_json)"
 run_test "review-effective local review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_review_list_json")"
 run_test "review-effective local review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$local_review_list_json")"
 run_test "review-effective local review list diagnostic" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.unreadable_file' <<< "$local_review_list_json")"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective local on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_on_draft_list_json")"
-run_test "review-effective local on_draft list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$local_on_draft_list_json")"
+run_test "review-effective local on_draft list policy remains absent" absent "$(jq -r '.effective_policy_state' <<< "$local_on_draft_list_json")"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft: []' '  internal_reviewers_unavailable_policy: warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+local_on_draft_policy_json="$(review_effective_json)"
+run_test "review-effective local on_draft list keeps readable policy" defined "$(jq -r '.effective_policy_state' <<< "$local_on_draft_policy_json")"
+run_test "review-effective local on_draft list keeps policy value" warn "$(jq -r '.effective_policy' <<< "$local_on_draft_policy_json")"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:'
 nullable_review_json="$(review_effective_json)"

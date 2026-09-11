@@ -94,8 +94,9 @@ def checks(base):
     out['D-18']=contains(hard,'Every configured reviewer with its verdict','including Reachable and Excluded by override','reason and remedy','`BLOCK_CAUSE`','`LOCAL_OVERRIDE_STATE`','`POLICY_INPUT`','`UNREADABLE_FILE` / `UNREADABLE_DETAIL`','Case B names `fail-if-any-unavailable`','do not attribute a block to runner identity') and '(<runner-context>)' not in hard
     recovery=section(hard,'Treat helper','After a proceed verdict')
     out['D-19']=contains(recovery,'exit `1` and exit `2` (`availability-resolver-failed`)','dispatch nobody, never convert to ready','After determination','gh pr ready <pr_number> --undo','verify `isDraft: true`','missing_required_secret_or_permission','do not claim the PR is draft')
+    out['D-19']=out['D-19'] and p.index('#### Hard-fail comment format') < p.index('### Draft-state pre-check') < p.index('### Design Review Gate') < p.index('### Reviewer dispatch map')
     out['D-20']=contains(entry,'no independent `review-effective` or `review-overrides` call','stalled parser is verified by smoke Step 16') and contains(hard,'After a proceed verdict, if a Reachable `coderabbit` is selected','only if needed','after availability and policy but before dispatch') and contains(policy,'Neither reviewer is classified unavailable because the PR is draft.')
-    precheck=section(p,'### Draft-state pre-check (after availability, before dispatch)','### Determining which reviewers to run')
+    precheck=section(p,'### Draft-state pre-check (after availability, before dispatch)','### Design Review Gate')
     out['D-20']=out['D-20'] and contains(precheck,'indexed records select a Reachable `coderabbit` reviewer for dispatch','An Unreachable or Excluded by override record never triggers conversion')
     out['D-21']=contains(runtime,'historical activity can be a false Reachable after removal','new or review-only installation can be false Unreachable','review failure under either policy, never an unreachability reclassification')
     unsafe_aggregate_lines=[line for line in gate.splitlines() if re.search(r'\b(?:CONFIGURED|REACHABLE|UNREACHABLE|OVERRIDE_EXCLUDED)\b',line) and re.search(r'\b(?:split|splitting|tokenize|eval)\b',line,re.I) and not re.search(r'never|must not|do not',line,re.I)]
@@ -149,6 +150,7 @@ if sys.argv[2]=='--prove-plants':
             ('D-17',protocol,'only when `OUTCOME=proceeded-reduced`','for every outcome'),
             ('D-18',protocol,'Every configured reviewer with its verdict is included in each hard-fail report.','Only unreachable reviewers are included in each hard-fail report.'),
             ('D-19',protocol,'verify `isDraft: true` before completing the block report','assume the PR is draft'),
+            ('D-19',protocol,'### Determining which reviewers to run','### Design Review Gate (premature dispatch)\n\n### Determining which reviewers to run'),
             ('D-20',protocol,'After a proceed verdict, if a Reachable `coderabbit` is selected','After a proceed verdict, regardless of whether `coderabbit` is Reachable'),
             ('D-20',protocol,'indexed records select a\nReachable `coderabbit` reviewer for dispatch','indexed records include any `coderabbit` reviewer'),
             ('D-21',protocol,'historical activity can be a false Reachable after removal','historical activity proves the service remains installed'),

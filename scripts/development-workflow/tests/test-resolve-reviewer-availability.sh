@@ -299,9 +299,15 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-48 malformed legacy alias blocks fallback',d['BLOCK_CAUSE']=='list-malformed' and d['REVIEWER_COUNT']=='0',d)
     reset('[codex]','{}');d=run(expected=1)
     check('T-48 collection diagnostics',d['POLICY_INPUT']=='{}' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']), d)
-    for malformed in ('review: []\n','review:\n  on_draft: []\n'):
+    for malformed in ('review: []\n',):
         reset();local.write_text(malformed);d=run('codex',1)
         check(f'T-31 malformed ancestor {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and str(local)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
+    for source in (cfg,local):
+        reset();source.write_text('review:\n  on_draft: []\n  internal_reviewers_unavailable_policy: warn\n');d=run('codex',1)
+        check(f'T-31 malformed runner keeps readable sibling policy {source.name}',d['BLOCK_CAUSE']=='list-malformed' and d['POLICY_STATE']=='defined' and d['POLICY']=='warn' and d['REVIEWER_COUNT']=='0',d)
+    for source in (cfg,local):
+        reset();source.write_text('review:\n  on_draft: []\n  internal_reviewers_unavailable_policy: maybe\n');d=run('codex',1)
+        check(f'T-31 unsupported sibling policy takes priority {source.name}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_STATE']=='unsupported' and d['CONFIG_LIST_STATE']=='not-evaluated' and d['REVIEWER_COUNT']=='0',d)
     for malformed in ('[,]', '[codex,,cursor]', '[,codex]'):
         reset(malformed);d=run('codex',1)
         check(f'T-31 missing flow element {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'],d)
