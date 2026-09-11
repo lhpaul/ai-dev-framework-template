@@ -334,8 +334,20 @@ reviews:
     fake('python3', 'if [ "$1" = -B ] && [ "$2" = -c ]; then exit 1; fi\nexec '+shlex.quote(real_python)+' "$@"')
     d=run(expected=1)
     check('T-22 parser execution remedy targets python','configuration check with the gate python3' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','Repair','Install')),d)
-    reset('[codex, cursor]');fake('codex','sleep 30');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'3'})
-    check('T-22 unstarted probe remedy targets budget','budget' in d['REVIEWER_2_REMEDY'] and all(x not in d['REVIEWER_2_REMEDY'] for x in ('gh','PyYAML','.coderabbit')),d)
+    # Exhaust the budget before dispatch, independently of timeout/SECONDS
+    # rounding. Delay only the final list decode, after bounded config parsing.
+    reset('[codex, cursor]')
+    runtime_started=root/'budget-runtime-started'
+    for binary in ('codex','cursor-agent'):
+        fake(binary,'touch '+shlex.quote(str(runtime_started)))
+    real_jq=str((bins/'jq').resolve())
+    fake('jq', 'if [ "$1" = -j ] && [[ "$2" == ".effective_runner[]"* ]]; then sleep 4; fi\nexec '+shlex.quote(real_jq)+' "$@"')
+    try:
+        d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'3'})
+    finally:
+        (bins/'jq').unlink()
+        (bins/'jq').symlink_to(real_jq)
+    check('T-22 unstarted probe remedy targets budget',not runtime_started.exists() and d['REVIEWER_2_DETAIL']=='availability budget exhausted before this check started' and 'budget' in d['REVIEWER_2_REMEDY'] and all(x not in d['REVIEWER_2_REMEDY'] for x in ('gh','PyYAML','.coderabbit')),d)
     reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}])
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
