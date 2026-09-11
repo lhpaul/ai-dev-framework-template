@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Resolve shared and local workflow repository context.
 
-This script intentionally uses only the Python standard library. It supports the
-small YAML subset used by `.ai-dev-workflow.yaml` and
+Legacy commands use only the Python standard library. Strict review-effective
+uses PyYAML for complete syntax validation and supports the small YAML subset in `.ai-dev-workflow.yaml` and
 `.ai-dev-workflow.local.yaml`: nested mappings, lists, and scalar values.
 Unsupported or malformed structures fail closed with a file-specific error.
 """
@@ -54,343 +54,96 @@ LOCAL_ONLY_KEYS = {
 }
 
 
-YAML_INLINE_WHITESPACE = " \t"
-# YAML c-printable excludes these raw code points even inside comments/quotes.
-# Escapes are validated separately after parsing the printable source text.
-YAML_NON_PRINTABLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f\ud800-\udfff\ufffe\uffff]")
-
-
 class ConfigError(Exception):
     """Configuration problem with a human-readable message."""
 
 
-def quote_starts_here(prefix: list[str], *, strict_quotes: bool) -> bool:
-    """Return whether a quote can delimit a YAML scalar at this position."""
-    return (
-        not strict_quotes
-        or not prefix
-        or prefix[-1] in YAML_INLINE_WHITESPACE
-        or prefix[-1] in ":,[{"
-    )
-
-
-def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> str:
+def strip_inline_comment(line: str) -> str:
     in_single = False
     in_double = False
     escaped = False
     result: list[str] = []
-    node_started = False
-    flow_depth = 0
-    index = 0
-    while index < len(line):
-        char = line[index]
+    for char in line:
         if escaped:
             result.append(char)
             escaped = False
-            index += 1
             continue
         if char == "\\" and in_double:
             result.append(char)
             escaped = True
-            index += 1
             continue
         if char == "'" and not in_double:
-            if strict_yaml_comments and in_single and index + 1 < len(line) and line[index + 1] == "'":
-                result.extend((char, "'"))
-                index += 2
-                continue
-            if in_single or not strict_yaml_comments or not node_started:
-                in_single = not in_single
-            node_started = True
+            in_single = not in_single
             result.append(char)
-            index += 1
             continue
         if char == '"' and not in_single:
-            if in_double or not strict_yaml_comments or not node_started:
-                in_double = not in_double
-            node_started = True
+            in_double = not in_double
             result.append(char)
-            index += 1
             continue
         if char == "#" and not in_single and not in_double:
-            if not strict_yaml_comments or not result or result[-1] in YAML_INLINE_WHITESPACE:
-                break
-        if strict_yaml_comments and not in_single and not in_double:
-            # Whitespace within a plain scalar never starts a quoted scalar.
-            # Only mapping/list boundaries can start a new node, matching the
-            # flow splitter's treatment of literal quotes in plain values.
-            separated = index + 1 == len(line) or line[index + 1] in YAML_INLINE_WHITESPACE
-            if char in "[{" and (flow_depth > 0 or not node_started):
-                flow_depth += 1
-                node_started = False
-            elif char in "]}" and flow_depth > 0:
-                flow_depth -= 1
-                node_started = True
-            elif (char == "," and flow_depth > 0) or (char == ":" and separated):
-                node_started = False
-            elif char == "-" and not node_started and separated:
-                pass
-            elif char not in YAML_INLINE_WHITESPACE:
-                node_started = True
+            break
         result.append(char)
-        index += 1
-    return "".join(result).rstrip(YAML_INLINE_WHITESPACE if strict_yaml_comments else None)
+    return "".join(result).rstrip()
 
 
-def preprocess_yaml(path: Path, *, strict_yaml_comments: bool = False) -> list[tuple[int, str, int]]:
+def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
     try:
-        raw_text = path.read_text(encoding="utf-8")
-        if strict_yaml_comments:
-            invalid = YAML_NON_PRINTABLE.search(raw_text)
-            if invalid is not None:
-                line_no = raw_text.count("\n", 0, invalid.start()) + 1
-                raise ConfigError(
-                    f"{path}:{line_no}: non-printable YAML character U+{ord(invalid.group()):04X}"
-                )
-        # read_text normalizes CR/CRLF; Unicode whitespace is scalar content,
-        # not indentation, separation, or an additional physical line break.
-        raw_lines = raw_text.split("\n") if strict_yaml_comments else raw_text.splitlines()
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise ConfigError(f"{path}: could not read config: {exc}") from exc
 
-    whitespace = YAML_INLINE_WHITESPACE if strict_yaml_comments else None
     lines: list[tuple[int, str, int]] = []
     for line_no, raw in enumerate(raw_lines, start=1):
         if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
             raise ConfigError(f"{path}:{line_no}: tabs are not supported for indentation")
-        stripped_comment = strip_inline_comment(raw, strict_yaml_comments=strict_yaml_comments)
-        if not stripped_comment.strip(whitespace):
+        stripped_comment = strip_inline_comment(raw)
+        if not stripped_comment.strip():
             continue
         indent = len(stripped_comment) - len(stripped_comment.lstrip(" "))
         if indent % 2 != 0:
             raise ConfigError(f"{path}:{line_no}: indentation must use multiples of two spaces")
-        lines.append((indent, stripped_comment.strip(whitespace), line_no))
+        lines.append((indent, stripped_comment.strip(), line_no))
     return lines
 
 
-def split_key_value(
-    content: str, path: Path, line_no: int, *, require_mapping_separator: bool = False
-) -> tuple[str, str | None]:
+def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | None]:
     if ":" not in content:
         raise ConfigError(f"{path}:{line_no}: expected '<key>: <value>'")
-    delimiter = content.index(":")
-    if require_mapping_separator and delimiter + 1 < len(content) and content[delimiter + 1] not in YAML_INLINE_WHITESPACE:
-        raise ConfigError(f"{path}:{line_no}: mapping colon must be followed by whitespace or end of line")
-    key, value = content[:delimiter], content[delimiter + 1:]
-    whitespace = YAML_INLINE_WHITESPACE if require_mapping_separator else None
-    key = key.strip(whitespace)
+    key, value = content.split(":", 1)
+    key = key.strip()
     if not re.match(r"^[A-Za-z0-9_.-]+$", key):
         raise ConfigError(f"{path}:{line_no}: unsupported key '{key}'")
-    value = value.strip(whitespace)
+    value = value.strip()
     return key, value if value != "" else None
-
-
-def decode_review_double_quoted_scalar(value: str, path: Path, line_no: int) -> str:
-    """Decode and validate the YAML double-quoted scalar subset used by the gate."""
-    escapes = {
-        "0": "\0", "a": "\a", "b": "\b", "t": "\t", "n": "\n", "v": "\v",
-        "f": "\f", "r": "\r", "e": "\x1b", " ": " ", '"': '"', "/": "/",
-        "\\": "\\", "N": "\u0085", "_": "\u00a0", "L": "\u2028", "P": "\u2029",
-    }
-    decoded: list[str] = []
-    index = 1
-    while index < len(value):
-        char = value[index]
-        if char == '"':
-            index += 1
-            if index != len(value):
-                raise ConfigError(f"{path}:{line_no}: trailing content after quoted scalar")
-            decoded_value = "".join(decoded)
-            if "\0" in decoded_value:
-                raise ConfigError(f"{path}:{line_no}: NUL is not supported in review configuration")
-            return decoded_value
-        if char != "\\":
-            decoded.append(char)
-            index += 1
-            continue
-        if index + 1 >= len(value):
-            raise ConfigError(f"{path}:{line_no}: truncated YAML escape")
-        escape = value[index + 1]
-        if escape in escapes:
-            decoded.append(escapes[escape])
-            index += 2
-            continue
-        width = {"x": 2, "u": 4, "U": 8}.get(escape)
-        if width is None:
-            raise ConfigError(f"{path}:{line_no}: unsupported YAML escape \\{escape}")
-        end = index + 2 + width
-        digits = value[index + 2:end]
-        if len(digits) != width or not re.fullmatch(r"[0-9A-Fa-f]+", digits):
-            raise ConfigError(f"{path}:{line_no}: malformed YAML Unicode escape")
-        codepoint = int(digits, 16)
-        if 0xD800 <= codepoint <= 0xDFFF or codepoint > 0x10FFFF:
-            raise ConfigError(f"{path}:{line_no}: invalid YAML Unicode code point")
-        decoded.append(chr(codepoint))
-        index = end
-    raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
-
-
-def validate_review_flow(value: str, path: Path, line_no: int) -> None:
-    """Validate collection boundaries without reinterpreting quoted delimiters."""
-    stack: list[str] = []
-    quote: str | None = None
-    started = False
-    closed = ""
-    index = 0
-    while index < len(value):
-        char = value[index]
-        if quote is not None:
-            if char == "\\" and quote == '"':
-                index += 2
-                continue
-            if char == quote:
-                if quote == "'" and value[index:index + 2] == "''":
-                    index += 2
-                    continue
-                quote = None
-                closed = "quoted scalar"
-            index += 1
-            continue
-        if char in YAML_INLINE_WHITESPACE:
-            index += 1
-            continue
-        if char in "]}":
-            if not stack or stack.pop() != {"]": "[", "}": "{"}[char]:
-                raise ConfigError(f"{path}:{line_no}: mismatched flow delimiter")
-            if not stack:
-                if value[index + 1:].strip(YAML_INLINE_WHITESPACE):
-                    raise ConfigError(f"{path}:{line_no}: trailing content after flow collection")
-                return
-            started = True
-            closed = "flow collection"
-        elif char == ",":
-            started = False
-            closed = ""
-        elif closed:
-            raise ConfigError(f"{path}:{line_no}: trailing content after {closed}")
-        elif char in "[{":
-            if started:
-                raise ConfigError(f"{path}:{line_no}: flow delimiter inside plain scalar")
-            stack.append(char)
-            started = False
-        elif char == "#" and not started:
-            raise ConfigError(f"{path}:{line_no}: comment indicator cannot start a flow node")
-        elif char in ("'", '"') and not started:
-            quote = char
-            started = True
-        else:
-            started = True
-        index += 1
-    if quote is not None:
-        raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
-    kind = "sequence" if value.startswith("[") else "mapping"
-    raise ConfigError(f"{path}:{line_no}: unterminated flow {kind}")
-
-
-def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
-    """Reject syntax the review-effective reader must not reinterpret."""
-    if "\0" in value:
-        raise ConfigError(f"{path}:{line_no}: NUL is not supported in review configuration")
-    if value.startswith(("[", "{")):
-        validate_review_flow(value, path, line_no)
-    # The legacy subset never interpreted flow mappings.  Treating one as a
-    # string in review-effective would turn a non-scalar policy into an
-    # unsupported scalar, so reject unsupported non-empty flow mappings.
-    if value.startswith("{") and value.endswith("}") and value != "{}":
-        raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
-    if value.startswith("[") and value.endswith("]") and value[1:-1].strip(YAML_INLINE_WHITESPACE):
-        items = split_inline_list(value[1:-1], strict_quotes=True)
-        # YAML permits a trailing comma, but never an omitted first or middle
-        # item. The legacy reader historically skipped those items; the
-        # review-effective reader must reject them rather than changing the
-        # configured reviewer set.
-        if any(not item.strip(YAML_INLINE_WHITESPACE) for item in items[:-1]) or (
-            len(items) == 1 and not items[0].strip(YAML_INLINE_WHITESPACE)
-        ):
-            raise ConfigError(f"{path}:{line_no}: flow sequence contains an empty item")
-        if any(
-            re.match(r"^[?:](?:[ \t]|$)", item.strip(YAML_INLINE_WHITESPACE))
-            or list_item_is_mapping(item.strip(YAML_INLINE_WHITESPACE), strict_quotes=True)
-            for item in items
-            if item.strip(YAML_INLINE_WHITESPACE)
-        ):
-            raise ConfigError(f"{path}:{line_no}: flow sequence contains a mapping item")
-    if not value.startswith(("'", '"')):
-        # Plain scalar values cannot contain a mapping delimiter, even when
-        # the malformed field is unrelated to review settings. Flow lists are
-        # validated element by element so quoted colons remain valid strings.
-        if not value.startswith(("[", "{")) and re.search(r":(?:[ \t]|$)", value):
-            raise ConfigError(f"{path}:{line_no}: mapping delimiter in plain scalar")
-        if (
-            value.startswith(("!", "&", "*", "|", ">", "@", "`", "%", "]", "}", ","))
-            or re.match(r"^[?-](?:[ \t]|$)", value)
-        ):
-            raise ConfigError(f"{path}:{line_no}: unsupported YAML node indicator")
-        return
-
-    quote = value[0]
-    if quote == '"':
-        decode_review_double_quoted_scalar(value, path, line_no)
-        return
-    index = 1
-    while index < len(value):
-        char = value[index]
-        if quote == "'" and char == "'":
-            if index + 1 < len(value) and value[index + 1] == "'":
-                index += 2
-                continue
-            index += 1
-            break
-        index += 1
-    else:
-        raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
-    if value[index:]:
-        raise ConfigError(f"{path}:{line_no}: trailing content after quoted scalar")
 
 
 def parse_scalar(
     value: str, *, review_effective: bool = False, path: Path | None = None, line_no: int | None = None
 ) -> Any:
-    whitespace = YAML_INLINE_WHITESPACE if review_effective else None
     if review_effective:
         assert path is not None and line_no is not None
-        validate_review_scalar(value, path, line_no)
+        return parse_review_yaml(path, raw="value: " + value)["value"]
     if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip(whitespace)
+        inner = value[1:-1].strip()
         if not inner:
             return []
-        return [
-            parse_scalar(item.strip(whitespace), review_effective=review_effective, path=path, line_no=line_no)
-            for item in split_inline_list(inner, strict_quotes=review_effective)
-            if item.strip(whitespace)
-        ]
+        return [parse_scalar(item.strip()) for item in split_inline_list(inner) if item.strip()]
     if value in {"''", '""'}:
         return ""
     if (value.startswith("'") and value.endswith("'")) or (
         value.startswith('"') and value.endswith('"')
     ):
-        if review_effective and value.startswith("'"):
-            return value[1:-1].replace("''", "'")
-        if review_effective and value.startswith('"'):
-            assert path is not None and line_no is not None
-            return decode_review_double_quoted_scalar(value, path, line_no)
         return value[1:-1]
     if value == "[]":
         return []
     if value == "{}":
         return {}
-    # Review-effective preserves noncanonical case variants as strings;
-    # legacy callers retain their historical case-insensitive coercion.
-    scalar_token = value if review_effective else value.lower()
-    if scalar_token in {"true", "True", "TRUE"}:
+    if value.lower() == "true":
         return True
-    if scalar_token in {"false", "False", "FALSE"}:
+    if value.lower() == "false":
         return False
-    if scalar_token in {"null", "Null", "NULL", "~"}:
+    if value.lower() in {"null", "~"}:
         return None
-    if review_effective:
-        assert path is not None and line_no is not None
-        return parse_review_numeric_scalar(value, path, line_no)
     return value
 
 
@@ -422,72 +175,42 @@ def parse_review_numeric_scalar(value: str, path: Path, line_no: int) -> Any:
     return value
 
 
-def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
+def split_inline_list(value: str) -> list[str]:
     items: list[str] = []
     current: list[str] = []
     in_single = False
     in_double = False
     escaped = False
-    depth = 0
-    node_started = False
 
-    index = 0
-    while index < len(value):
-        char = value[index]
+    for char in value:
         if escaped:
             current.append(char)
             escaped = False
-            index += 1
             continue
         if char == "\\" and in_double:
             current.append(char)
             escaped = True
-            index += 1
             continue
         if char == "'" and not in_double:
-            if strict_quotes and in_single and index + 1 < len(value) and value[index + 1] == "'":
-                current.extend((char, "'"))
-                index += 2
-                continue
-            if in_single or (not node_started if strict_quotes else quote_starts_here(current, strict_quotes=False)):
-                in_single = not in_single
-            node_started = True
+            in_single = not in_single
             current.append(char)
-            index += 1
             continue
         if char == '"' and not in_single:
-            if in_double or (not node_started if strict_quotes else quote_starts_here(current, strict_quotes=False)):
-                in_double = not in_double
-            node_started = True
+            in_double = not in_double
             current.append(char)
-            index += 1
             continue
-        if strict_quotes and not in_single and not in_double:
-            if char in "[{":
-                depth += 1
-                node_started = False
-            elif char in "]}":
-                depth -= 1
-                node_started = True
-            elif char == ",":
-                node_started = False
-            elif char not in YAML_INLINE_WHITESPACE:
-                node_started = True
-        if char == "," and not in_single and not in_double and (not strict_quotes or depth == 0):
+        if char == "," and not in_single and not in_double:
             items.append("".join(current))
             current = []
-            index += 1
             continue
         current.append(char)
-        index += 1
 
     items.append("".join(current))
     return items
 
 
 def parse_mapping(
-    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path, *,
-    preserve_empty_values: bool = False, existing_keys: set[str] | None = None
+    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path
 ) -> tuple[dict[str, Any], int]:
     result: dict[str, Any] = {}
     while index < len(lines):
@@ -498,75 +221,27 @@ def parse_mapping(
             raise ConfigError(f"{path}:{line_no}: unexpected indentation")
         if content.startswith("- "):
             raise ConfigError(f"{path}:{line_no}: list item is not valid in this mapping")
-        key, value = split_key_value(
-            content, path, line_no, require_mapping_separator=preserve_empty_values
-        )
-        if preserve_empty_values and (key in result or (existing_keys is not None and key in existing_keys)):
-            raise ConfigError(f"{path}:{line_no}: duplicate mapping key '{key}'")
+        key, value = split_key_value(content, path, line_no)
         index += 1
         if value is not None:
-            result[key] = parse_scalar(
-                value, review_effective=preserve_empty_values, path=path, line_no=line_no
-            )
+            result[key] = parse_scalar(value)
             continue
         if index >= len(lines) or lines[index][0] <= indent:
-            result[key] = None if preserve_empty_values else {}
+            result[key] = {}
             continue
         child_indent, child_content, _ = lines[index]
         if child_indent != indent + 2:
             raise ConfigError(f"{path}:{lines[index][2]}: expected child indentation of {indent + 2}")
         if child_content.startswith("- "):
-            child, index = parse_list(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
+            child, index = parse_list(lines, index, child_indent, path)
         else:
-            child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
+            child, index = parse_mapping(lines, index, child_indent, path)
         result[key] = child
     return result, index
 
 
-def list_item_is_mapping(item: str, *, strict_quotes: bool = False) -> bool:
-    """Return whether a list item has a YAML mapping delimiter.
-
-    The legacy parser treats every colon as a mapping delimiter.  The effective
-    review reader needs quoted strings and URL-like values to remain scalars.
-    """
-    in_single = False
-    in_double = False
-    escaped = False
-    index = 0
-    while index < len(item):
-        char = item[index]
-        if escaped:
-            escaped = False
-            index += 1
-            continue
-        if char == "\\" and in_double:
-            escaped = True
-            index += 1
-            continue
-        if char == "'" and not in_double:
-            if strict_quotes and in_single and index + 1 < len(item) and item[index + 1] == "'":
-                index += 2
-                continue
-            if in_single or quote_starts_here(list(item[:index]), strict_quotes=strict_quotes):
-                in_single = not in_single
-            index += 1
-            continue
-        if char == '"' and not in_single:
-            if in_double or quote_starts_here(list(item[:index]), strict_quotes=strict_quotes):
-                in_double = not in_double
-            index += 1
-            continue
-        if char == ":" and not in_single and not in_double:
-            if index + 1 == len(item) or (
-                item[index + 1] in YAML_INLINE_WHITESPACE if strict_quotes else item[index + 1].isspace()
-            ):
-                return True
-        index += 1
-    return False
-
-
 def parse_list(
-    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path, *, preserve_empty_values: bool = False
+    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path
 ) -> tuple[list[Any], int]:
     result: list[Any] = []
     while index < len(lines):
@@ -577,7 +252,7 @@ def parse_list(
             raise ConfigError(f"{path}:{line_no}: unexpected indentation")
         if not content.startswith("- "):
             break
-        item = content[2:].strip(YAML_INLINE_WHITESPACE if preserve_empty_values else None)
+        item = content[2:].strip()
         index += 1
         if not item:
             if index >= len(lines) or lines[index][0] <= indent:
@@ -587,57 +262,126 @@ def parse_list(
             if child_indent != indent + 2:
                 raise ConfigError(f"{path}:{lines[index][2]}: expected child indentation of {indent + 2}")
             if child_content.startswith("- "):
-                child, index = parse_list(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
+                child, index = parse_list(lines, index, child_indent, path)
             else:
-                child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
+                child, index = parse_mapping(lines, index, child_indent, path)
             result.append(child)
             continue
-        if (not preserve_empty_values and ":" in item) or (
-            preserve_empty_values and list_item_is_mapping(item, strict_quotes=True)
-        ):
-            key, value = split_key_value(
-                item, path, line_no, require_mapping_separator=preserve_empty_values
-            )
+        if ":" in item:
+            key, value = split_key_value(item, path, line_no)
             if value is None and index < len(lines) and lines[index][0] > indent:
                 # For `- key:` items, the following indented block is the value
                 # of `key`; it must not be merged into the list-item root.
                 child_indent = lines[index][0]
                 child_content = lines[index][1]
                 if child_content.startswith("- "):
-                    child, index = parse_list(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
+                    child, index = parse_list(lines, index, child_indent, path)
                 else:
-                    child, index = parse_mapping(lines, index, child_indent, path, preserve_empty_values=preserve_empty_values)
+                    child, index = parse_mapping(lines, index, child_indent, path)
                 item_map = {key: child}
             else:
-                item_map = {
-                    key: parse_scalar(
-                        value, review_effective=preserve_empty_values, path=path, line_no=line_no
-                    ) if value is not None else {}
-                }
+                item_map = {key: parse_scalar(value) if value is not None else {}}
             if value is not None and index < len(lines) and lines[index][0] == indent + 2:
-                continuation, index = parse_mapping(
-                    lines, index, indent + 2, path,
-                    preserve_empty_values=preserve_empty_values, existing_keys=set(item_map)
-                )
+                continuation, index = parse_mapping(lines, index, indent + 2, path)
                 for continuation_key, continuation_value in continuation.items():
                     item_map[continuation_key] = continuation_value
             result.append(item_map)
         else:
-            result.append(
-                parse_scalar(item, review_effective=preserve_empty_values, path=path, line_no=line_no)
-            )
+            result.append(parse_scalar(item))
     return result, index
+
+
+def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
+    """Delegate syntax to PyYAML; enforce only the supported data/schema contract.
+
+    Compose nodes rather than constructing YAML objects. Tags, anchors, aliases,
+    directives, block scalars and non-empty flow mappings remain unsupported.
+    PyYAML's YAML 1.1 line-break rules apply; scalar typing below is explicit.
+    """
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ConfigError(
+            f"{path}: review-effective requires PyYAML; install PyYAML==6.0.2 "
+            "for the python3 used by the gate and re-run"
+        ) from exc
+    try:
+        if raw is None:
+            raw = path.read_text(encoding="utf-8")
+        for token in yaml.scan(raw, Loader=yaml.BaseLoader):
+            if isinstance(token, (yaml.tokens.TagToken, yaml.tokens.AnchorToken,
+                                  yaml.tokens.AliasToken, yaml.tokens.DirectiveToken,
+                                  yaml.tokens.DocumentStartToken, yaml.tokens.DocumentEndToken)):
+                raise ConfigError(f"{path}:{token.start_mark.line + 1}: unsupported YAML metadata")
+        root = yaml.compose(raw, Loader=yaml.BaseLoader)
+    except (yaml.YAMLError, OSError, RecursionError, ValueError) as exc:
+        mark = getattr(exc, "problem_mark", None)
+        location = f"{path}:{mark.line + 1}" if mark is not None else str(path)
+        raise ConfigError(f"{location}: invalid YAML: {exc}") from exc
+
+    def convert(node: Any) -> Any:
+        line_no = node.start_mark.line + 1
+        if isinstance(node, yaml.ScalarNode):
+            if node.style in ("|", ">") or node.start_mark.line != node.end_mark.line:
+                raise ConfigError(f"{path}:{line_no}: multiline scalars are not supported")
+            value = node.value
+            if "\0" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+                raise ConfigError(f"{path}:{line_no}: NUL or surrogate is not supported in review configuration")
+            if node.style in ("'", '"'):
+                return value
+            if value in ("", "null", "Null", "NULL", "~"):
+                return None
+            if value in ("true", "True", "TRUE"):
+                return True
+            if value in ("false", "False", "FALSE"):
+                return False
+            return parse_review_numeric_scalar(value, path, line_no)
+        if node.flow_style and node.start_mark.line != node.end_mark.line:
+            raise ConfigError(f"{path}:{line_no}: multiline flow collections are not supported")
+        if not node.flow_style and node.start_mark.column % 2:
+            raise ConfigError(f"{path}:{line_no}: indentation must use multiples of two spaces")
+        if isinstance(node, yaml.SequenceNode):
+            return [convert(child) for child in node.value]
+        if isinstance(node, yaml.MappingNode):
+            if node.flow_style and node.value:
+                raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
+            result: dict[str, Any] = {}
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, yaml.ScalarNode) or key_node.style is not None or not re.fullmatch(r"[A-Za-z0-9_.-]+", key_node.value):
+                    raise ConfigError(f"{path}:{line_no}: unsupported mapping key")
+                key = key_node.value
+                if key in result:
+                    raise ConfigError(f"{path}:{key_node.start_mark.line + 1}: duplicate mapping key '{key}'")
+                if isinstance(value_node, (yaml.MappingNode, yaml.SequenceNode)) and not value_node.flow_style:
+                    if value_node.start_mark.column != key_node.start_mark.column + 2:
+                        raise ConfigError(f"{path}:{value_node.start_mark.line + 1}: expected child indentation of {key_node.start_mark.column + 2}")
+                result[key] = convert(value_node)
+            return result
+        raise ConfigError(f"{path}:{line_no}: unsupported YAML node")
+
+    if root is None:
+        return {}
+    if not isinstance(root, yaml.MappingNode) or root.start_mark.column != 0:
+        raise ConfigError(f"{path}: workflow config must be a top-level mapping")
+    try:
+        return convert(root)
+    except RecursionError as exc:
+        raise ConfigError(f"{path}: YAML nesting exceeds the supported depth") from exc
+    except (ValueError, OverflowError) as exc:
+        raise ConfigError(f"{path}: unsupported YAML scalar conversion: {exc}") from exc
 
 
 def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
     if not path.exists():
         return {}
-    lines = preprocess_yaml(path, strict_yaml_comments=preserve_empty_values)
+    if preserve_empty_values:
+        return parse_review_yaml(path)
+    lines = preprocess_yaml(path)
     if not lines:
         return {}
     if lines[0][0] != 0:
         raise ConfigError(f"{path}:{lines[0][2]}: top-level keys must not be indented")
-    data, index = parse_mapping(lines, 0, lines[0][0], path, preserve_empty_values=preserve_empty_values)
+    data, index = parse_mapping(lines, 0, lines[0][0], path)
     if index != len(lines):
         _, _, line_no = lines[index]
         raise ConfigError(f"{path}:{line_no}: could not parse remaining YAML")

@@ -169,13 +169,15 @@ CodeRabbit as an internal reviewer is subject to the same `max_internal_review_c
 
 ### Availability Check
 
-Opting into the CodeRabbit runner reviewer requires PyYAML in the `python3`
-interpreter used by the gate. The workflow CI provisions `PyYAML==6.0.2`, and
+Step 7a workflow configuration validation requires PyYAML in the `python3`
+interpreter used by the gate for every reviewer. CodeRabbit enablement uses the
+same dependency. The workflow CI provisions `PyYAML==6.0.2`, and
 `scripts/cloud-agent-install.sh` provisions the distribution package. For local
 use, install that pinned version in a virtual environment and put its `bin`
-directory on PATH before running the gate. Missing PyYAML produces
-`check-inconclusive` with setup guidance; the probe never installs packages.
-Other reviewer probes do not need PyYAML.
+directory on PATH before running the gate. Missing PyYAML during workflow
+configuration parsing produces `policy-unreadable` with setup guidance. An
+isolated CodeRabbit parser import failure remains `check-inconclusive`. Neither
+path installs packages.
 
 The entire `.coderabbit.yaml` is validated with a safe YAML loader, including
 unrelated sections. Syntax errors, unsafe tags, and duplicate explicit mapping

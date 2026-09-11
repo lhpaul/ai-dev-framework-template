@@ -15,7 +15,7 @@ seed.
 
 - [ ] You are on the implementation branch for #1495 with the change applied.
 - [ ] `gh` is installed and authenticated (`gh auth status` succeeds).
-- [ ] `python3`, `perl`, `jq`, `git`, and `bash` are available. Start one dedicated Bash
+- [ ] `python3` with `PyYAML==6.0.2`, `perl`, `jq`, `git`, and `bash` are available. Start one dedicated Bash
       session with `bash --noprofile --norc` from the repository root, then run all snippets in
       that session. Every mutation fails closed; expected resolver exits are captured explicitly.
 - [ ] Preserve the checkout's original override before any fixture writes. The unique state

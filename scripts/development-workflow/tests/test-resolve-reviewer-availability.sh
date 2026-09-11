@@ -3,6 +3,10 @@
 # covers: scripts/development-workflow/workflow-config-resolver.py scripts/development-workflow/workflow-lib.sh
 # Hermetic PATHs; all reviewer commands and GitHub calls are fake.
 set -euo pipefail
+python3 -c 'import yaml' >/dev/null 2>&1 || {
+  printf 'ERROR: install PyYAML==6.0.2 in the test python3 environment.\n' >&2
+  exit 2
+}
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$SCRIPT_DIR/.." <<'PY'
 import json, os, pathlib, shlex, shutil, signal, subprocess, sys, tempfile, time
@@ -314,9 +318,9 @@ reviews:
     (missing_parser/'yaml.py').write_text('raise ImportError("planted unavailable parser")\n')
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n')
     log.write_text('');d=run(expected=1,extra_env={'PYTHONPATH':str(missing_parser)})
-    check('T-22 missing YAML parser gives setup remedy',d['REVIEWER_1_REASON']=='check-inconclusive' and 'requires PyYAML' in d['REVIEWER_1_DETAIL'] and 'Install PyYAML' in d['REVIEWER_1_REMEDY'] and not log.read_text(),d)
-    reset('[codex]');d=run('codex',extra_env={'PYTHONPATH':str(missing_parser)})
-    check('T-22 other reviewers do not need YAML parser',d['REVIEWER_1_STATUS']=='reachable',d)
+    check('T-22 missing workflow YAML parser gives setup guidance',d['BLOCK_CAUSE']=='policy-unreadable' and 'install PyYAML==6.0.2' in d['UNREADABLE_DETAIL'] and d['REVIEWER_COUNT']=='0' and not log.read_text(),d)
+    reset('[codex]');d=run('codex',1,extra_env={'PYTHONPATH':str(missing_parser)})
+    check('T-22 native reviewer also requires workflow YAML parser',d['BLOCK_CAUSE']=='policy-unreadable' and 'requires PyYAML' in d['UNREADABLE_DETAIL'] and d['REVIEWER_COUNT']=='0',d)
     reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}])
     reset('[codex]');fake('codex','exit 1');d=run(expected=1)
     check('T-22 local failure remedy targets runtime', '--version' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','PyYAML','.coderabbit')),d)
@@ -330,7 +334,8 @@ reviews:
     d=run(expected=1)
     check('T-22 config remedy targets file','Repair .coderabbit.yaml' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','PyYAML','--version')),d)
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n')
-    d=run(expected=1,extra_env={'PYTHONPATH':str(missing_parser)})
+    fake('python3','if [ "$1" = -B ] && [ "$2" = -c ]; then export PYTHONPATH='+shlex.quote(str(missing_parser))+'; fi\nexec '+shlex.quote(real_python)+' "$@"')
+    d=run(expected=1)
     check('T-22 dependency remedy targets install','Install PyYAML' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','Repair','--version')),d)
     fake('python3', 'if [ "$1" = -B ] && [ "$2" = -c ]; then exit 1; fi\nexec '+shlex.quote(real_python)+' "$@"')
     d=run(expected=1)
@@ -450,7 +455,7 @@ reviews:
             d=run('codex',1)
             check(f'T-42 escaped policy control rendered {source.name} {escaped}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==rendered,d)
     for source in (cfg, local):
-        for flow in ('[codex,#]', '[#]', '[codex,#name]', '[[#name],codex]', '[codex, #name]', '[codex,\t#name]'):
+        for flow in ('[codex,#]', '[#]', '[codex,#name]', '[[#name],codex]', '[codex, #name]', '[codex,\t#name]', '[codex,:bad]', '[:bad]', '[[codex,:bad]]'):
             reset();source.write_text('review:\n  on_draft:\n    runner: '+flow+'\n')
             d=run('codex',1)
             check(f'T-31 hash flow node blocks {source.name} {flow!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
@@ -460,7 +465,7 @@ reviews:
             check(f'T-31 literal hash remains reportable {source.name} {token}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_STATUS']=='reachable' and d['REVIEWER_2_NAME']==token.strip("\"'"),d)
     for source in (cfg, local):
         for token in ('foo "', "foo '", 'foo "#literal', "foo '#literal"):
-            for suffix in ('', ' # comment', '\t# comment'):
+            for suffix in ('', ' # comment'):
                 reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]'+suffix+'\n')
                 d=run('codex')
                 check(f'T-31 plain quote preserves comment {source.name} {token!r} {suffix!r}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_NAME']==token and d['REVIEWER_2_NAME']=='codex' and d['REVIEWER_2_STATUS']=='reachable',d)
@@ -468,6 +473,11 @@ reviews:
             reset();source.write_text('review:\n  on_draft:\n    runner: ['+node+', codex] # comment\n')
             d=run('codex')
             check(f'T-31 quoted literal hash preserves comment {source.name} {node}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_NAME']==expected,d)
+    if hasattr(sys, 'get_int_max_str_digits') and sys.get_int_max_str_digits():
+        for source in (cfg, local):
+            reset();source.write_text('other: '+('1'*(sys.get_int_max_str_digits()+1))+'\nreview:\n  on_draft:\n    runner: [codex]\n')
+            d=run('codex',1)
+            check(f'T-31 numeric conversion limit blocks with config diagnostic {source.name}',d['BLOCK_CAUSE']=='policy-unreadable' and 'scalar conversion' in d['UNREADABLE_DETAIL'] and d['REVIEWER_COUNT']=='0',d)
     for source in (cfg, local):
         for char in ('\x00', '\x07', '\x0b', '\x7f', '\x9f', '\ufffe', '\uffff'):
             for extra in ('# comment '+char, 'other: x'+char, 'other: "x'+char+'"'):
@@ -497,7 +507,7 @@ reviews:
                 reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+']\n')
                 d=run('codex',1)
                 check(f'T-31 Unicode runner stays unsupported {source.name} {token!r}',any(d[f'REVIEWER_{n}_NAME']==token and d[f'REVIEWER_{n}_REASON']=='value-not-supported' for n in range(1,int(d['REVIEWER_COUNT'])+1)) and d['FALLBACK_APPLIED']=='false',d)
-        for token in ('warn #comment', 'warn\t#comment', '"warn" #comment'):
+        for token in ('warn #comment', '"warn" #comment'):
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
             d=run('codex')
             check(f'T-31 ASCII policy comment {source.name} {token!r}',d['POLICY']=='warn' and d['POLICY_STATE']=='defined',d)
@@ -641,7 +651,8 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
     for malformed in ('review:\n  on_draft:\n    runner:[]\n', 'review:\n  on_draft:\n    runner:null\n', 'review:\n  on_draft:{}\n', 'review:{}\n', 'review:\n  internal_reviewers_unavailable_policy:warn\n'):
         reset();cfg.write_text(malformed);d=run('codex',1)
-        check(f'T-48 mapping separation blocks fallback {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and bool(d['UNREADABLE_DETAIL']),d)
+        expected_cause='list-malformed' if '    runner:' in malformed else 'policy-unreadable'
+        check(f'T-48 compact scalar parent blocks fallback {malformed!r}',d['BLOCK_CAUSE']==expected_cause and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false',d)
     for duplicate in (
         'review:\n  on_draft:\n    runner: [codex-github]\n    runner: []\n',
         'review:\n  on_draft:\n    runner: [codex]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n  internal_reviewers_unavailable_policy: warn\n',

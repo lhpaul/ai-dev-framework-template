@@ -1500,6 +1500,28 @@ helper. Run it on every cycle, before dispatch, passing the actual driving
 session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
 from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
+The strict `review-effective` reader requires PyYAML (CI pin `6.0.2`) in the gate's
+`python3` environment for every reviewer. Workflow CI already provisions it;
+`scripts/cloud-agent-install.sh` provisions the distribution package. Locally,
+install the pinned version in a virtual environment and put its `bin` directory
+on PATH. Missing PyYAML blocks as `policy-unreadable`, with installation guidance
+in `UNREADABLE_DETAIL`; the helper never installs dependencies.
+
+Strict syntax is delegated to PyYAML's `BaseLoader` scanner/parser and composed
+nodes, never YAML object construction. YAML 1.1 line-break semantics apply:
+raw NEL/U+2028/U+2029 are line breaks, not ordinary scalar whitespace. Use spaces
+for separation outside quoted values; PyYAML's pure scanner rejects tabs in some
+separation positions. Quoted/interior indicators accepted by that parser remain
+literal values. The supported workflow subset excludes tags, anchors, aliases,
+directives, document markers, complex/quoted mapping keys, multiline scalars and
+flow collections, and non-empty flow mappings. Duplicate mapping keys and
+unsupported shapes fail closed throughout both files. Scalar typing remains
+explicit: only `null`/`Null`/`NULL`/`~` and empty plain values are null, and only
+`true`/`True`/`TRUE` or `false`/`False`/`FALSE` are booleans; quoted values stay
+strings. Numeric conversion limits produce structured unreadable-config diagnostics.
+Legacy resolver commands retain their existing dependency-free parser.
+
+
 The resolver accepts the transition-release `review.internal_reviewers` alias
 when `review.on_draft.runner` is absent in that file. An explicitly present modern
 key takes precedence, including empty or malformed values. Resolve each file's
