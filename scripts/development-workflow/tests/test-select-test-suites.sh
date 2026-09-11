@@ -388,7 +388,7 @@ run_test "real_all_matches_disk_count" "$real_on_disk" "$real_count"
 
 # Area 11 runs against the real repository so shard packing covers every suite.
 REPO_ROOT="$SOURCE_REPO_ROOT"
-S="$REPO_ROOT/scripts/development-workflow"
+S="scripts/development-workflow"
 T="$S/tests"
 unset SELECT_TEST_SUITES_REPO_ROOT
 # Area 11: shard packing (#1722)
@@ -489,16 +489,16 @@ run_test "shards_place_longest_suite_first" "$longest_suite" "$first_actual_suit
 run_test "shards_match_lpt_expected" "$expected_shards" "$shards"
 
 # Fewer suites than shards must not emit empty shards.
-two="$(printf '%s\n' "$S/run-item-scope-resolver.sh" "$S/run-epic-risk-classifier.sh" \
+two="$(printf '%s\n' "$S/run-item-scope-resolver.sh" "$S/run-item-scope-resolver.sh" \
   | bash "$SELECTOR" --changed-files - --shards 8 2>/dev/null)"
 run_test "shards_clamp_to_suite_count" "2" "$(printf '%s\n' "$two" | grep -c .)"
 run_test "shards_clamp_renumbers_total" "1/2" "$(printf '%s\n' "$two" | head -1 | cut -f1)"
 
 # An empty selection yields no shards at all, so the caller can skip the job.
 run_test "shards_empty_selection_lines" "0" \
-  "$(printf '%s\n' "README.md" | bash "$SELECTOR" --changed-files - --shards 8 2>/dev/null | grep -c . || true)"
+  "$(printf '%s\n' "random/unmatched.bin" | bash "$SELECTOR" --changed-files - --shards 8 2>/dev/null | grep -c . || true)"
 run_test "shards_empty_selection_json" "[]" \
-  "$(printf '%s\n' "README.md" | bash "$SELECTOR" --changed-files - --shards 8 --format json 2>/dev/null)"
+  "$(printf '%s\n' "random/unmatched.bin" | bash "$SELECTOR" --changed-files - --shards 8 --format json 2>/dev/null)"
 
 # JSON is fed straight to fromJSON() in the workflow, where a malformed value
 # fails the whole run rather than one job.
