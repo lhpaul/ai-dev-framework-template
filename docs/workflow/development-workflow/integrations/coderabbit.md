@@ -169,6 +169,21 @@ CodeRabbit as an internal reviewer is subject to the same `max_internal_review_c
 
 ### Availability Check
 
+Opting into the CodeRabbit runner reviewer requires PyYAML in the `python3`
+interpreter used by the gate. The workflow CI provisions `PyYAML==6.0.2`, and
+`scripts/cloud-agent-install.sh` provisions the distribution package. For local
+use, install that pinned version in a virtual environment and put its `bin`
+directory on PATH before running the gate. Missing PyYAML produces
+`check-inconclusive` with setup guidance; the probe never installs packages.
+Other reviewer probes do not need PyYAML.
+
+The entire `.coderabbit.yaml` is validated with a safe YAML loader, including
+unrelated sections. Syntax errors, unsafe tags, and duplicate explicit mapping
+keys are rejected. Valid aliases, flow collections, multiline values, and merge
+defaults with explicit overrides are supported. Enablement accepts typed
+`true`/`True`/`TRUE` and `false`/`False`/`FALSE`; quoted spellings, numbers, and
+YAML 1.1 `yes`/`no`/`on`/`off` are not boolean enablement settings.
+
 Step 7a calls `resolve-reviewer-availability.sh` once, under its fixed bounded
 budget, before dispatching anybody. For CodeRabbit the helper checks
 `reviews.auto_review.enabled: true` and reads the newest repository issue

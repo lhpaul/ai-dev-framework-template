@@ -1543,7 +1543,7 @@ substitute a reviewer while it runs. Do not provision services or write tracked 
 | --- | --- |
 | `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
-| `check-inconclusive` | Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository. |
+| `check-inconclusive` | Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Install PyYAML==6.0.2 for the gate python3 if the detail reports that dependency missing. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository. |
 | `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
 
 Hosted-service availability is decided at runtime from whether the service is
@@ -1588,6 +1588,13 @@ One bounded GET reads the newest repository issue comments with
 a full unmatched page is incomplete (`check-inconclusive`), and a short unmatched
 page is `prerequisite-missing`. CodeRabbit additionally requires
 `reviews.auto_review.enabled: true`; its login is `coderabbitai[bot]`.
+CodeRabbit configuration validation requires PyYAML (the existing CI pin is
+`6.0.2`) in the gate's `python3`. A missing parser is `check-inconclusive` with
+installation guidance; the probe never installs it. The whole document is
+parsed with a safe loader, rejecting syntax errors, unsafe tags, and duplicate
+explicit keys while permitting merge defaults with explicit overrides. Boolean
+settings accept `true`/`True`/`TRUE` and `false`/`False`/`FALSE`; quoted values,
+numbers, and YAML 1.1 `yes`/`no`/`on`/`off` remain nonbooleans.
 An unreadable or rejected `.coderabbit.yaml` produces `check-inconclusive` with
 the read or syntax error and a remedy to repair that file; a missing file or a
 readable disabled setting is `prerequisite-missing`. An enablement-probe timeout

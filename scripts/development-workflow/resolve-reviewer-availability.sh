@@ -209,7 +209,7 @@ add_record() {
   case "$3" in
     runtime-absent) remedies[$count]="Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml." ;;
     prerequisite-missing) remedies[$count]='Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml.' ;;
-    check-inconclusive) remedies[$count]='Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository.' ;;
+    check-inconclusive) remedies[$count]='Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Install PyYAML==6.0.2 for the gate python3 if the detail reports that dependency missing. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository.' ;;
     value-not-supported) remedies[$count]='Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner.' ;;
     '') remedies[$count]= ;;
     *) fail 'invalid internal reason' ;;
@@ -323,164 +323,78 @@ probe_hosted() {
 import pathlib, re, sys
 
 path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    print("false")
+    raise SystemExit(0)
+try:
+    import yaml
+except ImportError:
+    print("CodeRabbit configuration validation requires PyYAML; install PyYAML==6.0.2 for the python3 used by this gate", file=sys.stderr)
+    raise SystemExit(4)
 
-def scalar_before_comment(value):
-    for index, char in enumerate(value):
-        if char == "#" and (index == 0 or value[index - 1].isspace()):
-            return value[:index].rstrip()
-    return value.rstrip()
+class ConfigLoader(yaml.SafeLoader):
+    # Keep YAML core true/false spellings typed; quoted strings and YAML 1.1
+    # yes/no/on/off are not CodeRabbit boolean settings.
+    yaml_implicit_resolvers = {
+        initial: [(tag, pattern) for tag, pattern in rules if tag != "tag:yaml.org,2002:bool"]
+        for initial, rules in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
 
-def fields(text):
-    block_indent = None
-    flow = []
-    quote = None
-    def consume_flow(value, number):
-        nonlocal quote
-        index = 0
-        while index < len(value):
-            char = value[index]
-            if quote is not None:
-                if char == "\\" and quote == chr(34):
-                    index += 2
-                    continue
-                if char == quote:
-                    if quote == chr(39) and value[index:index + 2] == quote * 2:
-                        index += 2
-                        continue
-                    quote = None
-            elif char == "#" and (index == 0 or value[index - 1].isspace()):
-                break
-            elif char in (chr(34), chr(39)):
-                quote = char
-            elif char in "[{":
-                flow.append(char)
-            elif char in "]}":
-                if not flow or flow.pop() != {"]": "[", "}": "{"}[char]:
-                    raise ValueError(f"mismatched flow delimiter on line {number}")
-                if not flow:
-                    if scalar_before_comment(value[index + 1:]).strip():
-                        raise ValueError(f"unexpected text after flow value on line {number}")
-                    return
-            index += 1
-    for number, line in enumerate(text.splitlines(), 1):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if flow:
-            consume_flow(line, number)
-            continue
-        leading = len(line) - len(line.lstrip(" \t"))
-        if block_indent is not None:
-            if leading > block_indent:
-                continue
-            block_indent = None
-        if "\t" in line[:leading]:
-            raise ValueError(f"tab indentation on line {number}")
-        # Keys outside the target path can be quoted or contain punctuation.
-        # A sequence item containing a colon is still a sequence, not a field.
-        match = None if re.match(r"^\s*-(?:\s|$)", line) else re.match(
-            r"^( *)(\"(?:\\.|[^\"\\])*\"|\x27(?:\x27\x27|[^\x27])*\x27|[^\s:#][^:]*):(?:[ \t]+(.*)|$)", line)
-        if match:
-            key = match.group(2).strip()
-            if key.startswith((chr(34), chr(39))):
-                key = key[1:-1]
-            raw_value = (match.group(3) or "").lstrip()
-            value = raw_value.rstrip() if raw_value.startswith(("[", "{")) else scalar_before_comment(raw_value)
-            if value.startswith(("[", "{")):
-                consume_flow(value, number)
-            if re.fullmatch(r"[|>][1-9+-]*", value):
-                block_indent = len(match.group(1))
-            yield number, len(match.group(1)), key, value
-        else:
-            # Preserve nonmapping tokens so malformed target containers cannot
-            # disappear. Unrelated sequence contents are handled by their scope.
-            yield number, leading, None, line.lstrip()
-    if flow:
-        raise ValueError("unterminated flow collection")
+    def flatten_mapping(self, node):
+        # Validate explicit keys before SafeLoader expands merges. Explicit
+        # values may legitimately override merged defaults; duplicates may not.
+        if not hasattr(self, "checked_mappings"):
+            self.checked_mappings = set()
+        if node not in self.checked_mappings:
+            self.checked_mappings.add(node)
+            seen = set()
+            for key_node, _value_node in node.value:
+                key = "<<" if key_node.tag == "tag:yaml.org,2002:merge" else self.construct_object(key_node)
+                try:
+                    duplicate = key in seen
+                    seen.add(key)
+                except TypeError as error:
+                    raise yaml.constructor.ConstructorError(None, None, "unsupported complex mapping key", key_node.start_mark) from error
+                if duplicate:
+                    raise yaml.constructor.ConstructorError(None, None, "duplicate mapping key", key_node.start_mark)
+        super().flatten_mapping(node)
+
+def construct_boolean(loader, node):
+    value = loader.construct_scalar(node)
+    if value not in ("true", "True", "TRUE", "false", "False", "FALSE"):
+        raise yaml.constructor.ConstructorError(None, None, "unsupported boolean spelling", node.start_mark)
+    return value.lower() == "true"
+
+ConfigLoader.add_constructor("tag:yaml.org,2002:bool", construct_boolean)
+ConfigLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF"))
+
+def mapping(value, name):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} must be a mapping")
+    return value
 
 try:
-    if not path.is_file():
+    config = mapping(yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader), "document")
+    reviews = mapping(config.get("reviews"), "reviews")
+    auto_review = mapping(reviews.get("auto_review"), "reviews.auto_review")
+    if "enabled" not in auto_review:
         print("false")
-        raise SystemExit(0)
-    reviews_indent = reviews_children = auto_indent = auto_children = None
-    reviews_closed = auto_closed = False
-    reviews_list_allowed = auto_list_allowed = False
-    enabled = None
-    scalar_field = None
-    for number, indent, key, value in fields(path.read_text(encoding="utf-8")):
-        if scalar_field is not None:
-            scalar_indent, scalar_key, scalar_value = scalar_field
-            if indent <= scalar_indent:
-                scalar_field = None
-            elif (scalar_key == "enabled" or key is not None
-                  or re.match(r"-(?:\s|$)", value)
-                  or scalar_value.startswith(("[", "{"))):
-                raise ValueError(f"unexpected nesting beneath {scalar_key} on line {number}")
-        if reviews_indent is None:
-            if indent == 0 and key == "reviews":
-                if value:
-                    raise ValueError(f"reviews must be a mapping on line {number}")
-                reviews_indent = indent
-            continue
-        if indent <= reviews_indent:
-            if not reviews_closed and key is None and re.match(r"-(?:\s|$)", value):
-                raise ValueError(f"reviews must be a mapping on line {number}")
-            if key == "reviews":
-                raise ValueError(f"duplicate reviews mapping on line {number}")
-            reviews_closed = True
-            continue
-        if reviews_closed:
-            continue
-        if reviews_children is None:
-            reviews_children = indent
-        if indent < reviews_children:
-            raise ValueError(f"unexpected reviews dedent on line {number}")
-        if indent == reviews_children:
-            if key is None:
-                # YAML allows an indentless sequence as the value of a sibling
-                # field such as path_filters; it cannot be the reviews mapping.
-                if reviews_list_allowed and re.match(r"-(?:\s|$)", value):
-                    continue
-                raise ValueError(f"expected reviews mapping field on line {number}")
-            reviews_list_allowed = key != "auto_review" and not value
-            if value:
-                scalar_field = (indent, key, value)
-        if indent == reviews_children and key == "auto_review":
-            if auto_indent is not None:
-                raise ValueError(f"duplicate auto_review mapping on line {number}")
-            if value:
-                raise ValueError(f"auto_review must be a mapping on line {number}")
-            auto_indent = indent
-            continue
-        if auto_indent is None:
-            continue
-        if indent <= auto_indent:
-            auto_closed = True
-            continue
-        if auto_closed:
-            continue
-        if auto_children is None:
-            auto_children = indent
-        if indent < auto_children:
-            raise ValueError(f"unexpected auto_review dedent on line {number}")
-        if indent == auto_children:
-            if key is None:
-                if auto_list_allowed and re.match(r"-(?:\s|$)", value):
-                    continue
-                raise ValueError(f"expected auto_review mapping field on line {number}")
-            auto_list_allowed = key != "enabled" and not value
-            if value:
-                scalar_field = (indent, key, value)
-        if indent == auto_children and key == "enabled":
-            if enabled is not None:
-                raise ValueError(f"duplicate enabled value on line {number}")
-            if value not in ("true", "false"):
-                raise ValueError(f"enabled must be a boolean on line {number}")
-            enabled = value == "true"
-    print("true" if enabled is True else "false")
-except (OSError, UnicodeDecodeError, ValueError) as error:
+    else:
+        enabled = auto_review["enabled"]
+        if type(enabled) is not bool:
+            raise ValueError("reviews.auto_review.enabled must be a boolean")
+        print("true" if enabled else "false")
+except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
     print(str(error), file=sys.stderr)
     sys.exit(3)
 ' "$repo_root/.coderabbit.yaml" || rc=$?
+    if [ "$rc" = 4 ]; then
+      detail=$(cat "$work_dir/probe.err")
+      return
+    fi
     if [ "$rc" = 3 ]; then
       detail=".coderabbit.yaml could not be read: $(cat "$work_dir/probe.err")"
       return

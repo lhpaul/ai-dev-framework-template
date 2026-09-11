@@ -31,7 +31,13 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         executable = shutil.which(command)
         if executable:
             (bins / command).symlink_to(executable)
-    (bins / 'python3').symlink_to(real_python)
+    def restore_python():
+        # Execute the original interpreter path so virtualenv packages remain
+        # visible; relocating its symlink makes Python lose pyvenv.cfg.
+        launcher = bins / 'python3'
+        launcher.write_text('#!/bin/bash\nexec '+shlex.quote(real_python)+' "$@"\n')
+        launcher.chmod(0o755)
+    restore_python()
     env = {**os.environ, 'PATH':str(bins), 'TMPDIR':str(root)}
     for key in list(env):
         if key.startswith(('WORKFLOW_REVIEWER_AVAILABILITY_', 'CODEX_GITHUB_')) or key == 'WORKFLOW_RUNNER_KIND':
@@ -54,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     def reset(runners='[codex]', policy=None):
         for command in ('claude','cursor-agent','codex','gh','python3'):
             (bins / command).unlink(missing_ok=True)
-        (bins / 'python3').symlink_to(real_python)
+        restore_python()
         local.unlink(missing_ok=True)
         (repo / '.git').unlink(missing_ok=True) if (repo / '.git').is_file() else None
         (repo / '.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n')
@@ -256,7 +262,7 @@ reviews:
         check(f'T-22 malformed flow value fails closed {malformed_flow!r}',d['REVIEWER_1_REASON']=='check-inconclusive' and 'Repair' in d['REVIEWER_1_REMEDY'],d)
     (repo/'.coderabbit.yaml').write_text('reviews:\n  - invalid\n  auto_review:\n    enabled: true\n')
     d=run(expected=1)
-    check('T-22 parse error identifies config and actionable repair', '.coderabbit.yaml' in d['REVIEWER_1_DETAIL'] and 'line 2' in d['REVIEWER_1_DETAIL'] and 'Repair' in d['REVIEWER_1_REMEDY'],d)
+    check('T-22 parse error identifies config and actionable repair', '.coderabbit.yaml' in d['REVIEWER_1_DETAIL'] and 'line ' in d['REVIEWER_1_DETAIL'] and 'Repair' in d['REVIEWER_1_REMEDY'],d)
     for invalid_nesting in (
         'reviews:\n  auto_review:\n    enabled: true\n      invalid: value\n',
         'reviews:\n  auto_review:\n    enabled: true\n      - invalid\n',
@@ -281,6 +287,36 @@ reviews:
     ):
         (repo/'.coderabbit.yaml').write_text(valid_nesting)
         check(f'T-22 valid target nesting preserved {valid_nesting!r}',run()['REVIEWER_1_STATUS']=='reachable')
+    for spelling,expected in (('True',0),('TRUE',0),('true',0),('False',1),('FALSE',1),('false',1)):
+        (repo/'.coderabbit.yaml').write_text(f'reviews:\n  auto_review:\n    enabled: {spelling}\n')
+        d=run(expected=expected)
+        check(f'T-22 typed YAML boolean {spelling}',d['REVIEWER_1_STATUS']==('reachable' if expected==0 else 'unreachable') and d['REVIEWER_1_REASON']==('' if expected==0 else 'prerequisite-missing'),d)
+    for token in ('"True"', "'TRUE'", '1', '0', 'null', 'yes', 'on', 'tRuE', '!!bool yes', '!!bool nonsense'):
+        (repo/'.coderabbit.yaml').write_text(f'reviews:\n  auto_review:\n    enabled: {token}\n')
+        log.write_text('');d=run(expected=1)
+        check(f'T-22 nonboolean YAML remains invalid {token}',d['REVIEWER_1_REASON']=='check-inconclusive' and not log.read_text(),d)
+    for broken in ('broken: "unterminated\n', "broken: 'unterminated\n", 'broken: [one, two\n', 'broken: true\n  invalid: value\n', 'broken: !unsafe value\n', 'broken: *unknown\n', 'broken: one\nbroken: two\n', 'other:\n  duplicate: one\n  duplicate: two\n'):
+        for placement in ('before','after'):
+            target='reviews:\n  auto_review:\n    enabled: true\n'
+            (repo/'.coderabbit.yaml').write_text(broken+target if placement=='before' else target+broken)
+            log.write_text('');d=run(expected=1)
+            check(f'T-22 invalid whole document {placement} {broken!r}',d['REVIEWER_1_REASON']=='check-inconclusive' and '.coderabbit.yaml' in d['REVIEWER_1_DETAIL'] and not log.read_text(),d)
+    for document,expected in (
+        ('defaults: &defaults {enabled: false, drafts: true}\nreviews:\n  auto_review:\n    <<: *defaults\n    enabled: TRUE\n',0),
+        ('defaults: &defaults {enabled: TRUE}\nreviews:\n  auto_review: *defaults\n',0),
+        ('defaults: &defaults {enabled: true}\nreviews:\n  auto_review:\n    <<: *defaults\n    enabled: FALSE\n',1),
+        ('description: "quoted multiline\n  with: colon and [brackets]"\nreviews:\n  auto_review: {enabled: True}\n',0),
+    ):
+        (repo/'.coderabbit.yaml').write_text(document);d=run(expected=expected)
+        check(f'T-22 valid whole YAML document {document!r}', d['REVIEWER_1_REASON']==('' if expected==0 else 'prerequisite-missing'),d)
+    missing_parser=root/'missing-parser';missing_parser.mkdir()
+    (missing_parser/'yaml.py').write_text('raise ImportError("planted unavailable parser")\n')
+    (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n')
+    log.write_text('');d=run(expected=1,extra_env={'PYTHONPATH':str(missing_parser)})
+    check('T-22 missing YAML parser gives setup remedy',d['REVIEWER_1_REASON']=='check-inconclusive' and 'requires PyYAML' in d['REVIEWER_1_DETAIL'] and 'Install PyYAML' in d['REVIEWER_1_REMEDY'] and not log.read_text(),d)
+    reset('[codex]');d=run('codex',extra_env={'PYTHONPATH':str(missing_parser)})
+    check('T-22 other reviewers do not need YAML parser',d['REVIEWER_1_STATUS']=='reachable',d)
+    reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}])
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])
