@@ -138,8 +138,6 @@ is, is narrowing the placeholder's bound, never widening it without new live
 evidence. See issue #1491's implementation plan (Decision 2 and its two
 addenda) for the full design history and rationale.
 
-## Prerequisites
-
 ## Step 7a runner reviewer
 
 `codex-github` is an opt-in Step 7a runner reviewer value; it is not in the
@@ -153,6 +151,8 @@ verification checklist below before opting in.
 <!-- step7a-codex-github-availability:start -->
 `codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
 <!-- step7a-codex-github-availability:end -->
+
+## Prerequisites
 
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
 

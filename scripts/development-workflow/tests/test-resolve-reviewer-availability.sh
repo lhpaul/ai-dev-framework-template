@@ -237,6 +237,26 @@ reviews:
         for enabled,expected,reason in (('true',0,''),('false',1,'prerequisite-missing')):
             (repo/'.coderabbit.yaml').write_text(f'reviews:\n  path_filters:\n  {indentation}- "src/**"\n  auto_review:\n    enabled: {enabled}\n    labels:\n    {indentation}- ready\n  path_instructions:\n  {indentation}- path: src/**\n    {indentation}instructions: |\n      {indentation}\tenabled: false\n')
             check(f'T-22 valid sibling lists {indentation!r} preserve {enabled}',run(expected=expected)['REVIEWER_1_REASON']==reason)
+    for extra in (
+        '  path_filters: [\n    "src/**"\n  ]\n',
+        '  "path_filters": ["src/**"]\n',
+        '  custom.key: true\n',
+        '  path_filters: ["src # text", "a]b"]\n',
+        '  custom key: true\n',
+        '  settings: {\n    text: "[quoted] # text",\n    nested: [one, two]\n  }\n',
+    ):
+        for placement in ('reviews', 'auto_review'):
+            nested = extra if placement == 'reviews' else ''.join('  '+line+'\n' for line in extra.splitlines())
+            content = 'reviews:\n'+nested+'  auto_review:\n    enabled: true\n' if placement == 'reviews' else 'reviews:\n  auto_review:\n'+nested+'    enabled: true\n'
+            (repo/'.coderabbit.yaml').write_text(content)
+            check(f'T-22 valid unrelated YAML {placement} {extra!r}',run()['REVIEWER_1_STATUS']=='reachable')
+    for malformed_flow in ('[\n', '[one}\n'):
+        (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n  path_filters: '+malformed_flow)
+        d=run(expected=1)
+        check(f'T-22 malformed flow value fails closed {malformed_flow!r}',d['REVIEWER_1_REASON']=='check-inconclusive' and 'Repair' in d['REVIEWER_1_REMEDY'],d)
+    (repo/'.coderabbit.yaml').write_text('reviews:\n  - invalid\n  auto_review:\n    enabled: true\n')
+    d=run(expected=1)
+    check('T-22 parse error identifies config and actionable repair', '.coderabbit.yaml' in d['REVIEWER_1_DETAIL'] and 'line 2' in d['REVIEWER_1_DETAIL'] and 'Repair' in d['REVIEWER_1_REMEDY'],d)
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])

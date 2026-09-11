@@ -209,7 +209,7 @@ add_record() {
   case "$3" in
     runtime-absent) remedies[$count]="Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml." ;;
     prerequisite-missing) remedies[$count]='Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml.' ;;
-    check-inconclusive) remedies[$count]='Re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository.' ;;
+    check-inconclusive) remedies[$count]='Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository.' ;;
     value-not-supported) remedies[$count]='Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner.' ;;
     '') remedies[$count]= ;;
     *) fail 'invalid internal reason' ;;
@@ -332,8 +332,41 @@ def scalar_before_comment(value):
 
 def fields(text):
     block_indent = None
+    flow = []
+    quote = None
+    def consume_flow(value, number):
+        nonlocal quote
+        index = 0
+        while index < len(value):
+            char = value[index]
+            if quote is not None:
+                if char == "\\" and quote == chr(34):
+                    index += 2
+                    continue
+                if char == quote:
+                    if quote == chr(39) and value[index:index + 2] == quote * 2:
+                        index += 2
+                        continue
+                    quote = None
+            elif char == "#" and (index == 0 or value[index - 1].isspace()):
+                break
+            elif char in (chr(34), chr(39)):
+                quote = char
+            elif char in "[{":
+                flow.append(char)
+            elif char in "]}":
+                if not flow or flow.pop() != {"]": "[", "}": "{"}[char]:
+                    raise ValueError(f"mismatched flow delimiter on line {number}")
+                if not flow:
+                    if scalar_before_comment(value[index + 1:]).strip():
+                        raise ValueError(f"unexpected text after flow value on line {number}")
+                    return
+            index += 1
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if flow:
+            consume_flow(line, number)
             continue
         leading = len(line) - len(line.lstrip(" \t"))
         if block_indent is not None:
@@ -342,16 +375,27 @@ def fields(text):
             block_indent = None
         if "\t" in line[:leading]:
             raise ValueError(f"tab indentation on line {number}")
-        match = re.match(r"^( *)([A-Za-z_][A-Za-z0-9_-]*):(.*)$", line)
+        # Keys outside the target path can be quoted or contain punctuation.
+        # A sequence item containing a colon is still a sequence, not a field.
+        match = None if re.match(r"^\s*-(?:\s|$)", line) else re.match(
+            r"^( *)(\"(?:\\.|[^\"\\])*\"|\x27(?:\x27\x27|[^\x27])*\x27|[^\s:#][^:]*):(?:[ \t]+(.*)|$)", line)
         if match:
-            value = scalar_before_comment(match.group(3).lstrip())
+            key = match.group(2).strip()
+            if key.startswith((chr(34), chr(39))):
+                key = key[1:-1]
+            raw_value = (match.group(3) or "").lstrip()
+            value = raw_value.rstrip() if raw_value.startswith(("[", "{")) else scalar_before_comment(raw_value)
+            if value.startswith(("[", "{")):
+                consume_flow(value, number)
             if re.fullmatch(r"[|>][1-9+-]*", value):
                 block_indent = len(match.group(1))
-            yield number, len(match.group(1)), match.group(2), value
+            yield number, len(match.group(1)), key, value
         else:
             # Preserve nonmapping tokens so malformed target containers cannot
             # disappear. Unrelated sequence contents are handled by their scope.
             yield number, leading, None, line.lstrip()
+    if flow:
+        raise ValueError("unterminated flow collection")
 
 try:
     if not path.is_file():
@@ -418,8 +462,12 @@ try:
     print("true" if enabled is True else "false")
 except (OSError, UnicodeDecodeError, ValueError) as error:
     print(str(error), file=sys.stderr)
-    sys.exit(1)
+    sys.exit(3)
 ' "$repo_root/.coderabbit.yaml" || rc=$?
+    if [ "$rc" = 3 ]; then
+      detail=".coderabbit.yaml could not be read: $(cat "$work_dir/probe.err")"
+      return
+    fi
     if [ "$rc" != 0 ]; then detail='CodeRabbit enablement check did not complete'; return; fi
     if [ "$(cat "$work_dir/enabled")" != true ]; then reason=prerequisite-missing; detail='reviews.auto_review.enabled is not true'; return; fi
     login='coderabbitai[bot]'

@@ -176,7 +176,11 @@ comments page for `coderabbitai[bot]`. Bot activity is a bounded
 repository-activity proxy, not proof of current installation or per-review
 enablement: a complete short unmatched page is `prerequisite-missing`, while a
 full unmatched page is `check-inconclusive`. The helper validates policy and configuration first and blocks invalid inputs
-before any probe. For valid configuration it classifies capability, then applies
+before any probe. During the CodeRabbit probe, an unreadable or rejected
+`.coderabbit.yaml` is `check-inconclusive`: repair the file using the reported
+read or syntax error, then re-run. A missing file or a readable disabled setting
+is `prerequisite-missing`; a probe timeout remains `check-inconclusive` with
+execution guidance. For valid configuration it classifies capability, then applies
 the resolved reachability policy; the gate consumes that returned outcome.
 
 The proxy can be false Reachable after an App is removed and false Unreachable

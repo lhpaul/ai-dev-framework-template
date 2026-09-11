@@ -1543,7 +1543,7 @@ substitute a reviewer while it runs. Do not provision services or write tracked 
 | --- | --- |
 | `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
-| `check-inconclusive` | Re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository. |
+| `check-inconclusive` | Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository. |
 | `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
 
 Hosted-service availability is decided at runtime from whether the service is
@@ -1588,6 +1588,11 @@ One bounded GET reads the newest repository issue comments with
 a full unmatched page is incomplete (`check-inconclusive`), and a short unmatched
 page is `prerequisite-missing`. CodeRabbit additionally requires
 `reviews.auto_review.enabled: true`; its login is `coderabbitai[bot]`.
+An unreadable or rejected `.coderabbit.yaml` produces `check-inconclusive` with
+the read or syntax error and a remedy to repair that file; a missing file or a
+readable disabled setting is `prerequisite-missing`. An enablement-probe timeout
+remains `check-inconclusive` with execution guidance. These reviewer records
+follow the same resolved availability policy as other probe results.
 `codex-github` uses `CODEX_GITHUB_BOT_LOGIN` or
 `chatgpt-codex-connector[bot]`. Matching accepts the optional `[bot]` suffix.
 Neither reviewer is classified unavailable because the PR is draft.
