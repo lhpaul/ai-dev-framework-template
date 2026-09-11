@@ -335,20 +335,35 @@ reviews:
     fake('python3', 'if [ "$1" = -B ] && [ "$2" = -c ]; then exit 1; fi\nexec '+shlex.quote(real_python)+' "$@"')
     d=run(expected=1)
     check('T-22 parser execution remedy targets python','configuration check with the gate python3' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','Repair','Install')),d)
-    # Exhaust the budget before dispatch, independently of timeout/SECONDS
-    # rounding. Delay only the final list decode, after bounded config parsing.
+    # Set the test clock at dispatch instead of relying on rounded wall-clock
+    # boundaries or deliberately stalling now-bounded config decoding.
     reset('[codex, cursor]')
     runtime_started=root/'budget-runtime-started'
     for binary in ('codex','cursor-agent'):
         fake(binary,'touch '+shlex.quote(str(runtime_started)))
-    real_jq=str((bins/'jq').resolve())
-    fake('jq', 'if [ "$1" = -j ] && [[ "$2" == ".effective_runner[]"* ]]; then sleep 4; fi\nexec '+shlex.quote(real_jq)+' "$@"')
-    try:
-        d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'3'})
-    finally:
-        (bins/'jq').unlink()
-        (bins/'jq').symlink_to(real_jq)
+    budget_clock=root/'budget-clock.bash'
+    budget_clock.write_text("trap 'case \"$BASH_COMMAND\" in verdict=unreachable*) SECONDS=$DEADLINE ;; esac' DEBUG\n")
+    d=run(expected=1,extra_env={'BASH_ENV':str(budget_clock)})
     check('T-22 unstarted probe remedy targets budget',not runtime_started.exists() and d['REVIEWER_2_DETAIL']=='availability budget exhausted before this check started' and 'budget' in d['REVIEWER_2_REMEDY'] and all(x not in d['REVIEWER_2_REMEDY'] for x in ('gh','PyYAML','.coderabbit')),d)
+    # Every jq stage, including successful hosted responses, shares the gate
+    # deadline. A stalled decoder must yield a verdict rather than hang.
+    real_jq=str((bins/'jq').resolve())
+    for stage in ('type ==', '[.effective_policy_state', '.local_review_override_applied', '.override_excluded[]', '.effective_runner[]', 'hosted'):
+        reset('[codex-github]' if stage=='hosted' else '[codex]')
+        gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}])
+        condition='[ "$1" = -er ]' if stage=='hosted' else '[[ "$2" == '+shlex.quote(stage)+'* ]]'
+        fake('jq','if '+condition+'; then sleep 30; fi\nexec '+shlex.quote(real_jq)+' "$@"')
+        try:
+            d=run('codex',1)
+        finally:
+            (bins/'jq').unlink()
+            (bins/'jq').symlink_to(real_jq)
+        if stage=='hosted':
+            check('T-22 hosted JSON decoder is bounded',d['REVIEWER_1_REASON']=='check-inconclusive' and 'decoding exceeded' in d['REVIEWER_1_DETAIL'],d)
+        else:
+            check(f'T-22 config JSON decoder is bounded {stage}',d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0' and not log.read_text(),d)
+    reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}])
+    check('T-22 repaired JSON decoder proceeds',run('codex')['OUTCOME']=='proceeded')
     reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}])
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')

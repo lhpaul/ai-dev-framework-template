@@ -288,19 +288,30 @@ run_bounded "$bound" "$work_dir/config.json" "$work_dir/config.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$repo_root" || config_rc=$?
 if [ "$config_rc" = 124 ]; then block config-resolution-inconclusive; fi
 if [ "$config_rc" != 0 ]; then cat "$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
+# Keep JSON validation and decoding inside the same deadline as the probes.
+# Run in this shell so cancellation retains ownership of the active process.
+decode_config() {
+  local output=$1 decode_rc=0
+  shift
+  clamp_bound "$CONFIG_RESOLVE_CAP_SECONDS"
+  run_bounded "$bound" "$output" "$work_dir/decode.err" jq "$@" || decode_rc=$?
+  if [ "$decode_rc" = 124 ]; then block config-resolution-inconclusive; fi
+  return "$decode_rc"
+}
 # Validate before reading: malformed helper output is execution failure, not configuration data.
-jq -e 'type == "object" and
+decode_config "$work_dir/validated" -e 'type == "object" and
   ([.effective_runner,.override_excluded,.shipped_runner] | all(.[]; type == "array" and all(.[]; type == "string" and (contains("\u0000")|not)))) and
   ([.effective_runner_state,.effective_runner_source,.effective_policy,.effective_policy_state,.effective_policy_source,.unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file] | all(.[]; type == "string")) and
   (.local_review_override_applied | type == "boolean")' \
-  "$work_dir/config.json" >/dev/null || fail 'invalid review-effective JSON contract'
-jq -j '[.effective_policy_state,.effective_policy_source,
+  "$work_dir/config.json" || fail 'invalid review-effective JSON contract'
+decode_config "$work_dir/fields" -j '[.effective_policy_state,.effective_policy_source,
   (if .policy_input == null then "" elif (.policy_input|type)=="string" then .policy_input else (.policy_input|tojson) end),
   .unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file,.effective_policy,.effective_runner_state,.effective_runner_source][] | . + "\u0000"' \
-  "$work_dir/config.json" >"$work_dir/fields" || fail 'cannot decode config fields'
+  "$work_dir/config.json" || fail 'cannot decode config fields'
 fields=()
 while IFS= read -r -d '' field; do fields+=("$field"); done <"$work_dir/fields"
-local_review_override_applied=$(jq -r '.local_review_override_applied' "$work_dir/config.json") || fail 'cannot decode local override state'
+decode_config "$work_dir/applied" -r '.local_review_override_applied' "$work_dir/config.json" || fail 'cannot decode local override state'
+IFS= read -r local_review_override_applied <"$work_dir/applied" || fail 'cannot read local override state'
 policy_state=${fields[0]} policy_source=${fields[1]} policy_input=${fields[2]}
 unreadable_file=${fields[3]} unreadable_detail=${fields[4]}
 if [ "$local_review_override_applied" = true ] && [ -n "${fields[5]}" ]; then local_state="${fields[5]} (${fields[6]}), applied"
@@ -316,7 +327,7 @@ list_state=${fields[9]} list_source=${fields[10]}
 case "$list_state" in
   malformed) block list-malformed ;; absent|empty) fallback=true ;; defined) ;; *) fail 'invalid runner list state' ;;
 esac
-jq -j '.override_excluded[] | . + "\u0000"' "$work_dir/config.json" >"$work_dir/excluded" || fail 'cannot decode exclusions'
+decode_config "$work_dir/excluded" -j '.override_excluded[] | . + "\u0000"' "$work_dir/config.json" || fail 'cannot decode exclusions'
 while IFS= read -r -d '' entry; do add_record "$entry" override-excluded '' 'removed by local override'; done <"$work_dir/excluded"
 if [ "$fallback" = true ]; then
   [ "$runner_kind" != unknown ] || block no-driving-runner
@@ -441,19 +452,26 @@ except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
     if [ "$rc" = 124 ]; then detail="check exceeded its ${bound}s bound"; else detail="gh api exited $rc"; fi
     return
   fi
-  if ! signal=$(jq -er --arg login "${login%\[bot\]}" '
+  clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
+  [ "$bound" -le "$((host_deadline - SECONDS))" ] || bound=$((host_deadline - SECONDS))
+  rc=0
+  run_bounded "$bound" "$work_dir/signal" "$work_dir/probe.err" jq -er --arg login "${login%\[bot\]}" '
     if type != "array" or any(.[]; (.user.login|type) != "string") then error("invalid comments response")
     elif any(.[]; (.user.login | sub("\\[bot\\]$"; "")) == $login) then "present"
-    elif length >= 100 then "incomplete" else "absent" end' "$work_dir/activity.json"); then
-    detail='gh api returned invalid comments JSON'; return
+    elif length >= 100 then "incomplete" else "absent" end' "$work_dir/activity.json" || rc=$?
+  if [ "$rc" != 0 ]; then
+    if [ "$rc" = 124 ]; then detail="activity JSON decoding exceeded its ${bound}s bound"
+    else detail='gh api returned invalid comments JSON'; fi
+    return
   fi
+  IFS= read -r signal <"$work_dir/signal" || { detail='cannot read activity signal'; return; }
   case "$signal" in
     present) verdict=reachable; reason=; detail='repository issue-comment activity found (installation proxy)' ;;
     incomplete) detail='activity coverage incomplete' ;;
     absent) reason=prerequisite-missing; detail='no matching repository issue-comment activity' ;;
   esac
 }
-jq -j '.effective_runner[] | . + "\u0000"' "$work_dir/config.json" >"$work_dir/entries" || fail 'cannot decode reviewers'
+decode_config "$work_dir/entries" -j '.effective_runner[] | . + "\u0000"' "$work_dir/config.json" || fail 'cannot decode reviewers'
 while IFS= read -r -d '' entry; do
   verdict=unreachable reason=check-inconclusive detail= probe_context=budget
   case "$entry" in
