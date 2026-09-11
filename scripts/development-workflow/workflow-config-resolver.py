@@ -1395,8 +1395,17 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_value(shared)
     shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
     local_runner_raw, local_runner_present, local_runner_structure_error = review_runner_value(local)
+    # A local malformed ancestor is still the source of the effective runner
+    # failure. Do not report the shipped list merely because that malformed
+    # local tree has no final ``runner`` key.
     runner_raw, runner_present, runner_source = (
-        (local_runner_raw, True, str(local_path)) if local_runner_present else (shipped_raw, shipped_present, str(shared_path) if shipped_present else "")
+        (local_runner_raw, local_runner_present, str(local_path))
+        if local_runner_present or local_runner_structure_error
+        else (
+            shipped_raw,
+            shipped_present,
+            str(shared_path) if shipped_present or shipped_runner_structure_error else "",
+        )
     )
     effective_runner, effective_runner_state = review_runner_state(runner_raw, runner_present)
 

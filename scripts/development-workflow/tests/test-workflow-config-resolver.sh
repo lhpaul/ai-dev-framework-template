@@ -1325,6 +1325,7 @@ run_test "review-effective shared review list diagnostic" "$review_effective_dir
 write_review_effective_fixture 'review:' '  on_draft: []'
 shared_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective shared on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_on_draft_list_json")"
+run_test "review-effective shared on_draft list source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.effective_runner_source' <<< "$shared_on_draft_list_json")"
 run_test "review-effective shared on_draft list policy remains absent" absent "$(jq -r '.effective_policy_state' <<< "$shared_on_draft_list_json")"
 write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers_unavailable_policy: warn'
 shared_on_draft_policy_json="$(review_effective_json)"
@@ -1339,6 +1340,7 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective local on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_on_draft_list_json")"
+run_test "review-effective local on_draft list source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.effective_runner_source' <<< "$local_on_draft_list_json")"
 run_test "review-effective local on_draft list policy remains absent" absent "$(jq -r '.effective_policy_state' <<< "$local_on_draft_list_json")"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft: []' '  internal_reviewers_unavailable_policy: warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"

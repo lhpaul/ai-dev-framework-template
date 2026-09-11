@@ -304,7 +304,7 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         check(f'T-31 malformed ancestor {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and str(local)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)
     for source in (cfg,local):
         reset();source.write_text('review:\n  on_draft: []\n  internal_reviewers_unavailable_policy: warn\n');d=run('codex',1)
-        check(f'T-31 malformed runner keeps readable sibling policy {source.name}',d['BLOCK_CAUSE']=='list-malformed' and d['POLICY_STATE']=='defined' and d['POLICY']=='warn' and d['REVIEWER_COUNT']=='0',d)
+        check(f'T-31 malformed runner keeps readable sibling policy {source.name}',d['BLOCK_CAUSE']=='list-malformed' and d['POLICY_STATE']=='defined' and d['POLICY']=='warn' and d['CONFIG_LIST_SOURCE']==str(source) and d['REVIEWER_COUNT']=='0',d)
     for source in (cfg,local):
         reset();source.write_text('review:\n  on_draft: []\n  internal_reviewers_unavailable_policy: maybe\n');d=run('codex',1)
         check(f'T-31 unsupported sibling policy takes priority {source.name}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_STATE']=='unsupported' and d['CONFIG_LIST_STATE']=='not-evaluated' and d['REVIEWER_COUNT']=='0',d)
