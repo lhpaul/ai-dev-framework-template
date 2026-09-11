@@ -308,6 +308,9 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     for malformed in ('["codex]', '[codex'):
         reset(malformed);d=run(expected=1)
         check(f'T-31 malformed YAML {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and str(cfg)==d['UNREADABLE_FILE'] and d['CONFIG_LIST_STATE']=='not-evaluated',d)
+    for malformed in ('[codex, "claude" "cursor"]', "[codex, 'claude' 'cursor']", '[codex, "claude"cursor]'):
+        reset(malformed);d=run('codex',1)
+        check(f'T-31 missing delimiter after quoted entry {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and bool(d['UNREADABLE_DETAIL']),d)
     for scalar in ('"foo: bar"',"'foo: bar'",'https://example.test'):
         reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - '+scalar+'\n');d=run(expected=1)
         check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_1_REASON']=='value-not-supported')
