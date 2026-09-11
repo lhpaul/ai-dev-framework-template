@@ -1287,6 +1287,56 @@ PY_FLOW
 )
 run_test "review-effective E-32 nested sequence value boundaries" '[["a","b"],["c,d",{}]]' "$nested_flow"
 
+# Only YAML canonical null/boolean spellings change scalar types in strict
+# mode. Exercise every case permutation and preserve legacy coercion explicitly.
+scalar_case_result=$(python3 - "$RESOLVER" <<'PY_CASE'
+import importlib.util, itertools, pathlib, sys
+spec=importlib.util.spec_from_file_location("resolver",sys.argv[1])
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+canonical={"null":None,"Null":None,"NULL":None,"true":True,"True":True,"TRUE":True,"false":False,"False":False,"FALSE":False}
+count=0
+for word,legacy in (("null",None),("true",True),("false",False)):
+    for chars in itertools.product(*[(char.lower(),char.upper()) for char in word]):
+        token="".join(chars);count+=1
+        strict=module.parse_scalar(token,review_effective=True,path=pathlib.Path("fixture"),line_no=1)
+        expected=canonical.get(token,token)
+        assert type(strict) is type(expected) and strict==expected,(token,strict,expected)
+        assert module.parse_scalar(token) is legacy,token
+        for quote in ("'",chr(34)):
+            assert module.parse_scalar(quote+token+quote,review_effective=True,path=pathlib.Path("fixture"),line_no=1)==token,token
+assert module.parse_scalar("~",review_effective=True,path=pathlib.Path("fixture"),line_no=1) is None
+print(f"{count} permutations preserve strict types, quoted strings and legacy types")
+PY_CASE
+)
+run_test "review-effective scalar case classification" '64 permutations preserve strict types, quoted strings and legacy types' "$scalar_case_result"
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for token in nUlL NuLl tRuE fAlSe; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' 'review:' "  internal_reviewers_unavailable_policy: $token" > "$review_effective_dir/$config_name"
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
+    assert_review_effective_states "mixed-case policy $config_name $token" "$expected_runner" unsupported
+    printf '%s\n' 'review:' '  on_draft:' "    runner: $token" > "$review_effective_dir/$config_name"
+    assert_review_effective_states "mixed-case runner $config_name $token" malformed absent
+  done
+  for token in null Null NULL '~'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' 'review:' "  internal_reviewers_unavailable_policy: $token" > "$review_effective_dir/$config_name"
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
+    assert_review_effective_states "canonical null policy $config_name $token" "$expected_runner" empty
+    printf '%s\n' 'review:' '  on_draft:' "    runner: $token" > "$review_effective_dir/$config_name"
+    assert_review_effective_states "canonical null runner $config_name $token" empty absent
+  done
+  for token in True FALSE; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' 'review:' "  internal_reviewers_unavailable_policy: $token" > "$review_effective_dir/$config_name"
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
+    assert_review_effective_states "canonical boolean policy $config_name $token" "$expected_runner" unreadable
+    printf '%s\n' 'review:' '  on_draft:' "    runner: [$token, codex]" > "$review_effective_dir/$config_name"
+    assert_review_effective_states "canonical boolean runner $config_name $token" malformed absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 # Review-effective uses YAML's required separator after every mapping colon.
 # The legacy override reader keeps accepting its historic compact forms.
 write_review_effective_fixture 'review:{}'

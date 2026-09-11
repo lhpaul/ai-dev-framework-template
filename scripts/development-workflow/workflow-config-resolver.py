@@ -340,11 +340,14 @@ def parse_scalar(
         return []
     if value == "{}":
         return {}
-    if value.lower() == "true":
+    # Review-effective preserves noncanonical case variants as strings;
+    # legacy callers retain their historical case-insensitive coercion.
+    scalar_token = value if review_effective else value.lower()
+    if scalar_token in {"true", "True", "TRUE"}:
         return True
-    if value.lower() == "false":
+    if scalar_token in {"false", "False", "FALSE"}:
         return False
-    if value.lower() in {"null", "~"}:
+    if scalar_token in {"null", "Null", "NULL", "~"}:
         return None
     if review_effective:
         assert path is not None and line_no is not None

@@ -357,6 +357,31 @@ reviews:
         for flow in ['["a[b]", "a]b"]', "['a{b}', 'a}b']", '[[a, b], [c, d]]', '[[], {}, [a, [b, c]]]', '[["a: b", https://example.test], ["x,y"]]', '["escaped\\"[", \'doubled\'\'[\']', 'a[b', 'a]b', 'a[b]', 'a{b}', 'a,b']:
             reset();source.write_text('other: '+flow+'\nreview:\n  on_draft:\n    runner: [codex]\n')
             check(f'T-31 valid flow and block control {source.name} {flow}',run('codex')['REVIEWER_1_STATUS']=='reachable')
+    for source in (cfg, local):
+        for token in ('nUlL','NuLl','tRuE','fAlSe'):
+            reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
+            d=run('codex',1)
+            check(f'T-31 mixed-case policy stays unsupported {source.name} {token}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==token,d)
+            reset();source.write_text('review:\n  on_draft:\n    runner: '+token+'\n')
+            d=run('codex',1)
+            check(f'T-31 mixed-case runner never falls back {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed' and d['FALLBACK_APPLIED']=='false',d)
+            reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]\n')
+            d=run('codex')
+            check(f'T-31 mixed-case list member stays string {source.name} {token}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_NAME']==token and d['REVIEWER_1_REASON']=='value-not-supported',d)
+        for token in ('null','Null','NULL','~'):
+            reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
+            d=run('codex')
+            check(f'T-31 canonical null policy defaults {source.name} {token}',d['POLICY_STATE']=='empty' and d['POLICY']=='warn',d)
+            reset();source.write_text('review:\n  on_draft:\n    runner: '+token+'\n')
+            d=run('codex')
+            check(f'T-31 canonical null runner falls back {source.name} {token}',d['CONFIG_LIST_STATE']=='empty' and d['FALLBACK_APPLIED']=='true',d)
+        for token in ('True','FALSE'):
+            reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
+            d=run('codex',1)
+            check(f'T-31 canonical boolean policy stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='policy-unreadable',d)
+            reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]\n')
+            d=run('codex',1)
+            check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
     reset();cfg.write_text('review:\n  broken mapping\n');d=run('codex',1)
     check('T-31 broken file plant',d['BLOCK_CAUSE']=='policy-unreadable' and d['CONFIG_LIST_STATE']=='not-evaluated')
     reset();check('T-31 repaired availability guard',run('codex')['OUTCOME']=='proceeded')
