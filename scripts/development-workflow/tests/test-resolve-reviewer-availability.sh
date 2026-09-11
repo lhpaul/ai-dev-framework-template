@@ -335,6 +335,30 @@ reviews:
     fake('python3', 'if [ "$1" = -B ] && [ "$2" = -c ]; then exit 1; fi\nexec '+shlex.quote(real_python)+' "$@"')
     d=run(expected=1)
     check('T-22 parser execution remedy targets python','configuration check with the gate python3' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','Repair','Install')),d)
+    # Slow individual decoders cannot each receive a fresh configuration cap.
+    # Include a slow parser so the same allowance covers parsing plus decoding.
+    real_jq=str((bins/'jq').resolve())
+    for parser_delay in (0.7, 1.0):
+        reset('[codex]')
+        config_started=root/'config-started'
+        clock_code='import pathlib,time; pathlib.Path('+repr(str(config_started))+').write_text(str(time.monotonic()))'
+        fake('python3',shlex.quote(real_python)+' -c '+shlex.quote(clock_code)+'\nsleep '+str(parser_delay)+'\nexec '+shlex.quote(real_python)+' "$@"')
+        fake('jq','sleep 1.5\nexec '+shlex.quote(real_jq)+' "$@"')
+        try:
+            d=run('codex',1)
+        finally:
+            (bins/'jq').unlink()
+            (bins/'jq').symlink_to(real_jq)
+        check(f'T-22 config parsing and decoding share two seconds {parser_delay}',time.monotonic()-float(config_started.read_text())<3 and d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0',d)
+    reset('[codex]')
+    decode_calls=root/'config-decode-calls'
+    fake('jq','printf x >> '+shlex.quote(str(decode_calls))+'\nexec '+shlex.quote(real_jq)+' "$@"')
+    try:
+        d=run('codex')
+    finally:
+        (bins/'jq').unlink()
+        (bins/'jq').symlink_to(real_jq)
+    check('T-22 responsive config decodes once and retains native reviewer',d['REVIEWER_1_STATUS']=='reachable' and decode_calls.read_text()=='x',d)
     # Set the test clock at dispatch instead of relying on rounded wall-clock
     # boundaries or deliberately stalling now-bounded config decoding.
     reset('[codex, cursor]')
@@ -348,7 +372,7 @@ reviews:
     # Every jq stage, including successful hosted responses, shares the gate
     # deadline. A stalled decoder must yield a verdict rather than hang.
     real_jq=str((bins/'jq').resolve())
-    for stage in ('type ==', '[.effective_policy_state', '.local_review_override_applied', '.override_excluded[]', '.effective_runner[]', 'hosted'):
+    for stage in ('if (type ==', 'hosted'):
         reset('[codex-github]' if stage=='hosted' else '[codex]')
         gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}])
         condition='[ "$1" = -er ]' if stage=='hosted' else '[[ "$2" == '+shlex.quote(stage)+'* ]]'

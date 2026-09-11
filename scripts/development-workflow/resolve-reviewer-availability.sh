@@ -282,36 +282,41 @@ report() {
   print_kv_escaped ELAPSED_SECONDS "$SECONDS.0"
 }
 block() { block_cause=$1; report; exit 1; }
+config_deadline=$((SECONDS + CONFIG_RESOLVE_CAP_SECONDS))
 clamp_bound "$CONFIG_RESOLVE_CAP_SECONDS"
 config_rc=0
 run_bounded "$bound" "$work_dir/config.json" "$work_dir/config.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$repo_root" || config_rc=$?
 if [ "$config_rc" = 124 ]; then block config-resolution-inconclusive; fi
 if [ "$config_rc" != 0 ]; then cat "$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
-# Keep JSON validation and decoding inside the same deadline as the probes.
+# Parsing and every JSON decode share one configuration-stage deadline,
+# further constrained by the overall determination deadline.
 # Run in this shell so cancellation retains ownership of the active process.
 decode_config() {
   local output=$1 decode_rc=0
   shift
   clamp_bound "$CONFIG_RESOLVE_CAP_SECONDS"
+  [ "$bound" -le "$((config_deadline - SECONDS))" ] || bound=$((config_deadline - SECONDS))
   run_bounded "$bound" "$output" "$work_dir/decode.err" jq "$@" || decode_rc=$?
   if [ "$decode_rc" = 124 ]; then block config-resolution-inconclusive; fi
   return "$decode_rc"
 }
 # Validate before reading: malformed helper output is execution failure, not configuration data.
-decode_config "$work_dir/validated" -e 'type == "object" and
+decode_config "$work_dir/fields" -j 'if (type == "object" and
   ([.effective_runner,.override_excluded,.shipped_runner] | all(.[]; type == "array" and all(.[]; type == "string" and (contains("\u0000")|not)))) and
   ([.effective_runner_state,.effective_runner_source,.effective_policy,.effective_policy_state,.effective_policy_source,.unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file] | all(.[]; type == "string")) and
-  (.local_review_override_applied | type == "boolean")' \
-  "$work_dir/config.json" || fail 'invalid review-effective JSON contract'
-decode_config "$work_dir/fields" -j '[.effective_policy_state,.effective_policy_source,
+  (.local_review_override_applied | type == "boolean")) then
+  [.effective_policy_state,.effective_policy_source,
   (if .policy_input == null then "" elif (.policy_input|type)=="string" then .policy_input else (.policy_input|tojson) end),
-  .unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file,.effective_policy,.effective_runner_state,.effective_runner_source][] | . + "\u0000"' \
-  "$work_dir/config.json" || fail 'cannot decode config fields'
+  .unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file,.effective_policy,.effective_runner_state,.effective_runner_source,
+  (.local_review_override_applied|tostring),(.override_excluded|length|tostring),
+  .override_excluded[],.effective_runner[]][] | . + "\u0000"
+  else error("invalid review-effective JSON contract") end' \
+  "$work_dir/config.json" || fail 'invalid review-effective JSON contract'
 fields=()
 while IFS= read -r -d '' field; do fields+=("$field"); done <"$work_dir/fields"
-decode_config "$work_dir/applied" -r '.local_review_override_applied' "$work_dir/config.json" || fail 'cannot decode local override state'
-IFS= read -r local_review_override_applied <"$work_dir/applied" || fail 'cannot read local override state'
+local_review_override_applied=${fields[11]}
+excluded_end=$((13 + ${fields[12]}))
 policy_state=${fields[0]} policy_source=${fields[1]} policy_input=${fields[2]}
 unreadable_file=${fields[3]} unreadable_detail=${fields[4]}
 if [ "$local_review_override_applied" = true ] && [ -n "${fields[5]}" ]; then local_state="${fields[5]} (${fields[6]}), applied"
@@ -327,8 +332,9 @@ list_state=${fields[9]} list_source=${fields[10]}
 case "$list_state" in
   malformed) block list-malformed ;; absent|empty) fallback=true ;; defined) ;; *) fail 'invalid runner list state' ;;
 esac
-decode_config "$work_dir/excluded" -j '.override_excluded[] | . + "\u0000"' "$work_dir/config.json" || fail 'cannot decode exclusions'
-while IFS= read -r -d '' entry; do add_record "$entry" override-excluded '' 'removed by local override'; done <"$work_dir/excluded"
+for ((entry_index=13; entry_index<excluded_end; entry_index++)); do
+  add_record "${fields[$entry_index]}" override-excluded '' 'removed by local override'
+done
 if [ "$fallback" = true ]; then
   [ "$runner_kind" != unknown ] || block no-driving-runner
   outcome=proceeded
@@ -471,8 +477,8 @@ except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
     absent) reason=prerequisite-missing; detail='no matching repository issue-comment activity' ;;
   esac
 }
-decode_config "$work_dir/entries" -j '.effective_runner[] | . + "\u0000"' "$work_dir/config.json" || fail 'cannot decode reviewers'
-while IFS= read -r -d '' entry; do
+for ((entry_index=excluded_end; entry_index<${#fields[@]}; entry_index++)); do
+  entry=${fields[$entry_index]}
   verdict=unreachable reason=check-inconclusive detail= probe_context=budget
   case "$entry" in
     claude|cursor|codex)
@@ -488,7 +494,7 @@ while IFS= read -r -d '' entry; do
     *) reason='value-not-supported'; detail='value is not a supported reviewer' ;;
   esac
   add_record "$entry" "$verdict" "$reason" "$detail" "$probe_context"
-done <"$work_dir/entries"
+done
 [ "$reachable_count" -gt 0 ] || block zero-reachable
 if [ "$unavailable_count" -gt 0 ]; then
   [ "$policy" != fail-if-any-unavailable ] || block policy-forbids-reduced-coverage
