@@ -1247,6 +1247,22 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex'
 assert_review_effective_states "E-32 unterminated flow sequence" malformed unreadable
 run_contains "review-effective E-32 unterminated flow sequence detail" "unterminated flow sequence" "$(review_effective_state unreadable_detail)"
 
+# A mapping delimiter cannot occur inside an unquoted plain scalar anywhere
+# in either config; quoted colons, URLs and stripped comments stay valid.
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for scalar in 'a: b' 'a:' 'https://example.test: invalid'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "broken: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 plain delimiter $config_name $scalar" malformed unreadable
+  done
+  for scalar in '"a: b"' "'a: b'" 'https://example.test/path#part' 'value#fragment' 'value # ignored: comment' '["a: b", https://example.test]'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 plain delimiter control $config_name $scalar" defined absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 # Review-effective uses YAML's required separator after every mapping colon.
 # The legacy override reader keeps accepting its historic compact forms.
 write_review_effective_fixture 'review:{}'

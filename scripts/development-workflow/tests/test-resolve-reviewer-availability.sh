@@ -5,7 +5,7 @@
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$SCRIPT_DIR/.." <<'PY'
-import json, os, pathlib, shlex, shutil, subprocess, sys, tempfile, time
+import json, os, pathlib, shlex, shutil, signal, subprocess, sys, tempfile, time
 
 scripts = pathlib.Path(sys.argv[1]).resolve()
 helper = scripts / 'resolve-reviewer-availability.sh'
@@ -341,6 +341,14 @@ reviews:
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])
     check('T-26 invocation failure has no verdict','OUTCOME' not in d)
+    for source in (cfg,local):
+        for scalar in ('a: b','a:', 'https://example.test: invalid'):
+            reset();source.write_text('broken: '+scalar+'\nreview:\n  on_draft:\n    runner: [codex]\n')
+            d=run('codex',1)
+            check(f'T-31 plain mapping delimiter blocks {source.name} {scalar}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+        for scalar in ('"a: b"', "'a: b'", 'https://example.test/path#part', 'value#fragment', 'value # ignored: comment', '["a: b", https://example.test]'):
+            reset();source.write_text('other: '+scalar+'\nreview:\n  on_draft:\n    runner: [codex]\n')
+            check(f'T-31 valid scalar controls {source.name} {scalar}',run('codex')['REVIEWER_1_STATUS']=='reachable')
     reset();cfg.write_text('review:\n  broken mapping\n');d=run('codex',1)
     check('T-31 broken file plant',d['BLOCK_CAUSE']=='policy-unreadable' and d['CONFIG_LIST_STATE']=='not-evaluated')
     reset();check('T-31 repaired availability guard',run('codex')['OUTCOME']=='proceeded')
@@ -411,6 +419,57 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
             try:os.kill(pid,0)
             except ProcessLookupError:gone=True
             check(f'T-46 {discovery} detached-session descendant cleanup {command}',gone and d['REVIEWER_1_STATUS']=='reachable')
+    if sys.platform.startswith('linux'):
+        for engine in ('fallback', 'GNU-timeout'):
+            (bins/'timeout').unlink(missing_ok=True)
+            if engine == 'GNU-timeout':
+                (bins/'timeout').symlink_to(shutil.which('timeout'))
+            for cancellation in (signal.SIGTERM, signal.SIGINT):
+                reset('[codex]');pidfile=root/'cancel-probe.pid';childfile=root/'cancel-child.pid'
+                pidfile.unlink(missing_ok=True);childfile.unlink(missing_ok=True)
+                descendant=f"import os,pathlib,time; pathlib.Path({str(childfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
+                probe=f"import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable, '-c', {descendant!r}], start_new_session=True); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
+                fake('codex',f'exec {shlex.quote(real_python)} -c {shlex.quote(probe)}')
+                process=subprocess.Popen([bash,str(helper),'--repo-root',str(repo),'--owner','example','--repo','test','--runner-kind','unknown'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+                owned=[]
+                try:
+                    deadline=time.monotonic()+5
+                    while not (pidfile.exists() and childfile.exists()) and process.poll() is None and time.monotonic()<deadline:
+                        time.sleep(.01)
+                    assert pidfile.exists() and childfile.exists(), 'probe must start before cancellation'
+                    owned=[int(pidfile.read_text()),int(childfile.read_text())]
+                    started=time.monotonic();process.send_signal(cancellation)
+                    time.sleep(.01)
+                    if process.poll() is None:
+                        process.send_signal(cancellation)  # Repeated cancellation must not interrupt cleanup.
+                    output,error=process.communicate(timeout=3)
+                    gone=[]
+                    for pid in owned:
+                        try:os.kill(pid,0);gone.append(False)
+                        except ProcessLookupError:gone.append(True)
+                    check(f'T-46 external cancellation reaps {engine} {cancellation.name}',process.returncode==2 and time.monotonic()-started<2.5 and all(gone),(process.returncode,owned,gone,output,error))
+                finally:
+                    if process.poll() is None:process.kill();process.wait()
+                    for pid in owned:
+                        try:os.kill(pid,signal.SIGKILL)
+                        except ProcessLookupError:pass
+        # An unresponsive supervisor still has a bounded owned-group fallback.
+        (bins/'timeout').unlink(missing_ok=True)
+        reset('[codex]');pidfile=root/'hung-supervisor.pid'
+        (bins/'python3').write_text('#!/bin/bash\ntrap "" TERM INT\nprintf "%s" "$$" > '+shlex.quote(str(pidfile))+'\nwhile :; do :; done\n')
+        process=subprocess.Popen([bash,str(helper),'--repo-root',str(repo),'--owner','example','--repo','test'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        try:
+            deadline=time.monotonic()+3
+            while not pidfile.exists() and process.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+            assert pidfile.exists(), 'hung supervisor fixture must start'
+            started=time.monotonic();process.terminate();output,error=process.communicate(timeout=3)
+            gone=False
+            try:os.kill(int(pidfile.read_text()),0)
+            except ProcessLookupError:gone=True
+            check('T-46 external cancellation bounds unresponsive supervisor',process.returncode==2 and gone and time.monotonic()-started<2.5,(output,error))
+        finally:
+            if process.poll() is None:process.kill();process.wait()
+        (bins/'timeout').unlink(missing_ok=True)
     reset();fake('codex','exit 0');fake('timeout','echo "BusyBox timeout"; exit 1')
     check('T-46 non-GNU timeout uses owned-group fallback',run()['REVIEWER_1_STATUS']=='reachable')
     (bins/'timeout').unlink()

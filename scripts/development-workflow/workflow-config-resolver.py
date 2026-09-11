@@ -222,6 +222,11 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains a mapping item")
     if not value.startswith(("'", '"')):
+        # Plain scalar values cannot contain a mapping delimiter, even when
+        # the malformed field is unrelated to review settings. Flow lists are
+        # validated element by element so quoted colons remain valid strings.
+        if not value.startswith(("[", "{")) and re.search(r":(?:\s|$)", value):
+            raise ConfigError(f"{path}:{line_no}: mapping delimiter in plain scalar")
         if (
             value.startswith(("!", "&", "*", "|", ">", "@", "`"))
             or value == "?"

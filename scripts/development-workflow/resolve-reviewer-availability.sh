@@ -51,10 +51,23 @@ fi
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-availability.XXXXXX") || fail 'cannot create temporary directory'
 active_pid=
 cleanup() {
-  local rc=$?
+  local rc=$? cleanup_ticks=0
+  # Cancellation must not reenter cleanup or kill the Linux subreaper before
+  # its finally block terminates and reaps probes in separate sessions.
+  trap '' INT TERM
   if [ -n "$active_pid" ]; then
-    kill -KILL -- "-$active_pid" 2>/dev/null || true
-    kill -KILL "$active_pid" 2>/dev/null || true
+    kill -TERM -- "-$active_pid" 2>/dev/null || true
+    kill -TERM "$active_pid" 2>/dev/null || true
+    while [ "$cleanup_ticks" -lt 20 ] && {
+      kill -0 -- "-$active_pid" 2>/dev/null || kill -0 "$active_pid" 2>/dev/null
+    }; do
+      sleep 0.05
+      cleanup_ticks=$((cleanup_ticks + 1))
+    done
+    if kill -0 -- "-$active_pid" 2>/dev/null || kill -0 "$active_pid" 2>/dev/null; then
+      kill -KILL -- "-$active_pid" 2>/dev/null || true
+      kill -KILL "$active_pid" 2>/dev/null || true
+    fi
     wait "$active_pid" 2>/dev/null || true
   fi
   if [ -n "$work_dir" ]; then rm -rf -- "$work_dir"; fi
