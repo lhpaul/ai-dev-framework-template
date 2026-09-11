@@ -1575,7 +1575,7 @@ The fixed external ceiling is ten seconds, with an eight-second internal budget
 including configuration resolution and probe cleanup. Configuration gets at
 most two seconds, each local probe at most three, and each hosted check at most
 four, clamped to the remaining global budget. Native positive evidence and
-unsupported-value classification still apply after budget exhaustion. An
+unsupported-value classification still apply after budget exhaustion. Linux probes run under a Python child subreaper with a separate probe process group, so killed descendants are reaped even when container PID 1 does not reap them. The inner deadline reserves cleanup time; the outer watchdog still bounds an unresponsive supervisor. An
 unstarted bounded probe is `check-inconclusive`. A config timeout reports
 `config-resolution-inconclusive`, with both input states `not-evaluated` and
 zero reviewer records. Exit `2` means invocation/execution failure and provides

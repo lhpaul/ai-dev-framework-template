@@ -63,12 +63,58 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 2' INT TERM
 
+# Linux PID 1 may not reap adopted children (notably in containers). Keep a
+# subreaper outside the probe's own process group so killing that group cannot
+# kill the process responsible for waiting for its descendants. The existing
+# launcher remains an outer watchdog, including for a hung Python executable.
+linux_probe_supervisor=$(cat <<'PY_SUPERVISOR'
+# Step 7a Linux probe supervisor
+import ctypes, os, signal, subprocess, sys, time
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    raise OSError(ctypes.get_errno(), "cannot enable probe child subreaper")
+interrupted = False
+def interrupt(_signum, _frame):
+    global interrupted
+    interrupted = True
+signal.signal(signal.SIGTERM, interrupt)
+signal.signal(signal.SIGINT, interrupt)
+deadline = time.monotonic() + max(0.05, float(sys.argv[1]) - 0.5)
+child = subprocess.Popen(sys.argv[2:], start_new_session=True)
+timed_out = False
+try:
+    while child.poll() is None:
+        if interrupted or time.monotonic() >= deadline:
+            timed_out = True
+            break
+        time.sleep(0.01)
+finally:
+    # Always clean up: a successfully exited leader may leave children behind.
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait()
+    while True:
+        try:
+            os.waitpid(-1, 0)
+        except InterruptedError:
+            continue
+        except ChildProcessError:
+            break
+raise SystemExit(124 if timed_out or interrupted else (child.returncode if child.returncode >= 0 else 128 - child.returncode))
+PY_SUPERVISOR
+)
+
 # Each child writes to files, never a pipe held open by a surviving descendant.
 # Timeout fallback owns a fresh process group, including on macOS without setsid.
 run_bounded() {
   local bound=$1 output=$2 error=$3 finish rc=0
   shift 3
   [ "$bound" -gt 0 ] || return 124
+  if [[ "$OSTYPE" == linux* ]]; then
+    set -- python3 -B -c "$linux_probe_supervisor" "$bound" "$@"
+  fi
   if [ "$launch_kind" = timeout ]; then
     # GNU timeout owns a group but can exit when its monitored leader exits
     # on TERM, before --kill-after reaches a TERM-ignoring descendant.

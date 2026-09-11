@@ -941,3 +941,17 @@ gate ignores.
   leaves the shipped list in force.
 - This runbook exercises the availability decision, not review quality. What a dispatched reviewer
   then says about the change is out of scope for both the spec and this runbook.
+
+### Linux descendant-reaping regression
+
+Run the availability suite in a Linux container whose PID 1 is a Python process
+that sleeps without calling `waitpid`, and launch the suite with `docker exec`
+after dependencies are installed. T-46 must still report both the leader and
+TERM-ignoring descendant gone; a zombie is not a pass. The same suite must pass
+on macOS. Linux uses the existing Python dependency as a child subreaper, with a
+separate probe process group and an outer watchdog; no new Perl dependency is
+required on Linux.
+
+If the Linux kernel or container policy denies `PR_SET_CHILD_SUBREAPER`, the
+helper must stop with an invocation-error diagnostic. It must not silently
+fall back to cleanup that can leave adopted zombie descendants.

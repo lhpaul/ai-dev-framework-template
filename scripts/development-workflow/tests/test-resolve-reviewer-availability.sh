@@ -44,6 +44,10 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     def fake(command, body):
         path = bins / command
         path.unlink(missing_ok=True)  # Never follow a dependency symlink when writing a fake.
+        if command == 'python3':
+            # Fake the requested config parser, not the Linux process supervisor
+            # that bounds and reaps that parser. A hanging target stays bounded.
+            body = (f'if [ "$1" = -B ] && [ "$2" = -c ] && [[ "$3" == "# Step 7a Linux probe supervisor"* ]]; then exec {real_python!r} "$@"; fi\n' + body)
         path.write_text('#!/bin/bash\n'+body+'\n')
         path.chmod(0o755)
 
