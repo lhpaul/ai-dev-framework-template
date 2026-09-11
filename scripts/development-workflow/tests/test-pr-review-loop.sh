@@ -15630,8 +15630,9 @@ _1562_suite="$REPO_ROOT/scripts/development-workflow/tests/test-pr-review-loop.s
 _1562_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
 
 # --- AC-1: a single area can be run without the full suite -------------------
+_1562_areas="$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --list-areas 2>/dev/null)"
 run_test "area_filter_list_areas_lists_this_area" "yes" \
-  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --list-areas 2>/dev/null | grep -q 'Area 18:' && echo yes || echo no)"
+  "$(grep -F 'Area 18:' <<< "$_1562_areas" >/dev/null && echo yes || echo no)"
 
 _1562_filtered="$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --area 1 2>/dev/null || true)"
 run_test "area_filter_runs_selected_area" "yes" \

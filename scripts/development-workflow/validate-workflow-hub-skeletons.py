@@ -17,6 +17,7 @@ SKELETON_MANIFESTS = (
 )
 PRODUCT_RELEASE_RUNTIME_PATHS = {
     "scripts/development-workflow/workflow-config-resolver.py",
+    "scripts/development-workflow/resolve-reviewer-availability.sh",
     "scripts/development-workflow/validate-workflow-config.sh",
     "scripts/development-workflow/workflow-lib.sh",
     "scripts/development-workflow/pr-review-loop.sh",

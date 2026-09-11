@@ -30,6 +30,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: resolves product repository mode and hub references
+  - group: Step 7a reviewer availability helper
+    path: scripts/development-workflow/resolve-reviewer-availability.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: resolves bounded reviewer availability for product-owned pull requests
   - group: workflow configuration validator
     path: scripts/development-workflow/validate-workflow-config.sh
     mode_scope: product_repo_injection

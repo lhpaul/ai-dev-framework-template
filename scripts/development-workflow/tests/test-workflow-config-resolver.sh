@@ -4,6 +4,10 @@
 # Usage: bash scripts/development-workflow/tests/test-workflow-config-resolver.sh
 
 set -euo pipefail
+python3 -c 'import yaml' >/dev/null 2>&1 || {
+  printf 'ERROR: install PyYAML==6.0.2 in the test python3 environment.\n' >&2
+  exit 2
+}
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
@@ -974,6 +978,754 @@ worktree_resolve_output="$(python3 "$RESOLVER" resolve --repo-root "$hub_worktre
 run_contains "set_local_path_from_worktree_resolves_correctly" "TARGET_LOCAL_PATH=$TMP_ROOT/demo-checkout" "$worktree_resolve_output"
 git -C "$hub_worktree_main" worktree remove --force "$hub_worktree_linked"
 unset hub_worktree_main hub_worktree_linked worktree_resolve_output
+
+# review-effective is deliberately JSON-only.  These parser-risk fixtures pin
+# the state distinctions that review-overrides historically collapses.
+review_effective_dir="$(fixture_dir review-effective)"
+write_review_effective_fixture() {
+  printf '%s\n' "$@" > "$review_effective_dir/.ai-dev-workflow.yaml"
+}
+review_effective_json() {
+  python3 "$RESOLVER" review-effective --repo-root "$review_effective_dir"
+}
+review_effective_state() {
+  local field="$1"
+  review_effective_json | jq -r ".$field"
+}
+assert_review_effective_states() {
+  local name="$1" runner_state="$2" policy_state="$3"
+  run_test "review-effective $name runner state" "$runner_state" "$(review_effective_state effective_runner_state)"
+  run_test "review-effective $name policy state" "$policy_state" "$(review_effective_state effective_policy_state)"
+}
+
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
+t27_json="$(review_effective_json)"
+run_test "review-effective T-27 is one JSON object" "object" "$(jq -r 'type' <<< "$t27_json")"
+run_test "review-effective T-27 shipped list" '["claude","codex"]' "$(jq -c '.effective_runner' <<< "$t27_json")"
+run_test "review-effective T-27 state" "defined" "$(jq -r '.effective_runner_state' <<< "$t27_json")"
+run_test "review-effective T-27 exclusions" '[]' "$(jq -c '.override_excluded' <<< "$t27_json")"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+t28_json="$(review_effective_json)"
+run_test "review-effective T-28 local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.effective_runner_source' <<< "$t28_json")"
+run_test "review-effective T-28 retains shipped list" '["claude","codex"]' "$(jq -c '.shipped_runner' <<< "$t28_json")"
+run_test "review-effective T-28 exclusions" '["claude"]' "$(jq -c '.override_excluded' <<< "$t28_json")"
+run_test "review-effective T-28 local review override applied" true "$(jq -r '.local_review_override_applied' <<< "$t28_json")"
+printf '%s\n' 'product_repos:' '  checkout_root: ../product-checkout' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+unrelated_local_json="$(review_effective_json)"
+run_test "review-effective unrelated local file remains diagnostic" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.local_override_file' <<< "$unrelated_local_json")"
+run_test "review-effective unrelated local file does not apply review override" false "$(jq -r '.local_review_override_applied' <<< "$unrelated_local_json")"
+printf '%s\n' 'review: {}' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+empty_review_local_json="$(review_effective_json)"
+run_test "review-effective empty local review does not apply override" false "$(jq -r '.local_review_override_applied' <<< "$empty_review_local_json")"
+printf '%s\n' 'review: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+malformed_review_local_json="$(review_effective_json)"
+run_test "review-effective malformed local review records override source" true "$(jq -r '.local_review_override_applied' <<< "$malformed_review_local_json")"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+mv "$review_effective_dir/.ai-dev-workflow.local.yaml" "$review_effective_dir/local-saved.yaml"
+printf '%s\n' 'review:' '  on_draft:' '    runner' > "$review_effective_dir/.ai-dev-workflow.yaml"
+t29_json="$(review_effective_json)"
+run_test "review-effective T-29 parse failure exits zero" "object" "$(jq -r 'type' <<< "$t29_json")"
+run_test "review-effective T-29 scalar parent leaves policy absent" "absent" "$(jq -r '.effective_policy_state' <<< "$t29_json")"
+run_test "review-effective T-29 runner malformed" "malformed" "$(jq -r '.effective_runner_state' <<< "$t29_json")"
+run_test "review-effective T-29 valid YAML has no unreadable file" "" "$(jq -r '.unreadable_file' <<< "$t29_json")"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.yaml"
+cp "$review_effective_dir/local-saved.yaml" "$review_effective_dir/.ai-dev-workflow.local.yaml"
+legacy_overrides="$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir")"
+run_contains "review-effective T-30 legacy review-overrides runner unchanged" "REVIEW_ON_DRAFT_RUNNER=codex" "$legacy_overrides"
+
+# E-1 through E-32: each assertion is named separately to make a parser
+# regression obvious in the harness output.
+unset WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+mv "$review_effective_dir/.ai-dev-workflow.local.yaml" "$review_effective_dir/local-restored.yaml"
+write_review_effective_fixture 'review:' '  on_draft: {}'
+assert_review_effective_states "E-1" absent absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:'
+assert_review_effective_states "E-2" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: []'
+assert_review_effective_states "E-3" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
+assert_review_effective_states "E-4" defined absent
+run_test "review-effective E-4 entries" '["claude","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - claude'
+assert_review_effective_states "E-5" defined absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex'
+assert_review_effective_states "E-6" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: {a: b}'
+assert_review_effective_states "E-7" malformed unreadable
+run_contains "review-effective E-7 flow mapping detail" "flow mappings" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '    # no entries' '    github: []'
+assert_review_effective_states "E-8" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [ claude , codex ]'
+assert_review_effective_states "E-9" defined absent
+run_test "review-effective E-9 trims entries" '["claude","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["claude", '\''codex'\'']'
+assert_review_effective_states "E-10" defined absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude] # ignored'
+assert_review_effective_states "E-11" defined absent
+write_review_effective_fixture 'review:' '  on_draft:' '    # runner: [codex]'
+assert_review_effective_states "E-12" absent absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner_extra: [codex]'
+assert_review_effective_states "E-13" absent absent
+write_review_effective_fixture 'review:' '  on_ready:' '    runner: [codex]'
+assert_review_effective_states "E-14" absent absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner'
+assert_review_effective_states "E-15 scalar parent" malformed absent
+run_test "review-effective E-15 valid YAML has no unreadable file" "" "$(review_effective_state unreadable_file)"
+write_review_effective_fixture $'review:\n\ton_draft:\n    runner: [codex]'
+assert_review_effective_states "E-16" malformed unreadable
+run_contains "review-effective E-16 detail names line" ":2:" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: warn'
+assert_review_effective_states "E-17" absent defined
+run_test "review-effective E-17 policy" warn "$(review_effective_state effective_policy)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:'
+assert_review_effective_states "E-18" absent empty
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: Warn'
+assert_review_effective_states "E-19" absent unsupported
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: [warn]'
+assert_review_effective_states "E-20" absent unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  internal_reviewers_unavailable_policy: bogus'
+assert_review_effective_states "E-21" defined unsupported
+
+# The review-effective parser follows YAML's whitespace-delimited comment rule;
+# legacy callers retain their historic unconditional-hash stripping behavior.
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: warn#typo'
+assert_review_effective_states "E-21 policy hash suffix" absent unsupported
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-21 legacy hash suffix unchanged" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=warn" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=/p')"
+assert_review_effective_states "E-21 local policy hash suffix" defined unsupported
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn # intended comment' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 whitespace policy comment" defined defined
+run_test "review-effective E-21 whitespace policy comment value" warn "$(review_effective_state effective_policy)"
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: '\''warn'\''#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 parser accepts comment after quoted policy" defined defined
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn\#typo' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 escaped policy suffix" defined unsupported
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: &policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 policy anchor" malformed unreadable
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: !policy warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 policy tag" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex#typo]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 runner hash suffix" defined absent
+run_test "review-effective E-21 runner hash suffix value" '["codex#typo"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [it'\''s] # intended comment' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 apostrophe runner and comment" defined absent
+run_test "review-effective E-21 apostrophe runner value" '["it'"'"'s"]' "$(review_effective_json | jq -c '.effective_runner')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# `review.internal_reviewers` remains a supported transition alias for the
+# review-effective gate. A present modern key always wins inside each file.
+write_review_effective_fixture 'review:' '  internal_reviewers: [codex-github]'
+assert_review_effective_states "E-21 legacy runner alias" defined absent
+run_test "review-effective E-21 legacy runner alias entries" '["codex-github"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  internal_reviewers:'
+assert_review_effective_states "E-21 empty legacy runner alias" empty absent
+write_review_effective_fixture 'review:' '  internal_reviewers: codex'
+assert_review_effective_states "E-21 malformed legacy runner alias" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude]' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 modern runner wins shared alias" defined absent
+run_test "review-effective E-21 modern runner shared alias entries" '["claude"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: []' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 empty modern runner wins alias" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: null' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 null modern runner wins alias" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 malformed modern runner wins alias" malformed absent
+write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers: [codex]'
+assert_review_effective_states "E-21 malformed modern ancestor wins alias" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude, codex]'
+printf '%s\n' 'review:' '  internal_reviewers: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 local legacy runner alias" defined absent
+run_test "review-effective E-21 local legacy alias entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+run_test "review-effective E-21 local legacy alias exclusions" '["claude"]' "$(review_effective_json | jq -c '.override_excluded')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: []' '  internal_reviewers: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-21 local empty modern wins alias" empty absent
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# E-22 uses a real linked worktree because the origin field is the contract.
+effective_main="$TMP_ROOT/effective-main"; mkdir -p "$effective_main"; git -C "$effective_main" init -q
+printf '%s\n' 'review:' '  on_draft:' '    runner: [claude]' > "$effective_main/.ai-dev-workflow.yaml"
+git -C "$effective_main" add .ai-dev-workflow.yaml
+git -C "$effective_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+printf '%s\n' 'review:' '  internal_reviewers: [codex]' > "$effective_main/.ai-dev-workflow.local.yaml"
+effective_linked="$TMP_ROOT/effective-linked"; git -C "$effective_main" worktree add -q "$effective_linked" -b fixture/effective-linked HEAD
+printf '%s\n' 'product_repos: []' > "$effective_linked/.ai-dev-workflow.local.yaml"
+e22_json="$(python3 "$RESOLVER" review-effective --repo-root "$effective_linked")"
+run_test "review-effective E-22 runner state" defined "$(jq -r '.effective_runner_state' <<< "$e22_json")"
+run_test "review-effective E-22 origin" main_clone "$(jq -r '.local_override_origin' <<< "$e22_json")"
+run_test "review-effective E-22 main clone legacy alias" '["codex"]' "$(jq -c '.effective_runner' <<< "$e22_json")"
+git -C "$effective_main" worktree remove --force "$effective_linked"
+
+for e_case in 23 24 25 26 27; do
+  case "$e_case" in
+    23) entry='codex, claude' ;;
+    24) entry='my reviewer' ;;
+    25) entry='a, b c' ;;
+    26) entry='' ;;
+    27) entry="it's" ;;
+  esac
+  if [ "$e_case" = 27 ]; then
+    write_review_effective_fixture 'review:' '  on_draft:' "    runner: [$entry]"
+  else
+    write_review_effective_fixture 'review:' '  on_draft:' "    runner: [\"$entry\"]"
+  fi
+  assert_review_effective_states "E-$e_case" defined absent
+  run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
+done
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [it'\''s, codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 multi-entry plain apostrophe" defined absent
+run_test "review-effective E-27 multi-entry plain apostrophe values" '["it'"'"'s","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+legacy_apostrophe_runner="$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+run_contains "review-effective E-27 legacy apostrophe output retained" "REVIEW_ON_DRAFT_RUNNER=" "$legacy_apostrophe_runner"
+run_contains "review-effective E-27 legacy apostrophe still joins comma" "codex" "$legacy_apostrophe_runner"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [he"llo, codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 multi-entry plain double quote" defined absent
+run_test "review-effective E-27 multi-entry plain double quote values" '["he\"llo","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["it'\''s, codex", "a,b", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 quoted commas" defined absent
+run_test "review-effective E-27 quoted comma values" '["it'"'"'s, codex","a,b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["a\",b", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 escaped quoted comma" defined absent
+run_test "review-effective E-27 escaped quoted comma values" '["a\",b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["claude\"x", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 escaped quoted scalar" defined absent
+run_test "review-effective E-27 escaped quoted scalar values" '["claude\"x","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["co\u0064ex"]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 escaped supported reviewer" defined absent
+run_test "review-effective E-27 escaped supported reviewer decodes" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["co\x64ex"]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 hexadecimal escaped supported reviewer" defined absent
+run_test "review-effective E-27 hexadecimal escaped reviewer decodes" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+for invalid_escape in '"bad\q"' '"bad\x1"' '"bad\u12"' '"bad\uD800"' '"bad\U00110000"' '"bad\0"'; do
+  printf '%s\n' 'review:' '  on_draft:' "    runner: [codex, $invalid_escape]" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+  assert_review_effective_states "E-27 invalid double-quoted escape $invalid_escape" malformed unreadable
+done
+printf '%s\n' 'review:' '  on_draft:' "    runner: ['claude''s, cursor', codex]" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 doubled single quote" defined absent
+run_test "review-effective E-27 doubled single quote values" '["claude'"'"'s, cursor","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, "claude" "cursor"]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 adjacent double quoted values" malformed unreadable
+run_contains "review-effective E-27 adjacent double quoted detail" "invalid YAML" "$(review_effective_state unreadable_detail)"
+printf '%s\n' 'review:' '  on_draft:' "    runner: [codex, 'claude' 'cursor']" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 adjacent single quoted values" malformed unreadable
+run_contains "review-effective E-27 adjacent single quoted detail" "invalid YAML" "$(review_effective_state unreadable_detail)"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["extra: value", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 quoted mapping-shaped scalar" defined absent
+run_test "review-effective E-27 quoted mapping-shaped scalar values" '["extra: value","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: {}'
+assert_review_effective_states "E-28" malformed absent
+run_test "review-effective E-28 legacy bare runner stays empty" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: null'
+assert_review_effective_states "E-29 null" empty absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ~'
+assert_review_effective_states "E-29 tilde" empty absent
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {}'
+assert_review_effective_states "E-30 mapping" absent unreadable
+run_test "review-effective E-30 type-error file" "$review_effective_dir/.ai-dev-workflow.yaml" "$(review_effective_state unreadable_file)"
+run_contains "review-effective E-30 type-error detail" "must be a scalar string" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {mode: warn}'
+assert_review_effective_states "E-30 flow mapping" malformed unreadable
+run_contains "review-effective E-30 flow mapping detail" "flow mappings" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:'
+assert_review_effective_states "E-30 bare" absent empty
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: null'
+assert_review_effective_states "E-31 null" absent empty
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: ~'
+assert_review_effective_states "E-31 tilde" absent empty
+run_test "review-effective E-31 legacy null policy stays empty" "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^INTERNAL_REVIEWERS_UNAVAILABLE_POLICY=/p')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - "foo: bar"' "      - 'foo: bar'" '      - https://example.test'
+assert_review_effective_states "E-32 scalar colons" defined absent
+run_test "review-effective E-32 scalar colons values" '["foo: bar","foo: bar","https://example.test"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - key: value'
+assert_review_effective_states "E-32 mapping" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - codex' '      - a:b: c'
+assert_review_effective_states "E-32 later colon mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, a:b: c]'
+assert_review_effective_states "E-32 later colon flow mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["codex]'
+assert_review_effective_states "E-32 unterminated quote" malformed unreadable
+run_contains "review-effective E-32 unterminated quote detail" "invalid YAML" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex'
+assert_review_effective_states "E-32 unterminated flow sequence" malformed unreadable
+run_contains "review-effective E-32 unterminated flow sequence detail" "invalid YAML" "$(review_effective_state unreadable_detail)"
+
+# A mapping delimiter cannot occur inside an unquoted plain scalar anywhere
+# in either config; quoted colons, URLs and stripped comments stay valid.
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for scalar in 'a: b' 'a:' 'https://example.test: invalid'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "broken: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 plain delimiter $config_name $scalar" malformed unreadable
+  done
+  for scalar in '"a: b"' "'a: b'" 'https://example.test/path#part' 'value#fragment' 'value # ignored: comment' '["a: b", https://example.test]'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 plain delimiter control $config_name $scalar" defined absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# Flow delimiters are structural outside quotes, including nested sequences.
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for flow in '[a[b]' '[a]b]' '[a[b]]' '[a{b}]' '[a}b]' '[[a,b]' '[[a], b]]' '[[] []]' '[{}x]' '["a"b]' '["a[b]"' '[a "b[c"]' ']' '}' ,bad; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $flow" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 structural flow $config_name $flow" malformed unreadable
+  done
+  for flow in '["a[b]", "a]b"]' '['"'"'a{b}'"'"', '"'"'a}b'"'"']' '[[a, b], [c, d]]' '[[], {}, [a, [b, c]]]' '[["a: b", https://example.test], ["x,y"]]' '["escaped\"[", '"'"'doubled'"'"''"'"'['"'"']' 'a[b' 'a]b' 'a[b]' 'a{b}' a,b; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $flow" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 structural flow control $config_name $flow" defined absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'other: [[a, b], ["c,d", {}]]'
+nested_flow=$(python3 - "$RESOLVER" "$review_effective_dir/.ai-dev-workflow.yaml" <<'PY_FLOW'
+import importlib.util, json, pathlib, sys
+spec=importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+print(json.dumps(module.parse_yaml_subset(pathlib.Path(sys.argv[2]), preserve_empty_values=True)["other"], separators=(",",":")))
+PY_FLOW
+)
+run_test "review-effective E-32 nested sequence value boundaries" '[["a","b"],["c,d",{}]]' "$nested_flow"
+
+# Only YAML canonical null/boolean spellings change scalar types in strict
+# mode. Exercise every case permutation and preserve legacy coercion explicitly.
+scalar_case_result=$(python3 - "$RESOLVER" <<'PY_CASE'
+import importlib.util, itertools, pathlib, sys
+spec=importlib.util.spec_from_file_location("resolver",sys.argv[1])
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+canonical={"null":None,"Null":None,"NULL":None,"true":True,"True":True,"TRUE":True,"false":False,"False":False,"FALSE":False}
+count=0
+for word,legacy in (("null",None),("true",True),("false",False)):
+    for chars in itertools.product(*[(char.lower(),char.upper()) for char in word]):
+        token="".join(chars);count+=1
+        strict=module.parse_scalar(token,review_effective=True,path=pathlib.Path("fixture"),line_no=1)
+        expected=canonical.get(token,token)
+        assert type(strict) is type(expected) and strict==expected,(token,strict,expected)
+        assert module.parse_scalar(token) is legacy,token
+        for quote in ("'",chr(34)):
+            assert module.parse_scalar(quote+token+quote,review_effective=True,path=pathlib.Path("fixture"),line_no=1)==token,token
+assert module.parse_scalar("~",review_effective=True,path=pathlib.Path("fixture"),line_no=1) is None
+print(f"{count} permutations preserve strict types, quoted strings and legacy types")
+PY_CASE
+)
+run_test "review-effective scalar case classification" '64 permutations preserve strict types, quoted strings and legacy types' "$scalar_case_result"
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for token in nUlL NuLl tRuE fAlSe; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' 'review:' "  internal_reviewers_unavailable_policy: $token" > "$review_effective_dir/$config_name"
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
+    assert_review_effective_states "mixed-case policy $config_name $token" "$expected_runner" unsupported
+    printf '%s\n' 'review:' '  on_draft:' "    runner: $token" > "$review_effective_dir/$config_name"
+    assert_review_effective_states "mixed-case runner $config_name $token" malformed absent
+  done
+  for token in null Null NULL '~'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' 'review:' "  internal_reviewers_unavailable_policy: $token" > "$review_effective_dir/$config_name"
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
+    assert_review_effective_states "canonical null policy $config_name $token" "$expected_runner" empty
+    printf '%s\n' 'review:' '  on_draft:' "    runner: $token" > "$review_effective_dir/$config_name"
+    assert_review_effective_states "canonical null runner $config_name $token" empty absent
+  done
+  for token in True FALSE; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' 'review:' "  internal_reviewers_unavailable_policy: $token" > "$review_effective_dir/$config_name"
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
+    assert_review_effective_states "canonical boolean policy $config_name $token" "$expected_runner" unreadable
+    printf '%s\n' 'review:' '  on_draft:' "    runner: [$token, codex]" > "$review_effective_dir/$config_name"
+    assert_review_effective_states "canonical boolean runner $config_name $token" malformed absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# A hash cannot start a flow node, even without separating whitespace.
+flow_hash_result=$(python3 - "$RESOLVER" <<'PY_FLOW_HASH'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for flow in ("[codex,#]", "[#]", "[codex,#name]", "[[#name],codex]", "[codex, #name]", "[codex,\t#name]", "[codex,:bad]", "[:bad]", "[[codex,:bad]]"):
+            local.unlink(missing_ok=True)
+            shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+            source.write_text("review:\n  on_draft:\n    runner: "+flow+"\n")
+            d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+            assert d["effective_runner_state"] == "malformed" and d["effective_policy_state"] == "unreadable", d
+            checks += 1
+        for flow, expected in (("[codex,'#']", ["codex", "#"]), ('["#name",codex]', ["#name", "codex"]), ('[["#name"],codex]', [["#name"], "codex"]), ("[codex,a#name]", ["codex", "a#name"]), ("[https://example.test/#part,codex]", ["https://example.test/#part", "codex"])):
+            for comment in ("", " # comment"):
+                source.write_text("other: "+flow+comment+"\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == expected
+                checks += 1
+    assert module.parse_scalar("[codex,#]") == ["codex", "#"]
+    checks += 1
+print(f"{checks} flow hash and quoted controls passed")
+PY_FLOW_HASH
+)
+run_test "strict flow hash node validation" '39 flow hash and quoted controls passed' "$flow_hash_result"
+
+# Literal quotes inside started plain nodes cannot hide trailing comments.
+plain_quote_result=$(python3 - "$RESOLVER" <<'PY_PLAIN_QUOTE'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for token in ('foo "', "foo '", 'foo "#literal', "foo '#literal"):
+            for suffix in ("", " # comment"):
+                for node in ("["+token+", codex]"+suffix, "\n      - "+token+suffix+"\n      - codex"):
+                    local.unlink(missing_ok=True)
+                    shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                    source.write_text("review:\n  on_draft:\n    runner: "+node+"\n")
+                    d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                    assert d["effective_runner_state"] == "defined" and d["effective_runner"] == [token, "codex"], d
+                    checks += 1
+        for token in ('foo [ "', "foo { '", 'foo, "', 'foo:bar "'):
+            source.write_text("other: "+token+" # comment\n")
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == token
+            checks += 1
+        for node, expected in ((r'"escaped\" #literal"', 'escaped" #literal'), ("'doubled'' #literal'", "doubled' #literal"), ('"#literal"', '#literal')):
+            for value, want in ((node, expected), ("["+node+"]", [expected]), ("[["+node+"]]", [[expected]])):
+                source.write_text("other: "+value+" # comment\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == want
+                checks += 1
+    assert module.strip_inline_comment('other: foo " # legacy') == 'other: foo " # legacy'
+    checks += 1
+print(f"{checks} plain quote and comment controls passed")
+PY_PLAIN_QUOTE
+)
+run_test "strict plain quote comment boundaries" '59 plain quote and comment controls passed' "$plain_quote_result"
+
+# Validate raw YAML before removing comments or interpreting quoted escapes.
+raw_character_result=$(python3 - "$RESOLVER" <<'PY_RAW'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+invalid_points = list(range(0, 9))+[11,12]+list(range(14,32))+list(range(127,133))+list(range(134,160))+[65534,65535]
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for point in invalid_points:
+            char = chr(point)
+            for extra in ("# comment "+char, "other: x"+char, 'other: "x'+char+'"'):
+                local.unlink(missing_ok=True)
+                shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                source.write_text(extra+"\nreview:\n  on_draft:\n    runner: [codex]\n")
+                d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                assert d["effective_runner_state"] == "malformed" and d["effective_policy_state"] == "unreadable", d
+                assert "invalid YAML" in d["unreadable_detail"], d
+                checks += 1
+        for escaped, expected in ((r"\a", "\a"), (r"\e", "\x1b"), (r"\t", "\t"), (r"\x07", "\a"), (r"\u0007", "\a")):
+            source.write_text('other: "'+escaped+'" # valid escape\n')
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == expected
+            checks += 1
+        for char in ("\t", "\u00a0", "\ud7ff", "\ue000", "\ufffd", "\U00010000", "\U0010ffff"):
+            source.write_text('other: "x'+char+'y"\n')
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == "x"+char+"y"
+            checks += 1
+        for newline in ("\n", "\r", "\r\n"):
+            source.write_bytes(("other: value"+newline).encode())
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == "value"
+            checks += 1
+    shared.write_text("# comment \x00\nother: \x07\n")
+    assert module.parse_yaml_subset(shared)["other"] == "\x07"
+    checks += 1
+print(f"{checks} raw character and escaped controls passed")
+PY_RAW
+)
+run_test "strict YAML raw character validation" '409 raw character and escaped controls passed' "$raw_character_result"
+
+# Tabs separate node indicators just like spaces in strict YAML.
+tab_indicator_result=$(python3 - "$RESOLVER" <<'PY_TAB'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for indicator in ("?", "-", ":"):
+            for separator in (" ", "\t"):
+                token = indicator+separator+"foo"
+                for node in (token, "[codex, "+token+"]", "\n      - codex\n      - "+token):
+                    local.unlink(missing_ok=True)
+                    shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                    source.write_text("review:\n  on_draft:\n    runner: "+node+"\n")
+                    d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                    assert d["effective_runner_state"] == "malformed", d
+                    checks += 1
+                for quote in ("'", '"'):
+                    source.write_text("other: ["+quote+token+quote+"]\n")
+                    assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == [token]
+                    checks += 1
+                assert module.parse_scalar(token) == token
+                checks += 1
+            for token in (() if indicator in (":", "?") else (indicator+"foo", indicator+"\u00a0foo")):
+                source.write_text("other: ["+token+"]\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == [token]
+                checks += 1
+print(f"{checks} tab indicator and scalar controls passed")
+PY_TAB
+)
+run_test "strict YAML tab indicator classification" '76 tab indicator and scalar controls passed' "$tab_indicator_result"
+
+# Strict YAML separation is ASCII space/tab, not Python's Unicode whitespace.
+unicode_whitespace_result=$(python3 - "$RESOLVER" <<'PY_WHITESPACE'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared = root / ".ai-dev-workflow.yaml"
+    local = root / ".ai-dev-workflow.local.yaml"
+    for source in (shared, local):
+        for space in ("\u00a0", "\u2003", "\u3000"):
+            for token in (space, "warn"+space+"#literal", space+"warn", "warn"+space):
+                local.unlink(missing_ok=True)
+                shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                source.write_text("review:\n  internal_reviewers_unavailable_policy: "+token+"\n")
+                d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                assert d["effective_policy_state"] == "unsupported" and d["policy_input"] == token, d
+                checks += 1
+            for value in (space, "codex"+space+"#literal", "x:"+space+"y", "x"+space+'"y#z'):
+                for node in (value, "["+value+"]"):
+                    source.write_text("other: "+node+"\n")
+                    parsed = module.parse_yaml_subset(source, preserve_empty_values=True)
+                    expected = [value] if node.startswith("[") else value
+                    assert parsed["other"] == expected, (node, parsed)
+                    checks += 1
+                source.write_text("other:\n  - "+value+"\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == [value]
+                checks += 1
+            for invalid in ("other:"+space+"value", "other: [codex]"+space, 'other: "codex"'+space):
+                source.write_text(invalid+"\n")
+                try:
+                    module.parse_yaml_subset(source, preserve_empty_values=True)
+                except module.ConfigError:
+                    checks += 1
+                else:
+                    raise AssertionError(invalid)
+        for value, expected in (("warn #comment", "warn"), ('"warn #literal"', "warn #literal"), ("https://example.test/#part", "https://example.test/#part")):
+            source.write_text("other: "+value+" \n")
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == expected
+            checks += 1
+    shared.write_text("other: \u00a0\n")
+    assert module.parse_yaml_subset(shared)["other"] == {}
+    shared.write_text("other: warn\u00a0#literal\n")
+    assert module.parse_yaml_subset(shared)["other"] == "warn"
+    checks += 2
+print(f"{checks} strict whitespace and legacy controls passed")
+PY_WHITESPACE
+)
+run_test "strict YAML whitespace classification" '122 strict whitespace and legacy controls passed' "$unicode_whitespace_result"
+
+# Reserved percent indicators are invalid nodes, but quoted/interior percent is text.
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for scalar in '%reserved' '%' '[%reserved]' '[[%reserved]]'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "reserved percent $config_name $scalar" malformed unreadable
+  done
+  for scalar in '"%reserved"' "'%reserved'" '["%reserved"]' 'value%part' 'https://example.test/%20'; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $scalar" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "valid percent $config_name $scalar" defined absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+legacy_percent=$(python3 - "$RESOLVER" <<'PY_PERCENT'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+assert module.parse_scalar("%reserved") == "%reserved"
+assert module.parse_scalar("[%reserved]") == ["%reserved"]
+print("legacy percent unchanged")
+PY_PERCENT
+)
+run_test "legacy percent parsing" 'legacy percent unchanged' "$legacy_percent"
+
+# Review-effective uses YAML's required separator after every mapping colon.
+# The legacy override reader keeps accepting its historic compact forms.
+write_review_effective_fixture 'review:{}'
+assert_review_effective_states "E-32 compact root mapping separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:{}'
+assert_review_effective_states "E-32 compact parent mapping separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:[]'
+assert_review_effective_states "E-32 compact empty runner separator is scalar parent" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:null'
+assert_review_effective_states "E-32 compact null runner separator is scalar parent" malformed absent
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:warn'
+assert_review_effective_states "E-32 compact policy separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:[codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner:[codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-32 legacy compact runner unchanged" "REVIEW_ON_DRAFT_RUNNER=codex" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# Unsupported YAML node indicators cannot be silently converted to reviewer
+# names. Their quoted counterparts remain ordinary, lossless strings.
+for node_value in '!local codex' '&local codex' '*local' '? codex' '- codex' '|' '>' '@codex' '`codex'; do
+  write_review_effective_fixture 'review:' '  on_draft:' "    runner: [codex, $node_value]"
+  assert_review_effective_states "E-32 flow node indicator $node_value" malformed unreadable
+  write_review_effective_fixture 'review:' '  on_draft:' '    runner:' "      - $node_value"
+  if [[ "$node_value" = '? codex' || "$node_value" = '- codex' ]]; then
+    assert_review_effective_states "E-32 block collection member $node_value" malformed absent
+  else
+    assert_review_effective_states "E-32 block node indicator $node_value" malformed unreadable
+  fi
+done
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: - codex'
+assert_review_effective_states "E-32 inline sequence indicator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["!local codex", "&local codex", "*local", "? codex", "- codex", "|", ">", "@codex", "`codex"]'
+assert_review_effective_states "E-32 quoted node indicators" defined absent
+run_test "review-effective E-32 quoted node indicator values" '["!local codex","&local codex","*local","? codex","- codex","|",">","@codex","`codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+
+# The review-effective reader rejects omitted flow members and preserves numeric
+# YAML types, while the legacy reader retains its historical string/skip behavior.
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex,]'
+assert_review_effective_states "E-33 trailing flow comma" defined absent
+run_test "review-effective E-33 trailing flow comma entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [,]'
+assert_review_effective_states "E-34 shared missing first flow member" malformed unreadable
+run_contains "review-effective E-34 missing member detail" "invalid YAML" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex,,cursor]'
+assert_review_effective_states "E-34 shared double comma" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex,,cursor]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-34 legacy double comma unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,cursor" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+assert_review_effective_states "E-34 local double comma" malformed unreadable
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, extra: value]'
+assert_review_effective_states "E-34 shared flow mapping member" malformed unreadable
+run_contains "review-effective E-34 flow mapping detail" "flow mappings" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, ? extra]'
+assert_review_effective_states "E-34 shared explicit-key flow mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, extra:]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-34 legacy flow mapping unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,extra:" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+assert_review_effective_states "E-34 local empty-value flow mapping" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, "extra": value]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-34 local quoted-key flow mapping" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, : value]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-34 local explicit-value flow mapping" malformed unreadable
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, "foo: bar", https://example.test]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-34 quoted colon and URL flow strings" defined absent
+run_test "review-effective E-34 quoted colon and URL entries" '["codex","foo: bar","https://example.test"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex, 0x10]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-35 legacy numeric member unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,0x10" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+assert_review_effective_states "E-35 local numeric member" malformed absent
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["123", '\''0x10'\'']' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-35 quoted numeric members" defined absent
+run_test "review-effective E-35 quoted numeric entries" '["123","0x10"]' "$(review_effective_json | jq -c '.effective_runner')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+printf '\377' > "$review_effective_dir/.ai-dev-workflow.yaml"
+utf8_json="$(review_effective_json)"
+run_test "review-effective E-36 invalid UTF-8 returns JSON" object "$(jq -r 'type' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '\377' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_fails_contains "review-effective E-36 legacy invalid UTF-8 behavior unchanged" "UnicodeDecodeError" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, .inf]'
+assert_review_effective_states "E-36 non-finite numeric member" malformed unreadable
+run_contains "review-effective E-36 non-finite numeric detail" "non-finite numeric scalar" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, 1e999]'
+assert_review_effective_states "E-36 overflowing numeric member" malformed unreadable
+run_contains "review-effective E-36 overflowing numeric detail" "non-finite numeric scalar" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, _123]'
+assert_review_effective_states "E-36 leading underscore stays string" defined absent
+run_test "review-effective E-36 leading underscore entry" '["codex","_123"]' "$(review_effective_json | jq -c '.effective_runner')"
+
+# Present non-mapping ancestors must not be mistaken for absent values and
+# silently fall through to another configuration file.
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review: []'
+shared_review_list_json="$(review_effective_json)"
+run_test "review-effective shared review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_review_list_json")"
+run_test "review-effective shared review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$shared_review_list_json")"
+run_test "review-effective shared review list diagnostic" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$shared_review_list_json")"
+write_review_effective_fixture 'review:' '  on_draft: []'
+shared_on_draft_list_json="$(review_effective_json)"
+run_test "review-effective shared on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_on_draft_list_json")"
+run_test "review-effective shared on_draft list source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.effective_runner_source' <<< "$shared_on_draft_list_json")"
+run_test "review-effective shared on_draft list policy remains absent" absent "$(jq -r '.effective_policy_state' <<< "$shared_on_draft_list_json")"
+write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers_unavailable_policy: warn'
+shared_on_draft_policy_json="$(review_effective_json)"
+run_test "review-effective shared on_draft list keeps readable policy" defined "$(jq -r '.effective_policy_state' <<< "$shared_on_draft_policy_json")"
+run_test "review-effective shared on_draft list keeps policy value" warn "$(jq -r '.effective_policy' <<< "$shared_on_draft_policy_json")"
+printf '%s\n' 'review: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+local_review_list_json="$(review_effective_json)"
+run_test "review-effective local review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_review_list_json")"
+run_test "review-effective local review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$local_review_list_json")"
+run_test "review-effective local review list diagnostic" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.unreadable_file' <<< "$local_review_list_json")"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+local_on_draft_list_json="$(review_effective_json)"
+run_test "review-effective local on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_on_draft_list_json")"
+run_test "review-effective local on_draft list source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.effective_runner_source' <<< "$local_on_draft_list_json")"
+run_test "review-effective local on_draft list policy remains absent" absent "$(jq -r '.effective_policy_state' <<< "$local_on_draft_list_json")"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft: []' '  internal_reviewers_unavailable_policy: warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+local_on_draft_policy_json="$(review_effective_json)"
+run_test "review-effective local on_draft list keeps readable policy" defined "$(jq -r '.effective_policy_state' <<< "$local_on_draft_policy_json")"
+run_test "review-effective local on_draft list keeps policy value" warn "$(jq -r '.effective_policy' <<< "$local_on_draft_policy_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:'
+nullable_review_json="$(review_effective_json)"
+run_test "review-effective bare review key policy absent" absent "$(jq -r '.effective_policy_state' <<< "$nullable_review_json")"
+run_test "review-effective bare review key runner absent" absent "$(jq -r '.effective_runner_state' <<< "$nullable_review_json")"
+
+
+write_review_effective_fixture 'review: []'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective runner-only override cannot hide malformed policy ancestor" unreadable "$(review_effective_state effective_policy_state)"
+printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective policy-only override cannot hide malformed runner ancestor" unreadable "$(review_effective_state effective_policy_state)"
+
+# Duplicate keys must never silently replace required coverage or policy.
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []'
+assert_review_effective_states "duplicate runner" malformed unreadable
+run_contains "duplicate runner diagnostic identifies second key" ".ai-dev-workflow.yaml:4: duplicate mapping key 'runner'" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: fail-if-any-unavailable' '  internal_reviewers_unavailable_policy: warn'
+assert_review_effective_states "duplicate policy" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' 'review:' '  on_draft:' '    runner: []'
+assert_review_effective_states "duplicate root mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '  on_draft:' '    runner: []'
+assert_review_effective_states "duplicate parent mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  internal_reviewers: [codex-github]' '  internal_reviewers: []'
+assert_review_effective_states "duplicate legacy alias" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "duplicate local runner" malformed unreadable
+run_test "duplicate local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(review_effective_state unreadable_file)"
+run_test "legacy duplicate runner behavior unchanged" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - name: codex' '        name: cursor'
+assert_review_effective_states "duplicate list mapping continuation" malformed unreadable
+run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key 'name'" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
+assert_review_effective_states "same key in separate mappings is valid" defined absent
 
 echo ""
 echo "Passed: $PASS_COUNT"

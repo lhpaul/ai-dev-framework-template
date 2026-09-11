@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Resolve shared and local workflow repository context.
 
-This script intentionally uses only the Python standard library. It supports the
-small YAML subset used by `.ai-dev-workflow.yaml` and
+Legacy commands use only the Python standard library. Strict review-effective
+uses PyYAML for complete syntax validation and supports the small YAML subset in `.ai-dev-workflow.yaml` and
 `.ai-dev-workflow.local.yaml`: nested mappings, lists, and scalar values.
 Unsupported or malformed structures fail closed with a file-specific error.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -116,7 +117,12 @@ def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | 
     return key, value if value != "" else None
 
 
-def parse_scalar(value: str) -> Any:
+def parse_scalar(
+    value: str, *, review_effective: bool = False, path: Path | None = None, line_no: int | None = None
+) -> Any:
+    if review_effective:
+        assert path is not None and line_no is not None
+        return parse_review_yaml(path, raw="value: " + value)["value"]
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
         if not inner:
@@ -138,6 +144,34 @@ def parse_scalar(value: str) -> Any:
         return False
     if value.lower() in {"null", "~"}:
         return None
+    return value
+
+
+def parse_review_numeric_scalar(value: str, path: Path, line_no: int) -> Any:
+    """Preserve numeric YAML scalars as non-strings for review-effective only."""
+    normalized = value.replace("_", "")
+    decimal = r"(?:0|[1-9](?:_?[0-9])*)"
+    if re.fullmatch(r"[+-]?\.(?:inf|nan)", value, re.IGNORECASE):
+        raise ConfigError(f"{path}:{line_no}: non-finite numeric scalar is not supported")
+    if re.fullmatch(r"[+-]?0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*", value):
+        return int(normalized, 0)
+    if re.fullmatch(r"[+-]?0[oO][0-7](?:_?[0-7])*", value):
+        return int(normalized, 0)
+    if re.fullmatch(r"[+-]?0[bB][01](?:_?[01])*", value):
+        return int(normalized, 0)
+    if re.fullmatch(r"[+-]?0[0-7](?:_?[0-7])*", value):
+        sign = -1 if normalized.startswith("-") else 1
+        return sign * int(normalized.lstrip("+-"), 8)
+    if re.fullmatch(rf"[+-]?{decimal}", value):
+        return int(normalized)
+    if re.fullmatch(
+        rf"[+-]?(?:(?:{decimal}\.(?:[0-9](?:_?[0-9])*)?|\.[0-9](?:_?[0-9])*)(?:[eE][+-]?{decimal})?|{decimal}[eE][+-]?{decimal})",
+        value,
+    ):
+        numeric = float(normalized)
+        if not math.isfinite(numeric):
+            raise ConfigError(f"{path}:{line_no}: non-finite numeric scalar is not supported")
+        return numeric
     return value
 
 
@@ -257,9 +291,91 @@ def parse_list(
     return result, index
 
 
-def parse_yaml_subset(path: Path) -> dict[str, Any]:
+def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
+    """Delegate syntax to PyYAML; enforce only the supported data/schema contract.
+
+    Compose nodes rather than constructing YAML objects. Tags, anchors, aliases,
+    directives, block scalars and non-empty flow mappings remain unsupported.
+    PyYAML's YAML 1.1 line-break rules apply; scalar typing below is explicit.
+    """
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ConfigError(
+            f"{path}: review-effective requires PyYAML; install PyYAML==6.0.2 "
+            "for the python3 used by the gate and re-run"
+        ) from exc
+    try:
+        if raw is None:
+            raw = path.read_text(encoding="utf-8")
+        for token in yaml.scan(raw, Loader=yaml.BaseLoader):
+            if isinstance(token, (yaml.tokens.TagToken, yaml.tokens.AnchorToken,
+                                  yaml.tokens.AliasToken, yaml.tokens.DirectiveToken,
+                                  yaml.tokens.DocumentStartToken, yaml.tokens.DocumentEndToken)):
+                raise ConfigError(f"{path}:{token.start_mark.line + 1}: unsupported YAML metadata")
+        root = yaml.compose(raw, Loader=yaml.BaseLoader)
+    except (yaml.YAMLError, OSError, RecursionError, ValueError) as exc:
+        mark = getattr(exc, "problem_mark", None)
+        location = f"{path}:{mark.line + 1}" if mark is not None else str(path)
+        raise ConfigError(f"{location}: invalid YAML: {exc}") from exc
+
+    def convert(node: Any) -> Any:
+        line_no = node.start_mark.line + 1
+        if isinstance(node, yaml.ScalarNode):
+            if node.style in ("|", ">") or node.start_mark.line != node.end_mark.line:
+                raise ConfigError(f"{path}:{line_no}: multiline scalars are not supported")
+            value = node.value
+            if "\0" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+                raise ConfigError(f"{path}:{line_no}: NUL or surrogate is not supported in review configuration")
+            if node.style in ("'", '"'):
+                return value
+            if value in ("", "null", "Null", "NULL", "~"):
+                return None
+            if value in ("true", "True", "TRUE"):
+                return True
+            if value in ("false", "False", "FALSE"):
+                return False
+            return parse_review_numeric_scalar(value, path, line_no)
+        if node.flow_style and node.start_mark.line != node.end_mark.line:
+            raise ConfigError(f"{path}:{line_no}: multiline flow collections are not supported")
+        if not node.flow_style and node.start_mark.column % 2:
+            raise ConfigError(f"{path}:{line_no}: indentation must use multiples of two spaces")
+        if isinstance(node, yaml.SequenceNode):
+            return [convert(child) for child in node.value]
+        if isinstance(node, yaml.MappingNode):
+            if node.flow_style and node.value:
+                raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
+            result: dict[str, Any] = {}
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, yaml.ScalarNode) or key_node.style is not None or not re.fullmatch(r"[A-Za-z0-9_.-]+", key_node.value):
+                    raise ConfigError(f"{path}:{line_no}: unsupported mapping key")
+                key = key_node.value
+                if key in result:
+                    raise ConfigError(f"{path}:{key_node.start_mark.line + 1}: duplicate mapping key '{key}'")
+                if isinstance(value_node, (yaml.MappingNode, yaml.SequenceNode)) and not value_node.flow_style:
+                    if value_node.start_mark.column != key_node.start_mark.column + 2:
+                        raise ConfigError(f"{path}:{value_node.start_mark.line + 1}: expected child indentation of {key_node.start_mark.column + 2}")
+                result[key] = convert(value_node)
+            return result
+        raise ConfigError(f"{path}:{line_no}: unsupported YAML node")
+
+    if root is None:
+        return {}
+    if not isinstance(root, yaml.MappingNode) or root.start_mark.column != 0:
+        raise ConfigError(f"{path}: workflow config must be a top-level mapping")
+    try:
+        return convert(root)
+    except RecursionError as exc:
+        raise ConfigError(f"{path}: YAML nesting exceeds the supported depth") from exc
+    except (ValueError, OverflowError) as exc:
+        raise ConfigError(f"{path}: unsupported YAML scalar conversion: {exc}") from exc
+
+
+def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
     if not path.exists():
         return {}
+    if preserve_empty_values:
+        return parse_review_yaml(path)
     lines = preprocess_yaml(path)
     if not lines:
         return {}
@@ -1044,6 +1160,231 @@ def list_override_from_path(data: dict[str, Any], path: list[str]) -> tuple[list
     return [], False
 
 
+def typed_value_from_path(data: dict[str, Any], path: list[str]) -> tuple[Any, bool]:
+    """Return a raw nested value and whether its final key was present."""
+    value: Any = data
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None, False
+        value = value[key]
+    return value, True
+
+
+def review_effective_value_from_path(
+    data: dict[str, Any], path: list[str]
+) -> tuple[Any, bool, bool]:
+    """Read a review-effective field without hiding a non-mapping ancestor.
+
+    The legacy review-overrides reader intentionally treats this shape as
+    absent.  The new gate cannot: a present ``review: []`` or
+    ``review.on_draft: []`` is malformed configuration and policy resolution
+    must block before a shipped value can be used as a fallback.
+    """
+    value: Any = data
+    for index, key in enumerate(path):
+        if not isinstance(value, dict):
+            # Empty optional review/on_draft sections (including sections that
+            # contain only comments) retain the historic absent-field meaning.
+            # A list, scalar, or mapping in the wrong position remains a
+            # structural error and cannot fall through to another file.
+            if value is None and (
+                (index == 1 and path[:1] == ["review"])
+                or (index == 2 and path[:2] == ["review", "on_draft"])
+            ):
+                return None, False, False
+            return None, False, True
+        if key not in value:
+            return None, False, False
+        value = value[key]
+    return value, True, False
+
+
+def review_runner_state(value: Any, present: bool) -> tuple[list[str], str]:
+    if not present:
+        return [], "absent"
+    if value is None or value == []:
+        return [], "empty"
+    if not isinstance(value, list):
+        return [], "malformed"
+    if not all(isinstance(item, str) for item in value):
+        return [], "malformed"
+    return value, "defined"
+
+
+def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
+    """Resolve modern runner config before the supported legacy alias.
+
+    A present modern key wins even when empty or malformed. Its malformed
+    ancestors must also block rather than letting the alias change coverage.
+    """
+    modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
+        data, ["review", "on_draft", "runner"]
+    )
+    legacy_raw, legacy_present, legacy_structure_error = review_effective_value_from_path(
+        data, ["review", "internal_reviewers"]
+    )
+    if modern_present or modern_structure_error:
+        return modern_raw, modern_present, modern_structure_error
+    return legacy_raw, legacy_present, legacy_structure_error
+
+
+def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
+    if not present:
+        return "", None, "absent"
+    if value is None or value == "":
+        return "", value, "empty"
+    if not isinstance(value, str):
+        return "", value, "unreadable"
+    if value in {"warn", "fail-if-any-unavailable"}:
+        return value, value, "defined"
+    return value, value, "unsupported"
+
+
+def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve the Step 7a config without collapsing parse-state distinctions."""
+    repo_root = repo_root_from_args(args.repo_root)
+    if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
+        raise ConfigError(f"{repo_root}: repository root is not a readable directory")
+
+    shared_path = repo_root / ".ai-dev-workflow.yaml"
+    local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
+    local_file = str(local_path) if local_path.is_file() else ""
+    if not local_file:
+        local_origin = ""
+
+    base = {
+        "effective_runner": [],
+        "effective_runner_state": "malformed",
+        "effective_runner_source": "",
+        "shipped_runner": [],
+        "override_excluded": [],
+        "effective_policy": "",
+        "policy_input": None,
+        "effective_policy_state": "unreadable",
+        "effective_policy_source": "",
+        "unreadable_file": "",
+        "unreadable_detail": "",
+        "local_override_file": local_file,
+        "local_override_origin": local_origin,
+        "local_review_override_applied": False,
+        "main_clone_local_override_file": str(main_clone_file) if main_clone_file else "",
+    }
+
+    try:
+        shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
+    except (ConfigError, UnicodeDecodeError) as exc:
+        base.update({
+            "effective_policy_state": "unreadable",
+            "unreadable_file": str(shared_path),
+            "unreadable_detail": str(exc),
+        })
+        return base
+
+    parse_path = local_path
+    try:
+        local = parse_yaml_subset(local_path, preserve_empty_values=True)
+        # A linked worktree's product-repos-only local file must not mask the
+        # main clone's review settings (#1560).
+        if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
+            parse_path = main_clone_file
+            main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
+            if "review" in main_local:
+                local_path, local_origin, local = main_clone_file, "main_clone", main_local
+                local_file = str(local_path)
+                base["local_override_file"] = local_file
+                base["local_override_origin"] = local_origin
+    except (ConfigError, UnicodeDecodeError) as exc:
+        base.update({
+            "effective_policy_state": "unreadable",
+            "unreadable_file": str(parse_path),
+            "unreadable_detail": str(exc),
+        })
+        return base
+
+    shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_value(shared)
+    shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
+    local_runner_raw, local_runner_present, local_runner_structure_error = review_runner_value(local)
+    # A local malformed ancestor is still the source of the effective runner
+    # failure. Do not report the shipped list merely because that malformed
+    # local tree has no final ``runner`` key.
+    runner_raw, runner_present, runner_source = (
+        (local_runner_raw, local_runner_present, str(local_path))
+        if local_runner_present or local_runner_structure_error
+        else (
+            shipped_raw,
+            shipped_present,
+            str(shared_path) if shipped_present or shipped_runner_structure_error else "",
+        )
+    )
+    effective_runner, effective_runner_state = review_runner_state(runner_raw, runner_present)
+
+    shipped_policy_raw, shipped_policy_present, shipped_policy_structure_error = review_effective_value_from_path(
+        shared, ["review", "internal_reviewers_unavailable_policy"]
+    )
+    local_policy_raw, local_policy_present, local_policy_structure_error = review_effective_value_from_path(
+        local, ["review", "internal_reviewers_unavailable_policy"]
+    )
+    local_review_override_applied = (
+        local_runner_present
+        or local_runner_structure_error
+        or local_policy_present
+        or local_policy_structure_error
+    )
+    policy_raw, policy_present, policy_source = (
+        (local_policy_raw, True, str(local_path)) if local_policy_present else (shipped_policy_raw, shipped_policy_present, str(shared_path) if shipped_policy_present else "")
+    )
+    effective_policy, policy_input, effective_policy_state = review_policy_state(policy_raw, policy_present)
+
+    runner_structure_error = local_runner_structure_error or (
+        not local_runner_present and shipped_runner_structure_error
+    )
+    # Policy is evaluated first, but its sibling runner tree is independent.
+    # A malformed ``review.on_draft`` affects the reviewer list only; a
+    # readable ``review.internal_reviewers_unavailable_policy`` still decides
+    # how that malformed list is reported. A malformed shared ``review``
+    # ancestor is reported by both field paths and remains policy-unreadable
+    # when the local file did not replace the runner tree.
+    local_structure_error = local_policy_structure_error
+    policy_structure_error = (
+        local_structure_error
+        or (not local_policy_present and shipped_policy_structure_error)
+        or (
+            not local_runner_present
+            and shipped_runner_structure_error
+            and shipped_policy_structure_error
+        )
+    )
+    if runner_structure_error:
+        effective_runner_state = "malformed"
+    if policy_structure_error:
+        effective_policy_state = "unreadable"
+        policy_input = None
+        effective_policy = ""
+        unreadable_path = str(local_path) if local_structure_error else str(shared_path)
+        base["unreadable_file"] = unreadable_path
+        base["unreadable_detail"] = f"{unreadable_path}: review section must be a mapping"
+    if effective_policy_state == "unreadable" and not policy_structure_error:
+        base["unreadable_file"] = policy_source
+        base["unreadable_detail"] = (
+            "review.internal_reviewers_unavailable_policy must be a scalar string; "
+            f"received {type(policy_raw).__name__}"
+        )
+
+    base.update({
+        "effective_runner": effective_runner,
+        "effective_runner_state": effective_runner_state,
+        "effective_runner_source": runner_source,
+        "shipped_runner": shipped_runner,
+        "override_excluded": [entry for entry in shipped_runner if local_runner_present and entry not in effective_runner],
+        "effective_policy": effective_policy,
+        "policy_input": policy_input,
+        "effective_policy_state": effective_policy_state,
+        "effective_policy_source": policy_source,
+        "local_review_override_applied": local_review_override_applied,
+    })
+    return base
+
+
 def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
     value: Any = data
     for key in path:
@@ -1194,6 +1535,13 @@ def cmd_review_overrides(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review_effective(args: argparse.Namespace) -> int:
+    # JSON is the sole form: a shell key/value list would lose delimiter-bearing
+    # reviewer names before the availability gate can classify them.
+    print(json.dumps(resolve_review_effective(args), sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -1246,6 +1594,12 @@ def build_parser() -> argparse.ArgumentParser:
     overrides.add_argument("--repo-root")
     overrides.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
     overrides.set_defaults(func=cmd_review_overrides)
+
+    effective = subcommands.add_parser(
+        "review-effective", help="print effective Step 7a reviewer configuration as JSON"
+    )
+    effective.add_argument("--repo-root")
+    effective.set_defaults(func=cmd_review_effective)
     return parser
 
 

@@ -6,9 +6,9 @@
 # polls for the resulting Actions run to complete, and inspects PR review threads
 # to determine the final verdict.
 #
-# Classifies as universally reachable: requires only gh CLI access (no Claude Code
-# CLI runtime), so it works from Claude Code, Cursor, headless CI, and any
-# context where `gh` is authenticated.
+# This hosted-service reviewer is assessed at runtime from its repository
+# prerequisite; it needs no local Claude CLI runtime, so no driving runner is
+# inherently barred.
 #
 # Usage:
 #   claude-code-action-reviewer.sh <pr_number> <owner> <repo> [options]

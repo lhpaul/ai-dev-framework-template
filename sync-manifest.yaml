@@ -109,6 +109,9 @@ categories:
     - path: scripts/development-workflow/workflow-config-resolver.py
       mode_scope: product_repo_injection
       note: product-repo runtime helper for repository mode and release contract resolution
+    - path: scripts/development-workflow/resolve-reviewer-availability.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper for Step 7a reviewer availability resolution
     - path: scripts/development-workflow/validate-workflow-config.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for non-secret workflow configuration validation

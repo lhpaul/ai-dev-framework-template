@@ -1491,37 +1491,267 @@ for this stage. Per `guardrails-enforcement.md` section 3 Gate 4:
 - Otherwise: leave the PR at its normal `ready-for-human-review` handoff — do
   not make the review decision autonomously.
 
-Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
+Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings. Resolve availability and apply policy first. Only a proceed verdict permits the draft-state pre-check, Design Review Gate, and configured-reviewer dispatch below; a blocking result dispatches no reviewer, including `design-reviewer`.
 
-### Draft-state pre-check (mandatory, before any reviewer is dispatched)
+### Determining which reviewers to run
 
-Before dispatching any reviewer, check whether the PR is currently in draft state:
+The only configuration resolution for Step 7a is the bounded availability
+helper. Run it on every cycle, before dispatch, passing the actual driving
+session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
+from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
+The strict `review-effective` reader requires PyYAML (CI pin `6.0.2`) in the gate's
+`python3` environment for every reviewer. Workflow CI already provisions it;
+`scripts/cloud-agent-install.sh` provisions the distribution package. Locally,
+install the pinned version in a virtual environment and put its `bin` directory
+on PATH. Missing PyYAML blocks as `policy-unreadable`, with installation guidance
+in `UNREADABLE_DETAIL`; the helper never installs dependencies.
+
+Strict syntax is delegated to PyYAML's `BaseLoader` scanner/parser and composed
+nodes, never YAML object construction. YAML 1.1 line-break semantics apply:
+raw NEL/U+2028/U+2029 are line breaks, not ordinary scalar whitespace. Use spaces
+for separation outside quoted values; PyYAML's pure scanner rejects tabs in some
+separation positions. Quoted/interior indicators accepted by that parser remain
+literal values. The supported workflow subset excludes tags, anchors, aliases,
+directives, document markers, complex/quoted mapping keys, multiline scalars and
+flow collections, and non-empty flow mappings. Duplicate mapping keys and
+unsupported shapes fail closed throughout both files. Scalar typing remains
+explicit: only `null`/`Null`/`NULL`/`~` and empty plain values are null, and only
+`true`/`True`/`TRUE` or `false`/`False`/`FALSE` are booleans; quoted values stay
+strings. Numeric conversion limits produce structured unreadable-config diagnostics.
+Legacy resolver commands retain their existing dependency-free parser.
+
+
+The resolver accepts the transition-release `review.internal_reviewers` alias
+when `review.on_draft.runner` is absent in that file. An explicitly present modern
+key takes precedence, including empty or malformed values. Resolve each file's
+reviewer key before applying local-over-shared precedence; an alias must never
+turn configured reviewers into an absent-list fallback.
+
+<!-- workflow-shell-contract: bash -->
 ```bash
-gh pr view <pr_number> --json isDraft --jq '.isDraft'
+bash scripts/development-workflow/resolve-reviewer-availability.sh \
+  --repo-root <artifact-repo-root> --owner <target-owner> --repo <target-repo> \
+  --runner-kind <actual-driving-session-kind>
 ```
 
-If the result is `true` (PR is a draft), inspect the resolved
-`review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
-`.ai-dev-workflow.local.yaml` override) and the `review.on_draft.github` /
-`review.on_ready.github` lists.
+Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and
+`coderabbit`, `codex-github` (hosted-service). If no list is defined, the
+helper falls back to the driving runner's own stage reviewer. Consume reviewer
+names only from its indexed `REVIEWER_N_*` fields; aggregate lists are
+display-only and must never be split or `eval`ed. The helper reports local
+override state and `override-excluded` records, which are deliberate omissions
+and never unreachability warnings.
 
-If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
-a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
-`reviews.auto_review.drafts: false`, so draft state prevents CodeRabbit from
-starting before the draft GitHub reviewer gate. If `coderabbit` is listed under
-`review.on_draft.github` while draft reviews are disabled, treat the reviewer
-placement as a configuration issue to fix before Step 7: draft GitHub reviewers
-are expected to support draft PRs.
+On exit `0`, dispatch each indexed reachable reviewer, in configured order, only after applying the returned `OUTCOME`. Never dispatch unreachable or override-excluded records. When
+`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer
+exactly once. No reviewer is dispatched until the resolver returns and the
+policy has been applied; a verdict from an earlier cycle is never reused.
+The invocation passes `--runner-kind <actual-driving-session-kind>` and is
+never a value inferred from PATH, the reviewer list, or inherited environment.
 
-If `coderabbit` is listed as a **runner reviewer** and is therefore required
-inside Step 7a itself, convert the PR to non-draft before triggering reviewers:
+### Runtime-availability check
 
+Availability follows capability at the moment of the run. A matching driving
+runner is sufficient positive evidence; it never makes another reviewer
+unreachable. The helper finishes within its fixed ten-second budget and emits
+`reachable`, `unreachable`, or `override-excluded`, with reasons
+`runtime-absent`, `prerequisite-missing`, `check-inconclusive`, or
+`value-not-supported` and a remedy for every unreachable entry. Determination
+is read-only: do not review, post a comment, alter the PR, install software, or
+substitute a reviewer while it runs. Do not provision services or write tracked files. This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.
+
+| Reason | Remedy |
+| --- | --- |
+| `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
+| `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
+| `check-inconclusive` | Use the remedy for the actual failing probe context below. |
+| `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
+
+Inconclusive remedies use an explicit internal probe context, not the reviewer
+name or free-text detail. The four reason values and output keys stay unchanged.
+An unstarted probe uses `budget`; CodeRabbit parsing and dependency failures
+never receive hosted-activity guidance, and local runtime failures never receive
+CodeRabbit or gh setup guidance.
+
+| Probe context | Inconclusive remedy |
+| --- | --- |
+| `local-runtime` | Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate. |
+| `coderabbit-config` | Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate. |
+| `coderabbit-dependency` | Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate. |
+| `coderabbit-parser` | Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate. |
+| `hosted-activity` | Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate. |
+| `budget` | Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again. |
+
+Hosted-service availability is decided at runtime from whether the service is
+installed and reachable. Where the service is not installed and reachable it is
+unavailable with a named reason. The repository-activity signal used for
+`coderabbit` and `codex-github` is an accepted proxy, not proof of that source
+condition: historical activity can be a false Reachable after removal, while a
+new or review-only installation can be false Unreachable. Decision 8 waives
+literal verification of both directions for this implementation. A reviewer
+that then fails, errors, times out, or has no verdict is a review failure under
+either policy, never an unreachability reclassification.
+
+<!-- step7a-codex-github-availability:start -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
+<!-- step7a-codex-github-availability:end -->
+
+#### Policy resolution
+
+Consume the helper's resolved policy and outcome; do not re-read configuration.
+The helper resolves repository defaults and the machine-local override once,
+validates policy before evaluating the reviewer list, then classifies capability
+and applies policy. Absent, null, bare, or empty policy means `warn` with
+`POLICY_SOURCE=default`. A non-empty unsupported string blocks before list
+fallback; a non-scalar policy or unreadable config file is `policy-unreadable`.
+An absent or empty list falls back to the driving runner's own stage reviewer;
+a malformed non-list or list with non-string members never falls back.
+
+The fixed external ceiling is ten seconds, with an eight-second internal budget
+including configuration resolution and probe cleanup. Configuration gets at
+most two seconds, each local probe at most three, and each hosted check at most
+four, clamped to the remaining global budget. Native positive evidence and
+unsupported-value classification still apply after budget exhaustion. Linux probes run under a Python child subreaper with a separate probe process group, so killed descendants are reaped even when container PID 1 does not reap them. The inner deadline reserves cleanup time; the outer watchdog still bounds an unresponsive supervisor. An
+unstarted bounded probe is `check-inconclusive`. A config timeout reports
+`config-resolution-inconclusive`, with both input states `not-evaluated` and
+zero reviewer records. Exit `2` means invocation/execution failure and provides
+no policy verdict.
+
+For hosted checks, `gh` absence, authentication failure, transport error, invalid
+response, or timeout is `check-inconclusive`. There is no authentication preflight.
+One bounded GET reads the newest repository issue comments with
+`per_page=100&sort=created&direction=desc`. A bot match is positive proxy evidence;
+a full unmatched page is incomplete (`check-inconclusive`), and a short unmatched
+page is `prerequisite-missing`. CodeRabbit additionally requires
+`reviews.auto_review.enabled: true`; its login is `coderabbitai[bot]`.
+CodeRabbit configuration validation requires PyYAML (the existing CI pin is
+`6.0.2`) in the gate's `python3`. A missing parser is `check-inconclusive` with
+installation guidance; the probe never installs it. The whole document is
+parsed with a safe loader, rejecting syntax errors, unsafe tags, and duplicate
+explicit keys while permitting merge defaults with explicit overrides. Boolean
+settings accept `true`/`True`/`TRUE` and `false`/`False`/`FALSE`; quoted values,
+numbers, and YAML 1.1 `yes`/`no`/`on`/`off` remain nonbooleans.
+An unreadable or rejected `.coderabbit.yaml` produces `check-inconclusive` with
+the read or syntax error and a remedy to repair that file; a missing file or a
+readable disabled setting is `prerequisite-missing`. An enablement-probe timeout
+remains `check-inconclusive` with execution guidance. These reviewer records
+follow the same resolved availability policy as other probe results.
+`codex-github` uses `CODEX_GITHUB_BOT_LOGIN` or
+`chatgpt-codex-connector[bot]`. Matching accepts the optional `[bot]` suffix.
+Neither reviewer is classified unavailable because the PR is draft.
+
+To override the policy locally without changing shared config, prefer
+`.ai-dev-workflow.local.yaml`:
+
+```yaml
+review:
+  on_draft:
+    runner:
+      - cursor
+  internal_reviewers_unavailable_policy: warn
+```
+
+Allowed values: `warn` (default), `fail-if-any-unavailable`.
+
+| Condition                                                 | Policy                    | Action                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Policy unreadable                                         | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unreadable`; dispatch nobody and restore an already-ready PR to draft. |
+| Policy unsupported                                        | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unsupported`; dispatch nobody and restore an already-ready PR to draft. |
+| Reviewer list malformed                                   | Any                       | **Hard-fail** with `BLOCK_CAUSE=list-malformed`; dispatch nobody and restore an already-ready PR to draft. |
+| Config resolution timed out | Any | **Hard-fail** with `BLOCK_CAUSE=config-resolution-inconclusive`; do not evaluate the list or dispatch. |
+| No configured list and no driving runner                  | Any                       | **Hard-fail** with `BLOCK_CAUSE=no-driving-runner`. |
+| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
+| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post the reason-and-remedy warning, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
+| Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
+| All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
+
+#### Warning comment format (one or more unreachable, `warn` policy)
+
+Post via `gh pr comment` only when `OUTCOME=proceeded-reduced`, after determination and before dispatching any reviewer. Use indexed names, reasons, and remedies to render each unreachable reviewer and the reachable subset; never name runner context or include override-excluded records in this warning. Use the following wording for each unreachable reviewer:
+
+> `WARNING: internal_reviewer '<reviewer>' unreachable — <reason-display-label>. Remedy: <remedy>. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
+
+Example when the Codex runtime is absent and the configured list is
+`review.on_draft.runner: [claude, codex]`:
+
+> `WARNING: internal_reviewer 'codex' unreachable — runtime absent. Remedy: Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
+
+#### Hard-fail comment format
+
+Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a summary comment in the hard-fail case. Use the appropriate template based on the hard-fail condition:
+
+**Case A — Zero reviewers reachable (any policy):**
+
+> `Step 7a BLOCKED: BLOCK_CAUSE=zero-reachable. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (<reason-display-label>; Remedy: <remedy>), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: make the missing runtime or prerequisite available, correct the configured value, or narrow 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
+
+Render `<local-override-state>` directly from `LOCAL_OVERRIDE_STATE`, without
+reconstructing it from legacy reader fields. It is `none`, an applied override
+path and origin, or a present-but-unpropagated path diagnostic. Investigate an
+unpropagated override from the artifact worktree before treating it as final.
+
+**Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
+
+> `Step 7a BLOCKED: BLOCK_CAUSE=policy-forbids-reduced-coverage. No reviewers were dispatched. Reachable: [<reachable-list>]. Unreachable: [<reviewer> (<reason-display-label>; Remedy: <remedy>), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: make a runtime available, set the policy to 'warn', or narrow the local list.`
+
+**Case C — blocking configuration input or resolver failure:** report
+`BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`,
+`no-driving-runner`, or `config-resolution-inconclusive`), `POLICY_STATE`,
+`POLICY_SOURCE`, the exact `POLICY_INPUT` for an unsupported value, and
+`UNREADABLE_FILE` / `UNREADABLE_DETAIL` for unreadable input. For a malformed
+list, name `CONFIG_LIST_SOURCE` and its malformed state. Explain the corrective
+action without guessing classifications for entries that were not evaluated.
+For exit `2`, report `availability-resolver-failed`, exit status, and stderr;
+there is no returned policy verdict to invent.
+
+Every configured reviewer with its verdict is included in each hard-fail report.
+Use the available indexed records, including Reachable and Excluded by override
+records; state that none was dispatched. Include each Unreachable record's named
+reason and remedy, `BLOCK_CAUSE`, and `LOCAL_OVERRIDE_STATE`. When policy caused
+the block, explicitly name that policy (Case B names
+`fail-if-any-unavailable`); do not attribute a block to runner identity. When
+input validation precluded classification, state `not-evaluated` rather than
+claiming no reviewers were configured.
+
+Treat helper exit `1` and exit `2` (`availability-resolver-failed`) alike:
+dispatch nobody, never convert to ready, and escalate. After determination, read
+current draft state. If already ready, run `gh pr ready <pr_number> --undo`, then
+verify `isDraft: true` before completing the block report. If restoration or
+verification fails, escalate as `missing_required_secret_or_permission` and do
+not claim the PR is draft. A PR that was draft remains draft. Post the hard-fail
+summary only after this recovery attempt, including any recovery failure.
+
+After a proceed verdict, if a Reachable `coderabbit` is selected, read the PR's
+draft state and `.coderabbit.yaml` `reviews.auto_review.drafts` setting. Convert
+with `gh pr ready <pr_number>` only if needed, when that setting is `false` or absent; when
+it is `true`, preserve the draft state until normal approval. Verify non-draft
+state before its dispatch only on the conversion path. This conversion occurs after availability
+and policy but before dispatch; it is a CodeRabbit draft-eligibility precondition,
+not availability evidence. Other reviewer paths retain conversion after approval.
+A conversion/verification failure escalates as `missing_required_secret_or_permission`
+and dispatches nobody. The CodeRabbit exception below never applies on a block.
+
+### Draft-state pre-check (after availability, before dispatch)
+
+Do not read configuration or mutate PR state before the availability helper has
+returned a proceed verdict. Its indexed reviewer records are the sole source for
+reviewer selection in this check. This keeps configuration resolution within the bounded availability
+window and leaves a blocked draft PR draft.
+There is no independent `review-effective` or `review-overrides` call.
+
+After a proceed verdict, check draft state with `gh pr view <pr_number> --json
+isDraft --jq '.isDraft'`. If it is draft and the indexed records select a
+Reachable `coderabbit` reviewer for dispatch, read only
+`.coderabbit.yaml`'s `reviews.auto_review.drafts` setting. Convert immediately
+before dispatch when it is `false` or absent; preserve draft state when it is
+`true`. An Unreachable or Excluded by override record never triggers conversion:
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr ready <pr_number>
 ```
 
-Post a comment on the PR explaining the action:
+Post this explanation:
 
 > `INFO: PR converted from draft to non-draft before Step 7a internal review. Reason: CodeRabbit is configured as an internal reviewer and '.coderabbit.yaml' sets 'auto_review.drafts: false' — CodeRabbit silently skips draft PRs. Converting now to ensure full reviewer coverage.`
 
@@ -1540,29 +1770,29 @@ internal review gate would silently pass with reduced coverage.
 | `claude`     | Never — Claude Code agents always review regardless of draft state          |
 | `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
 
-To check whether `.coderabbit.yaml` restricts draft PRs:
+Read `.coderabbit.yaml` as YAML and select only the root
+`reviews.auto_review.drafts` field; similarly named keys or instruction text do
+not determine eligibility. If the file or field is absent, CodeRabbit defaults
+to `drafts: false`. A boolean `true` permits draft review, while boolean `false`
+requires conversion. If the file cannot be read or the field is not a boolean,
+stop before conversion and report the draft-eligibility error; do not guess or
+reclassify the reviewer as unreachable.
 
-```bash
-grep -E '^\s*drafts:\s*false' .coderabbit.yaml
-```
-
-If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
-
-**Important**: Do not convert a draft PR to non-draft merely because CodeRabbit
-appears in `review.on_draft.github` or `review.on_ready.github`. Convert early
-only when CodeRabbit is part of `review.on_draft.runner`. Otherwise, keep the
-draft state until the draft GitHub reviewer gate below has passed.
+**Important**: `auto_review.drafts: false` is not an unreachability condition.
+The availability decision happens first; this conversion guarantees eligibility
+before dispatch only on the proceed path.
 
 If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
 
 ### Design Review Gate (implementation PRs only)
 
-This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Determining which reviewers to run" for those PR types.
+This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Reviewer dispatch map" for those PR types.
 
 #### Frontend-file detection
 
 Inspect the PR's changed files:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr diff <pr_number> --name-only
 ```
@@ -1580,7 +1810,7 @@ These detection rules are extensible — downstream teams that need additional e
 
 **Path A — No frontend changes detected (Use Case 2):**
 
-Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Determining which reviewers to run". This skip is not a failure (BR-10).
+Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Reviewer dispatch map". This skip is not a failure (BR-10).
 
 **Path B — Frontend changes detected, provider available (Use Case 1):**
 
@@ -1594,7 +1824,7 @@ After the agent posts its PR comment, parse the verdict from the comment header 
 
 | Verdict          | Action                                                                                                                            |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `Approved`       | Proceed normally to "Determining which reviewers to run"                                                                          |
+| `Approved`       | Proceed normally to "Reviewer dispatch map"                                                                          |
 | `Needs Revision` | Treat as a review finding. Do not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted (BR-5) |
 | `Skipped`        | Development server was unreachable; log the skip and continue without blocking (BR-4)                                             |
 
@@ -1614,145 +1844,9 @@ The design-reviewer agent resolves the preview base URL in this order (BR-11):
 
 The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider value (BR-8).
 
-### Determining which reviewers to run
-
-Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. For local
-developer overrides, prefer `.ai-dev-workflow.local.yaml` (gitignored) with the
-same nested review shape:
-
-```yaml
-review:
-  on_draft:
-    runner:
-      - cursor
-  internal_reviewers_unavailable_policy: warn
-```
-
-The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
-developers without access to all configured review tools to run a subset, such
-as only `cursor`, without changing the shared config.
-
-Resolve the effective lists with the config resolver rather than by reading
-the files by hand. It applies the precedence above and locates the override
-file for the checkout you are actually in:
-
-<!-- workflow-shell-contract: bash-zsh -->
-```bash
-python3 ./scripts/development-workflow/workflow-config-resolver.py review-overrides --repo-root "$(pwd -P)"
-```
-
-`REVIEW_ON_DRAFT_RUNNER` is the override list (empty when the local file sets
-none — then `review.on_draft.runner` from `.ai-dev-workflow.yaml` applies).
-`LOCAL_OVERRIDE_FILE` names the file the values came from and
-`LOCAL_OVERRIDE_ORIGIN` where it lives: `checkout` (this directory),
-`main_clone` (this directory is a linked git worktree with no file of its own,
-so the main clone's applies — `git worktree add` never carries gitignored
-files, #1560), or `override_root` (`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`, the
-reviewer-loop handoff path from #1033). `MAIN_CLONE_LOCAL_OVERRIDE_FILE` is set
-whenever a linked worktree's main clone holds a local override, whichever file
-was applied. A worktree created through the Protocol 90 isolation manifest
-therefore resolves the same reviewer configuration as the main clone without
-anyone copying the file into it; do not copy it by hand — a copy shadows the
-main clone's file and drifts from it.
-
-Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
-
-If neither config file defines `review.on_draft.runner`, fall back to running
-the stage-appropriate reviewer once (default behavior: `claude`).
-
-When the local file supplies an override, log the following before running the
-availability check:
-
-> `INFO: Using review.on_draft.runner override from .ai-dev-workflow.local.yaml: [<override-list>]. Original list: [<yaml-list>].`
-
-No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
-
-### Runtime-availability check
-
-Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude`, `cursor`, and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability because the gate only dispatches reviewers the current runner can invoke without a cross-runner CLI handoff. For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
-
-#### Reachability classification table
-
-| Runner context                                    | `claude` reachable? | `cursor` reachable? | `codex` reachable? | `coderabbit` reachable?           |
-| ------------------------------------------------- | ------------------- | ------------------- | ------------------ | --------------------------------- |
-| Claude Code (direct human session)                | Yes                 | No                  | No                 | Determined at runtime (App check) |
-| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                  | No                 | Determined at runtime (App check) |
-| Cursor direct session or subagent                 | No                  | Yes                 | No                 | Determined at runtime (App check) |
-| Codex runner / Codex skill                        | Yes                 | No                  | Yes                | Determined at runtime (App check) |
-| Direct human (shell / CI with `gh`)               | Yes                 | Yes                 | Yes                | Determined at runtime (App check) |
-
-To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable`.
-
-Note: the `auto_review.drafts: false` restriction is **not** treated as an unreachability condition here — it is handled upstream by the "Draft-state pre-check" at the top of Step 7a, which converts any draft PR to non-draft before this reachability check runs. By the time the reachability check executes, the PR is guaranteed to be non-draft (if the pre-check determined that a draft-restricting reviewer was in the list).
-
-#### Policy resolution
-
-After classifying each reviewer, apply the configured policy. Read
-`internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
-local override in `.ai-dev-workflow.local.yaml`). This policy key is retained
-for compatibility even though the reviewer list moved to
-`review.on_draft.runner`. If the key is absent, the default is `warn`.
-
-To override the policy locally without changing shared config, prefer
-`.ai-dev-workflow.local.yaml`:
-
-```yaml
-review:
-  on_draft:
-    runner:
-      - cursor
-  internal_reviewers_unavailable_policy: warn
-```
-
-Allowed values: `warn` (default), `fail-if-any-unavailable`.
-
-| Condition                                                 | Policy                    | Action                                                                                                                                                                                                                                                                                           |
-| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
-| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
-| Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
-| All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
-
-#### Warning comment format (one or more unreachable, `warn` policy)
-
-Post via `gh pr comment` before dispatching any reviewer. Use the following wording for each unreachable reviewer:
-
-> `WARNING: internal_reviewer '<reviewer>' unreachable from current runner (<runner-context>) — skipping. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
-
-Example for `codex` unreachable from a Claude Code subagent with
-`review.on_draft.runner: [claude, codex]`:
-
-> `WARNING: internal_reviewer 'codex' unreachable from current runner (Claude Code subagent) — skipping. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
-
-#### Hard-fail comment format
-
-Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a summary comment in the hard-fail case. Use the appropriate template based on the hard-fail condition:
-
-**Case A — Zero reviewers reachable (any policy):**
-
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
-
-`<local-override-state>` comes from the resolver output, never from a guess
-(#1560 AC-3):
-
-- `none` — `LOCAL_OVERRIDE_FILE` and `MAIN_CLONE_LOCAL_OVERRIDE_FILE` are both
-  empty. This is a genuine configuration-policy block.
-- `<LOCAL_OVERRIDE_FILE> (<LOCAL_OVERRIDE_ORIGIN>), applied` — an override was
-  resolved and still left zero reachable reviewers; the override itself names
-  reviewers this runner cannot reach.
-- `present but unpropagated: <MAIN_CLONE_LOCAL_OVERRIDE_FILE>` —
-  `LOCAL_OVERRIDE_FILE` is empty while the main clone has a file. This is
-  almost always a worktree resolving the wrong file rather than a policy
-  decision: re-run the resolver from the worktree path (`pwd -P`) and report
-  the discrepancy instead of treating the block as final.
-
-**Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
-
-> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
-
 ### Reviewer dispatch map
 
-For each reviewer in the resolved list, dispatch the stage-appropriate agent:
+For each indexed Reachable reviewer selected by the proceed verdict, dispatch the stage-appropriate agent:
 
 | Reviewer     | PR branch prefix                                  | Agent / protocol to dispatch                                                                                           |
 | ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -1768,6 +1862,26 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `coderabbit` | `spec/*`                                          | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `implementation-plan/*`                           | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `codex-github` | `spec/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
+| `codex-github` | `implementation-plan/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
+| `codex-github` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
+
+When a local-runtime reviewer does not match the driving runner, invoke its
+installed CLI from the artifact root: `claude -p --output-format text`,
+`cursor-agent --print --output-format text`, or `codex exec --sandbox read-only`.
+The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
+reviewed base/head, and active pass. Request a read-only review and exactly one
+`VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
+fixes, commits and pushes them, and re-runs the required reviewers after the push.
+Preserve existing CLI permission controls; never add permission-bypass flags or
+substitute another runtime. The read-only prompt is an instruction; the Codex
+command additionally enforces a read-only sandbox. Capture the exit status and
+complete response; approval requires exit `0` and exactly one valid terminal verdict.
+For `codex-github`, exit `0` approves, `1` enters revision, `2` and `3` are
+review failures, and `4` waits for the reviewer. A non-zero CLI exit, timeout,
+permission denial, or missing/ambiguous verdict is a review failure, not an
+availability result.
+Every dispatched failure is a review failure under either policy.
 
 ### Branch-type detection
 
@@ -1778,7 +1892,7 @@ Before running any reviewers, classify the PR branch to determine which executio
 
 ### Multi-reviewer execution rules
 
-Run all configured internal reviewers **sequentially** in the order listed. Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
+Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
@@ -1791,11 +1905,11 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 | Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                        |
 | Any reviewer returns `NEEDS REVISION` (product/design decision)                                           | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding                                        |
 
-All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
+Except for the conditional CodeRabbit conversion above, all selected internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
 
 #### Implementation PRs (feature/_, fix/_, refactor/_, hotfix/_): two-pass
 
-Implementation PRs run two sequential passes before `gh pr ready` is called. Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
+Implementation PRs run two sequential passes before final approval (with the conditional pre-dispatch CodeRabbit conversion above when needed). Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
 
 **Pass 1 (Spec Compliance)**: each reviewer evaluates only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 1: Spec Compliance`) in the dispatch prompt so the reviewer scopes its findings accordingly.
 
@@ -1817,11 +1931,15 @@ Implementation PRs run two sequential passes before `gh pr ready` is called. Pas
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision)                                                                                                        | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human                                                                                                                                                                    |
 
-Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
+Both passes must complete with all selected reviewers `APPROVED` before final advancement. The conditional CodeRabbit conversion above is not approval. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
 
 #### Step 7a summary comment (mandatory)
 
 A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before `gh pr ready` (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
+
+Include a per-reviewer verdict for every configured reviewer, with its display
+label and its reason and remedy when unreachable, plus the gate outcome.
+Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED` and the own-stage dispatch when fallback applies; do not report success with no reviewer dispatched.
 
 Required fields:
 
@@ -1837,10 +1955,10 @@ Example format for a **non-implementation PR** (single-pass):
 
 **PR type**: Non-implementation (single-pass)
 **Effective reviewer set**: claude
-**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+**Skipped reviewers**: codex (runtime absent; remedy: make the runtime available)
 **Verdict**: APPROVED
 
-All reachable internal reviewers approved. Note: codex was unreachable from the current runner — reviewer coverage was reduced from 2 to 1. Human reviewers may re-run Step 7a from a Codex-capable runner if full coverage is required.
+All reachable internal reviewers approved. Coverage was reduced from 2 to 1 because the codex runtime was absent.
 ```
 
 Example format for an **implementation PR** (two-pass):
@@ -1850,7 +1968,7 @@ Example format for an **implementation PR** (two-pass):
 
 **PR type**: Implementation (two-pass)
 **Effective reviewer set**: claude
-**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+**Skipped reviewers**: codex (runtime absent; remedy: make the runtime available)
 
 **Pass 1 (Spec Compliance)**
 

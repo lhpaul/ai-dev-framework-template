@@ -15,7 +15,7 @@ seed.
 
 - [ ] You are on the implementation branch for #1495 with the change applied.
 - [ ] `gh` is installed and authenticated (`gh auth status` succeeds).
-- [ ] `python3`, `perl`, `jq`, `git`, and `bash` are available. Start one dedicated Bash
+- [ ] `python3` with `PyYAML==6.0.2`, `perl`, `jq`, `git`, and `bash` are available. Start one dedicated Bash
       session with `bash --noprofile --norc` from the repository root, then run all snippets in
       that session. Every mutation fails closed; expected resolver exits are captured explicitly.
 - [ ] Preserve the checkout's original override before any fixture writes. The unique state
@@ -941,3 +941,25 @@ gate ignores.
   leaves the shipped list in force.
 - This runbook exercises the availability decision, not review quality. What a dispatched reviewer
   then says about the change is out of scope for both the spec and this runbook.
+
+### Linux descendant-reaping regression
+
+Run the availability suite in a Linux container whose PID 1 is a Python process
+that sleeps without calling `waitpid`, and launch the suite with `docker exec`
+after dependencies are installed. T-46 must still report both the leader and
+TERM-ignoring descendant gone; a zombie is not a pass. The same suite must pass
+on macOS. Linux uses the existing Python dependency as a child subreaper, with a
+separate probe process group and an outer watchdog; no new Perl dependency is
+required on Linux.
+
+If the Linux kernel or container policy denies `PR_SET_CHILD_SUBREAPER`, the
+helper must stop with an invocation-error diagnostic. It must not silently
+fall back to cleanup that can leave adopted zombie descendants.
+
+The Linux cases also launch local and hosted probe descendants in new sessions
+and let the original probe leader exit successfully. Those descendants must be
+killed and reaped before return. The supervisor reads its own `/proc` child
+list to find adopted children outside the original group. When that optional
+entry is unavailable, it scans `/proc/*/status` for its own adopted children by
+`PPid`; Linux tests exercise both discovery paths. Missing process-status access
+also fails before launching a probe.
