@@ -1543,8 +1543,23 @@ substitute a reviewer while it runs. Do not provision services or write tracked 
 | --- | --- |
 | `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
-| `check-inconclusive` | Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Install PyYAML==6.0.2 for the gate python3 if the detail reports that dependency missing. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository. |
+| `check-inconclusive` | Use the remedy for the actual failing probe context below. |
 | `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
+
+Inconclusive remedies use an explicit internal probe context, not the reviewer
+name or free-text detail. The four reason values and output keys stay unchanged.
+An unstarted probe uses `budget`; CodeRabbit parsing and dependency failures
+never receive hosted-activity guidance, and local runtime failures never receive
+CodeRabbit or gh setup guidance.
+
+| Probe context | Inconclusive remedy |
+| --- | --- |
+| `local-runtime` | Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate. |
+| `coderabbit-config` | Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate. |
+| `coderabbit-dependency` | Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate. |
+| `coderabbit-parser` | Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate. |
+| `hosted-activity` | Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate. |
+| `budget` | Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again. |
 
 Hosted-service availability is decided at runtime from whether the service is
 installed and reachable. Where the service is not installed and reachable it is

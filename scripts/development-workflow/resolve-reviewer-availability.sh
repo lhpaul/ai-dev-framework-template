@@ -209,7 +209,16 @@ add_record() {
   case "$3" in
     runtime-absent) remedies[$count]="Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml." ;;
     prerequisite-missing) remedies[$count]='Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml.' ;;
-    check-inconclusive) remedies[$count]='Repair .coderabbit.yaml using the reported detail if it has a read or syntax error. Install PyYAML==6.0.2 for the gate python3 if the detail reports that dependency missing. Otherwise, re-run the gate. If it recurs, run the named command by hand and confirm gh is authenticated for this repository.' ;;
+    check-inconclusive)
+      case "${5:-}" in
+        local-runtime) remedies[$count]='Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate.' ;;
+        coderabbit-config) remedies[$count]='Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate.' ;;
+        coderabbit-dependency) remedies[$count]='Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate.' ;;
+        coderabbit-parser) remedies[$count]='Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate.' ;;
+        hosted-activity) remedies[$count]='Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate.' ;;
+        budget) remedies[$count]='Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again.' ;;
+        *) fail 'missing inconclusive probe context' ;;
+      esac ;;
     value-not-supported) remedies[$count]='Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner.' ;;
     '') remedies[$count]= ;;
     *) fail 'invalid internal reason' ;;
@@ -304,20 +313,23 @@ if [ "$fallback" = true ]; then
 fi
 
 probe_local() {
+  probe_context=local-runtime
   local entry=$1 binary=$1 rc=0
   [ "$entry" != cursor ] || binary='cursor-agent'
   if ! have_cmd "$binary"; then reason=runtime-absent; detail="$binary is not on PATH"; return; fi
   clamp_bound "$LOCAL_PROBE_CAP_SECONDS"
   run_bounded "$bound" "$work_dir/probe.out" "$work_dir/probe.err" "$binary" --version || rc=$?
   if [ "$rc" = 0 ]; then verdict=reachable; reason=; detail="$binary --version succeeded"
-  elif [ "$rc" = 124 ]; then detail="check exceeded its ${bound}s bound"
+  elif [ "$rc" = 124 ]; then detail="$binary --version check exceeded its ${bound}s bound"
   else detail="$binary --version exited $rc"
   fi
 }
 probe_hosted() {
+  probe_context=hosted-activity
   local entry=$1 login rc=0 signal host_deadline=$((SECONDS + HOSTED_PROBE_CAP_SECONDS))
   have_cmd gh || { detail='gh is not on PATH'; return; }
   if [ "$entry" = coderabbit ]; then
+    probe_context=coderabbit-parser
     clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
     run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B -c '
 import pathlib, re, sys
@@ -392,10 +404,12 @@ except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
     sys.exit(3)
 ' "$repo_root/.coderabbit.yaml" || rc=$?
     if [ "$rc" = 4 ]; then
+      probe_context=coderabbit-dependency
       detail=$(cat "$work_dir/probe.err")
       return
     fi
     if [ "$rc" = 3 ]; then
+      probe_context=coderabbit-config
       detail=".coderabbit.yaml could not be read: $(cat "$work_dir/probe.err")"
       return
     fi
@@ -404,6 +418,7 @@ except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
     login='coderabbitai[bot]'
   else login=${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}
   fi
+  probe_context=hosted-activity
   clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
   [ "$bound" -le "$((host_deadline - SECONDS))" ] || bound=$((host_deadline - SECONDS))
   rc=0
@@ -427,7 +442,7 @@ except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
 }
 jq -j '.effective_runner[] | . + "\u0000"' "$work_dir/config.json" >"$work_dir/entries" || fail 'cannot decode reviewers'
 while IFS= read -r -d '' entry; do
-  verdict=unreachable reason=check-inconclusive detail=
+  verdict=unreachable reason=check-inconclusive detail= probe_context=budget
   case "$entry" in
     claude|cursor|codex)
       if [ "$entry" = "$runner_kind" ]; then
@@ -441,7 +456,7 @@ while IFS= read -r -d '' entry; do
       fi ;;
     *) reason='value-not-supported'; detail='value is not a supported reviewer' ;;
   esac
-  add_record "$entry" "$verdict" "$reason" "$detail"
+  add_record "$entry" "$verdict" "$reason" "$detail" "$probe_context"
 done <"$work_dir/entries"
 [ "$reachable_count" -gt 0 ] || block zero-reachable
 if [ "$unavailable_count" -gt 0 ]; then

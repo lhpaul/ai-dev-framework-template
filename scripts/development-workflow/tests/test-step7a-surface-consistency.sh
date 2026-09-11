@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
-# covers: .ai-dev-workflow.yaml .ai-dev-workflow.local.example.yaml .claude/agents/item-orchestrator.md .cursor/agents/item-orchestrator.md
+# covers: .gitignore .ai-dev-workflow.yaml .ai-dev-workflow.local.example.yaml .claude/agents/item-orchestrator.md .cursor/agents/item-orchestrator.md
 # covers: docs/workflow/development-workflow/integrations/coderabbit.md docs/workflow/development-workflow/integrations/codex-github.md docs/workflow/development-workflow/README.md
 # covers: scripts/development-workflow/resolve-reviewer-availability.sh
 # covers: **.md **.sh **.yaml **.yml **.mdc
@@ -72,7 +72,10 @@ def checks(base):
     for line in read(helper).splitlines():
         m=re.match(r'\s*([a-z-]+)\) remedies\[\$count\]=([\'"])(.*)\2 ;;',line)
         if m: code[m[1]]=m[3]
-    out['D-5']=set(doc)==set(code)==reasons and doc==code
+    contexts={'local-runtime','coderabbit-config','coderabbit-dependency','coderabbit-parser','hosted-activity','budget'}
+    fixed=reasons-{'check-inconclusive'}
+    out['D-5']=set(doc)==reasons|contexts and set(code)==fixed|contexts and all(doc[key]==code[key] for key in code)
+    out['D-5']=out['D-5'] and contains(runtime,'explicit internal probe context','four reason values and output keys stay unchanged')
     out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','Request a read-only review and exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','The parent applies deterministic fixes, commits and pushes them','never add permission-bypass flags','approval requires exit `0` and exactly one valid terminal verdict','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
     out['D-6']=out['D-6'] and contains(gate,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.')
     out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
@@ -105,6 +108,13 @@ def checks(base):
     out['D-23']=all(blocks) and len(set(blocks))==1 and contains(blocks[0],'repository-activity proxy','`prerequisite-missing`','complete short page','`check-inconclusive`','full unmatched page','Post-dispatch errors remain review failures')
     outside=runtime.replace(availability(p) or '', '')
     out['D-24']=contains(outside,'availability is decided at runtime from whether the service is installed and reachable.','Where the service is not installed and reachable it is unavailable with a named reason.','Decision 8 waives literal verification of both directions')
+    with tempfile.TemporaryDirectory(prefix='step7a-ignore-') as tmp:
+        isolated=pathlib.Path(tmp)
+        subprocess.run(['git','init','-q',str(isolated)],check=True)
+        (isolated/'.gitignore').write_text(read('.gitignore'))
+        ignored=subprocess.run(['git','-C',str(isolated),'-c','core.excludesFile=/dev/null','check-ignore','--no-index','.ai-dev-workflow.local.yaml.retired'],capture_output=True)
+        normal=subprocess.run(['git','-C',str(isolated),'-c','core.excludesFile=/dev/null','check-ignore','--no-index','.ai-dev-workflow.local.example.yaml'],capture_output=True)
+        out['D-25']=ignored.returncode==0 and normal.returncode==1 and contains(read(local),'Before retiring a file in a downstream project','covered by its .gitignore')
     return out
 
 def report(result):
@@ -133,6 +143,12 @@ if sys.argv[2]=='--prove-plants':
             ('D-3',header,'# This is a hosted-service reviewer.','# This is universally reachable.'),
             ('D-4',local,'      - cursor','      - greptile'),
             ('D-5',protocol,"| `runtime-absent` | Install the reviewer's runtime","| `runtime-absent` | Acquire the reviewer's runtime"),
+            ('D-5',protocol,'Run the local runtime --version command named in the detail','Incorrect Run the local runtime --version command named in the detail'),
+            ('D-5',protocol,'Repair .coderabbit.yaml using the reported read or syntax error','Incorrect Repair .coderabbit.yaml using the reported read or syntax error'),
+            ('D-5',protocol,'Install PyYAML==6.0.2 for the python3 used by the gate','Incorrect Install PyYAML==6.0.2 for the python3 used by the gate'),
+            ('D-5',protocol,'Run the CodeRabbit configuration check with the gate python3','Incorrect Run the CodeRabbit configuration check with the gate python3'),
+            ('D-5',protocol,'Check gh authentication and repository issue-comment access','Incorrect Check gh authentication and repository issue-comment access'),
+            ('D-5',protocol,'Re-run the gate when the environment is responsive','Incorrect Re-run the gate when the environment is responsive'),
             ('D-6',protocol,'Every dispatched failure is a review failure under either policy.','Every dispatched failure is skipped under warn.'),
             ('D-6',protocol,'Request a read-only review and exactly one','Request a mutating review and exactly one'),
             ('D-6',protocol,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.','Cross-runner CLI reviewers apply fixes directly.'),
@@ -158,6 +174,7 @@ if sys.argv[2]=='--prove-plants':
             ('D-22',protocol,'### Branch-type detection','Split `CONFIGURED` on commas to recover reviewer names.\n\n### Branch-type detection'),
             ('D-23',agents,'complete short page','incomplete short page'),
             ('D-24',protocol,'Where the service is not installed and reachable it is\nunavailable with a named reason.','No source condition applies when the service is absent.'),
+            ('D-25','.gitignore','.ai-dev-workflow.local.yaml.retired\n',''),
         ]
         for number,(case,files,needle,replacement) in enumerate(plants,1):
             files=[files] if isinstance(files,str) else files

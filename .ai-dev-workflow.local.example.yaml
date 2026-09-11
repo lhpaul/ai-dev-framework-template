@@ -35,7 +35,9 @@ product_repos:
 # - keep `internal_reviewers_unavailable_policy: warn` unless you explicitly
 #   want unavailable local reviewers to hard-fail the gate
 # - if this override was only a former gate workaround, remove the runner key;
-#   or move the whole file aside, do not delete it: `mv .ai-dev-workflow.local.yaml
+#   Before retiring a file in a downstream project, ensure the exact backup
+#   name `.ai-dev-workflow.local.yaml.retired` is covered by its .gitignore.
+#   Then move the whole file aside, do not delete it: `mv .ai-dev-workflow.local.yaml
 #   .ai-dev-workflow.local.yaml.retired`. The gitignored file cannot be restored
 #   by a later rollback.
 review:
