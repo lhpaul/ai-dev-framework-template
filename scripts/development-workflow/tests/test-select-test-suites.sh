@@ -163,8 +163,8 @@ if [ -e "$NEW_SUITE" ] || [ -L "$NEW_SUITE" ]; then
   printf 'ERROR: probe path already exists, refusing to overwrite: %s\n' "$NEW_SUITE" >&2
   exit 2
 fi
-cleanup_probe() { rm -f -- "$NEW_SUITE"; }
-trap cleanup_probe EXIT
+cleanup_ac2_probe() { rm -f -- "$NEW_SUITE"; }
+trap cleanup_ac2_probe EXIT
 cat > "$NEW_SUITE" <<'PROBE'
 #!/usr/bin/env bash
 # test-zzz-ac2-probe.sh - temporary probe suite.
@@ -174,7 +174,7 @@ PROBE
 assert_contains "ac2_new_suite_in_all" "$T/test-zzz-ac2-probe.sh" "$(bash "$SELECTOR" --all)"
 assert_contains "ac2_new_suite_selected_by_covers" "$T/test-zzz-ac2-probe.sh" \
   "$(select_for "$S/zzz-ac2-probe.sh")"
-cleanup_probe
+cleanup_ac2_probe
 trap - EXIT
 assert_not_contains "ac2_probe_removed" "$T/test-zzz-ac2-probe.sh" "$(bash "$SELECTOR" --all)"
 
@@ -555,15 +555,15 @@ if [ -e "$REPO_ROOT/$DEFAULT_DURATION_PROBE" ] || [ -L "$REPO_ROOT/$DEFAULT_DURA
     "$REPO_ROOT/$DEFAULT_DURATION_PROBE" >&2
   exit 2
 fi
-cleanup_probe() { rm -f -- "$REPO_ROOT/$DEFAULT_DURATION_PROBE"; }
-trap cleanup_probe EXIT
+cleanup_default_duration_probe() { rm -f -- "$REPO_ROOT/$DEFAULT_DURATION_PROBE"; }
+trap cleanup_default_duration_probe EXIT
 printf '#!/usr/bin/env bash\n# covers: scripts/development-workflow/zzz-default-duration-probe.sh\nexit 0\n' \
   > "$REPO_ROOT/$DEFAULT_DURATION_PROBE"
 default_duration_out="$(printf '%s\n' scripts/development-workflow/zzz-default-duration-probe.sh \
   | bash "$SELECTOR" --changed-files - --shards 1 2>/dev/null)"
 run_test "shards_default_duration_applies" "yes" \
   "$(printf '%s' "$default_duration_out" | grep -q 'test-zzz-default-duration-probe.sh' && echo yes || echo no)"
-cleanup_probe
+cleanup_default_duration_probe
 trap - EXIT
 
 # Duration hints must be normalised to base 10 at the boundary. A digits-only
@@ -582,8 +582,8 @@ if [ -e "$REPO_ROOT/$DURATION_PROBE" ] || [ -L "$REPO_ROOT/$DURATION_PROBE" ]; t
     "$REPO_ROOT/$DURATION_PROBE" >&2
   exit 2
 fi
-cleanup_probe() { rm -f -- "$REPO_ROOT/$DURATION_PROBE"; }
-trap cleanup_probe EXIT
+cleanup_duration_probe() { rm -f -- "$REPO_ROOT/$DURATION_PROBE"; }
+trap cleanup_duration_probe EXIT
 for pad in 08 09 007 00 0; do
   printf '#!/usr/bin/env bash\n# duration: %s\n# covers: scripts/development-workflow/zzz-duration-probe.sh\nexit 0\n' \
     "$pad" > "$REPO_ROOT/$DURATION_PROBE"
@@ -597,7 +597,7 @@ for pad in 08 09 007 00 0; do
   run_test "duration_zero_padded_${pad}_suite_present" "yes" \
     "$(printf '%s' "$probe_out" | grep -q 'test-zzz-duration-probe.sh' && echo yes || echo no)"
 done
-cleanup_probe
+cleanup_duration_probe
 trap - EXIT
 
 # Argument validation. '00'/'000' are in here because a digits-only check
