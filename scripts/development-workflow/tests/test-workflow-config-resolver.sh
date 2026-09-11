@@ -1171,10 +1171,20 @@ assert_review_effective_states "E-27 quoted commas" defined absent
 run_test "review-effective E-27 quoted comma values" '["it'"'"'s, codex","a,b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
 printf '%s\n' 'review:' '  on_draft:' '    runner: ["a\",b", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-27 escaped quoted comma" defined absent
-run_test "review-effective E-27 escaped quoted comma values" '["a\\\",b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+run_test "review-effective E-27 escaped quoted comma values" '["a\",b","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
 printf '%s\n' 'review:' '  on_draft:' '    runner: ["claude\"x", codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-27 escaped quoted scalar" defined absent
-run_test "review-effective E-27 escaped quoted scalar values" '["claude\\\"x","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+run_test "review-effective E-27 escaped quoted scalar values" '["claude\"x","codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["co\u0064ex"]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 escaped supported reviewer" defined absent
+run_test "review-effective E-27 escaped supported reviewer decodes" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+printf '%s\n' 'review:' '  on_draft:' '    runner: ["co\x64ex"]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "E-27 hexadecimal escaped supported reviewer" defined absent
+run_test "review-effective E-27 hexadecimal escaped reviewer decodes" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+for invalid_escape in '"bad\q"' '"bad\x1"' '"bad\u12"' '"bad\uD800"' '"bad\U00110000"' '"bad\0"'; do
+  printf '%s\n' 'review:' '  on_draft:' "    runner: [codex, $invalid_escape]" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+  assert_review_effective_states "E-27 invalid double-quoted escape $invalid_escape" malformed unreadable
+done
 printf '%s\n' 'review:' '  on_draft:' "    runner: ['claude''s, cursor', codex]" > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "E-27 doubled single quote" defined absent
 run_test "review-effective E-27 doubled single quote values" '["claude'"'"'s, cursor","codex"]' "$(review_effective_json | jq -c '.effective_runner')"

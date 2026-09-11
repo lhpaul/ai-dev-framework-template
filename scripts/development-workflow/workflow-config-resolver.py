@@ -146,8 +146,55 @@ def split_key_value(
     return key, value if value != "" else None
 
 
+def decode_review_double_quoted_scalar(value: str, path: Path, line_no: int) -> str:
+    """Decode and validate the YAML double-quoted scalar subset used by the gate."""
+    escapes = {
+        "0": "\0", "a": "\a", "b": "\b", "t": "\t", "n": "\n", "v": "\v",
+        "f": "\f", "r": "\r", "e": "\x1b", " ": " ", '"': '"', "/": "/",
+        "\\": "\\", "N": "\u0085", "_": "\u00a0", "L": "\u2028", "P": "\u2029",
+    }
+    decoded: list[str] = []
+    index = 1
+    while index < len(value):
+        char = value[index]
+        if char == '"':
+            index += 1
+            if index != len(value):
+                raise ConfigError(f"{path}:{line_no}: trailing content after quoted scalar")
+            decoded_value = "".join(decoded)
+            if "\0" in decoded_value:
+                raise ConfigError(f"{path}:{line_no}: NUL is not supported in review configuration")
+            return decoded_value
+        if char != "\\":
+            decoded.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(value):
+            raise ConfigError(f"{path}:{line_no}: truncated YAML escape")
+        escape = value[index + 1]
+        if escape in escapes:
+            decoded.append(escapes[escape])
+            index += 2
+            continue
+        width = {"x": 2, "u": 4, "U": 8}.get(escape)
+        if width is None:
+            raise ConfigError(f"{path}:{line_no}: unsupported YAML escape \\{escape}")
+        end = index + 2 + width
+        digits = value[index + 2:end]
+        if len(digits) != width or not re.fullmatch(r"[0-9A-Fa-f]+", digits):
+            raise ConfigError(f"{path}:{line_no}: malformed YAML Unicode escape")
+        codepoint = int(digits, 16)
+        if 0xD800 <= codepoint <= 0xDFFF or codepoint > 0x10FFFF:
+            raise ConfigError(f"{path}:{line_no}: invalid YAML Unicode code point")
+        decoded.append(chr(codepoint))
+        index = end
+    raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
+
+
 def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     """Reject syntax the review-effective reader must not reinterpret."""
+    if "\0" in value:
+        raise ConfigError(f"{path}:{line_no}: NUL is not supported in review configuration")
     if value.startswith("[") != value.endswith("]"):
         raise ConfigError(f"{path}:{line_no}: unterminated flow sequence")
     if value.startswith("{") != value.endswith("}"):
@@ -186,6 +233,9 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         return
 
     quote = value[0]
+    if quote == '"':
+        decode_review_double_quoted_scalar(value, path, line_no)
+        return
     index = 1
     while index < len(value):
         char = value[index]
@@ -193,12 +243,6 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
             if index + 1 < len(value) and value[index + 1] == "'":
                 index += 2
                 continue
-            index += 1
-            break
-        if quote == '"' and char == "\\":
-            index += 2
-            continue
-        if quote == '"' and char == '"':
             index += 1
             break
         index += 1
@@ -230,6 +274,9 @@ def parse_scalar(
     ):
         if review_effective and value.startswith("'"):
             return value[1:-1].replace("''", "'")
+        if review_effective and value.startswith('"'):
+            assert path is not None and line_no is not None
+            return decode_review_double_quoted_scalar(value, path, line_no)
         return value[1:-1]
     if value == "[]":
         return []

@@ -328,6 +328,13 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     for malformed in ('[codex, "claude" "cursor"]', "[codex, 'claude' 'cursor']", '[codex, "claude"cursor]'):
         reset(malformed);d=run('codex',1)
         check(f'T-31 missing delimiter after quoted entry {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and bool(d['UNREADABLE_DETAIL']),d)
+    reset(r'["co\u0064ex"]');d=run('codex')
+    check('T-31 escaped supported reviewer decodes before probing',d['OUTCOME']=='proceeded' and d['REVIEWER_1_NAME']=='codex' and d['REVIEWER_1_STATUS']=='reachable',d)
+    for malformed in (r'[codex, "bad\q"]', r'[codex, "bad\x1"]', r'[codex, "bad\u12"]', r'[codex, "bad\uD800"]', r'[codex, "bad\U00110000"]', r'[codex, "bad\0"]'):
+        reset(malformed);d=run('codex',1)
+        check(f'T-31 invalid YAML escape {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and bool(d['UNREADABLE_DETAIL']),d)
+    reset(r'[codex, "bad\nname"]');d=run('codex')
+    check('T-31 escaped newline stays one verdict field',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_2_NAME']=='bad\\nname' and d['REVIEWER_COUNT']=='2',d)
     for scalar in ('"foo: bar"',"'foo: bar'",'https://example.test'):
         reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - '+scalar+'\n');d=run(expected=1)
         check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_1_REASON']=='value-not-supported')
