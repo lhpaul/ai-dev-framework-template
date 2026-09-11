@@ -83,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         elapsed = time.monotonic()-started
         assert elapsed <= 10.0, (elapsed,result.stdout,result.stderr)
         assert result.returncode == expected, (result.returncode,expected,result.stdout,result.stderr)
+        assert not any((ord(c)<32 and c!='\n') or 127<=ord(c)<=159 for c in result.stdout), repr(result.stdout)
         rows = result.stdout.splitlines()
         assert all('=' in row for row in rows), result.stdout
         data = dict(row.split('=',1) for row in rows)
@@ -394,6 +395,21 @@ reviews:
             reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]\n')
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
+    # The shared serializer must preserve text while rendering every C0/C1
+    # control visibly; test all representable controls, not just ANSI ESC.
+    raw_controls=''.join(chr(n) for n in list(range(1,32))+list(range(127,160)))
+    printable=r'literal\e[2J café 😀 '+chr(0xa0)+chr(0x2028)
+    expected_controls=''.join({9:r'\t',10:r'\n',13:r'\r'}.get(ord(c),f'\\x{ord(c):02x}' if ord(c)<128 else f'\\u{ord(c):04x}') for c in raw_controls)
+    serializer=subprocess.run([bash,'-c','source "$1"; print_kv_escaped FIELD "$2"','test',str(scripts/'workflow-lib.sh'),raw_controls+printable],capture_output=True,text=True,check=True)
+    check('T-42 serializer escapes all C0/C1 and preserves Unicode',serializer.stdout=='FIELD='+expected_controls+printable.replace('\\','\\\\')+'\n',repr(serializer.stdout))
+    for source in (cfg, local):
+        for escaped, rendered in ((r'bad\e[2J',r'bad\x1b[2J'),(r'bad\a',r'bad\x07'),(r'bad\x7f',r'bad\x7f'),(r'bad\u009b2J',r'bad\u009b2J'),(r'bad\N',r'bad\u0085'),(r'bad\\e[2J',r'bad\\e[2J')):
+            reset();source.write_text('review:\n  on_draft:\n    runner: ["'+escaped+'"]\n')
+            d=run('codex',1)
+            check(f'T-42 escaped reviewer control rendered {source.name} {escaped}',d['REVIEWER_'+d['REVIEWER_COUNT']+'_NAME']==rendered,d)
+            reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: "'+escaped+'"\n')
+            d=run('codex',1)
+            check(f'T-42 escaped policy control rendered {source.name} {escaped}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==rendered,d)
     for source in (cfg, local):
         for flow in ('[codex,#]', '[#]', '[codex,#name]', '[[#name],codex]', '[codex, #name]', '[codex,\t#name]'):
             reset();source.write_text('review:\n  on_draft:\n    runner: '+flow+'\n')

@@ -541,11 +541,32 @@ configured_reviewer_check_names_json() {
 }
 
 print_kv_escaped() {
-  local value="$2"
+  local value="$2" control escaped code octal
+  local LC_ALL=C
   value="${value//\\/\\\\}"
   value="${value//$'\r'/\\r}"
   value="${value//$'\n'/\\n}"
   value="${value//$'\t'/\\t}"
+  # Bash values cannot contain NUL. Escape the other C0/DEL and UTF-8 C1
+  # controls so decoded YAML escapes cannot issue terminal commands. Keep the
+  # common printable path cheap and retain the existing CR/LF/tab spellings.
+  if [[ "$value" == *[$'\001'-$'\037'$'\177']* ]]; then
+    for ((code=1; code<=127; code++)); do
+      [ "$code" -le 31 ] || [ "$code" -eq 127 ] || continue
+      printf -v octal '\\%03o' "$code"
+      printf -v control '%b' "$octal"
+      printf -v escaped '\\x%02x' "$code"
+      value="${value//$control/$escaped}"
+    done
+  fi
+  if [[ "$value" == *$'\302'[$'\200'-$'\237']* ]]; then
+    for ((code=128; code<=159; code++)); do
+      printf -v octal '\\302\\%03o' "$code"
+      printf -v control '%b' "$octal"
+      printf -v escaped '\\u%04x' "$code"
+      value="${value//$control/$escaped}"
+    done
+  fi
   printf '%s=%s\n' "$1" "$value"
 }
 
