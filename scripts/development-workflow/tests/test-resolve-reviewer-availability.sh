@@ -211,6 +211,15 @@ reviews:
     check('T-22 text enabled fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review: [\n')
     check('T-22 malformed target fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
+    for separator in ('', 'language: en-US\n', 'other:\n  auto_review:\n    enabled: true\n'):
+        (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: true\n' + separator + 'reviews:\n  auto_review:\n    enabled: false\n')
+        check(f'T-22 duplicate root reviews after {separator!r} fails closed',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
+    cfg.write_text(cfg.read_text() + '  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n')
+    d=run(expected=1)
+    check('T-22 duplicate root reviews blocks strict policy',d['OUTCOME']=='blocked' and d['POLICY']=='fail-if-any-unavailable' and d['REVIEWER_1_REASON']=='check-inconclusive')
+    for enabled,expected,reason in (('true',0,''),('false',1,'prerequisite-missing')):
+        (repo/'.coderabbit.yaml').write_text(f'reviews:\n  auto_review:\n    enabled: {enabled}\nother:\n  reviews:\n    auto_review:\n      enabled: true\n')
+        check(f'T-22 unrelated nested reviews preserves {enabled}',run(expected=expected)['REVIEWER_1_REASON']==reason)
     (bins/'gh').unlink();check('T-23 missing gh',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     reset('[codex-github]');gh([{'user':{'login':'special'}}]);check('T-24 hosted login suffix',run('cursor',extra_env={'CODEX_GITHUB_BOT_LOGIN':'special[bot]'})['REVIEWER_1_STATUS']=='reachable')
     d=run(expected=2,arguments=['--repo-root',str(repo)])

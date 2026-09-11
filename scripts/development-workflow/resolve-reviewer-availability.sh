@@ -354,7 +354,7 @@ try:
         print("false")
         raise SystemExit(0)
     reviews_indent = reviews_children = auto_indent = auto_children = None
-    auto_closed = False
+    reviews_closed = auto_closed = False
     enabled = None
     for number, indent, key, value in fields(path.read_text(encoding="utf-8")):
         if reviews_indent is None:
@@ -366,7 +366,10 @@ try:
         if indent <= reviews_indent:
             if key == "reviews":
                 raise ValueError(f"duplicate reviews mapping on line {number}")
-            break
+            reviews_closed = True
+            continue
+        if reviews_closed:
+            continue
         if reviews_children is None:
             reviews_children = indent
         if indent == reviews_children and key == "auto_review":
