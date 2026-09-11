@@ -1337,6 +1337,42 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Tabs separate node indicators just like spaces in strict YAML.
+tab_indicator_result=$(python3 - "$RESOLVER" <<'PY_TAB'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for indicator in ("?", "-", ":"):
+            for separator in (" ", "\t"):
+                token = indicator+separator+"foo"
+                for node in (token, "[codex, "+token+"]", "\n      - codex\n      - "+token):
+                    local.unlink(missing_ok=True)
+                    shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                    source.write_text("review:\n  on_draft:\n    runner: "+node+"\n")
+                    d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                    assert d["effective_runner_state"] == "malformed", d
+                    checks += 1
+                for quote in ("'", '"'):
+                    source.write_text("other: ["+quote+token+quote+"]\n")
+                    assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == [token]
+                    checks += 1
+                assert module.parse_scalar(token) == token
+                checks += 1
+            for token in (indicator+"foo", indicator+"\u00a0foo"):
+                source.write_text("other: ["+token+"]\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == [token]
+                checks += 1
+print(f"{checks} tab indicator and scalar controls passed")
+PY_TAB
+)
+run_test "strict YAML tab indicator classification" '84 tab indicator and scalar controls passed' "$tab_indicator_result"
+
 # Strict YAML separation is ASCII space/tab, not Python's Unicode whitespace.
 unicode_whitespace_result=$(python3 - "$RESOLVER" <<'PY_WHITESPACE'
 import importlib.util, json, pathlib, subprocess, sys, tempfile

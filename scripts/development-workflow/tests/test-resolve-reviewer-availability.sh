@@ -383,6 +383,15 @@ reviews:
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
     for source in (cfg, local):
+        for token in ('?\tfoo', '-\tfoo', ':\tfoo'):
+            reset();source.write_text('review:\n  on_draft:\n    runner: [codex, '+token+']\n')
+            d=run('codex',1)
+            check(f'T-31 tab node indicator blocks {source.name} {token!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+            for quote in ("'", '"'):
+                reset();source.write_text('review:\n  on_draft:\n    runner: [codex, '+quote+token+quote+']\n')
+                d=run('codex')
+                check(f'T-31 quoted tab node stays reportable {source.name} {quote} {token!r}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_2_NAME']==token.replace('\t',r'\t') and d['REVIEWER_2_REASON']=='value-not-supported',d)
+    for source in (cfg, local):
         for space in ('\u00a0', '\u2003', '\u3000'):
             for token in (space, 'warn'+space+'#literal', space+'warn', 'warn'+space):
                 reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')

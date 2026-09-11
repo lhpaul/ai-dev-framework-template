@@ -276,7 +276,7 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         ):
             raise ConfigError(f"{path}:{line_no}: flow sequence contains an empty item")
         if any(
-            item.strip(YAML_INLINE_WHITESPACE).startswith(("? ", ": "))
+            re.match(r"^[?:](?:[ \t]|$)", item.strip(YAML_INLINE_WHITESPACE))
             or list_item_is_mapping(item.strip(YAML_INLINE_WHITESPACE), strict_quotes=True)
             for item in items
             if item.strip(YAML_INLINE_WHITESPACE)
@@ -290,10 +290,7 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
             raise ConfigError(f"{path}:{line_no}: mapping delimiter in plain scalar")
         if (
             value.startswith(("!", "&", "*", "|", ">", "@", "`", "%", "]", "}", ","))
-            or value == "?"
-            or value.startswith("? ")
-            or value == "-"
-            or value.startswith("- ")
+            or re.match(r"^[?-](?:[ \t]|$)", value)
         ):
             raise ConfigError(f"{path}:{line_no}: unsupported YAML node indicator")
         return
