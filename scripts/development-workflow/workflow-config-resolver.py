@@ -311,7 +311,8 @@ def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
 
 
 def parse_mapping(
-    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path, *, preserve_empty_values: bool = False
+    lines: list[tuple[int, str, int]], index: int, indent: int, path: Path, *,
+    preserve_empty_values: bool = False, existing_keys: set[str] | None = None
 ) -> tuple[dict[str, Any], int]:
     result: dict[str, Any] = {}
     while index < len(lines):
@@ -323,6 +324,8 @@ def parse_mapping(
         if content.startswith("- "):
             raise ConfigError(f"{path}:{line_no}: list item is not valid in this mapping")
         key, value = split_key_value(content, path, line_no)
+        if preserve_empty_values and (key in result or (existing_keys is not None and key in existing_keys)):
+            raise ConfigError(f"{path}:{line_no}: duplicate mapping key '{key}'")
         index += 1
         if value is not None:
             result[key] = parse_scalar(
@@ -431,7 +434,10 @@ def parse_list(
                     ) if value is not None else {}
                 }
             if value is not None and index < len(lines) and lines[index][0] == indent + 2:
-                continuation, index = parse_mapping(lines, index, indent + 2, path, preserve_empty_values=preserve_empty_values)
+                continuation, index = parse_mapping(
+                    lines, index, indent + 2, path,
+                    preserve_empty_values=preserve_empty_values, existing_keys=set(item_map)
+                )
                 for continuation_key, continuation_value in continuation.items():
                     item_map[continuation_key] = continuation_value
             result.append(item_map)

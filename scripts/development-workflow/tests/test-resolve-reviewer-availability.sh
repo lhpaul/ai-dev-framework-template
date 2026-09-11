@@ -272,6 +272,14 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-47 no auth preflight','auth' not in log.read_text())
     reset('[codex]','"bad policy"');d=run(expected=1)
     check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
+    for duplicate in (
+        'review:\n  on_draft:\n    runner: [codex-github]\n    runner: []\n',
+        'review:\n  on_draft:\n    runner: [codex]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n  internal_reviewers_unavailable_policy: warn\n',
+        'review:\n  on_draft:\n    runner: [codex-github]\nreview:\n  on_draft:\n    runner: []\n',
+    ):
+        for source in (cfg,local):
+            reset();source.write_text(duplicate);d=run('codex',1)
+            check(f'T-48 duplicate config blocks {source.name} {duplicate!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and d['UNREADABLE_FILE']==str(source) and 'duplicate mapping key' in d['UNREADABLE_DETAIL'],d)
     reset('[codex]','warn#typo');d=run('codex',1)
     check('T-48 hash without separation remains unsupported policy',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='warn#typo' and d['REVIEWER_COUNT']=='0',d)
     reset('[codex#typo]');d=run('codex',1)

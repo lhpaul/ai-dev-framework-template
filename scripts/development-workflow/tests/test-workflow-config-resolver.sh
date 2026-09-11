@@ -1317,6 +1317,31 @@ run_test "review-effective runner-only override cannot hide malformed policy anc
 printf '%s\n' 'review:' '  internal_reviewers_unavailable_policy: warn' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 run_test "review-effective policy-only override cannot hide malformed runner ancestor" unreadable "$(review_effective_state effective_policy_state)"
 
+# Duplicate keys must never silently replace required coverage or policy.
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []'
+assert_review_effective_states "duplicate runner" malformed unreadable
+run_contains "duplicate runner diagnostic identifies second key" ".ai-dev-workflow.yaml:4: duplicate mapping key 'runner'" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: fail-if-any-unavailable' '  internal_reviewers_unavailable_policy: warn'
+assert_review_effective_states "duplicate policy" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' 'review:' '  on_draft:' '    runner: []'
+assert_review_effective_states "duplicate root mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '  on_draft:' '    runner: []'
+assert_review_effective_states "duplicate parent mapping" malformed unreadable
+write_review_effective_fixture 'review:' '  internal_reviewers: [codex-github]' '  internal_reviewers: []'
+assert_review_effective_states "duplicate legacy alias" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+assert_review_effective_states "duplicate local runner" malformed unreadable
+run_test "duplicate local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(review_effective_state unreadable_file)"
+run_test "legacy duplicate runner behavior unchanged" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - name: codex' '        name: cursor'
+assert_review_effective_states "duplicate list mapping continuation" malformed unreadable
+run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key 'name'" "$(review_effective_state unreadable_detail)"
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
+assert_review_effective_states "same key in separate mappings is valid" defined absent
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
