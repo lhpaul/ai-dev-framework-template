@@ -74,7 +74,27 @@ libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
     raise OSError(ctypes.get_errno(), "cannot enable probe child subreaper")
 children_path = pathlib.Path(f"/proc/self/task/{os.getpid()}/children")
-children_path.read_text()  # Check the cleanup capability before launching a probe.
+force_status_scan = (os.environ.get("WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE") == "1"
+                     and os.environ.get("WORKFLOW_REVIEWER_AVAILABILITY_TEST_NO_PROC_CHILDREN") == "1")
+def adopted_children():
+    if not force_status_scan:
+        try:
+            return list(map(int, children_path.read_text().split()))
+        except (FileNotFoundError, PermissionError):
+            pass
+    # Some kernels/sandboxes omit task/<pid>/children. PPid in process status
+    # exposes the same adoption relationship without that optional entry.
+    pathlib.Path("/proc/self/status").read_text()
+    children = []
+    for status_path in pathlib.Path("/proc").glob("[0-9]*/status"):
+        try:
+            lines = status_path.read_text().splitlines()
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        if any(line.startswith("PPid:") and int(line.split()[1]) == os.getpid() for line in lines):
+            children.append(int(status_path.parent.name))
+    return children
+adopted_children()  # Check child discovery before launching a probe.
 interrupted = False
 def interrupt(_signum, _frame):
     global interrupted
@@ -100,7 +120,7 @@ finally:
     while True:
         # A descendant can escape killpg by starting a new session. The
         # subreaper adopts it; only signal our own still-unreaped children.
-        for pid in map(int, children_path.read_text().split()):
+        for pid in adopted_children():
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:

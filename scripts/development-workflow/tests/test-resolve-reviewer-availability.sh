@@ -273,17 +273,18 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
             check(f'T-46 {engine} descendant cleanup {command}',gone and d['REVIEWER_1_REASON']=='check-inconclusive')
     (bins/'timeout').unlink(missing_ok=True)
     if sys.platform.startswith('linux'):
-        for command,reviewer in (('codex','codex'),('gh','codex-github')):
+        for discovery,command,reviewer in ((mode,cmd,reviewer) for mode in ('task-children','status-scan') for cmd,reviewer in (('codex','codex'),('gh','codex-github'))):
             reset(f'[{reviewer}]');pidfile=root/'detached.pid'
             pidfile.unlink(missing_ok=True)
             detached = f"import os,pathlib,time; os.setsid(); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
             # Wait until the child has actually left the original group, then
             # exit the leader successfully. Cleanup must still reap that child.
             fake(command, f'{shlex.quote(real_python)} -c {shlex.quote(detached)} &\nwhile [ ! -s {str(pidfile)!r} ]; do sleep .01; done\nprintf \'%s\\n\' \'[{{"user":{{"login":"chatgpt-codex-connector[bot]"}}}}]\'\nexit 0')
-            d=run();pid=int(pidfile.read_text());gone=False
+            extra={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_TEST_NO_PROC_CHILDREN':'1'} if discovery == 'status-scan' else {}
+            d=run(extra_env=extra);pid=int(pidfile.read_text());gone=False
             try:os.kill(pid,0)
             except ProcessLookupError:gone=True
-            check(f'T-46 detached-session descendant cleanup {command}',gone and d['REVIEWER_1_STATUS']=='reachable')
+            check(f'T-46 {discovery} detached-session descendant cleanup {command}',gone and d['REVIEWER_1_STATUS']=='reachable')
     reset();fake('codex','exit 0');fake('timeout','echo "BusyBox timeout"; exit 1')
     check('T-46 non-GNU timeout uses owned-group fallback',run()['REVIEWER_1_STATUS']=='reachable')
     (bins/'timeout').unlink()
