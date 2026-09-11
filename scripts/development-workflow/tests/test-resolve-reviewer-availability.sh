@@ -315,6 +315,8 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - '+scalar+'\n');d=run(expected=1)
         check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_1_REASON']=='value-not-supported')
     cfg.write_text('review:\n  on_draft:\n    runner:\n      - key: value\n');check('T-49 mapping',run(expected=1)['BLOCK_CAUSE']=='list-malformed')
+    reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - codex\n      - a:b: c\n');d=run('codex',1)
+    check('T-49 later colon mapping blocks',d['BLOCK_CAUSE']=='list-malformed' and d['REVIEWER_COUNT']=='0',d)
     for mapping in ('extra: value', 'extra:', '"extra": value', '? extra', ': value'):
         reset('[codex, '+mapping+']');d=run('codex',1)
         check(f'T-49 flow mapping blocks {mapping}',d['OUTCOME']=='blocked' and d['BLOCK_CAUSE'] in ('list-malformed','policy-unreadable') and d['REVIEWER_COUNT']=='0',d)

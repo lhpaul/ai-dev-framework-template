@@ -1214,6 +1214,10 @@ assert_review_effective_states "E-32 scalar colons" defined absent
 run_test "review-effective E-32 scalar colons values" '["foo: bar","foo: bar","https://example.test"]' "$(review_effective_json | jq -c '.effective_runner')"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - key: value'
 assert_review_effective_states "E-32 mapping" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - codex' '      - a:b: c'
+assert_review_effective_states "E-32 later colon mapping" malformed absent
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, a:b: c]'
+assert_review_effective_states "E-32 later colon flow mapping" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["codex]'
 assert_review_effective_states "E-32 unterminated quote" malformed unreadable
 run_contains "review-effective E-32 unterminated quote detail" "unterminated quoted scalar" "$(review_effective_state unreadable_detail)"

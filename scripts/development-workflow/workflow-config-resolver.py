@@ -377,7 +377,8 @@ def list_item_is_mapping(item: str, *, strict_quotes: bool = False) -> bool:
             index += 1
             continue
         if char == ":" and not in_single and not in_double:
-            return index + 1 == len(item) or item[index + 1].isspace()
+            if index + 1 == len(item) or item[index + 1].isspace():
+                return True
         index += 1
     return False
 
