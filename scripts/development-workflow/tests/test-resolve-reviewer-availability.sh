@@ -272,6 +272,9 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-47 no auth preflight','auth' not in log.read_text())
     reset('[codex]','"bad policy"');d=run(expected=1)
     check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
+    for malformed in ('review:\n  on_draft:\n    runner:[]\n', 'review:\n  on_draft:\n    runner:null\n', 'review:\n  on_draft:{}\n', 'review:{}\n', 'review:\n  internal_reviewers_unavailable_policy:warn\n'):
+        reset();cfg.write_text(malformed);d=run('codex',1)
+        check(f'T-48 mapping separation blocks fallback {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and bool(d['UNREADABLE_DETAIL']),d)
     for duplicate in (
         'review:\n  on_draft:\n    runner: [codex-github]\n    runner: []\n',
         'review:\n  on_draft:\n    runner: [codex]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n  internal_reviewers_unavailable_policy: warn\n',
@@ -324,7 +327,13 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']==scalar.strip("\"'") and d['REVIEWER_1_REASON']=='value-not-supported')
     cfg.write_text('review:\n  on_draft:\n    runner:\n      - key: value\n');check('T-49 mapping',run(expected=1)['BLOCK_CAUSE']=='list-malformed')
     reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - codex\n      - a:b: c\n');d=run('codex',1)
-    check('T-49 later colon mapping blocks',d['BLOCK_CAUSE']=='list-malformed' and d['REVIEWER_COUNT']=='0',d)
+    check('T-49 later colon mapping blocks',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+    for token in ('!local codex', '&local codex', '*local', '? codex', '- codex', '|', '>', '@bad', '`bad'):
+        reset('['+token+', codex]');d=run('codex',1)
+        check(f'T-49 unsupported YAML node blocks {token}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+    for token in ('!local codex', '&local codex', '*local', '? codex', '- codex', '|', '>', '@bad', '`bad', '-foo', '?foo'):
+        reset('['+json.dumps(token)+', codex]');d=run('codex')
+        check(f'T-49 quoted node-like scalar stays reportable {token}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_NAME']==token and d['REVIEWER_2_STATUS']=='reachable',d)
     for mapping in ('extra: value', 'extra:', '"extra": value', '? extra', ': value'):
         reset('[codex, '+mapping+']');d=run('codex',1)
         check(f'T-49 flow mapping blocks {mapping}',d['OUTCOME']=='blocked' and d['BLOCK_CAUSE'] in ('list-malformed','policy-unreadable') and d['REVIEWER_COUNT']=='0',d)
