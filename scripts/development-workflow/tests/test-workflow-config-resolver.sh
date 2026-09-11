@@ -1215,7 +1215,7 @@ run_test "review-effective E-32 scalar colons values" '["foo: bar","foo: bar","h
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - key: value'
 assert_review_effective_states "E-32 mapping" malformed absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - codex' '      - a:b: c'
-assert_review_effective_states "E-32 later colon mapping" malformed absent
+assert_review_effective_states "E-32 later colon mapping" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, a:b: c]'
 assert_review_effective_states "E-32 later colon flow mapping" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: ["codex]'
@@ -1224,6 +1224,23 @@ run_contains "review-effective E-32 unterminated quote detail" "unterminated quo
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex'
 assert_review_effective_states "E-32 unterminated flow sequence" malformed unreadable
 run_contains "review-effective E-32 unterminated flow sequence detail" "unterminated flow sequence" "$(review_effective_state unreadable_detail)"
+
+# Review-effective uses YAML's required separator after every mapping colon.
+# The legacy override reader keeps accepting its historic compact forms.
+write_review_effective_fixture 'review:{}'
+assert_review_effective_states "E-32 compact root mapping separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:{}'
+assert_review_effective_states "E-32 compact parent mapping separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:[]'
+assert_review_effective_states "E-32 compact empty runner separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:null'
+assert_review_effective_states "E-32 compact null runner separator" malformed unreadable
+write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy:warn'
+assert_review_effective_states "E-32 compact policy separator" malformed unreadable
+write_review_effective_fixture 'review:' '  on_draft:' '    runner:[codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner:[codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+run_test "review-effective E-32 legacy compact runner unchanged" "REVIEW_ON_DRAFT_RUNNER=codex" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
 # The review-effective reader rejects omitted flow members and preserves numeric
 # YAML types, while the legacy reader retains its historical string/skip behavior.

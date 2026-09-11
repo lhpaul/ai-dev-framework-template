@@ -130,10 +130,15 @@ def preprocess_yaml(path: Path, *, strict_yaml_comments: bool = False) -> list[t
     return lines
 
 
-def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | None]:
+def split_key_value(
+    content: str, path: Path, line_no: int, *, require_mapping_separator: bool = False
+) -> tuple[str, str | None]:
     if ":" not in content:
         raise ConfigError(f"{path}:{line_no}: expected '<key>: <value>'")
-    key, value = content.split(":", 1)
+    delimiter = content.index(":")
+    if require_mapping_separator and delimiter + 1 < len(content) and not content[delimiter + 1].isspace():
+        raise ConfigError(f"{path}:{line_no}: mapping colon must be followed by whitespace or end of line")
+    key, value = content[:delimiter], content[delimiter + 1:]
     key = key.strip()
     if not re.match(r"^[A-Za-z0-9_.-]+$", key):
         raise ConfigError(f"{path}:{line_no}: unsupported key '{key}'")
@@ -323,7 +328,9 @@ def parse_mapping(
             raise ConfigError(f"{path}:{line_no}: unexpected indentation")
         if content.startswith("- "):
             raise ConfigError(f"{path}:{line_no}: list item is not valid in this mapping")
-        key, value = split_key_value(content, path, line_no)
+        key, value = split_key_value(
+            content, path, line_no, require_mapping_separator=preserve_empty_values
+        )
         if preserve_empty_values and (key in result or (existing_keys is not None and key in existing_keys)):
             raise ConfigError(f"{path}:{line_no}: duplicate mapping key '{key}'")
         index += 1
@@ -416,7 +423,9 @@ def parse_list(
         if (not preserve_empty_values and ":" in item) or (
             preserve_empty_values and list_item_is_mapping(item, strict_quotes=True)
         ):
-            key, value = split_key_value(item, path, line_no)
+            key, value = split_key_value(
+                item, path, line_no, require_mapping_separator=preserve_empty_values
+            )
             if value is None and index < len(lines) and lines[index][0] > indent:
                 # For `- key:` items, the following indented block is the value
                 # of `key`; it must not be merged into the list-item root.
