@@ -143,7 +143,7 @@ exec "$@"''')
     - path: src/**
       instructions: |
         Explain the module.
-        Keep this indentation intact.
+        \tKeep this literal tab after required spaces.
   auto_review:
     enabled: true
 ''')
@@ -160,11 +160,20 @@ exec "$@"''')
     check('T-22 multiline path instructions after target',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
     (repo/'.coderabbit.yaml').write_text('''reviews:
   auto_review:
+    enabled: true
+  path_instructions:
+    - path: src/**
+      instructions: >
+        \tThis literal block can contain enabled: false.
+''')
+    check('T-22 folded path instructions after target with tab',run(closed_stdin=True)['REVIEWER_1_STATUS']=='reachable')
+    (repo/'.coderabbit.yaml').write_text('''reviews:
+  auto_review:
     enabled: false
   path_instructions:
     - path: src/**
       instructions: |
-        enabled: true
+        \tenabled: true
 ''')
     check('T-22 literal fake enabled cannot override false target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
     (repo/'.coderabbit.yaml').write_text('''reviews:
@@ -192,6 +201,8 @@ reviews:
   auto_review:
 ''')
     check('T-22 nested fake reviews cannot create root target',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='prerequisite-missing')
+    (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n\tenabled: true\n')
+    check('T-22 target tab indentation fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review:\n    enabled: "true"\n')
     check('T-22 text enabled fails closed',run(expected=1,closed_stdin=True)['REVIEWER_1_REASON']=='check-inconclusive')
     (repo/'.coderabbit.yaml').write_text('reviews:\n  auto_review: [\n')

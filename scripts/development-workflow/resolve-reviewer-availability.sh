@@ -252,14 +252,23 @@ def scalar_before_comment(value):
     return value.rstrip()
 
 def fields(text):
+    block_indent = None
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
+        leading = len(line) - len(line.lstrip(" \t"))
+        if block_indent is not None:
+            if leading > block_indent:
+                continue
+            block_indent = None
+        if "\t" in line[:leading]:
+            raise ValueError(f"tab indentation on line {number}")
         match = re.match(r"^( *)([A-Za-z_][A-Za-z0-9_-]*):(.*)$", line)
         if match:
-            yield number, len(match.group(1)), match.group(2), scalar_before_comment(match.group(3).lstrip())
-        elif "\t" in line[:len(line) - len(line.lstrip())]:
-            raise ValueError(f"tab indentation on line {number}")
+            value = scalar_before_comment(match.group(3).lstrip())
+            if re.fullmatch(r"[|>][1-9+-]*", value):
+                block_indent = len(match.group(1))
+            yield number, len(match.group(1)), match.group(2), value
 
 try:
     if not path.is_file():
