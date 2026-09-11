@@ -191,14 +191,67 @@ def decode_review_double_quoted_scalar(value: str, path: Path, line_no: int) -> 
     raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
 
 
+def validate_review_flow(value: str, path: Path, line_no: int) -> None:
+    """Validate collection boundaries without reinterpreting quoted delimiters."""
+    stack: list[str] = []
+    quote: str | None = None
+    started = False
+    closed = ""
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if quote is not None:
+            if char == "\\" and quote == '"':
+                index += 2
+                continue
+            if char == quote:
+                if quote == "'" and value[index:index + 2] == "''":
+                    index += 2
+                    continue
+                quote = None
+                closed = "quoted scalar"
+            index += 1
+            continue
+        if char.isspace():
+            index += 1
+            continue
+        if char in "]}":
+            if not stack or stack.pop() != {"]": "[", "}": "{"}[char]:
+                raise ConfigError(f"{path}:{line_no}: mismatched flow delimiter")
+            if not stack:
+                if value[index + 1:].strip():
+                    raise ConfigError(f"{path}:{line_no}: trailing content after flow collection")
+                return
+            started = True
+            closed = "flow collection"
+        elif char == ",":
+            started = False
+            closed = ""
+        elif closed:
+            raise ConfigError(f"{path}:{line_no}: trailing content after {closed}")
+        elif char in "[{":
+            if started:
+                raise ConfigError(f"{path}:{line_no}: flow delimiter inside plain scalar")
+            stack.append(char)
+            started = False
+        elif char in ("'", '"') and not started:
+            quote = char
+            started = True
+        else:
+            started = True
+        index += 1
+    if quote is not None:
+        raise ConfigError(f"{path}:{line_no}: unterminated quoted scalar")
+    kind = "sequence" if value.startswith("[") else "mapping"
+    raise ConfigError(f"{path}:{line_no}: unterminated flow {kind}")
+
+
 def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
     """Reject syntax the review-effective reader must not reinterpret."""
     if "\0" in value:
         raise ConfigError(f"{path}:{line_no}: NUL is not supported in review configuration")
-    if value.startswith("[") != value.endswith("]"):
-        raise ConfigError(f"{path}:{line_no}: unterminated flow sequence")
-    if value.startswith("{") != value.endswith("}"):
-        raise ConfigError(f"{path}:{line_no}: unterminated flow mapping")
+    if value.startswith(("[", "{")):
+        validate_review_flow(value, path, line_no)
     # The legacy subset never interpreted flow mappings.  Treating one as a
     # string in review-effective would turn a non-scalar policy into an
     # unsupported scalar, so reject unsupported non-empty flow mappings.
@@ -228,7 +281,7 @@ def validate_review_scalar(value: str, path: Path, line_no: int) -> None:
         if not value.startswith(("[", "{")) and re.search(r":(?:\s|$)", value):
             raise ConfigError(f"{path}:{line_no}: mapping delimiter in plain scalar")
         if (
-            value.startswith(("!", "&", "*", "|", ">", "@", "`"))
+            value.startswith(("!", "&", "*", "|", ">", "@", "`", "]", "}", ","))
             or value == "?"
             or value.startswith("? ")
             or value == "-"
@@ -333,6 +386,8 @@ def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
     in_single = False
     in_double = False
     escaped = False
+    depth = 0
+    node_started = False
 
     index = 0
     while index < len(value):
@@ -352,18 +407,31 @@ def split_inline_list(value: str, *, strict_quotes: bool = False) -> list[str]:
                 current.extend((char, "'"))
                 index += 2
                 continue
-            if in_single or quote_starts_here(current, strict_quotes=strict_quotes):
+            if in_single or (not node_started if strict_quotes else quote_starts_here(current, strict_quotes=False)):
                 in_single = not in_single
+            node_started = True
             current.append(char)
             index += 1
             continue
         if char == '"' and not in_single:
-            if in_double or quote_starts_here(current, strict_quotes=strict_quotes):
+            if in_double or (not node_started if strict_quotes else quote_starts_here(current, strict_quotes=False)):
                 in_double = not in_double
+            node_started = True
             current.append(char)
             index += 1
             continue
-        if char == "," and not in_single and not in_double:
+        if strict_quotes and not in_single and not in_double:
+            if char in "[{":
+                depth += 1
+                node_started = False
+            elif char in "]}":
+                depth -= 1
+                node_started = True
+            elif char == ",":
+                node_started = False
+            elif not char.isspace():
+                node_started = True
+        if char == "," and not in_single and not in_double and (not strict_quotes or depth == 0):
             items.append("".join(current))
             current = []
             index += 1

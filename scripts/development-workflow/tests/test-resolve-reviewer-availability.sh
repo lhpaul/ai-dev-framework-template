@@ -349,6 +349,14 @@ reviews:
         for scalar in ('"a: b"', "'a: b'", 'https://example.test/path#part', 'value#fragment', 'value # ignored: comment', '["a: b", https://example.test]'):
             reset();source.write_text('other: '+scalar+'\nreview:\n  on_draft:\n    runner: [codex]\n')
             check(f'T-31 valid scalar controls {source.name} {scalar}',run('codex')['REVIEWER_1_STATUS']=='reachable')
+    for source in (cfg, local):
+        for flow in ['[a[b]', '[a]b]', '[a[b]]', '[a{b}]', '[a}b]', '[[a,b]', '[[a], b]]', '[[] []]', '[{}x]', '["a"b]', '["a[b]"', '[a "b[c"]', ']', '}', ',bad']:
+            reset();source.write_text('other: '+flow+'\nreview:\n  on_draft:\n    runner: [codex]\n')
+            d=run('codex',1)
+            check(f'T-31 malformed flow blocks {source.name} {flow}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+        for flow in ['["a[b]", "a]b"]', "['a{b}', 'a}b']", '[[a, b], [c, d]]', '[[], {}, [a, [b, c]]]', '[["a: b", https://example.test], ["x,y"]]', '["escaped\\"[", \'doubled\'\'[\']', 'a[b', 'a]b', 'a[b]', 'a{b}', 'a,b']:
+            reset();source.write_text('other: '+flow+'\nreview:\n  on_draft:\n    runner: [codex]\n')
+            check(f'T-31 valid flow and block control {source.name} {flow}',run('codex')['REVIEWER_1_STATUS']=='reachable')
     reset();cfg.write_text('review:\n  broken mapping\n');d=run('codex',1)
     check('T-31 broken file plant',d['BLOCK_CAUSE']=='policy-unreadable' and d['CONFIG_LIST_STATE']=='not-evaluated')
     reset();check('T-31 repaired availability guard',run('codex')['OUTCOME']=='proceeded')

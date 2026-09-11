@@ -1263,6 +1263,30 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Flow delimiters are structural outside quotes, including nested sequences.
+for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
+  for flow in '[a[b]' '[a]b]' '[a[b]]' '[a{b}]' '[a}b]' '[[a,b]' '[[a], b]]' '[[] []]' '[{}x]' '["a"b]' '["a[b]"' '[a "b[c"]' ']' '}' ,bad; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $flow" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 structural flow $config_name $flow" malformed unreadable
+  done
+  for flow in '["a[b]", "a]b"]' '['"'"'a{b}'"'"', '"'"'a}b'"'"']' '[[a, b], [c, d]]' '[[], {}, [a, [b, c]]]' '[["a: b", https://example.test], ["x,y"]]' '["escaped\"[", '"'"'doubled'"'"''"'"'['"'"']' 'a[b' 'a]b' 'a[b]' 'a{b}' a,b; do
+    write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+    printf '%s\n' "other: $flow" 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/$config_name"
+    assert_review_effective_states "E-32 structural flow control $config_name $flow" defined absent
+  done
+done
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+write_review_effective_fixture 'other: [[a, b], ["c,d", {}]]'
+nested_flow=$(python3 - "$RESOLVER" "$review_effective_dir/.ai-dev-workflow.yaml" <<'PY_FLOW'
+import importlib.util, json, pathlib, sys
+spec=importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+print(json.dumps(module.parse_yaml_subset(pathlib.Path(sys.argv[2]), preserve_empty_values=True)["other"], separators=(",",":")))
+PY_FLOW
+)
+run_test "review-effective E-32 nested sequence value boundaries" '[["a","b"],["c,d",{}]]' "$nested_flow"
+
 # Review-effective uses YAML's required separator after every mapping colon.
 # The legacy override reader keeps accepting its historic compact forms.
 write_review_effective_fixture 'review:{}'
