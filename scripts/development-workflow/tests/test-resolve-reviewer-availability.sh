@@ -395,6 +395,15 @@ reviews:
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
     for source in (cfg, local):
+        for flow in ('[codex,#]', '[#]', '[codex,#name]', '[[#name],codex]', '[codex, #name]', '[codex,\t#name]'):
+            reset();source.write_text('review:\n  on_draft:\n    runner: '+flow+'\n')
+            d=run('codex',1)
+            check(f'T-31 hash flow node blocks {source.name} {flow!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+        for token in ("'#'", '"#name"', 'a#name', 'https://example.test/#part'):
+            reset();source.write_text('review:\n  on_draft:\n    runner: [codex,'+token+'] # comment\n')
+            d=run('codex')
+            check(f'T-31 literal hash remains reportable {source.name} {token}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_1_STATUS']=='reachable' and d['REVIEWER_2_NAME']==token.strip("\"'"),d)
+    for source in (cfg, local):
         for token in ('foo "', "foo '", 'foo "#literal', "foo '#literal"):
             for suffix in ('', ' # comment', '\t# comment'):
                 reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+', codex]'+suffix+'\n')

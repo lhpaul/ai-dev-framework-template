@@ -273,6 +273,8 @@ def validate_review_flow(value: str, path: Path, line_no: int) -> None:
                 raise ConfigError(f"{path}:{line_no}: flow delimiter inside plain scalar")
             stack.append(char)
             started = False
+        elif char == "#" and not started:
+            raise ConfigError(f"{path}:{line_no}: comment indicator cannot start a flow node")
         elif char in ("'", '"') and not started:
             quote = char
             started = True

@@ -1337,6 +1337,36 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# A hash cannot start a flow node, even without separating whitespace.
+flow_hash_result=$(python3 - "$RESOLVER" <<'PY_FLOW_HASH'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for flow in ("[codex,#]", "[#]", "[codex,#name]", "[[#name],codex]", "[codex, #name]", "[codex,\t#name]"):
+            local.unlink(missing_ok=True)
+            shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+            source.write_text("review:\n  on_draft:\n    runner: "+flow+"\n")
+            d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+            assert d["effective_runner_state"] == "malformed" and d["effective_policy_state"] == "unreadable", d
+            checks += 1
+        for flow, expected in (("[codex,'#']", ["codex", "#"]), ('["#name",codex]', ["#name", "codex"]), ('[["#name"],codex]', [["#name"], "codex"]), ("[codex,a#name]", ["codex", "a#name"]), ("[https://example.test/#part,codex]", ["https://example.test/#part", "codex"])):
+            for comment in ("", " # comment"):
+                source.write_text("other: "+flow+comment+"\n")
+                assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == expected
+                checks += 1
+    assert module.parse_scalar("[codex,#]") == ["codex", "#"]
+    checks += 1
+print(f"{checks} flow hash and quoted controls passed")
+PY_FLOW_HASH
+)
+run_test "strict flow hash node validation" '33 flow hash and quoted controls passed' "$flow_hash_result"
+
 # Literal quotes inside started plain nodes cannot hide trailing comments.
 plain_quote_result=$(python3 - "$RESOLVER" <<'PY_PLAIN_QUOTE'
 import importlib.util, json, pathlib, subprocess, sys, tempfile
