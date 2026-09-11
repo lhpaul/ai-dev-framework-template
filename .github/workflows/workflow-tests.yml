@@ -15,13 +15,26 @@ name: workflow test harnesses
 # drift this issue exists to end, and test-select-test-suites.sh asserts
 # against it.
 #
-# Tradeoff (AC-4): the full set is 65 suites / ~27 min sequentially, and
-# test-pr-review-loop.sh alone is ~13 min of that — 48% of the total, with a
-# median suite in the low seconds. Running everything on every PR would put 27
-# minutes in front of every change. Running the change-scoped subset keeps the
-# typical PR at well under a minute while making "green" mean the changed
-# script's own tests passed. The scheduled nightly full run is the backstop
-# that catches cross-suite and mapping regressions the subset cannot see.
+# Tradeoff (AC-4): the full set changes as the workflow framework grows, and
+# most suites still finish in seconds while the slowest suite dominates the
+# critical path. Running everything on every PR would put the full harness in
+# front of every change. Running the change-scoped subset keeps the typical PR
+# fast while making "green" mean the changed script's own tests passed. The
+# scheduled nightly full run is the backstop for cross-suite and mapping
+# regressions the subset cannot see.
+#
+# Sharding (#1722) narrows this tradeoff but does not remove it. The matrix
+# runs one job per SHARD, not one per suite. GitHub bills every job rounded up
+# to a whole minute, so a job per suite pays the checkout/interpreter overhead
+# and the one-minute floor once for every suite. Packed into SHARD_COUNT shards,
+# that overhead is paid once per shard while per-suite pass/fail still appears
+# in the step summary.
+#
+# The packing itself lives in select-test-suites.sh --shards, not here, for the
+# same reason the selection does: a list in this file is a list that drifts.
+# What is lost is one check name per suite in the PR rollup; per-suite
+# pass/fail moves to the step summary, which is where the detail belongs
+# anyway. The required check name is unchanged.
 
 on:
   pull_request:
@@ -43,6 +56,23 @@ concurrency:
   group: workflow-tests-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # How many parallel jobs a full selection is packed into. The bill is roughly
+  # (total work + one rounding penalty per shard), so raising this buys wall
+  # clock and costs minutes; lowering it does the reverse. 8 sits at the point
+  # where the slowest real suite is typically its own shard; past that, more
+  # shards cost minutes without shortening the critical path.
+  SHARD_COUNT: '8'
+  # Per-suite wall-clock cap inside a shard. A hang must cost only its own
+  # suite: the job-level timeout-minutes is a backstop for the shard as a
+  # whole, sized from the number of suites in that shard. On its own it would
+  # let a hung harness suppress later suites — coverage the per-suite matrix
+  # never lost — but it still needs to be large enough for several suites in one
+  # shard to hit their own per-suite caps without starving the rest.
+  # 600s gives headroom for a genuinely slow suite and a tight bound on a stuck
+  # one.
+  SUITE_TIMEOUT_SECONDS: '600'
+
 jobs:
   select:
     name: select suites
@@ -50,15 +80,21 @@ jobs:
     permissions:
       contents: read
     outputs:
-      suites: ${{ steps.select.outputs.suites }}
+      shards: ${{ steps.select.outputs.shards }}
       count: ${{ steps.select.outputs.count }}
       mode: ${{ steps.select.outputs.mode }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
-          # Full history so the merge-base diff below is computable.
+          # Full history so the merge-base diff below is computable. A partial
+          # clone keeps every commit and tree — which is all merge-base and
+          # 'diff --name-only' need — while skipping file contents, so this
+          # stays cheap as the repository grows. Do NOT swap it for a shallow
+          # 'fetch-depth: N': that drops commits, and a merge-base that falls
+          # outside the fetched depth silently produces the wrong change set.
           fetch-depth: 0
+          filter: blob:none
 
       - name: Resolve suites to run
         id: select
@@ -72,7 +108,7 @@ jobs:
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "mode=full" >> "$GITHUB_OUTPUT"
             echo "Full run (event: $EVENT_NAME)."
-            suites="$(bash "$selector" --all --format json)"
+            shards="$(bash "$selector" --all --shards "$SHARD_COUNT" --format json)"
             lines="$(bash "$selector" --all)"
           else
             echo "mode=selected" >> "$GITHUB_OUTPUT"
@@ -86,12 +122,13 @@ jobs:
             git diff --name-only "$base_sha" HEAD > changed-files.txt
             echo "Changed files:"
             sed 's/^/  /' changed-files.txt
-            suites="$(bash "$selector" --changed-files changed-files.txt --format json)"
+            shards="$(bash "$selector" --changed-files changed-files.txt \
+              --shards "$SHARD_COUNT" --format json)"
             lines="$(bash "$selector" --changed-files changed-files.txt)"
           fi
 
           count="$(printf '%s\n' "$lines" | grep -c . || true)"
-          echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
           {
@@ -100,15 +137,7 @@ jobs:
             if [ "$count" -eq 0 ]; then
               echo "_No workflow test suite covers this change set._"
             else
-              # Formatted with printf rather than sed, and with the
-              # backticks escaped inside double quotes: a literal backtick in
-              # a single-quoted string trips shellcheck SC2016, which
-              # actionlint surfaces in consumer repositories that lint this
-              # workflow (#1631).
-              while IFS= read -r suite; do
-                [ -n "$suite" ] || continue
-                printf -- "- \`%s\`\n" "$suite"
-              done <<< "$lines"
+              printf '%s\n' "$lines" | awk '{ printf "- `%s`\n", $0 }'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -131,19 +160,21 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   test:
-    name: ${{ matrix.suite }}
+    name: shard ${{ matrix.shard.id }}
     needs: select
     if: needs.select.outputs.count != '0'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
-      # Run every selected suite even when one fails, so a PR gets the whole
-      # picture in one pass instead of one failure per push.
+      # Run every shard even when one fails, so a PR gets the whole picture in
+      # one pass instead of one failure per push. The suites WITHIN a shard get
+      # the same treatment by the run step below, which deliberately does not
+      # 'set -e'.
       fail-fast: false
       max-parallel: 8
       matrix:
-        suite: ${{ fromJSON(needs.select.outputs.suites) }}
+        shard: ${{ fromJSON(needs.select.outputs.shards) }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -160,7 +191,7 @@ jobs:
       #
       # A dedicated venv with a pinned version, rather than "install if
       # missing": an unpinned install takes whatever PyPI serves that day, and
-      # an "already present" branch takes whatever the image happens to ship —
+      # an "already present" branch takes whatever the image happens to ship -
       # both leave the same commit free to change YAML-parsing behavior between
       # runs, which is the nondeterminism this step exists to remove. The venv
       # also keeps the install off the runner's system interpreter, which is
@@ -181,11 +212,84 @@ jobs:
           # Subsequent steps resolve python3 from the venv.
           echo "$venv/bin" >> "$GITHUB_PATH"
 
-      - name: Run ${{ matrix.suite }}
-        # Longest suite is test-pr-review-loop.sh at ~13 min; this bounds a hang
-        # well above that rather than inheriting the 6-hour Actions default.
-        timeout-minutes: 30
-        run: bash "${{ matrix.suite }}"
+      - name: Run shard ${{ matrix.shard.id }}
+        # Computed by select-test-suites.sh as:
+        # suite count * ceil((SUITE_TIMEOUT_SECONDS + kill-after grace) / 60)
+        # + setup/reporting overhead. A fixed shard deadline can still suppress
+        # later suites when several earlier suites time out.
+        timeout-minutes: ${{ matrix.shard.timeout_minutes }}
+        env:
+          SHARD_ID: ${{ matrix.shard.id }}
+          SHARD_SUITES: ${{ matrix.shard.suites }}
+        run: |
+          # Before sharding, every suite was its own job: neither a failure
+          # nor a hang could take a sibling with it. Both properties have to be
+          # rebuilt here, and they need different mechanisms.
+          #
+          # Failure isolation: GitHub runs this with 'bash -eo pipefail', so a
+          # non-zero suite would abort the loop. The '|| status=$?' form below
+          # puts each suite in a '||' list, which '-e' exempts by definition;
+          # do not rewrite it as a bare 'bash "$suite"' on its own line
+          # followed by a '$?' check, which '-e' would abort before the check
+          # ever runs.
+          #
+          # Hang isolation: the job-level timeout-minutes bounds the shard, not
+          # the suite, so without the per-suite 'timeout' below one stuck
+          # harness would suppress every suite after it in this shard while the
+          # workflow still claimed all selected suites ran.
+          set -uo pipefail
+
+          failed=0
+          failed_suites=""
+          {
+            printf '### Shard %s\n\n' "$SHARD_ID"
+            printf '| suite | result | seconds |\n|---|---|---|\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # shellcheck disable=SC2086  # deliberate: the shard is a space-joined suite list
+          for suite in $SHARD_SUITES; do
+            started=$SECONDS
+            printf '::group::%s\n' "$suite"
+            status=0
+            timeout --signal=TERM --kill-after=30s \
+              "$SUITE_TIMEOUT_SECONDS" bash "$suite" || status=$?
+            duration_seconds=$((SECONDS - started))
+            case "$status" in
+              0) result='pass' ;;
+              # 124 is ambiguous: it can be timeout's own deadline, or a nested
+              # command that exited 124 before the outer deadline fired. Only
+              # call it a timeout when the measured runtime reaches the outer
+              # suite deadline; otherwise report the command status as FAIL.
+              124)
+                failed=1
+                if [ "$duration_seconds" -ge "$SUITE_TIMEOUT_SECONDS" ]; then
+                  result='**TIMEOUT**'
+                else
+                  result='**FAIL**'
+                fi
+                ;;
+              # A later 137 is ambiguous too: it can be timeout's SIGKILL after
+              # grace expires, but it can also be an unrelated OOM/kill -9 crash.
+              # Report 137 as a failure rather than claiming a definite timeout.
+              *) result='**FAIL**'; failed=1 ;;
+            esac
+            if [ "$status" -ne 0 ]; then
+              printf -v failed_suites '%s  %s: %s\n' "$failed_suites" "$suite" "$result"
+            fi
+            printf '::endgroup::\n'
+            printf "| \`%s\` | %s | %s |\n" \
+              "$suite" "$result" "$duration_seconds" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          # Per-suite pass/fail lives in the step summary now that the check
+          # rollup names shards rather than suites, so a failure has to name
+          # the suite here too — a bare non-zero exit would make the reader
+          # open the log to find out which of a dozen suites broke.
+          if [ "$failed" -ne 0 ]; then
+            echo "Shard $SHARD_ID: one or more suites failed (see the table above)." >&2
+            printf 'Failed suites:\n%s' "$failed_suites" >&2
+          fi
+          exit "$failed"
 
   # A single stable check name to require in branch protection. The matrix job
   # names change with the selection, so they cannot be required directly.
