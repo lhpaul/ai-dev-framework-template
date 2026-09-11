@@ -1337,6 +1337,48 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
 done
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Validate raw YAML before removing comments or interpreting quoted escapes.
+raw_character_result=$(python3 - "$RESOLVER" <<'PY_RAW'
+import importlib.util, json, pathlib, subprocess, sys, tempfile
+spec = importlib.util.spec_from_file_location("resolver", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+checks = 0
+invalid_points = list(range(0, 9))+[11,12]+list(range(14,32))+list(range(127,133))+list(range(134,160))+[65534,65535]
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    shared, local = (root / name for name in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.yaml"))
+    for source in (shared, local):
+        for point in invalid_points:
+            char = chr(point)
+            for extra in ("# comment "+char, "other: x"+char, 'other: "x'+char+'"'):
+                local.unlink(missing_ok=True)
+                shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
+                source.write_text(extra+"\nreview:\n  on_draft:\n    runner: [codex]\n")
+                d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
+                assert d["effective_runner_state"] == "malformed" and d["effective_policy_state"] == "unreadable", d
+                assert f"U+{point:04X}" in d["unreadable_detail"], d
+                checks += 1
+        for escaped, expected in ((r"\a", "\a"), (r"\e", "\x1b"), (r"\t", "\t"), (r"\x07", "\a"), (r"\u0007", "\a")):
+            source.write_text('other: "'+escaped+'" # valid escape\n')
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == expected
+            checks += 1
+        for char in ("\t", "\u0085", "\u00a0", "\ud7ff", "\ue000", "\ufffd", "\U00010000", "\U0010ffff"):
+            source.write_text('other: "x'+char+'y"\n')
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == "x"+char+"y"
+            checks += 1
+        for newline in ("\n", "\r", "\r\n"):
+            source.write_bytes(("other: value"+newline).encode())
+            assert module.parse_yaml_subset(source, preserve_empty_values=True)["other"] == "value"
+            checks += 1
+    shared.write_text("# comment \x00\nother: \x07\n")
+    assert module.parse_yaml_subset(shared)["other"] == "\x07"
+    checks += 1
+print(f"{checks} raw character and escaped controls passed")
+PY_RAW
+)
+run_test "strict YAML raw character validation" '411 raw character and escaped controls passed' "$raw_character_result"
+
 # Tabs separate node indicators just like spaces in strict YAML.
 tab_indicator_result=$(python3 - "$RESOLVER" <<'PY_TAB'
 import importlib.util, json, pathlib, subprocess, sys, tempfile

@@ -55,6 +55,9 @@ LOCAL_ONLY_KEYS = {
 
 
 YAML_INLINE_WHITESPACE = " \t"
+# YAML c-printable excludes these raw code points even inside comments/quotes.
+# Escapes are validated separately after parsing the printable source text.
+YAML_NON_PRINTABLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f\ud800-\udfff\ufffe\uffff]")
 
 
 class ConfigError(Exception):
@@ -116,6 +119,13 @@ def strip_inline_comment(line: str, *, strict_yaml_comments: bool = False) -> st
 def preprocess_yaml(path: Path, *, strict_yaml_comments: bool = False) -> list[tuple[int, str, int]]:
     try:
         raw_text = path.read_text(encoding="utf-8")
+        if strict_yaml_comments:
+            invalid = YAML_NON_PRINTABLE.search(raw_text)
+            if invalid is not None:
+                line_no = raw_text.count("\n", 0, invalid.start()) + 1
+                raise ConfigError(
+                    f"{path}:{line_no}: non-printable YAML character U+{ord(invalid.group()):04X}"
+                )
         # read_text normalizes CR/CRLF; Unicode whitespace is scalar content,
         # not indentation, separation, or an additional physical line break.
         raw_lines = raw_text.split("\n") if strict_yaml_comments else raw_text.splitlines()

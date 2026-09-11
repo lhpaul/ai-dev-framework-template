@@ -383,6 +383,16 @@ reviews:
             d=run('codex',1)
             check(f'T-31 canonical boolean member stays nonstring {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed',d)
     for source in (cfg, local):
+        for char in ('\x00', '\x07', '\x0b', '\x7f', '\x9f', '\ufffe', '\uffff'):
+            for extra in ('# comment '+char, 'other: x'+char, 'other: "x'+char+'"'):
+                reset();source.write_text(extra+'\nreview:\n  on_draft:\n    runner: [codex]\n')
+                d=run('codex',1)
+                check(f'T-31 raw control blocks {source.name} {extra!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
+        for escaped in (r'\a', r'\x07', r'\u0007', r'\t'):
+            reset();source.write_text('other: "'+escaped+'" # valid escape\nreview:\n  on_draft:\n    runner: [codex]\n')
+            d=run('codex')
+            check(f'T-31 valid escaped control proceeds {source.name} {escaped}',d['OUTCOME']=='proceeded',d)
+    for source in (cfg, local):
         for token in ('?\tfoo', '-\tfoo', ':\tfoo'):
             reset();source.write_text('review:\n  on_draft:\n    runner: [codex, '+token+']\n')
             d=run('codex',1)
