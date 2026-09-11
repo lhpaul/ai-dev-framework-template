@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # test-pr-review-loop.sh — Self-contained test harness for pr-review-loop.sh.
+# duration: 210
 # covers: scripts/development-workflow/pr-review-loop.sh
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 #
