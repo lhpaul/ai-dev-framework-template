@@ -17,13 +17,13 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 ### Use Case 1: A run starts and the reviewer configuration is coherent
 
 **Actor**: The orchestrating agent starting a batch or a single item, on behalf of the workflow operator who launched it.
-**Preconditions**: The run has a resolved base branch and a resolved reviewer configuration. Every reviewer platform named for this run's stages can review pull requests of the kind this run will open, against the base this run will target.
+**Preconditions**: The run has resolved base branches and a resolved reviewer configuration. Every reviewer platform named for this run's stages can review pull requests of the kind this run will open, against every base this run will target.
 
 **Steps**:
 
 1. Before the first item is dispatched, the run performs the reviewer preflight.
 2. The preflight resolves the reviewer list for every lifecycle stage the run will exercise, applying the machine-local override where one is in effect.
-3. For each platform in the resolved list, it reads whatever the platform's own configuration says about whether it will review, and compares that against the stage the platform is listed for and the base branch the run will target.
+3. For each platform in the resolved list, it reads whatever the platform's own configuration says about whether it will review, and compares that against the stage the platform is listed for and every base branch the run will target.
 4. It finds no disagreement and records the outcome Passed.
 5. The run dispatches work exactly as it does today.
 
@@ -40,7 +40,7 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 
 **Considerations**:
 
-- The preflight reads the surfaces as they stand on the run's base branch. It cannot see a divergence that a not-yet-created branch will introduce, and it does not claim to — see Use Case 3.
+- The preflight reads the surfaces as they stand on the run's base branches. It cannot see a divergence that a not-yet-created branch will introduce, and it does not claim to — see Use Case 3.
 - A platform being able to review says nothing about what it will find. A platform that passes the preflight and then fails, errors, exhausts its quota, or times out is a review failure and is reported as one, never as a preflight problem.
 
 ---
@@ -48,12 +48,12 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 ### Use Case 2: A surface disagrees, and the run stops before dispatching anything
 
 **Actor**: The orchestrating agent, and the workflow operator who reads the result.
-**Preconditions**: The run is about to dispatch work. At least one reviewer platform in the resolved list cannot review the pull requests this run will open — because the platform's own configuration turns automatic review off, or excludes the draft stage the platform is listed for, or covers a set of base branches that does not include the base this run targets.
+**Preconditions**: The run is about to dispatch work. At least one reviewer platform in the resolved list cannot review the pull requests this run will open — because the platform's own configuration turns automatic review off, or excludes the draft stage the platform is listed for, or covers a set of base branches that does not include every base this run targets.
 
 **Steps**:
 
 1. The run performs the reviewer preflight before dispatching anything.
-2. The preflight compares each platform's own configuration against the stage it is listed for and the base this run targets.
+2. The preflight compares each platform's own configuration against the stage it is listed for and every base this run targets.
 3. It finds the disagreement, classifies that platform Cannot review, and records which of the three surfaces disagrees and which setting inside it produced the disagreement.
 4. It records the run outcome Blocked and reports it.
 5. Nothing is dispatched.
@@ -65,12 +65,12 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 - The run outcome, Blocked, stated before any item-level output, so it cannot be mistaken for a per-item failure.
 - Each platform that cannot review, by name.
 - For each, which of the three surfaces disagrees — the shared workflow reviewer configuration, the machine-local override, or the platform's own configuration — identified by the file an operator would open, and the setting inside it identified by the name an operator would edit.
-- What the surfaces say that is incompatible, stated as the contradiction rather than as two isolated facts: which stage the platform is listed for against which stages it will review, or which base the run targets against which bases it covers.
+- What the surfaces say that is incompatible, stated as the contradiction rather than as two isolated facts: which stage the platform is listed for against which stages it will review, or which bases the run targets against which bases it covers.
 - At least one action that would resolve the disagreement.
 
 **Actions available**:
 
-- Change the platform's own configuration so it covers this run's stage and base.
+- Change the platform's own configuration so it covers this run's stage and every base it targets.
 - Change the shared workflow reviewer configuration so the platform is listed for a stage it will actually review.
 - Narrow the reviewer list for this machine through the machine-local override, accepting the reduced coverage deliberately rather than discovering it afterwards.
 - Re-run after any of the above. The preflight is determined fresh each run and picks the change up with no further action.
@@ -110,7 +110,7 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 
 **Considerations**:
 
-- This rule is why the preflight distinguishes what it checked from what it could not check. Before a branch exists, only the base branch's copy can be read.
+- This rule is why the preflight distinguishes what it checked from what it could not check. Before a branch exists, only the base branches' copies can be read.
 - The same rule means a preflight performed against an existing pull request reads that pull request's own branch, and therefore answers a stricter question than a preflight performed before any branch exists.
 
 ---
@@ -168,7 +168,8 @@ Cross-checking, per-platform verdicts about ability to review, and the run outco
 - The preflight is bounded: every check it performs either reaches a definite answer or yields Undetermined within a bound, so the preflight can never hold a run open in front of a dispatch that never happens. The product property the bound must satisfy is that an unreachable or slow surface degrades to Undetermined rather than to waiting, and that the preflight's cost stays negligible against the work it guards. The bound's concrete value, and how it is measured, are deliberately not fixed in this spec and are an implementation-plan decision.
 - Every failure report identifies the surface by the file an operator would open and the setting by the name an operator would edit, and states the contradiction rather than one side of it. A report an operator cannot act on directly does not satisfy this rule.
 - The preflight's verdicts are determined fresh on each run. No verdict from an earlier run is an input to a later one: a record of a past run's outcome is history, not state the preflight reads or updates. A surface repaired between two runs flips the verdict on the second run with no further action, and a surface broken between two runs flips it back.
-- The preflight reports what it checked against. A preflight performed before any branch exists is checked against the run's base branch, and says so; it does not claim to have verified branches that do not yet exist.
+- A run may target more than one base branch, and base-branch coverage is evaluated for every base in the set the run targets, not for one representative base. A platform whose own configuration fails to cover any one of those bases is Cannot review, which blocks the whole run. The Decision-Gate Consistency Matrix states this canonically.
+- The preflight reports what it checked against. A preflight performed before any branch exists is checked against the base branches the run targets, and names them; it does not claim to have verified branches that do not yet exist.
 - The reviewer platform configuration in force for a pull request is the copy on that pull request's own branch. A preflight performed against an existing pull request reads that pull request's branch. This rule is documented in the platform's integration documentation, not only implied by the preflight's behaviour.
 - The preflight decides whether a platform can review. It does not decide what the platform says, does not run a review, and does not change any reviewer gate's behaviour after it passes.
 - The preflight reports a disagreement; it never repairs one. Editing a surface on the operator's behalf would change the repository's review policy without the operator asking.
@@ -183,7 +184,7 @@ Per-platform verdicts:
 
 | Code value          | Display label        | Description                                                                                                                                  |
 | ------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `operable`          | Can review           | The surfaces agree for this platform: it will review pull requests of the kind this run opens, at the stage it is listed for, against this run's base. |
+| `operable`          | Can review           | The surfaces agree for this platform: it will review pull requests of the kind this run opens, at the stage it is listed for, against every base this run targets. |
 | `not-operable`      | Cannot review        | The surfaces disagree for this platform. Always accompanied by a disagreement reason and the surface that disagrees.                         |
 | `undetermined`      | Undetermined         | The preflight could not reach a definite answer for this platform. Never reported as Can review.                                             |
 | `override-excluded` | Excluded by override | The platform is in the shared reviewer list but not in the resolved list: the machine-local override removed it. It is reported, never cross-checked, and never affects the run outcome. Not a failure, and never reported as Cannot review. |
@@ -194,7 +195,7 @@ Disagreement reasons, reported with every Cannot review verdict:
 | ----------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `review-disabled`       | Automatic review turned off | The platform's own configuration turns automatic review off, so it will decline every pull request in this repository.             |
 | `stage-excluded`        | Stage not covered          | The platform is listed for a lifecycle stage its own configuration excludes — most commonly listed as a draft reviewer while its own configuration declines drafts. |
-| `base-branch-unmatched` | Base branch not covered    | The base branch this run targets is not among the bases the platform's own configuration covers.                                   |
+| `base-branch-unmatched` | Base branch not covered    | At least one base branch this run targets is not among the bases the platform's own configuration covers. Reported with the bases targeted and the bases covered. |
 | `value-not-supported`   | Not a supported reviewer   | The configured value is not a reviewer platform this workflow supports, so no cross-check is possible and no review would happen.   |
 
 Undetermined reasons, reported with every Undetermined verdict:
@@ -224,7 +225,7 @@ The preflight's only output is its report. There is no user interface, and no on
 - **Failure report**: on Blocked, each platform that cannot review, its disagreement reason, the surface that disagrees identified by the file an operator would open, the setting identified by the name an operator would edit, the contradiction stated in full, and at least one action that would change the outcome.
 - **Unverified report**: on Passed, some unverified, each undetermined platform with its reason, kept visibly separate from the platforms that passed.
 - **Override notice**: when a machine-local override is in effect, the report records that it is, and which platforms it removed, so reduced coverage is visible at the moment it is chosen rather than only when a review is missing.
-- **Scope statement**: every report states what it was checked against — this run's base branch, or a specific pull request's branch — so a reader never has to guess whether a branch-local divergence was covered.
+- **Scope statement**: every report states what it was checked against — every base branch this run targets, or a specific pull request's branch — so a reader never has to guess whether a branch-local divergence was covered.
 - **Audit record**: the preflight outcome is carried by the record the enclosing run already keeps of itself, so a run reported as complete can be checked afterwards for whether its reviewers were verified before it started. This is one more fact added to a record the run was already producing — the preflight creates no record of its own, and causes no record to exist where the run would otherwise keep none. Nothing the preflight does changes repository or external state, which is why carrying the outcome does not breach the no-side-effects rule that AC-2 tests.
 
 ---
@@ -240,11 +241,15 @@ The preflight is a workflow decision gate: it takes several inputs, produces one
 | The reviewer list for each lifecycle stage               | The shared workflow reviewer configuration                                  | Names which platforms are expected to review, and at which stage                      |
 | The machine-local override, when one is in effect        | The machine-local reviewer override                                         | Decides which of those platforms this machine will actually use                       |
 | Each platform's own review configuration                 | The platform's own configuration, read from the branch in force             | Decides whether the platform will review at all, at which stage, and against which bases |
-| The base branch this run targets                         | The run's resolved execution base                                           | A base the platform does not cover means every pull request in the run is declined    |
+| The set of base branches this run targets                | The resolved execution base of every item the run will dispatch              | A base the platform does not cover means every pull request the run opens against that base is declined |
 | The kind of pull request the run will open               | The stage the run is dispatching                                            | A draft-stage listing against a platform that declines drafts is a disagreement       |
 | Whether each configured value is a supported platform    | The canonical list of supported reviewer platforms                          | An unsupported value must be reported, not dropped                                    |
 
 Where a platform's own configuration cannot be read, that platform is Undetermined with the reason it could not be read. Where the resolved reviewer list itself cannot be read, the existing configuration-validation behaviour applies unchanged; the preflight adds no new handling for it, because a list that cannot be read names no platforms to cross-check.
+
+**A run may target more than one base branch.** One run can dispatch items against an epic integration branch and items against the main integration branch, so the gate's base-branch input is the set of every base the run will target, never a single representative base. Base-branch coverage is evaluated for every base in that set: a platform in the resolved list is Can review only where its own configuration covers all of them, and is Cannot review with the reason Base branch not covered where it covers none of them or only some. Where the surfaces differ between two targeted bases, each base is evaluated against the copy of the surfaces on that base, and the report names every base that was checked.
+
+**Under the rule this spec sets, a coverage gap on any base in that set blocks the whole run.** Such a gap is a Cannot review verdict for that platform, and Blocked is a hard whole-run stop: nothing is dispatched, for any base, including the bases the platform does cover. The gate outcome and the required next action are therefore fully determined for a run targeting several bases. Open Question 2 asks only whether a later refinement should narrow that stop to the items targeting the uncovered base; it does not leave today's outcome undefined.
 
 ### Triggers
 
@@ -289,7 +294,7 @@ Worked examples are part of the changed surface wherever a disagreement case is 
 
 - [ ] With a platform listed in the resolved reviewer list whose own configuration turns automatic review off, the preflight produces Blocked, classifies that platform Cannot review with the reason Automatic review turned off, and names the platform's own configuration as the surface that disagrees.
 - [ ] With a platform listed as a draft-stage reviewer whose own configuration excludes drafts, the preflight produces Blocked, classifies that platform Cannot review with the reason Stage not covered, and states both sides of the contradiction: the stage it is listed for and the stages its own configuration covers.
-- [ ] With a platform whose own configuration covers a set of base branches that does not include the base this run targets, the preflight produces Blocked, classifies that platform Cannot review with the reason Base branch not covered, and names both the base targeted and the bases covered.
+- [ ] With a platform whose own configuration covers a set of base branches that does not include every base this run targets, the preflight produces Blocked, classifies that platform Cannot review with the reason Base branch not covered, and names both the bases targeted and the bases covered.
 - [ ] Each of the three disagreement reasons is reported distinctly; none is reported in place of another, and none is reported as a generic configuration error.
 - [ ] Every Cannot review report names the file an operator would open and the setting an operator would edit, and gives at least one action that would change the outcome.
 - [ ] On Blocked, no item is dispatched: no branch is created, no pull request is opened, no tracker status changes, and no comment or label is applied by that run.
@@ -325,7 +330,7 @@ Worked examples are part of the changed surface wherever a disagreement case is 
 - [ ] It states the consequence that a configuration fix takes effect on the very pull request that carries it, so a broken review can be repaired on the branch in front of the operator without waiting for a merge.
 - [ ] It states the consequence that a branch can carry a configuration that differs from the repository's intended review policy, without anything else reporting the divergence.
 - [ ] It records the observation that established the behaviour, so the statement is traceable to evidence.
-- [ ] The documentation states that a pre-dispatch preflight is checked against the run's base branch and therefore cannot see a divergence introduced by a branch that does not yet exist.
+- [ ] The documentation states that a pre-dispatch preflight is checked against the base branches the run targets and therefore cannot see a divergence introduced by a branch that does not yet exist.
 - [ ] No workflow surface contradicts the resolution rule or describes the integration-branch copy as the one in force.
 
 ### The preflight is reachable where it is needed, and consistent across surfaces
