@@ -268,10 +268,13 @@ The agent was never instructed toward a class the same repository refuses.
   mode, and keeps its class-filtered meaning in a consumer repository. It must
   never report an empty result as a consequence of the classification rule
   itself.
-- Every workflow surface that tells an agent how to classify an item, or tells an
-  agent to set a class on an item, states the framework-mode rule and the
-  consumer rule consistently. No surface may instruct an agent to produce a class
-  the same repository refuses.
+- Every workflow surface that *explains* how to classify an item states the
+  framework-mode rule and the consumer rule consistently, so a reader in either
+  mode is not misled by the rule for the other.
+- Every workflow surface that *instructs* an agent to set a class on an item it
+  just created must never direct a framework-mode repository toward a class that
+  same repository refuses. Such a surface is not required to restate both rules;
+  it is required not to produce the refused class.
 - This feature changes no routing behavior for Feature, Bug, or Refactor items,
   in either mode.
 
@@ -309,8 +312,11 @@ Work-item classification values, and what each means in each mode:
 - **No new audit trail**: this feature records no events, writes no logs, and
   posts no tracker comments beyond the two reports above. It has no background or
   scheduled behavior.
-- **No board scanning**: nothing in this feature inspects the board looking for
-  misclassified items; problems surface when an item is created or routed.
+- **No misclassification scan**: nothing in this feature sweeps the board looking
+  for misclassified items; a problem surfaces only when an item is created or
+  routed. The framework-item lookup does read the open items on the board, but
+  that is an existing read serving the release and retrospective flows, not a new
+  scan for misclassification.
 
 ---
 
@@ -325,7 +331,7 @@ item's class into a pipeline — so the gate is enumerated here.
 | ----- | ------ | ------ |
 | Repository mode | Framework mode / consumer repository | The repository's own workflow configuration declaration that it is the framework template |
 | Item classification | Feature / Bug / Refactor / Workflow / unset | The project board's classification field for the item |
-| Item stage | Backlog / past Backlog | The item's board status |
+| Item stage | Still awaiting a pipeline (Backlog) / already on a pipeline | The item's board status, reconciled against work already completed for it, exactly as routing reconciles a stale status today |
 
 ### Triggers
 
@@ -337,6 +343,10 @@ item's class into a pipeline — so the gate is enumerated here.
 
 ### Allowed outcomes and required next actions
 
+Routing outcomes. Every row except the last describes an item still awaiting a
+pipeline; an item already on a pipeline is not re-evaluated by this gate in
+either mode.
+
 | Mode | Classification | Outcome | Required next action |
 | ---- | -------------- | ------- | -------------------- |
 | Framework | Feature | Route: full pipeline | Unchanged — start the spec stage |
@@ -347,14 +357,23 @@ item's class into a pipeline — so the gate is enumerated here.
 | Consumer | Feature / Bug / Refactor | Route as today | Unchanged |
 | Consumer | Workflow | Route as today — infer the path from the brief, stop if unclear | Unchanged |
 | Consumer | Unset | Unchanged from today | Unchanged |
+| Either | Any class, item already on a pipeline | Not re-evaluated | Unchanged — the item continues on the pipeline it started; re-deciding it mid-flight is out of scope |
 
 Creation-time outcomes:
 
-| Mode | Requested class | Outcome |
-| ---- | --------------- | ------- |
-| Framework | Workflow | Refused before creation, with the valid classes named |
-| Framework | Feature / Bug / Refactor | Created as today |
-| Consumer | Any class | Created as today |
+| Mode | Requested class | Outcome | Required next action |
+| ---- | --------------- | ------- | -------------------- |
+| Framework | Workflow | Refused before creation, with the valid classes named | Re-run the request with Feature, Bug, or Refactor |
+| Framework | Feature / Bug / Refactor | Created as today | Unchanged |
+| Consumer | Any class | Created as today | Unchanged |
+
+Framework-item lookup outcomes:
+
+| Mode | Board contents | Outcome | Required next action |
+| ---- | -------------- | ------- | -------------------- |
+| Framework | At least one open item | Every open board item, whatever its class | Unchanged — the flow reviews the list as today |
+| Framework | No open items | Empty, and empty only because the board is empty | Unchanged — an empty board is a legitimate answer |
+| Consumer | Any | Only items classified Workflow, as today | Unchanged |
 
 ### Mirror surfaces
 
@@ -371,7 +390,8 @@ Creation-time outcomes:
 
 - A framework-mode repository files "reviewer loop times out on large diffs" and
   asks for Workflow. The command refuses and names Feature, Bug, and Refactor.
-  The agent re-files it as a Bug, and it routes to the fast-track path.
+  The agent re-files it as a Bug, and it routes exactly as any Bug does today —
+  to the fast-track path when the existing scope check allows it.
 - A framework-mode repository is asked to advance an existing Backlog item that
   was filed months ago as Workflow. The runner stops, names the item, and asks for
   re-classification. Nothing about the item changes until an operator acts.
@@ -381,21 +401,30 @@ Creation-time outcomes:
 - A framework-mode release run asks for open framework items and receives every
   open board item, so a known open script bug affecting the release is still
   caught.
+- A framework-mode item classified Workflow is already past Backlog — its spec is
+  merged and implementation is under way. The runner continues that pipeline. The
+  misclassification stop does not fire, because the pipeline was already chosen.
 
-### Issue-objective traceability
+---
 
-| Brief objective | Disposition |
-| --------------- | ----------- |
-| Creation command refuses the Workflow class in framework mode, with a clear actionable message, and creates no item | *Creating an item in framework mode* |
-| The same invocation still succeeds when the repository is not the framework template | *Consumer repositories are unchanged* |
-| Framework-item lookup means all open board items in framework mode, and keeps its filtered behavior otherwise | *Open framework items stay discoverable* |
-| Backlog-creation protocol, routing protocol, agent-guidance file, and tracker integration guide state the rule consistently | *Guidance surfaces agree* |
-| Routing no longer infers a path for a framework-mode Workflow item | *Routing stops instead of guessing* |
-| Reuse the existing framework-template declaration as the gate rather than adding a switch | *Consumer repositories are unchanged*; Business Rules |
-| Keep the Workflow option on the board's class field | Out of Scope, item 1; Business Rules |
-| No board-scanning CI check | Out of Scope, item 2 |
-| Do not backfill the existing misclassified items | Out of Scope, item 3 |
-| Splitting the two meanings into a separate area field or label | Out of Scope, item 4 — considered and rejected in the brief |
+## Issue-objective Traceability
+
+Every discrete requirement in the brief maps to an acceptance-criteria group
+(named in italics) or to an explicit out-of-scope entry. Nothing in the brief is
+silently dropped.
+
+| Brief objective | Where it comes from in the brief | Disposition |
+| --------------- | -------------------------------- | ----------- |
+| Creation command refuses the Workflow class in framework mode, with a clear actionable message, and creates no item | Acceptance criterion 1; enforcement point 1 | *Creating an item in framework mode* |
+| The same invocation still succeeds when the repository is not the framework template | Acceptance criterion 2 | *Consumer repositories are unchanged* |
+| Framework-item lookup means all open board items in framework mode, and keeps its filtered behavior otherwise | Acceptance criterion 3; required companion change | *Open framework items stay discoverable* |
+| Backlog-creation protocol, routing protocol, agent-guidance file, and tracker integration guide state the rule consistently | Acceptance criterion 4; enforcement point 2 | *Guidance surfaces agree* |
+| Routing no longer infers a path for a framework-mode Workflow item | Acceptance criterion 5; enforcement point 3 | *Routing stops instead of guessing* |
+| Reuse the existing framework-template declaration as the gate rather than adding a switch | Proposed approach | *Consumer repositories are unchanged*; Business Rules |
+| Keep the Workflow option on the board's class field | Out of scope, first bullet | Out of Scope, item 1; Business Rules |
+| No board-scanning CI check | Out of scope, second bullet | Out of Scope, item 2 |
+| Do not backfill the existing misclassified items | Out of scope, third bullet | Out of Scope, item 3 |
+| Splitting the two meanings into a separate area field or label | Alternative considered and rejected | Out of Scope, item 4 — recorded as rejected, not revived |
 
 ---
 
@@ -457,6 +486,9 @@ Creation-time outcomes:
       its board status.
 - [ ] Re-classifying the item as Feature, Bug, or Refactor and re-running it
       routes it to the corresponding pipeline with no further intervention.
+- [ ] In framework mode, an item classified Workflow whose pipeline has already
+      started continues on that pipeline — the misclassification stop does not
+      fire, and the run proceeds exactly as it did before this feature.
 
 ### Guidance surfaces agree
 
@@ -491,6 +523,12 @@ Creation-time outcomes:
 3. **Re-classifying the items already filed with the Workflow class.** Tracked
    separately as #1584, which depends on this landing first so re-typed items are
    not pulled back by guidance that still recommends the old class.
+   **Accepted consequence**: until #1584 lands, the routing stop described above
+   is expected to fire on most of the open Backlog — on the order of the 57
+   Workflow-classed items measured on 2026-08-23. The cost is visible, per item,
+   and cleared by re-classifying that item on the board before re-running it; no
+   item is lost or altered. This spec accepts that cost in exchange for restoring
+   the routing meaning, and it applies only to items still in Backlog.
 4. **Splitting the two meanings into separate fields.** Keeping the class field
    routing-only and moving the framework-versus-product distinction to its own
    field or label is the more principled model, and it was considered and
