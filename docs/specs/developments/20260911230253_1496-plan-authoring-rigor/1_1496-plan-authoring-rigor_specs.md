@@ -22,15 +22,15 @@ Because this repository ships as a framework template, every rule must be expres
 **Steps**:
 
 1. The author recognizes that the design's correctness depends on the wording or shape of output they do not control.
-2. Before committing to a design, the author gathers real occurrences of that output and records the sampling under Rule 1.
+2. Before committing to a design, the author gathers real occurrences of that output and records the sampling under Rule 1 — or, where the population is finite and closed and a single recorded command reproduces its complete membership, enumerates it that way instead.
 3. The author checks whether the producer publishes a contract fixing the set of possible outputs, and cites it if one exists.
 4. With no such contract, the author designs for an open set and states in the plan what the system does when an unseen output arrives.
 
-**Postconditions**: The plan's design and its sampling record are both in the plan. A reader can see how much of the distribution was observed, and whether the design would survive an output the sample did not contain.
+**Postconditions**: The plan's design and its sampling record, or its enumeration record, are both in the plan. A reader can see how much of the distribution was observed, and whether the design would survive an output the sample did not contain.
 
 **Information shown**:
 
-- The sampling record, as defined in Rule 1.
+- The sampling record, or the enumeration and the command or query that produced it, as defined in Rule 1.
 - Either the cited producer contract or the stated behavior on an unseen variant.
 
 **Actions available**:
@@ -353,6 +353,7 @@ Triggers are events. They decide when the check runs, are never read as inputs, 
 | Evidence is present but does not reproduce at the recorded revision                              | Blocking finding       | Names the record that failed to reproduce                     | Derive the record again at the current revision               |
 | A design binds to a fixed set of external literals with no cited producer contract               | Blocking finding       | Names the binding and the missing contract citation           | Cite the contract, or make the design tolerant                |
 | A sampling record is built from curated examples, or covers two or fewer occurrences             | Blocking finding       | Names the record and why it is not a sample                   | Sample real occurrences and record the sampling              |
+| A plan enumerates a population in place of sampling it, but the population is not finite and closed, or no single command reproduces its complete membership | Blocking finding       | Names the population and why the escape hatch does not apply  | Sample real occurrences and record the sampling, or show the population is finite and closed |
 | A quantity is obtained by arithmetic with no shown partition                                     | Blocking finding       | Names the quantity and the operands                           | Derive it directly, or show the partition                     |
 | A count's population includes members that do not share the property the plan reasons about, even when the arithmetic over it is correct | Blocking finding       | Names the count and the population defect                     | Derive the count again over only the members that share the property |
 | A step's scope is set by a quantity with no enumeration                                          | Blocking finding       | Names the step and the missing enumeration                    | Carry the enumeration into the step                           |
@@ -394,6 +395,8 @@ Surfaces are named here by the role they play, not by file. Which document carri
 | A design matches a vendor's reply against two captured examples; no other occurrences were examined                     | Blocking finding     | Two occurrences are never a sample, and nothing shows the set is fixed                            |
 | The same design, with dozens of real occurrences sampled, saturation not reached, and behavior on an unseen reply stated | Check passed         | The set is open and the design says so                                                            |
 | The same design, bound to a fixed list, citing the producer's published contract for that list                          | Check passed         | The producer fixed the set, not the sample                                                        |
+| A design matches against a partner service's webhook payloads, all of which are captured in a fixed, versioned set of fixture files, and a single directory listing reproduces the complete set           | Check passed         | The population is finite, closed, and one recorded command reproduces its complete membership                    |
+| The same design, described as covering "the common payload shapes seen so far," with no command that lists the complete set                                            | Blocking finding     | The escape hatch requires a single reproducible command producing the complete membership, not an assertion of fewness |
 | A plan states a test count derived by subtracting one measured group from a larger measured total                       | Blocking finding     | The operands were not shown to partition one homogeneous population                               |
 | The same count, derived by its own command, with the enumeration carried into the step it scopes                        | Check passed         | Reproducible, and the step names artifacts rather than a number                                    |
 | A plan counts every file in a directory to size a step that touches only the files matching a naming pattern           | Blocking finding     | The population counted is wider than the property the step reasons about                          |
@@ -428,6 +431,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - [ ] A plan that binds to a fixed set of literal outputs passes only when it cites a producer contract fixing that set. The same plan with a large observed sample and no cited contract fails.
 - [ ] A plan with no cited contract passes only when it states the part of the output it relies on as stable and what the system does when an output outside the observed variants arrives.
 - [ ] A record whose occurrences are curated examples fails, and a record of two or fewer occurrences fails.
+- [ ] A plan enumerates a population instead of sampling it only when the population is finite and closed and a single recorded command, query, or listing reproduces its complete membership. A plan that instead lists a curated subset of a large or open distribution and calls that subset the whole population fails.
 
 ### Group C — One normative statement per fact (Rule 2)
 
