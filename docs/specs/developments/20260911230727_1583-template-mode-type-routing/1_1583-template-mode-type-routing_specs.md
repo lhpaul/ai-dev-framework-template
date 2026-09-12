@@ -289,7 +289,7 @@ Work-item classification values, and what each means in each mode:
 | `Feature`  | Feature       | Product capability; full pipeline — spec, plan, implementation | Framework capability; same full pipeline |
 | `Bug`      | Bug           | Product defect; fast-track fix path when the scope check allows | Framework defect; same fast-track path |
 | `Refactor` | Refactor      | Restructuring without behavior change; plan-only path | Framework restructuring; same plan-only path |
-| `Workflow` | Workflow      | AI-development-framework, process, or tooling work; pipeline inferred from the brief | Not valid — rejected on creation, treated as misclassified on routing |
+| `Workflow` | Workflow      | AI-development-framework, process, or tooling work; pipeline inferred from the brief | Not valid — refused on creation, and treated as misclassified when routing an item still awaiting a pipeline |
 
 **Valid transitions**:
 
@@ -338,7 +338,7 @@ item's class into a pipeline — so the gate is enumerated here.
 | Trigger | Gate evaluated |
 | ------- | -------------- |
 | An agent asks the creation command to file an item with a class | Creation-time class validity |
-| A runner is asked to advance a Backlog item | Routing classification |
+| A runner is asked to advance an item | Routing classification |
 | A release or retrospective flow asks for open framework items | Framework-item lookup meaning |
 
 ### Allowed outcomes and required next actions
@@ -365,7 +365,8 @@ Creation-time outcomes:
 | ---- | --------------- | ------- | -------------------- |
 | Framework | Workflow | Refused before creation, with the valid classes named | Re-run the request with Feature, Bug, or Refactor |
 | Framework | Feature / Bug / Refactor | Created as today | Unchanged |
-| Consumer | Any class | Created as today | Unchanged |
+| Framework | Unset — no class requested | Created as today | Unchanged — this feature does not add behavior for an absent class |
+| Consumer | Any class, or none | Created as today | Unchanged |
 
 Framework-item lookup outcomes:
 
@@ -501,6 +502,10 @@ silently dropped.
       board but is not valid in framework mode.
 - [ ] The routing protocol's Backlog table describes a framework-mode Workflow
       item as misclassified rather than as an item whose path is inferred.
+- [ ] The release-preparation flow and the retrospective flow each describe the
+      open-framework-item lookup's framework-mode meaning as every open board
+      item, so a reader of either flow is not left expecting a class-filtered
+      result there.
 - [ ] No workflow surface directs an agent in a framework-mode repository to set
       the Workflow class on an item, including the retrospective flows that create
       an item and classify it.
