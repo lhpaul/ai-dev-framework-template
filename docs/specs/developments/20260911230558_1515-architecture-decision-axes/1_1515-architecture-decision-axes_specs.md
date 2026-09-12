@@ -109,7 +109,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 
 **Considerations**:
 
-- The declaration is required wherever the citation appears in a rationale a human or reviewer will read, not only inside an escalation report. The recorded defect surfaced first in a review-thread reply.
+- The declaration is required wherever the citation appears in a rationale a human or reviewer will read, not only inside an escalation report. A review-thread reply is exactly such a surface: a reviewer reads it directly, often before any escalation report exists.
 - Declaring Departs is not by itself an architecture decision. Where conforming to the cited line is the obvious correction, the axis is settled and the correction is the next action.
 - Not yet implemented exists for citations made before the behavior is built — during planning, or about work not yet started. It is never used to avoid declaring a departure in behavior that does exist.
 
