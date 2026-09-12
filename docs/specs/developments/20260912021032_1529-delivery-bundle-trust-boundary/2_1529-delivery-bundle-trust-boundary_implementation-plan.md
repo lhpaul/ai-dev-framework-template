@@ -56,11 +56,11 @@ release is gated on this.
 | Repo revision | `git rev-parse --short HEAD` | `c367abf0` |
 | Producer emitted-field enumeration | `sed -n '208,224p' scripts/development-workflow/component-release-evidence.sh \| grep -cE '^\s+[a-z_]+:'` | `15` top-level fields: `schema_version`, `target_binding`, `routing_outcome`, `selected_product_repo_key`, `canonical_repository_identity`, `artifact_owners`, `release_correlation_key`, `contract_revision`, `release_branch`, `release_outcome`, `ci_outcome`, `deployment_outcome`, `cleanup_outcome`, `hub_tracker_ref`, `component_tag` |
 | `component_version` is absent from the producer | `grep -n "component_version" scripts/development-workflow/component-release-evidence.sh` | No matches — confirms the brief's "known-unaddressed instance" |
-| Consumer evidence reads | `grep -n 'evidence.get(\|stable_value(evidence' scripts/development-workflow/delivery-bundle-manifest.sh scripts/development-workflow/component-milestone-reconciliation.sh` | Bundle reads 11 evidence fields; reconciliation reads 9 |
+| Consumer evidence reads | `grep -oE 'evidence\.get\("[a-z_]+"\|stable_value\(evidence, "[a-z_]+"' scripts/development-workflow/delivery-bundle-manifest.sh scripts/development-workflow/component-milestone-reconciliation.sh \| sort -u` | Bundle names 13 distinct evidence fields, reconciliation 12 — in both cases 2 of them (`schema_version`, `target_binding`) are structural rather than content fields, leaving 11 and 10. Reconciliation additionally requires 4 identity fields through the `required_identity` loop at lines 300-307, which reads them via `stable_value(evidence, field)` and so is not itemized by the literal-string grep |
 | Cleanup evidence reads | `grep -nE 'json_field "\$EVIDENCE_FILE"\|compare_component_field' scripts/development-workflow/prepare-release-post-merge-cleanup.sh` | Reads `schema_version`, `release_branch`, `cleanup_outcome`; compares 6 identity fields against a freshly resolved target binding |
 | Caller-supplied overrides on the bundle | `grep -n 'update.add_argument' scripts/development-workflow/delivery-bundle-manifest.sh` | 9 flags; `--component-version` is `default=None` and never cross-checked |
-| Caller-supplied overrides on reconciliation | `grep -n 'parser.add_argument' scripts/development-workflow/component-milestone-reconciliation.sh` | 11 flags; `--version` is consumed only on the `single_repo` path, `--evidence-file` is ignored there |
-| All non-spec invocation sites of the producer | `grep -rl "component-release-evidence.sh" . --exclude-dir=.git \| grep -v '^./docs/specs'` | 17 paths; 8 are runtime/doc surfaces this plan updates, the rest are `CHANGELOG.md`, historical specs and the helper itself |
+| Caller-supplied overrides on reconciliation | `grep -n 'parser.add_argument' scripts/development-workflow/component-milestone-reconciliation.sh` | 14 lines: 10 in `add_component_common` (lines 730-741, the component subcommands this plan changes) and 4 in `add_parent_common` (lines 745-748). `--version` is consumed only on the `single_repo` path, `--evidence-file` is ignored there |
+| All invocation sites of the producer | `grep -rl "component-release-evidence.sh" . --exclude-dir=.git` | 17 paths at `c367abf0` (19 on this plan branch, which adds the plan and the runbook). 8 are runtime/doc surfaces this plan updates: `component-release-evidence.sh`, `delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`, `tests/test-component-release-evidence.sh`, `cross-repo-pr-flow.md`, `repository-modes.md`, `05-prepare-release-protocol.md`, `scripts/development-workflow/README.md`. The other 9 are `CHANGELOG.md`, 3 historical specs, 2 historical runbooks, `05b-graduate-development-protocol.md` and `94-batch-merge-protocol.md` (name-only references), and `tests/test-workflow-hub-docs.sh` (asserts on the docs, not on the helper's flags) — all excluded with rationale in Files to Modify |
 | Agent/skill surfaces naming these helpers | `grep -rn "component-release-evidence\|component_release_evidence\|component-milestone-reconciliation\|delivery-bundle-manifest" .agents/ .codex/ .claude/ .cursor/` | 2 hits, both in `.agents/skills/prepare-release/SKILL.md`; no `.codex/`, `.claude/`, or `.cursor/` surface names these helpers |
 | Test-suite auto-selection | `sed -n '1,32p' scripts/development-workflow/select-test-suites.sh` | A suite named `test-<name>.sh` covers `scripts/development-workflow/<name>.sh` by naming convention, so extending existing suites needs no CI wiring |
 | Cleanup suite coverage declaration | `grep -n 'covers:' scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh` | Declares `prepare-release-post-merge-cleanup.sh`, `component-release-target.sh`, `workflow-config-resolver.py` |
@@ -166,7 +166,7 @@ audit, not gated · `compare` = compared against an independently resolved targe
 | `hub_tracker_ref` | `producer_required` | `record` (RESIDUAL-1) | `require` non-empty (RESIDUAL-1) | `n/a` | `n/a` |
 | `component_tag` | `producer_conditional` | `req+match` vs `--component-tag` (fixed round 4) | `req+match` vs `--component-tag` (fixed round 3) | `attestation` (inside `<repo>@<tag>` title) | `n/a` (no caller override; no defined tag<->branch relation — RESIDUAL-2) |
 | `component_version` | `producer_conditional` | **GAP-1** unbound -> `req+match` vs `--component-version` | `n/a` on the hub path; **GAP-7** `--version` on the `single_repo` path -> reject `--evidence-file` there | `n/a` | `n/a` |
-| `evidence_state` (never emitted) | n/a | consumer-set on its own component view | **GAP-6** any string accepted -> closed enum, fail closed | `n/a` | `n/a` |
+| `evidence_state` (never emitted) | n/a | consumer-set on its own component view | **GAP-6** any string accepted -> closed enum with a per-value disposition (D9), fail closed on unknown | `n/a` | `n/a` |
 | `hub_tracker_reconciliation_outcome` (never emitted) | `hub_input` | `require` flag, fail closed on unknown | **GAP-5** falls back to the evidence file -> require the flag, no fallback | `n/a` | `n/a` |
 | `child_release_state` (never emitted) | `hub_input` | `require` flag, fail closed on unknown | **GAP-5** falls back to the evidence file -> require the flag, no fallback | `n/a` | `n/a` |
 | `component_key` / `child_item` / `source_pr` / `release_pr` (never emitted) | `hub_input` | `component_key` matched vs evidence; the rest `record` | `--issue` is `hub_input` (RESIDUAL-1) | `n/a` | `n/a` |
@@ -180,7 +180,7 @@ audit, not gated · `compare` = compared against an independently resolved targe
 | GAP-3 | producer | `compare_field` passes when target and binding are *equally empty*, so a record can be emitted with empty `canonical_repository_identity` / `release_correlation_key` / `contract_revision` — breaking the `producer_required` promise | Refuse emission when any of those three is empty |
 | GAP-4 | `component-milestone-reconciliation.sh` | `routing_outcome` is never checked, so `single_repo_release` evidence is accepted on the `workflow_hub` milestone path | Require `component_release_routed` on the hub path |
 | GAP-5 | `component-milestone-reconciliation.sh` | `hub_tracker_reconciliation_outcome` and `child_release_state` fall back to the evidence file — hub-owned facts sourced from a product-owned record | Remove the fallback; require the flags |
-| GAP-6 | `component-milestone-reconciliation.sh` | Any `evidence_state` string is accepted; only `stale`/`conflicting` block, so an unknown value passes as non-blocking | Closed enum; fail closed on unknown |
+| GAP-6 | `component-milestone-reconciliation.sh` | Any `evidence_state` string is accepted; only `stale`/`conflicting` block, so an unknown value — and the bundle's own `missing` / `partial` degraded states — pass as non-blocking | Closed enum with the per-value disposition table in D9; fail closed on unknown |
 | GAP-7 | `component-milestone-reconciliation.sh` | `--evidence-file` is silently ignored in `single_repo` mode while `--version` alone drives a real milestone mutation | Reject `--evidence-file` in `single_repo` mode; record `trust_basis` in the result |
 | GAP-8 | `prepare-release-post-merge-cleanup.sh` | Identity fields are compared but never required non-empty, so a pre-fix record with empty identity still passes | Require non-empty before comparing |
 | GAP-9 | `delivery-bundle-manifest.sh` | `release_branch` is not recorded, so the manifest cannot show which branch produced the shipped tag | Record it on the component view |
@@ -267,9 +267,25 @@ helpers it checks"). The in-scope change is to make that class machine-visible
 (`trust_class: "attestation"` in the result) and documented, not to fabricate formats for the
 six fields in RESIDUAL-4.
 
-**D9 — `evidence_state` becomes a closed enum** (`verified`, `stale`, `conflicting`,
-`missing`, `partial`) that fails closed on any other value, instead of treating unrecognized
-strings as non-blocking.
+**D9 — `evidence_state` becomes a closed enum with a stated disposition per member**, instead
+of treating unrecognized strings as non-blocking. The member list is taken from the values
+this subsystem actually produces, not invented: `delivery-bundle-manifest.sh` lines 216-222
+emit `verified`, `missing`, `conflicting`, and `partial`;
+`component-milestone-reconciliation.sh` line 521 additionally accepts `released` on the
+manifest-component path and line 535 blocks on `stale`/`conflicting`. Enumerating the values
+without deciding each one's disposition would leave a permissive branch inside a rule
+asserted as fail-closed, so the decision is:
+
+| `evidence_state` value | Disposition on the hub evidence path | Why |
+| --- | --- | --- |
+| `verified` | non-blocking | The success state `evidence_state()` already synthesizes for a schema-correct record. |
+| `released` | non-blocking | Already accepted at line 521; rejecting it here would make one script disagree with itself. |
+| `stale` | blocker `stale_component_evidence` | Existing behavior at line 535, preserved. |
+| `conflicting` | blocker `conflicting_component_evidence` | Existing behavior at line 535, preserved. |
+| `missing` | blocker `missing_component_evidence` | **New.** The bundle emits it when a component has no usable evidence; admitting it as non-blocking is the "absent value treated as a match" defect this audit exists to close. |
+| `partial` | blocker `partial_component_evidence` | **New.** The bundle emits it for a component whose outcomes are still pending (`tests/test-delivery-bundle-manifest.sh`, assertion `pending_default_persisted_partial`); a partially evidenced component must not stamp a milestone. |
+| any other string, or a non-string | blocker `invalid_evidence_state` | Fail closed on unknown. |
+| absent | unchanged: synthesized as `verified` when `schema_version` matches, otherwise blocker `evidence_state_missing` | Pre-existing behavior at lines 179-196; this plan does not change it. |
 
 **D10 — Extend the five existing test suites; do not add a new one.**
 `select-test-suites.sh` maps `test-<name>.sh` to `scripts/development-workflow/<name>.sh` by
@@ -320,7 +336,11 @@ surface.
     new `release_pr` changes it.
   - Validate `--hub-tracker-reconciliation-outcome` and `--child-release-state` against their
     closed enums at parse time so the error names the flag rather than surfacing later as a
-    generic `blocked_component_outcome`.
+    generic `blocked_component_outcome`. Preserve
+    `--hub-tracker-reconciliation-outcome`'s existing `default="pending"` (line 591): the
+    validation applies to a supplied value, not to the default, and
+    `tests/test-delivery-bundle-manifest.sh` pins that default in
+    `hub_reconciliation_defaults_pending`.
 - [ ] `scripts/development-workflow/component-milestone-reconciliation.sh`
   - `classify_component`, hub path: require
     `stable_value(evidence, "routing_outcome") == "component_release_routed"`; on mismatch set
@@ -330,7 +350,11 @@ surface.
     CLI flags only; emit blockers `hub_tracker_reconciliation_outcome_required` and
     `child_release_state_required` when absent (GAP-5, D5).
   - `evidence_state()`: return the raw value only when it is in the closed enum; otherwise
-    return a sentinel that produces the blocker `invalid_evidence_state` (GAP-6, D9).
+    return a sentinel that produces the blocker `invalid_evidence_state`. In the blocker
+    assembly that follows, extend the existing `stale`/`conflicting` branch to the full
+    disposition table in D9, so `missing` and `partial` add
+    `missing_component_evidence` / `partial_component_evidence` instead of passing as
+    non-blocking (GAP-6, D9).
   - `single_repo` path: fail with `evidence_not_supported_in_single_repo` when
     `--evidence-file` is supplied, and add `trust_basis: "caller_asserted"` to the
     `non_hub_result` payload (GAP-7, D6).
@@ -394,7 +418,7 @@ not from a prior enumeration.
 6. `scripts/development-workflow/tests/setup-component-release-fixture.sh`
 7. `scripts/development-workflow/tests/setup-component-milestone-fixture.sh`
 
-**Documentation and release notes (8; three new)**
+**Documentation and release notes (8; two created by the implementation, one already created on this plan branch)**
 
 1. `docs/workflow/development-workflow/component-release-evidence-contract.md` — **new**
 2. `docs/workflow/development-workflow/repository-modes.md`
@@ -402,7 +426,7 @@ not from a prior enumeration.
 4. `docs/workflow/development-workflow/cross-repo-pr-flow.md`
 5. `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
 6. `scripts/development-workflow/README.md`
-7. `docs/testing/workflow/1529-delivery-bundle-trust-boundary.smoke-test.md` — **new** (this plan's runbook)
+7. `docs/testing/workflow/1529-delivery-bundle-trust-boundary.smoke-test.md` — created on this plan branch; the implementation updates it with recorded PASS/FAIL results
 8. `changelog.d/1529.fixed.delivery-bundle-evidence-trust-boundary.md` — **new**
 
 **Agent / skill surfaces (1)**
@@ -429,6 +453,12 @@ not from a prior enumeration.
 - `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md` and
   `94-batch-merge-protocol.md` — both reference the producer by name only, with no flag list
   or field list to correct.
+- `scripts/development-workflow/tests/test-workflow-hub-docs.sh` — it `covers:` five of the
+  documents this plan edits, but every assertion on them is an additive `run_contains`
+  substring check (lines 132-188), so adding the two-phase render, the `attestation` class,
+  and the contract-document links cannot break it. The suite is still executed in
+  Implementation Order step 14. If a `run_contains` string is ever reworded rather than
+  added to, update the suite in the same commit.
 
 ---
 
@@ -442,12 +472,18 @@ agent must (1) add the test, (2) run the suite against unmodified runtime code a
 **failing** output, (3) apply the fix, (4) re-run and capture the passing output. The captured
 red-then-green pairs are the completion evidence recorded on the implementation PR.
 
+**The single exemption is T22.** It guards a defect already fixed in review round 3, so it is
+green against unmodified runtime code by construction and cannot be confirmed red. Record it
+as green-before and green-after; every other numbered test must show a captured red state.
+No other test may claim this exemption: T1-T21, including T15a and T15b, all target behavior
+this plan introduces.
+
 ### Fabricated-value rejection cases
 
 | # | Suite | Fabricated input | Expected rejection |
 | --- | --- | --- | --- |
 | T1 | `test-component-release-evidence.sh` | `--component-version v99.0.0` supplied, record inspected | `component_version` present and equal to the supplied value |
-| T2 | `test-component-release-evidence.sh` | `--component-version` omitted | `component_version` is JSON `null` (not absent, not `""`) |
+| T2 | `test-component-release-evidence.sh` | `--component-version` omitted | `component_version` is JSON `null` (not absent, not `""`), **and** `jq -r 'keys \| join(",")'` on the rendered record equals the 16-key list in the emitted-field contract table exactly — this is the assertion that pins the field count against drift |
 | T3 | `test-component-release-evidence.sh` | `--component-tag "bad tag"` (space) | exit 2, message names `--component-tag` |
 | T4 | `test-component-release-evidence.sh` | `--component-version "1.0.0;rm"` | exit 2, message names `--component-version` |
 | T5 | `test-component-release-evidence.sh` | target binding with `contract_revision: ""` | exit 1, `missing required identity field: contract_revision` |
@@ -461,6 +497,8 @@ red-then-green pairs are the completion evidence recorded on the implementation 
 | T13 | `test-component-milestone-reconciliation.sh` | evidence carrying `hub_tracker_reconciliation_outcome: "complete"`, flag omitted | blocker `hub_tracker_reconciliation_outcome_required`; the evidence value is **not** used |
 | T14 | `test-component-milestone-reconciliation.sh` | evidence carrying `child_release_state: "released"`, flag omitted | blocker `child_release_state_required` |
 | T15 | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "totally-fine"` | blocker `invalid_evidence_state`, `mutation_allowed=false` |
+| T15a | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "partial"`, then a second run with `evidence_state: "missing"` | blockers `partial_component_evidence` and `missing_component_evidence` respectively, `mutation_allowed=false` in both (D9 disposition table) |
+| T15b | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "released"` and otherwise valid hub facts | no `evidence_state` blocker — the value stays non-blocking, matching line 521 |
 | T16 | `test-component-milestone-reconciliation.sh` | `--mode single_repo --evidence-file <path>` | `evidence_not_supported_in_single_repo`, no `gh` call recorded |
 | T17 | `test-component-milestone-reconciliation.sh` | `--mode single_repo --version v1.2.3`, no evidence | `trust_basis: "caller_asserted"` in the result |
 | T18 | `test-component-milestone-reconciliation.sh` | valid hub-path apply | `trust_basis: "evidence_bound"` in the result |
@@ -593,6 +631,7 @@ section, which is what makes the gate satisfiable without fabricating follow-up 
 | Wrong-routing evidence | `routing_outcome: "single_repo_release"` with otherwise valid hub identity fields | `tests/test-component-milestone-reconciliation.sh` (T12) |
 | Hub-fact-smuggling evidence | Producer-shaped record that also carries `hub_tracker_reconciliation_outcome: "complete"` and `child_release_state: "released"` | `tests/test-component-milestone-reconciliation.sh` (T13, T14) |
 | Invalid `evidence_state` evidence | Producer-shaped record with `evidence_state: "totally-fine"` | `tests/test-component-milestone-reconciliation.sh` (T15) |
+| Degraded `evidence_state` evidence | Producer-shaped records with `evidence_state` of `partial`, `missing`, and `released` | `tests/test-component-milestone-reconciliation.sh` (T15a, T15b) |
 | Milestone fixture | Hub config plus `gh` stub call log, as today | `scripts/development-workflow/tests/setup-component-milestone-fixture.sh` (existing; extended with `component_version`) |
 | Assurance fixture | Valid and `release_contract: "garbage"` variants | `scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh` (existing, unchanged) |
 
@@ -605,9 +644,11 @@ The developer executes these after implementation; they are only identified here
 - [ ] `docs/workflow/development-workflow/component-release-evidence-contract.md` — **create.**
       Sections: (1) the four trust classes and each one's consumer duty; (2) the producer's
       emitted-field contract table (16 fields, required vs conditional vs nullable) — AC-5;
-      (3) the field x consumer trust matrix — AC-1; (4) fields the producer never emits and
-      which may never be sourced from an evidence file; (5) Known gaps, carrying RESIDUAL-1
-      through RESIDUAL-5 verbatim with their rationales.
+      (3) the field x consumer trust matrix — AC-1; (4) the `evidence_state` disposition
+      table from D9, covering every enum member plus the unknown and absent cases;
+      (5) fields the producer never emits and which may never be sourced from an evidence
+      file; (6) Known gaps, carrying RESIDUAL-1 through RESIDUAL-5 verbatim with their
+      rationales.
 - [ ] `docs/workflow/development-workflow/repository-modes.md` — in the paragraph beginning
       "`scripts/development-workflow/component-release-evidence.sh` renders deterministic
       ..." (around line 73), link the new contract document and state that the producer
@@ -655,7 +696,7 @@ The developer executes these after implementation; they are only identified here
 | Making `--component-version` required breaks an out-of-repository caller | Low | Med | Every in-repository caller already passes it (Verification Log). The failure is a loud exit-2 argparse error naming the flag, not silent misbehavior. |
 | Removing the `hub_tracker_reconciliation_outcome` / `child_release_state` evidence fallback breaks a real caller | Low | Med | D5 records the evidence that the documented caller is unreachable through the `schema_version` gate. Tests T13/T14 pin the new behavior, and the blockers name the missing flag. |
 | Rejecting `--evidence-file` in `single_repo` mode surprises an operator mid-release | Low | Low | Recovery is to omit the flag. The alternative — silently ignoring a supplied evidence file — is the exact false-assurance the audit exists to remove. |
-| The matrix is published but drifts as the helpers evolve | Med | Med | The contract document is `covers:`-reachable through `tests/test-workflow-hub-docs.sh` only if added there; the plan instead pins the field count via T2/T11 assertions and the Verification Log command, which a future change to the producer's emission object will break. |
+| The matrix is published but drifts as the helpers evolve | Med | Med | T2 asserts the rendered record's full top-level key list against the 16-key emitted-field contract table, so any field added to or removed from the producer's `jq` emission object fails `test-component-release-evidence.sh` until the table is updated. That is the enforcement mechanism; the Verification Log enumeration and smoke Step 14 are manual re-checks on top of it. The consumer axis has no equivalent automated guard, which is why Implementation Order step 2 re-runs the enumerations before any code is written. |
 | AC-4's "confirmed to fail before its fix" is skipped under time pressure | Med | High | The Implementation Order makes red-capture a numbered step before each fix, and the residual/completion evidence on the PR must contain the red-then-green pairs. |
 
 ---
@@ -685,8 +726,8 @@ can be mistaken for production code.
 5. **Implement the producer changes** (D1, D3, D4). Re-run the suite green.
 6. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11), capture failures.
 7. **Implement the bundle changes** (D2, GAP-1, GAP-9, enum validation). Re-run green.
-8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18), capture
-   failures.
+8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18, including T15a
+   and T15b), capture failures.
 9. **Implement the reconciliation changes** (GAP-4, D5, D9, D6, `trust_basis`). Re-run green.
 10. **Add the red tests for cleanup and assurance** (T19-T22), capture failures.
 11. **Implement the cleanup precondition** (GAP-8) and the assurance `trust_class` output
@@ -707,7 +748,7 @@ can be mistaken for production code.
     with exactly this body:
 
     ```markdown
-    - **Close the delivery-bundle evidence trust boundary** (#1529): the component release evidence contract is now documented field by field — which fields the producer always emits, which it emits only on request, and which are hub-supplied and must never come from an evidence file — together with a trust matrix stating each consumer's duty for every field. `component-release-evidence.sh` binds `component_version` alongside `component_tag`, charset-validates both, and refuses to emit a record whose repository identity, release correlation key, or contract revision is empty, so consumers can rely on presence. `delivery-bundle-manifest.sh` now requires `--component-version` and rejects it as unbound or mismatched rather than recording an unverified shipped version. `component-milestone-reconciliation.sh` requires hub-routed evidence, takes the hub tracker reconciliation outcome and child release state only from its own flags instead of falling back to the product-supplied evidence file, rejects unrecognized evidence states, and refuses a silently ignored evidence file in single-repository mode. Release cleanup rejects evidence with empty identity fields, and the adoption assurance harness reports that its scenario evidence is self-attested rather than verified. Known gaps that remain — the undefined semantics of `hub_tracker_ref`, the hub-checkout-scoped cleanup lease, and the absent release-tag deletion — are recorded in the contract document instead of being left implicit.
+    - **Close the delivery-bundle evidence trust boundary** (#1529): the component release evidence contract is now documented field by field — which fields the producer always emits, which it emits only on request, and which are hub-supplied and must never come from an evidence file — together with a trust matrix stating each consumer's duty for every field. `component-release-evidence.sh` binds `component_version` alongside `component_tag`, charset-validates both, and refuses to emit a record whose repository identity, release correlation key, or contract revision is empty, so consumers can rely on presence. `delivery-bundle-manifest.sh` now requires `--component-version` and rejects it as unbound or mismatched rather than recording an unverified shipped version. `component-milestone-reconciliation.sh` requires hub-routed evidence, takes the hub tracker reconciliation outcome and child release state only from its own flags instead of falling back to the product-supplied evidence file, rejects unrecognized and incomplete evidence states, and refuses a silently ignored evidence file in single-repository mode. Release cleanup rejects evidence with empty identity fields, and the adoption assurance harness reports that its scenario evidence is self-attested rather than verified. Known gaps that remain — the undefined semantics of `hub_tracker_ref`, the hub-checkout-scoped cleanup lease, and the absent release-tag deletion — are recorded in the contract document instead of being left implicit.
     ```
 
 ---
@@ -717,7 +758,7 @@ can be mistaken for production code.
 | Brief acceptance criterion | Where satisfied | Test / evidence |
 | --- | --- | --- |
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers |
-| No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T16, T19, T20 |
+| No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T16, T19, T20 |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T22 with captured red-then-green output on the implementation PR |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T21 (including T15a and T15b) with captured red-then-green output on the implementation PR; T22 is the single declared exemption and is recorded green-before and green-after |
 | The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table) and section 4 (never-emitted fields) | Document review; T2 pins the `null` emission of an unsupplied conditional field |

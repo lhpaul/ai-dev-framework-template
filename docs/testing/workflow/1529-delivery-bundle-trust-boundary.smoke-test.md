@@ -87,12 +87,16 @@ missing hub-input flags, invalid evidence state, empty identity field).
 **Maps to**: Acceptance Criterion 4.
 
 Read the implementation PR description (or the commit series). For each of the
-rejection tests T1-T22 listed in the plan's Testing Strategy, locate the captured
-failing output recorded before its fix.
+rejection tests T1-T21 listed in the plan's Testing Strategy, locate the captured
+failing output recorded before its fix. T22 is exempt: it is a regression guard
+for a defect already fixed in review round 3, so it is green against unmodified
+runtime code by design and the plan records it as the single exemption.
 
-**Expected result**: every rejection test has a recorded failure against the
-unmodified runtime code and a recorded pass after the fix. A test with no
-recorded red state is a FAIL for this step.
+**Expected result**: every rejection test except T22 has a recorded failure
+against the unmodified runtime code and a recorded pass after the fix. A
+non-exempt test with no recorded red state is a FAIL for this step. T22 must be
+recorded as green both before and after, proving the earlier fix did not
+regress.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -100,10 +104,11 @@ recorded red state is a FAIL for this step.
 
 ```bash
 bash scripts/development-workflow/tests/setup-component-release-fixture.sh \
-  --output-dir "$SMOKE_TMP/fixture" --json > "$SMOKE_TMP/fixture.json"
-TARGET="$SMOKE_TMP/target.json"
-# Resolve the target binding exactly as the fixture's README/usage prescribes,
-# then render evidence that binds both conditional fields.
+  --work-dir "$SMOKE_TMP/fixture" --json > "$SMOKE_TMP/fixture.json"
+# The fixture resolves the workflow-hub target binding itself and writes it to
+# <work-dir>/component-target.json; no separate resolve step is required.
+TARGET="$SMOKE_TMP/fixture/component-target.json"
+jq -c '{routing_outcome, mutation_allowed, release_branch_pattern}' "$TARGET"
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET" --binding-file "$TARGET" \
   --release-branch mobile-app/release/v1.0.0 \
@@ -116,7 +121,9 @@ scripts/development-workflow/component-release-evidence.sh \
 jq '{component_tag, component_version}' "$SMOKE_TMP/evidence-bound.json"
 ```
 
-**Expected result**: the record contains `"component_tag": "mobile-v1.4.0"` and
+**Expected result**: the fixture target reports
+`routing_outcome: "component_release_routed"` and `mutation_allowed: true`, and
+the rendered record contains `"component_tag": "mobile-v1.4.0"` and
 `"component_version": "1.4.0"`.
 
 Then render the same evidence **without** `--component-version` to
@@ -205,11 +212,14 @@ used; `mutation_allowed` is `false`.
 
 **Maps to**: Acceptance Criterion 2.
 
-Run `inspect-component` with an evidence file whose `evidence_state` is
-`totally-fine`.
+Run `inspect-component` four times, with an evidence file whose `evidence_state`
+is in turn `totally-fine`, `partial`, `missing`, and `released`.
 
-**Expected result**: `blockers` contains `invalid_evidence_state` and
-`mutation_allowed` is `false`.
+**Expected result**: the first three are rejected — `blockers` contains
+`invalid_evidence_state`, `partial_component_evidence`, and
+`missing_component_evidence` respectively, and `mutation_allowed` is `false` in
+all three. The `released` run carries no `evidence_state` blocker, matching the
+per-value disposition table in plan decision D9.
 
 ### Step 11: Single-repository mode refuses a silently ignored evidence file
 
@@ -261,10 +271,13 @@ and confirm each of the following:
    never-emitted field a consumer reads, and one column per consumer:
    `delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`,
    `multi-repo-release-assurance.sh`, `prepare-release-post-merge-cleanup.sh`.
-4. A "fields the producer never emits" section lists `evidence_state`,
+4. The `evidence_state` entry records a disposition for every enum member
+   (`verified`, `released`, `stale`, `conflicting`, `missing`, `partial`, any
+   unknown value, and an absent value), not just the accepted list.
+5. A "fields the producer never emits" section lists `evidence_state`,
    `hub_tracker_reconciliation_outcome`, `child_release_state`, `component_key`,
    `child_item`, `source_pr`, and `release_pr`.
-5. A Known gaps section records the undefined `hub_tracker_ref` semantics, the
+6. A Known gaps section records the undefined `hub_tracker_ref` semantics, the
    absent tag/branch-version relation, the unbound `apply-component` target, the
    six unvalidated assurance fields, the hub-checkout-scoped cleanup lease, and
    the absent release-tag deletion.
@@ -329,9 +342,9 @@ gh issue view 1529 --json body --jq .body > "$SMOKE_TMP/1529-body.md"
       docs (Steps 8, 9, 10, 13, 14).
 - [ ] **AC-2** — No consumer treats a missing overridable field as a match:
       unbound version, mismatched version, mismatched tag, wrong routing outcome,
-      smuggled hub facts, unrecognized evidence state, silently ignored evidence
-      file, and empty identity fields are all rejected (Steps 5, 6, 7, 8, 9, 10,
-      11, 12).
+      smuggled hub facts, unrecognized and degraded evidence states, silently
+      ignored evidence file, and empty identity fields are all rejected (Steps 5,
+      6, 7, 8, 9, 10, 11, 12).
 - [ ] **AC-3** — `component_version` is emitted by the producer and
       require-and-matched by every consumer that accepts a caller-supplied value
       (Steps 4, 6, 11).
@@ -348,7 +361,7 @@ gh issue view 1529 --json body --jq .body > "$SMOKE_TMP/1529-body.md"
 
 | Entity | Scenario | How to load |
 | --- | --- | --- |
-| Component release target binding | Valid `workflow_hub` routing with `mutation_allowed: true` | `scripts/development-workflow/tests/setup-component-release-fixture.sh --output-dir "$SMOKE_TMP/fixture" --json` |
+| Component release target binding | Valid `workflow_hub` routing with `mutation_allowed: true` | `scripts/development-workflow/tests/setup-component-release-fixture.sh --work-dir "$SMOKE_TMP/fixture" --json` (writes `component-target.json` into that directory) |
 | Milestone fixture with `gh` stub | Hub tracker calls captured to a log instead of executed | `scripts/development-workflow/tests/setup-component-milestone-fixture.sh` |
 | Assurance fixture | Valid and `release_contract: "garbage"` variants | `scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh --output-dir "$SMOKE_TMP/assurance" --json` |
 | Fabricated-value evidence variants | Unbound version, empty identity field, wrong routing outcome, smuggled hub facts, invalid evidence state | Hand-edited copies of `$SMOKE_TMP/evidence-bound.json` created inside each step |
