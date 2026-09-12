@@ -426,7 +426,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 
 ### Group B — Sampling an external output distribution (Rule 1)
 
-- [ ] A plan whose design matches, parses, classifies, or enumerates text produced outside the project fails the check when it carries no sampling record.
+- [ ] A plan whose design matches, parses, classifies, or enumerates text produced outside the project fails the check when it carries neither a sampling record nor an enumeration record satisfying the escape hatch below.
 - [ ] A sampling record passes only when it states the producer, the population and window sampled, the number of real occurrences examined, the number of distinct variants observed, whether further occurrences had stopped yielding new variants, and, for each occurrence counted, a locator sufficient for a reader to find or inspect it independently. A record missing any one of those fails.
 - [ ] A plan that binds to a fixed set of literal outputs passes only when it cites a producer contract fixing that set. The same plan with a large observed sample and no cited contract fails.
 - [ ] A plan with no cited contract passes only when it states the part of the output it relies on as stable and what the system does when an output outside the observed variants arrives.
