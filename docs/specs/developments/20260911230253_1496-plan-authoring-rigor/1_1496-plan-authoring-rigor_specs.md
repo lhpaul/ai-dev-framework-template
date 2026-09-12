@@ -201,7 +201,7 @@ Because this repository ships as a framework template, every rule must be expres
 1. The reviewer reads the recorded outcome for each rule.
 2. For each rule the author recorded as firing, the reviewer locates the required evidence and re-runs what can be re-run at the recorded revision.
 3. For each rule recorded as not applicable, the reviewer checks the stated rationale against the plan's contents.
-4. The reviewer raises a finding for every outcome that does not hold up, naming the rule, the claim, and what was missing or failed to reproduce.
+4. The reviewer raises a finding for every outcome that does not hold up, naming the rule, the claim, and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record.
 
 **Postconditions**: Each rule has a reviewer-confirmed outcome. Findings that block the plan from becoming human-ready are distinguished from findings that do not.
 
@@ -312,7 +312,7 @@ Each rule carries one outcome per plan revision.
 
 - **Per-rule outcome record on the plan pull request**: every rule with its display label, and, for each not-applicable rule, the rationale. A reviewer can tell from this record alone which rules the author claims fired, without first reading the plan.
 - **Evidence in the plan document**: the sampling records, count derivations, existence searches, consumer enumerations, and scope statements the firing rules require, each naming the revision it was gathered at. This is what survives merge and reaches the implementer.
-- **Review findings**: each finding names the rule, the claim it concerns, and what was missing or failed to reproduce, so the author knows which statement to fix rather than which section to reread.
+- **Review findings**: each finding names the rule, the claim it concerns, and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record, so the author knows which statement to fix rather than which section to reread.
 - No new notification, report, or dashboard is introduced. The records above sit on surfaces the plan stage already produces.
 
 ---
@@ -474,7 +474,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - [ ] Outcomes are determined afresh on every review round. An outcome recorded against an earlier plan revision never satisfies a later one.
 - [ ] Every outcome that keeps a plan from becoming human-ready is enumerated together with the action that clears it. A reader can determine, for any outcome, whether it blocks and what to do about it.
 - [ ] The evidence a firing rule requires is in the plan document. A plan whose only evidence for a firing rule is in a pull request comment or a chat transcript fails.
-- [ ] Every review finding this feature introduces names the rule, the claim, and what was missing or failed to reproduce.
+- [ ] Every review finding this feature introduces names the rule, the claim, and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record.
 
 ---
 
