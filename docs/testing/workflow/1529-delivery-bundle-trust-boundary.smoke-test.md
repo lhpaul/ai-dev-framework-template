@@ -88,22 +88,28 @@ missing hub-input flags, invalid evidence state, empty identity field).
 
 Read the implementation PR description (or the commit series). For each of the
 rejection tests T1-T21 listed in the plan's Testing Strategy, locate the captured
-failing output recorded before its fix. Three tests are exempt: T22 is a
+failing output recorded before its fix. Four tests are exempt: T22 is a
 regression guard for a defect already fixed in review round 3; T6b pins the
 producer's deliberately unchanged `null` passthrough for `single_repo_release`
-routing; and T15b pins reconciliation's deliberately unchanged non-blocking
+routing; T15b pins reconciliation's deliberately unchanged non-blocking
 treatment of `evidence_state: "released"` (already accepted before this plan,
-and D9's disposition table preserves that behavior rather than tightening it).
-All three are green against unmodified runtime code by design, and the plan
-records them as the only three exemptions.
+and D9's disposition table preserves that behavior rather than tightening it);
+and T15c pins reconciliation's deliberately unchanged treatment of an evidence
+record whose `evidence_state` key is entirely absent (synthesized as `verified`
+when `schema_version` matches, per D9's `absent` row — a pre-existing behavior
+this plan does not touch). All four are green against unmodified runtime code
+by design, and the plan records them as the only four exemptions.
 
-**Expected result**: every rejection test except T6b, T15b, and T22 has a
+**Expected result**: every rejection test except T6b, T15b, T15c, and T22 has a
 recorded failure against the unmodified runtime code and a recorded pass after
-the fix. A non-exempt test with no recorded red state is a FAIL for this step.
-T6b, T15b, and T22 must each be recorded as green both before and after: T6b
-proving the new identity precondition was not over-applied, T15b proving
-`released` still is not blocked, and T22 proving the earlier fix did not
-regress.
+the fix (this includes T15d, which proves the *new* `invalid_evidence_state`
+disposition for a present but non-string `evidence_state` value such as JSON
+`null`, distinct from the unchanged absent-key case in T15c). A non-exempt test
+with no recorded red state is a FAIL for this step. T6b, T15b, T15c, and T22
+must each be recorded as green both before and after: T6b proving the new
+identity precondition was not over-applied, T15b proving `released` still is
+not blocked, T15c proving an absent `evidence_state` key still is not blocked,
+and T22 proving the earlier fix did not regress.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -253,14 +259,24 @@ used; `mutation_allowed` is `false`.
 
 **Maps to**: Acceptance Criterion 2.
 
-Run `inspect-component` four times, with an evidence file whose `evidence_state`
-is in turn `totally-fine`, `partial`, `missing`, and `released`.
+Run `inspect-component` six times, with an evidence file whose `evidence_state`
+is in turn `totally-fine`, `partial`, `missing`, `released`, entirely absent
+(the key removed from the evidence file), and JSON `null` (the key present with
+a `null` value).
 
-**Expected result**: the first three are rejected — `blockers` contains
-`invalid_evidence_state`, `partial_component_evidence`, and
-`missing_component_evidence` respectively, and `mutation_allowed` is `false` in
-all three. The `released` run carries no `evidence_state` blocker, matching the
-per-value disposition table in plan decision D9.
+**Expected result**: the first three (`totally-fine`, `partial`, `missing`) are
+rejected — `blockers` contains `invalid_evidence_state`,
+`partial_component_evidence`, and `missing_component_evidence` respectively,
+and `mutation_allowed` is `false` in all three. The `released` run carries no
+`evidence_state` blocker, matching the per-value disposition table in plan
+decision D9. The absent-key run also carries no `evidence_state` blocker —
+`evidence_state` is synthesized as `verified` when `schema_version` matches,
+exactly as it was before this plan (D9's `absent` row, pre-existing behavior at
+lines 179-196 that this plan does not change). The `null` run is rejected —
+`blockers` contains `invalid_evidence_state` and `mutation_allowed` is
+`false` — because a *present* non-string value falls under D9's `any other
+string, or a non-string` row, not the `absent` row; this is the case that
+distinguishes "key missing" from "key present but not a valid enum string."
 
 ### Step 11: Single-repository mode refuses a silently ignored evidence file
 
