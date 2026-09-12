@@ -238,7 +238,7 @@ The rules below are the normative statement of this feature. Every other section
 
 ### Rule 2 — One normative statement per fact
 
-- A fact is any value, count, name, decision, or behavioral statement the plan asserts.
+- The rule fires when the plan asserts a fact — any value, count, name, decision, or behavioral statement the plan states as true. A plan with no factual assertion has no substance to review, so the rule fires on every ordinary plan; it is recorded as not applicable only in that limiting, essentially empty case.
 - Each fact is asserted in exactly one place in the plan. Every other mention of that fact names where it is asserted instead of restating it.
 - Two mentions that assert the same fact violate this rule whether or not they agree. Agreeing duplicates are a defect in waiting, because the next correction round will update one of them; disagreeing ones are a contradiction already.
 - A correction round edits the single assertion. It never adds a second statement of the corrected fact elsewhere.
