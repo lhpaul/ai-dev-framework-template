@@ -311,7 +311,7 @@ Each rule carries one outcome per plan revision.
 ## Operational Visibility
 
 - **Per-rule outcome record on the plan pull request**: every rule with its display label, and, for each not-applicable rule, the rationale. A reviewer can tell from this record alone which rules the author claims fired, without first reading the plan.
-- **Evidence in the plan document**: the sampling records, count derivations, existence searches, consumer enumerations, and scope statements the firing rules require, each naming the revision it was gathered at. This is what survives merge and reaches the implementer.
+- **Evidence in the plan document**: the sampling records, or, under Rule 1's escape hatch, enumeration records, count derivations, existence searches, consumer enumerations, and scope statements the firing rules require, each naming the revision it was gathered at. This is what survives merge and reaches the implementer.
 - **Review findings**: each finding names the rule, the claim it concerns, and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record, so the author knows which statement to fix rather than which section to reread.
 - No new notification, report, or dashboard is introduced. The records above sit on surfaces the plan stage already produces.
 
@@ -491,7 +491,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - **Retrofitting merged plans.** Plans already merged are not re-audited against these rules. The rules apply to plans authored after adoption.
 - **Per-repository opt-out or per-rule configuration.** The rules ship as part of the plan stage, like the plan stage's other guardrails. Whether a downstream repository may disable individual rules is left for a later decision, once there is evidence about their cost in practice.
 - **Extension to other artifacts.** Specs, code reviews, retrospectives, and release notes are not brought under these rules, even though some of the same failure modes are plausible there.
-- **Automated collection of external output samples.** Rule 1 requires a sample and a record of it; harvesting, storing, or refreshing such samples automatically is not part of this feature.
+- **Automated collection of external output samples.** Rule 1's sampling path requires a sample and a record of it; harvesting, storing, or refreshing such samples automatically is not part of this feature.
 - **Changing the review gate's existing severity vocabulary.** This feature classifies its own findings using the classifications the gate already has; it does not add new ones or alter the meaning of existing ones.
 
 ### Deferral notes
