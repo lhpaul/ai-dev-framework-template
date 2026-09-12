@@ -297,6 +297,8 @@ The outcomes above assume each gate input in the Gate inputs table could actuall
 | The axis decomposition produces no axis at all                                                           | Escalated, incomplete           | Stops, records that decomposition produced zero axes — which the axis rule in Business Rules never allows, since inseparable components are one axis, not none — and treats this as a defect in the escalation rather than a valid outcome | Have the runner redo the decomposition; at least one axis is required before the report stands |
 | A citation's conformance cannot be determined, and the cited line governs behavior that already exists  | Escalated, conformance undetermined | Does not declare Conforms or Departs, and does not use Not yet implemented for behavior that exists. States plainly that conformance could not be determined and why, and reports the axis that citation was meant to settle as Genuinely open with the reason Coverage uncertain | Decide the axis, or point the runner at what would let it determine conformance |
 
+These three rows are read in the order listed, because the second and third presuppose what the first checks: decomposition has nothing to decompose until the question and its source are established, and a citation's conformance has nothing to be undetermined about until an axis exists for it to settle. Where the question or its source cannot be established at all, that state is read by the first row alone, not by the second row's zero-axes case as well, even though no axis exists yet in either state.
+
 None of these three rows produces "Not an architecture decision" or any other outcome that lets the run continue without a human decision.
 
 ### Mirror surfaces
