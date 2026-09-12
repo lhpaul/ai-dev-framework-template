@@ -144,7 +144,7 @@ Because this repository ships as a framework template, every rule must be expres
 3. The author names where the obligation is discharged — the step or site that checks it.
 4. The author re-reads the statement for words that stand in for a scope without naming one, and rewrites any it finds.
 
-**Postconditions**: The obligation says not only when it applies but where, and who discharges it.
+**Postconditions**: The obligation says not only when it applies, but the scope it governs and where it is discharged.
 
 **Information shown**:
 
@@ -232,7 +232,7 @@ The rules below are the normative statement of this feature. Every other section
 - Before the design is committed to, the plan records a sampling record stating: the producer; the population sampled and the window it covers; how many real occurrences were examined; how many distinct variants those occurrences yielded; and whether further occurrences had stopped yielding new variants by the end of the sample.
 - For each occurrence counted in the sample, the record includes a locator sufficient for a reader who was not present when the sample was gathered to find or inspect it independently: a reference to where that occurrence was captured, or the occurrence's own text paired with a named source it was captured from — the specific message, log entry, response payload, request ID, timestamp, or similar. A record that reports only counts, with nothing that lets a reader locate or inspect any underlying occurrence, does not satisfy this rule, and embedded text with no named source has the same defect: a reader can read the string but cannot trace it to a real occurrence.
 - The occurrences must be real observed outputs. Text authored to illustrate the format — documentation examples, captures curated for a ticket — is not a sample of the distribution, and a record built only from it does not satisfy this rule.
-- A record of two or fewer occurrences never satisfies this rule. Where the whole population is small enough to enumerate, the plan enumerates it and says so.
+- A record of two or fewer occurrences never satisfies this rule. The population is small enough to enumerate only when it is finite and closed, and a single recorded command, query, or listing produces its complete membership, in enough detail for a reader to re-run it and reach the same list — the same reproducibility standard Rules 3 and 4 apply to counts and existence claims. Where that holds, the plan enumerates the population that way, instead of sampling it, and records the command or query used. This escape hatch is narrow: a design against a large or open output distribution does not satisfy it by listing a curated subset and calling that subset the whole population.
 - The plan may bind its design to a fixed set of literal outputs only when the producer publishes a contract fixing that set and the plan cites the contract. Observation alone never establishes a fixed set, however large the sample.
 - Without a cited contract, the design must be tolerant: the plan states which part of the output it relies on as stable, and what the system does when an output outside the observed variants arrives. "That cannot happen" is not an answer this rule accepts.
 
@@ -431,7 +431,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 
 ### Group C — One normative statement per fact (Rule 2)
 
-- [ ] Take any value, count, name, or decision that appears more than once in a plan. The author's obligation is to assert it in exactly one occurrence and have every other occurrence name where it is asserted; the next criterion governs whether a plan that instead repeats the assertion leaves the rule Satisfied or Unsatisfied.
+- [ ] Take any value, count, name, decision, or behavioral statement that appears more than once in a plan. The author's obligation is to assert it in exactly one occurrence and have every other occurrence name where it is asserted; the next criterion governs whether a plan that instead repeats the assertion leaves the rule Satisfied or Unsatisfied.
 - [ ] Two occurrences that both assert the same fact are a defect whether or not they agree, and each produces a finding, but only a disagreeing pair leaves the rule's outcome Unsatisfied. Agreeing duplicates produce a non-blocking consolidation finding and leave the rule Satisfied; disagreeing ones produce a blocking contradiction finding and leave the rule Unsatisfied.
 - [ ] No rule, check, outcome, or finding introduced by this feature uses a plan's length in bytes, lines, words, or pages as a pass or fail condition. A plan cannot fail anything in this feature because of its size, and a rule may name these units only to state that they are not a basis for failure.
 - [ ] After a correction round, the corrected fact is asserted exactly once. A reader comparing the two revisions finds the assertion edited rather than a second statement added.
