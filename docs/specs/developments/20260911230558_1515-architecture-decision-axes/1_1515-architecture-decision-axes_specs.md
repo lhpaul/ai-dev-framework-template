@@ -217,7 +217,7 @@ Reason, recorded with every Genuinely open verdict:
 | No governing line                   | Nothing in the workflow specification bears on this axis. Reported with the surfaces the runner consulted.                                    |
 | Governing lines conflict            | More than one line bears on this axis and they do not agree. Reported with every conflicting citation and what each would require.            |
 | Governing line covers a different case | A line looks applicable but governs a neighbouring case rather than this axis. Reported with the citation and why it does not reach the axis. |
-| Coverage uncertain                  | The runner cannot tell whether a line reaches this axis. Reported with the citation in doubt and what is unclear about it.                    |
+| Coverage uncertain                  | The runner cannot tell whether a line reaches this axis. Reported with the citation in doubt and what is unclear about it — or, where no candidate citation can even be tested because the axis itself is unclear, with what is ambiguous about the axis instead. |
 
 Conformance declaration, recorded with every citation:
 
@@ -273,10 +273,23 @@ Triggers are events. They decide when this gate runs, and none of them is read a
 | Every axis settled, the runner's behavior departs on one                       | Departure reported          | States the departure plainly and either conforms, or opens a new axis asking whether the line should change | None, unless a new axis was opened — then decide that axis       |
 | Every axis settled, but the runner is unsure the lines fully answer the question | Escalated                   | Records the uncertainty as an open axis with the reason Coverage uncertain, and stops                      | Decide the uncertain axis                                        |
 | Lines bearing on one axis conflict                                             | Escalated                   | Reports the axis as open with every conflicting citation and what each requires                            | Decide which line governs                                        |
-| The question cannot be separated into independently answerable axes            | Escalated                   | Stops, states that the question could not be decomposed, and names what is ambiguous about it              | Restate the question, or answer it as posed                      |
+| The question does not separate into more than one independently answerable component | Escalated                   | Reports the whole question as one axis, per the axis rule in Business Rules — never as zero axes. Where what is ambiguous about the question itself keeps the runner from telling whether any line reaches it, marks that one axis Genuinely open with the reason Coverage uncertain, and states the ambiguity as what is unclear | Decide the axis, or restate the question so the runner can attempt coverage again |
+| Every axis settled, coverage certain, and every citation on those axes is Not yet implemented | Not an architecture decision | Proceeds with the work as the cited lines already specify. There is no departure to declare, because the behavior does not exist yet to conform or depart                                     | None                                                             |
 | A citation is offered outside an escalation report                             | Declaration required        | Attaches Conforms, Departs, or Not yet implemented to that citation in place                                | None                                                             |
 
 No outcome above answers an open axis, acts on a provisional answer to one, or asks the human to ratify an action already taken on one. No outcome changes which stop condition applies to a question, and none suppresses a stop the runner would otherwise have taken.
+
+### Malformed or missing gate inputs
+
+The outcomes above assume each gate input in the Gate inputs table could actually be established. Where establishing one of them fails outright, none of the outcomes above apply; the rows below govern instead, and every one of them fails closed — the escalation is reported as incomplete rather than presented as well-formed, and the runner never treats a missing or malformed input as grounds to skip the stop.
+
+| Missing or malformed input                                                                              | Outcome                        | What the runner does                                                                                                                    | Operator's next action                                                        |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| The question as raised, or its source, cannot be established                                             | Escalated, incomplete           | Stops under `architecture_decision` regardless, records that the question or its source is missing, and does not present the report as complete | Supply the missing question or its source; the escalation cannot close until it does |
+| The axis decomposition produces no axis at all                                                           | Escalated, incomplete           | Stops, records that decomposition produced zero axes — which the axis rule in Business Rules never allows, since inseparable components are one axis, not none — and treats this as a defect in the escalation rather than a valid outcome | Have the runner redo the decomposition; at least one axis is required before the report stands |
+| A citation's conformance cannot be determined, and the cited line governs behavior that already exists  | Escalated, conformance undetermined | Does not declare Conforms or Departs, and does not use Not yet implemented for behavior that exists. States plainly that conformance could not be determined and why, and reports the axis that citation was meant to settle as Genuinely open with the reason Coverage uncertain | Decide the axis, or point the runner at what would let it determine conformance |
+
+None of these three rows produces "Not an architecture decision" or any other outcome that lets the run continue without a human decision.
 
 ### Mirror surfaces
 
@@ -305,6 +318,7 @@ The opening rows work through the recorded incident.
 | A line the runner cannot tell applies                                                                           | Genuinely open — Coverage uncertain           | The citation in doubt and what is unclear about it; never resolved as settled                                        |
 | A citation about behavior the plan has not built yet                                                            | Not yet implemented                           | The declaration says so; it is not used where the behavior exists                                                    |
 | Every axis settled, the runner conforms, no uncertainty                                                         | No escalation                                 | The runner applies the cited lines; there was no architecture decision to make                                       |
+| Every axis settled, coverage certain, and every citation is Not yet implemented — nothing cited has been built yet | No escalation                                 | The runner proceeds to build what the cited lines specify; there is no departure to declare, because there is no behavior yet to conform or depart                       |
 
 ### Coverage Matrix: issue-objective traceability
 
@@ -341,7 +355,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] Every axis marked Genuinely open carries exactly one reason: No governing line, Governing lines conflict, Governing line covers a different case, or Coverage uncertain.
 - [ ] An axis marked Genuinely open with the reason No governing line names the surfaces the runner consulted.
 - [ ] An axis marked Genuinely open with the reason Governing lines conflict cites every conflicting line and states what each would require.
-- [ ] An axis the runner could not resolve is reported as Genuinely open with the reason Coverage uncertain, naming the citation in doubt. No report resolves an uncertain axis as settled.
+- [ ] An axis the runner could not resolve is reported as Genuinely open with the reason Coverage uncertain, naming the citation in doubt — or, where the axis itself is too ambiguous for any citation to be tested against it, naming what is ambiguous about the axis instead. No report resolves an uncertain axis as settled.
 
 ### Citations carry a conformance declaration
 
@@ -368,7 +382,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] No guidance introduced by this feature permits a runner to continue past a question it would otherwise have escalated on the grounds that the analysis found axes settled.
 - [ ] Where the runner is uncertain whether the cited lines fully answer the question, the guidance requires it to record that uncertainty as an open axis and stop.
 - [ ] The named stop conditions, their triggers, and the choice of which condition applies to a question are unchanged by this feature.
-- [ ] A question that cannot be separated into independently answerable axes still escalates, with the report stating that it could not be decomposed and naming what is ambiguous about it.
+- [ ] A question that does not separate into more than one independently answerable component is still reported as one axis — never as zero — per the axis rule in Business Rules. Where what is ambiguous about the question keeps the runner from telling whether any line reaches it, that one axis is marked Genuinely open with the reason Coverage uncertain, and the report names the ambiguity as what is unclear.
 
 ### The guidance carries a worked example
 
