@@ -12,6 +12,30 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 
 ---
 
+## Brief Coverage
+
+Issue #1561's brief objectives (B-1 through B-10) and the three brief acceptance criteria (AC-1 through AC-3) all map to an acceptance-criteria group in this spec or an explicit `## Out of Scope (MVP)` entry with a deferral rationale. No objective is unmapped.
+
+| # | Brief objective | Covered by |
+| --- | --- | --- |
+| B-1 | Verify before dispatch that configured reviewer platforms can actually review this repository | AC group "A disagreement is reported before dispatch, naming the surface"; AC group "The preflight is reachable where it is needed" |
+| B-2 | Three surfaces must agree; they are validated only in isolation | Business Rules (cross-check rule, surface precedence rule); Gate inputs table |
+| B-3 | Cross-check the three surfaces against each other rather than each alone | Business Rules (cross-check rule); Decision-Gate Consistency Matrix gate inputs |
+| B-4 | Fail loudly before a batch starts; the cost of not having the check is an entire run | Outcome `blocked` / Blocked; AC "On Blocked, no item is dispatched"; AC "reported before any item-level output" |
+| B-5 | Assert reviewer operability against a real or scratch PR | Partially covered: AC group "A preflight against an existing pull request asserts operability, scoped to that branch (B-5)" covers the real-PR configuration cross-check. Scratch-PR creation is **Out of Scope entry 1**; live installation/service-availability detection is **Out of Scope entry 11** |
+| B-6 | `--preflight` mode on `pr-review-loop.sh` **or** a step in the bounded prelude | **Out of Scope entry 2** |
+| B-7 | The false-clean banner counting is fixed by #1531; the absence of a preflight is not | **Out of Scope entry 3** — prior context, not re-opened |
+| B-8 | Document that the reviewer platform reads its config from the PR HEAD branch | AC group "The branch-in-force resolution behaviour is documented (AC-3)"; Use Case 3; Mirror surfaces table |
+| B-9 | Document the two consequences: a config fix takes effect on the PR carrying it; a branch can silently diverge from repo review policy | AC-3 bullets 2 and 3; Use Case 3 steps 2–3 |
+| B-10 | The behaviour was confirmed live on PR #1532 and is load-bearing and undocumented | AC-3 bullet 4 |
+| AC-1 | A configuration where a listed platform cannot review is reported before dispatch, naming which surface disagrees | AC group "A disagreement is reported before dispatch, naming the surface (AC-1)" |
+| AC-2 | A correct configuration passes without side effects | AC group "A correct configuration passes without side effects (AC-2)" |
+| AC-3 | The HEAD-branch config resolution behaviour is documented | AC group "The branch-in-force resolution behaviour is documented (AC-3)" |
+
+Deferral notes for B-5's two partial-coverage items, B-6, and B-7 are recorded in `## Out of Scope (MVP)` entries 1, 2, 3, and 11.
+
+---
+
 ## Use Cases
 
 ### Use Case 1: A run starts and the reviewer configuration is coherent
@@ -230,7 +254,7 @@ The preflight's only output is its report. There is no user interface, and no on
 - **Unverified report**: on Passed, some unverified, each undetermined platform with its reason, kept visibly separate from the platforms that passed.
 - **Override notice**: when a machine-local override is in effect, the report records that it is, and which platforms it removed and which it added, so a coverage change — reduced, different, or both — is visible at the moment it is chosen rather than only when a review is missing.
 - **Scope statement**: every report states what it was checked against — every base branch this run targets, or a specific pull request's branch — so a reader never has to guess whether a branch-local divergence was covered.
-- **Prerequisite failure report**: on Prerequisite not met, the report says plainly which required input was empty, unresolved, or malformed — the targeted base-branch set, or the dispatching stage — and that no platform was cross-checked on this run — distinct from Passed, whose report states that every platform in the resolved list was actually checked.
+- **Prerequisite failure report**: on Prerequisite not met, the report says plainly which required input was empty, unresolved, or malformed — the targeted base-branch set, or the dispatching stage or pull-request state — and that no platform was cross-checked on this run — distinct from Passed, whose report states that every platform in the resolved list was actually checked.
 - **Audit record**: where the enclosing run already keeps an audit record of itself, the preflight's outcome is folded into that record as one more fact, so a run reported as complete can be checked afterwards for whether its reviewers were verified before it started. The preflight creates no record of its own and requires no run to create one where it previously kept none; folding the outcome in is the enclosing run's own pre-existing state change, made with a mechanism that predates this feature. The no-side-effects rule AC-2 tests is about the preflight's own actions — no pull request, no comment, no label, no branch, no tracked file created or modified by the preflight itself — not about whether some other, already-existing part of the run writes state for reasons of its own.
 
 ---
@@ -276,7 +300,7 @@ An empty, unresolved, or malformed set of targeted base branches is not the same
 
 | Outcome                 | When it is produced                                                | Required next action                                                                     |
 | ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Prerequisite not met    | The run's set of targeted base branches, or its dispatching stage, is empty, unresolved, or malformed | Nothing is dispatched. No per-platform verdict is computed. The run resolves the failed input and re-runs |
+| Prerequisite not met    | The run's set of targeted base branches, or its dispatching stage or pull-request state, is empty, unresolved, or malformed | Nothing is dispatched. No per-platform verdict is computed. The run resolves the failed input and re-runs |
 | Passed                  | No platform in the resolved list is Cannot review, and none is Undetermined | Dispatch proceeds. No operator action, no confirmation collected                |
 | Passed, some unverified | No platform in the resolved list is Cannot review, and at least one is Undetermined | Dispatch proceeds. The report names every unverified platform for the operator to read |
 | Blocked                 | At least one platform in the resolved list is Cannot review        | Nothing is dispatched. The operator repairs a surface, or narrows the list, and re-runs   |
