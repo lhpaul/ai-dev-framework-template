@@ -263,10 +263,23 @@ makes no tracker mutation. Run 2 succeeds with
 **Maps to**: Acceptance Criterion 2.
 
 Run `prepare-release-post-merge-cleanup.sh` with `--repo` and an
-`--evidence-file` whose `target_binding.contract_revision` is `""`.
+`--evidence-file` whose `target_binding.contract_revision` is `""` (T19).
 
 **Expected result**: exit `1` with a message naming the missing identity field.
 No product release branch is deleted and no tracker state changes.
+
+Repeat with `target_binding.canonical_repository_identity: ""` (T20), then
+`target_binding.release_correlation_key: ""` (T20b), then
+`target_binding.routing_outcome: ""` (T20d), then
+`target_binding.selected_product_repo_key: ""` or the key absent (T20e), then
+once per `artifact_owners` sub-field (`release`, `ci`, `github_release`,
+`deployment`, `cleanup`, `tracker`) — each run emptying exactly one sub-field
+with the other five populated (T20f, six runs).
+
+**Expected result**: each run exits `1` naming the missing field
+(`canonical_repository_identity`, `release_correlation_key`, `routing_outcome`,
+`selected_product_repo_key`, or `artifact_owners` respectively). No product
+release branch is deleted and no tracker state changes in any run.
 
 Then repeat with an otherwise-valid evidence file whose top-level
 `release_branch` is `""` (or the key omitted), passing a positional release
