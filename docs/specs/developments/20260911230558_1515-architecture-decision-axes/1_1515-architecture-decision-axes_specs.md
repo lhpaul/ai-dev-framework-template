@@ -365,6 +365,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] Not yet implemented appears only where the cited line governs behavior that does not exist yet. A report never uses it for behavior the runner has already built.
 - [ ] Where a departure is reported and conforming to the cited line is the correction, the axis is reported as Settled by specification and the correction is named as the next action — not put to the human as an architecture decision.
 - [ ] Where a departure leads the runner to question the cited line itself, that question appears as a separate axis marked Genuinely open, not as an answer to the axis originally raised.
+- [ ] Where every axis is Settled by specification and every citation on those axes is declared Not yet implemented, the runner proceeds with the work the cited lines specify and does not raise an `architecture_decision` escalation for that question.
 
 ### The requested decision covers only the open axes
 
