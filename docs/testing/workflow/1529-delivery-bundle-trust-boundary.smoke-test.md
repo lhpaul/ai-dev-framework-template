@@ -149,8 +149,14 @@ Run the producer five more times, each time changing one input:
 2. `--component-version "1.0.0;echo"` (contains a semicolon)
 3. a target binding whose `contract_revision` is `""`
 4. a target binding whose `release_correlation_key` is `""`
-5. a target binding whose `routing_outcome` is `component_release_routed` and
-   whose `selected_product_repo_key` is `null`
+5. a target binding whose `routing_outcome` is `component_release_routed`,
+   whose `selected_product_repo_key` is `null`, and whose `release_branch_pattern`
+   is **omitted (empty)** rather than the base fixture's
+   `{product_repo}/release/v{version}` — with the pattern non-empty, the
+   pre-existing branch-pattern check would substitute the null key's empty
+   string into `{product_repo}` and reject the run there instead of at the new
+   guard this step is meant to exercise, because no `--release-branch` value can
+   satisfy both a `{product_repo}`-shaped pattern and a null key at once
 
 **Expected result**: each run exits non-zero. Runs 1 and 2 exit `2` and the
 message names the offending flag. Runs 3, 4, and 5 exit `1` and the message names
@@ -158,7 +164,8 @@ the missing identity field — run 5 naming `selected_product_repo_key`. No
 evidence file is written in any of the five runs.
 
 Then run the producer once more against a target binding whose `routing_outcome`
-is `single_repo_release` and whose `selected_product_repo_key` is `null`.
+is `single_repo_release`, whose `selected_product_repo_key` is `null`, and whose
+`release_branch_pattern` is likewise omitted (empty), for the same reason as run 5.
 
 **Expected result**: the record **is** written and its `selected_product_repo_key`
 is JSON `null`. This is the `producer_required_nullable` contract: `null` occurs
@@ -290,13 +297,19 @@ scripts/development-workflow/multi-repo-release-assurance.sh \
 Open `docs/workflow/development-workflow/component-release-evidence-contract.md`
 and confirm each of the following:
 
-1. The five trust classes are defined with each one's consumer duty:
+1. The six trust classes are defined with each one's consumer duty:
    `producer_required`, `producer_required_nullable`, `producer_conditional`,
-   `hub_input`, and `attestation`. The `producer_required_nullable` entry states
-   its `null` handling explicitly — require the key present, accept a non-empty
-   string or JSON `null`, treat `null` as unbound, and require
-   `routing_outcome == component_release_routed` first — so it does not
-   contradict `producer_required`'s "require non-empty" duty.
+   `hub_input`, `hub_input_identifier`, and `attestation`. The
+   `producer_required_nullable` entry states its `null` handling explicitly —
+   require the key present, accept a non-empty string or JSON `null`, treat
+   `null` as unbound, and require `routing_outcome == component_release_routed`
+   first — so it does not contradict `producer_required`'s "require non-empty"
+   duty. The `hub_input` entry (closed-enum outcome flags) and the
+   `hub_input_identifier` entry (open-ended identifiers: component key, issue,
+   source PR, release PR) state their duties separately, and the `hub_input`
+   entry's note on `hub_tracker_reconciliation_outcome`'s bundle-side
+   `default="pending"` explains why an optional flag with a closed-enum default
+   does not contradict "require the flag" (plan decision D13).
 2. The producer's emitted-field table lists every field the producer emits, each
    carrying exactly one trust class, and no field's entry contradicts the
    definition of the class it carries. `selected_product_repo_key` is

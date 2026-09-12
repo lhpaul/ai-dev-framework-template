@@ -26,8 +26,8 @@ and the validation duties of its consumers — and every downstream project that
 
 **Approach**: Replace consumer-by-consumer patching with an explicit, documented trust
 boundary. First, enumerate every field `component-release-evidence.sh` emits and classify it
-into one of five trust classes (`producer_required`, `producer_required_nullable`,
-`producer_conditional`, `hub_input`, `attestation`). Second, publish that classification plus
+into one of six trust classes (`producer_required`, `producer_required_nullable`,
+`producer_conditional`, `hub_input`, `hub_input_identifier`, `attestation`). Second, publish that classification plus
 a field x consumer matrix as a new contract document. Third, close every cell where a consumer
 accepts a caller-supplied value without require-and-match, or treats an absent field as a
 match — including the known `component_version` gap — by binding the value at the producer (the
@@ -113,7 +113,8 @@ lets a future consumer tell required from optional without reading the producer 
 | `producer_required` | `component-release-evidence.sh` always emits the field with a non-empty value, and refuses to emit a record at all when it cannot. The value is never `null` and never `""`; a field that may legitimately be `null` is `producer_required_nullable` instead, never this class | Require non-empty. Where the caller can also supply the same fact, **require-and-match**. Never infer from absence. |
 | `producer_required_nullable` | The producer always emits the **key** and still refuses to emit a record when it cannot resolve the field, but the value is legitimately JSON `null` in exactly one defined case: `single_repo_release` routing, where `component-release-target.sh` emits the key empty (line 257) and renders it as `null` (line 105). `selected_product_repo_key` is the only member. Under `component_release_routed` routing the value is non-empty, because D4 makes the producer refuse emission otherwise — so `null` and `single_repo_release` routing imply each other | Require the key to be **present**, and accept only a non-empty string or JSON `null`; an absent key or `""` is a rejection. Treat `null` as **not bound**: never match it against a caller-supplied value and never read agreement into it. A consumer must first require `routing_outcome == component_release_routed`, after which the duty is identical to `producer_required` — require non-empty, and **require-and-match** where the caller can also supply the fact. |
 | `producer_conditional` | The producer emits the field only when the corresponding flag was supplied; otherwise it emits `null` | A consumer that accepts a caller override must **reject when the evidence does not bind the field** (`*_unbound`), then match (`*_mismatch`). "Check only if present" is forbidden. |
-| `hub_input` | A hub-owned fact the product release producer cannot know, supplied by the hub caller at consumption time | Require the flag, validate against a closed enum, fail closed on any unknown value, and **never** fall back to the evidence file for it. |
+| `hub_input` | A hub-owned fact expressed as a **closed-enum outcome value** that the product release producer cannot know, supplied by the hub caller at consumption time. Its only members are `hub_tracker_reconciliation_outcome` and `child_release_state` — the closed-enum subset of hub-supplied facts | Require the flag: the caller must supply it, or — in the one documented case, described in the note preceding the Trust matrix table below, where a consumer defines its own explicit "not yet known" default for an omitted flag, and that default is itself a member of the closed enum and never satisfies that consumer's own completion gate — accept that default in its place. Either way, validate the resulting value against the closed enum and fail closed on any unknown value, and **never** fall back to the evidence file for it. |
+| `hub_input_identifier` | A hub-owned **identifier** — a component key, tracker issue number, source PR reference, or release PR reference — that the product release producer cannot know, supplied by the hub caller at consumption time. Its members are `component_key`, `child_item`, `source_pr`, `release_pr`, and reconciliation's `--issue`. Unlike `hub_input`, its values are open-ended (repository keys, PR/issue numbers), not drawn from a fixed vocabulary, so no closed-enum validation applies to this class | Require the caller to supply the value; **never** source it from the evidence file. Apply whatever narrower per-field duty the trust matrix cell states: require-and-match against a specific, separately classified evidence field where the cell says so (e.g., `component_key` against `selected_product_repo_key`), or record it for audit without gating on it where the cell says `record`. No charset or shape validation applies unless a specific matrix cell states one — this class is a required, unvalidated-format identifier, not a closed enum. |
 | `attestation` | A self-declared reference string in an assurance summary; the referenced artifact is not loaded | Shape-check only where this codebase already establishes an objective format. Record the class in output so no downstream reader mistakes it for verification. |
 
 ### Producer emitted-field contract
@@ -157,6 +158,25 @@ resolved target to be routed, and the assurance harness never loads an evidence 
 `null` case is therefore unreachable in every cell of that row, and the `req+match` / `compare`
 duties below apply to a non-empty value.
 
+`hub_tracker_reconciliation_outcome` carries the `hub_input` closed-enum duty at every consumer
+that reads it, but its two consumers enforce that duty differently, and that difference is a
+deliberate, narrow exception rather than a contradiction. `component-milestone-reconciliation.sh`'s
+hub path has no default and blocks outright on an absent `--hub-tracker-reconciliation-outcome`
+flag (GAP-5, D5) — the flag is unconditionally required there. `delivery-bundle-manifest.sh
+update-component`, by contrast, tolerates an omitted `--hub-tracker-reconciliation-outcome` flag
+via a documented `default="pending"` (line 591), pinned by
+`tests/test-delivery-bundle-manifest.sh`'s `hub_reconciliation_defaults_pending` assertion. This
+does not contradict "require the flag": `pending` is itself a member of the closed enum the
+field's readers gate on, not a bypass of the enum, and `blocker_for_component`'s completion check
+(`hub not in ("complete", "deferred")` blocks; `hub == "pending"` returns
+`pending_component_outcome`, never `verified`) means an omitted flag on the bundle path can never
+be read as complete — it degrades the component to a pending, still-blocked state instead. The
+default is scoped to this one consumer, whose own component record already tracks incremental
+in-progress state before hub reconciliation completes; it grants no license for
+`component-milestone-reconciliation.sh`'s hub path, or for `child_release_state` (which the bundle
+already declares `required=True` with no default), to treat an absent flag as anything but a hard
+failure.
+
 | Field | Class | `delivery-bundle-manifest.sh` | `component-milestone-reconciliation.sh` | `multi-repo-release-assurance.sh` | `prepare-release-post-merge-cleanup.sh` |
 | --- | --- | --- | --- | --- | --- |
 | `schema_version` | `producer_required` | `require` (exact match) | `require` (exact match) | `attestation` string only | `require` (exact match) |
@@ -176,9 +196,9 @@ duties below apply to a non-empty value.
 | `component_tag` | `producer_conditional` | `req+match` vs `--component-tag` (fixed round 4) | `req+match` vs `--component-tag` (fixed round 3) | `attestation` (inside `<repo>@<tag>` title) | `n/a` (no caller override; no defined tag<->branch relation — RESIDUAL-2) |
 | `component_version` | `producer_conditional` | **GAP-1** unbound -> `req+match` vs `--component-version` | `n/a` on the hub path; **GAP-7** `--version` on the `single_repo` path -> reject `--evidence-file` there | `n/a` | `n/a` |
 | `evidence_state` (never emitted) | n/a | consumer-set on its own component view | **GAP-6** any string accepted -> closed enum with a per-value disposition (D9), fail closed on unknown | `n/a` | `n/a` |
-| `hub_tracker_reconciliation_outcome` (never emitted) | `hub_input` | `require` flag, fail closed on unknown | **GAP-5** falls back to the evidence file -> require the flag, no fallback | `n/a` | `n/a` |
+| `hub_tracker_reconciliation_outcome` (never emitted) | `hub_input` | flag optional at parse time (`default="pending"`, see the note preceding this matrix); the omitted-flag default is itself a closed-enum member that fails the finalize gate, so omission never reads as verified — fail closed on unknown | **GAP-5** falls back to the evidence file -> require the flag, no fallback, no default | `n/a` | `n/a` |
 | `child_release_state` (never emitted) | `hub_input` | `require` flag, fail closed on unknown | **GAP-5** falls back to the evidence file -> require the flag, no fallback | `n/a` | `n/a` |
-| `component_key` / `child_item` / `source_pr` / `release_pr` (never emitted) | `hub_input` | `component_key` matched vs evidence; the rest `record` | `--issue` is `hub_input` (RESIDUAL-1) | `n/a` | `n/a` |
+| `component_key` / `child_item` / `source_pr` / `release_pr` (never emitted) | `hub_input_identifier` | `component_key` matched vs evidence; the rest `record` | `--issue` is `hub_input_identifier` (RESIDUAL-1) | `n/a` | `n/a` |
 
 ### Gap register
 
@@ -354,6 +374,23 @@ present. That is exactly the defect this decision closes — a required field's 
 never be read as "nothing to check", the same principle AC-2 states for every other overridable
 field.
 
+**D13 — Split `hub_input` into `hub_input` (closed-enum outcome flags) and
+`hub_input_identifier` (open-ended identifiers).** The single `hub_input` class's stated duty —
+"validate against a closed enum, fail closed on any unknown value" — is true of
+`hub_tracker_reconciliation_outcome` and `child_release_state`, but was never true of
+`component_key`, `child_item`, `source_pr`, `release_pr`, or reconciliation's `--issue`: these are
+component keys, PR references, and an issue number, none drawn from a fixed vocabulary, and the
+trust matrix already gave them a different duty (`component_key` matched against a *different*
+evidence field, `selected_product_repo_key`; `child_item`/`source_pr`/`release_pr` merely
+`record`; `--issue` required but deliberately unbound per RESIDUAL-1). Nothing about that existing
+behavior changes — this decision corrects the class table to match the matrix cells it was
+already contradicting, rather than inventing new behavior for the identifier fields. *Rejected
+alternative*: keep one `hub_input` class and add prose carving out the identifier fields as an
+exception. AC-5's promise is that "the class alone determines the consumer's duty: no field is an
+exception to the class it carries" — an exception clause inside the one class definition is the
+same contradiction the class table is not supposed to contain, just relocated into prose instead
+of a table cell.
+
 ---
 
 ## Layer-by-Layer Changes
@@ -523,7 +560,7 @@ not from a prior enumeration.
   documents this plan edits, but every assertion on them is an additive `run_contains`
   substring check (lines 132-188), so adding the two-phase render, the `attestation` class,
   and the contract-document links cannot break it. The suite is still executed in
-  Implementation Order step 14. If a `run_contains` string is ever reworded rather than
+  Implementation Order step 15. If a `run_contains` string is ever reworded rather than
   added to, update the suite in the same commit.
 
 ---
@@ -563,8 +600,8 @@ including T5b, T6a, T6c, T6d, T15a, T20b, and T20c, all target behavior this pla
 | T5 | `test-component-release-evidence.sh` | target binding with `contract_revision: ""` | exit 1, `missing required identity field: contract_revision` |
 | T5b | `test-component-release-evidence.sh` | target binding with `canonical_repository_identity: ""` | exit 1, `missing required identity field: canonical_repository_identity` |
 | T6 | `test-component-release-evidence.sh` | target binding with `release_correlation_key: ""` | exit 1, names `release_correlation_key` |
-| T6a | `test-component-release-evidence.sh` | target binding with `routing_outcome: "component_release_routed"` and `selected_product_repo_key: null` | exit 1, `missing required identity field: selected_product_repo_key`; no record written |
-| T6b | `test-component-release-evidence.sh` | target binding with `routing_outcome: "single_repo_release"` and `selected_product_repo_key: null` | record emitted; `selected_product_repo_key` is JSON `null` — the `producer_required_nullable` contract, and the guard that T6a's precondition is not over-applied (red-capture exempt) |
+| T6a | `test-component-release-evidence.sh` | target binding with `routing_outcome: "component_release_routed"`, `selected_product_repo_key: null`, and `release_branch_pattern` omitted (empty) — the pre-existing pattern check at lines 167-190 only runs when `.release_branch_pattern` is non-empty, and with the `{product_repo}` token present that check would substitute the null key's empty string, making no `--release-branch` value satisfy both the pattern and the null key at once; omitting the pattern lets the run reach D4's new guard instead of failing that unrelated check first | exit 1, `missing required identity field: selected_product_repo_key`; no record written |
+| T6b | `test-component-release-evidence.sh` | target binding with `routing_outcome: "single_repo_release"`, `selected_product_repo_key: null`, and `release_branch_pattern` likewise omitted (empty), for the identical reason as T6a — the null key cannot satisfy a pattern containing `{product_repo}` regardless of routing outcome | record emitted; `selected_product_repo_key` is JSON `null` — the `producer_required_nullable` contract, and the guard that T6a's precondition is not over-applied (red-capture exempt) |
 | T6c | `test-component-release-evidence.sh` | target binding with `routing_outcome: ""` | exit 1, `missing required identity field: routing_outcome` |
 | T6d | `test-component-release-evidence.sh` | target binding with `artifact_owners.release: ""` (other five sub-fields populated) | exit 1, `missing required identity field: artifact_owners` |
 | T7 | `test-delivery-bundle-manifest.sh` | evidence binding `component_version: null`, `--component-version 1.4.0` | `ERROR_CODE=component_version_unbound` |
@@ -711,8 +748,9 @@ section, which is what makes the gate satisfiable without fabricating follow-up 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
 | Component release target binding | `component_release_target.v1` with `mutation_allowed: true`, `routing_outcome: component_release_routed`, `release_branch_pattern: "{product_repo}/release/v{version}"` | `scripts/development-workflow/tests/setup-component-release-fixture.sh` (existing; extended) |
-| Empty-identity target binding | Same, but `contract_revision: ""`; a second variant with `release_correlation_key: ""`; a third with `canonical_repository_identity: ""`; a fourth with `routing_outcome: "component_release_routed"` and `selected_product_repo_key: null`; a fifth with `routing_outcome: ""`; a sixth with `artifact_owners.release: ""` (other five sub-fields populated) | New temp fixtures inside `tests/test-component-release-evidence.sh` and `tests/test-prepare-release-tracker-cleanup.sh` (T5, T5b, T6, T6a, T6c, T6d, T19, T20, T20b) |
-| Single-repository-routed target binding | `component_release_target.v1` with `routing_outcome: "single_repo_release"`, `mutation_allowed: true`, `selected_product_repo_key: null` | New temp fixture inside `tests/test-component-release-evidence.sh` (T6b) |
+| Empty-identity target binding | Same, but `contract_revision: ""`; a second variant with `release_correlation_key: ""`; a third with `canonical_repository_identity: ""`; a fourth with `routing_outcome: ""`; a fifth with `artifact_owners.release: ""` (other five sub-fields populated) | New temp fixtures inside `tests/test-component-release-evidence.sh` and `tests/test-prepare-release-tracker-cleanup.sh` (T5, T5b, T6, T6c, T6d, T19, T20, T20b) |
+| Routed-null-key target binding | `component_release_target.v1` with `routing_outcome: "component_release_routed"`, `selected_product_repo_key: null`, and `release_branch_pattern` omitted (empty) — omitting the pattern is required because the base fixture's `{product_repo}/release/v{version}` pattern would substitute the null key's empty string, and no valid `--release-branch` value can satisfy both that pattern and the null key at once; with the pattern empty, `component-release-evidence.sh`'s branch-pattern check (which only runs when `.release_branch_pattern` is non-empty) is skipped, so the fixture reaches D4's new guard on its own merits | New temp fixture inside `tests/test-component-release-evidence.sh` (T6a) |
+| Single-repository-routed target binding | `component_release_target.v1` with `routing_outcome: "single_repo_release"`, `mutation_allowed: true`, `selected_product_repo_key: null`, and `release_branch_pattern` omitted (empty) for the same structural reason as the routed-null-key fixture above | New temp fixture inside `tests/test-component-release-evidence.sh` (T6b) |
 | Release-branch-empty evidence | `component_release_evidence.v1` record with the top-level `release_branch` set to `""` (or the key omitted), otherwise a valid producer-shaped record | New temp fixture inside `tests/test-prepare-release-tracker-cleanup.sh` (T20c) |
 | Version-bound evidence | `component_release_evidence.v1` with `component_tag: "mobile-v1.4.0"`, `component_version: "1.4.0"` | `write_evidence` in `tests/test-delivery-bundle-manifest.sh` (extend the existing helper with a `component_version` positional) |
 | Version-unbound evidence | Same record with `component_version: null` | `write_evidence` invoked with an empty version (T7) |
@@ -730,8 +768,9 @@ section, which is what makes the gate satisfiable without fabricating follow-up 
 The developer executes these after implementation; they are only identified here.
 
 - [ ] `docs/workflow/development-workflow/component-release-evidence-contract.md` — **create.**
-      Sections: (1) the five trust classes and each one's consumer duty, stating explicitly
-      how `producer_required_nullable` differs from `producer_required` in its `null` handling;
+      Sections: (1) the six trust classes and each one's consumer duty, stating explicitly
+      how `producer_required_nullable` differs from `producer_required` in its `null` handling,
+      and how `hub_input` differs from `hub_input_identifier` in closed-enum validation (D13);
       (2) the producer's emitted-field contract table (16 fields, each carrying exactly one of
       `producer_required`, `producer_required_nullable`, `producer_conditional`) — AC-5;
       (3) the field x consumer trust matrix — AC-1; (4) the `evidence_state` disposition
@@ -829,20 +868,24 @@ can be mistaken for production code.
     `setup-component-milestone-fixture.sh`) with `component_version`, then re-run all seven
     suites listed in the Testing Strategy.
 13. **Execute the Documentation Updates** section, including `.agents/skills/prepare-release/SKILL.md`.
-14. **Run the doc and lint gates**: `bash scripts/development-workflow/tests/test-workflow-hub-docs.sh`,
-    `npx markdownlint-cli2 "docs/workflow/**/*.md" "docs/testing/workflow/1529-*.md" "changelog.d/**/*.md"`,
-    and `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop` for the
-    edited doc snippets.
-15. **Walk the smoke test runbook** end to end and record PASS/FAIL per step.
-16. **Write the residual evidence file** described in the Residual Verification Strategy and
-    confirm `./scripts/development-workflow/scope-residual-gate.sh verify --issue-title "<#1529 title>" --issue-body-file <body> --evidence <path>`
-    reports `RESULT=pass`.
-17. **Add the changelog fragment** `changelog.d/1529.fixed.delivery-bundle-evidence-trust-boundary.md`
-    with exactly this body:
+14. **Add the changelog fragment** `changelog.d/1529.fixed.delivery-bundle-evidence-trust-boundary.md`
+    with exactly this body, **before** the lint gates in step 15 — this way the same
+    `markdownlint-cli2 "changelog.d/**/*.md"` invocation that step 15 runs actually validates the
+    fragment this plan adds, instead of running against `changelog.d/` before the fragment exists:
 
     ```markdown
     - **Close the delivery-bundle evidence trust boundary** (#1529): the component release evidence contract is now documented field by field — which fields the producer always emits, which it emits only on request, and which are hub-supplied and must never come from an evidence file — together with a trust matrix stating each consumer's duty for every field. `component-release-evidence.sh` binds `component_version` alongside `component_tag`, charset-validates both, and refuses to emit a record whose repository identity, release correlation key, or contract revision is empty, so consumers can rely on presence. `delivery-bundle-manifest.sh` now requires `--component-version` and rejects it as unbound or mismatched rather than recording an unverified shipped version. `component-milestone-reconciliation.sh` requires hub-routed evidence, takes the hub tracker reconciliation outcome and child release state only from its own flags instead of falling back to the product-supplied evidence file, rejects unrecognized and incomplete evidence states, and refuses a silently ignored evidence file in single-repository mode. Release cleanup rejects evidence with empty identity fields, and the adoption assurance harness reports that its scenario evidence is self-attested rather than verified. Known gaps that remain — the undefined semantics of `hub_tracker_ref`, the hub-checkout-scoped cleanup lease, and the absent release-tag deletion — are recorded in the contract document instead of being left implicit.
     ```
+
+15. **Run the doc and lint gates**: `bash scripts/development-workflow/tests/test-workflow-hub-docs.sh`,
+    `npx markdownlint-cli2 "docs/workflow/**/*.md" "docs/testing/workflow/1529-*.md" "changelog.d/**/*.md"`,
+    and `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop` for the
+    edited doc snippets. Because step 14 already created the changelog fragment, this pass lints
+    it along with every other edited doc — no second, narrower lint invocation is needed.
+16. **Walk the smoke test runbook** end to end and record PASS/FAIL per step.
+17. **Write the residual evidence file** described in the Residual Verification Strategy and
+    confirm `./scripts/development-workflow/scope-residual-gate.sh verify --issue-title "<#1529 title>" --issue-body-file <body> --evidence <path>`
+    reports `RESULT=pass`.
 
 ---
 
