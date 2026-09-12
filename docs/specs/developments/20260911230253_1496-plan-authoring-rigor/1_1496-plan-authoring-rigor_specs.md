@@ -77,7 +77,7 @@ Because this repository ships as a framework template, every rule must be expres
 ### Use Case 3: The plan author receives a claim that something does or does not exist
 
 **Actor**: The plan author, working from a delegated investigation, an earlier document, or a prior conversation.
-**Preconditions**: A claim of the form "this test already exists", "there is no such helper", or "that concern is already covered" is about to enter the plan, and its support comes from somewhere other than a search the author ran.
+**Preconditions**: A claim of the form "this test already exists", "there is no such helper", or "that concern is already covered" is about to enter the plan, and its support is not a reproducible search recorded in the plan.
 
 **Steps**:
 
@@ -230,7 +230,7 @@ The rules below are the normative statement of this feature. Every other section
 
 - The rule fires when the plan's design depends on the wording, shape, or presence of free text produced outside this project's control — a third-party service, another team's tool, or a generative model — including any design that matches, parses, classifies, or enumerates that text.
 - Before the design is committed to, the plan records a sampling record stating: the producer; the population sampled and the window it covers; how many real occurrences were examined; how many distinct variants those occurrences yielded; and whether further occurrences had stopped yielding new variants by the end of the sample.
-- For each occurrence counted in the sample, the record includes a locator — a reference to where that occurrence was captured, or the occurrence's own text — sufficient for a reader who was not present when the sample was gathered to find or inspect it independently. A record that reports only counts, with nothing that lets a reader locate or inspect any underlying occurrence, does not satisfy this rule.
+- For each occurrence counted in the sample, the record includes a locator sufficient for a reader who was not present when the sample was gathered to find or inspect it independently: a reference to where that occurrence was captured, or the occurrence's own text paired with a named source it was captured from — the specific message, log entry, response payload, request ID, timestamp, or similar. A record that reports only counts, with nothing that lets a reader locate or inspect any underlying occurrence, does not satisfy this rule, and embedded text with no named source has the same defect: a reader can read the string but cannot trace it to a real occurrence.
 - The occurrences must be real observed outputs. Text authored to illustrate the format — documentation examples, captures curated for a ticket — is not a sample of the distribution, and a record built only from it does not satisfy this rule.
 - A record of two or fewer occurrences never satisfies this rule. Where the whole population is small enough to enumerate, the plan enumerates it and says so.
 - The plan may bind its design to a fixed set of literal outputs only when the producer publishes a contract fixing that set and the plan cites the contract. Observation alone never establishes a fixed set, however large the sample.
@@ -240,7 +240,7 @@ The rules below are the normative statement of this feature. Every other section
 
 - The rule fires when the plan asserts a fact — any value, count, name, decision, or behavioral statement the plan states as true. A plan with no factual assertion has no substance to review, so the rule fires on every ordinary plan; it is recorded as not applicable only in that limiting, essentially empty case.
 - Each fact is asserted in exactly one place in the plan. Every other mention of that fact names where it is asserted instead of restating it.
-- Two mentions that assert the same fact violate this rule whether or not they agree. Agreeing duplicates are a defect in waiting, because the next correction round will update one of them; disagreeing ones are a contradiction already.
+- Two mentions that assert the same fact are a defect whether or not they agree, but only a disagreeing pair leaves the rule Unsatisfied: it is a contradiction, and the fact has no settled evidence while it stands. An agreeing pair produces a non-blocking finding rather than an Unsatisfied outcome, because the fact's evidence is neither missing nor contradicted — it is a defect in waiting, since the next correction round will update one of them.
 - A correction round edits the single assertion. It never adds a second statement of the corrected fact elsewhere.
 - This rule imposes no limit on a plan's length in bytes, lines, words, or pages, and no check in this feature may be failed on account of a plan's size. Size is a correlate of duplicated assertions, not the defect.
 
@@ -255,7 +255,7 @@ The rules below are the normative statement of this feature. Every other section
 ### Rule 4 — Independent verification of existence claims
 
 - The rule fires when the plan states that something does or does not exist in the codebase — a test, a helper, a call site, a configuration entry — or that a concern is already covered or already handled.
-- The plan author verifies each such claim with their own direct search before it enters the plan, and records the search and the revision it was run at. A claim whose only support is a delegated summary, a prior conversation, or another document does not enter the plan.
+- Before such a claim enters the plan, it is supported by a direct search recorded in the plan: the search terms or query, the places searched, and the revision it was run at, in enough detail for a reader to re-run it and reach the same result. A claim whose only support is a delegated summary, a prior conversation, or another document does not enter the plan, because none of those give a reader anything to re-run.
 - A statement that a whole class of claims was verified is itself a claim of this kind. It is supported by the per-item evidence, never by the assertion of completeness.
 - For a claim that something does not exist, the record names the places searched, and those places are where the thing could plausibly live. An absent result from a search that could not have found the thing is not evidence.
 
@@ -293,9 +293,9 @@ Each rule carries one outcome per plan revision.
 
 | Code value       | Display label  | Description                                                                                                                                              |
 | ---------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `satisfied`      | Satisfied      | The rule fired and the plan carries the evidence it requires, in the form the rule defines.                                                               |
+| `satisfied`      | Satisfied      | The rule fired and the plan carries the evidence it requires, in the form the rule defines. An open non-blocking finding against that evidence — for example, an agreeing duplicate under Rule 2 — does not change this outcome, because a non-blocking finding asks for consolidation rather than for evidence the rule is missing. |
 | `not-applicable` | Not applicable | The plan contains no claim of the class this rule governs, and the record states a rationale naming why the trigger is absent.                            |
-| `unsatisfied`    | Unsatisfied    | The rule fired and the required evidence is missing, does not reproduce at the recorded revision, or the claim itself violates the rule. Also the outcome for a rule with no record at all, for a not-applicable record with no rationale, and for a record whose value is not one of these three labels. |
+| `unsatisfied`    | Unsatisfied    | The rule fired and the required evidence is missing, does not reproduce at the recorded revision, or an open blocking finding stands against the claim. Also the outcome for a rule with no record at all, for a not-applicable record with no rationale, and for a record whose value is not one of these three labels. |
 
 **Valid transitions**:
 
@@ -371,6 +371,8 @@ Triggers are events. They decide when the check runs, are never read as inputs, 
 | A plan is long                                                                                   | Not an outcome         | Nothing; length is never a finding under these rules          | None                                                          |
 | A firing rule's evidence sits in a pull request comment rather than the plan                     | Blocking finding       | Names the evidence that must move into the plan               | Move it into the plan document                                |
 
+A firing rule's Satisfied outcome is compatible with an open non-blocking finding against it, such as the agreeing-duplicates row above: the finding asks for consolidation, not for evidence the rule lacks. A firing rule is never Satisfied while an open blocking finding stands against it. "Every firing rule Satisfied" in the Check passed row above is read with that meaning.
+
 No outcome above changes the plan's contents on the author's behalf, gathers evidence for them, or converts a pull request out of draft.
 
 ### Mirror surfaces
@@ -395,7 +397,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 | A plan states a test count derived by subtracting one measured group from a larger measured total                       | Blocking finding     | The operands were not shown to partition one homogeneous population                               |
 | The same count, derived by its own command, with the enumeration carried into the step it scopes                        | Check passed         | Reproducible, and the step names artifacts rather than a number                                    |
 | A plan counts every file in a directory to size a step that touches only the files matching a naming pattern           | Blocking finding     | The population counted is wider than the property the step reasons about                          |
-| A plan says a named test "already exists", on the strength of a delegated investigation                                 | Blocking finding     | The support is a summary, not a search the author ran                                             |
+| A plan says a named test "already exists", on the strength of a delegated investigation                                 | Blocking finding     | The support is a summary, not a reproducible search recorded in the plan                          |
 | A plan asserts that every claim in it was checked against the real files, with no per-item records                      | Blocking finding     | A completeness assertion is the one claim a reader cannot reproduce                                |
 | A plan states a helper does not exist, after searching only one of several directories where equivalent helpers are defined | Blocking finding     | The search did not cover the places the helper could plausibly live                                |
 | A plan deletes a shared check and states the changed unit's new return value                                            | Blocking finding     | The unit's answer is not the system's answer where consumers sit on an ordered path                |
@@ -430,7 +432,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 ### Group C — One normative statement per fact (Rule 2)
 
 - [ ] Take any value, count, name, or decision that appears more than once in a plan. The plan passes only when exactly one occurrence asserts it and every other occurrence names where it is asserted.
-- [ ] Two occurrences that both assert the same fact fail whether or not they agree. Agreeing duplicates produce a non-blocking consolidation finding; disagreeing ones produce a blocking contradiction finding.
+- [ ] Two occurrences that both assert the same fact are a defect whether or not they agree, and each produces a finding, but only a disagreeing pair leaves the rule's outcome Unsatisfied. Agreeing duplicates produce a non-blocking consolidation finding and leave the rule Satisfied; disagreeing ones produce a blocking contradiction finding and leave the rule Unsatisfied.
 - [ ] No rule, check, outcome, or finding introduced by this feature uses a plan's length in bytes, lines, words, or pages as a pass or fail condition. A plan cannot fail anything in this feature because of its size, and a rule may name these units only to state that they are not a basis for failure.
 - [ ] After a correction round, the corrected fact is asserted exactly once. A reader comparing the two revisions finds the assertion edited rather than a second statement added.
 
@@ -444,7 +446,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 ### Group E — Independent verification of existence claims (Rule 4)
 
 - [ ] Every statement that a named thing does or does not exist in the codebase carries a recorded search and the revision it was run at. A reader re-running it reaches the same yes or no, or the plan fails.
-- [ ] A claim whose recorded support is a delegated summary, a prior conversation, or another document, rather than a search the plan author ran, fails.
+- [ ] A claim whose recorded support is a delegated summary, a prior conversation, or another document, rather than a reproducible search recorded in the plan, fails.
 - [ ] A statement that a class of claims was all verified passes only when the per-item evidence is present. The completeness statement alone fails.
 - [ ] A non-existence claim passes only when its record names the places searched and those places are where the thing could plausibly live.
 
