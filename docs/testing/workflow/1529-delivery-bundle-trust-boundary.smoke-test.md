@@ -88,17 +88,22 @@ missing hub-input flags, invalid evidence state, empty identity field).
 
 Read the implementation PR description (or the commit series). For each of the
 rejection tests T1-T21 listed in the plan's Testing Strategy, locate the captured
-failing output recorded before its fix. Two tests are exempt: T22 is a regression
-guard for a defect already fixed in review round 3, and T6b pins the producer's
-deliberately unchanged `null` passthrough for `single_repo_release` routing. Both
-are green against unmodified runtime code by design, and the plan records them as
-the only two exemptions.
+failing output recorded before its fix. Three tests are exempt: T22 is a
+regression guard for a defect already fixed in review round 3; T6b pins the
+producer's deliberately unchanged `null` passthrough for `single_repo_release`
+routing; and T15b pins reconciliation's deliberately unchanged non-blocking
+treatment of `evidence_state: "released"` (already accepted before this plan,
+and D9's disposition table preserves that behavior rather than tightening it).
+All three are green against unmodified runtime code by design, and the plan
+records them as the only three exemptions.
 
-**Expected result**: every rejection test except T6b and T22 has a recorded
-failure against the unmodified runtime code and a recorded pass after the fix. A
-non-exempt test with no recorded red state is a FAIL for this step. T6b and T22
-must each be recorded as green both before and after, proving the earlier fix did
-not regress and that the new identity precondition was not over-applied.
+**Expected result**: every rejection test except T6b, T15b, and T22 has a
+recorded failure against the unmodified runtime code and a recorded pass after
+the fix. A non-exempt test with no recorded red state is a FAIL for this step.
+T6b, T15b, and T22 must each be recorded as green both before and after: T6b
+proving the new identity precondition was not over-applied, T15b proving
+`released` still is not blocked, and T22 proving the earlier fix did not
+regress.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -246,7 +251,7 @@ makes no tracker mutation. Run 2 succeeds with
 `reconciliation_outcome=single_repo_milestone` and reports
 `trust_basis: "caller_asserted"`.
 
-### Step 12: Cleanup rejects evidence with an empty identity field
+### Step 12: Cleanup rejects evidence with an empty identity field or an empty `release_branch`
 
 **Maps to**: Acceptance Criterion 2.
 
@@ -255,6 +260,14 @@ Run `prepare-release-post-merge-cleanup.sh` with `--repo` and an
 
 **Expected result**: exit `1` with a message naming the missing identity field.
 No product release branch is deleted and no tracker state changes.
+
+Then repeat with an otherwise-valid evidence file whose top-level
+`release_branch` is `""` (or the key omitted), passing a positional release
+argument that does not correspond to any real branch (T20c).
+
+**Expected result**: exit `1` naming `release_branch` as a missing required
+field, before the positional argument is ever compared against it. No product
+release branch is deleted and no tracker state changes.
 
 ### Step 13: The assurance harness declares its trust class
 
