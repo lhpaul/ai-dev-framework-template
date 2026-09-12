@@ -32,7 +32,7 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 **Information shown**:
 
 - The preflight outcome, Passed, in the run's own output before the first dispatch.
-- Each platform in the resolved list with its verdict, including the platforms excluded by the machine-local override, so the operator can see the review coverage the run is actually about to get.
+- Every platform in the shared reviewer list with its annotation: the cross-check verdict for each platform in the resolved list, and Excluded by override for each platform the machine-local override removed, so the operator can see the review coverage the run is actually about to get.
 
 **Actions available**:
 
@@ -118,7 +118,7 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 ### Use Case 4: The preflight cannot determine whether a platform will review
 
 **Actor**: The orchestrating agent, and the workflow operator who reads the result.
-**Preconditions**: The run is about to dispatch work. At least one platform in the resolved list exposes no readable configuration the preflight can cross-check, or its configuration could not be read within the preflight's bound.
+**Preconditions**: The run is about to dispatch work. At least one platform in the resolved list exposes no readable configuration the preflight can cross-check, or its configuration could not be read within the preflight's bound (the bound is stated as a product property in Business Rules; its concrete value is deferred to the implementation plan).
 
 **Steps**:
 
@@ -143,22 +143,31 @@ This feature adds a **reviewer preflight**: a check that runs before work is dis
 
 - Undetermined is not Passed and is never folded into it. Reporting an unverifiable platform as verified would recreate, in the preflight itself, the exact false assurance this feature exists to remove.
 - Undetermined does not block, because a platform the preflight cannot inspect is not evidence of a misconfiguration — only of a check that does not apply. Blocking on it would make the preflight unusable for platforms that keep no configuration in the repository.
-- The preflight always reaches an outcome. A check that cannot complete promptly yields Undetermined rather than leaving the run hanging in front of a dispatch that never happens.
+- The preflight always reaches an outcome. A check that has not reached a definite answer within the preflight's bound yields Undetermined rather than leaving the run hanging in front of a dispatch that never happens. The bound exists so the preflight can never itself stall a run; what that bound is numerically, and how it is measured, is deferred to the implementation plan — see the bound rule in Business Rules and item 10 in Out of Scope.
 
 ---
 
 ## Business Rules
 
+Two lists are referred to throughout, and they are not the same list:
+
+- The **shared reviewer list** is every platform the shared workflow reviewer configuration names for the lifecycle stages this run will exercise, before any machine-local override is applied.
+- The **resolved reviewer list** is what remains once the machine-local override is applied — the platforms this machine will actually use.
+
+Cross-checking, per-platform verdicts about ability to review, and the run outcome are determined over the resolved list alone. Reporting enumerates the shared list: every entry appears exactly once, annotated either with its cross-check verdict — Can review, Cannot review, or Undetermined — when it is in the resolved list, or as Excluded by override when the override removed it. A platform the shared configuration does not list for any stage this run exercises is in neither list and is not reported, because this run never expected it to review.
+
 - The preflight runs before any item is dispatched in a run, and before any branch, pull request, tracker status, comment, or label is created or changed by that run. A preflight that runs after dispatch has no value, because the cost it exists to prevent has already been incurred.
 - The preflight cross-checks the surfaces against each other. A surface that is internally valid but contradicts another surface is a failure, and it is the only kind of failure this feature adds — each surface already validates itself.
 - Surface precedence is unchanged: the machine-local override takes precedence over the shared workflow reviewer configuration for the machine it is on. The preflight cross-checks the resolved result, not the shared configuration alone, so a run on a machine with an override is checked against the reviewers that machine will actually use.
-- Every platform in the resolved list gets a verdict. No platform is silently omitted from the report, because a silently omitted platform is indistinguishable from one that passed.
-- A platform removed by the machine-local override is reported as excluded by the override and produces no failure. A deliberate exclusion is not a disagreement.
+- Every platform in the shared reviewer list appears in the report exactly once — with its cross-check verdict if it is in the resolved list, or as Excluded by override if the override removed it. No platform is silently omitted, because a silently omitted platform is indistinguishable from one that passed.
+- A platform removed by the machine-local override is reported as Excluded by override, is not cross-checked, and never affects the run outcome. A deliberate exclusion is not a disagreement.
 - A Blocked outcome stops the run before dispatch. It is not a warning the run proceeds past.
-- An Undetermined verdict does not block, and is never reported as a pass.
+- An Undetermined verdict does not block, and is never reported as a pass: it is surfaced by name instead. The Decision-Gate Consistency Matrix states this guarantee canonically, and every other statement in this spec about unverified coverage defers to it.
 - A Passed preflight has no side effects: it creates no pull request, posts no comment, applies no label, creates or modifies no branch, and modifies no tracked file. The same holds for a Blocked or Undetermined preflight — a preflight that reports a problem must not also create one.
+- The preflight persists nothing of its own. Its outcome is run output. Where the enclosing run already keeps an audit record of itself, that existing record carries the preflight outcome as one more fact about a run already under way; the preflight never writes a record of its own and never causes a record to be written where the run would otherwise write none. Recording the outcome therefore changes no repository state and no external state, which is what lets a Passed preflight be side-effect-free.
+- The preflight is bounded: every check it performs either reaches a definite answer or yields Undetermined within a bound, so the preflight can never hold a run open in front of a dispatch that never happens. The product property the bound must satisfy is that an unreachable or slow surface degrades to Undetermined rather than to waiting, and that the preflight's cost stays negligible against the work it guards. The bound's concrete value, and how it is measured, are deliberately not fixed in this spec and are an implementation-plan decision.
 - Every failure report identifies the surface by the file an operator would open and the setting by the name an operator would edit, and states the contradiction rather than one side of it. A report an operator cannot act on directly does not satisfy this rule.
-- The preflight's verdicts are determined fresh on each run and do not persist. A surface repaired between two runs flips the verdict on the second run with no further action, and a surface broken between two runs flips it back.
+- The preflight's verdicts are determined fresh on each run. No verdict from an earlier run is an input to a later one: a record of a past run's outcome is history, not state the preflight reads or updates. A surface repaired between two runs flips the verdict on the second run with no further action, and a surface broken between two runs flips it back.
 - The preflight reports what it checked against. A preflight performed before any branch exists is checked against the run's base branch, and says so; it does not claim to have verified branches that do not yet exist.
 - The reviewer platform configuration in force for a pull request is the copy on that pull request's own branch. A preflight performed against an existing pull request reads that pull request's branch. This rule is documented in the platform's integration documentation, not only implied by the preflight's behaviour.
 - The preflight decides whether a platform can review. It does not decide what the platform says, does not run a review, and does not change any reviewer gate's behaviour after it passes.
@@ -177,7 +186,7 @@ Per-platform verdicts:
 | `operable`          | Can review           | The surfaces agree for this platform: it will review pull requests of the kind this run opens, at the stage it is listed for, against this run's base. |
 | `not-operable`      | Cannot review        | The surfaces disagree for this platform. Always accompanied by a disagreement reason and the surface that disagrees.                         |
 | `undetermined`      | Undetermined         | The preflight could not reach a definite answer for this platform. Never reported as Can review.                                             |
-| `override-excluded` | Excluded by override | The machine-local override left this platform out. Not a failure, and never reported as Cannot review.                                       |
+| `override-excluded` | Excluded by override | The platform is in the shared reviewer list but not in the resolved list: the machine-local override removed it. It is reported, never cross-checked, and never affects the run outcome. Not a failure, and never reported as Cannot review. |
 
 Disagreement reasons, reported with every Cannot review verdict:
 
@@ -193,15 +202,17 @@ Undetermined reasons, reported with every Undetermined verdict:
 | Code value            | Display label                  | Description                                                                                              |
 | --------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `no-readable-surface` | No configuration to cross-check | The platform exposes no configuration the preflight can read, so the cross-check does not apply to it.   |
-| `check-inconclusive`  | Check did not complete          | The reading did not reach a definite yes or no within the preflight's bound, or ended without an answer. |
+| `check-inconclusive`  | Check did not complete          | The reading did not reach a definite yes or no within the preflight's bound — whose concrete value is deferred to the implementation plan — or ended without an answer. |
 
 Run outcomes:
 
 | Code value             | Display label          | Description                                                                                                     |
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `passed`               | Passed                 | Every platform in the resolved list was Can review or Excluded by override. The run dispatches.                 |
-| `passed-unverified`    | Passed, some unverified | No platform disagreed, and at least one was Undetermined. The run dispatches, and the report names the unverified platforms. |
-| `blocked`              | Blocked                | At least one platform was Cannot review. Nothing is dispatched, and the run stops for the operator.             |
+| `passed`               | Passed                 | Every platform in the resolved list is Can review; none is Cannot review and none is Undetermined. An empty resolved list qualifies. The run dispatches. |
+| `passed-unverified`    | Passed, some unverified | No platform in the resolved list is Cannot review, and at least one is Undetermined. The run dispatches, and the report names the unverified platforms. |
+| `blocked`              | Blocked                | At least one platform in the resolved list is Cannot review. Nothing is dispatched, and the run stops for the operator. |
+
+Platforms Excluded by override are reported but are not in the resolved list, so they never contribute to the run outcome.
 
 ---
 
@@ -209,12 +220,12 @@ Run outcomes:
 
 The preflight's only output is its report. There is no user interface, and no one is notified: the audience is the operator reading the run and the agent deciding whether to dispatch.
 
-- **Run output, before dispatch**: the run outcome and every platform in the resolved list with its verdict — Can review, Cannot review, Undetermined, or Excluded by override — emitted before any item-level output, so the outcome cannot be mistaken for a per-item result.
+- **Run output, before dispatch**: the run outcome, and every platform in the shared reviewer list annotated exactly once — Can review, Cannot review, or Undetermined for the platforms in the resolved list, Excluded by override for the platforms the override removed — emitted before any item-level output, so the outcome cannot be mistaken for a per-item result.
 - **Failure report**: on Blocked, each platform that cannot review, its disagreement reason, the surface that disagrees identified by the file an operator would open, the setting identified by the name an operator would edit, the contradiction stated in full, and at least one action that would change the outcome.
 - **Unverified report**: on Passed, some unverified, each undetermined platform with its reason, kept visibly separate from the platforms that passed.
 - **Override notice**: when a machine-local override is in effect, the report records that it is, and which platforms it removed, so reduced coverage is visible at the moment it is chosen rather than only when a review is missing.
 - **Scope statement**: every report states what it was checked against — this run's base branch, or a specific pull request's branch — so a reader never has to guess whether a branch-local divergence was covered.
-- **Audit record**: the run's existing audit record carries the preflight outcome, so a run reported as complete can be checked afterwards for whether its reviewers were verified before it started.
+- **Audit record**: the preflight outcome is carried by the record the enclosing run already keeps of itself, so a run reported as complete can be checked afterwards for whether its reviewers were verified before it started. This is one more fact added to a record the run was already producing — the preflight creates no record of its own, and causes no record to exist where the run would otherwise keep none. Nothing the preflight does changes repository or external state, which is why carrying the outcome does not breach the no-side-effects rule that AC-2 tests.
 
 ---
 
@@ -243,17 +254,19 @@ Where a platform's own configuration cannot be read, that platform is Undetermin
 | A run is retried after a Blocked outcome                  | The retry is the operator's remedy path; a repaired surface must be picked up          |
 | A preflight is performed against an existing pull request | Answers the stricter, branch-specific question that the pre-dispatch check cannot      |
 
-An empty resolved reviewer list is not a trigger failure: the gate still runs and reports that no platform is configured to review, which is a legitimate configuration and not a disagreement.
+An empty resolved reviewer list is not a trigger failure: the gate still runs, reports that no platform is configured to review, and produces Passed, because no platform in the resolved list disagrees. That is a legitimate configuration and not a disagreement.
 
 ### Allowed outcomes and required next actions
 
 | Outcome                 | When it is produced                                                | Required next action                                                                     |
 | ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Passed                  | Every platform is Can review or Excluded by override               | Dispatch proceeds. No operator action, no confirmation collected                         |
-| Passed, some unverified | No disagreement, and at least one platform is Undetermined         | Dispatch proceeds. The report names the unverified platforms for the operator to read     |
-| Blocked                 | At least one platform is Cannot review                             | Nothing is dispatched. The operator repairs a surface, or narrows the list, and re-runs   |
+| Passed                  | No platform in the resolved list is Cannot review, and none is Undetermined | Dispatch proceeds. No operator action, no confirmation collected                |
+| Passed, some unverified | No platform in the resolved list is Cannot review, and at least one is Undetermined | Dispatch proceeds. The report names every unverified platform for the operator to read |
+| Blocked                 | At least one platform in the resolved list is Cannot review        | Nothing is dispatched. The operator repairs a surface, or narrows the list, and re-runs   |
 
-No outcome permits dispatch on the strength of an unverified assumption, and no outcome repairs a surface.
+**Outcome determination is total and mutually exclusive.** Every platform in the resolved list carries exactly one of Can review, Cannot review, or Undetermined, and the outcome is the most severe verdict present: Blocked if any platform is Cannot review; otherwise Passed, some unverified if any platform is Undetermined; otherwise Passed. Exactly one outcome therefore applies to any configuration, including one where a platform is Cannot review and another is Undetermined — that configuration is Blocked, and the undetermined platform is still reported as Undetermined. Platforms Excluded by override are reported but are not in the resolved list and never change the outcome.
+
+**Unverified coverage is surfaced, never assumed clean.** This is the canonical statement of the guarantee, and every other statement in this spec about Undetermined defers to it. An Undetermined platform is never counted as Can review and never disappears into a Passed outcome. Dispatch may proceed while a platform is unverified, but only under Passed, some unverified, which requires the report to name that platform as unverified. What is forbidden is dispatching while treating an unverified platform as though it had been verified; what is required is that the operator is told, before the first item goes out, exactly which coverage was assumed rather than checked. No outcome repairs a surface.
 
 ### Mirror surfaces
 
@@ -283,25 +296,26 @@ Worked examples are part of the changed surface wherever a disagreement case is 
 - [ ] The Blocked outcome is reported before any item-level output, so it is not mistakable for a single item's failure.
 - [ ] With a platform removed by the machine-local override, the preflight reports it as Excluded by override and does not produce Blocked on its account.
 - [ ] With the shared configuration and the machine-local override naming different reviewer lists, the preflight cross-checks the resolved list — the one this machine will use — and the report states that an override was in effect.
-- [ ] With a configured value that is not a supported reviewer platform, the preflight produces Blocked with the reason Not a supported reviewer and names the offending value. It is never silently dropped.
-- [ ] Every platform in the resolved list appears in the report with a verdict, including the ones that passed.
+- [ ] With a configured value in the resolved list that is not a supported reviewer platform, the preflight classifies it Cannot review with the reason Not a supported reviewer, names the offending value, and therefore produces Blocked. It is never silently dropped.
+- [ ] Every platform in the shared reviewer list appears in the report exactly once: with its cross-check verdict if it is in the resolved list — including the ones that passed — or as Excluded by override if the override removed it.
 - [ ] The preflight repairs nothing: after a Blocked outcome, every surface is byte-for-byte as it was before the preflight ran.
 
 ### A correct configuration passes without side effects (AC-2)
 
-- [ ] With all three surfaces in agreement, the preflight produces Passed and the run dispatches exactly as it does today.
+- [ ] With all three surfaces in agreement and every platform in the resolved list verified as Can review, the preflight produces Passed and the run dispatches exactly as it does today.
 - [ ] A Passed preflight creates no pull request, posts no comment, applies no label, creates or modifies no branch, changes no tracker status, and modifies no tracked file. Running it on a clean checkout leaves the checkout clean and leaves the repository's pull request list unchanged.
 - [ ] A Blocked or Undetermined preflight has the same absence of side effects as a Passed one.
 - [ ] A Passed preflight runs no review and dispatches no reviewer.
 - [ ] A Passed preflight collects no operator confirmation and does not pause the run.
 - [ ] This repository's own shipped configuration — in which the platform that keeps a configuration file is deliberately absent from every lifecycle stage, and that file's automatic review is deliberately off — produces Passed and not Blocked, because a platform that is not listed for any stage is not a platform this run expects to review.
 - [ ] The preflight reaches an outcome without operator intervention even when a platform's configuration cannot be read, rather than leaving the run waiting in front of a dispatch that never happens.
-- [ ] Verdicts are determined fresh each run: repairing a surface between two runs flips Blocked to Passed on the second run with no other change, and breaking it flips the verdict back.
+- [ ] Verdicts are determined fresh each run: repairing a surface between two runs flips Blocked to Passed on the second run with no other change, and breaking it flips the verdict back. No earlier run's recorded outcome is consulted.
+- [ ] The preflight persists nothing of its own. Its outcome reaches the operator as run output, and where the enclosing run already keeps a record of itself, that existing record carries the outcome; the preflight writes no record of its own and causes none to be written where the run would keep none. Recording the outcome changes no repository state and no external state, so it is consistent with the absence of side effects required above.
 
 ### Unverifiable platforms are never reported as verified
 
-- [ ] A platform that exposes no configuration the preflight can read is classified Undetermined with the reason No configuration to cross-check, and the run outcome is Passed, some unverified — never Passed.
-- [ ] A platform whose configuration could not be read within the preflight's bound is classified Undetermined with the reason Check did not complete, distinct from No configuration to cross-check.
+- [ ] A platform that exposes no configuration the preflight can read is classified Undetermined with the reason No configuration to cross-check. Where no platform in the resolved list is Cannot review, the run outcome is then Passed, some unverified — never Passed. Where some other platform is Cannot review, the run outcome is Blocked and that platform is still reported as Undetermined; the two criteria never demand different outcomes for the same configuration.
+- [ ] A platform whose configuration could not be read within the preflight's bound — whose concrete value the implementation plan sets — is classified Undetermined with the reason Check did not complete, distinct from No configuration to cross-check. The preflight reaches its outcome rather than waiting on that platform.
 - [ ] The report keeps undetermined platforms visibly separate from platforms that passed.
 - [ ] An Undetermined verdict does not block dispatch on its own.
 
@@ -343,6 +357,8 @@ Worked examples are part of the changed surface wherever a disagreement case is 
 8. **Changing any reviewer platform's own behaviour, or the branch it reads its configuration from.** That behaviour is the platform's, and this feature documents it rather than altering it.
 
 9. **Re-reviewing pull requests from runs that had no preflight.** The check applies to runs from the change forward.
+
+10. **Fixing the preflight's time bound to a concrete value.** This spec requires a bound and states the product property it must satisfy — the preflight always reaches an outcome, and an unreachable or slow surface degrades to Undetermined rather than to waiting — but deliberately sets no number and does not say how the bound is measured. Deferral rationale: a defensible bound depends on how and where the check is performed, which item 2 also leaves open. To be decided in the implementation plan. Human confirmation requested: no.
 
 ---
 
