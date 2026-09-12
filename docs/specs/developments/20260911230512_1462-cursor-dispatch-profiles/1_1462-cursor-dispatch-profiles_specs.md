@@ -6,7 +6,7 @@
 
 The framework's bounded commands assume that when a run needs a specialist role — a portfolio orchestrator, an epic runner, a work item runner, a spec writer, an implementer, a reviewer — the runner can hand the work to that role as a separate, freshly-scoped context. In Cursor that assumption holds on the desktop application and breaks under Remote Control, where the orchestration context a command hands off to frequently cannot hand off again. The framework has never named this situation, so operators discover it mid-run, improvise, and in the recorded case ended up with one context doing orchestration and implementation at once — which collapses the role and model separation the workflow depends on and required a human to intervene.
 
-This feature gives the situation a name and a contract. Every bounded command declares, before it changes anything, which **dispatch profile** is in force and which orchestration role the current context is personally accountable for. Each profile states exactly what the current context must do itself, what it must hand off, and what it must never do inline. The central rule is that a context which absorbs an orchestration role absorbs that role's **entire** contract — every decision, guard, gate, and verification the role owes — and not a reduced version of it; and that absorbing an orchestration role never grants permission to write or review the work product inline.
+This feature gives the situation a name and a contract. Every bounded command declares, before it changes anything, which **dispatch profile** is in force and, for the orchestration role that profile names for the active layer, whether the current context is personally accountable for that role or is handing it off intact. Each profile states exactly what the current context must do itself, what it must hand off, and what it must never do inline. The central rule is that a context which absorbs an orchestration role absorbs that role's **entire** contract — every decision, guard, gate, and verification the role owes — and not a reduced version of it; and that absorbing an orchestration role never grants permission to write or review the work product inline.
 
 The guarantee this feature owes its operators is self-service: someone running the workflow under Remote Control should be able to start a single item, an explicit multi-item batch, or an epic, and complete it correctly using the published documentation alone, without a human rescuing the run and without inventing a fallback that quietly drops a gate.
 
@@ -23,10 +23,10 @@ The guarantee this feature owes its operators is self-service: someone running t
 
 1. The operator reads the published guidance on how to tell which handoff behavior this environment actually supports.
 2. The run states which dispatch profile is in force.
-3. The run states which orchestration role the current context is personally accountable for under that profile, named after the layer the command operates at.
+3. For the orchestration role named after the layer the command operates at, the run states whether the current context is personally accountable for that role — because this profile absorbs it — or whether the role is being handed off intact to a separate context — because this profile does not absorb it.
 4. Only then does the run proceed toward its first mutating action.
 
-**Postconditions**: The profile and the accountable role are on the record for this run, before any mutation. Anyone reading the run output afterwards can tell which contract the run was operating under.
+**Postconditions**: The profile and the named role's accountability — personally accepted by the current context, or handed off intact — are on the record for this run, before any mutation. Anyone reading the run output afterwards can tell which contract the run was operating under.
 
 **Information shown**:
 
@@ -68,14 +68,14 @@ The guarantee this feature owes its operators is self-service: someone running t
 **Considerations**:
 
 - This use case exists to establish that the feature changes nothing about the environment where handoff already works. The only addition is the declaration.
-- If a handoff that was expected to succeed fails partway through the run, the run moves to the situation in Use Case 3 and re-declares rather than continuing under a profile that is no longer true.
+- If a handoff that was expected to succeed fails partway through the run — after the orchestration role has already run or mutated state — control returns to the context that invoked the run, rather than the run continuing to depend on a role that has stopped being reachable. Mutations already completed before the failure are preserved as they stand; this transition does not undo or retroactively re-verify them as a whole. The invoking context re-declares before its next mutating action, applying the profile re-declaration Business Rule ("Exactly one profile is in force at a time..."), and from that re-declaration forward it absorbs the orchestration role under the parent-orchestrated profile per Use Case 3, whose contract — including its stage handoffs and its own gates and verification — governs the rest of the run.
 
 ---
 
 ### Use Case 3: Onward handoff is unavailable, and the current context absorbs the orchestration role
 
 **Actor**: The operator running a mutating bounded command in an environment where the orchestration role cannot hand work onward.
-**Preconditions**: A bounded command that may change artifacts has been invoked. The current context can hand work to one further role, but that role cannot hand work onward. Nothing has been mutated yet.
+**Preconditions**: A bounded command that may change artifacts has been invoked. The current context can hand work to one further role, but that role cannot hand work onward. This use case is reached either at the start of a run, with nothing yet mutated, or via the mid-run handoff-failure re-declaration described in Use Case 2's Considerations, in which case any mutations completed before that re-declaration are preserved and this profile's contract governs only what happens from the re-declaration forward.
 
 **Steps**:
 
@@ -189,8 +189,8 @@ The guarantee this feature owes its operators is self-service: someone running t
 
 ## Business Rules
 
-- Every bounded workflow run declares exactly one dispatch profile and the orchestration role the current context is personally accountable for, before its first mutating action.
-- A run that has not declared a profile and accountable role stops before mutating anything, rather than proceeding under an assumed profile.
+- Every bounded workflow run declares exactly one dispatch profile and, for the orchestration role that profile names for the active layer, whether the current context is personally accountable for that role or is handing it off intact, before its first mutating action.
+- A run that has not declared a profile and the named role's accountability stops before mutating anything, rather than proceeding under an assumed profile.
 - A declared profile value that does not match one of the three defined profiles, and a declaration whose accountable-role field names no accountable orchestrator role (including an empty value), each count as a missing declaration. The run stops before mutating anything, exactly as it does for an absent declaration, and reports which part of the declaration was invalid.
 - Handoff availability is evaluated in a fixed order. First, the run confirms whether the current context can hand orchestration to one further role at all (initial handoff). Only when initial handoff is confirmed available does the run go on to evaluate whether that receiving role can hand stage work onward in turn (onward-handoff capability). A profile decision never evaluates onward-handoff capability before initial handoff is confirmed.
 - When initial handoff availability itself cannot be confirmed as available or unavailable, the run treats it the same as no handoff being available at all: it declares inline-fallback, not parent-orchestrated or native handoff, and stays read-only until initial handoff is confirmed by a later declaration.
@@ -207,6 +207,7 @@ The guarantee this feature owes its operators is self-service: someone running t
 - The canonical profiles guidance describes behavior by reference to the roles' own contracts and protocols and does not duplicate them. Where they conflict, the role contract and protocol prevail. This does not relax the parent-orchestrated profile's prohibition on performing product work inline for a context that absorbed the orchestration role; see the dedicated carve-out rule above.
 - Every entrypoint an operator can legitimately start a bounded run from states the profile requirement and points to the canonical guidance, so the requirement cannot be missed by choosing a different starting point.
 - Obligations tied to repository arrangement — artifact ownership, tracker updates, and post-merge cleanup — follow the absorbed role's contract and are unaffected by which profile is in force.
+- For an environment or orchestration layer whose handoff behavior has not been directly observed — including Cursor Cloud Agents — the profile recorded for it in the agent model configuration document is an explicit assumption, not an observed fact, and follows the same conservative-default pattern as an unconfirmed handoff capability observed mid-run: the more restrictive of the profiles under consideration is assumed until confirmed by observation. The agent model configuration document states, for each environment and orchestration layer it covers, whether the recorded profile is confirmed by observation or is an explicit assumption.
 
 ---
 
@@ -241,7 +242,7 @@ The guarantee this feature owes its operators is self-service: someone running t
 
 The profile declaration is a decision gate: the same inputs must produce the same outcome and the same next action wherever the gate is described.
 
-**Evaluation order**: the gate evaluates initial orchestration-handoff availability first — whether the current context can hand orchestration to one further role at all. Only when initial handoff is confirmed available does the gate go on to evaluate onward-handoff capability — whether that receiving role can hand stage work onward in turn. The rows below describing an unconfirmed onward-handoff capability apply only once initial handoff is confirmed available. When initial handoff availability itself cannot be confirmed as available or unavailable, the gate treats it exactly as it treats "no handoff of any kind available" — see those rows below — rather than selecting parent-orchestrated on an unconfirmed initial hop.
+**Evaluation order**: declaration validity is checked before handoff availability. A missing declaration, a declared value outside the three defined profiles, or a declaration with no accountable orchestrator role named produces `dispatch_profile_declaration_missing` regardless of what the initial-handoff or onward-handoff facts are, because an invalid or absent declaration leaves no declared profile to weigh against those facts. Only once the declaration is structurally valid does the gate go on to evaluate initial orchestration-handoff availability — whether the current context can hand orchestration to one further role at all. Only when initial handoff is confirmed available does the gate go on to evaluate onward-handoff capability — whether that receiving role can hand stage work onward in turn. The rows below describing an unconfirmed onward-handoff capability apply only once initial handoff is confirmed available. When initial handoff availability itself cannot be confirmed as available or unavailable, the gate treats it exactly as it treats "no handoff of any kind available" — see those rows below — rather than selecting parent-orchestrated on an unconfirmed initial hop.
 
 | Input observed at run start                                                                                                | Profile outcome                                          | Required next action for the current context                                                                                                | Prohibited                                                                                                |
 | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
@@ -286,7 +287,7 @@ The profile declaration is a decision gate: the same inputs must produce the sam
 - [ ] The portfolio-scan command documents that scanning runs in the current context and is read-only under every profile — including when orchestration handoff to another role is otherwise available — and that acting on its results requires a new bounded run with its own declaration.
 - [ ] The portfolio orchestration role document and the item orchestration role document each state what to do when onward handoff is unavailable: return the run to the context that invoked it rather than proceeding, and perform no product work inline.
 - [ ] The portfolio, single-item, and epic orchestration protocols each reference the canonical document at the point a run establishes its execution arrangement, before dispatch or mutation.
-- [ ] The agent model configuration document states which profile and which model assignment apply for each combination of supported Cursor environment and orchestration layer.
+- [ ] The agent model configuration document states which profile and which model assignment apply for each combination of supported Cursor environment and orchestration layer, and states for each combination whether that profile assignment is confirmed by observation or is an explicit assumption, per the conservative-default Business Rule for environments and layers whose handoff behavior has not been directly observed.
 - [ ] The repository's workflow rule file states the profile-declaration requirement and points to the canonical document.
 - [ ] An operator who has never run the workflow under a constrained environment can reach the canonical guidance from any bounded command entrypoint or orchestration role document, and can run a single item, an explicit multi-item batch, and an epic to a terminal condition using the documentation alone, with no gate dropped and no human rescue.
 - [ ] Every profile, layer, and orchestration-role name is spelled and labelled identically across the canonical document, the command entrypoints, the role documents, the protocols, the model configuration document, and the workflow rule file.
@@ -316,6 +317,6 @@ The profile declaration is a decision gate: the same inputs must produce the sam
 
 1. When an operator is in an environment where no handoff of any kind is available and the work genuinely must proceed, is stopping and moving to a capable environment the only sanctioned remedy, or should there be an explicitly approved, recorded escape hatch that permits mutation in the current context? The brief states the read-only rule without addressing the operator who has no other environment available.
 
-2. Cursor Cloud Agents are named as a distinct environment in the model configuration requirement, but the recorded failure is from Remote Control only. Which profile should the documentation state as expected for Cloud Agents at each orchestration layer, and is that expectation confirmed by observation or assumed?
+2. Under the parent-orchestrated profile, one context is accountable for the portfolio layer for an entire explicit multi-item batch. Should such a batch still run its items concurrently, or should it be documented as running items one at a time in this environment, given that a single context is supervising every item itself?
 
-3. Under the parent-orchestrated profile, one context is accountable for the portfolio layer for an entire explicit multi-item batch. Should such a batch still run its items concurrently, or should it be documented as running items one at a time in this environment, given that a single context is supervising every item itself?
+> Resolved: Cursor Cloud Agents' profile-per-layer assignment (previously Open Question 2) is answered by the new Business Rule on unobserved environments and by Acceptance Criterion 15 — the agent model configuration document records Cloud Agents' assignment as an explicit assumption under the same conservative-default pattern used elsewhere, unless and until it is confirmed by observation, rather than leaving it undecided.
