@@ -206,6 +206,7 @@ duties below apply to a non-empty value.
 | RESIDUAL-3 | `apply-component` mutates GitHub milestones from the evidence file alone, without re-resolving an independent target binding the way cleanup does | `out_of_scope` | Closing it changes the required CLI contract of a mutating helper and adds a hub-config prerequisite to every caller — larger than this audit and not named by any acceptance criterion. |
 | RESIDUAL-4 | `multi-repo-release-assurance.sh` applies no shape validator to `hub_config`, `product_config`, `run_id`, `step_id`, `supersedes`, `idempotency_guard` | `out_of_scope` | This codebase establishes no objective format for any of the six. The existing validators were deliberately limited to fields with an established format; inventing formats would produce false rejections. |
 | RESIDUAL-5 | `prepare-release-post-merge-cleanup.sh`'s cleanup lease is hub-checkout-scoped, not cross-machine; and it has no release-tag deletion logic at all, while the smoke-test document's `remote_tag_deleted` field describes functionality that was never implemented | `out_of_scope` | Explicitly carried forward from the brief's "Residual limitations recorded at merge" section, which states these are not part of this audit. Recorded in the contract doc so they are not lost. |
+| RESIDUAL-6 | T2 asserts the rendered record's key list against a hardcoded 16-key list inside the test file, not against the emitted-field contract table itself; nothing in this plan mechanically derives one from the other, so a maintainer who updates the producer's `jq` emission object and T2's hardcoded list together, while forgetting the contract table, introduces silent drift between the running code and the published documentation that no test catches | `out_of_scope` | This codebase has no existing tooling that extracts a field list from a markdown table for use in a test assertion (checked: no such helper exists under `scripts/lint/` or `scripts/development-workflow/`), and inventing one is outside this audit's boundary-closing scope — it would add new parsing/tooling surface the brief never asked for. T2's real, narrower guarantee is drift detection between the running producer and T2's own list; the gap between that list and the contract table is accepted here rather than assumed away. |
 
 ---
 
@@ -497,24 +498,30 @@ agent must (1) add the test, (2) run the suite against unmodified runtime code a
 **failing** output, (3) apply the fix, (4) re-run and capture the passing output. The captured
 red-then-green pairs are the completion evidence recorded on the implementation PR.
 
-**Two tests are exempt from red-capture, and only these two.** T22 guards a defect already
+**Three tests are exempt from red-capture, and only these three.** T22 guards a defect already
 fixed in review round 3, so it is green against unmodified runtime code by construction and
 cannot be confirmed red. T6b pins behavior this plan deliberately leaves unchanged — the
 producer's `null` passthrough for `single_repo_release` routing — so that T6a's new
 precondition cannot be over-applied to the one routing case where `null` is the contracted
-value; it is likewise green by construction. Record both as green-before and green-after.
-Every other numbered test must show a captured red state: T1-T21 other than T6b, including
-T6a, T15a, and T15b, all target behavior this plan introduces.
+value; it is likewise green by construction. T15b pins behavior this plan deliberately leaves
+unchanged for the same reason as T6b: `released` is already non-blocking in the current
+implementation (line 521), and D9's disposition table preserves that behavior explicitly
+("Already accepted at line 521; rejecting it here would make one script disagree with
+itself") rather than tightening it — so there is no fix for T15b to be red against, and it is
+likewise green by construction. Record all three as green-before and green-after.
+Every other numbered test must show a captured red state: T1-T21 other than T6b and T15b,
+including T5b, T6a, T15a, and T20b, all target behavior this plan introduces.
 
 ### Fabricated-value rejection cases
 
 | # | Suite | Fabricated input | Expected rejection |
 | --- | --- | --- | --- |
 | T1 | `test-component-release-evidence.sh` | `--component-version v99.0.0` supplied, record inspected | `component_version` present and equal to the supplied value |
-| T2 | `test-component-release-evidence.sh` | `--component-version` omitted | `component_version` is JSON `null` (not absent, not `""`), **and** `jq -r 'keys \| join(",")'` on the rendered record equals the 16-key list in the emitted-field contract table exactly — this is the assertion that pins the field count against drift |
+| T2 | `test-component-release-evidence.sh` | `--component-version` omitted | `component_version` is JSON `null` (not absent, not `""`), **and** `jq -r 'keys \| join(",")'` on the rendered record equals a hardcoded 16-key list mirroring the emitted-field contract table exactly — this pins the running producer's key set against T2's own list (RESIDUAL-6 records the gap between that list and the contract table itself) |
 | T3 | `test-component-release-evidence.sh` | `--component-tag "bad tag"` (space) | exit 2, message names `--component-tag` |
 | T4 | `test-component-release-evidence.sh` | `--component-version "1.0.0;rm"` | exit 2, message names `--component-version` |
 | T5 | `test-component-release-evidence.sh` | target binding with `contract_revision: ""` | exit 1, `missing required identity field: contract_revision` |
+| T5b | `test-component-release-evidence.sh` | target binding with `canonical_repository_identity: ""` | exit 1, `missing required identity field: canonical_repository_identity` |
 | T6 | `test-component-release-evidence.sh` | target binding with `release_correlation_key: ""` | exit 1, names `release_correlation_key` |
 | T6a | `test-component-release-evidence.sh` | target binding with `routing_outcome: "component_release_routed"` and `selected_product_repo_key: null` | exit 1, `missing required identity field: selected_product_repo_key`; no record written |
 | T6b | `test-component-release-evidence.sh` | target binding with `routing_outcome: "single_repo_release"` and `selected_product_repo_key: null` | record emitted; `selected_product_repo_key` is JSON `null` — the `producer_required_nullable` contract, and the guard that T6a's precondition is not over-applied (red-capture exempt) |
@@ -534,6 +541,7 @@ T6a, T15a, and T15b, all target behavior this plan introduces.
 | T18 | `test-component-milestone-reconciliation.sh` | valid hub-path apply | `trust_basis: "evidence_bound"` in the result |
 | T19 | `test-prepare-release-tracker-cleanup.sh` | evidence whose `target_binding.contract_revision` is `""` | exit 1, `missing required identity field: contract_revision`; no branch deletion |
 | T20 | `test-prepare-release-tracker-cleanup.sh` | evidence whose `target_binding.canonical_repository_identity` is `""` | exit 1, names the field |
+| T20b | `test-prepare-release-tracker-cleanup.sh` | evidence whose `target_binding.release_correlation_key` is `""` | exit 1, names `release_correlation_key`; no branch deletion |
 | T21 | `test-multi-repo-release-assurance.sh` | valid fixture | output carries `trust_class: "attestation"` / `TRUST_CLASS=attestation` |
 | T22 | `test-multi-repo-release-assurance.sh` | `release_contract: "garbage"` (regression guard for the round-3 fix) | `adoption_status: "blocked"` |
 
@@ -636,6 +644,11 @@ and pass to `scope-residual-gate.sh verify --evidence <path>`:
       "disposition": "out_of_scope"
     },
     {
+      "summary": "T2's hardcoded key list is not mechanically derived from the emitted-field contract table, so drift between the two is undetected (RESIDUAL-6)",
+      "remaining_count": 1,
+      "disposition": "out_of_scope"
+    },
+    {
       "summary": "Producer-emitted fields with no remaining unbound caller override after this work",
       "remaining_count": 0,
       "disposition": "completed"
@@ -655,7 +668,7 @@ section, which is what makes the gate satisfiable without fabricating follow-up 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
 | Component release target binding | `component_release_target.v1` with `mutation_allowed: true`, `routing_outcome: component_release_routed`, `release_branch_pattern: "{product_repo}/release/v{version}"` | `scripts/development-workflow/tests/setup-component-release-fixture.sh` (existing; extended) |
-| Empty-identity target binding | Same, but `contract_revision: ""`; a second variant with `release_correlation_key: ""`; a third with `routing_outcome: "component_release_routed"` and `selected_product_repo_key: null` | New temp fixtures inside `tests/test-component-release-evidence.sh` and `tests/test-prepare-release-tracker-cleanup.sh` (T5, T6, T6a, T19, T20) |
+| Empty-identity target binding | Same, but `contract_revision: ""`; a second variant with `release_correlation_key: ""`; a third with `canonical_repository_identity: ""`; a fourth with `routing_outcome: "component_release_routed"` and `selected_product_repo_key: null` | New temp fixtures inside `tests/test-component-release-evidence.sh` and `tests/test-prepare-release-tracker-cleanup.sh` (T5, T5b, T6, T6a, T19, T20, T20b) |
 | Single-repository-routed target binding | `component_release_target.v1` with `routing_outcome: "single_repo_release"`, `mutation_allowed: true`, `selected_product_repo_key: null` | New temp fixture inside `tests/test-component-release-evidence.sh` (T6b) |
 | Version-bound evidence | `component_release_evidence.v1` with `component_tag: "mobile-v1.4.0"`, `component_version: "1.4.0"` | `write_evidence` in `tests/test-delivery-bundle-manifest.sh` (extend the existing helper with a `component_version` positional) |
 | Version-unbound evidence | Same record with `component_version: null` | `write_evidence` invoked with an empty version (T7) |
@@ -680,7 +693,7 @@ The developer executes these after implementation; they are only identified here
       (3) the field x consumer trust matrix — AC-1; (4) the `evidence_state` disposition
       table from D9, covering every enum member plus the unknown and absent cases;
       (5) fields the producer never emits and which may never be sourced from an evidence
-      file; (6) Known gaps, carrying RESIDUAL-1 through RESIDUAL-5 verbatim with their
+      file; (6) Known gaps, carrying RESIDUAL-1 through RESIDUAL-6 verbatim with their
       rationales.
 - [ ] `docs/workflow/development-workflow/repository-modes.md` — in the paragraph beginning
       "`scripts/development-workflow/component-release-evidence.sh` renders deterministic
@@ -729,8 +742,9 @@ The developer executes these after implementation; they are only identified here
 | Making `--component-version` required breaks an out-of-repository caller | Low | Med | Every in-repository caller already passes it (Verification Log). The failure is a loud exit-2 argparse error naming the flag, not silent misbehavior. |
 | Removing the `hub_tracker_reconciliation_outcome` / `child_release_state` evidence fallback breaks a real caller | Low | Med | D5 records the evidence that the documented caller is unreachable through the `schema_version` gate. Tests T13/T14 pin the new behavior, and the blockers name the missing flag. |
 | Rejecting `--evidence-file` in `single_repo` mode surprises an operator mid-release | Low | Low | Recovery is to omit the flag. The alternative — silently ignoring a supplied evidence file — is the exact false-assurance the audit exists to remove. |
-| The matrix is published but drifts as the helpers evolve | Med | Med | T2 asserts the rendered record's full top-level key list against the 16-key emitted-field contract table, so any field added to or removed from the producer's `jq` emission object fails `test-component-release-evidence.sh` until the table is updated. That is the enforcement mechanism; the Verification Log enumeration and smoke Step 14 are manual re-checks on top of it. The consumer axis has no equivalent automated guard, which is why Implementation Order step 2 re-runs the enumerations before any code is written. |
+| The matrix is published but drifts as the helpers evolve | Med | Med | T2 asserts the rendered record's full top-level key list against a hardcoded 16-key list mirroring the emitted-field contract table, so any field added to or removed from the producer's `jq` emission object without a matching update to T2's own list fails `test-component-release-evidence.sh`. That guards drift between the running producer and T2's list; it is not a mechanical check that either one still matches the contract document's table, and this plan invents no tooling to make it one — a maintainer who updates the code and T2's list together while forgetting the table would introduce undetected drift there, which is recorded as RESIDUAL-6 (`out_of_scope`) rather than claimed as an anti-drift mechanism for the contract table itself. The Verification Log enumeration and smoke Step 14 are manual re-checks on top of it. The consumer axis has no equivalent automated guard, which is why Implementation Order step 2 re-runs the enumerations before any code is written. |
 | AC-4's "confirmed to fail before its fix" is skipped under time pressure | Med | High | The Implementation Order makes red-capture a numbered step before each fix, and the residual/completion evidence on the PR must contain the red-then-green pairs. |
+| This plan changes the published `component_release_evidence.v1` contract (adds `component_version`; tightens `canonical_repository_identity`, `release_correlation_key`, `contract_revision`, and the routed case of `selected_product_repo_key` from optional-empty-tolerant to required-non-empty) and a later revert of that contract has no stated path | Low | Low | Reverting is a straightforward code revert: the producer and all four consumers change together in this plan's commits, so there is no partial-revert skew where one file expects the new shape and another still expects the old one. Per Dependencies, `WORKFLOW_MODE` resolves to `single_repo` in this repository and no `workflow_hub` block is configured, so this repository itself persists no `workflow_hub` evidence record today for a revert to break. The bounded residual risk is a future `workflow_hub` adopter of this template: `component-release-evidence.sh`'s output is a short-lived, single-release CLI artifact that is generated and consumed synchronously within one release attempt (bundle attach, reconciliation, cleanup all read the same file produced moments earlier), not a durable append-only log, so an adopter's release attempt straddling a future revert boundary can only present an older, more permissive consumer with a newer, stricter-shaped record — which the permissive consumer already accepts, since it is a superset of what it requires — never the reverse. No verification log entry in this plan measures adopter behavior beyond this repository, so this statement is scoped to what the Dependencies section already establishes and claims no more. |
 
 ---
 
@@ -753,16 +767,17 @@ can be mistaken for production code.
 3. **Write the contract document** `component-release-evidence-contract.md` first. It is the
    specification the code changes implement, and drafting it surfaces any matrix cell that is
    still ambiguous.
-4. **Add the tests for the producer** (T1-T6b; T6b is the red-capture exemption). Run
-   `bash scripts/development-workflow/tests/test-component-release-evidence.sh` and capture
-   the failures.
+4. **Add the tests for the producer** (T1-T6b, including T5b; T6b is the red-capture
+   exemption). Run `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
+   and capture the failures.
 5. **Implement the producer changes** (D1, D3, D4). Re-run the suite green.
 6. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11), capture failures.
 7. **Implement the bundle changes** (D2, GAP-1, GAP-9, enum validation). Re-run green.
-8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18, including T15a
-   and T15b), capture failures.
+8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18, including
+   T15a; T15b is the red-capture exemption for this suite), capture failures.
 9. **Implement the reconciliation changes** (GAP-4, D5, D9, D6, `trust_basis`). Re-run green.
-10. **Add the red tests for cleanup and assurance** (T19-T22), capture failures.
+10. **Add the red tests for cleanup and assurance** (T19-T22, including T20b; T22 is the
+    red-capture exemption for this suite), capture failures.
 11. **Implement the cleanup precondition** (GAP-8) and the assurance `trust_class` output
     (D8). Re-run both suites green.
 12. **Update the fixture helpers** (`setup-component-release-fixture.sh`,
@@ -791,7 +806,7 @@ can be mistaken for production code.
 | Brief acceptance criterion | Where satisfied | Test / evidence |
 | --- | --- | --- |
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers |
-| No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T16, T19, T20 |
+| No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T16, T19, T20, T20b |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T21 other than T6b (including T6a, T15a, and T15b) with captured red-then-green output on the implementation PR; T6b and T22 are the two declared red-capture exemptions and are recorded green-before and green-after |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T21 other than T6b and T15b (including T5b, T6a, T15a, and T20b) with captured red-then-green output on the implementation PR; T6b, T15b, and T22 are the three declared red-capture exemptions and are recorded green-before and green-after |
 | The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, and T6a/T6b pin the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing) |
