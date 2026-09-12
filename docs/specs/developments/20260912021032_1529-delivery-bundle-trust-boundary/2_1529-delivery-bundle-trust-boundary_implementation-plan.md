@@ -36,8 +36,8 @@ rejection for each fabricated-value case, each confirmed red before its fix.
 
 **Estimated complexity**: **M** (1-3 days).
 
-**Rationale**: The change set is five runtime helpers, five test suites, one new document and
-seven existing documents. No new subsystem, no new data format, no schema-version bump
+**Rationale**: The change set is five runtime helpers, five test suites plus two fixture
+helpers, one new contract document, and six existing documents. No new subsystem, no new data format, no schema-version bump
 (`component_release_evidence.v1` gains one optional-to-emit field and tighter emission
 preconditions; every currently valid record stays valid except ones the audit deliberately
 rejects). The cost is in breadth and in the "confirm red before green" discipline of AC-4,
@@ -394,7 +394,7 @@ not from a prior enumeration.
 6. `scripts/development-workflow/tests/setup-component-release-fixture.sh`
 7. `scripts/development-workflow/tests/setup-component-milestone-fixture.sh`
 
-**Documentation (8, one new)**
+**Documentation and release notes (8; three new)**
 
 1. `docs/workflow/development-workflow/component-release-evidence-contract.md` — **new**
 2. `docs/workflow/development-workflow/repository-modes.md`
