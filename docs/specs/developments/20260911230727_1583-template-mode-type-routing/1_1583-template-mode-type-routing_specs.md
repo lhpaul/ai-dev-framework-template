@@ -338,7 +338,7 @@ item's class into a pipeline — so the gate is enumerated here.
 | Trigger | Gate evaluated |
 | ------- | -------------- |
 | An agent asks the creation command to file an item with a class | Creation-time class validity |
-| A runner is asked to advance an item | Routing classification |
+| A runner is asked to advance an item, or a portfolio scan proposes a Backlog item to start | Routing classification |
 | A release or retrospective flow asks for open framework items | Framework-item lookup meaning |
 
 ### Allowed outcomes and required next actions
@@ -383,7 +383,7 @@ Framework-item lookup outcomes:
 | Backlog-creation protocol (classification step and its inference table) | States the framework-mode rule; its worked examples do not show a class that framework mode refuses |
 | Repository agent-guidance file, and its per-runner mirrors | States the framework-mode rule in the same words as the canonical copy |
 | Tracker integration guide (classification field table and the Workflow entry) | States that the Workflow option remains on the board but is not valid in framework mode |
-| Routing protocol's Backlog table | Framework-mode Workflow row reads as misclassified-and-stop, not infer-the-path |
+| Every Backlog routing table that turns a class into a pipeline — the single-item routing table and the portfolio batch-proposal table alike | The framework-mode Workflow row reads as misclassified-and-stop, not infer-the-path, in each of them |
 | Retrospective flows that create an item and set its class | Do not direct a framework-mode repository to set a class it refuses |
 | Release and retrospective framework-item lookups | Describe the lookup's framework-mode meaning as every open board item |
 
@@ -486,7 +486,9 @@ silently dropped.
 - [ ] The run starts no pipeline for that item and changes neither its class nor
       its board status.
 - [ ] Re-classifying the item as Feature, Bug, or Refactor and re-running it
-      routes it to the corresponding pipeline with no further intervention.
+      routes the item exactly as that class routes today, with no additional
+      step introduced by this feature — a re-classified Bug still passes
+      through the existing scope check before it reaches the fast-track path.
 - [ ] In framework mode, an item classified Workflow whose pipeline has already
       started continues on that pipeline — the misclassification stop does not
       fire, and the run proceeds exactly as it did before this feature.
@@ -500,8 +502,10 @@ silently dropped.
       every per-runner mirror of that text says the same thing.
 - [ ] The tracker integration guide states that the Workflow option remains on the
       board but is not valid in framework mode.
-- [ ] The routing protocol's Backlog table describes a framework-mode Workflow
-      item as misclassified rather than as an item whose path is inferred.
+- [ ] Every Backlog routing table that turns a class into a pipeline — the
+      single-item routing table and the portfolio batch-proposal table alike —
+      describes a framework-mode Workflow item as misclassified rather than as
+      an item whose path is inferred.
 - [ ] The release-preparation flow and the retrospective flow each describe the
       open-framework-item lookup's framework-mode meaning as every open board
       item, so a reader of either flow is not left expecting a class-filtered
