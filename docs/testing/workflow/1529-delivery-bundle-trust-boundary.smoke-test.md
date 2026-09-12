@@ -88,15 +88,17 @@ missing hub-input flags, invalid evidence state, empty identity field).
 
 Read the implementation PR description (or the commit series). For each of the
 rejection tests T1-T21 listed in the plan's Testing Strategy, locate the captured
-failing output recorded before its fix. T22 is exempt: it is a regression guard
-for a defect already fixed in review round 3, so it is green against unmodified
-runtime code by design and the plan records it as the single exemption.
+failing output recorded before its fix. Two tests are exempt: T22 is a regression
+guard for a defect already fixed in review round 3, and T6b pins the producer's
+deliberately unchanged `null` passthrough for `single_repo_release` routing. Both
+are green against unmodified runtime code by design, and the plan records them as
+the only two exemptions.
 
-**Expected result**: every rejection test except T22 has a recorded failure
-against the unmodified runtime code and a recorded pass after the fix. A
-non-exempt test with no recorded red state is a FAIL for this step. T22 must be
-recorded as green both before and after, proving the earlier fix did not
-regress.
+**Expected result**: every rejection test except T6b and T22 has a recorded
+failure against the unmodified runtime code and a recorded pass after the fix. A
+non-exempt test with no recorded red state is a FAIL for this step. T6b and T22
+must each be recorded as green both before and after, proving the earlier fix did
+not regress and that the new identity precondition was not over-applied.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -136,16 +138,27 @@ and not an empty string.
 
 **Maps to**: Acceptance Criteria 2 and 5.
 
-Run the producer four more times, each time changing one input:
+Run the producer five more times, each time changing one input:
 
 1. `--component-tag "bad tag"` (contains a space)
 2. `--component-version "1.0.0;echo"` (contains a semicolon)
 3. a target binding whose `contract_revision` is `""`
 4. a target binding whose `release_correlation_key` is `""`
+5. a target binding whose `routing_outcome` is `component_release_routed` and
+   whose `selected_product_repo_key` is `null`
 
 **Expected result**: each run exits non-zero. Runs 1 and 2 exit `2` and the
-message names the offending flag. Runs 3 and 4 exit `1` and the message names the
-missing identity field. No evidence file is written in any of the four runs.
+message names the offending flag. Runs 3, 4, and 5 exit `1` and the message names
+the missing identity field — run 5 naming `selected_product_repo_key`. No
+evidence file is written in any of the five runs.
+
+Then run the producer once more against a target binding whose `routing_outcome`
+is `single_repo_release` and whose `selected_product_repo_key` is `null`.
+
+**Expected result**: the record **is** written and its `selected_product_repo_key`
+is JSON `null`. This is the `producer_required_nullable` contract: `null` occurs
+if and only if routing is `single_repo_release`, so run 5's precondition must not
+fire here.
 
 ### Step 6: The bundle requires and matches `component_version`
 
@@ -264,9 +277,18 @@ scripts/development-workflow/multi-repo-release-assurance.sh \
 Open `docs/workflow/development-workflow/component-release-evidence-contract.md`
 and confirm each of the following:
 
-1. The four trust classes are defined with each one's consumer duty.
+1. The five trust classes are defined with each one's consumer duty:
+   `producer_required`, `producer_required_nullable`, `producer_conditional`,
+   `hub_input`, and `attestation`. The `producer_required_nullable` entry states
+   its `null` handling explicitly — require the key present, accept a non-empty
+   string or JSON `null`, treat `null` as unbound, and require
+   `routing_outcome == component_release_routed` first — so it does not
+   contradict `producer_required`'s "require non-empty" duty.
 2. The producer's emitted-field table lists every field the producer emits, each
-   marked required, conditional, or nullable.
+   carrying exactly one trust class, and no field's entry contradicts the
+   definition of the class it carries. `selected_product_repo_key` is
+   `producer_required_nullable`; every other always-emitted field is
+   `producer_required`.
 3. The field x consumer matrix has one row per emitted field and per
    never-emitted field a consumer reads, and one column per consumer:
    `delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`,
