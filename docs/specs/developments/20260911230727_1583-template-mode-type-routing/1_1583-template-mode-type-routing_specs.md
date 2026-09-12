@@ -212,6 +212,11 @@ lookup could not be performed.
 - What the operator must never have to guess is which of the three answers they
   are looking at. "The board is empty" and "the lookup failed" produce the same
   empty list, so the distinction has to come from the report, not from the list.
+- This third answer is scoped to framework mode, the same as every other step in
+  this use case. A consumer repository's lookup failure is unaffected by this
+  feature and keeps its current behavior, even though that current behavior is
+  also an unlabeled empty result — fixing that is a pre-existing gap this
+  feature does not widen its scope to close.
 
 ---
 
@@ -304,13 +309,21 @@ The agent was never instructed toward a class the same repository refuses.
   mode, and keeps its class-filtered meaning in a consumer repository. It must
   never report an empty result as a consequence of the classification rule
   itself.
-- The lookup has three distinguishable answers: the items it found, an empty
-  result because the board holds no open items, and unavailable because the
-  lookup could not be performed. An unavailable lookup is reported as
+- In framework mode, the lookup has three distinguishable answers: the items it
+  found, an empty result because the board holds no open items, and unavailable
+  because the lookup could not be performed. An unavailable lookup is reported as
   unavailable, with the reason, and is never reported as an empty result. An
   unavailable lookup does not block the release or retrospective flow, but the
   flow must state that the lookup was not performed rather than record the
   review or the de-duplication it feeds as having been satisfied.
+- This distinguishable-unavailable requirement applies to framework mode only.
+  A consumer repository's lookup keeps its current failure behavior unchanged,
+  exactly like every other part of the lookup's consumer-mode meaning — this
+  feature does not touch how a consumer-repository lookup failure is reported,
+  even though today's failure behavior there is also a return of `[]`.
+  Widening the requirement to consumer mode would be new consumer-facing
+  behavior, which contradicts the guarantee that consumer repositories are
+  unaffected in every respect.
 - Every workflow surface that *explains* how to classify an item states the
   framework-mode rule and the consumer rule consistently, so a reader in either
   mode is not misled by the rule for the other.
@@ -357,9 +370,11 @@ Work-item classification values, and what each means in each mode:
   meets the misclassified item, the same three pieces of information appear in the
   scan's report of evaluated candidates it did not propose. The scan continues and
   its proposal is unaffected apart from that item's absence.
-- **Unavailable framework-item lookup**: when the lookup cannot be performed, the
-  flow that asked for it says so in its own output, with the reason, at the point
-  where the list would otherwise have appeared. This is a report, not a stop.
+- **Unavailable framework-item lookup**: in framework mode, when the lookup
+  cannot be performed, the flow that asked for it says so in its own output,
+  with the reason, at the point where the list would otherwise have appeared.
+  This is a report, not a stop. A consumer-repository lookup failure is
+  unaffected by this feature and keeps its current, unreported behavior.
 - **No new audit trail**: this feature records no events, writes no logs, and
   posts no tracker comments beyond the reports above. It has no background or
   scheduled behavior.
@@ -429,7 +444,8 @@ Framework-item lookup outcomes:
 | Framework | Lookup completed; at least one open item on the board | Every open board item, whatever its class | Unchanged — the flow reviews the list as today |
 | Framework | Lookup completed; no open items on the board | Empty, and empty only because the board is empty — reported as an empty board, distinguishably from an unavailable lookup | Unchanged — an empty board is a legitimate answer |
 | Consumer | Lookup completed | Only items classified Workflow, as today | Unchanged |
-| Either | Lookup could not be performed — the tracker was unreachable, the board or its classification field could not be read, or the configured tracker does not support this lookup | Unavailable. Reported as unavailable, with the reason, in place of a list. Never reported as an empty result, and never silently treated as one | Do not block the flow: the release run and the retrospective both continue. State in the flow's own output that the lookup was not performed and why. Do not record the review or de-duplication it feeds as satisfied — a release must not claim it checked for open framework bugs, and a retrospective must not record a finding as having no related item, on the strength of an unavailable lookup |
+| Framework | Lookup could not be performed — the tracker was unreachable, the board or its classification field could not be read, or the configured tracker does not support this lookup | Unavailable. Reported as unavailable, with the reason, in place of a list. Never reported as an empty result, and never silently treated as one | Do not block the flow: the release run and the retrospective both continue. State in the flow's own output that the lookup was not performed and why. Do not record the review or de-duplication it feeds as satisfied — a release must not claim it checked for open framework bugs, and a retrospective must not record a finding as having no related item, on the strength of an unavailable lookup |
+| Consumer | Lookup could not be performed | Unchanged from today — this feature does not alter how a consumer-repository lookup failure is handled, including today's return of an empty list on failure | Unchanged — out of scope for this feature |
 
 ### Mirror surfaces
 
@@ -441,7 +457,7 @@ Framework-item lookup outcomes:
 | Every Backlog routing table that turns a class into a pipeline — the single-item routing table and the portfolio batch-proposal table alike | The framework-mode Workflow row reads as misclassified in each of them, never as infer-the-path: stop the run in the single-item table, hold-and-report the item in the portfolio table |
 | The portfolio scan's report categories | The category for evaluated candidates excluded from the proposal admits a misclassified item as a hold reason, so a held item is surfaced with its reason rather than dropped from the report |
 | Retrospective flows that create an item and set its class | Do not direct a framework-mode repository to set a class it refuses |
-| Release and retrospective framework-item lookups | Describe the lookup's framework-mode meaning as every open board item, and describe what the flow does when the lookup cannot be performed — report it as unavailable and continue, rather than reading it as no open items |
+| Release and retrospective framework-item lookups | Describe the lookup's framework-mode meaning as every open board item, and describe what the flow does in framework mode when the lookup cannot be performed — report it as unavailable and continue, rather than reading it as no open items. Do not extend the unavailable-reporting requirement to the consumer-mode lookup, whose failure handling this feature leaves unchanged |
 
 ### Examples
 
@@ -543,16 +559,21 @@ silently dropped.
 - [ ] With at least one open item on the board, the framework-mode lookup never
       returns an empty result on the grounds that no item carries the Workflow
       class.
-- [ ] When the lookup cannot be performed at all, the release flow and the
-      retrospective flow each report it as unavailable, with the reason, rather
-      than reporting that there are no open framework items.
-- [ ] An operator reading either flow's output can tell "no open framework items
-      on the board" apart from "the lookup could not be performed" without
-      inspecting the tracker themselves.
-- [ ] An unavailable lookup does not stop the release flow or the retrospective
-      flow, and neither flow records the check it feeds — the open-script-bug
-      review, or matching a finding against already-filed items — as satisfied on
-      the strength of an unavailable result.
+- [ ] In framework mode, when the lookup cannot be performed at all, the
+      release flow and the retrospective flow each report it as unavailable,
+      with the reason, rather than reporting that there are no open framework
+      items.
+- [ ] In framework mode, an operator reading either flow's output can tell "no
+      open framework items on the board" apart from "the lookup could not be
+      performed" without inspecting the tracker themselves.
+- [ ] In framework mode, an unavailable lookup does not stop the release flow
+      or the retrospective flow, and neither flow records the check it feeds —
+      the open-script-bug review, or matching a finding against already-filed
+      items — as satisfied on the strength of an unavailable result.
+- [ ] A consumer repository's lookup failure behavior is unchanged by this
+      feature — the unavailable-versus-empty distinction required above applies
+      only in framework mode, and no new reporting requirement is introduced for
+      a consumer-repository lookup failure.
 
 ### Routing stops instead of guessing
 
