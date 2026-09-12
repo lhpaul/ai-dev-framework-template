@@ -175,11 +175,14 @@ matched against work that is already filed.
 
 **Postconditions**: The release check and the retrospective de-duplication both
 see a complete list. Neither reports "no open framework items" merely because the
-repository stopped using the Workflow class.
+repository stopped using the Workflow class, and neither reports it because the
+lookup could not be performed.
 
 **Information shown**:
 
 - The open items, in the same shape and detail as today.
+- When the lookup could not be performed at all, that it was not performed and
+  why — in place of, and never disguised as, an empty list.
 
 **Considerations**:
 
@@ -194,6 +197,21 @@ repository stopped using the Workflow class.
 - Returning nothing remains a legitimate answer when the board genuinely has no
   open items. The requirement is that emptiness reflects the board, not the
   classification rule.
+- A lookup that could not be completed is a third answer, distinct from both of
+  those, and it must not be dressed up as the second. The tracker may be
+  unreachable, the board or its classification field may be unreadable, the
+  configured tracker may not support this lookup at all. In each of those cases
+  the flow says the lookup was not performed, and why, instead of reporting that
+  there are no open framework items.
+- Being unable to perform the lookup does not stop the release or the
+  retrospective. The lookup is a review aid, not a gate, and the established
+  convention for a tracker read that cannot be performed is to warn, say so, and
+  continue — the same convention the workflow's other best-effort tracker reads
+  and writes already follow. Escalating this one read to a hard stop would make
+  every transient tracker outage a release blocker.
+- What the operator must never have to guess is which of the three answers they
+  are looking at. "The board is empty" and "the lookup failed" produce the same
+  empty list, so the distinction has to come from the report, not from the list.
 
 ---
 
@@ -264,10 +282,35 @@ The agent was never instructed toward a class the same repository refuses.
   from the brief.
 - The routing stop applies to items whose pipeline has not yet been chosen. An
   item already past Backlog keeps the pipeline it started on.
+- The misclassification stop is reported under the recognized stop-condition name
+  `missing_tracker_context`. This feature introduces no new stop-condition name.
+  The classification field is present but cannot be resolved to a pipeline, which
+  is what that condition already covers — a required tracker field that is absent
+  **or unresolvable** — and that name is already recognized by the workflow's
+  guardrails enforcement reference and already listed in this repository's
+  configured stop conditions, so the terminal report stays machine-readable with
+  no vocabulary change. The specificity lives in the rest of the stop message,
+  which names the item and names re-classification as the unblocking action.
+- The misclassification stop is scoped to the misclassified item, never to the
+  run that found it. When a single named item is misclassified, that item's run
+  stops. When a misclassified item is one of many evaluated by a portfolio scan,
+  only that item is held; every other item is still evaluated, and the scan still
+  proposes the largest safe batch of valid items. A misclassified item never
+  terminates a scan and never suppresses an unrelated item from a proposal.
+- A held misclassified item is reported, not dropped. It appears in the scan's
+  category for evaluated candidates that were excluded from the proposal, with
+  its reason and the re-classification that unblocks it.
 - The lookup for open framework items means every open board item in framework
   mode, and keeps its class-filtered meaning in a consumer repository. It must
   never report an empty result as a consequence of the classification rule
   itself.
+- The lookup has three distinguishable answers: the items it found, an empty
+  result because the board holds no open items, and unavailable because the
+  lookup could not be performed. An unavailable lookup is reported as
+  unavailable, with the reason, and is never reported as an empty result. An
+  unavailable lookup does not block the release or retrospective flow, but the
+  flow must state that the lookup was not performed rather than record the
+  review or the de-duplication it feeds as having been satisfied.
 - Every workflow surface that *explains* how to classify an item states the
   framework-mode rule and the consumer rule consistently, so a reader in either
   mode is not misled by the rule for the other.
@@ -306,11 +349,19 @@ Work-item classification values, and what each means in each mode:
 - **Creation refusals**: reported directly to whoever ran the creation command, at
   the moment of the attempt, naming the invalid class and the valid ones. No item
   is created, so nothing is left on the tracker to explain later.
-- **Routing stops**: reported in the run's own report, naming the item, the reason
+- **Routing stops**: reported in the run's own report under the recognized
+  stop-condition name `missing_tracker_context`, naming the item, the reason
   (classification not valid in framework mode), and the re-classification that
   unblocks it.
+- **Held scan candidates**: when a portfolio scan rather than a single-item run
+  meets the misclassified item, the same three pieces of information appear in the
+  scan's report of evaluated candidates it did not propose. The scan continues and
+  its proposal is unaffected apart from that item's absence.
+- **Unavailable framework-item lookup**: when the lookup cannot be performed, the
+  flow that asked for it says so in its own output, with the reason, at the point
+  where the list would otherwise have appeared. This is a report, not a stop.
 - **No new audit trail**: this feature records no events, writes no logs, and
-  posts no tracker comments beyond the two reports above. It has no background or
+  posts no tracker comments beyond the reports above. It has no background or
   scheduled behavior.
 - **No misclassification scan**: nothing in this feature sweeps the board looking
   for misclassified items; a problem surfaces only when an item is created or
@@ -332,6 +383,8 @@ item's class into a pipeline — so the gate is enumerated here.
 | Repository mode | Framework mode / consumer repository | The repository's own workflow configuration declaration that it is the framework template |
 | Item classification | Feature / Bug / Refactor / Workflow / unset | The project board's classification field for the item |
 | Item stage | Still awaiting a pipeline (Backlog) / already on a pipeline | The item's board status, reconciled against work already completed for it, exactly as routing reconciles a stale status today |
+| Routing caller | A single-item run, where the operator named this one item / a portfolio scan, where many items are evaluated together to build a proposed start batch | Which command is asking — the single-item runner or the portfolio scan |
+| Framework-item lookup result | Items found / no open items on the board / lookup could not be performed | The tracker read itself, including whether it completed |
 
 ### Triggers
 
@@ -352,7 +405,8 @@ either mode.
 | Framework | Feature | Route: full pipeline | Unchanged — start the spec stage |
 | Framework | Bug | Route: fast track, subject to the existing scope check | Unchanged — run the existing gate |
 | Framework | Refactor | Route: plan-only | Unchanged — start the plan stage |
-| Framework | Workflow | Misclassified | Stop; report the item and ask for re-classification. Do not infer a pipeline |
+| Framework | Workflow, reached by a single-item run | Misclassified | Stop this item's run under `missing_tracker_context`; report the item and ask for re-classification. Do not infer a pipeline |
+| Framework | Workflow, reached as one item among many in a portfolio scan | Misclassified — that item only | Hold that item and report it among the scan's evaluated-but-not-proposed candidates, with the reason and the re-classification that unblocks it. Continue evaluating every other item and still propose the largest safe batch of valid ones. Do not terminate the scan, and do not stop the whole scan under a stop condition |
 | Framework | Unset | Unchanged from today | Unchanged — this feature does not add behavior for an absent class |
 | Consumer | Feature / Bug / Refactor | Route as today | Unchanged |
 | Consumer | Workflow | Route as today — infer the path from the brief, stop if unclear | Unchanged |
@@ -370,11 +424,12 @@ Creation-time outcomes:
 
 Framework-item lookup outcomes:
 
-| Mode | Board contents | Outcome | Required next action |
-| ---- | -------------- | ------- | -------------------- |
-| Framework | At least one open item | Every open board item, whatever its class | Unchanged — the flow reviews the list as today |
-| Framework | No open items | Empty, and empty only because the board is empty | Unchanged — an empty board is a legitimate answer |
-| Consumer | Any | Only items classified Workflow, as today | Unchanged |
+| Mode | Lookup result | Outcome | Required next action |
+| ---- | ------------- | ------- | -------------------- |
+| Framework | Lookup completed; at least one open item on the board | Every open board item, whatever its class | Unchanged — the flow reviews the list as today |
+| Framework | Lookup completed; no open items on the board | Empty, and empty only because the board is empty — reported as an empty board, distinguishably from an unavailable lookup | Unchanged — an empty board is a legitimate answer |
+| Consumer | Lookup completed | Only items classified Workflow, as today | Unchanged |
+| Either | Lookup could not be performed — the tracker was unreachable, the board or its classification field could not be read, or the configured tracker does not support this lookup | Unavailable. Reported as unavailable, with the reason, in place of a list. Never reported as an empty result, and never silently treated as one | Do not block the flow: the release run and the retrospective both continue. State in the flow's own output that the lookup was not performed and why. Do not record the review or de-duplication it feeds as satisfied — a release must not claim it checked for open framework bugs, and a retrospective must not record a finding as having no related item, on the strength of an unavailable lookup |
 
 ### Mirror surfaces
 
@@ -383,9 +438,10 @@ Framework-item lookup outcomes:
 | Backlog-creation protocol (classification step and its inference table) | States the framework-mode rule; its worked examples do not show a class that framework mode refuses |
 | Repository agent-guidance file, and its per-runner mirrors | States the framework-mode rule in the same words as the canonical copy |
 | Tracker integration guide (classification field table and the Workflow entry) | States that the Workflow option remains on the board but is not valid in framework mode |
-| Every Backlog routing table that turns a class into a pipeline — the single-item routing table and the portfolio batch-proposal table alike | The framework-mode Workflow row reads as misclassified-and-stop, not infer-the-path, in each of them |
+| Every Backlog routing table that turns a class into a pipeline — the single-item routing table and the portfolio batch-proposal table alike | The framework-mode Workflow row reads as misclassified in each of them, never as infer-the-path: stop the run in the single-item table, hold-and-report the item in the portfolio table |
+| The portfolio scan's report categories | The category for evaluated candidates excluded from the proposal admits a misclassified item as a hold reason, so a held item is surfaced with its reason rather than dropped from the report |
 | Retrospective flows that create an item and set its class | Do not direct a framework-mode repository to set a class it refuses |
-| Release and retrospective framework-item lookups | Describe the lookup's framework-mode meaning as every open board item |
+| Release and retrospective framework-item lookups | Describe the lookup's framework-mode meaning as every open board item, and describe what the flow does when the lookup cannot be performed — report it as unavailable and continue, rather than reading it as no open items |
 
 ### Examples
 
@@ -394,8 +450,19 @@ Framework-item lookup outcomes:
   The agent re-files it as a Bug, and it routes exactly as any Bug does today —
   to the fast-track path when the existing scope check allows it.
 - A framework-mode repository is asked to advance an existing Backlog item that
-  was filed months ago as Workflow. The runner stops, names the item, and asks for
-  re-classification. Nothing about the item changes until an operator acts.
+  was filed months ago as Workflow. The runner stops under
+  `missing_tracker_context`, names the item, and asks for re-classification.
+  Nothing about the item changes until an operator acts.
+- A framework-mode portfolio scan evaluates ten Backlog items. Three are still
+  classified Workflow; the other seven are Features, Bugs, and Refactors. The
+  three are held and reported with their reason and the re-classification that
+  unblocks them. The other seven are assessed exactly as they would have been, and
+  the valid ones are proposed as a start batch. The scan does not stop, and no
+  valid item is withheld because a different item was misclassified.
+- A framework-mode release run asks for open framework items and the tracker read
+  fails. The run reports that the lookup could not be performed, and why, instead
+  of reporting that no framework items are open. The release is not blocked, but
+  its output does not claim the open-script-bug review was done.
 - A consumer repository files "the retrospective script drops the last finding"
   and asks for Workflow. The item is created as Workflow, and routing infers its
   path from the brief exactly as it does today.
@@ -476,6 +543,16 @@ silently dropped.
 - [ ] With at least one open item on the board, the framework-mode lookup never
       returns an empty result on the grounds that no item carries the Workflow
       class.
+- [ ] When the lookup cannot be performed at all, the release flow and the
+      retrospective flow each report it as unavailable, with the reason, rather
+      than reporting that there are no open framework items.
+- [ ] An operator reading either flow's output can tell "no open framework items
+      on the board" apart from "the lookup could not be performed" without
+      inspecting the tracker themselves.
+- [ ] An unavailable lookup does not stop the release flow or the retrospective
+      flow, and neither flow records the check it feeds — the open-script-bug
+      review, or matching a finding against already-filed items — as satisfied on
+      the strength of an unavailable result.
 
 ### Routing stops instead of guessing
 
@@ -492,6 +569,17 @@ silently dropped.
 - [ ] In framework mode, an item classified Workflow whose pipeline has already
       started continues on that pipeline — the misclassification stop does not
       fire, and the run proceeds exactly as it did before this feature.
+- [ ] In framework mode, when a portfolio scan rather than a single-item run
+      evaluates a Backlog item classified Workflow, the scan holds only that
+      item — reporting it, with the reason and the re-classification that
+      unblocks it, in the scan's category for evaluated candidates excluded
+      from the proposal — and does not stop the scan itself under any stop
+      condition.
+- [ ] In that same scan, every other evaluated Backlog item is assessed exactly
+      as it would be without the misclassified item present, and the scan still
+      proposes the largest safe batch of valid items; no valid item is withheld
+      from the proposal because a different item in the same scan was
+      misclassified.
 
 ### Guidance surfaces agree
 
