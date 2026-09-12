@@ -230,6 +230,7 @@ The rules below are the normative statement of this feature. Every other section
 
 - The rule fires when the plan's design depends on the wording, shape, or presence of free text produced outside this project's control — a third-party service, another team's tool, or a generative model — including any design that matches, parses, classifies, or enumerates that text.
 - Before the design is committed to, the plan records a sampling record stating: the producer; the population sampled and the window it covers; how many real occurrences were examined; how many distinct variants those occurrences yielded; and whether further occurrences had stopped yielding new variants by the end of the sample.
+- For each occurrence counted in the sample, the record includes a locator — a reference to where that occurrence was captured, or the occurrence's own text — sufficient for a reader who was not present when the sample was gathered to find or inspect it independently. A record that reports only counts, with nothing that lets a reader locate or inspect any underlying occurrence, does not satisfy this rule.
 - The occurrences must be real observed outputs. Text authored to illustrate the format — documentation examples, captures curated for a ticket — is not a sample of the distribution, and a record built only from it does not satisfy this rule.
 - A record of two or fewer occurrences never satisfies this rule. Where the whole population is small enough to enumerate, the plan enumerates it and says so.
 - The plan may bind its design to a fixed set of literal outputs only when the producer publishes a contract fixing that set and the plan cites the contract. Observation alone never establishes a fixed set, however large the sample.
@@ -294,11 +295,12 @@ Each rule carries one outcome per plan revision.
 | ---------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `satisfied`      | Satisfied      | The rule fired and the plan carries the evidence it requires, in the form the rule defines.                                                               |
 | `not-applicable` | Not applicable | The plan contains no claim of the class this rule governs, and the record states a rationale naming why the trigger is absent.                            |
-| `unsatisfied`    | Unsatisfied    | The rule fired and the required evidence is missing, does not reproduce at the recorded revision, or the claim itself violates the rule. Also the outcome for a rule with no record at all, and for a not-applicable record with no rationale. |
+| `unsatisfied`    | Unsatisfied    | The rule fired and the required evidence is missing, does not reproduce at the recorded revision, or the claim itself violates the rule. Also the outcome for a rule with no record at all, for a not-applicable record with no rationale, and for a record whose value is not one of these three labels. |
 
 **Valid transitions**:
 
-- Unsatisfied → Satisfied when a later plan revision supplies the evidence or removes the claim, and the outcome is determined again.
+- Unsatisfied → Satisfied when a later plan revision supplies the required evidence for a claim that still fires the rule, and the outcome is determined again.
+- Unsatisfied → Not applicable when a later plan revision removes the claim that made the rule fire, and the record states the rationale this outcome requires.
 - Not applicable → Satisfied or Unsatisfied when a later plan revision introduces a claim of the rule's class.
 - Satisfied → Unsatisfied when a later plan revision changes the population an evidence record covers and the record is not derived again.
 - No outcome persists across plan revisions; every transition above is the result of determining the outcome afresh.
@@ -346,6 +348,7 @@ Triggers are events. They decide when the check runs, are never read as inputs, 
 | ----------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
 | Every firing rule Satisfied; every non-firing rule Not applicable with a rationale               | Check passed           | Proceeds under the gate's existing rules                      | None                                                          |
 | A firing rule carries no evidence                                                                | Blocking finding       | Names the rule and the claim; the plan is not human-ready     | Record the evidence, or remove the claim                      |
+| A firing rule's evidence record is present but omits one or more of the elements the rule requires (for example a sampling record missing its window, or a count missing its revision) | Blocking finding       | Names the record and the missing element                      | Add the missing element, or derive the record again complete  |
 | Evidence is present but does not reproduce at the recorded revision                              | Blocking finding       | Names the record that failed to reproduce                     | Derive the record again at the current revision               |
 | A design binds to a fixed set of external literals with no cited producer contract               | Blocking finding       | Names the binding and the missing contract citation           | Cite the contract, or make the design tolerant                |
 | A sampling record is built from curated examples, or covers two or fewer occurrences             | Blocking finding       | Names the record and why it is not a sample                   | Sample real occurrences and record the sampling              |
@@ -358,6 +361,7 @@ Triggers are events. They decide when the check runs, are never read as inputs, 
 | The same fact is asserted in two places, and the statements agree                                | Non-blocking finding   | Names both statements as a consolidation request              | Leave one assertion; make the other a reference               |
 | A rule carries no outcome record                                                                 | Blocking finding       | Treats the rule as Unsatisfied, not as Not applicable         | Record the outcome                                            |
 | A rule is recorded Not applicable with no rationale                                              | Blocking finding       | Treats the rule as Unsatisfied                                | State why the trigger is absent                               |
+| A rule's outcome record carries a value that is not one of the three defined outcome labels      | Blocking finding       | Treats the rule as Unsatisfied                                | Replace the value with one of the three defined labels        |
 | A rule is recorded Not applicable and the plan does contain a claim of its class                 | Blocking finding       | Names the claim that contradicts the rationale                | Correct the outcome and supply the evidence                   |
 | A plan is long                                                                                   | Not an outcome         | Nothing; length is never a finding under these rules          | None                                                          |
 | A firing rule's evidence sits in a pull request comment rather than the plan                     | Blocking finding       | Names the evidence that must move into the plan               | Move it into the plan document                                |
@@ -411,7 +415,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 ### Group B — Sampling an external output distribution (Rule 1)
 
 - [ ] A plan whose design matches, parses, classifies, or enumerates text produced outside the project fails the check when it carries no sampling record.
-- [ ] A sampling record passes only when it states the producer, the population and window sampled, the number of real occurrences examined, the number of distinct variants observed, and whether further occurrences had stopped yielding new variants. A record missing any one of those fails.
+- [ ] A sampling record passes only when it states the producer, the population and window sampled, the number of real occurrences examined, the number of distinct variants observed, whether further occurrences had stopped yielding new variants, and, for each occurrence counted, a locator sufficient for a reader to find or inspect it independently. A record missing any one of those fails.
 - [ ] A plan that binds to a fixed set of literal outputs passes only when it cites a producer contract fixing that set. The same plan with a large observed sample and no cited contract fails.
 - [ ] A plan with no cited contract passes only when it states the part of the output it relies on as stable and what the system does when an output outside the observed variants arrives.
 - [ ] A record whose occurrences are curated examples fails, and a record of two or fewer occurrences fails.
@@ -420,7 +424,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 
 - [ ] Take any value, count, name, or decision that appears more than once in a plan. The plan passes only when exactly one occurrence asserts it and every other occurrence names where it is asserted.
 - [ ] Two occurrences that both assert the same fact fail whether or not they agree. Agreeing duplicates produce a non-blocking consolidation finding; disagreeing ones produce a blocking contradiction finding.
-- [ ] No rule, check, outcome, or finding introduced by this feature refers to a plan's length in bytes, lines, words, or pages. A plan cannot fail anything in this feature because of its size.
+- [ ] No rule, check, outcome, or finding introduced by this feature uses a plan's length in bytes, lines, words, or pages as a pass or fail condition. A plan cannot fail anything in this feature because of its size, and a rule may name these units only to state that they are not a basis for failure.
 - [ ] After a correction round, the corrected fact is asserted exactly once. A reader comparing the two revisions finds the assertion edited rather than a second statement added.
 
 ### Group D — Counts of codebase artifacts (Rule 3)
@@ -456,6 +460,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - [ ] Each rule carries one of the three outcomes — Satisfied, Not applicable, Unsatisfied — and those display labels are spelled and used identically on every surface that shows an outcome.
 - [ ] A rule with no recorded outcome is treated as Unsatisfied, not as Not applicable.
 - [ ] A rule recorded Not applicable with no rationale is treated as Unsatisfied, and one whose rationale is contradicted by a claim in the plan produces a blocking finding naming that claim.
+- [ ] A rule whose outcome record carries a value other than Satisfied, Not applicable, or Unsatisfied is treated as Unsatisfied.
 - [ ] The plan pull request quality gate log lists every rule with its outcome, and a rationale beside each Not applicable.
 - [ ] Outcomes are determined afresh on every review round. An outcome recorded against an earlier plan revision never satisfies a later one.
 - [ ] Every outcome that keeps a plan from becoming human-ready is enumerated together with the action that clears it. A reader can determine, for any outcome, whether it blocks and what to do about it.
