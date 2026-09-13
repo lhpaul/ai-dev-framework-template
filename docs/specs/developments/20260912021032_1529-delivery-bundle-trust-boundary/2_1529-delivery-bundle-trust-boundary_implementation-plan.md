@@ -604,8 +604,12 @@ rule. If the list is empty, `reconciliation_outcome = component_released`,
 — the only path that allows mutation.
 
 **Mirror surfaces and examples**: this table is the authoritative precedence source; the new
-`component-release-evidence-contract.md` document (Documentation Updates, item 1) carries a
-pointer to it rather than a duplicate table, and the `repository-modes.md` reconciliation
+`component-release-evidence-contract.md` document (Documentation Updates, item 1) embeds a
+verbatim copy of Table A and Table B (not a pointer into this plan), because `sync-manifest.yaml`
+makes `docs/workflow/` `always_sync` to downstream template consumers while `docs/specs/` is
+never synced, so a pointer from the synced contract document into this unsynced plan would be a
+broken reference for that reader; this plan's copy remains the source the developer copies from
+at implementation time, and the `repository-modes.md` reconciliation
 paragraph (Documentation Updates, item 2) is corrected to describe `routing_outcome`,
 `evidence_state`, and the two hub-input flags as the gate's combined inputs instead of
 describing them as independent, unordered facts. T12 (routing mismatch), T13/T14 (hub-input
@@ -1418,10 +1422,12 @@ can be mistaken for production code.
     and `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop` for the
     edited doc snippets. Because step 14 already created the changelog fragment, this pass lints
     it along with every other edited doc — no second, narrower lint invocation is needed.
-16. **Walk the smoke test runbook** end to end and record PASS/FAIL per step.
-17. **Write the residual evidence file** described in the Residual Verification Strategy and
+16. **Write the residual evidence file** described in the Residual Verification Strategy and
     confirm `./scripts/development-workflow/scope-residual-gate.sh verify --issue-title "<#1529 title>" --issue-body-file <body> --evidence <path>`
-    reports `RESULT=pass`.
+    reports `RESULT=pass` — this must happen before step 17: the smoke test runbook's own
+    Residual verification gate step invokes `scope-residual-gate.sh verify` against this same
+    `residual-evidence.json` file, so it must already exist before that step of the runbook runs.
+17. **Walk the smoke test runbook** end to end and record PASS/FAIL per step.
 
 ---
 

@@ -552,10 +552,16 @@ and confirm each of the following:
    absent tag/branch-version relation, the unbound `apply-component` target, the
    six unvalidated assurance fields, the hub-checkout-scoped cleanup lease, and
    the absent release-tag deletion.
-7. A `classify_component` mutation-eligibility decision-gate section points to
-   the plan's "Decision gate — `classify_component` mutation eligibility (hub
-   path)" subsection (Table A ordered preconditions, Table B accumulating
-   outcome) rather than duplicating it.
+7. A `classify_component` mutation-eligibility decision-gate section embeds a
+   verbatim copy of Table A (ordered preconditions) and Table B (accumulating
+   outcome) from the plan's "Decision gate — `classify_component` mutation
+   eligibility (hub path)" subsection, including the repository-mode-is-first-gate
+   paragraph preceding Table A and the `child_release_state`
+   precedence-resolution paragraph following Table B — not merely a pointer
+   into the plan, because `sync-manifest.yaml` makes `docs/workflow/`
+   `always_sync` to downstream template consumers while `docs/specs/` is never
+   synced, so a bare pointer into the unsynced plan would be broken for those
+   readers.
 
 Then confirm the document is linked from `repository-modes.md`,
 `multi-repo-release-adoption.md`, and `scripts/development-workflow/README.md`.
