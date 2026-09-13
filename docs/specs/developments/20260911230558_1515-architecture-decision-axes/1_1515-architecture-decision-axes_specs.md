@@ -95,7 +95,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 1. The runner identifies the line it intends to cite.
 2. Before offering it, it declares whether its current behavior Conforms to that line or Departs from it.
 3. Finding that the behavior departs, it states the departure plainly and does not present the line as support.
-4. It records the departure as a finding about its own work: either an error to correct by conforming, or a reason to ask whether the line itself should change — which is a separate axis, Genuinely open with the reason Governing line disputed, carrying a proposed amendment for what the line should become.
+4. Where the departed line's axis is Settled by specification, the runner records the departure as a finding about its own work: either an error to correct by conforming, or a reason to ask whether the line itself should change — which is a separate axis, Genuinely open with the reason Governing line disputed, carrying a proposed amendment for what the line should become. Where the departed line instead belongs to an axis that is already Genuinely open for a different reason — such as a conflict between governing lines, per Use Case 5 — the runner reports the departure as part of that axis instead, and does not yet correct its behavior or dispute the line's substance; that choice waits until the axis itself is decided.
 
 **Postconditions**: The contradiction is visible in the runner's own words, at the moment of citation, rather than being discovered later by a reviewer or a human. No citation stands as support for behavior that contradicts it.
 
