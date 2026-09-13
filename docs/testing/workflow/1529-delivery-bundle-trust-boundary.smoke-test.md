@@ -460,6 +460,29 @@ everything else.
 
 **Maps to**: Acceptance Criterion 2.
 
+`prepare-release-post-merge-cleanup.sh` derives `HUB_REPO_ROOT` from `$PWD`
+unconditionally and, if `--repo-root` is also supplied, rejects any value that
+does not canonically match `$PWD` (`"--repo-root must point at the current
+workflow hub checkout for release tracker cleanup."`). Every invocation in
+this step must therefore run with the fixture's hub checkout (`$HUB_REPO`,
+set in Step 4) as its current directory, not the repository root the rest of
+this runbook runs from. Capture the cleanup script's absolute path before
+changing directory, and invoke it in a subshell so the `cd` does not leak
+into later steps:
+
+```bash
+CLEANUP_SCRIPT="$PWD/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+run_cleanup() {
+  # Usage: run_cleanup <evidence-file> [release-branch-arg]
+  # Defaults the positional release argument to the real, matching branch;
+  # only T20c below overrides it with a branch that does not exist.
+  local evidence_file="$1"
+  local release_arg="${2:-mobile-app/release/v1.0.0}"
+  (cd "$HUB_REPO" && "$CLEANUP_SCRIPT" --repo mobile-app --repo-root "$HUB_REPO" \
+    --evidence-file "$evidence_file" "$release_arg")
+}
+```
+
 Every hand-edited evidence file in this step (T19, T20, T20b, T20d, T20e, T20f, and T20g)
 starts from a `jq` copy of `$SMOKE_TMP/evidence-bound.json` — the file Step 4 rendered
 from the branch-bound `$TARGET` (resolved there via `component-release-target.sh
@@ -477,13 +500,17 @@ means to test. Starting from `evidence-bound.json` keeps `release_branch` and
 step except T20c, which deliberately breaks that consistency on purpose (see its own
 instructions below).
 
-Run `prepare-release-post-merge-cleanup.sh` with `--repo` and an
-`--evidence-file` whose `target_binding.contract_revision` is `""` (T19).
+```bash
+jq '.target_binding.contract_revision = ""' "$SMOKE_TMP/evidence-bound.json" \
+  > "$SMOKE_TMP/cleanup-t19.json"
+run_cleanup "$SMOKE_TMP/cleanup-t19.json"
+```
 
 **Expected result**: exit `1` with a message naming the missing identity field.
 No product release branch is deleted and no tracker state changes.
 
-Repeat with `target_binding.canonical_repository_identity: ""` (T20), then
+Repeat the same `jq`-edit-then-`run_cleanup` pattern with
+`target_binding.canonical_repository_identity: ""` (T20), then
 `target_binding.release_correlation_key: ""` (T20b), then
 `target_binding.routing_outcome: ""` (T20d), then
 `target_binding.selected_product_repo_key: ""` or the key absent (T20e), then
@@ -504,11 +531,13 @@ including reusing `mobile-app/release/v1.0.0`) to get a target whose
 produces, not a fixed or contract-level key, then render evidence from that
 target with the same `--release-branch`. Only after that render, edit **only**
 the top-level `release_branch` to `""` (or remove the key) while leaving
-`target_binding.release_correlation_key` untouched, and pass a positional
-release argument that does not correspond to any real branch (T20c). Do not
-substitute a fixed/attempt-independent correlation key here — and do not
-reuse `evidence-bound.json` unedited for the target-resolution step, since
-that would only prove the guard against the same fixture the other six
+`target_binding.release_correlation_key` untouched, and run it through
+`run_cleanup` with a second argument naming a release that does not
+correspond to any real branch, e.g. `run_cleanup
+"$SMOKE_TMP/cleanup-t20c.json" mobile-app/release/v9.9.9-nonexistent` (T20c).
+Do not substitute a fixed/attempt-independent correlation key here — and do
+not reuse `evidence-bound.json` unedited for the target-resolution step,
+since that would only prove the guard against the same fixture the other six
 sub-tests already use: an empty `release_branch` means cleanup's target
 re-resolution omits `--release-branch`, so the freshly resolved target
 computes a release correlation key from an empty attempt-branch input, which
@@ -525,9 +554,10 @@ the wrong place (after target re-resolution and the identity compares) rather
 than immediately after `evidence_branch` is read — treat that as a FAIL for
 this step. No product release branch is deleted and no tracker state changes.
 
-Then repeat with an otherwise valid, ready-to-clean-up evidence file whose
-top-level `cleanup_outcome` is `""`, then again with the `cleanup_outcome` key
-removed entirely (T20g).
+Then repeat with an otherwise valid, ready-to-clean-up evidence file (again a
+`jq` copy of `evidence-bound.json`) whose top-level `cleanup_outcome` is `""`,
+then again with the `cleanup_outcome` key removed entirely, each run through
+`run_cleanup` (T20g).
 
 **Expected result**: both runs exit `1` with `Component release evidence is
 missing required field: cleanup_outcome`. Neither run may fall through and
