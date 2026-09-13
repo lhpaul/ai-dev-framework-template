@@ -128,8 +128,8 @@ Target state after this work (`component_release_evidence.v1`, 16 top-level fiel
 | --- | --- | --- |
 | `schema_version` | `producer_required` | Constant `component_release_evidence.v1` |
 | `target_binding` | `producer_required` | Whole `component_release_target.v1` object, verified `mutation_allowed: true` |
-| `routing_outcome` | `producer_required` | Copied from the target binding after `compare_field` agreement; **new**: emission refused when empty (D4) |
-| `selected_product_repo_key` | `producer_required_nullable` | Copied from the target; the key is always emitted, and the value is legitimately `null` for `single_repo_release` routing. **New**: emission refused when `routing_outcome` is `component_release_routed` and the value is empty, **and** emission refused when `routing_outcome` is `single_repo_release` and the value is not exactly JSON `null` — an empty string `""` or an absent key are rejected exactly like a non-empty string — both directions of the `null` ⇔ `single_repo_release` relationship are enforced (D4) |
+| `routing_outcome` | `producer_required` | Copied from the target binding after `compare_field` agreement; **new**: emission refused when empty, **and** emission refused when the (non-empty) value is anything other than exactly `component_release_routed` or `single_repo_release` — the only two outcomes `component-release-target.sh` ever emits — so an unrecognized value such as `unknown` is rejected on its own, before either of `selected_product_repo_key`'s two conditional branches below is even consulted (D4) |
+| `selected_product_repo_key` | `producer_required_nullable` | Copied from the target; the key is always emitted, and the value is legitimately `null` for `single_repo_release` routing. **New**: once `routing_outcome`'s own closed-enum precondition (above) has already passed, emission is refused when `routing_outcome` is `component_release_routed` and the value is empty, **and** emission refused when `routing_outcome` is `single_repo_release` and the value is not exactly JSON `null` — an empty string `""` or an absent key are rejected exactly like a non-empty string — both directions of the `null` ⇔ `single_repo_release` relationship are enforced (D4) |
 | `canonical_repository_identity` | `producer_required` | Copied from the target; **new**: emission refused when empty |
 | `artifact_owners` | `producer_required` | Copied from the target after `compare_field` agreement; **new**: emission refused when any of its six sub-fields (`release`, `ci`, `github_release`, `deployment`, `cleanup`, `tracker`) is empty (D4) |
 | `release_correlation_key` | `producer_required` | Copied from the target; **new**: emission refused when empty |
@@ -259,7 +259,7 @@ it already enforces.
 | --- | --- | --- | --- |
 | GAP-1 | producer + `delivery-bundle-manifest.sh` | `component_version` is never emitted, and `--component-version` (`default=None`) is stored into the shipped-composition manifest unchecked | Add `--component-version` to the producer, emit `component_version`; make the bundle flag required and require-and-match |
 | GAP-2 | producer | `--component-tag` accepts any string; charset is enforced only downstream, and only by reconciliation | Charset-validate `--component-tag` and `--component-version` at the producer |
-| GAP-3 | producer | `compare_field` passes when target and binding are *equally empty* (or *equally non-empty*), so a record can be emitted with empty `canonical_repository_identity` / `release_correlation_key` / `contract_revision` / `routing_outcome` / any `artifact_owners` sub-field — breaking the `producer_required` promise — or with a non-`null` `selected_product_repo_key` (empty string, missing key, or non-empty string) under `component_release_routed` or `single_repo_release` routing where it must be exactly non-empty or exactly `null` respectively, either of which would break the `producer_required_nullable` promise that `null` means `single_repo_release` **and** `single_repo_release` means `null` | Refuse emission when any of those four scalar fields (or an `artifact_owners` sub-field) is empty, when `selected_product_repo_key` is empty while `routing_outcome` is `component_release_routed`, and when `selected_product_repo_key` is not exactly JSON `null` (rejecting a non-empty string, an empty string, and an absent key alike) while `routing_outcome` is `single_repo_release` (D4) |
+| GAP-3 | producer | `compare_field` passes when target and binding are *equally empty* (or *equally non-empty*), so a record can be emitted with empty `canonical_repository_identity` / `release_correlation_key` / `contract_revision` / `routing_outcome` / any `artifact_owners` sub-field — breaking the `producer_required` promise — or with a non-`null` `selected_product_repo_key` (empty string, missing key, or non-empty string) under `component_release_routed` or `single_repo_release` routing where it must be exactly non-empty or exactly `null` respectively, either of which would break the `producer_required_nullable` promise that `null` means `single_repo_release` **and** `single_repo_release` means `null`. A non-empty-but-unrecognized `routing_outcome` (e.g. `unknown`) is a distinct instance of the same defect: it passes the plain non-empty check, yet matches neither of `selected_product_repo_key`'s two conditional branches, so a matching target/binding pair carrying `routing_outcome: "unknown"` and `selected_product_repo_key: null` would satisfy every check above without ever being rejected — silently breaking the "`null` if and only if `single_repo_release`" guarantee for a routing outcome the guarantee was never scoped to | Refuse emission when any of those four scalar fields (or an `artifact_owners` sub-field) is empty; refuse emission when `routing_outcome` is non-empty but is not exactly `component_release_routed` or `single_repo_release`; and, only once that closed-enum precondition has passed, refuse emission when `selected_product_repo_key` is empty while `routing_outcome` is `component_release_routed`, and when `selected_product_repo_key` is not exactly JSON `null` (rejecting a non-empty string, an empty string, and an absent key alike) while `routing_outcome` is `single_repo_release` (D4) |
 | GAP-4 | `component-milestone-reconciliation.sh` | `routing_outcome` is never checked, so `single_repo_release` evidence is accepted on the `workflow_hub` milestone path | Require `component_release_routed` on the hub path |
 | GAP-5 | `component-milestone-reconciliation.sh` | `hub_tracker_reconciliation_outcome` and `child_release_state` fall back to the evidence file — hub-owned facts sourced from a product-owned record | Remove the fallback; require the flags |
 | GAP-6 | `component-milestone-reconciliation.sh` | Any `evidence_state` string is accepted; only `stale`/`conflicting` block, so an unknown value — and the bundle's own `missing` / `partial` degraded states — pass as non-blocking | Closed enum with the per-value disposition table in D9; fail closed on unknown |
@@ -318,10 +318,22 @@ assurance validator will accept.
 
 **D4 — The producer refuses to emit when `canonical_repository_identity`,
 `release_correlation_key`, `contract_revision`, `routing_outcome`, or any `artifact_owners`
-sub-field is empty; when `selected_product_repo_key` is empty under
-`component_release_routed` routing; and, in the reverse direction, when
+sub-field is empty; when `routing_outcome` is non-empty but is not exactly
+`component_release_routed` or `single_repo_release`; when `selected_product_repo_key` is empty
+under `component_release_routed` routing; and, in the reverse direction, when
 `selected_product_repo_key` is anything other than exactly JSON `null` under
-`single_repo_release` routing.** `compare_field` compares target against binding, so two
+`single_repo_release` routing.** The `routing_outcome` closed-enum precondition must run before
+either `selected_product_repo_key` conditional branch, and independently of them: `compare_field
+'.routing_outcome'` only requires target and binding to agree with each other, so a matching
+pair carrying an unrecognized value such as `routing_outcome: "unknown"` passes the plain
+non-empty check above and then satisfies *neither* the `component_release_routed` branch nor the
+`single_repo_release` branch below — each of which is an `if routing_outcome == <value>` guard,
+not an exhaustive `if/elif/else` over all possible values — so `selected_product_repo_key`
+(`null` or anything else) would pass through completely unchecked without this precondition.
+Without it, the class table's own "if and only if" claim for `producer_required_nullable`
+silently narrows to "if and only if, provided `routing_outcome` happens to be one of the two
+values this decision anticipated" — an unstated scope limit the class table does not carry.
+`compare_field` compares target against binding, so two
 equally empty values pass — and, symmetrically, two equally non-empty values pass regardless of
 what `routing_outcome` says they should be. `selected_product_repo_key` cannot carry the
 unconditional non-empty precondition, because `component-release-target.sh`
@@ -501,6 +513,80 @@ exception to the class it carries" — an exception clause inside the one class 
 same contradiction the class table is not supposed to contain, just relocated into prose instead
 of a table cell.
 
+### Decision gate — `classify_component` mutation eligibility (hub path)
+
+This plan changes `classify_component`'s hub-path (`args.mode != "single_repo"`) decision on
+whether a component release milestone may be mutated, gating that single decision on multiple
+independent inputs — repository mode, `routing_outcome` (GAP-4, new), `evidence_state` (GAP-6,
+D9), `hub_tracker_reconciliation_outcome` and `child_release_state` (GAP-5, D5), plus the
+pre-existing `release_outcome`/`ci_outcome`/`deployment_outcome`/`cleanup_outcome` checks
+(`ci_outcome` narrowed by GAP-14) — each producing its own outcome branch, blocker set, and
+`required_next_action`. This is the complex workflow decision gate the Document Quality Gate
+log must classify as applicable; this table is that matrix.
+
+**Repository mode is the first gate.** `args.mode == "single_repo"` never reaches any of the
+checks below: it returns `non_hub_result`, a structurally separate decision with its own single
+input (`--version` presence and shape) and its own mutation rule
+(`mutation_allowed = args.target_kind == "component_child"`); `--evidence-file` is rejected
+outright in this mode (GAP-7, D6). Everything below applies only once `args.mode` is a
+recognized non-`single_repo` value (malformed `--mode` values are rejected at CLI-parse time by
+`validate_mode`, exit `2`, before `classify_component` runs at all — a gate precondition, not a
+row in this table).
+
+**Table A — ordered preconditions (hub path, `args.mode != "single_repo"`).** Each row is
+evaluated in this order; the run returns at the first one that fails, so only one row's outcome
+ever applies to a given evaluation. Existing (pre-plan) rows are unchanged by this plan and are
+listed for gate completeness; new/changed rows are marked.
+
+| # | Precondition | On failure: `reconciliation_outcome` | `child_release_state` | `mutation_allowed` | Blocker | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `args.target_kind == "component_child"` | `milestone_target_not_allowed` | `pending` (base default, not overridden) | `false` | `milestone_target_not_allowed` | existing |
+| 2 | `--product-repo`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_product_repository` | existing |
+| 3 | `--product-repo` is supplied at all | `missing_product_selection` | `pending` (base default, not overridden) | `false` | `missing_product_selection` | existing |
+| 4 | `--component-tag`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_component_tag` | existing |
+| 5 | `--component-tag` is supplied at all | `component_tag_missing` | `pending` (base default, not overridden) | `false` | `component_tag_missing` | existing |
+| 6 | `--evidence-file` is supplied and loads | `component_release_pending` | `pending` | `false` | `component_release_evidence_missing` | existing |
+| 7 | `evidence.schema_version == component_release_evidence.v1` | `component_release_not_ready` | `blocked` | `false` | `invalid_evidence_schema` | existing |
+| 8 | **New (GAP-4):** `stable_value(evidence, "routing_outcome") == "component_release_routed"`. Malformed and empty inputs take the identical branch: this is a single equality test, not an enum-membership check, so `""`, `null`, an absent key (`stable_value` returns `None`), and an unrecognized non-empty value such as `"unknown"` all fail the same way — there is no separate "malformed" outcome to enumerate. Placed immediately after row 7 (basic evidence-shape validity) and before row 9 (product-identity match), because whether the evidence describes a routed component release at all must be established before any product/component identity comparison is meaningful | `component_target_mismatch` | `blocked` | `false` | `routing_outcome_mismatch` | **new** |
+| 9 | `stable_value(evidence, "selected_product_repo_key") == product_repo` | `component_target_mismatch` | `blocked` | `false` | `product_repository_mismatch` | existing |
+| 10 | `evidence.get("component_tag")` is truthy | `component_target_mismatch` | `blocked` | `false` | `component_tag_unbound` | existing |
+| 11 | `evidence_tag == component_tag` | `component_target_mismatch` | `blocked` | `false` | `component_tag_mismatch` | existing |
+| 12 | Each of `canonical_repository_identity`, `release_correlation_key`, `contract_revision`, `hub_tracker_ref` is non-empty via `stable_value` | `component_release_not_ready` | `blocked` | `false` | `missing_<field>` per missing field (may list more than one) | existing |
+| — | All of rows 1-12 pass | *(proceed to Table B)* | | | | |
+
+**Table B — accumulating outcome (only reached once every Table A row passes).** Unlike Table A,
+these checks do not short-circuit: every condition is evaluated independently and any number of
+failing conditions append their own blocker to one shared `blockers` list. Missing/malformed
+handling is per-field, matching each field's trust class:
+
+| Input | Non-blocking value(s) | Blocking condition -> appended blocker | Status |
+| --- | --- | --- | --- |
+| `evidence_state` (absent key) | n/a — falls through to pre-existing `schema_version` synthesis (D9 `absent` row) | key absent **and** `schema_version` does not match -> `evidence_state_missing` | existing, unchanged |
+| `evidence_state` (present) | `verified`, `released` | present and not a closed-enum member (any non-member string, `null`, or other non-string JSON value) -> `invalid_evidence_state`; `stale`/`conflicting` -> `{state}_component_evidence`; `missing` -> `missing_component_evidence`; `partial` -> `partial_component_evidence` | `invalid_evidence_state`/`missing_component_evidence`/`partial_component_evidence` **new** (GAP-6/D9); `stale`/`conflicting` existing |
+| `release_outcome` | `completed` | anything else, or absent -> `release_outcome_{value\|missing}` | existing |
+| `ci_outcome` | `passed`, `not_applicable` | anything else (including the no-longer-accepted `skipped`), or absent -> `ci_outcome_{value\|missing}` | narrowed (GAP-14) |
+| `deployment_outcome` | `recorded`, `not_applicable` | anything else, or absent -> `deployment_outcome_{value\|missing}` | existing |
+| `cleanup_outcome` | `complete` | anything else, or absent -> `cleanup_outcome_{value\|missing}` | existing |
+| `hub_tracker_reconciliation_outcome` (flag only, no evidence fallback) | `complete`, `deferred` | flag absent -> `hub_tracker_reconciliation_outcome_required`; flag present but not a closed-enum member -> `hub_tracker_reconciliation_{value}` | fallback removed, `_required` blocker **new** (GAP-5/D5) |
+| `child_release_state` (flag only, no evidence fallback) | `released`, `merged` | flag absent -> `child_release_state_required`; flag present but not a closed-enum member -> `child_release_state_{value}` | fallback removed, `_required` blocker **new** (GAP-5/D5) |
+
+If the accumulated `blockers` list is non-empty, `reconciliation_outcome = component_release_not_ready`,
+`mutation_allowed = false`, and `child_release_state` is resolved by existing, unchanged
+precedence: `failed` when `release_outcome == "failed"` or `child_state == "failed"`; else
+`blocked` when `release_outcome == "blocked"` or `evidence_state` is `stale`/`conflicting`; else
+`pending`. If the list is empty, `reconciliation_outcome = component_released`,
+`child_release_state = "released"`, and `mutation_allowed = true` — the only path that allows
+mutation.
+
+**Mirror surfaces and examples**: this table is the authoritative precedence source; the new
+`component-release-evidence-contract.md` document (Documentation Updates, item 1) carries a
+pointer to it rather than a duplicate table, and the `repository-modes.md` reconciliation
+paragraph (Documentation Updates, item 2) is corrected to describe `routing_outcome`,
+`evidence_state`, and the two hub-input flags as the gate's combined inputs instead of
+describing them as independent, unordered facts. T12 (routing mismatch), T13/T14 (hub-input
+flags required), T15/T15a/T15d (evidence-state disposition), and T24 (`ci_outcome: "skipped"`)
+are the fabricated-value tests that exercise Table A row 8 and the Table B rows respectively.
+
 ---
 
 ## Layer-by-Layer Changes
@@ -521,6 +607,14 @@ surface.
     any `artifact_owners` sub-field (`release`, `ci`, `github_release`, `deployment`, `cleanup`,
     `tracker`) resolves empty; exit `1` with
     `target binding is missing required identity field: <field>` (D4).
+  - In the same block, immediately after the empty-value checks above and **before** either of
+    the two `selected_product_repo_key` conditional guards below, refuse emission when the
+    (non-empty) `routing_outcome` value is anything other than exactly `component_release_routed`
+    or `single_repo_release`; exit `1` with `target binding routing_outcome must be
+    component_release_routed or single_repo_release, got: <value>`. This closes the gap where a
+    third, unrecognized value (e.g. `unknown`) would pass the empty-value check and then match
+    neither of the two conditional branches below, letting `selected_product_repo_key` (`null` or
+    otherwise) through unchecked (GAP-3, D4).
   - In the same block, refuse emission when `selected_product_repo_key` resolves empty while
     `routing_outcome` is `component_release_routed`; exit `1` with
     `target binding is missing required identity field: selected_product_repo_key`.
@@ -575,7 +669,11 @@ surface.
   - `classify_component`, hub path: require
     `stable_value(evidence, "routing_outcome") == "component_release_routed"`; on mismatch set
     `reconciliation_outcome="component_target_mismatch"`, `child_release_state="blocked"`,
-    blocker `routing_outcome_mismatch` (GAP-4).
+    blocker `routing_outcome_mismatch` (GAP-4). Insert this check as Table A row 8 in the
+    "Decision gate — `classify_component` mutation eligibility (hub path)" subsection above:
+    immediately after the existing `evidence.schema_version` check and before the existing
+    `selected_product_repo_key`-vs-`product_repo` match check, so routing identity is
+    established before any product/component identity comparison runs.
   - Replace the `hub_reconciliation` / `child_state` fallback chains (lines 328-333) with the
     CLI flags only; emit blockers `hub_tracker_reconciliation_outcome_required` and
     `child_release_state_required` when absent (GAP-5, D5).
@@ -759,13 +857,15 @@ instruction for `evidence_state()` preserves that branch untouched — so there 
 T15c to be red against either, and it is likewise green by construction. Record all four as
 green-before and green-after.
 Every other numbered test must show a captured red state: T1-T24 other than T6b, T15b, T15c,
-and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T15a, T15d, T20b, T20c, T20d, T20e, T20f,
-T23, and T24, all target behavior this plan introduces — T15d proves the new `invalid_evidence_state`
-disposition now applies to a *present* but non-string `evidence_state` value (e.g. JSON `null`),
-which previously fell through silently to the same synthesis path as an absent key; T23 and T24
-prove that `ci_outcome: "skipped"` — a value `component-release-evidence.sh`'s own `--ci-outcome`
-enum can never emit — is now rejected by both consumers that read `ci_outcome` directly from the
-evidence file (GAP-14).
+and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T15a, T15d, T20b, T20c, T20d, T20e,
+T20f, T23, and T24, all target behavior this plan introduces — T15d proves the new
+`invalid_evidence_state` disposition now applies to a *present* but non-string `evidence_state`
+value (e.g. JSON `null`), which previously fell through silently to the same synthesis path as
+an absent key; T6h proves the `routing_outcome` closed-enum precondition rejects a third,
+unrecognized value on its own, before either `selected_product_repo_key` conditional branch is
+even consulted; T23 and T24 prove that `ci_outcome: "skipped"` — a value
+`component-release-evidence.sh`'s own `--ci-outcome` enum can never emit — is now rejected by
+both consumers that read `ci_outcome` directly from the evidence file (GAP-14).
 
 ### Fabricated-value rejection cases
 
@@ -785,6 +885,7 @@ evidence file (GAP-14).
 | T6e | `test-component-release-evidence.sh` | target binding with `routing_outcome: "single_repo_release"` and `selected_product_repo_key` set to a **non-null, non-empty** value (e.g. `mobile-app`), with `release_branch_pattern` omitted (empty) for the same structural reason as T6a/T6b — this proves the reverse direction of the `producer_required_nullable` guard: a target and binding that both agree on a bound key under `single_repo_release` routing must still be rejected, not merely allowed to pass because target and binding agree with each other | exit 1, `target binding must not bind selected_product_repo_key under single_repo_release routing`; no record written |
 | T6f | `test-component-release-evidence.sh` | target binding with `routing_outcome: "single_repo_release"` and `selected_product_repo_key` set to an **empty string** `""` (key present, value `""`, not JSON `null`), with `release_branch_pattern` omitted (empty) for the same structural reason as T6a/T6b/T6e — this proves the reverse-direction guard rejects `""` exactly like a non-empty string, closing the gap where a string-emptiness check (rather than a JSON-`null` type check) would let `""` pass as if it were `null` | exit 1, `target binding must not bind selected_product_repo_key under single_repo_release routing`; no record written |
 | T6g | `test-component-release-evidence.sh` | target binding with `routing_outcome: "single_repo_release"` and the `selected_product_repo_key` key **absent entirely** (not present in the JSON object at all, distinct from an explicit `null`), with `release_branch_pattern` omitted (empty) for the same structural reason as T6a/T6b/T6e — this proves the reverse-direction guard also rejects a missing key, not only a present-but-wrong value | exit 1, `target binding must not bind selected_product_repo_key under single_repo_release routing`; no record written |
+| T6h | `test-component-release-evidence.sh` | target binding with `routing_outcome: "unknown"` (a non-empty, unrecognized value — neither `component_release_routed` nor `single_repo_release`), `mutation_allowed: true`, `selected_product_repo_key: null`, and `release_branch_pattern` omitted (empty) for the same structural reason as T6a/T6b/T6e — this is the exact matching target/binding pair that would otherwise pass the plain non-empty check on `routing_outcome` and then match neither of `selected_product_repo_key`'s two conditional branches, proving the new closed-enum precondition rejects an unrecognized routing outcome on its own rather than allowing it to fall through both conditional guards unchecked | exit 1, `target binding routing_outcome must be component_release_routed or single_repo_release, got: unknown`; no record written |
 | T7 | `test-delivery-bundle-manifest.sh` | evidence binding `component_version: null`, `--component-version 1.4.0` | `ERROR_CODE=component_version_unbound` |
 | T8 | `test-delivery-bundle-manifest.sh` | evidence binding `component_version: "1.4.0"`, `--component-version 99.0.0` | `ERROR_CODE=component_version_mismatch` |
 | T9 | `test-delivery-bundle-manifest.sh` | `--component-version` omitted entirely | argparse failure, `ERROR_CODE=invalid_arguments`, exit 2 |
@@ -948,6 +1049,7 @@ section, which is what makes the gate satisfiable without fabricating follow-up 
 | Single-repository-routed bound-key target binding | `component_release_target.v1` with `routing_outcome: "single_repo_release"`, `mutation_allowed: true`, `selected_product_repo_key` set to a non-null, non-empty value (e.g. `mobile-app`), and `release_branch_pattern` omitted (empty) for the same structural reason as the routed-null-key fixture above — this is the reverse-direction counterpart to the routed-null-key and single-repository-routed fixtures, proving D4's guard rejects a bound key under `single_repo_release` routing rather than merely tolerating a `null` one | New temp fixture inside `tests/test-component-release-evidence.sh` (T6e) |
 | Single-repository-routed empty-string-key target binding | `component_release_target.v1` with `routing_outcome: "single_repo_release"`, `mutation_allowed: true`, `selected_product_repo_key` set to an empty string `""` (key present, value `""`, not JSON `null`), and `release_branch_pattern` omitted (empty) for the same structural reason as the routed-null-key fixture above — proves the reverse-direction guard is a JSON-type check, not a string-emptiness check, and so rejects `""` exactly like a non-empty string | New temp fixture inside `tests/test-component-release-evidence.sh` (T6f) |
 | Single-repository-routed missing-key target binding | `component_release_target.v1` with `routing_outcome: "single_repo_release"`, `mutation_allowed: true`, the `selected_product_repo_key` key removed entirely (not present at all, distinct from JSON `null`), and `release_branch_pattern` omitted (empty) for the same structural reason as the routed-null-key fixture above — proves the reverse-direction guard also rejects a missing key, not only a present-but-wrong value | New temp fixture inside `tests/test-component-release-evidence.sh` (T6g) |
+| Unknown-routing target binding | `component_release_target.v1` with `routing_outcome: "unknown"` (matching, non-empty, unrecognized in both the target and binding files), `mutation_allowed: true`, `selected_product_repo_key: null`, and `release_branch_pattern` omitted (empty) for the same structural reason as the routed-null-key fixture above — proves the new closed-enum precondition on `routing_outcome` rejects a third value on its own, before either `selected_product_repo_key` conditional branch runs | New temp fixture inside `tests/test-component-release-evidence.sh` (T6h) |
 | Release-branch-empty evidence with a real per-attempt correlation key | `component_release_evidence.v1` record produced via `setup-component-release-fixture.sh`'s normal fixture path against a real `--release-branch` (so `target_binding.release_correlation_key` is genuinely computed from that attempt branch, not a fixed/contract-level value), then mutated to set the top-level `release_branch` to `""` (or remove the key) while leaving `target_binding.release_correlation_key` unchanged — otherwise a valid producer-shaped record. Using a fixed, attempt-independent correlation key here would let this fixture pass the new guard for the wrong reason: it would never exercise the disagreement between the evidence's recorded per-attempt key and the key cleanup's target re-resolution computes when `--release-branch` is omitted, which is exactly the case that exposes whether the guard runs before or after the six `compare_component_field` calls | New temp fixture inside `tests/test-prepare-release-tracker-cleanup.sh` (T20c) |
 | Empty-identity evidence (cleanup) | `component_release_evidence.v1` records whose `target_binding.contract_revision` is `""`; a second variant with `target_binding.release_correlation_key: ""`; a third with `target_binding.canonical_repository_identity: ""`; a fourth with `target_binding.routing_outcome: ""`; a fifth with `target_binding.selected_product_repo_key: ""` (or the key absent); a sixth family of six variants, each with exactly one `target_binding.artifact_owners` sub-field (`release`, `ci`, `github_release`, `deployment`, `cleanup`, `tracker`) set to `""` and the other five populated — otherwise a valid producer-shaped record | New temp fixtures inside `tests/test-prepare-release-tracker-cleanup.sh` (T19, T20, T20b, T20d, T20e, T20f — T20f exercised once per `artifact_owners` sub-field) |
 | Version-bound evidence | `component_release_evidence.v1` with `component_tag: "mobile-v1.4.0"`, `component_version: "1.4.0"` | `write_evidence` in `tests/test-delivery-bundle-manifest.sh` (extend the existing helper with a `component_version` positional) |
@@ -985,14 +1087,21 @@ The developer executes these after implementation; they are only identified here
       `component-milestone-reconciliation.sh`'s separate, unchanged `inspect-parent`/`apply-parent`
       manifest-component path, which reads `evidence_state` from a manifest-derived component view
       and is not subject to this plan's closed-enum fix; (6) Known gaps,
-      carrying RESIDUAL-1 through RESIDUAL-6 verbatim with their rationales.
+      carrying RESIDUAL-1 through RESIDUAL-6 verbatim with their rationales; (7) the
+      `classify_component` mutation-eligibility decision gate (hub path) — a pointer to the
+      "Decision gate — `classify_component` mutation eligibility (hub path)" subsection of this
+      plan (Table A ordered preconditions, Table B accumulating outcome), not a duplicate table,
+      since this plan is the authoritative source and a copy would drift independently of it.
 - [ ] `docs/workflow/development-workflow/repository-modes.md` — in the paragraph beginning
       "`scripts/development-workflow/component-release-evidence.sh` renders deterministic
       ..." (around line 73), link the new contract document and state that the producer
       refuses to emit on empty identity fields. In the
       `component-milestone-reconciliation.sh` paragraph (around line 101), correct the list of
       matched facts: `hub_tracker_reconciliation_outcome` and `child_release_state` are
-      hub-supplied flags, not evidence fields.
+      hub-supplied flags, not evidence fields; and state that `routing_outcome`,
+      `evidence_state`, and the two hub-input flags together gate a single combined
+      mutation-eligibility decision, in the order documented in the contract document's
+      decision-gate section, rather than describing them as independent, unordered checks.
 - [ ] `docs/workflow/development-workflow/multi-repo-release-adoption.md` — in the evidence
       shape-check paragraph (around lines 102-110), state the `attestation` trust class
       explicitly, name the six fields with no format validator (RESIDUAL-4), add
@@ -1058,26 +1167,31 @@ can be mistaken for production code.
 3. **Write the contract document** `component-release-evidence-contract.md` first. It is the
    specification the code changes implement, and drafting it surfaces any matrix cell that is
    still ambiguous.
-4. **Add the tests for the producer** (T1-T6g, including T5b, T6c, T6d, T6e, T6f, and T6g — T6d
-   run once per `artifact_owners` sub-field, six red-then-green pairs; T6b is the red-capture
-   exemption). Run
+4. **Update the fixture helpers** (`setup-component-release-fixture.sh`,
+   `setup-component-milestone-fixture.sh`) with `component_version`, then re-run all seven
+   suites listed in the Testing Strategy to confirm the fixture change alone does not break any
+   currently passing assertion. This must happen before step 5 below: `test-component-release-evidence.sh`
+   (the producer suite written in step 5) sources `setup-component-release-fixture.sh` directly
+   (`FIXTURE_HELPER`), and `test-component-milestone-reconciliation.sh` (step 9) sources
+   `setup-component-milestone-fixture.sh` the same way, so both suites' first test-writing step
+   must find fixtures already shaped for the tightened contract rather than the pre-plan shape.
+5. **Add the tests for the producer** (T1-T6h, including T5b, T6c, T6d, T6e, T6f, T6g, and T6h —
+   T6d run once per `artifact_owners` sub-field, six red-then-green pairs; T6b is the
+   red-capture exemption). Run
    `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
    and capture the failures.
-5. **Implement the producer changes** (D1, D3, D4). Re-run the suite green.
-6. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11 and T23), capture failures.
-7. **Implement the bundle changes** (D2, GAP-1, GAP-9, GAP-14, enum validation). Re-run green.
-8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18 and T24, including
+6. **Implement the producer changes** (D1, D3, D4). Re-run the suite green.
+7. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11 and T23), capture failures.
+8. **Implement the bundle changes** (D2, GAP-1, GAP-9, GAP-14, enum validation). Re-run green.
+9. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18 and T24, including
    T15a and T15d; T15b and T15c are the red-capture exemptions for this suite), capture
    failures.
-9. **Implement the reconciliation changes** (GAP-4, D5, D9, D6, GAP-14, `trust_basis`). Re-run green.
-10. **Add the red tests for cleanup and assurance** (T19-T22, including T20b, T20c, T20d, T20e,
+10. **Implement the reconciliation changes** (GAP-4, D5, D9, D6, GAP-14, `trust_basis`). Re-run green.
+11. **Add the red tests for cleanup and assurance** (T19-T22, including T20b, T20c, T20d, T20e,
     and T20f — T20f run once per `artifact_owners` sub-field, six red-then-green pairs; T22 is
     the red-capture exemption for this suite), capture failures.
-11. **Implement the cleanup precondition** (GAP-8, GAP-13, D12) and the assurance
+12. **Implement the cleanup precondition** (GAP-8, GAP-13, D12) and the assurance
     `trust_class` output (D8). Re-run both suites green.
-12. **Update the fixture helpers** (`setup-component-release-fixture.sh`,
-    `setup-component-milestone-fixture.sh`) with `component_version`, then re-run all seven
-    suites listed in the Testing Strategy.
 13. **Execute the Documentation Updates** section, including `.agents/skills/prepare-release/SKILL.md`.
 14. **Add the changelog fragment** `changelog.d/1529.fixed.delivery-bundle-evidence-trust-boundary.md`
     with exactly this body, **before** the lint gates in step 15 — this way the same
@@ -1107,5 +1221,5 @@ can be mistaken for production code.
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | The published matrix's field column, diffed against the Producer emitted-field contract table (16 rows) and the never-emitted-fields list (7 rows), shows zero missing and zero extra fields across all four consumer columns (`delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`, `multi-repo-release-assurance.sh`, `prepare-release-post-merge-cleanup.sh`) — a check that fails if the matrix section is absent, truncated, or omits any field, unlike a bare field-enumeration count. Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers corroborates the source counts the diff is run against |
 | No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8, GAP-13, GAP-14; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T15d, T16, T19, T20, T20b, T20c, T20d, T20e, T20f, T23, T24 |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T24 (plus T6f, T6g) other than T6b, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T6b, T15b, T15c, and T22 are the four declared red-capture exemptions and are recorded green-before and green-after |
-| The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, T6a/T6e/T6f/T6g pin the two directions of the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing — T6a pins that `component_release_routed` requires non-`null`; T6e, T6f, and T6g together pin that `single_repo_release` requires *exactly* `null`, rejecting a non-empty string (T6e), an empty string (T6f), and a missing key (T6g) alike) while T6b pins the `null` passthrough this plan leaves unchanged, and T6c/T6d pin the `producer_required` promise for `routing_outcome` and `artifact_owners` |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 7, 9, 11 capture red before green | T1-T24 (plus T6f, T6g, T6h) other than T6b, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T6b, T15b, T15c, and T22 are the four declared red-capture exemptions and are recorded green-before and green-after |
+| The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, T6a/T6e/T6f/T6g pin the two directions of the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing — T6a pins that `component_release_routed` requires non-`null`; T6e, T6f, and T6g together pin that `single_repo_release` requires *exactly* `null`, rejecting a non-empty string (T6e), an empty string (T6f), and a missing key (T6g) alike) while T6b pins the `null` passthrough this plan leaves unchanged, T6c/T6d pin the `producer_required` promise for `routing_outcome` and `artifact_owners`, and T6h pins that the `producer_required_nullable` boundary's "if and only if" claim holds even when `routing_outcome` carries a third, unrecognized value |

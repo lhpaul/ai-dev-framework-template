@@ -198,6 +198,21 @@ merely agree on the wrong thing for this routing outcome. Only with this run
 passing alongside run 5 and the preceding `null`-passthrough run is the "if and
 only if" claim actually exercised in both directions.
 
+Then run the producer once more against a target binding whose `routing_outcome`
+is `unknown` (a non-empty value that is neither `component_release_routed` nor
+`single_repo_release`, matching in both the target and binding files),
+`mutation_allowed: true`, `selected_product_repo_key: null`, and
+`release_branch_pattern` again omitted (empty) for the same structural reason
+as the earlier runs (T6h).
+
+**Expected result**: exit `1` with a message naming that `routing_outcome` must
+be `component_release_routed` or `single_repo_release`; no evidence file is
+written. This is the closed-enum precondition on `routing_outcome` itself: a
+non-empty-but-unrecognized value passes the plain non-empty check but matches
+neither of the two conditional `selected_product_repo_key` branches above, so
+without this run's guard a matching target/binding pair carrying `unknown`
+routing and a `null` key would pass every other check in this step unrejected.
+
 ### Step 6: The bundle requires and matches `component_version`
 
 **Maps to**: Acceptance Criteria 2 and 3.
@@ -397,6 +412,10 @@ and confirm each of the following:
    absent tag/branch-version relation, the unbound `apply-component` target, the
    six unvalidated assurance fields, the hub-checkout-scoped cleanup lease, and
    the absent release-tag deletion.
+7. A `classify_component` mutation-eligibility decision-gate section points to
+   the plan's "Decision gate — `classify_component` mutation eligibility (hub
+   path)" subsection (Table A ordered preconditions, Table B accumulating
+   outcome) rather than duplicating it.
 
 Then confirm the document is linked from `repository-modes.md`,
 `multi-repo-release-adoption.md`, and `scripts/development-workflow/README.md`.
