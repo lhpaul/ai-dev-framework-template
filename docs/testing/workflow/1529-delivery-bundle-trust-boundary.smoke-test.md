@@ -385,12 +385,19 @@ real milestone-mutation `gh` call through `ensure_milestone`/
 `assign_milestone`. Set up the milestone fixture and its `gh` stub — **not**
 the real `gh` CLI — before either invocation below, mirroring the pattern
 `tests/test-component-milestone-reconciliation.sh` uses for its own
-`single_repo` apply coverage:
+`single_repo` apply coverage. This mock stub must be scoped to this step
+only: it rejects every invocation whose first argument is not `api` (see the
+stub's source in `setup-component-milestone-fixture.sh`), so leaving it first
+on `PATH` after this step would break Step 16's real `gh issue view` call
+later in this runbook. Save the current `PATH` before prepending the stub's
+directory, and restore it — along with unsetting the fixture-scoped variables
+below — immediately after both invocations finish and before Step 12 begins:
 
 ```bash
 bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh \
   --output-dir "$SMOKE_TMP/milestone-fixture" --json > "$SMOKE_TMP/milestone-fixture.json"
 MOCK_GH_BIN="$(jq -r '.mock_gh.bin_dir' "$SMOKE_TMP/milestone-fixture.json")"
+ORIGINAL_PATH="$PATH"
 export PATH="$MOCK_GH_BIN:$PATH"
 export COMPONENT_MILESTONE_MOCK_STATE
 export COMPONENT_MILESTONE_GH_CALL_LOG
@@ -410,11 +417,31 @@ variables and `GITHUB_REPOSITORY` exported:
 
 **Expected result**: run 1 fails with `evidence_not_supported_in_single_repo`
 and `$COMPONENT_MILESTONE_GH_CALL_LOG` is unchanged (no line appended) — no
-tracker mutation. Run 2 succeeds with `reconciliation_outcome=single_repo_milestone`,
-reports `trust_basis: "caller_asserted"`, and appends exactly one line to
-`$COMPONENT_MILESTONE_GH_CALL_LOG` recording the mock `gh` milestone-assignment
-call for `$COMPONENT_CHILD_ISSUE` — confirming the mutation went through the
-stub, not the real `gh` CLI.
+tracker mutation. Run 2 succeeds with `reconciliation_outcome=single_repo_milestone`
+and reports `trust_basis: "caller_asserted"`. The fixture only pre-seeds a
+`mobile-app@mobile-v1.4.0` milestone — no `v1.2.3` milestone exists yet — so a
+correct implementation's `ensure_milestone` call must create it before
+`assign_milestone` can assign it: confirm `$COMPONENT_MILESTONE_GH_CALL_LOG`
+gains exactly **two** new lines from run 2, a milestone-creation call
+(`-X POST .../milestones` with `title=v1.2.3`) followed by a
+milestone-assignment call (`-X PATCH .../issues/$COMPONENT_CHILD_ISSUE` with
+the newly created milestone number) — confirming both mutations went through
+the stub, not the real `gh` CLI. A single-line result is a FAIL for this step:
+it means either the milestone-creation call never happened (and the
+assignment would then be against a pre-existing, unrelated milestone) or the
+log was not read correctly.
+
+Immediately after run 2, restore the environment before Step 12 runs:
+
+```bash
+export PATH="$ORIGINAL_PATH"
+unset COMPONENT_MILESTONE_MOCK_STATE COMPONENT_MILESTONE_GH_CALL_LOG GITHUB_REPOSITORY
+```
+
+No later step in this runbook needs the mock `gh` stub, and Step 16 makes a
+real `gh issue view` call — leaving the stub first on `PATH` would make that
+call fail, because the stub only implements `gh api ...` and rejects
+everything else.
 
 ### Step 12: Cleanup rejects evidence with an empty identity field, an empty `release_branch`, or an empty/missing `cleanup_outcome`
 
@@ -566,15 +593,32 @@ claims the evidence "must include" `hub_tracker_reconciliation_outcome` or
 
 **Maps to**: Plan Residual Verification Strategy.
 
+This step uses the real `gh` CLI, not the Step 11 milestone fixture's mock
+stub. Confirm `PATH` no longer has that stub's directory ahead of the real
+`gh` (Step 11 restores it, but re-check if any earlier step in this run was
+retried or reordered), then fetch the issue body and stop immediately if the
+fetch did not actually produce one — an empty or missing body file must never
+be passed on to the gate silently:
+
 ```bash
 gh issue view 1529 --json body --jq .body > "$SMOKE_TMP/1529-body.md"
+[ -s "$SMOKE_TMP/1529-body.md" ] || {
+  echo "gh issue view 1529 produced an empty body — stop here; check that" \
+       "PATH is not still pointing at the Step 11 mock gh stub and that" \
+       "gh is authenticated for this repository" >&2
+  exit 1
+}
 ./scripts/development-workflow/scope-residual-gate.sh verify \
   --issue-title "workflow-hub: audit the delivery-bundle evidence trust boundary — consumers accept unvalidated caller-supplied values" \
   --issue-body-file "$SMOKE_TMP/1529-body.md" \
   --evidence docs/specs/developments/20260912021032_1529-delivery-bundle-trust-boundary/residual-evidence.json
 ```
 
-**Expected result**: `RESULT=pass` with `SCOPE_CLASSIFICATION=numeric_sweep`.
+**Expected result**: the `gh issue view` fetch succeeds and produces a
+non-empty `$SMOKE_TMP/1529-body.md`; if it does not, stop and fix the fetch
+(this is a hard precondition failure, not a soft one to route around) before
+re-running the gate. `scope-residual-gate.sh verify` then reports
+`RESULT=pass` with `SCOPE_CLASSIFICATION=numeric_sweep`.
 
 ### Step 17: Both consumers reject a producer-unemittable `ci_outcome: "skipped"` (GAP-14)
 
