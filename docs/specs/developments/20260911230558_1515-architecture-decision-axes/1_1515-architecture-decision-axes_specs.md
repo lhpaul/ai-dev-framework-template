@@ -253,6 +253,7 @@ Raising `architecture_decision` is a workflow decision gate: what the runner doe
 | The workflow specification lines found for each axis        | The runner's search of the workflow surfaces                             | **Added by this feature.** Supplies the citation behind every settled verdict      |
 | Whether the runner's behavior matches each cited line       | The runner's own current behavior or implementation                      | **Added by this feature.** Decides whether a citation can stand as support         |
 | Whether the runner can determine coverage for an axis       | The same search                                                          | Unresolvable coverage is an open axis, never a settled one                         |
+| Whether the runner judges a covered, non-uncertain citation's substance to be correct | The runner's own judgment of the cited line, distinct from whether its behavior conforms to it | **Added by this feature.** A citation the runner judges wrong opens a new dispute axis instead of leaving the axis it covers unquestioned |
 
 ### Triggers
 
