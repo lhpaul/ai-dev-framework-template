@@ -379,13 +379,42 @@ distinguishes "key missing" from "key present but not a valid enum string."
 
 **Maps to**: Acceptance Criterion 2.
 
-1. Run `apply-component --mode single_repo --version v1.2.3 --evidence-file <any path>`.
+`apply-component` requires `--issue` and `--target-kind` (both are
+`required=True` on the parser) and, on a successful `single_repo` run, makes a
+real milestone-mutation `gh` call through `ensure_milestone`/
+`assign_milestone`. Set up the milestone fixture and its `gh` stub — **not**
+the real `gh` CLI — before either invocation below, mirroring the pattern
+`tests/test-component-milestone-reconciliation.sh` uses for its own
+`single_repo` apply coverage:
+
+```bash
+bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh \
+  --output-dir "$SMOKE_TMP/milestone-fixture" --json > "$SMOKE_TMP/milestone-fixture.json"
+MOCK_GH_BIN="$(jq -r '.mock_gh.bin_dir' "$SMOKE_TMP/milestone-fixture.json")"
+export PATH="$MOCK_GH_BIN:$PATH"
+export COMPONENT_MILESTONE_MOCK_STATE
+export COMPONENT_MILESTONE_GH_CALL_LOG
+COMPONENT_MILESTONE_MOCK_STATE="$(jq -r '.mock_gh.state' "$SMOKE_TMP/milestone-fixture.json")"
+COMPONENT_MILESTONE_GH_CALL_LOG="$(jq -r '.mock_gh.call_log' "$SMOKE_TMP/milestone-fixture.json")"
+export GITHUB_REPOSITORY="example/mobile-app"
+COMPONENT_CHILD_ISSUE="$(jq -r '.issues.component_child' "$SMOKE_TMP/milestone-fixture.json")"
+```
+
+With the mock `gh` stub first on `PATH` and both `COMPONENT_MILESTONE_*`
+variables and `GITHUB_REPOSITORY` exported:
+
+1. Run `apply-component --mode single_repo --issue "$COMPONENT_CHILD_ISSUE"
+   --target-kind component_child --version v1.2.3 --evidence-file
+   "$SMOKE_TMP/evidence-bound.json" --json`.
 2. Run the same command without `--evidence-file`.
 
-**Expected result**: run 1 fails with `evidence_not_supported_in_single_repo` and
-makes no tracker mutation. Run 2 succeeds with
-`reconciliation_outcome=single_repo_milestone` and reports
-`trust_basis: "caller_asserted"`.
+**Expected result**: run 1 fails with `evidence_not_supported_in_single_repo`
+and `$COMPONENT_MILESTONE_GH_CALL_LOG` is unchanged (no line appended) — no
+tracker mutation. Run 2 succeeds with `reconciliation_outcome=single_repo_milestone`,
+reports `trust_basis: "caller_asserted"`, and appends exactly one line to
+`$COMPONENT_MILESTONE_GH_CALL_LOG` recording the mock `gh` milestone-assignment
+call for `$COMPONENT_CHILD_ISSUE` — confirming the mutation went through the
+stub, not the real `gh` CLI.
 
 ### Step 12: Cleanup rejects evidence with an empty identity field, an empty `release_branch`, or an empty/missing `cleanup_outcome`
 
@@ -583,18 +612,30 @@ present, non-string JSON value (for example a JSON array) for either field made
 that check raise an uncaught `TypeError` instead of returning a blocker.
 Confirm the fix rejects both cleanly.
 
+`inspect-component` never uses a non-zero exit code to signal a blocker —
+`cmd_inspect_component` only prints `classify_component`'s result and `main`
+returns 0 for every subcommand dispatch that completes without raising, so a
+blocked (`mutation_allowed: false`) result is reported entirely through the
+JSON body, exactly as it is in Steps 8, 9, and 10. This is different from
+`apply-component`, whose `cmd_apply_component` explicitly calls `fail(...)`
+(exit 1) when `mutation_allowed` is not `true`. The defect this step guards
+against is the unmodified script *crashing* — exiting non-zero for the wrong
+reason (an uncaught `TypeError`/traceback) instead of returning 0 with the
+blocker in the JSON body — so "exits cleanly" below means exit `0`, not a
+non-zero status.
+
 1. Run `inspect-component` on the hub path with an evidence file that is
    otherwise valid except `ci_outcome: []` (a JSON array, not a string).
 
-   **Expected result**: the command exits with a normal non-zero status and a
-   JSON result — no Python traceback, no uncaught exception. `blockers`
+   **Expected result**: the command exits `0` and prints a JSON result — no
+   Python traceback, no uncaught exception, no non-zero crash exit. `blockers`
    contains `ci_outcome_invalid` and `mutation_allowed` is `false` (T25).
 
 2. Run `inspect-component` on the hub path with an evidence file that is
    otherwise valid except `deployment_outcome: []`.
 
-   **Expected result**: the command exits with a normal non-zero status and a
-   JSON result — no Python traceback, no uncaught exception. `blockers`
+   **Expected result**: the command exits `0` and prints a JSON result — no
+   Python traceback, no uncaught exception, no non-zero crash exit. `blockers`
    contains `deployment_outcome_invalid` and `mutation_allowed` is `false`
    (T26).
 
