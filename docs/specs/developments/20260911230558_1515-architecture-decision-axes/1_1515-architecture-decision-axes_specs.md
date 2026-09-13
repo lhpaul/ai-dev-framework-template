@@ -310,6 +310,8 @@ These three rows are read in the order listed, because the second and third pres
 
 None of these three rows produces "Not an architecture decision" or any other outcome that lets the run continue without a human decision.
 
+A report can combine the third row with the settled-axis and open-axis outcomes above: a decomposition can have one axis whose citation's conformance is undetermined alongside other axes that are genuinely open, settled with a determined declaration, or subject to a departure. Where it does, the report is incomplete rather than well-formed — the third row's own outcome governs — and the requested decision combines the genuinely open axes' decision, if any, with a named request for the missing conformance evidence for each axis the third row applies to.
+
 ### Mirror surfaces
 
 | Surface                                                                       | Relationship                                                                     | Consistency requirement                                                                          |
@@ -391,12 +393,12 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 
 ### The requested decision covers only the open axes
 
-- [ ] An emitted report states the decision requested of the human, and that decision names the genuinely open axes — except for the conformance-undetermined incomplete report, whose sole axis stays Settled by specification and whose requested action is to supply the missing conformance evidence instead.
+- [ ] An emitted report states the decision requested of the human, and that decision names the genuinely open axes, combined with a named request for conformance evidence for any axis whose citation's conformance could not be determined; that axis itself stays Settled by specification and is never listed as genuinely open on that account.
 - [ ] No axis marked Settled by specification appears in the requested decision.
 - [ ] A report that contains at least one settled axis and at least one open axis asks the human about the open axis only, and the human can confirm that by reading the report alone.
 - [ ] A recommendation, where the report offers one, is labelled as a recommendation and is stated separately from the requested decision.
 - [ ] The report does not act on, pre-answer, or ask for ratification of any axis marked Genuinely open.
-- [ ] The emitted stop still carries the exact stop condition name, the affected work item, and the concrete human action required. The required human action names the open axes — except for the conformance-undetermined incomplete report, where the sole axis keeps its Settled by specification verdict and the required human action instead names the conformance evidence to supply.
+- [ ] The emitted stop still carries the exact stop condition name, the affected work item, and the concrete human action required. The required human action names the open axes, combined with a named request for conformance evidence for any axis whose citation's conformance could not be determined.
 - [ ] The report is readable on the work item after the run ends, without opening an agent session transcript.
 
 ### The requirement never suppresses a stop
