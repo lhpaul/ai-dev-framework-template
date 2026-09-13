@@ -239,7 +239,7 @@ The guarantee this feature owes its operators is self-service: someone running t
 
 **Valid transitions**:
 
-- Native handoff → Parent orchestrated when an onward handoff that was assumed available proves unavailable during the run.
+- Native handoff → Parent orchestrated when, mid-run, the orchestration role the current context handed off to becomes unreachable, while the current context's own initial handoff to one further role remains confirmed available at the point of discovery (see the Decision-Gate Consistency Matrix's mid-run recovery rows). This is the orchestration role itself becoming unreachable, not merely a narrower failure of that role's own onward-handoff capability to hand stage work on in turn.
 - Parent orchestrated → Inline fallback when stage handoff also proves unavailable.
 - Native handoff → Inline fallback when no handoff of any kind is available.
 - Any transition is a re-declaration: the run states the new profile and the reason before continuing under it.
