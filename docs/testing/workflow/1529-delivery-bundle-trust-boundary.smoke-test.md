@@ -447,6 +447,21 @@ everything else.
 
 **Maps to**: Acceptance Criterion 2.
 
+Every hand-edited evidence file in this step (T19, T20, T20b, T20d, T20e, T20f, and T20g)
+starts from a `jq` copy of `$SMOKE_TMP/evidence-bound.json` — the file Step 4 rendered
+against `--release-branch mobile-app/release/v1.0.0` — with exactly the one field under
+test changed. Do **not** start from a fresh, un-branched `component-release-target.sh`
+resolution (the kind `setup-component-release-fixture.sh` produces internally without a
+`--release-branch`): that fixture's `release_correlation_key` was computed for no branch
+at all, so `prepare-release-post-merge-cleanup.sh`'s real target re-resolution — which
+re-derives the correlation key from `evidence.release_branch` — would reject it on a
+`release_correlation_key`/`release_branch` mismatch (or the missing-`release_branch`
+guard, once one is edited) before the run ever reaches the specific field this step
+means to test. Starting from `evidence-bound.json` keeps `release_branch` and
+`release_correlation_key` mutually consistent with a real branch for every edit in this
+step except T20c, which deliberately breaks that consistency on purpose (see its own
+instructions below).
+
 Run `prepare-release-post-merge-cleanup.sh` with `--repo` and an
 `--evidence-file` whose `target_binding.contract_revision` is `""` (T19).
 
