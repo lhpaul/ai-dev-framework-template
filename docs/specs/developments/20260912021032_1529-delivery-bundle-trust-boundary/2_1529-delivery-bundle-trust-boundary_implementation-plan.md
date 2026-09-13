@@ -107,6 +107,9 @@ no longer hold.
 Every field that reaches a consumer belongs to exactly one class, and the class alone
 determines the consumer's duty: no field is an exception to the class it carries. That is what
 lets a future consumer tell required from optional without reading the producer (AC-5).
+`release_branch` and `hub_tracker_ref` narrow that duty at exactly one consumer each, for a
+stated reason rather than as an unexplained exception — see the note preceding the Trust matrix
+table below.
 
 | Class | Definition | Consumer duty |
 | --- | --- | --- |
@@ -149,17 +152,27 @@ was given, per each class's consumer duty above (`hub_tracker_reconciliation_out
 `child_release_state` under `hub_input`, closed by GAP-5/D5; `component_key`, `child_item`,
 `source_pr`, and `release_pr` under `hub_input_identifier`, which states the same "never source
 it from the evidence file" duty directly and never had an evidence-file fallback to remove).
-`evidence_state` is the one documented exception to "never sourced from an evidence file": the
-canonical `component_release_evidence.v1` record never carries the key
-(a producer-emitted file has no `evidence_state` to read), but `delivery-bundle-manifest.sh`
-sets `evidence_state` on its own component view, and `component-milestone-reconciliation.sh`'s
-hub path legitimately reads whichever evidence-shaped input it was given — a canonical evidence
-file (where the key is normally absent, D9's `absent` row) or a manifest-derived component view
-(where the key is normally present) — subject to the closed-enum validation in D9, never trusted
-outright. "Never emits" therefore means "the producer's own contract carries no such key," not
-"a present value is forbidden everywhere": a present `evidence_state` is always consumer-set,
-never producer-attested, which is exactly why D9 gates it behind a closed enum instead of
-passing it through unchecked.
+`evidence_state` is the one documented exception to "never sourced from an evidence file": unlike
+the six hub-owned fields above, which `classify_component`'s hub path takes only as explicit CLI
+flags and never reads from the evidence file, `evidence_state` is read directly from whatever
+`--evidence-file` contains (`evidence_state()`, called only from `classify_component`). That file
+is always `schema_version`-gated to `component_release_evidence.v1` first (line 257), so it can
+never be a manifest-derived component view — a bundle component carries `evidence_schema_version`,
+not `schema_version` (see `component_from_evidence`) — exactly the unreachable path D5 already
+establishes. A producer-emitted file legitimately has no `evidence_state` key at all (D9's
+`absent` row, synthesized as `verified` when `schema_version` matches, which it always does once
+`classify_component` reaches this point); a present value is therefore always consumer-fabricated
+inside a hand-authored evidence file, never producer-attested, which is exactly why D9 gates it
+behind a closed enum (GAP-6) instead of passing it through unchecked. `delivery-bundle-manifest.sh`
+separately sets `evidence_state` on its own component view for
+`component-milestone-reconciliation.sh`'s distinct manifest-component path
+(`component_blocker`/`component_is_released`, reached only through `inspect-parent`/`apply-parent`,
+never through `classify_component`); that path is unrelated to and untouched by this plan, keeps
+its pre-existing `stale`/`conflicting`-only check unchanged, and is not subject to the GAP-6/D9
+closed-enum fix — D9's introductory survey cites its `released` value only to justify listing
+`released` as a legitimate enum member on the hub path, not to claim the closed-enum fix applies
+to that separate path too. "Never emits" therefore means "the producer's own contract carries no
+such key," not "a present value is forbidden everywhere on the hub path."
 
 ### Trust matrix — field x consumer
 
@@ -193,6 +206,24 @@ in-progress state before hub reconciliation completes; it grants no license for
 `component-milestone-reconciliation.sh`'s hub path, or for `child_release_state` (which the bundle
 already declares `required=True` with no default), to treat an absent flag as anything but a hard
 failure.
+
+`release_branch` and `hub_tracker_ref` are `producer_required`, and each carries a `record`-only
+duty at exactly one consumer — `delivery-bundle-manifest.sh` — while a different consumer carries
+that field's actual non-empty duty. This is not an unvalidated field slipping through: for each
+field, the class's "require non-empty" duty is enforced in full, just not at this particular
+consumer. `release_branch`'s bundle-side duty is `record` because the value is audit metadata that
+can legitimately change across a re-tag under a new `release_pr` (see the
+`delivery-bundle-manifest.sh` implementation step), so it deliberately does not join
+`stable_fields`; the field's `producer_required` non-empty duty is enforced downstream instead, at
+`prepare-release-post-merge-cleanup.sh`, which GAP-13 closes from "compare only if present" to
+"require non-empty before comparing" (D12). `hub_tracker_ref`'s bundle-side duty is likewise
+`record`, unconditionally storing the value it is given with no defect to close there; its
+`producer_required` non-empty duty is enforced at `component-milestone-reconciliation.sh`'s hub
+path, which already requires it non-empty (pre-existing `required_identity` check, unchanged by
+this plan). Binding `hub_tracker_ref` further — matching it against `--issue` or `--child-item` —
+is explicitly out of scope (RESIDUAL-1); that scoping decision is about matching the value against
+another identifier, not about whether it is required non-empty, which every consumer that gates on
+it already enforces.
 
 | Field | Class | `delivery-bundle-manifest.sh` | `component-milestone-reconciliation.sh` | `multi-repo-release-assurance.sh` | `prepare-release-post-merge-cleanup.sh` |
 | --- | --- | --- | --- | --- | --- |
@@ -947,8 +978,13 @@ The developer executes these after implementation; they are only identified here
       (5) fields the producer never emits, noting that six of the seven
       (`hub_tracker_reconciliation_outcome`, `child_release_state`, `component_key`,
       `child_item`, `source_pr`, `release_pr`) may never be sourced from an evidence file at
-      all, while `evidence_state` is the documented exception a consumer may read from a
-      manifest-derived component view subject to the D9 closed-enum check; (6) Known gaps,
+      all, while `evidence_state` is the documented exception: `classify_component`'s
+      canonical-evidence-only hub path reads it directly from `--evidence-file`, gated by the
+      GAP-6/D9 closed enum, precisely because that file can never be a manifest-derived component
+      view (D5's `schema_version` gate makes that path unreachable) — distinct from
+      `component-milestone-reconciliation.sh`'s separate, unchanged `inspect-parent`/`apply-parent`
+      manifest-component path, which reads `evidence_state` from a manifest-derived component view
+      and is not subject to this plan's closed-enum fix; (6) Known gaps,
       carrying RESIDUAL-1 through RESIDUAL-6 verbatim with their rationales.
 - [ ] `docs/workflow/development-workflow/repository-modes.md` — in the paragraph beginning
       "`scripts/development-workflow/component-release-evidence.sh` renders deterministic

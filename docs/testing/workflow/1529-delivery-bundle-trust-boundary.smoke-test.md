@@ -233,7 +233,12 @@ Attempt `update-component` with `--component-tag fabricated-v99.0.0` against
 `$SMOKE_TMP/evidence-bound.json`.
 
 **Expected result**: `ERROR_CODE=component_tag_mismatch`, manifest revision
-unchanged, and `finalize` still reports the component as blocked.
+unchanged, and the stored `mobile-app` component still carries the honest
+values from Step 6's update (`component_tag: "mobile-v1.4.0"`,
+`component_version: "1.4.0"`) — the rejected fabricated-tag attempt writes
+nothing to the manifest, so the bundle remains exactly as ready as Step 6 left
+it (do not call `finalize` here: Step 17 reuses this same unfinalized,
+otherwise-ready state).
 
 ### Step 8: Reconciliation refuses non-hub routing
 
