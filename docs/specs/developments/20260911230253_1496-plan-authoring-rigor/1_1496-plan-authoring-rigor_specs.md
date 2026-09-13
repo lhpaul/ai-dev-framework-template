@@ -476,7 +476,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 
 ### Group E — Independent verification of existence claims (Rule 4)
 
-- [ ] Every statement that a named thing does or does not exist in the codebase carries a recorded search and the revision it was run at. A reader re-running it reaches the same yes or no, or the plan fails.
+- [ ] Every statement that a named thing does or does not exist in the codebase, or that a concern is already covered or already handled, carries a recorded search and the revision it was run at. A reader re-running it reaches the same yes or no, or the plan fails.
 - [ ] A claim whose recorded support is a delegated summary, a prior conversation, or another document, rather than a reproducible search recorded in the plan, fails.
 - [ ] A statement that a class of claims was all verified passes only when the per-item evidence is present. The completeness statement alone fails.
 - [ ] A non-existence claim passes only when its record names the places searched and those places are where the thing could plausibly live.
