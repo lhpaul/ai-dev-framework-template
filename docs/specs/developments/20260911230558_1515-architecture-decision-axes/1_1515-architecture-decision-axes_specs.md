@@ -399,7 +399,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] A report that contains at least one settled axis and at least one open axis asks the human about the open axis only, and the human can confirm that by reading the report alone. A separately reported conformance-evidence request, where one applies, is additional to the requested decision and does not count as asking about a settled axis.
 - [ ] A recommendation, where the report offers one, is labelled as a recommendation and is stated separately from the requested decision.
 - [ ] The report does not act on, pre-answer, or ask for ratification of any axis marked Genuinely open.
-- [ ] The emitted stop still carries the exact stop condition name, the affected work item, and the concrete human action required. The required human action names the open axes and, separately, any conformance evidence to supply for an axis whose citation's conformance could not be determined.
+- [ ] The emitted stop still carries the exact stop condition name, the affected work item, and the concrete human action required. For a complete report, the required human action names the open axes and, separately, any conformance evidence to supply for an axis whose citation's conformance could not be determined. For an incomplete report under the malformed-input rule — the question or its source could not be established, or decomposition produced no axis — the required human action instead supplies what that rule names: the missing question or its source, or a redone decomposition; there is no axis yet to name.
 - [ ] The report is readable on the work item after the run ends, without opening an agent session transcript.
 
 ### The requirement never suppresses a stop
