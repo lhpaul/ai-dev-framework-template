@@ -208,22 +208,37 @@ already declares `required=True` with no default), to treat an absent flag as an
 failure.
 
 `release_branch` and `hub_tracker_ref` are `producer_required`, and each carries a `record`-only
-duty at exactly one consumer — `delivery-bundle-manifest.sh` — while a different consumer carries
-that field's actual non-empty duty. This is not an unvalidated field slipping through: for each
-field, the class's "require non-empty" duty is enforced in full, just not at this particular
-consumer. `release_branch`'s bundle-side duty is `record` because the value is audit metadata that
-can legitimately change across a re-tag under a new `release_pr` (see the
-`delivery-bundle-manifest.sh` implementation step), so it deliberately does not join
-`stable_fields`; the field's `producer_required` non-empty duty is enforced downstream instead, at
-`prepare-release-post-merge-cleanup.sh`, which GAP-13 closes from "compare only if present" to
-"require non-empty before comparing" (D12). `hub_tracker_ref`'s bundle-side duty is likewise
-`record`, unconditionally storing the value it is given with no defect to close there; its
-`producer_required` non-empty duty is enforced at `component-milestone-reconciliation.sh`'s hub
-path, which already requires it non-empty (pre-existing `required_identity` check, unchanged by
-this plan). Binding `hub_tracker_ref` further — matching it against `--issue` or `--child-item` —
-is explicitly out of scope (RESIDUAL-1); that scoping decision is about matching the value against
-another identifier, not about whether it is required non-empty, which every consumer that gates on
-it already enforces.
+duty at `delivery-bundle-manifest.sh` — after GAP-9 for `release_branch` — while a separate,
+independently-invoked consumer carries a non-empty check on that same field name. This is a
+genuine residual limitation of the bundle's own guarantee, not a closed guarantee that is merely
+enforced somewhere else: `delivery-bundle-manifest.sh`'s own `cmd_finalize` /
+`inspect_manifest` / `blocker_for_component` code path never invokes
+`prepare-release-post-merge-cleanup.sh` or `component-milestone-reconciliation.sh`, so a bundle
+can reach `finalized` status while its component record carries an empty `release_branch` or
+`hub_tracker_ref` — the other consumer's non-empty check only ever runs if and when something
+separately invokes that other, decoupled binary against the same evidence, which bundle
+finalization neither requires nor verifies. The two fields are not in the same starting state
+today: `release_branch` is not stored by `delivery-bundle-manifest.sh` at all currently
+(`component_from_evidence` has no `release_branch` key) — GAP-9 is what newly introduces
+`record`-only storage for it here, deliberately excluded from `stable_fields` because the value
+is audit metadata that can legitimately change across a re-tag under a new `release_pr` (see the
+`delivery-bundle-manifest.sh` implementation step); once GAP-9 ships, the field's non-empty duty
+is enforced only when `prepare-release-post-merge-cleanup.sh` is later invoked against that same
+evidence file, and GAP-13 closes that consumer's own "compare only if present" gap to "require
+non-empty before comparing" (D12) — a guarantee about cleanup's own input, not about bundle
+finalization's. `hub_tracker_ref` is already stored today, pre-existing and unchanged by this
+plan (`component_from_evidence`'s `"hub_tracker_ref": evidence.get("hub_tracker_ref")`), with no
+non-empty check anywhere in `delivery-bundle-manifest.sh` — `blocker_for_component`'s `missing`
+list covers only `selected_product_repo_key`, `canonical_repository_identity`,
+`release_correlation_key`, and `contract_revision`. Its non-empty duty is enforced only when
+`component-milestone-reconciliation.sh`'s hub path is later invoked against that same evidence
+(pre-existing `required_identity` check, unchanged by this plan) — again, a guarantee about that
+other consumer's own input, not about the bundle's. Binding `hub_tracker_ref` further — matching
+it against `--issue` or `--child-item` — is a separate, already-recorded gap (RESIDUAL-1); this
+paragraph is about whether either field is required non-empty at the point the bundle itself
+records it, which for both fields it is not. Recorded as RESIDUAL-8, filed as issue #1747
+("decide: should `release_branch` / `hub_tracker_ref`'s `producer_required` non-empty duty
+actually be enforced, and where?").
 
 | Field | Class | `delivery-bundle-manifest.sh` | `component-milestone-reconciliation.sh` | `multi-repo-release-assurance.sh` | `prepare-release-post-merge-cleanup.sh` |
 | --- | --- | --- | --- | --- | --- |
@@ -285,6 +300,7 @@ it already enforces.
 | RESIDUAL-5 | `prepare-release-post-merge-cleanup.sh`'s cleanup lease is hub-checkout-scoped, not cross-machine; and it has no release-tag deletion logic at all, while the smoke-test document's `remote_tag_deleted` field describes functionality that was never implemented | `out_of_scope` | Explicitly carried forward from the brief's "Residual limitations recorded at merge" section, which states these are not part of this audit. Recorded in the contract doc so they are not lost. |
 | RESIDUAL-6 | T2 asserts the rendered record's key list against a hardcoded 16-key list inside the test file, not against the emitted-field contract table itself; nothing in this plan mechanically derives one from the other, so a maintainer who updates the producer's `jq` emission object and T2's hardcoded list together, while forgetting the contract table, introduces silent drift between the running code and the published documentation that no test catches | `out_of_scope` | This codebase has no existing tooling that extracts a field list from a markdown table for use in a test assertion (checked: no such helper exists under `scripts/lint/` or `scripts/development-workflow/`), and inventing one is outside this audit's boundary-closing scope — it would add new parsing/tooling surface the brief never asked for. T2's real, narrower guarantee is drift detection between the running producer and T2's own list; the gap between that list and the contract table is accepted here rather than assumed away. |
 | RESIDUAL-7 | Spec #1357 (`docs/specs/developments/20260731164352_1357-delivery-bundle-issue-manifest-workflow/1_1357-delivery-bundle-issue-manifest-workflow_specs.md`, lines 101-103) documents `ci_outcome: "skipped"` as a contractually valid value for a product configured with `ci_policy: none`, but GAP-14 narrows both consumers to reject it, because `component-release-evidence.sh`'s `--ci-outcome` enum has never included `skipped` (it is, and has always been, `pending\|passed\|failed\|not_applicable`) and no `ci_policy`-equivalent field exists anywhere in the producer or any consumer to condition admission of it | `out_of_scope` | GAP-14 audits the producer's actual, currently running contract: a value the producer can never legitimately emit is forgeable by definition and must be rejected regardless of what a separate spec independently promises. Spec #1357's `skipped` allowance is therefore presently unimplemented/aspirational, not a contradiction this plan can resolve — closing it would mean one of two decisions genuinely outside this audit's boundary-closing scope: (a) build `ci_policy` binding end-to-end (the producer would need to accept and emit it, and at least one consumer would need to condition admission of `skipped` on it) — a feature spanning multiple helpers, not an audit finding; or (b) retire spec #1357's clause — a product decision to drop a documented capability, which this audit should not make as an unreviewed side effect of narrowing an enum. Filed as issue #1742 ("decide: does the delivery bundle support CI-not-required products? Build `ci_policy`, or retire spec #1357's `ci_outcome: skipped` clause") so the deferral is traceable rather than silent, and left to a human product decision rather than resolved here. |
+| RESIDUAL-8 | `release_branch` and `hub_tracker_ref`'s `producer_required` non-empty duty is, for each field, actually enforced only by a separate, independently-invoked consumer (`prepare-release-post-merge-cleanup.sh` via GAP-13 for `release_branch`; `component-milestone-reconciliation.sh`'s pre-existing hub path for `hub_tracker_ref`), and `delivery-bundle-manifest.sh`'s own `cmd_finalize`/`inspect_manifest`/`blocker_for_component` code path never invokes either of those other scripts — a bundle can reach `finalized` status while its component record carries an empty value for either field. The two fields start from different states: `release_branch` is not stored by `delivery-bundle-manifest.sh` today at all (GAP-9 newly introduces `record`-only storage for it); `hub_tracker_ref` is already stored today with no non-empty check anywhere in `delivery-bundle-manifest.sh` | `out_of_scope` | Closing this changes what `delivery-bundle-manifest.sh` itself guarantees about two `producer_required` fields — either adding an independent non-empty presence check in `component_from_evidence` (a new GAP with implementation instructions, red-before-green test coverage, and Trust Model narrative changes) or accepting today's cross-consumer, evidence-file-coupled enforcement as the intended design. Either is a product/scope decision, not a wording or test-fixture correction, and is outside this audit's boundary-closing mandate the same way GAP-14's `ci_policy` question was (RESIDUAL-7). Filed as issue #1747 ("decide: should `release_branch` / `hub_tracker_ref`'s `producer_required` non-empty duty actually be enforced, and where?") so the deferral is traceable rather than silent, and left to a human product decision rather than resolved here. |
 
 ---
 
@@ -1240,6 +1256,11 @@ and pass to `scope-residual-gate.sh verify --evidence <path>`:
       "disposition": "out_of_scope"
     },
     {
+      "summary": "release_branch/hub_tracker_ref's producer_required non-empty duty is enforced only by a separate, independently-invoked consumer, never by delivery-bundle-manifest.sh's own finalize path; deferred to issue #1747 (RESIDUAL-8)",
+      "remaining_count": 2,
+      "disposition": "out_of_scope"
+    },
+    {
       "summary": "Producer-emitted fields with no remaining unbound caller override after this work",
       "remaining_count": 0,
       "disposition": "completed"
@@ -1306,9 +1327,10 @@ The developer executes these after implementation; they are only identified here
       `component-milestone-reconciliation.sh`'s separate, unchanged `inspect-parent`/`apply-parent`
       manifest-component path, which reads `evidence_state` from a manifest-derived component view
       and is not subject to this plan's closed-enum fix; (6) Known gaps,
-      carrying RESIDUAL-1 through RESIDUAL-7 verbatim with their rationales, including
+      carrying RESIDUAL-1 through RESIDUAL-8 verbatim with their rationales, including
       RESIDUAL-7's pointer to issue #1742 for the spec #1357 `ci_outcome: skipped`
-      discrepancy; (7) the
+      discrepancy and RESIDUAL-8's pointer to issue #1747 for the
+      `release_branch`/`hub_tracker_ref` cross-consumer enforcement question; (7) the
       `classify_component` mutation-eligibility decision gate (hub path) — this section embeds
       Table A (ordered preconditions) and Table B (accumulating outcome) verbatim, copied at
       implementation time from this plan's "Decision gate — `classify_component` mutation
