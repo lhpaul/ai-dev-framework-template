@@ -447,9 +447,13 @@ gh issue view 1529 --json body --jq .body > "$SMOKE_TMP/1529-body.md"
 `pending|passed|failed|not_applicable` — it can never emit `skipped`. Confirm
 neither consumer that reads `ci_outcome` still admits that value.
 
-1. Take a finalized, otherwise-ready bundle (as in Step 6's honest update) and
-   directly mutate its `mobile-app` component's stored `ci_outcome` to
-   `"skipped"`, then run `finalize` on the manifest.
+1. Take an **unfinalized**, otherwise-ready bundle (as in Step 6's honest
+   update, but before any successful `finalize` call against it — `finalize`
+   on an already-finalized manifest short-circuits on the idempotency check
+   and returns `{"result": "idempotent", ...}` without ever re-evaluating
+   component readiness, which would never exercise this guard) and directly
+   mutate its `mobile-app` component's stored `ci_outcome` to `"skipped"`,
+   then run `finalize` on the manifest for the first time.
 
    **Expected result**: `finalize` fails with
    `ERROR_CODE=blocked_component_outcome`; the manifest revision is unchanged
