@@ -88,41 +88,65 @@ producer-unemittable `ci_outcome: "skipped"`).
 **Maps to**: Acceptance Criterion 4.
 
 Read the implementation PR description (or the commit series). For each of the
-rejection tests T1-T24 (plus T6f, T6g, T6h, T13a, T14a, and T20g) listed in the
-plan's Testing Strategy, locate the captured failing output recorded before its
-fix. Six tests are exempt: T22 is a regression guard for a defect already
-fixed in review round 3; T6b pins the producer's deliberately unchanged `null`
-passthrough for `single_repo_release` routing; T15b pins reconciliation's
-deliberately unchanged non-blocking treatment of `evidence_state: "released"`
-(already accepted before this plan, and D9's disposition table preserves that
-behavior rather than tightening it); T15c pins reconciliation's deliberately
-unchanged treatment of an evidence record whose `evidence_state` key is
-entirely absent (synthesized as `verified` when `schema_version` matches, per
-D9's `absent` row — a pre-existing behavior this plan does not touch); and
-T13a/T14a each pin a pre-existing, unchanged `pending`-value regression for one
-of the two hub-input flags (the `not in {"complete", "deferred"}` /
-`not in {"released", "merged"}` blocker comparisons are untouched by GAP-5/D5).
-All six are green against unmodified runtime code by design, and the plan
-records them as the only six exemptions. T23 and T24 (GAP-14, the
-`ci_outcome: "skipped"` rejection) and T20g (GAP-15, the empty/missing
-`cleanup_outcome` rejection) are **not** exempt and must each show a captured
-red state.
+rejection tests T1-T24 (plus T6f, T6g, T6h, T10a, T13a, T14a, and T20g) listed
+in the plan's Testing Strategy, locate the captured failing output recorded
+before its fix. Seven tests are exempt: T22 is a regression guard for a defect
+already fixed in review round 3; T6b pins the producer's deliberately
+unchanged `null` passthrough for `single_repo_release` routing; T15b pins
+reconciliation's deliberately unchanged non-blocking treatment of
+`evidence_state: "released"` (already accepted before this plan, and D9's
+disposition table preserves that behavior rather than tightening it); T15c
+pins reconciliation's deliberately unchanged treatment of an evidence record
+whose `evidence_state` key is entirely absent (synthesized as `verified` when
+`schema_version` matches, per D9's `absent` row — a pre-existing behavior this
+plan does not touch); T13a/T14a each pin a pre-existing, unchanged
+`pending`-value regression for one of the two hub-input flags (the
+`not in {"complete", "deferred"}` / `not in {"released", "merged"}` blocker
+comparisons are untouched by GAP-5/D5); and T10b pins that
+`--child-release-state failed` was already accepted before this plan (no
+`choices=` validator exists yet on `delivery-bundle-manifest.sh
+update-component`) and is still accepted by the new parse-time closed-enum
+validator, because `failed` is one of that flag's pre-existing, meaningful
+values (`classify_component` line 357), not a value the new validator should
+reject. All seven are green against unmodified runtime code by design, and the
+plan records them as the only seven exemptions. T23 and T24 (GAP-14, the
+`ci_outcome: "skipped"` rejection), T20g (GAP-15, the empty/missing
+`cleanup_outcome` rejection), and T10a (the new
+`--hub-tracker-reconciliation-outcome` parse-time closed-enum rejection,
+symmetric to the already-existing T10) are **not** exempt and must each show a
+captured red state.
 
-**Expected result**: every rejection test except T6b, T13a, T14a, T15b, T15c,
-and T22 has a recorded failure against the unmodified runtime code and a
-recorded pass after the fix (this includes T15d, which proves the *new*
-`invalid_evidence_state` disposition for a present but non-string
-`evidence_state` value such as JSON `null`, distinct from the unchanged
-absent-key case in T15c; T23/T24, which prove the *new* rejection of
+T4 requires one additional check beyond "a recorded red state exists": confirm
+the recorded red state was captured **after** `--component-version` argument
+parsing (D1) landed but **before** the charset validator (D3) did — i.e., the
+recorded "before" behavior is that `--component-version "1.0.0;rm"` was
+*accepted* and emitted verbatim, not that it was rejected with exit 2 by the
+pre-D1 catch-all `Unknown argument` branch. A red capture for T4 taken before
+D1 landed (or one showing exit 2 for the "wrong" reason) does not satisfy this
+step even though it superficially looks like a captured failure — it proves
+nothing about the charset validator this test exists to cover.
+
+**Expected result**: every rejection test except T6b, T10b, T13a, T14a, T15b,
+T15c, and T22 has a recorded failure against the runtime code as it stood
+immediately before that specific test's own fix (for T4, that baseline is the
+post-D1/pre-D3 state described above, not the unmodified pre-D1 code; for
+every other non-exempt test, it is the unmodified runtime code) and a recorded
+pass after the fix (this includes T10a, which proves the *new*
+`--hub-tracker-reconciliation-outcome` parse-time rejection; T15d, which
+proves the *new* `invalid_evidence_state` disposition for a present but
+non-string `evidence_state` value such as JSON `null`, distinct from the
+unchanged absent-key case in T15c; T23/T24, which prove the *new* rejection of
 `ci_outcome: "skipped"` at both consumers; and T20g, which proves the *new*
 rejection of an empty/missing `cleanup_outcome`). A non-exempt test with no
-recorded red state is a FAIL for this step. T6b, T13a, T14a, T15b, T15c, and
-T22 must each be recorded as green both before and after: T6b proving the new
-identity precondition was not over-applied, T13a/T14a proving a `pending`
-hub-input flag value was already blocked before this plan and still is after,
-T15b proving `released` still is not blocked, T15c proving an absent
-`evidence_state` key still is not blocked, and T22 proving the earlier fix did
-not regress.
+recorded red state, or with a T4 red state captured at the wrong baseline, is
+a FAIL for this step. T6b, T10b, T13a, T14a, T15b, T15c, and T22 must each be
+recorded as green both before and after: T6b proving the new identity
+precondition was not over-applied, T10b proving `--child-release-state
+failed` was accepted before the new validator and still is after, T13a/T14a
+proving a `pending` hub-input flag value was already blocked before this plan
+and still is after, T15b proving `released` still is not blocked, T15c
+proving an absent `evidence_state` key still is not blocked, and T22 proving
+the earlier fix did not regress.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -178,9 +202,18 @@ Run the producer five more times, each time changing one input:
    satisfy both a `{product_repo}`-shaped pattern and a null key at once
 
 **Expected result**: each run exits non-zero. Runs 1 and 2 exit `2` and the
-message names the offending flag. Runs 3, 4, and 5 exit `1` and the message names
-the missing identity field — run 5 naming `selected_product_repo_key`. No
-evidence file is written in any of the five runs.
+message names the offending flag — for run 2, the message must be the charset
+validator's own diagnostic (naming `--component-version`), not the generic
+`Unknown argument: --component-version` an unrecognized flag would produce; by
+this point in the runbook `--component-version` is already a recognized,
+charset-validated flag, so this distinction only matters for how run 2's
+implementation-time red capture was taken (see Step 3's T4 note) — an
+implementation that skipped the charset validator entirely but still rejected
+run 2 via the catch-all unrecognized-argument path would be indistinguishable
+from a correct implementation at this step, which is exactly why Step 3
+carries the extra T4-specific check. Runs 3, 4, and 5 exit `1` and the message
+names the missing identity field — run 5 naming `selected_product_repo_key`.
+No evidence file is written in any of the five runs.
 
 Then run the producer once more against a target binding whose `routing_outcome`
 is `single_repo_release`, whose `selected_product_repo_key` is `null`, and whose

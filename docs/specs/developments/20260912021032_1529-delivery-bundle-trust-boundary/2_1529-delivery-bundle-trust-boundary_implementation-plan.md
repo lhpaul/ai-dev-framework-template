@@ -655,12 +655,48 @@ surface.
     metadata only: it must **not** join `stable_fields`, because a legitimate re-tag under a
     new `release_pr` changes it.
   - Validate `--hub-tracker-reconciliation-outcome` and `--child-release-state` against their
-    closed enums at parse time so the error names the flag rather than surfacing later as a
-    generic `blocked_component_outcome`. Preserve
-    `--hub-tracker-reconciliation-outcome`'s existing `default="pending"` (line 591): the
-    validation applies to a supplied value, not to the default, and
+    closed enums at parse time (`choices=[...]` on each `add_argument` call, lines 588-593) so
+    the error names the flag rather than surfacing later as a generic `blocked_component_outcome`.
+    This is the bundle's own argparse-level enforcement and is distinct from Table B's runtime
+    blocker check below: `component-milestone-reconciliation.sh` does not gain a matching
+    `choices=` (its own `add_component_common` at line 737 stays unchanged, accepting any string
+    at parse time), because Table B already fails closed on any value outside its two-member
+    completion set via the `{field}_{value}` blocker, with no separate closed-enum precondition
+    needed at that layer; only the bundle's `update-component` parser gains `choices=`.
+    The two flags' closed enums are not identical, and each is fixed by the pre-existing,
+    unchanged runtime behavior each value drives in `component-milestone-reconciliation.sh`
+    (`classify_component`, lines 328-362) — the parse-time `choices=` list must accept exactly
+    the values that code already treats as meaningful, and reject everything else, or a caller
+    that legitimately supplies one of these values today would be rejected at parse time after
+    this fix ships:
+    - `--hub-tracker-reconciliation-outcome`: `choices=["pending", "complete", "deferred"]`.
+      `complete`/`deferred` are the two completion values (Table B); `pending` is the sole
+      recognized non-terminal member (Table B's note ahead of the table, pinned by T13a). No
+      `failed` (or other) member exists for this flag: `hub_reconciliation` is never compared
+      against `"failed"` anywhere in `classify_component`, so there is no pre-existing meaning
+      to preserve for a value beyond these three, and this plan does not invent one.
+    - `--child-release-state`: `choices=["pending", "released", "merged", "failed"]`.
+      `released`/`merged` are the two completion values (Table B); `pending` is the sole
+      recognized non-terminal member (Table B's note ahead of the table, pinned by T14a).
+      `failed` is a fourth, pre-existing recognized member, not a Table-B-blocking-only
+      value: `classify_component`'s existing, unchanged blocker-assembly branch (line 357,
+      `if release == "failed" or child_state == "failed": child_release_state = "failed"`)
+      reads the raw `--child-release-state` flag value (`child_state`) and treats exactly
+      `"failed"` as a distinct, meaningful signal — a hub caller reporting the child issue's
+      release genuinely failed, propagated to the gate's own `child_release_state` output — so
+      excluding it from the closed enum would make the parse-time validator reject a value the
+      unchanged reconciliation logic downstream still specifically recognizes. `failed` still
+      blocks completion in Table B exactly like `pending` (neither is `released` nor `merged`),
+      it is simply not rejected at parse time.
+    Preserve `--hub-tracker-reconciliation-outcome`'s existing `default="pending"` (line 591):
+    the validation applies to a supplied value, not to the default, and
     `tests/test-delivery-bundle-manifest.sh` pins that default in
-    `hub_reconciliation_defaults_pending`.
+    `hub_reconciliation_defaults_pending`. T10 (existing) pins `--child-release-state shipped`
+    rejected at parse time; T10a (new) pins the symmetric case for the other flag,
+    `--hub-tracker-reconciliation-outcome garbage` rejected at parse time naming that flag; T10b
+    (new) pins that `--child-release-state failed` is *accepted* at parse time (the record
+    carries `child_release_state: "failed"`), proving the new validator does not reject this
+    pre-existing, meaningful value.
   - `blocker_for_component`: narrow the `ci_outcome` acceptance check (line 184) from
     `("passed", "not_applicable", "skipped")` to `("passed", "not_applicable")`, matching
     `component-release-evidence.sh`'s `--ci-outcome` enum exactly; `skipped` is a value the
@@ -847,9 +883,14 @@ must capture six red-then-green pairs, one per `artifact_owners` sub-field (`rel
 prove a six-sub-field guard actually checks all six; T20f (see the Fabricated-value rejection
 cases table) is the identical parameterization for the equivalent guard in
 `prepare-release-post-merge-cleanup.sh`. Every other test identifier captures exactly one
-red-then-green pair.
+red-then-green pair, with one exception to *where* (not *whether*) that pair is captured: T4's
+red state cannot be captured at step 5 like every other producer test, because
+`--component-version` is not yet a recognized flag there and the pre-existing catch-all
+argument-parsing branch already exits 2 naming the flag by coincidence, for the wrong reason
+(see the T4 row in the Fabricated-value rejection cases table). T4's red state is instead
+captured at step 6a, after D1 lands and before D3 does.
 
-**Six tests are exempt from red-capture, and only these six.** T22 guards a defect already
+**Seven tests are exempt from red-capture, and only these seven.** T22 guards a defect already
 fixed in review round 3, so it is green against unmodified runtime code by construction and
 cannot be confirmed red. T6b pins behavior this plan deliberately leaves unchanged — the
 producer's `null` passthrough for `single_repo_release` routing — so that T6a's new
@@ -872,11 +913,19 @@ removes the evidence-file fallback and adds the `_required` blocker for an absen
 `pending` already blocks correctly today — there is no fix for either test to be red against;
 they exist to close the ambiguity in Table B's now-corrected phrasing (a prior round's "not a
 closed-enum member" wording could have been misread as exempting a recognized non-terminal
-value like `pending`), and they are likewise green by construction. Record all six as
-green-before and green-after.
-Every other numbered test must show a captured red state: T1-T24 other than T6b, T13a, T14a,
-T15b, T15c, and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T15a, T15d, T20b, T20c,
-T20d, T20e, T20f, T23, and T24, all target behavior this plan introduces — T15d proves the new
+value like `pending`), and they are likewise green by construction. T10b pins that
+`--child-release-state failed` is accepted, not rejected, by the new `choices=` validator on
+`delivery-bundle-manifest.sh update-component`: that flag already accepts any string today (no
+`choices=` exists yet), so `failed` already parses successfully — there is no fix for T10b to
+be red against; it exists so the new parse-time closed enum cannot accidentally narrow to just
+`{"pending", "released", "merged"}` and silently reject the pre-existing, meaningful `failed`
+value. Record all seven as green-before and green-after.
+Every other numbered test must show a captured red state: T1-T24 other than T6b, T10b, T13a,
+T14a, T15b, T15c, and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d,
+T20b, T20c, T20d, T20e, T20f, T23, and T24, all target behavior this plan introduces — T4's red
+capture is taken at step 6a rather than step 5, for the reason given above; T10a proves the new
+`choices=` validator rejects an unrecognized `--hub-tracker-reconciliation-outcome` value at
+parse time, the symmetric case to the already-existing T10; T15d proves the new
 `invalid_evidence_state` disposition now applies to a *present* but non-string `evidence_state`
 value (e.g. JSON `null`), which previously fell through silently to the same synthesis path as
 an absent key; T6h proves the `routing_outcome` closed-enum precondition rejects a third,
@@ -892,7 +941,7 @@ both consumers that read `ci_outcome` directly from the evidence file (GAP-14).
 | T1 | `test-component-release-evidence.sh` | `--component-version v99.0.0` supplied, record inspected | `component_version` present and equal to the supplied value |
 | T2 | `test-component-release-evidence.sh` | `--component-version` omitted | `component_version` is JSON `null` (not absent, not `""`), **and** `jq -r 'keys \| join(",")'` on the rendered record equals a hardcoded 16-key list mirroring the emitted-field contract table exactly — this pins the running producer's key set against T2's own list (RESIDUAL-6 records the gap between that list and the contract table itself) |
 | T3 | `test-component-release-evidence.sh` | `--component-tag "bad tag"` (space) | exit 2, message names `--component-tag` |
-| T4 | `test-component-release-evidence.sh` | `--component-version "1.0.0;rm"` | exit 2, message names `--component-version` |
+| T4 | `test-component-release-evidence.sh` | `--component-version "1.0.0;rm"` | exit 2, message names `--component-version` — **but see the note below this table**: T4's red capture cannot be taken at step 5 (before any producer change), because `--component-version` is not yet a recognized flag there, and the pre-existing catch-all `*)` case (`echo "Unknown argument: $1"`) already exits 2 naming the flag by coincidence, for the wrong reason. T4's genuine red state is captured at Implementation Order step 6a, after D1 (argument parsing) lands but before D3 (the charset validator) does: at that point `--component-version "1.0.0;rm"` is accepted and emitted verbatim (`component_version: "1.0.0;rm"`, exit 0), which is what actually fails the "exit 2, message names the flag" assertion for the right reason. Green is captured after step 6b (D3). |
 | T5 | `test-component-release-evidence.sh` | target binding with `contract_revision: ""` | exit 1, `missing required identity field: contract_revision` |
 | T5b | `test-component-release-evidence.sh` | target binding with `canonical_repository_identity: ""` | exit 1, `missing required identity field: canonical_repository_identity` |
 | T6 | `test-component-release-evidence.sh` | target binding with `release_correlation_key: ""` | exit 1, names `release_correlation_key` |
@@ -908,6 +957,8 @@ both consumers that read `ci_outcome` directly from the evidence file (GAP-14).
 | T8 | `test-delivery-bundle-manifest.sh` | evidence binding `component_version: "1.4.0"`, `--component-version 99.0.0` | `ERROR_CODE=component_version_mismatch` |
 | T9 | `test-delivery-bundle-manifest.sh` | `--component-version` omitted entirely | argparse failure, `ERROR_CODE=invalid_arguments`, exit 2 |
 | T10 | `test-delivery-bundle-manifest.sh` | `--child-release-state shipped` (not in the enum) | rejected at parse time naming `--child-release-state` |
+| T10a | `test-delivery-bundle-manifest.sh` | `--hub-tracker-reconciliation-outcome garbage` (not in the enum) | rejected at parse time naming `--hub-tracker-reconciliation-outcome` — the symmetric case to T10 for the other `hub_input` flag |
+| T10b | `test-delivery-bundle-manifest.sh` | `--child-release-state failed` (a real, pre-existing member of the flag's closed enum — see the enum note above under `delivery-bundle-manifest.sh`, and `classify_component` line 357) | **not** rejected: parse succeeds, component record carries `child_release_state: "failed"` — proves the new `choices=` validator does not reject this pre-existing, meaningful value; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T13a/T14a) |
 | T11 | `test-delivery-bundle-manifest.sh` | valid update | component record carries `release_branch` from the evidence |
 | T12 | `test-component-milestone-reconciliation.sh` | evidence with `routing_outcome: "single_repo_release"` on the hub path | `component_target_mismatch`, blocker `routing_outcome_mismatch`, `mutation_allowed=false` |
 | T13 | `test-component-milestone-reconciliation.sh` | evidence carrying `hub_tracker_reconciliation_outcome: "complete"`, flag omitted | blocker `hub_tracker_reconciliation_outcome_required`; the evidence value is **not** used |
@@ -1203,8 +1254,22 @@ can be mistaken for production code.
    red-capture exemption). Run
    `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
    and capture the failures.
-6. **Implement the producer changes** (D1, D3, D4). Re-run the suite green.
-7. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11 and T23), capture failures.
+6. **Implement the producer changes in two sub-steps**, because T4 needs an intermediate
+   capture that a single combined implementation step cannot provide (see the T4 row in
+   Fabricated-value rejection cases and the parameterization note above it):
+   1. **Step 6a**: implement D1 (`--component-version` argument parsing and emission) and D4
+      (the identity-field refusal guards), but not yet D3 (the charset validator). Re-run the
+      suite: T1, T2, T5, T5b, T6, T6a-T6h go green. T3 stays red (no charset validator yet,
+      unchanged from step 5). Capture T4's genuine red state here: with D1 landed,
+      `--component-version` is now a recognized flag, so `--component-version "1.0.0;rm"` is
+      accepted and emitted verbatim (`component_version: "1.0.0;rm"`, exit 0) rather than
+      rejected by the pre-D1 catch-all `Unknown argument` path — this acceptance, not an exit-2
+      result captured before D1 landed, is T4's red evidence.
+   2. **Step 6b**: implement D3 (the charset validator, applied to both `--component-tag` and
+      `--component-version`). Re-run the suite green: T3 and T4 both now reject their
+      fabricated inputs with exit 2 naming the offending flag.
+7. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11, including T10a; T23), and
+   the green-by-construction T10b, capture failures for everything except T10b.
 8. **Implement the bundle changes** (D2, GAP-1, GAP-9, GAP-14, enum validation). Re-run green.
 9. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18 and T24, including
    T15a and T15d; T15b, T15c, T13a, and T14a are the red-capture exemptions for this suite —
@@ -1245,5 +1310,5 @@ can be mistaken for production code.
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | The published matrix's field column, diffed against the Producer emitted-field contract table (16 rows) and the never-emitted-fields list (7 rows), shows zero missing and zero extra fields across all four consumer columns (`delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`, `multi-repo-release-assurance.sh`, `prepare-release-post-merge-cleanup.sh`) — a check that fails if the matrix section is absent, truncated, or omits any field, unlike a bare field-enumeration count. Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers corroborates the source counts the diff is run against |
 | No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8, GAP-13, GAP-14, GAP-15; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T15d, T16, T19, T20, T20b, T20c, T20d, T20e, T20f, T20g, T23, T24 |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 7, 9, 11 capture red before green | T1-T24 (plus T6f, T6g, T6h, T13a, T14a, T20g) other than T6b, T13a, T14a, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T20g, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T6b, T13a, T14a, T15b, T15c, and T22 are the six declared red-capture exemptions and are recorded green-before and green-after |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 6a/6b, 7, 9, 11 capture red before green | T1-T24 (plus T6f, T6g, T6h, T10a, T13a, T14a, T20g) other than T6b, T10b, T13a, T14a, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T20g, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T4's red capture is taken at step 6a (after D1, before D3) rather than step 5, because `--component-version` is not a recognized flag until D1 lands (see the T4 row in Fabricated-value rejection cases); T6b, T10b, T13a, T14a, T15b, T15c, and T22 are the seven declared red-capture exemptions and are recorded green-before and green-after |
 | The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, T6a/T6e/T6f/T6g pin the two directions of the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing — T6a pins that `component_release_routed` requires non-`null`; T6e, T6f, and T6g together pin that `single_repo_release` requires *exactly* `null`, rejecting a non-empty string (T6e), an empty string (T6f), and a missing key (T6g) alike) while T6b pins the `null` passthrough this plan leaves unchanged, T6c/T6d pin the `producer_required` promise for `routing_outcome` and `artifact_owners`, and T6h pins that the `producer_required_nullable` boundary's "if and only if" claim holds even when `routing_outcome` carries a third, unrecognized value |
