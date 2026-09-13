@@ -549,7 +549,7 @@ listed for gate completeness; new/changed rows are marked.
 | 3 | `--product-repo` is supplied at all | `missing_product_selection` | `pending` (base default, not overridden) | `false` | `missing_product_selection` | "select exactly one product repository before component milestone reconciliation" | existing |
 | 4 | `--component-tag`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_component_tag` | "provide a component tag using letters, numbers, dot, underscore, or hyphen" | existing |
 | 5 | `--component-tag` is supplied at all | `component_tag_missing` | `pending` (base default, not overridden) | `false` | `component_tag_missing` | "provide the released component tag before milestone reconciliation" | existing |
-| 6 | `--evidence-file` is supplied and loads | `component_release_pending` | `pending` | `false` | `component_release_evidence_missing` | "attach component_release_evidence.v1 before milestone reconciliation" | existing |
+| 6 | `--evidence-file` is omitted, or is supplied but the named file does not exist (`load_json_file(..., required=False)` returns `None` in both cases) | `component_release_pending` | `pending` | `false` | `component_release_evidence_missing` | "attach component_release_evidence.v1 before milestone reconciliation" | existing |
 | 7 | `evidence.schema_version == component_release_evidence.v1` | `component_release_not_ready` | `blocked` | `false` | `invalid_evidence_schema` | "provide evidence with schema_version component_release_evidence.v1" | existing |
 | 8 | **New (GAP-4):** `stable_value(evidence, "routing_outcome") == "component_release_routed"`. Malformed and empty inputs take the identical branch: this is a single equality test, not an enum-membership check, so `""`, `null`, an absent key (`stable_value` returns `None`), and an unrecognized non-empty value such as `"unknown"` all fail the same way — there is no separate "malformed" outcome to enumerate. Placed immediately after row 7 (basic evidence-shape validity) and before row 9 (product-identity match), because whether the evidence describes a routed component release at all must be established before any product/component identity comparison is meaningful | `component_target_mismatch` | `blocked` | `false` | `routing_outcome_mismatch` | "correct the evidence's routing outcome to component_release_routed, or re-run component release routing, before mutation" | **new** |
 | 9 | `stable_value(evidence, "selected_product_repo_key") == product_repo` | `component_target_mismatch` | `blocked` | `false` | `product_repository_mismatch` | "correct the selected child or component release evidence before mutation" | existing |
@@ -557,6 +557,22 @@ listed for gate completeness; new/changed rows are marked.
 | 11 | `evidence_tag == component_tag` | `component_target_mismatch` | `blocked` | `false` | `component_tag_mismatch` | "correct the component tag or evidence before mutation" | existing |
 | 12 | Each of `canonical_repository_identity`, `release_correlation_key`, `contract_revision`, `hub_tracker_ref` is non-empty via `stable_value` | `component_release_not_ready` | `blocked` | `false` | `missing_<field>` per missing field (may list more than one) | "repair incomplete component release evidence before mutation" | existing |
 | — | All of rows 1-12 pass | *(proceed to Table B)* | | | | | |
+
+Row 6's "does not load" outcome applies only to a genuinely absent evidence file — `--evidence-file`
+not supplied, or supplied but naming a path that does not exist — because
+`load_json_file(args.evidence_file, "evidence", required=False)` returns `None` in exactly those
+two cases and reconciliation continues to the graceful `component_release_pending` result the row
+describes. It does **not** apply when the named file exists but contains malformed JSON, or valid
+JSON that is not an object: `load_json_file`'s `json.JSONDecodeError`/non-`dict` checks run
+unconditionally, regardless of `required`, and call `fail("invalid_json", ...)`, which prints
+`ERROR_CODE=invalid_json` to stderr and exits `1` immediately — terminating the process before it
+ever reaches, or returns, the `reconciliation_outcome`/`child_release_state`/`mutation_allowed`
+result shape any row in this table produces. Confirmed directly against `load_json_file` with
+`'{'` (malformed JSON) and `'[]'`/`'null'` (valid JSON, not an object): all three raise
+`ERROR_CODE=invalid_json`, not `component_release_pending`. This is a hard, pre-existing script
+termination this plan does not change — like the malformed-`--mode` case above Table A, it is a
+gate precondition outside this table's outcome schema, not a row failure this plan should
+represent as producing `component_release_pending`.
 
 **Table B — accumulating outcome (only reached once every Table A row passes).** Unlike Table A,
 these checks do not short-circuit: every condition is evaluated independently and any number of
