@@ -110,7 +110,7 @@ Because this repository ships as a framework template, every rule must be expres
 
 **Steps**:
 
-1. The author enumerates every consumer of the unit, deriving the enumeration under Rule 3.
+1. The author enumerates every consumer of the unit with a reproducible search recorded at a repository revision, the same evidentiary standard Rule 3 applies to a count's derivation.
 2. For each consumer, the author works out the outcome after the change, including for consumers the plan does not otherwise touch.
 3. The author writes every expected-behavior statement against a consumer site from that enumeration, naming the path through the chain that produces the outcome.
 
@@ -135,7 +135,7 @@ Because this repository ships as a framework template, every rule must be expres
 ### Use Case 5: The plan author states an obligation that applies only sometimes
 
 **Actor**: The plan author.
-**Preconditions**: The plan is about to state a rule of the form "required when X", "checkable once Y", or "must hold after Z" — an obligation whose applicability depends on a condition.
+**Preconditions**: The plan is about to state a rule, step, or expectation of the form "required when X", "checkable once Y", or "must hold after Z" — an obligation whose applicability depends on a condition.
 
 **Steps**:
 
@@ -240,7 +240,7 @@ The rules below are the normative statement of this feature. Every other section
 ### Rule 2 — One normative statement per fact
 
 - The rule fires when the plan asserts a fact — any value, count, name, decision, or behavioral statement the plan states as true. A plan with no factual assertion has no substance to review, so the rule fires on every ordinary plan; it is recorded as not applicable only in that limiting, essentially empty case.
-- Each fact is asserted in exactly one place in the plan. Every other mention of that fact names where it is asserted instead of restating it.
+- Each fact is asserted in exactly one place in the plan. Every other mention of that fact names where it is asserted instead of restating it. The next bullet governs whether a plan that instead repeats the assertion leaves this rule Satisfied or Unsatisfied.
 - Two mentions that assert the same fact are a defect whether or not they agree, but only a disagreeing pair leaves the rule Unsatisfied: it is a contradiction, and the fact has no settled evidence while it stands. An agreeing pair produces a non-blocking finding rather than an Unsatisfied outcome, because the fact's evidence is neither missing nor contradicted — it is a defect in waiting, since the next correction round will update one of them.
 - A correction round edits the single assertion. It never adds a second statement of the corrected fact elsewhere.
 - This rule imposes no limit on a plan's length in bytes, lines, words, or pages, and no check in this feature may be failed on account of a plan's size. Size is a correlate of duplicated assertions, not the defect.
@@ -263,13 +263,13 @@ The rules below are the normative statement of this feature. Every other section
 ### Rule 5 — Expectations at the composed call site
 
 - The rule fires when the plan changes, deletes, or replaces a unit — a function, guard, rule, or check — that has more than one consumer, and those consumers sit on an ordered path where an earlier branch can decide the outcome.
-- The plan enumerates every consumer of the unit, derived under Rule 3, and states the outcome at each consumer after the change, including consumers the plan does not otherwise touch.
+- The plan enumerates every consumer of the unit, produced by a reproducible search or query recorded at a repository revision — the same evidentiary standard Rule 3 applies to a count's derivation, required here whether or not the plan separately states a quantity that fires Rule 3 — and states the outcome at each consumer after the change, including consumers the plan does not otherwise touch.
 - Every expected-behavior statement names the consumer site at which the behavior is observed and the path through the chain that produces it. An expectation written against the changed unit alone does not satisfy this rule, because the unit's own answer is not the system's answer.
 - Removing or narrowing a branch requires stating which branch then receives the inputs that branch used to absorb, and what it does with them.
 
 ### Rule 6 — A conditional obligation names its scope
 
-- For every rule expressed as a conditional obligation ("required when X", "checkable once Y", "must hold after Z"), the plan must name the scope the obligation binds to — which edges, revisions, call sites, or input classes it governs, and where it is discharged. A conditional stated without its scope is under-specified even when the condition itself is precise.
+- For every statement in the plan expressed as a conditional obligation ("required when X", "checkable once Y", "must hold after Z") — whether framed as a rule, a step, or an expectation — the plan must name the scope the obligation binds to — which edges, revisions, call sites, or input classes it governs, and where it is discharged. A conditional stated without its scope is under-specified even when the condition itself is precise.
 - A word that stands in for a scope without naming one — "then", "there", "at that point" — does not name a scope. Where such a word carries the scope, the statement is rewritten so the scope is named.
 - An explanation of why the obligation cannot always be discharged is not a scope. Such an explanation makes the statement read as complete reasoning while leaving unsaid which occurrences the obligation governs.
 - This obligation sits on the plan author. The reviewer check for it is a backstop, and no surface may describe plan review as the place this defect is expected to be found: the defect is cheap to catch at implementation review, expensive to catch at plan review, and cheapest of all to avoid at authoring time.
@@ -363,6 +363,7 @@ Rows are independent checks, not a priority-ordered decision tree: when a situat
 | A step's scope is set by a quantity with no enumeration                                          | Blocking finding       | Names the step and the missing enumeration                    | Carry the enumeration into the step                           |
 | An existence claim is supported only by a delegated summary or another document                  | Blocking finding       | Names the claim and its inadmissible support                  | Run and record a direct search, or drop the claim             |
 | A non-existence claim's recorded search does not cover the places the thing could plausibly live  | Blocking finding       | Names the claim and the missing plausible location            | Search the plausible locations and record the search, or drop the claim |
+| A consumer enumeration names no reproducible search or query recorded at a revision, whether or not a separate quantity fires Rule 3 | Blocking finding       | Names the enumeration and the missing recorded search          | Derive the enumeration with a recorded, reproducible search    |
 | An expectation is written against a changed unit that has consumers on an ordered path           | Blocking finding       | Names the expectation and the unenumerated consumers          | Enumerate the consumers and rewrite the expectation at a site |
 | A conditional obligation names no scope or no discharge point                                    | Blocking finding       | Quotes the statement and says which of the two is missing     | Name the governed scope and where it is discharged            |
 | The same fact is asserted in two places, and the statements disagree                             | Blocking finding       | Names both statements                                         | Resolve the contradiction and leave one assertion             |
@@ -409,9 +410,11 @@ Surfaces are named here by the role they play, not by file. Which document carri
 | A plan asserts that every claim in it was checked against the real files, with no per-item records                      | Blocking finding     | A completeness assertion is the one claim a reader cannot reproduce                                |
 | A plan states a helper does not exist, after searching only one of several directories where equivalent helpers are defined | Blocking finding     | The search did not cover the places the helper could plausibly live                                |
 | A plan deletes a shared check and states the changed unit's new return value                                            | Blocking finding     | The unit's answer is not the system's answer where consumers sit on an ordered path                |
-| The same deletion, with every consumer enumerated and its outcome stated, including untouched ones                       | Check passed         | The expectations are anchored where behavior is observable                                         |
+| The same deletion, with every consumer enumerated by a recorded, reproducible search and its outcome stated, including untouched ones | Check passed         | The expectations are anchored where behavior is observable, and the enumeration itself is reproducible |
+| The same deletion, with a hand-recalled list of consumers and their outcomes stated, no search recorded, and no separate quantity claim to fire Rule 3 | Blocking finding | An enumeration with no recorded, reproducible search can silently omit a consumer, which is the failure this rule exists to catch |
 | A plan says a replacement reference "is checkable only once the child carries a new one, and is required then"          | Blocking finding     | The condition is precise; "then" names no scope and no discharge point                            |
 | The same rule, saying which edges it governs and which step discharges it                                                | Check passed         | Scope and discharge are both named                                                                |
+| An implementation step says "update the child only when the parent's reference changes," with no named edges, revisions, or call sites | Blocking finding     | This rule applies to every conditional obligation in the plan, not only statements the plan calls a rule; a step-phrased conditional is checked the same way |
 | A plan states the same decision in three sections, all in agreement                                                      | Non-blocking finding | Agreement today; the next correction round will update one of them                                |
 | The same plan after consolidation: one assertion, two references to it                                                   | Check passed         | One place to edit when the decision changes                                                       |
 | A plan is long, and asserts every fact exactly once                                                                      | Check passed         | Length is not an input to this gate                                                               |
@@ -463,6 +466,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 ### Group F — Expectations at the composed call site (Rule 5)
 
 - [ ] When a plan changes, deletes, or replaces a unit with more than one consumer on an ordered decision path, it carries an enumeration of every consumer with the outcome at each after the change. A consumer missing from the enumeration fails.
+- [ ] The consumer enumeration passes only when it names a reproducible search or query recorded at a repository revision — required whether or not the plan separately states a quantity that fires Rule 3. An enumeration with no recorded search fails, even when every consumer listed happens to be correct.
 - [ ] Consumers the plan does not otherwise modify appear in the enumeration when they sit on the path.
 - [ ] Every expected-behavior statement names an observation point that appears in the consumer enumeration, and the path that produces the outcome there. A statement naming only the changed unit fails.
 - [ ] A plan that removes or narrows a branch passes only when it states which branch then receives the inputs that branch used to absorb, and what it does with them.
