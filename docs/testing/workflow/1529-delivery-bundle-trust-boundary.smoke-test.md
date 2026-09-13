@@ -506,8 +506,17 @@ jq '.target_binding.contract_revision = ""' "$SMOKE_TMP/evidence-bound.json" \
 run_cleanup "$SMOKE_TMP/cleanup-t19.json"
 ```
 
-**Expected result**: exit `1` with a message naming the missing identity field.
-No product release branch is deleted and no tracker state changes.
+**Expected result**: exit `1` with exactly `Component release evidence is
+missing required identity field: contract_revision`. This must be the new
+GAP-8 diagnostic, not the pre-existing `Component release evidence mismatch
+for .contract_revision: current=... evidence=...` message: since
+`contract_revision` is compared last among the six ordered
+`compare_component_field` calls, a build that omits GAP-8 entirely would
+still exit `1` naming `contract_revision` (via the mismatch check, once the
+five earlier compares pass), which would look like a pass against a looser
+"names the field" assertion — treat any run producing the mismatch-format
+message instead of the exact GAP-8 message as a FAIL for this case. No
+product release branch is deleted and no tracker state changes.
 
 Repeat the same `jq`-edit-then-`run_cleanup` pattern with
 `target_binding.canonical_repository_identity: ""` (T20), then
@@ -518,10 +527,18 @@ once per `artifact_owners` sub-field (`release`, `ci`, `github_release`,
 `deployment`, `cleanup`, `tracker`) — each run emptying exactly one sub-field
 with the other five populated (T20f, six runs).
 
-**Expected result**: each run exits `1` naming the missing field
+**Expected result**: each run exits `1` with exactly `Component release
+evidence is missing required identity field: <field>`
 (`canonical_repository_identity`, `release_correlation_key`, `routing_outcome`,
-`selected_product_repo_key`, or `artifact_owners` respectively). No product
-release branch is deleted and no tracker state changes in any run.
+`selected_product_repo_key`, or `artifact_owners` respectively) — the same
+exact-diagnostic requirement as the T19 case above, for the same reason: the
+freshly resolved target's real value for each of these fields already
+disagrees with the evidence's edited `""`, so the pre-existing
+`compare_component_field` mismatch check would independently exit `1` naming
+the same field even without GAP-8. A run that exits `1` with the
+`Component release evidence mismatch for ...` message instead of the exact
+GAP-8 message is a FAIL for that case, not a pass. No product release branch
+is deleted and no tracker state changes in any run.
 
 Then repeat with a fresh evidence file rendered exactly like Step 4's, target
 resolution and all: re-run `component-release-target.sh --repo-root "$HUB_REPO"
