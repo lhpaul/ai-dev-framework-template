@@ -25,6 +25,8 @@ The guarantee this feature owes its operators is self-service: someone running t
 - **BO-9**: An explicit `--dispatch-profile` override flag on the bounded commands, offered in the brief as an optional later phase.
 - **BO-10**: Documenting the `owner/repo` identifier format used by the retrospective cross-reference step, raised as a closing note in the brief.
 
+---
+
 ## Use Cases
 
 ### Use Case 1: A run declares its dispatch profile and accountable role before touching anything
@@ -332,6 +334,8 @@ The profile declaration is a decision gate: the same inputs must produce the sam
 | BO-8 | AC11, AC12, AC15, AC16, AC18 | Named stop conditions and the `guardrails-enforcement.md` update, the portfolio-scan command's read-only posture, the agent model configuration document, the repository's workflow rule file, and cross-surface naming consistency. |
 | BO-9 | Out of Scope item 1 | Deferred; see Deferral Notes. |
 | BO-10 | Out of Scope item 5 | Deferred; see Deferral Notes. |
+
+---
 
 ## Out of Scope (MVP)
 
