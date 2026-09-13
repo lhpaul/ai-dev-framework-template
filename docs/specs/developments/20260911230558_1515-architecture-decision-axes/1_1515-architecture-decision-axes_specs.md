@@ -229,14 +229,14 @@ Conformance declaration, recorded with every citation:
 | Departs             | The runner's current behavior does not match the cited line. Reported with what the behavior does instead and why.                       |
 | Not yet implemented | The cited line governs behavior that does not exist yet, so there is nothing to conform to or depart from. Never used where behavior exists. |
 
-The one exception is a citation whose conformance genuinely cannot be determined — for behavior that already exists, or because the runner cannot even establish whether the cited line's governed behavior exists yet: it carries none of the three declarations above. That case is governed by the malformed-input rule in the Decision-Gate Consistency Matrix, not by this table.
+The one exception is a citation whose conformance genuinely cannot be determined — for behavior that already exists, or because the runner cannot even establish whether the cited line's governed behavior exists yet: it carries none of the three declarations above. In an escalation report, that case is governed by the malformed-input rule in the Decision-Gate Consistency Matrix, not by this table; in a standalone reply on a review thread, offered outside a full escalation report, the reply states the same thing plainly instead, without that alone opening a full escalation, per Business Rules.
 
 ---
 
 ## Operational Visibility
 
 - **Escalation report**: emitted wherever the stop itself is reported — in the run summary the operator reads, and as a durable record on the work item's own tracker record: its pull request when one exists, or its tracker issue when the run stops before any pull request is opened. This feature changes only the report's content, not where it is routed (Out of Scope, item 7); this bullet names the existing destination the content lands on. It is readable on the work item without opening an agent session transcript.
-- **Stop message**: unchanged in its three existing elements, with the required human action naming the genuinely open axes rather than the question as a whole.
+- **Stop message**: unchanged in its three existing elements. For a complete report, the required human action names the genuinely open axes — and, separately, any conformance evidence to supply — rather than the question as a whole. For an incomplete report under the malformed-input rule, the required human action instead supplies what that rule names — the missing question or its source, a redone decomposition, or the missing conformance evidence — since such a report may have no open axis yet to name.
 - **Citation declarations outside the report**: where a runner cites a workflow specification line in a reply on a review thread, the conformance declaration appears in that reply, so a reviewer reading the thread sees it without opening the escalation report.
 - **Incompleteness**: an escalation report missing a required element is identifiable as incomplete from the report alone, without reconstructing what the runner did.
 
