@@ -118,7 +118,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 ### Use Case 4: The operator reads the stop and decides
 
 **Actor**: The operator — the human the run stopped for.
-**Preconditions**: A run has stopped under `architecture_decision` and its escalation report is available where the existing stop-message contract already makes it durable — on the work item's pull request when one exists, or otherwise in the run summary per that contract.
+**Preconditions**: A run has stopped under `architecture_decision` and its escalation report is available in the run summary the operator reads, per the existing stop-message contract, and additionally as a durable record on the work item's pull request when one exists.
 
 **Steps**:
 
@@ -131,7 +131,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 
 **Information shown**:
 
-- The whole report, durable on the work item's pull request when one exists; otherwise available per the existing stop-message contract, rather than only in a session transcript.
+- The whole report, available in the run summary per the existing stop-message contract, and — where a pull request exists — durable on it, readable after the run ends without opening a session transcript.
 
 **Actions available**:
 
