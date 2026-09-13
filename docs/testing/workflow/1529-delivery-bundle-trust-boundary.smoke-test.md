@@ -80,14 +80,15 @@ done
 **Expected result**: every suite reports zero failures. Confirm by reading the
 output that the evidence, bundle, and reconciliation suites each name new
 rejection cases (unbound version, mismatched version, wrong routing outcome,
-missing hub-input flags, invalid evidence state, empty identity field).
+missing hub-input flags, invalid evidence state, empty identity field,
+producer-unemittable `ci_outcome: "skipped"`).
 
 ### Step 3: Red-before-green evidence for each fabricated-value case
 
 **Maps to**: Acceptance Criterion 4.
 
 Read the implementation PR description (or the commit series). For each of the
-rejection tests T1-T21 listed in the plan's Testing Strategy, locate the captured
+rejection tests T1-T24 listed in the plan's Testing Strategy, locate the captured
 failing output recorded before its fix. Four tests are exempt: T22 is a
 regression guard for a defect already fixed in review round 3; T6b pins the
 producer's deliberately unchanged `null` passthrough for `single_repo_release`
@@ -98,18 +99,21 @@ and T15c pins reconciliation's deliberately unchanged treatment of an evidence
 record whose `evidence_state` key is entirely absent (synthesized as `verified`
 when `schema_version` matches, per D9's `absent` row — a pre-existing behavior
 this plan does not touch). All four are green against unmodified runtime code
-by design, and the plan records them as the only four exemptions.
+by design, and the plan records them as the only four exemptions. T23 and T24
+(GAP-14, the `ci_outcome: "skipped"` rejection) are **not** exempt and must
+each show a captured red state.
 
 **Expected result**: every rejection test except T6b, T15b, T15c, and T22 has a
 recorded failure against the unmodified runtime code and a recorded pass after
 the fix (this includes T15d, which proves the *new* `invalid_evidence_state`
 disposition for a present but non-string `evidence_state` value such as JSON
-`null`, distinct from the unchanged absent-key case in T15c). A non-exempt test
-with no recorded red state is a FAIL for this step. T6b, T15b, T15c, and T22
-must each be recorded as green both before and after: T6b proving the new
-identity precondition was not over-applied, T15b proving `released` still is
-not blocked, T15c proving an absent `evidence_state` key still is not blocked,
-and T22 proving the earlier fix did not regress.
+`null`, distinct from the unchanged absent-key case in T15c; and T23/T24, which
+prove the *new* rejection of `ci_outcome: "skipped"` at both consumers). A
+non-exempt test with no recorded red state is a FAIL for this step. T6b, T15b,
+T15c, and T22 must each be recorded as green both before and after: T6b proving
+the new identity precondition was not over-applied, T15b proving `released`
+still is not blocked, T15c proving an absent `evidence_state` key still is not
+blocked, and T22 proving the earlier fix did not regress.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -435,6 +439,28 @@ gh issue view 1529 --json body --jq .body > "$SMOKE_TMP/1529-body.md"
 
 **Expected result**: `RESULT=pass` with `SCOPE_CLASSIFICATION=numeric_sweep`.
 
+### Step 17: Both consumers reject a producer-unemittable `ci_outcome: "skipped"` (GAP-14)
+
+**Maps to**: Acceptance Criterion 2.
+
+`component-release-evidence.sh`'s `--ci-outcome` enum is
+`pending|passed|failed|not_applicable` — it can never emit `skipped`. Confirm
+neither consumer that reads `ci_outcome` still admits that value.
+
+1. Take a finalized, otherwise-ready bundle (as in Step 6's honest update) and
+   directly mutate its `mobile-app` component's stored `ci_outcome` to
+   `"skipped"`, then run `finalize` on the manifest.
+
+   **Expected result**: `finalize` fails with
+   `ERROR_CODE=blocked_component_outcome`; the manifest revision is unchanged
+   (T23).
+
+2. Run `inspect-component` on the hub path with an evidence file that is
+   otherwise valid except `ci_outcome: "skipped"`.
+
+   **Expected result**: `blockers` contains `ci_outcome_skipped` and
+   `mutation_allowed` is `false` (T24).
+
 ### Last Step: Validate and clean up
 
 - [ ] Every assertion in the checklist below is met.
@@ -450,8 +476,9 @@ gh issue view 1529 --json body --jq .body > "$SMOKE_TMP/1529-body.md"
 - [ ] **AC-2** — No consumer treats a missing overridable field as a match:
       unbound version, mismatched version, mismatched tag, wrong routing outcome,
       smuggled hub facts, unrecognized and degraded evidence states, silently
-      ignored evidence file, and empty identity fields are all rejected (Steps 5,
-      6, 7, 8, 9, 10, 11, 12).
+      ignored evidence file, empty identity fields, and a producer-unemittable
+      `ci_outcome: "skipped"` are all rejected (Steps 5, 6, 7, 8, 9, 10, 11, 12,
+      17).
 - [ ] **AC-3** — `component_version` is emitted by the producer and
       require-and-matched by every consumer that accepts a caller-supplied value
       (Steps 4, 6, 11).
