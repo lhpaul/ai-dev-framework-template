@@ -22,7 +22,7 @@ design-fidelity step applies.
 ## Preconditions
 
 - [ ] The repository is checked out on the #1529 implementation branch.
-- [ ] `jq`, `python3`, `git`, and `bash` are available on `PATH`.
+- [ ] `jq`, `python3`, `git`, `bash`, and `shellcheck` are available on `PATH`.
 - [ ] No production secrets, deployments, private local paths, or `workflow_hub`
       configuration are required. Every step runs against temporary fixtures.
 - [ ] A scratch directory is available: `export SMOKE_TMP="$(mktemp -d)"`.

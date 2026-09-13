@@ -539,21 +539,21 @@ evaluated in this order; the run returns at the first one that fails, so only on
 ever applies to a given evaluation. Existing (pre-plan) rows are unchanged by this plan and are
 listed for gate completeness; new/changed rows are marked.
 
-| # | Precondition | On failure: `reconciliation_outcome` | `child_release_state` | `mutation_allowed` | Blocker | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `args.target_kind == "component_child"` | `milestone_target_not_allowed` | `pending` (base default, not overridden) | `false` | `milestone_target_not_allowed` | existing |
-| 2 | `--product-repo`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_product_repository` | existing |
-| 3 | `--product-repo` is supplied at all | `missing_product_selection` | `pending` (base default, not overridden) | `false` | `missing_product_selection` | existing |
-| 4 | `--component-tag`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_component_tag` | existing |
-| 5 | `--component-tag` is supplied at all | `component_tag_missing` | `pending` (base default, not overridden) | `false` | `component_tag_missing` | existing |
-| 6 | `--evidence-file` is supplied and loads | `component_release_pending` | `pending` | `false` | `component_release_evidence_missing` | existing |
-| 7 | `evidence.schema_version == component_release_evidence.v1` | `component_release_not_ready` | `blocked` | `false` | `invalid_evidence_schema` | existing |
-| 8 | **New (GAP-4):** `stable_value(evidence, "routing_outcome") == "component_release_routed"`. Malformed and empty inputs take the identical branch: this is a single equality test, not an enum-membership check, so `""`, `null`, an absent key (`stable_value` returns `None`), and an unrecognized non-empty value such as `"unknown"` all fail the same way — there is no separate "malformed" outcome to enumerate. Placed immediately after row 7 (basic evidence-shape validity) and before row 9 (product-identity match), because whether the evidence describes a routed component release at all must be established before any product/component identity comparison is meaningful | `component_target_mismatch` | `blocked` | `false` | `routing_outcome_mismatch` | **new** |
-| 9 | `stable_value(evidence, "selected_product_repo_key") == product_repo` | `component_target_mismatch` | `blocked` | `false` | `product_repository_mismatch` | existing |
-| 10 | `evidence.get("component_tag")` is truthy | `component_target_mismatch` | `blocked` | `false` | `component_tag_unbound` | existing |
-| 11 | `evidence_tag == component_tag` | `component_target_mismatch` | `blocked` | `false` | `component_tag_mismatch` | existing |
-| 12 | Each of `canonical_repository_identity`, `release_correlation_key`, `contract_revision`, `hub_tracker_ref` is non-empty via `stable_value` | `component_release_not_ready` | `blocked` | `false` | `missing_<field>` per missing field (may list more than one) | existing |
-| — | All of rows 1-12 pass | *(proceed to Table B)* | | | | |
+| # | Precondition | On failure: `reconciliation_outcome` | `child_release_state` | `mutation_allowed` | Blocker | Required next action | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `args.target_kind == "component_child"` | `milestone_target_not_allowed` | `pending` (base default, not overridden) | `false` | `milestone_target_not_allowed` | "component milestones may only be applied to component child issues" | existing |
+| 2 | `--product-repo`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_product_repository` | "provide a product repository key using letters, numbers, dot, underscore, or hyphen" | existing |
+| 3 | `--product-repo` is supplied at all | `missing_product_selection` | `pending` (base default, not overridden) | `false` | `missing_product_selection` | "select exactly one product repository before component milestone reconciliation" | existing |
+| 4 | `--component-tag`, if supplied, matches the identifier charset | `component_release_not_ready` | `pending` (base default, not overridden) | `false` | `invalid_component_tag` | "provide a component tag using letters, numbers, dot, underscore, or hyphen" | existing |
+| 5 | `--component-tag` is supplied at all | `component_tag_missing` | `pending` (base default, not overridden) | `false` | `component_tag_missing` | "provide the released component tag before milestone reconciliation" | existing |
+| 6 | `--evidence-file` is supplied and loads | `component_release_pending` | `pending` | `false` | `component_release_evidence_missing` | "attach component_release_evidence.v1 before milestone reconciliation" | existing |
+| 7 | `evidence.schema_version == component_release_evidence.v1` | `component_release_not_ready` | `blocked` | `false` | `invalid_evidence_schema` | "provide evidence with schema_version component_release_evidence.v1" | existing |
+| 8 | **New (GAP-4):** `stable_value(evidence, "routing_outcome") == "component_release_routed"`. Malformed and empty inputs take the identical branch: this is a single equality test, not an enum-membership check, so `""`, `null`, an absent key (`stable_value` returns `None`), and an unrecognized non-empty value such as `"unknown"` all fail the same way — there is no separate "malformed" outcome to enumerate. Placed immediately after row 7 (basic evidence-shape validity) and before row 9 (product-identity match), because whether the evidence describes a routed component release at all must be established before any product/component identity comparison is meaningful | `component_target_mismatch` | `blocked` | `false` | `routing_outcome_mismatch` | "correct the evidence's routing outcome to component_release_routed, or re-run component release routing, before mutation" | **new** |
+| 9 | `stable_value(evidence, "selected_product_repo_key") == product_repo` | `component_target_mismatch` | `blocked` | `false` | `product_repository_mismatch` | "correct the selected child or component release evidence before mutation" | existing |
+| 10 | `evidence.get("component_tag")` is truthy | `component_target_mismatch` | `blocked` | `false` | `component_tag_unbound` | "render component release evidence with --component-tag before mutation" | existing |
+| 11 | `evidence_tag == component_tag` | `component_target_mismatch` | `blocked` | `false` | `component_tag_mismatch` | "correct the component tag or evidence before mutation" | existing |
+| 12 | Each of `canonical_repository_identity`, `release_correlation_key`, `contract_revision`, `hub_tracker_ref` is non-empty via `stable_value` | `component_release_not_ready` | `blocked` | `false` | `missing_<field>` per missing field (may list more than one) | "repair incomplete component release evidence before mutation" | existing |
+| — | All of rows 1-12 pass | *(proceed to Table B)* | | | | | |
 
 **Table B — accumulating outcome (only reached once every Table A row passes).** Unlike Table A,
 these checks do not short-circuit: every condition is evaluated independently and any number of
@@ -572,12 +572,33 @@ handling is per-field, matching each field's trust class:
 | `child_release_state` (flag only, no evidence fallback) | `released`, `merged` | flag absent -> `child_release_state_required`; flag present with any value other than exactly `released` or `merged` -> `child_release_state_{value}`. Same plain two-member equality test as `hub_tracker_reconciliation_outcome` above: `pending` and every other non-member string block identically (T14a pins the `pending` case) | fallback removed, `_required` blocker **new** (GAP-5/D5) |
 
 If the accumulated `blockers` list is non-empty, `reconciliation_outcome = component_release_not_ready`,
-`mutation_allowed = false`, and `child_release_state` is resolved by existing, unchanged
-precedence: `failed` when `release_outcome == "failed"` or `child_state == "failed"`; else
-`blocked` when `release_outcome == "blocked"` or `evidence_state` is `stale`/`conflicting`; else
-`pending`. If the list is empty, `reconciliation_outcome = component_released`,
-`child_release_state = "released"`, and `mutation_allowed = true` — the only path that allows
-mutation.
+`mutation_allowed = false`, `required_next_action = "repair or retry component release evidence
+before milestone mutation"` (Table B's own aggregate required-next-action, unchanged by this
+plan), and `child_release_state` is resolved by precedence: `failed` when
+`release_outcome == "failed"` or `child_state == "failed"`; else `blocked` when
+`release_outcome == "blocked"`, `evidence_state` is `stale`/`conflicting`, **or the
+`evidence_state` row above appended `invalid_evidence_state`, `missing_component_evidence`, or
+`partial_component_evidence` (changed — GAP-6/D9)**; else `pending`. The `blocked` branch's
+`evidence_state`-driven members are widened, not merely re-derived from the existing
+`stale`/`conflicting` case: an evidence record that is present but incomplete or invalid
+(`missing`, `partial`, or an unrecognized/`null` value) previously fell through this precedence
+to `pending` because none of `release_outcome == "blocked"` or `evidence_state in
+{"stale", "conflicting"}` matched it, even though the evidence-state blocker itself was already
+new/changed by GAP-6/D9. Spec #1358's component-child transition table
+(`docs/specs/developments/20260731193728_1358-component-milestones-release-statuses/1_1358-component-milestones-release-statuses_specs.md`,
+lines 295-297) states that an existing but incomplete or invalid evidence record moves a
+`pending` child to `blocked`, not that it stays `pending`, so leaving this branch unwidened
+would misreport a repair-required state as ordinary in-progress work; this precedence change
+closes that gap without altering the `stale`/`conflicting` branch's own pre-existing behavior.
+This does not affect `component_release_evidence_missing` (Table A row 6, no evidence file at
+all), which still resolves to `pending` unchanged — that is a distinct case (`evidence.get()`
+returning `None` before Table B ever runs, and this plan's own `component_release_pending` /
+`pending` result at row 6 is untouched), not one of the three evidence-state blockers this
+paragraph widens, and matches spec #1358's own "no release evidence record remains pending"
+rule. If the list is empty, `reconciliation_outcome = component_released`,
+`child_release_state = "released"`, `mutation_allowed = true`, and `required_next_action =
+"create or reuse the namespaced component milestone and assign it only to the component child"`
+— the only path that allows mutation.
 
 **Mirror surfaces and examples**: this table is the authoritative precedence source; the new
 `component-release-evidence-contract.md` document (Documentation Updates, item 1) carries a
@@ -675,7 +696,8 @@ surface.
       `failed` (or other) member exists for this flag: `hub_reconciliation` is never compared
       against `"failed"` anywhere in `classify_component`, so there is no pre-existing meaning
       to preserve for a value beyond these three, and this plan does not invent one.
-    - `--child-release-state`: `choices=["pending", "released", "merged", "failed"]`.
+    - `--child-release-state`:
+      `choices=["not_started", "pending", "released", "merged", "failed", "blocked"]`.
       `released`/`merged` are the two completion values (Table B); `pending` is the sole
       recognized non-terminal member (Table B's note ahead of the table, pinned by T14a).
       `failed` is a fourth, pre-existing recognized member, not a Table-B-blocking-only
@@ -687,7 +709,22 @@ surface.
       excluding it from the closed enum would make the parse-time validator reject a value the
       unchanged reconciliation logic downstream still specifically recognizes. `failed` still
       blocks completion in Table B exactly like `pending` (neither is `released` nor `merged`),
-      it is simply not rejected at parse time.
+      it is simply not rejected at parse time. `not_started` and `blocked` are the two
+      remaining component-child release states in the established, five-value vocabulary this
+      field is drawn from
+      (`docs/specs/developments/20260731193728_1358-component-milestones-release-statuses/1_1358-component-milestones-release-statuses_specs.md`,
+      lines 268-276: `not_started`, `pending`, `released`, `blocked`, `failed`); they are not
+      driven by any `classify_component` special-case the way `failed` is, but
+      `blocker_for_component`'s existing, unchanged `child not in ("released", "merged")`
+      branch (`delivery-bundle-manifest.sh` line 207) already classifies any non-completion
+      value — including `blocked` and `not_started`, exactly like the pre-existing `pending`
+      and `failed` — as `blocked_component_outcome`, so admitting them changes no runtime
+      classification behavior, only what an operator is permitted to record. Excluding them
+      would let this same closed-enum fix reject an operator update that records a real,
+      spec-defined child state (for example when a hub tracker reports a child issue is
+      `blocked` or has `not_started`) before `blocker_for_component` ever sees it, contradicting
+      the #1357 bundle contract that blocked outcomes must be representable as finalization
+      blockers.
     Preserve `--hub-tracker-reconciliation-outcome`'s existing `default="pending"` (line 591):
     the validation applies to a supplied value, not to the default, and
     `tests/test-delivery-bundle-manifest.sh` pins that default in
@@ -696,7 +733,11 @@ surface.
     `--hub-tracker-reconciliation-outcome garbage` rejected at parse time naming that flag; T10b
     (new) pins that `--child-release-state failed` is *accepted* at parse time (the record
     carries `child_release_state: "failed"`), proving the new validator does not reject this
-    pre-existing, meaningful value.
+    pre-existing, meaningful value; T10c and T10d (new) pin the same acceptance for `blocked`
+    and `not_started` respectively, and additionally assert that a subsequent
+    `inspect-manifest`/`finalize` call classifies each as blocker `blocked_component_outcome`
+    via the unchanged `blocker_for_component` branch, proving the widened enum both accepts and
+    correctly classifies the two added states.
   - `blocker_for_component`: narrow the `ci_outcome` acceptance check (line 184) from
     `("passed", "not_applicable", "skipped")` to `("passed", "not_applicable")`, matching
     `component-release-evidence.sh`'s `--ci-outcome` enum exactly; `skipped` is a value the
@@ -729,6 +770,17 @@ surface.
     disposition table in D9, so `missing` and `partial` add
     `missing_component_evidence` / `partial_component_evidence` instead of passing as
     non-blocking (GAP-6, D9).
+  - `classify_component`, hub path, `child_release_state` precedence (lines 357-362): widen the
+    `blocked` branch's condition from `release == "blocked" or state in {"stale", "conflicting"}`
+    to also match when the blockers list contains `invalid_evidence_state`,
+    `missing_component_evidence`, or `partial_component_evidence` — i.e. when `evidence_state()`
+    returned anything other than a non-blocking value. Without this, the three new/changed
+    `evidence_state` blockers from the previous bullet fall through the unwidened precedence to
+    `pending`, misreporting an existing-but-incomplete-or-invalid evidence record as ordinary
+    in-progress work instead of the `blocked` state spec #1358's `pending -> blocked` transition
+    requires (GAP-6, D9; see the corrected precedence in the "Decision gate" subsection above).
+    This does not touch the `component_release_evidence_missing` case (Table A row 6, no
+    evidence file at all), which is a separate, unchanged `pending` result.
   - `single_repo` path: fail with `evidence_not_supported_in_single_repo` when
     `--evidence-file` is supplied, and add `trust_basis: "caller_asserted"` to the
     `non_hub_result` payload (GAP-7, D6).
@@ -890,7 +942,7 @@ argument-parsing branch already exits 2 naming the flag by coincidence, for the 
 (see the T4 row in the Fabricated-value rejection cases table). T4's red state is instead
 captured at step 6a, after D1 lands and before D3 does.
 
-**Seven tests are exempt from red-capture, and only these seven.** T22 guards a defect already
+**Nine tests are exempt from red-capture, and only these nine.** T22 guards a defect already
 fixed in review round 3, so it is green against unmodified runtime code by construction and
 cannot be confirmed red. T6b pins behavior this plan deliberately leaves unchanged — the
 producer's `null` passthrough for `single_repo_release` routing — so that T6a's new
@@ -919,10 +971,16 @@ value like `pending`), and they are likewise green by construction. T10b pins th
 `choices=` exists yet), so `failed` already parses successfully — there is no fix for T10b to
 be red against; it exists so the new parse-time closed enum cannot accidentally narrow to just
 `{"pending", "released", "merged"}` and silently reject the pre-existing, meaningful `failed`
-value. Record all seven as green-before and green-after.
-Every other numbered test must show a captured red state: T1-T24 other than T6b, T10b, T13a,
-T14a, T15b, T15c, and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d,
-T20b, T20c, T20d, T20e, T20f, T23, and T24, all target behavior this plan introduces — T4's red
+value. T10c and T10d pin the same already-accepted-today behavior for the two newly admitted
+states, `blocked` and `not_started`: like `failed`, both already parse successfully under the
+current, unrestricted `--child-release-state` flag (no `choices=` exists yet), so there is no
+fix for either test to be red against; they exist so the new parse-time closed enum cannot
+accidentally narrow to just `{"pending", "released", "merged", "failed"}` and silently reject
+these two established component-child states (spec #1358) before `blocker_for_component` can
+classify them. Record all nine as green-before and green-after.
+Every other numbered test must show a captured red state: T1-T24 other than T6b, T10b, T10c,
+T10d, T13a, T14a, T15b, T15c, and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a,
+T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, and T24, all target behavior this plan introduces — T4's red
 capture is taken at step 6a rather than step 5, for the reason given above; T10a proves the new
 `choices=` validator rejects an unrecognized `--hub-tracker-reconciliation-outcome` value at
 parse time, the symmetric case to the already-existing T10; T15d proves the new
@@ -959,17 +1017,19 @@ both consumers that read `ci_outcome` directly from the evidence file (GAP-14).
 | T10 | `test-delivery-bundle-manifest.sh` | `--child-release-state shipped` (not in the enum) | rejected at parse time naming `--child-release-state` |
 | T10a | `test-delivery-bundle-manifest.sh` | `--hub-tracker-reconciliation-outcome garbage` (not in the enum) | rejected at parse time naming `--hub-tracker-reconciliation-outcome` — the symmetric case to T10 for the other `hub_input` flag |
 | T10b | `test-delivery-bundle-manifest.sh` | `--child-release-state failed` (a real, pre-existing member of the flag's closed enum — see the enum note above under `delivery-bundle-manifest.sh`, and `classify_component` line 357) | **not** rejected: parse succeeds, component record carries `child_release_state: "failed"` — proves the new `choices=` validator does not reject this pre-existing, meaningful value; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T13a/T14a) |
+| T10c | `test-delivery-bundle-manifest.sh` | `--child-release-state blocked` (one of the two established component-child states added to the enum — see the enum note above and spec #1358 lines 268-276), then `inspect-manifest`/`finalize` on the resulting manifest | **not** rejected at parse time: component record carries `child_release_state: "blocked"`; the subsequent call returns blocker `blocked_component_outcome` via the unchanged `blocker_for_component` `child not in ("released", "merged")` branch — proves the widened enum accepts and correctly classifies the state; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T10b) |
+| T10d | `test-delivery-bundle-manifest.sh` | `--child-release-state not_started` (the other established component-child state added to the enum), then `inspect-manifest`/`finalize` on the resulting manifest | **not** rejected at parse time: component record carries `child_release_state: "not_started"`; the subsequent call returns blocker `blocked_component_outcome` for the same unchanged `blocker_for_component` reason as T10c; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T10b/T10c) |
 | T11 | `test-delivery-bundle-manifest.sh` | valid update | component record carries `release_branch` from the evidence |
 | T12 | `test-component-milestone-reconciliation.sh` | evidence with `routing_outcome: "single_repo_release"` on the hub path | `component_target_mismatch`, blocker `routing_outcome_mismatch`, `mutation_allowed=false` |
 | T13 | `test-component-milestone-reconciliation.sh` | evidence carrying `hub_tracker_reconciliation_outcome: "complete"`, flag omitted | blocker `hub_tracker_reconciliation_outcome_required`; the evidence value is **not** used |
 | T14 | `test-component-milestone-reconciliation.sh` | evidence carrying `child_release_state: "released"`, flag omitted | blocker `child_release_state_required` |
 | T13a | `test-component-milestone-reconciliation.sh` | `--hub-tracker-reconciliation-outcome pending` supplied (present, a real non-terminal member of the field's own closed enum, not `complete`/`deferred`), otherwise valid hub-path inputs | blocker `hub_tracker_reconciliation_pending`, `mutation_allowed=false` — pins the pre-existing `not in {"complete", "deferred"}` blocking behavior (unchanged by GAP-5/D5) against the specific value Table B's phrasing could otherwise be misread as exempting; green-before and green-after (no fix; regression guard only) |
 | T14a | `test-component-milestone-reconciliation.sh` | `--child-release-state pending` supplied (present, not `released`/`merged`), otherwise valid hub-path inputs | blocker `child_release_state_pending`, `mutation_allowed=false` — pins the pre-existing `not in {"released", "merged"}` blocking behavior (unchanged by GAP-5/D5); green-before and green-after (no fix; regression guard only) |
-| T15 | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "totally-fine"` | blocker `invalid_evidence_state`, `mutation_allowed=false` |
-| T15a | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "partial"`, then a second run with `evidence_state: "missing"` | blockers `partial_component_evidence` and `missing_component_evidence` respectively, `mutation_allowed=false` in both (D9 disposition table) |
+| T15 | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "totally-fine"` | blocker `invalid_evidence_state`, `mutation_allowed=false`, `child_release_state="blocked"` (widened precedence — see the "Decision gate" subsection above) |
+| T15a | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "partial"`, then a second run with `evidence_state: "missing"` | blockers `partial_component_evidence` and `missing_component_evidence` respectively, `mutation_allowed=false` in both, `child_release_state="blocked"` in both (D9 disposition table; widened precedence) |
 | T15b | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: "released"` and otherwise valid hub facts | no `evidence_state` blocker — the value stays non-blocking, matching line 521 |
 | T15c | `test-component-milestone-reconciliation.sh` | evidence with the `evidence_state` key entirely absent and otherwise valid hub facts | no `evidence_state` blocker — synthesized as `verified` when `schema_version` matches, unchanged pre-existing behavior at lines 179-196 (D9's `absent` row; red-capture exempt) |
-| T15d | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: null` (JSON `null`, key present) and otherwise valid hub facts | blocker `invalid_evidence_state`, `mutation_allowed=false` — a present but non-string value is distinct from the absent-key case in T15c (D9's `any other string, or a non-string` row) |
+| T15d | `test-component-milestone-reconciliation.sh` | evidence with `evidence_state: null` (JSON `null`, key present) and otherwise valid hub facts | blocker `invalid_evidence_state`, `mutation_allowed=false`, `child_release_state="blocked"` — a present but non-string value is distinct from the absent-key case in T15c (D9's `any other string, or a non-string` row; widened precedence) |
 | T16 | `test-component-milestone-reconciliation.sh` | `--mode single_repo --evidence-file <path>` | `evidence_not_supported_in_single_repo`, no `gh` call recorded |
 | T17 | `test-component-milestone-reconciliation.sh` | `--mode single_repo --version v1.2.3`, no evidence | `trust_basis: "caller_asserted"` in the result |
 | T18 | `test-component-milestone-reconciliation.sh` | valid hub-path apply | `trust_basis: "evidence_bound"` in the result |
@@ -1269,7 +1329,8 @@ can be mistaken for production code.
       `--component-version`). Re-run the suite green: T3 and T4 both now reject their
       fabricated inputs with exit 2 naming the offending flag.
 7. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11, including T10a; T23), and
-   the green-by-construction T10b, capture failures for everything except T10b.
+   the green-by-construction T10b, T10c, and T10d, capture failures for everything except T10b,
+   T10c, and T10d.
 8. **Implement the bundle changes** (D2, GAP-1, GAP-9, GAP-14, enum validation). Re-run green.
 9. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18 and T24, including
    T15a and T15d; T15b, T15c, T13a, and T14a are the red-capture exemptions for this suite —
@@ -1310,5 +1371,5 @@ can be mistaken for production code.
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | The published matrix's field column, diffed against the Producer emitted-field contract table (16 rows) and the never-emitted-fields list (7 rows), shows zero missing and zero extra fields across all four consumer columns (`delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`, `multi-repo-release-assurance.sh`, `prepare-release-post-merge-cleanup.sh`) — a check that fails if the matrix section is absent, truncated, or omits any field, unlike a bare field-enumeration count. Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers corroborates the source counts the diff is run against |
 | No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8, GAP-13, GAP-14, GAP-15; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T15d, T16, T19, T20, T20b, T20c, T20d, T20e, T20f, T20g, T23, T24 |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 6a/6b, 7, 9, 11 capture red before green | T1-T24 (plus T6f, T6g, T6h, T10a, T13a, T14a, T20g) other than T6b, T10b, T13a, T14a, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T20g, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T4's red capture is taken at step 6a (after D1, before D3) rather than step 5, because `--component-version` is not a recognized flag until D1 lands (see the T4 row in Fabricated-value rejection cases); T6b, T10b, T13a, T14a, T15b, T15c, and T22 are the seven declared red-capture exemptions and are recorded green-before and green-after |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 6a/6b, 7, 9, 11 capture red before green | T1-T24 (plus T6f, T6g, T6h, T10a, T13a, T14a, T20g) other than T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T20g, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T4's red capture is taken at step 6a (after D1, before D3) rather than step 5, because `--component-version` is not a recognized flag until D1 lands (see the T4 row in Fabricated-value rejection cases); T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22 are the nine declared red-capture exemptions and are recorded green-before and green-after |
 | The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, T6a/T6e/T6f/T6g pin the two directions of the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing — T6a pins that `component_release_routed` requires non-`null`; T6e, T6f, and T6g together pin that `single_repo_release` requires *exactly* `null`, rejecting a non-empty string (T6e), an empty string (T6f), and a missing key (T6g) alike) while T6b pins the `null` passthrough this plan leaves unchanged, T6c/T6d pin the `producer_required` promise for `routing_outcome` and `artifact_owners`, and T6h pins that the `producer_required_nullable` boundary's "if and only if" claim holds even when `routing_outcome` carries a third, unrecognized value |
