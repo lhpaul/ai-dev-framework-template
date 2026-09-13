@@ -189,7 +189,7 @@ failure.
 | `contract_revision` | `producer_required` | `require` + cross-update stability | `require` | `n/a` | `compare`; **GAP-8** add non-empty precondition |
 | `release_branch` | `producer_required` | **GAP-9** not stored -> `record` | `n/a` | `n/a` | `req+match` vs the positional `<version\|release-branch>`; **GAP-13** empty/missing `evidence.release_branch` skips the match -> require non-empty first |
 | `release_outcome` | `producer_required` | `require` == `completed` | `require` == `completed` | `n/a` | `n/a` |
-| `ci_outcome` | `producer_required` | `require` in `passed\|not_applicable\|skipped` | `require` in `passed\|skipped\|not_applicable` | `n/a` | `n/a` |
+| `ci_outcome` | `producer_required` | **GAP-14** accepted `skipped`, a value the producer can never emit -> `require` in `passed\|not_applicable` | **GAP-14** accepted `skipped` on the hub path -> `require` in `passed\|not_applicable` | `n/a` | `n/a` |
 | `deployment_outcome` | `producer_required` | `require` in `recorded\|not_applicable` | `require` in `recorded\|not_applicable` | `n/a` | `n/a` |
 | `cleanup_outcome` | `producer_required` | `require` == `complete` | `require` == `complete` | `n/a` | `require`; `complete` is the idempotent-rerun signal |
 | `hub_tracker_ref` | `producer_required` | `record` (RESIDUAL-1) | `require` non-empty (RESIDUAL-1) | `n/a` | `n/a` |
@@ -222,6 +222,7 @@ failure.
 | GAP-11 | `05-prepare-release-protocol.md`, `cross-repo-pr-flow.md`, `scripts/development-workflow/README.md` | The documented producer invocations omit `--component-tag`, so the documented bundle-attach sequence fails at `component_tag_unbound` | Document the two-phase render (pending record, then a re-render that binds `--component-tag` and `--component-version`) |
 | GAP-12 | `.agents/skills/prepare-release/SKILL.md` | States the evidence "must include" `hub_tracker_reconciliation_outcome` and `child_release_state` — fields the producer never emits, and which GAP-5 makes definitively hub-supplied | Correct the skill to name them as hub-supplied flags |
 | GAP-13 | `prepare-release-post-merge-cleanup.sh` | `validate_component_release_cleanup` only compares `evidence.release_branch` against the resolved `RELEASE_INPUT` when `evidence.release_branch` is non-empty, so an evidence file with an empty or missing `release_branch` lets the positional `<version\|release-branch>` argument through unbound — the "compare only if present" defect class, unclosed for this field | Require `evidence.release_branch` to be non-empty **immediately after it is read from the evidence file** (the existing `evidence_branch="$(json_field ...)"` line), **before** `component-release-target.sh` re-resolves the target and **before** any of the six `compare_component_field` calls; reject when empty or missing. Placing the guard first, rather than later at the `RELEASE_INPUT` fallback/mismatch block, matters because an empty `evidence_branch` also changes what `--release-branch` is passed to target re-resolution, which changes the freshly resolved `release_correlation_key` (a per-attempt value) and can make `compare_component_field '.release_correlation_key'` fail with a mismatch **before** this guard ever runs if the guard is placed later — masking the intended rejection behind an unrelated identity-mismatch exit (D12) |
+| GAP-14 | `delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh` | `blocker_for_component` (line 184) and `classify_component`'s hub path (line 343) both accept `ci_outcome: "skipped"` as satisfying the field's `producer_required` gate, but `component-release-evidence.sh`'s `--ci-outcome` enum (`validate_enum "ci" "$CI_OUTCOME" pending passed failed not_applicable`, line 136 of the producer emitted-field contract table) is `pending\|passed\|failed\|not_applicable` — `skipped` is a value no legitimate producer-emitted record can ever carry, so a hand-authored (or otherwise caller-fabricated) evidence file stamping `ci_outcome: "skipped"` was accepted by both consumers as a terminal, non-blocking outcome equivalent to `passed`: the exact "caller-supplied value admitted without being checked against what the producer can actually emit" defect class this audit exists to close, caught here as one more instance of it | Narrow both consumers' accepted `ci_outcome` sets to exactly `passed\|not_applicable`, dropping `skipped` so no consumer accepts a value outside the producer's real enum |
 
 ### Residual register (deliberately not closed by this audit)
 
@@ -497,6 +498,12 @@ surface.
     validation applies to a supplied value, not to the default, and
     `tests/test-delivery-bundle-manifest.sh` pins that default in
     `hub_reconciliation_defaults_pending`.
+  - `blocker_for_component`: narrow the `ci_outcome` acceptance check (line 184) from
+    `("passed", "not_applicable", "skipped")` to `("passed", "not_applicable")`, matching
+    `component-release-evidence.sh`'s `--ci-outcome` enum exactly; `skipped` is a value the
+    producer can never emit, so accepting it let a hand-authored evidence file — or a
+    manifest component record derived from one via `component_from_evidence` — pass as a
+    non-blocking, `passed`-equivalent outcome (GAP-14).
 - [ ] `scripts/development-workflow/component-milestone-reconciliation.sh`
   - `classify_component`, hub path: require
     `stable_value(evidence, "routing_outcome") == "component_release_routed"`; on mismatch set
@@ -524,6 +531,10 @@ surface.
     `non_hub_result` payload (GAP-7, D6).
   - Add `trust_basis: "evidence_bound"` to the hub-path result so both paths report the same
     key with different values.
+  - `classify_component`, hub path: narrow the `ci_outcome` acceptance check (line 343) from
+    `{"passed", "skipped", "not_applicable"}` to `{"passed", "not_applicable"}`, for the
+    identical reason as the bundle's `blocker_for_component` fix above — `skipped` is a value
+    `component-release-evidence.sh`'s `--ci-outcome` enum can never emit (GAP-14).
 - [ ] `scripts/development-workflow/prepare-release-post-merge-cleanup.sh`
   - In `validate_component_release_cleanup`, before the six `compare_component_field` calls,
     require every `producer_required` field those calls compare —
@@ -680,11 +691,14 @@ D9's disposition table's `absent` row states this is unchanged, and the Layer-by
 instruction for `evidence_state()` preserves that branch untouched — so there is no fix for
 T15c to be red against either, and it is likewise green by construction. Record all four as
 green-before and green-after.
-Every other numbered test must show a captured red state: T1-T21 other than T6b, T15b, and T15c,
-including T5b, T6a, T6c, T6d, T6e, T15a, T15d, T20b, T20c, T20d, T20e, and T20f, all target
-behavior this plan introduces — T15d proves the new `invalid_evidence_state` disposition now
-applies to a *present* but non-string `evidence_state` value (e.g. JSON `null`), which
-previously fell through silently to the same synthesis path as an absent key.
+Every other numbered test must show a captured red state: T1-T24 other than T6b, T15b, T15c,
+and T22, including T5b, T6a, T6c, T6d, T6e, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, and
+T24, all target behavior this plan introduces — T15d proves the new `invalid_evidence_state`
+disposition now applies to a *present* but non-string `evidence_state` value (e.g. JSON `null`),
+which previously fell through silently to the same synthesis path as an absent key; T23 and T24
+prove that `ci_outcome: "skipped"` — a value `component-release-evidence.sh`'s own `--ci-outcome`
+enum can never emit — is now rejected by both consumers that read `ci_outcome` directly from the
+evidence file (GAP-14).
 
 ### Fabricated-value rejection cases
 
@@ -727,6 +741,8 @@ previously fell through silently to the same synthesis path as an absent key.
 | T20f | `test-prepare-release-tracker-cleanup.sh` | evidence with exactly one `target_binding.artifact_owners` sub-field set to `""`, other five populated — run once per sub-field (`release`, `ci`, `github_release`, `deployment`, `cleanup`, `tracker`; six separate red-then-green captures under this one test identifier, T20f, for the same reason as T6d) | each of the six runs: exit 1, names `artifact_owners`; no branch deletion |
 | T21 | `test-multi-repo-release-assurance.sh` | valid fixture | output carries `trust_class: "attestation"` / `TRUST_CLASS=attestation` |
 | T22 | `test-multi-repo-release-assurance.sh` | `release_contract: "garbage"` (regression guard for the round-3 fix) | `adoption_status: "blocked"` |
+| T23 | `test-delivery-bundle-manifest.sh` | a finalized, otherwise-ready bundle whose `mobile-app` component carries `ci_outcome: "skipped"` — a value `component-release-evidence.sh`'s `--ci-outcome` enum can never emit | `finalize` fails with `ERROR_CODE=blocked_component_outcome`; manifest revision unchanged (GAP-14) |
+| T24 | `test-component-milestone-reconciliation.sh` | evidence carrying `ci_outcome: "skipped"` on the hub path, otherwise valid | blocker `ci_outcome_skipped`, `mutation_allowed=false` (GAP-14) |
 
 ### Charset validator input enumeration (D3)
 
@@ -870,6 +886,7 @@ section, which is what makes the gate satisfiable without fabricating follow-up 
 | Invalid `evidence_state` evidence | Producer-shaped record with `evidence_state: "totally-fine"`; a second variant with `evidence_state: null` (key present, JSON `null`) | `tests/test-component-milestone-reconciliation.sh` (T15, T15d) |
 | Degraded `evidence_state` evidence | Producer-shaped records with `evidence_state` of `partial`, `missing`, and `released` | `tests/test-component-milestone-reconciliation.sh` (T15a, T15b) |
 | Absent-`evidence_state` evidence | Producer-shaped record with the `evidence_state` key removed entirely (not present at all, distinct from JSON `null`) | `tests/test-component-milestone-reconciliation.sh` (T15c) |
+| Producer-unemittable `ci_outcome` evidence | A finalized bundle component (otherwise ready) with `ci_outcome: "skipped"`; and, separately, a `component_release_evidence.v1`-shaped record with `ci_outcome: "skipped"` on the hub path — in both cases a value outside the producer's own `--ci-outcome` enum (`pending\|passed\|failed\|not_applicable`) | `tests/test-delivery-bundle-manifest.sh` (T23, mutates a finalized manifest component directly) and `tests/test-component-milestone-reconciliation.sh` (T24, mutates the evidence file) |
 | Milestone fixture | Hub config plus `gh` stub call log, as today | `scripts/development-workflow/tests/setup-component-milestone-fixture.sh` (existing; extended with `component_version`) |
 | Assurance fixture | Valid and `release_contract: "garbage"` variants | `scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh` (existing, unchanged) |
 
@@ -967,12 +984,12 @@ can be mistaken for production code.
    `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
    and capture the failures.
 5. **Implement the producer changes** (D1, D3, D4). Re-run the suite green.
-6. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11), capture failures.
-7. **Implement the bundle changes** (D2, GAP-1, GAP-9, enum validation). Re-run green.
-8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18, including
+6. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11 and T23), capture failures.
+7. **Implement the bundle changes** (D2, GAP-1, GAP-9, GAP-14, enum validation). Re-run green.
+8. **Add the red tests for `component-milestone-reconciliation.sh`** (T12-T18 and T24, including
    T15a and T15d; T15b and T15c are the red-capture exemptions for this suite), capture
    failures.
-9. **Implement the reconciliation changes** (GAP-4, D5, D9, D6, `trust_basis`). Re-run green.
+9. **Implement the reconciliation changes** (GAP-4, D5, D9, D6, GAP-14, `trust_basis`). Re-run green.
 10. **Add the red tests for cleanup and assurance** (T19-T22, including T20b, T20c, T20d, T20e,
     and T20f — T20f run once per `artifact_owners` sub-field, six red-then-green pairs; T22 is
     the red-capture exemption for this suite), capture failures.
@@ -1008,7 +1025,7 @@ can be mistaken for production code.
 | Brief acceptance criterion | Where satisfied | Test / evidence |
 | --- | --- | --- |
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | The published matrix's field column, diffed against the Producer emitted-field contract table (16 rows) and the never-emitted-fields list (7 rows), shows zero missing and zero extra fields across all four consumer columns (`delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`, `multi-repo-release-assurance.sh`, `prepare-release-post-merge-cleanup.sh`) — a check that fails if the matrix section is absent, truncated, or omits any field, unlike a bare field-enumeration count. Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers corroborates the source counts the diff is run against |
-| No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8, GAP-13; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T15d, T16, T19, T20, T20b, T20c, T20d, T20e, T20f |
+| No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8, GAP-13, GAP-14; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T15d, T16, T19, T20, T20b, T20c, T20d, T20e, T20f, T23, T24 |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T21 other than T6b, T15b, and T15c (including T5b, T6a, T6c, T6d, T6e, T15a, T15d, T20b, T20c, T20d, T20e, and T20f) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T6b, T15b, T15c, and T22 are the four declared red-capture exemptions and are recorded green-before and green-after |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 4, 6, 8, 10 capture red before green | T1-T24 other than T6b, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, and T24) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T6b, T15b, T15c, and T22 are the four declared red-capture exemptions and are recorded green-before and green-after |
 | The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, T6a/T6e pin the two directions of the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing — T6a pins that `component_release_routed` requires non-`null`, T6e pins that `single_repo_release` requires `null`) while T6b pins the `null` passthrough this plan leaves unchanged, and T6c/T6d pin the `producer_required` promise for `routing_outcome` and `artifact_owners` |
