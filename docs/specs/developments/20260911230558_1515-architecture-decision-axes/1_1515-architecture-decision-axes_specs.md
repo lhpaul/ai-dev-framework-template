@@ -109,7 +109,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 
 **Considerations**:
 
-- The declaration is required wherever the citation appears in a rationale a human or reviewer will read, not only inside an escalation report. A review-thread reply is exactly such a surface: a reviewer reads it directly, often before any escalation report exists.
+- The declaration is required in the two surfaces this feature covers — an escalation report and a reply on a review thread — not only inside an escalation report. A review-thread reply is exactly such a surface: a reviewer reads it directly, often before any escalation report exists. A citation in other human-readable rationale, such as a planning artifact, is outside this feature's scope.
 - Declaring Departs is not by itself an architecture decision. Where conforming to the cited line is the obvious correction, the axis is settled and the correction is the next action.
 - Not yet implemented exists for citations made before the behavior is built — during planning, or about work not yet started. It is never used to avoid declaring a departure in behavior that does exist.
 
@@ -219,7 +219,7 @@ Reason, recorded with every Genuinely open verdict:
 | Governing lines conflict            | More than one line bears on this axis and they do not agree. Reported with every conflicting citation and what each would require.            |
 | Governing line covers a different case | A line looks applicable but governs a neighbouring case rather than this axis. Reported with the citation and why it does not reach the axis. |
 | Coverage uncertain                  | The runner cannot tell whether a line reaches this axis. Reported with the citation in doubt and what is unclear about it — or, where no candidate citation can even be tested because the axis itself is unclear, with what is ambiguous about the axis instead. |
-| Governing line disputed             | A line reaches and covers this axis, and the runner is not uncertain about that — but the runner judges the line's substance to be wrong. Reported with the citation and a proposed amendment stating what the line should become instead. A proposed amendment is required; disputing a line without one is not a valid use of this reason. |
+| Governing line disputed             | This axis is the dispute itself — a separate axis from the one the cited line settles, never a reclassification of it. It applies where a line reaches and covers that other axis, and the runner is not uncertain about that coverage, but judges the line's substance to be wrong; the other axis keeps its own coverage verdict. Reported with the citation and a proposed amendment stating what the line should become instead. A proposed amendment is required; disputing a line without one is not a valid use of this reason. |
 
 Conformance declaration, recorded with every citation:
 
@@ -235,7 +235,7 @@ The one exception is a citation whose conformance genuinely cannot be determined
 
 ## Operational Visibility
 
-- **Escalation report**: emitted wherever the stop itself is reported — in the run summary the operator reads, and as a durable record on the work item's pull request when one exists. It is readable without opening an agent session transcript.
+- **Escalation report**: emitted wherever the stop itself is reported — in the run summary the operator reads, and as a durable record on the work item's own tracker record: its pull request when one exists, or its tracker issue when the run stops before any pull request is opened. This feature changes only the report's content, not where it is routed (Out of Scope, item 7); this bullet names the existing destination the content lands on. It is readable on the work item without opening an agent session transcript.
 - **Stop message**: unchanged in its three existing elements, with the required human action naming the genuinely open axes rather than the question as a whole.
 - **Citation declarations outside the report**: where a runner cites a workflow specification line in a reply on a review thread, the conformance declaration appears in that reply, so a reviewer reading the thread sees it without opening the escalation report.
 - **Incompleteness**: an escalation report missing a required element is identifiable as incomplete from the report alone, without reconstructing what the runner did.
