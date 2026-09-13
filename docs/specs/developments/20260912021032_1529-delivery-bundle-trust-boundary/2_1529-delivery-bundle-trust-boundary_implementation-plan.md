@@ -748,10 +748,22 @@ surface.
     (new) pins that `--child-release-state failed` is *accepted* at parse time (the record
     carries `child_release_state: "failed"`), proving the new validator does not reject this
     pre-existing, meaningful value; T10c and T10d (new) pin the same acceptance for `blocked`
-    and `not_started` respectively, and additionally assert that a subsequent
-    `inspect-manifest`/`finalize` call classifies each as blocker `blocked_component_outcome`
-    via the unchanged `blocker_for_component` branch, proving the widened enum both accepts and
-    correctly classifies the two added states.
+    and `not_started` respectively, and additionally assert the two-stage classification
+    `component_from_evidence`'s existing, unchanged `component_view` call already produces:
+    the `update-component` call's own returned manifest record classifies the new component
+    as blocker `blocked_component_outcome` via the unchanged `blocker_for_component`
+    `child not in ("released", "merged")` branch, but that same `component_view` call also
+    persists `evidence_state: "partial"` onto the stored component record as a side effect
+    (line 222); a subsequent `inspect`/`finalize` call re-runs `blocker_for_component` against
+    that already-persisted component, whose `evidence_state` short-circuit
+    (`state in ("missing", "partial")`, line 159) now fires before the `child_release_state`
+    check is ever reached, so the second call reclassifies the same component as
+    `missing_component_evidence`, not `blocked_component_outcome`. This is pre-existing,
+    unchanged `component_view`/`blocker_for_component` behavior — the enum widening changes
+    only which `child_release_state` values reach this evaluation, not the persisted-state
+    short-circuit itself — so both assertions (the update call's own blocker, and the
+    subsequent call's different blocker) must be captured, or the test would misreport the
+    short-circuit as absent.
   - `blocker_for_component`: narrow the `ci_outcome` acceptance check (line 184) from
     `("passed", "not_applicable", "skipped")` to `("passed", "not_applicable")`, matching
     `component-release-evidence.sh`'s `--ci-outcome` enum exactly; `skipped` is a value the
@@ -1058,8 +1070,8 @@ distinct from every other non-exempt test's "the process exits 0 or names the wr
 | T10 | `test-delivery-bundle-manifest.sh` | `--child-release-state shipped` (not in the enum) | rejected at parse time naming `--child-release-state` |
 | T10a | `test-delivery-bundle-manifest.sh` | `--hub-tracker-reconciliation-outcome garbage` (not in the enum) | rejected at parse time naming `--hub-tracker-reconciliation-outcome` — the symmetric case to T10 for the other `hub_input` flag |
 | T10b | `test-delivery-bundle-manifest.sh` | `--child-release-state failed` (a real, pre-existing member of the flag's closed enum — see the enum note above under `delivery-bundle-manifest.sh`, and `classify_component` line 357) | **not** rejected: parse succeeds, component record carries `child_release_state: "failed"` — proves the new `choices=` validator does not reject this pre-existing, meaningful value; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T13a/T14a) |
-| T10c | `test-delivery-bundle-manifest.sh` | `--child-release-state blocked` (one of the two established component-child states added to the enum — see the enum note above and spec #1358 lines 268-276), then `inspect-manifest`/`finalize` on the resulting manifest | **not** rejected at parse time: component record carries `child_release_state: "blocked"`; the subsequent call returns blocker `blocked_component_outcome` via the unchanged `blocker_for_component` `child not in ("released", "merged")` branch — proves the widened enum accepts and correctly classifies the state; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T10b) |
-| T10d | `test-delivery-bundle-manifest.sh` | `--child-release-state not_started` (the other established component-child state added to the enum), then `inspect-manifest`/`finalize` on the resulting manifest | **not** rejected at parse time: component record carries `child_release_state: "not_started"`; the subsequent call returns blocker `blocked_component_outcome` for the same unchanged `blocker_for_component` reason as T10c; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T10b/T10c) |
+| T10c | `test-delivery-bundle-manifest.sh` | `--child-release-state blocked` (one of the two established component-child states added to the enum — see the enum note above and spec #1358 lines 268-276), then `inspect`/`finalize` on the resulting manifest | **not** rejected at parse time: component record carries `child_release_state: "blocked"`, and the `update-component` call's own returned manifest record already classifies it as blocker `blocked_component_outcome` via the unchanged `blocker_for_component` `child not in ("released", "merged")` branch; the same `component_view` call also persists `evidence_state: "partial"` onto the stored component as a side effect, so the subsequent `inspect`/`finalize` call re-derives `blocker_for_component` against that persisted state and short-circuits to `missing_component_evidence` before ever reaching the `child_release_state` check — proves the widened enum accepts the value and that both the initial and short-circuited subsequent classifications are unchanged, pre-existing `component_view` behavior; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T10b) |
+| T10d | `test-delivery-bundle-manifest.sh` | `--child-release-state not_started` (the other established component-child state added to the enum), then `inspect`/`finalize` on the resulting manifest | **not** rejected at parse time: component record carries `child_release_state: "not_started"`, and the `update-component` call's own returned manifest record already classifies it as blocker `blocked_component_outcome` for the same unchanged `blocker_for_component` reason as T10c; the subsequent `inspect`/`finalize` call likewise short-circuits to `missing_component_evidence` via the same persisted `evidence_state: "partial"` side effect as T10c; already accepted today (no `choices=` exists yet), so this is green-before and green-after (no fix; regression guard only, like T10b/T10c) |
 | T11 | `test-delivery-bundle-manifest.sh` | valid update | component record carries `release_branch` from the evidence |
 | T12 | `test-component-milestone-reconciliation.sh` | evidence with `routing_outcome: "single_repo_release"` on the hub path | `component_target_mismatch`, blocker `routing_outcome_mismatch`, `mutation_allowed=false` |
 | T13 | `test-component-milestone-reconciliation.sh` | evidence carrying `hub_tracker_reconciliation_outcome: "complete"`, flag omitted | blocker `hub_tracker_reconciliation_outcome_required`; the evidence value is **not** used |
