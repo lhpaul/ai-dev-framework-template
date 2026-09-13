@@ -365,8 +365,8 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 
 ### The escalation names the question and its axes
 
-- [ ] An emitted `architecture_decision` escalation report states the question as it was asked and names who or what raised it.
-- [ ] The report lists the axes the question was separated into. A question with one axis lists one; a question with more lists each of them.
+- [ ] A complete emitted `architecture_decision` escalation report states the question as it was asked and names who or what raised it. Where the question or its source cannot be established, the report instead records that fact and is reported as incomplete, per the malformed-input rule.
+- [ ] A complete report lists the axes the question was separated into. A question with one axis lists one; a question with more lists each of them. Where decomposition produces no axis at all, the report instead records that defect and is reported as incomplete, per the malformed-input rule.
 - [ ] Each listed axis is stated so that a reader can answer it without answering any other listed axis.
 - [ ] No axis in an emitted report carries more than one coverage verdict. An axis the specification settles only in part appears as two or more axes, each with one verdict.
 - [ ] Each argument the report offers names the one axis it addresses. An argument about a different axis than the one raised is labelled as addressing that other axis.
