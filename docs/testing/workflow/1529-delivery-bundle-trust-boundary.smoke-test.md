@@ -620,8 +620,11 @@ and confirm each of the following:
 2. The producer's emitted-field table lists every field the producer emits, each
    carrying exactly one trust class, and no field's entry contradicts the
    definition of the class it carries. `selected_product_repo_key` is
-   `producer_required_nullable`; every other always-emitted field is
-   `producer_required`.
+   `producer_required_nullable`; `component_tag` and `component_version` are
+   `producer_conditional` (the key is always emitted, but the value is `null`
+   when the corresponding flag was not supplied); every other always-emitted
+   field — always emitted with a non-empty value, never conditionally `null` —
+   is `producer_required`.
 3. The field x consumer matrix has one row per emitted field and per
    never-emitted field a consumer reads, and one column per consumer:
    `delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`,
