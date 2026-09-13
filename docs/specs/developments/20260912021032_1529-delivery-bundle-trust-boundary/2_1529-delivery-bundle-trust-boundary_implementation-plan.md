@@ -631,8 +631,14 @@ surface.
 - [ ] `scripts/development-workflow/component-release-evidence.sh`
   - Add `--component-version VERSION` argument parsing and usage text (D1).
   - Add a `validate_identifier` helper applying `^[A-Za-z0-9._-]+$` to `--component-tag` and
-    `--component-version` when supplied; exit `2` with
-    `--component-tag must use letters, numbers, dot, underscore, or hyphen` (D3).
+    `--component-version` when supplied; the helper takes the offending flag's own name as an
+    argument and exits `2` with `--<flag-name> must use letters, numbers, dot, underscore, or
+    hyphen`, i.e. exactly `--component-tag must use letters, numbers, dot, underscore, or hyphen`
+    when called for `--component-tag` and exactly `--component-version must use letters, numbers,
+    dot, underscore, or hyphen` when called for `--component-version` (D3) — T3 and T4
+    (Fabricated-value rejection cases table) and smoke Step 5 each assert the message names the
+    flag under test, and this parameterization is what makes both flags' diagnostics correct from
+    the one shared helper.
   - After the six `compare_field` calls, refuse emission when `canonical_repository_identity`,
     `release_correlation_key`, `contract_revision`, or `routing_outcome` resolves empty, or when
     any `artifact_owners` sub-field (`release`, `ci`, `github_release`, `deployment`, `cleanup`,
@@ -1099,9 +1105,17 @@ validator deserves explicit accept/reject inputs so T3 and T4 are not the only c
 
 ### Regression suite
 
-The repository's regression surface for this subsystem is the five shell suites above; they
-are selected automatically by `select-test-suites.sh` when their scripts change. Full local
-run:
+The five shell suites this plan **modifies** are `test-component-release-evidence.sh`,
+`test-delivery-bundle-manifest.sh`, `test-component-milestone-reconciliation.sh`,
+`test-multi-repo-release-assurance.sh`, and `test-prepare-release-tracker-cleanup.sh` (see
+Files to Modify — Full Enumeration, "Runtime (5)" and "Tests and fixtures (7)"); they are
+selected automatically by `select-test-suites.sh` when their scripts change. The full local
+run below also executes `test-component-release-target.sh` and `test-workflow-hub-docs.sh` —
+two suites this plan does not modify but includes for consistency/safety, because
+`component-release-target.sh`'s output shape is the direct input this plan's new D4 guards
+validate (`routing_outcome`, `selected_product_repo_key`) and `test-workflow-hub-docs.sh`
+covers five of the documentation files this plan edits (see "Deliberately excluded, with
+evidence" above). Full local run:
 
 ```bash
 for suite in component-release-evidence delivery-bundle-manifest \
