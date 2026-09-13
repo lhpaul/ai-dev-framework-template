@@ -152,7 +152,7 @@ Deferral notes for B-1's and B-5's partial-coverage items, B-6, and B-7 are reco
 3. It completes the remaining platforms and reports the run outcome, distinguishing the undetermined platforms from those that passed.
 4. The run proceeds if nothing else blocked it.
 
-**Postconditions**: The run proceeded, and the run's report says plainly which platforms were not verified. No undetermined platform was reported as having passed.
+**Postconditions**: The run proceeded, unless some other platform in the resolved list was independently Cannot review — in which case the outcome is Blocked and nothing was dispatched, exactly as the canonical outcome rule requires when any platform is Cannot review, whether or not another platform is also Undetermined. When the run did proceed, the run's report says plainly which platforms were not verified, and no undetermined platform was reported as having passed.
 
 **Information shown**:
 
