@@ -83,7 +83,7 @@ Deferral notes for B-1's, B-4's, and B-5's partial-coverage items, B-6, and B-7 
 4. It records the run outcome Blocked and reports it.
 5. Nothing is dispatched.
 
-**Postconditions**: No item was dispatched, no branch was created, no pull request was opened, and no tracker status changed on account of this run. The repository is in the state it was in before the run started. The operator has a report that names the platform, the surface, the setting, and at least one action that would change the outcome.
+**Postconditions**: This item is not dispatched: no branch was created, no pull request was opened, and no tracker status changed on account of this item's own run. Nothing this item's own run would have touched — its own branch, pull request, and tracker status — changed on account of this item's preflight; this postcondition is scoped to this item alone and says nothing about an earlier item a batch run may already have dispatched before reaching this one. The operator has a report that names the platform, the surface, the setting, and at least one action that would change the outcome.
 
 **Information shown**:
 
