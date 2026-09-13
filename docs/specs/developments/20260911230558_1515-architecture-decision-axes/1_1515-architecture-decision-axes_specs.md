@@ -229,6 +229,8 @@ Conformance declaration, recorded with every citation:
 | Departs             | The runner's current behavior does not match the cited line. Reported with what the behavior does instead and why.                       |
 | Not yet implemented | The cited line governs behavior that does not exist yet, so there is nothing to conform to or depart from. Never used where behavior exists. |
 
+The one exception is a citation whose conformance genuinely cannot be determined for behavior that already exists: it carries none of the three declarations above. That case is governed by the malformed-input rule in the Decision-Gate Consistency Matrix, not by this table.
+
 ---
 
 ## Operational Visibility
