@@ -1263,10 +1263,19 @@ The developer executes these after implementation; they are only identified here
       carrying RESIDUAL-1 through RESIDUAL-7 verbatim with their rationales, including
       RESIDUAL-7's pointer to issue #1742 for the spec #1357 `ci_outcome: skipped`
       discrepancy; (7) the
-      `classify_component` mutation-eligibility decision gate (hub path) — a pointer to the
-      "Decision gate — `classify_component` mutation eligibility (hub path)" subsection of this
-      plan (Table A ordered preconditions, Table B accumulating outcome), not a duplicate table,
-      since this plan is the authoritative source and a copy would drift independently of it.
+      `classify_component` mutation-eligibility decision gate (hub path) — this section embeds
+      Table A (ordered preconditions) and Table B (accumulating outcome) verbatim, copied at
+      implementation time from this plan's "Decision gate — `classify_component` mutation
+      eligibility (hub path)" subsection, including the repository-mode-is-first-gate paragraph
+      preceding Table A and the `child_release_state` precedence-resolution paragraph following
+      Table B, not a pointer into that subsection: `sync-manifest.yaml` classifies
+      `docs/workflow/` as `always_sync` to downstream template consumers and has no entry for
+      `docs/specs/`, so a downstream repository receiving this contract document through
+      template sync never receives this plan, and a pointer into an unsynced plan would be a
+      broken reference for that reader. This plan's own copy remains the source the developer
+      copies from; keeping two copies accepts the same class of documented, uncaught drift risk
+      already recorded for the emitted-field contract table (RESIDUAL-6), not a claim that the
+      two copies are mechanically kept in sync.
 - [ ] `docs/workflow/development-workflow/repository-modes.md` — in the paragraph beginning
       "`scripts/development-workflow/component-release-evidence.sh` renders deterministic
       ..." (around line 73), link the new contract document and state that the producer
@@ -1296,7 +1305,14 @@ The developer executes these after implementation; they are only identified here
       note that `--component-version` is now required on `delivery-bundle-manifest.sh
       update-component` (around line 430); note the new `TRUST_CLASS` output of
       `multi-repo-release-assurance.sh` (around line 383); link the contract document from
-      each of the five helper sections.
+      each of the five helper sections. Also update the `component-milestone-reconciliation.sh`
+      `inspect-component` and `apply-component` usage examples (around lines 510-524) to add
+      `--hub-tracker-reconciliation-outcome complete` and `--child-release-state released` to
+      both examples, with realistic example values drawn from Table B's non-blocking members:
+      GAP-5/D5 removes these two flags' evidence-file fallback and makes them unconditionally
+      required on the hub path, so the existing examples, followed verbatim, always block
+      (`hub_tracker_reconciliation_outcome_required` / `child_release_state_required`) even with
+      an otherwise-valid evidence file.
 - [ ] `.agents/skills/prepare-release/SKILL.md` — step 8 currently says the evidence "must
       include `hub_tracker_ref`, `hub_tracker_reconciliation_outcome` ... and
       `child_release_state`". Correct it: the evidence must include `hub_tracker_ref`,
