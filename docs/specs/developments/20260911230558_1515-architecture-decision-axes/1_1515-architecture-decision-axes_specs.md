@@ -310,7 +310,7 @@ These three rows are read in the order listed, because the second and third pres
 
 None of these three rows produces "Not an architecture decision" or any other outcome that lets the run continue without a human decision.
 
-A report can combine the third row with the settled-axis and open-axis outcomes above: a decomposition can have one axis whose citation's conformance is undetermined alongside other axes that are genuinely open, settled with a determined declaration, or subject to a departure. Where it does, the report is incomplete rather than well-formed — the third row's own outcome governs — and the requested decision combines the genuinely open axes' decision, if any, with a named request for the missing conformance evidence for each axis the third row applies to.
+A report can combine the third row with the settled-axis and open-axis outcomes above: a decomposition can have one axis whose citation's conformance is undetermined alongside other axes that are genuinely open (including an axis whose open reason is Governing lines conflict, if one of the conflicting citations is itself undetermined — the axis keeps its Genuinely open verdict and conflict content while the undetermined citation separately requests evidence), settled with a determined declaration, or subject to a departure. Where it does, the report is incomplete rather than well-formed — the third row's own outcome governs — and the report states the genuinely open axes' requested decision, if any, alongside a separately reported request for the missing conformance evidence for each axis the third row applies to; the evidence request is never merged into the requested decision itself.
 
 ### Mirror surfaces
 
@@ -393,12 +393,12 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 
 ### The requested decision covers only the open axes
 
-- [ ] An emitted report states the decision requested of the human, and that decision names the genuinely open axes, combined with a named request for conformance evidence for any axis whose citation's conformance could not be determined; that axis itself stays Settled by specification and is never listed as genuinely open on that account.
+- [ ] An emitted report states the decision requested of the human, and that decision names the genuinely open axes only. Where a citation's conformance could not be determined, the report separately states — as its own element, never merged into the requested decision — a request for the missing conformance evidence; the axis that citation was meant to settle stays Settled by specification and is never listed as genuinely open on that account.
 - [ ] No axis marked Settled by specification appears in the requested decision.
-- [ ] A report that contains at least one settled axis and at least one open axis asks the human about the open axis only, and the human can confirm that by reading the report alone.
+- [ ] A report that contains at least one settled axis and at least one open axis asks the human about the open axis only, and the human can confirm that by reading the report alone. A separately reported conformance-evidence request, where one applies, is additional to the requested decision and does not count as asking about a settled axis.
 - [ ] A recommendation, where the report offers one, is labelled as a recommendation and is stated separately from the requested decision.
 - [ ] The report does not act on, pre-answer, or ask for ratification of any axis marked Genuinely open.
-- [ ] The emitted stop still carries the exact stop condition name, the affected work item, and the concrete human action required. The required human action names the open axes, combined with a named request for conformance evidence for any axis whose citation's conformance could not be determined.
+- [ ] The emitted stop still carries the exact stop condition name, the affected work item, and the concrete human action required. The required human action names the open axes and, separately, any conformance evidence to supply for an axis whose citation's conformance could not be determined.
 - [ ] The report is readable on the work item after the run ends, without opening an agent session transcript.
 
 ### The requirement never suppresses a stop
