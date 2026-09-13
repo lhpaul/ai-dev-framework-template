@@ -45,7 +45,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 
 - Answer the open axis or axes, which is the requested decision.
 - Reject the decomposition and ask the runner to redo it.
-- Overturn an axis the runner marked settled, by deciding that the cited line should change. That is a different question from the one asked, and it enters as a new axis rather than as an answer to this one.
+- Overturn an axis the runner marked settled, by deciding that the cited line should change. That is a different question from the one asked, and it enters as a new axis — Genuinely open with the reason Governing line disputed, carrying a proposed amendment for what the line should become — rather than as an answer to this one.
 
 **Considerations**:
 
@@ -95,7 +95,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 1. The runner identifies the line it intends to cite.
 2. Before offering it, it declares whether its current behavior Conforms to that line or Departs from it.
 3. Finding that the behavior departs, it states the departure plainly and does not present the line as support.
-4. It records the departure as a finding about its own work: either an error to correct by conforming, or a reason to ask whether the line itself should change — which is a separate axis, genuinely open.
+4. It records the departure as a finding about its own work: either an error to correct by conforming, or a reason to ask whether the line itself should change — which is a separate axis, Genuinely open with the reason Governing line disputed, carrying a proposed amendment for what the line should become.
 
 **Postconditions**: The contradiction is visible in the runner's own words, at the moment of citation, rather than being discovered later by a reviewer or a human. No citation stands as support for behavior that contradicts it.
 
@@ -137,7 +137,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 
 - Decide the open axes.
 - Send the report back as incomplete, naming the missing element.
-- Decide that a settled axis should be reopened by changing the cited line.
+- Decide that a settled axis should be reopened by changing the cited line, which the next report carries as a new axis under the reason Governing line disputed, with a proposed amendment.
 
 **Considerations**:
 
@@ -180,12 +180,13 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 - An **axis** is one independently decidable component of the question raised. Two proposed axes that cannot be answered separately are one axis. An axis that the specification settles only in part is split until every axis carries exactly one coverage verdict.
 - Every axis carries exactly one coverage verdict: **Settled by specification** or **Genuinely open**. There is no partial verdict.
 - An axis is Settled by specification only when a specific, cited workflow specification line answers it. A general principle, an inference from neighbouring guidance, or the runner's own past behavior is not a settling citation.
-- Every Genuinely open axis carries exactly one reason, drawn from the defined reason vocabulary, and the reason is stated in terms of what was looked for rather than asserted.
+- Every Genuinely open axis carries exactly one reason, drawn from the defined reason vocabulary, and the reason is substantiated by what the runner looked for, found, or would change — never merely asserted.
 - Where the reason is **No governing line**, the report names the surfaces the runner consulted. An unsearchable claim of absence is not a reason.
 - Where the runner cannot tell whether a line reaches an axis, the axis is Genuinely open with the reason **Coverage uncertain**, and the uncertainty is stated as such. Uncertainty is never resolved in favour of settled.
+- Where a cited line reaches and covers an axis, and the runner is not uncertain about that, but the runner judges the line's substance to be wrong, that dispute is a new axis, stated separately, Genuinely open with the reason **Governing line disputed**, and the report states a proposed amendment: what the line should become instead. It does not reclassify the axis the line settles; that axis keeps its own coverage verdict, reported together with the conformance declaration against the disputed line. The proposed amendment is required — disputing a line's substance without stating what it should instead say is not a valid use of this reason.
 - Every citation offered anywhere in the runner's rationale carries a **conformance declaration**: Conforms, Departs, or Not yet implemented. This holds in escalation reports and in replies on review threads — anywhere the runner offers a citation as support for a decision a human or reviewer will weigh.
 - A citation whose declaration is Departs is never presented as support for the current behavior. The report states the departure plainly, in the runner's own words, before it asks the human anything.
-- A departure is a finding about the runner's own work. It is either an error to correct by conforming to the cited line, or a reason to ask whether the line should change. The second is a new axis, stated separately, and is Genuinely open.
+- A departure is a finding about the runner's own work. It is either an error to correct by conforming to the cited line, or a reason to ask whether the line should change. The second is a new axis, stated separately, Genuinely open with the reason Governing line disputed, and it carries a proposed amendment stating what the line should become.
 - Every argument the runner offers is attached to exactly one axis. An argument that addresses a different axis than the one raised is labelled as such and is not presented as an answer to the question asked.
 - The **requested decision** covers the genuinely open axes only. Settled axes are reported for checking and are never included in what the human is asked to decide.
 - The runner may state a recommendation for an open axis. A recommendation is labelled as one, never presented as the answer, and never narrows the decision the human can make.
@@ -218,6 +219,7 @@ Reason, recorded with every Genuinely open verdict:
 | Governing lines conflict            | More than one line bears on this axis and they do not agree. Reported with every conflicting citation and what each would require.            |
 | Governing line covers a different case | A line looks applicable but governs a neighbouring case rather than this axis. Reported with the citation and why it does not reach the axis. |
 | Coverage uncertain                  | The runner cannot tell whether a line reaches this axis. Reported with the citation in doubt and what is unclear about it — or, where no candidate citation can even be tested because the axis itself is unclear, with what is ambiguous about the axis instead. |
+| Governing line disputed             | A line reaches and covers this axis, and the runner is not uncertain about that — but the runner judges the line's substance to be wrong. Reported with the citation and a proposed amendment stating what the line should become instead. A proposed amendment is required; disputing a line without one is not a valid use of this reason. |
 
 Conformance declaration, recorded with every citation:
 
@@ -270,7 +272,7 @@ Triggers are events. They decide when this gate runs, and none of them is read a
 | Every axis Genuinely open                                                      | Escalated                   | Stops with a report listing each axis, its reason, and a requested decision covering all of them           | Decide the open axes                                             |
 | At least one axis settled, at least one open                                   | Escalated, scope narrowed   | Stops with the settled axes cited and the requested decision covering the open ones only                   | Decide the open axes; the settled ones need no answer            |
 | Every axis settled, the runner conforms, and the runner is not uncertain       | Not an architecture decision | Applies the cited lines and continues; no human decision was required                                      | None                                                             |
-| Every axis settled, the runner's behavior departs on one                       | Departure reported          | States the departure plainly and either conforms, or opens a new axis asking whether the line should change | None, unless a new axis was opened — then decide that axis       |
+| Every axis settled, the runner's behavior departs on one                       | Departure reported          | States the departure plainly and either conforms, or opens a new axis — Genuinely open with the reason Governing line disputed and a proposed amendment — asking whether the line should change | None, unless a new axis was opened — then decide that axis       |
 | Every axis settled, but the runner is unsure the lines fully answer the question | Escalated                   | Records the uncertainty as an open axis with the reason Coverage uncertain, and stops                      | Decide the uncertain axis                                        |
 | Lines bearing on one axis conflict                                             | Escalated                   | Reports the axis as open with every conflicting citation and what each requires                            | Decide which line governs                                        |
 | The question does not separate into more than one independently answerable component, and that one axis is Genuinely open | Escalated                   | Reports the whole question as one axis, per the axis rule in Business Rules — never as zero axes. Where what is ambiguous about the question itself keeps the runner from telling whether any line reaches it, marks that one axis Genuinely open with the reason Coverage uncertain, and states the ambiguity as what is unclear | Decide the axis, or restate the question so the runner can attempt coverage again |
@@ -283,7 +285,7 @@ The fourth of those four — the runner is unsure the cited lines fully answer t
 
 The same precedence holds for "Lines bearing on one axis conflict": whenever an axis's open reason is a conflict between governing lines, that axis is read by the conflict row rather than by "Every axis Genuinely open" or "At least one axis settled, at least one open" — whichever axis count alone would otherwise suggest — because the general rows do not distinguish reasons and the conflict row supplies the citation-by-citation content the report needs. The "Every axis Genuinely open" row and the "Lines bearing on one axis conflict" row are for questions with more than one axis. Where a question does not separate into more than one axis at all, its single axis is read instead by the row for a question that does not separate when Genuinely open, and by the settled-axis rows above when settled — never by those two multi-axis rows.
 
-The departs row carries the same precedence when its second branch fires. Opening a new axis to ask whether the cited line should change gives the question the same settled-and-open shape as "At least one axis settled, at least one open" too, but that new axis is still read by the departs row that produced it, not by the general row: the departs row already names what the new axis asks and what the operator does about it, which the general row does not. The general row governs axes that arrived open from the initial decomposition; it does not re-govern an axis a departure produced.
+The departs row carries the same precedence when its second branch fires. Opening a new axis — Genuinely open with the reason Governing line disputed and a proposed amendment — to ask whether the cited line should change gives the question the same settled-and-open shape as "At least one axis settled, at least one open" too, but that new axis is still read by the departs row that produced it, not by the general row: the departs row already names what the new axis asks and what the operator does about it, which the general row does not. The general row governs axes that arrived open from the initial decomposition; it does not re-govern an axis a departure produced.
 
 No outcome above answers an open axis, acts on a provisional answer to one, or asks the human to ratify an action already taken on one. No outcome changes which stop condition applies to a question, and none suppresses a stop the runner would otherwise have taken.
 
@@ -326,6 +328,7 @@ The opening rows work through the recorded incident.
 | Two lines that require different things of the same behavior                                                    | Genuinely open — Governing lines conflict     | Both citations, what each requires, and a declaration against each                                                   |
 | A line that governs the draft stage, raised about the ready stage                                               | Genuinely open — Governing line covers a different case | The citation, and why it does not reach the axis                                                            |
 | A line the runner cannot tell applies                                                                           | Genuinely open — Coverage uncertain           | The citation in doubt and what is unclear about it; never resolved as settled                                        |
+| A line reaches and covers the axis, the runner is not uncertain, but judges the line's substance wrong          | Genuinely open — Governing line disputed      | The citation, and a proposed amendment stating what the line should become instead                                   |
 | A citation about behavior the plan has not built yet                                                            | Not yet implemented                           | The declaration says so; it is not used where the behavior exists                                                    |
 | Every axis settled, the runner conforms, no uncertainty                                                         | No escalation                                 | The runner applies the cited lines; there was no architecture decision to make                                       |
 | Every axis settled, coverage certain, and every citation is Not yet implemented — nothing cited has been built yet | No escalation                                 | The runner proceeds to build what the cited lines specify; there is no departure to declare, because there is no behavior yet to conform or depart                       |
@@ -362,10 +365,11 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 
 - [ ] Every axis in an emitted report carries exactly one coverage verdict: Settled by specification or Genuinely open.
 - [ ] Every axis marked Settled by specification carries a citation identifying a specific workflow specification line, and says how that line answers the axis.
-- [ ] Every axis marked Genuinely open carries exactly one reason: No governing line, Governing lines conflict, Governing line covers a different case, or Coverage uncertain.
+- [ ] Every axis marked Genuinely open carries exactly one reason: No governing line, Governing lines conflict, Governing line covers a different case, Coverage uncertain, or Governing line disputed.
 - [ ] An axis marked Genuinely open with the reason No governing line names the surfaces the runner consulted.
 - [ ] An axis marked Genuinely open with the reason Governing lines conflict cites every conflicting line and states what each would require.
 - [ ] An axis the runner could not resolve is reported as Genuinely open with the reason Coverage uncertain, naming the citation in doubt — or, where the axis itself is too ambiguous for any citation to be tested against it, naming what is ambiguous about the axis instead. No report resolves an uncertain axis as settled.
+- [ ] An axis marked Genuinely open with the reason Governing line disputed carries the citation and a proposed amendment stating what the cited line should become instead. The reason is never used without a proposed amendment, and it is reported as a new axis separate from the axis the disputed line settles.
 
 ### Citations carry a conformance declaration
 
@@ -374,7 +378,7 @@ Acceptance criteria are referenced by group — the sub-headings under **Accepta
 - [ ] A citation the runner offers in a reply on a review thread carries the same declaration, visible in that reply.
 - [ ] Not yet implemented appears only where the cited line governs behavior that does not exist yet. A report never uses it for behavior the runner has already built.
 - [ ] Where a departure is reported and conforming to the cited line is the correction, the axis is reported as Settled by specification and the correction is named as the next action — not put to the human as an architecture decision.
-- [ ] Where a departure leads the runner to question the cited line itself, that question appears as a separate axis marked Genuinely open, not as an answer to the axis originally raised.
+- [ ] Where a departure leads the runner to question the cited line itself, that question appears as a separate axis marked Genuinely open with the reason Governing line disputed, carrying a proposed amendment, not as an answer to the axis originally raised.
 - [ ] Where every axis is Settled by specification and every citation on those axes is declared Not yet implemented, the runner proceeds with the work the cited lines specify and does not raise an `architecture_decision` escalation for that question.
 
 ### The requested decision covers only the open axes
