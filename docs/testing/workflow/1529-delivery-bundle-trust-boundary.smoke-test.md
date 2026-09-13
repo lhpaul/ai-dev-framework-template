@@ -88,32 +88,41 @@ producer-unemittable `ci_outcome: "skipped"`).
 **Maps to**: Acceptance Criterion 4.
 
 Read the implementation PR description (or the commit series). For each of the
-rejection tests T1-T24 listed in the plan's Testing Strategy, locate the captured
-failing output recorded before its fix. Four tests are exempt: T22 is a
-regression guard for a defect already fixed in review round 3; T6b pins the
-producer's deliberately unchanged `null` passthrough for `single_repo_release`
-routing; T15b pins reconciliation's deliberately unchanged non-blocking
-treatment of `evidence_state: "released"` (already accepted before this plan,
-and D9's disposition table preserves that behavior rather than tightening it);
-and T15c pins reconciliation's deliberately unchanged treatment of an evidence
-record whose `evidence_state` key is entirely absent (synthesized as `verified`
-when `schema_version` matches, per D9's `absent` row — a pre-existing behavior
-this plan does not touch). All four are green against unmodified runtime code
-by design, and the plan records them as the only four exemptions. T23 and T24
-(GAP-14, the `ci_outcome: "skipped"` rejection) are **not** exempt and must
-each show a captured red state.
+rejection tests T1-T24 (plus T6f, T6g, T6h, T13a, T14a, and T20g) listed in the
+plan's Testing Strategy, locate the captured failing output recorded before its
+fix. Six tests are exempt: T22 is a regression guard for a defect already
+fixed in review round 3; T6b pins the producer's deliberately unchanged `null`
+passthrough for `single_repo_release` routing; T15b pins reconciliation's
+deliberately unchanged non-blocking treatment of `evidence_state: "released"`
+(already accepted before this plan, and D9's disposition table preserves that
+behavior rather than tightening it); T15c pins reconciliation's deliberately
+unchanged treatment of an evidence record whose `evidence_state` key is
+entirely absent (synthesized as `verified` when `schema_version` matches, per
+D9's `absent` row — a pre-existing behavior this plan does not touch); and
+T13a/T14a each pin a pre-existing, unchanged `pending`-value regression for one
+of the two hub-input flags (the `not in {"complete", "deferred"}` /
+`not in {"released", "merged"}` blocker comparisons are untouched by GAP-5/D5).
+All six are green against unmodified runtime code by design, and the plan
+records them as the only six exemptions. T23 and T24 (GAP-14, the
+`ci_outcome: "skipped"` rejection) and T20g (GAP-15, the empty/missing
+`cleanup_outcome` rejection) are **not** exempt and must each show a captured
+red state.
 
-**Expected result**: every rejection test except T6b, T15b, T15c, and T22 has a
-recorded failure against the unmodified runtime code and a recorded pass after
-the fix (this includes T15d, which proves the *new* `invalid_evidence_state`
-disposition for a present but non-string `evidence_state` value such as JSON
-`null`, distinct from the unchanged absent-key case in T15c; and T23/T24, which
-prove the *new* rejection of `ci_outcome: "skipped"` at both consumers). A
-non-exempt test with no recorded red state is a FAIL for this step. T6b, T15b,
-T15c, and T22 must each be recorded as green both before and after: T6b proving
-the new identity precondition was not over-applied, T15b proving `released`
-still is not blocked, T15c proving an absent `evidence_state` key still is not
-blocked, and T22 proving the earlier fix did not regress.
+**Expected result**: every rejection test except T6b, T13a, T14a, T15b, T15c,
+and T22 has a recorded failure against the unmodified runtime code and a
+recorded pass after the fix (this includes T15d, which proves the *new*
+`invalid_evidence_state` disposition for a present but non-string
+`evidence_state` value such as JSON `null`, distinct from the unchanged
+absent-key case in T15c; T23/T24, which prove the *new* rejection of
+`ci_outcome: "skipped"` at both consumers; and T20g, which proves the *new*
+rejection of an empty/missing `cleanup_outcome`). A non-exempt test with no
+recorded red state is a FAIL for this step. T6b, T13a, T14a, T15b, T15c, and
+T22 must each be recorded as green both before and after: T6b proving the new
+identity precondition was not over-applied, T13a/T14a proving a `pending`
+hub-input flag value was already blocked before this plan and still is after,
+T15b proving `released` still is not blocked, T15c proving an absent
+`evidence_state` key still is not blocked, and T22 proving the earlier fix did
+not regress.
 
 ### Step 4: The producer binds and emits `component_version`
 
@@ -279,6 +288,18 @@ carries `hub_tracker_reconciliation_outcome: "complete"` and
 `child_release_state_required`; the values embedded in the evidence file are not
 used; `mutation_allowed` is `false`.
 
+Then run `inspect-component` on the hub path with otherwise-ready evidence and
+`--hub-tracker-reconciliation-outcome pending` supplied explicitly (the other
+hub-input flag left at a non-blocking value) (T13a); repeat with
+`--child-release-state pending` supplied instead (T14a). `pending` is a real,
+non-terminal value for both flags — it is not an unrecognized string, and it
+must still block.
+
+**Expected result**: the first run's `blockers` contains
+`hub_tracker_reconciliation_pending` and the second run's `blockers` contains
+`child_release_state_pending`; `mutation_allowed` is `false` in both. Neither
+run may pass with an empty `blockers` list.
+
 ### Step 10: Reconciliation rejects an unrecognized evidence state
 
 **Maps to**: Acceptance Criterion 2.
@@ -314,7 +335,7 @@ makes no tracker mutation. Run 2 succeeds with
 `reconciliation_outcome=single_repo_milestone` and reports
 `trust_basis: "caller_asserted"`.
 
-### Step 12: Cleanup rejects evidence with an empty identity field or an empty `release_branch`
+### Step 12: Cleanup rejects evidence with an empty identity field, an empty `release_branch`, or an empty/missing `cleanup_outcome`
 
 **Maps to**: Acceptance Criterion 2.
 
@@ -358,6 +379,17 @@ instead names a `release_correlation_key` mismatch, the guard is implemented in
 the wrong place (after target re-resolution and the identity compares) rather
 than immediately after `evidence_branch` is read — treat that as a FAIL for
 this step. No product release branch is deleted and no tracker state changes.
+
+Then repeat with an otherwise valid, ready-to-clean-up evidence file whose
+top-level `cleanup_outcome` is `""`, then again with the `cleanup_outcome` key
+removed entirely (T20g).
+
+**Expected result**: both runs exit `1` with `Component release evidence is
+missing required field: cleanup_outcome`. Neither run may fall through and
+perform an actual cleanup — that would mean the missing/empty value was
+silently treated the same as any other non-`complete` value instead of being
+rejected outright. No product release branch is deleted and no tracker state
+changes in either run.
 
 ### Step 13: The assurance harness declares its trust class
 
