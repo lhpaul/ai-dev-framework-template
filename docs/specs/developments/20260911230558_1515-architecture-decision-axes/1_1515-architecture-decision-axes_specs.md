@@ -6,7 +6,7 @@
 
 When a runner reaches a question it cannot safely answer on its own, it stops the run and hands that question to a human under the `architecture_decision` stop condition. Nothing today requires it to first establish which part of the question the workflow specification already answers. A question with one settled part and one genuinely open part can be handed over whole, as "an open architecture decision", and the human then does the separation work the runner was better placed to do.
 
-This feature defines what a well-formed `architecture_decision` escalation must contain. The runner states the question as it was actually asked, breaks it into axes that can each be answered without answering the others, and for every axis records whether a workflow specification line already settles it — with the citation — or whether it is genuinely open, with the reason the specification does not reach it. Every line the runner cites carries a plain declaration of whether the runner's own behavior conforms to that line or departs from it. The decision put to the human is then narrowed to the axes that are genuinely open.
+This feature defines what a well-formed `architecture_decision` escalation must contain. The runner states the question as it was actually asked, breaks it into axes that can each be answered without answering the others, and for every axis records whether a workflow specification line already settles it — with the citation — or whether it is genuinely open, with the reason the specification does not reach it. Every line the runner cites carries a plain declaration of how the runner's own behavior relates to it: Conforms, Departs, Not yet implemented for behavior not yet built, or — where conformance genuinely cannot be determined — a plain statement saying so. The decision put to the human is then narrowed to the axes that are genuinely open.
 
 The change is to framing, not to judgment. It does not make a runner stop where it would not have stopped, and it does not let a runner continue past a question that needs a human. It changes what the human receives when the runner does stop: a question already separated into the part the workflow answers and the part only a person can.
 
@@ -118,7 +118,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 ### Use Case 4: The operator reads the stop and decides
 
 **Actor**: The operator — the human the run stopped for.
-**Preconditions**: A run has stopped under `architecture_decision` and its escalation report is available on the work item.
+**Preconditions**: A run has stopped under `architecture_decision` and its escalation report is available where the existing stop-message contract already makes it durable — on the work item's pull request when one exists, or otherwise in the run summary per that contract.
 
 **Steps**:
 
@@ -131,7 +131,7 @@ The defect is on record. In the run that produced this item, a reviewer asked th
 
 **Information shown**:
 
-- The whole report, durable on the work item rather than only in a session transcript.
+- The whole report, durable on the work item's pull request when one exists; otherwise available per the existing stop-message contract, rather than only in a session transcript.
 
 **Actions available**:
 
