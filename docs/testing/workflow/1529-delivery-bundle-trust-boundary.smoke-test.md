@@ -152,8 +152,13 @@ not a clean, documented rejection — running
 pre-fix code crashes because `load_json_file` only catches
 `json.JSONDecodeError` around `open()`, not the `OSError` subclass
 (`IsADirectoryError`) an existing-but-not-a-regular-file path raises. Confirm
-the post-fix run instead exits cleanly with a stable `{label}_unreadable`-class
-blocker distinct from `invalid_json`, and `mutation_allowed: false`. A T28 red
+the post-fix run instead exits `1` with `ERROR_CODE=evidence_unreadable
+message='...'` printed to stderr and **no JSON on stdout** — the same
+stderr-only shape the pre-existing `invalid_json` and `evidence_not_found`
+failures in `load_json_file` already use, not a `classify_component`-style
+structured result with `mutation_allowed` (that field only exists on results
+`classify_component` builds after a record has already been parsed;
+`load_json_file` fails before any record exists). A T28 red
 state that is already a clean exit (rather than a captured traceback) does not
 satisfy this step.
 
@@ -183,8 +188,10 @@ the post-fix run instead exits cleanly with `ci_outcome_invalid` /
 is likewise not a clean wrong-blocker exit: the unmodified script raises an
 uncaught `OSError` (an `IsADirectoryError`, unwrapped by `load_json_file`)
 and crashes instead of returning any blocker at all; capture that crash as
-the red state, and confirm the post-fix run instead exits cleanly with a
-stable `{label}_unreadable`-class blocker and `mutation_allowed: false`. T27's
+the red state, and confirm the post-fix run instead exits `1` with
+`ERROR_CODE=evidence_unreadable message='...'` printed to stderr and no JSON
+on stdout (see the T28 baseline note above for why this is stderr-only rather
+than a `mutation_allowed` field). T27's
 red capture uses the opposite polarity from T4 (see above): it must be taken
 **before** D1 lands, not after. A non-exempt test
 with no recorded red state, or with a T4 or T27 red state captured at the wrong
