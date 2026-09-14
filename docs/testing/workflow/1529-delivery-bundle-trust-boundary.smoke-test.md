@@ -89,7 +89,7 @@ producer-unemittable `ci_outcome: "skipped"`, non-string `ci_outcome`/
 **Maps to**: Acceptance Criterion 4.
 
 Read the implementation PR description (or the commit series). For each of the
-rejection tests T1-T26 (plus T6f, T6g, T6h, T10a, T13a, T14a, and T20g) listed
+rejection tests T1-T28 (plus T6f, T6g, T6h, T6i, T10a, T13a, T14a, and T20g) listed
 in the plan's Testing Strategy, locate the captured failing output recorded
 before its fix. Nine tests are exempt: T22 is a regression guard for a defect
 already fixed in review round 3; T6b pins the producer's deliberately
@@ -134,6 +134,29 @@ D1 landed (or one showing exit 2 for the "wrong" reason) does not satisfy this
 step even though it superficially looks like a captured failure — it proves
 nothing about the charset validator this test exists to cover.
 
+T27 requires the opposite-polarity check from T4: confirm the recorded red
+state was captured **before** `--component-version` argument parsing (D1)
+landed — i.e., `--component-version "v1.4.0+build.7"` was *rejected* with
+`exit 2, Unknown argument: --component-version` by the pre-existing catch-all,
+for the right reason, not accepted or rejected for any other cause. Unlike T4,
+T27 needs no intermediate re-check at step 6a/6b: once D1 lands it goes green
+immediately (no charset check yet exists to reject the `+`), and it must stay
+green through step 6b when D3's split, per-flag version charset is applied. A
+T27 red state captured after D1 landed, or one showing any exit code or
+message other than the pre-D1 catch-all's, does not satisfy this step.
+
+T28 requires the same kind of baseline check as T25/T26: confirm the recorded
+red state is the unmodified script's uncaught `OSError` crash (a traceback),
+not a clean, documented rejection — running
+`inspect-component --evidence-file <path-to-a-directory>` against the
+pre-fix code crashes because `load_json_file` only catches
+`json.JSONDecodeError` around `open()`, not the `OSError` subclass
+(`IsADirectoryError`) an existing-but-not-a-regular-file path raises. Confirm
+the post-fix run instead exits cleanly with a stable `{label}_unreadable`-class
+blocker distinct from `invalid_json`, and `mutation_allowed: false`. A T28 red
+state that is already a clean exit (rather than a captured traceback) does not
+satisfy this step.
+
 **Expected result**: every rejection test except T6b, T10b, T10c, T10d, T13a,
 T14a, T15b, T15c, and T22 has a recorded failure against the runtime code as
 it stood immediately before that specific test's own fix (for T4, that
@@ -145,16 +168,26 @@ proves the *new* `invalid_evidence_state` disposition for a present but
 non-string `evidence_state` value such as JSON `null`, distinct from the
 unchanged absent-key case in T15c; T23/T24, which prove the *new* rejection of
 `ci_outcome: "skipped"` at both consumers; T20g, which proves the *new*
-rejection of an empty/missing `cleanup_outcome`; and T25/T26, which prove the
-*new* type guard on `ci_outcome`/`deployment_outcome`). T25/T26's red capture
+rejection of an empty/missing `cleanup_outcome`; T25/T26, which prove the
+*new* type guard on `ci_outcome`/`deployment_outcome`; T27, which proves
+`--component-version`'s charset admits the SemVer `+build.7` segment; and
+T6i, which proves the `component_release_routed` forward guard rejects a
+non-string JSON type exactly like an empty one). T25/T26's red capture
 is not a clean wrong-blocker exit like every other non-exempt test: the
 unmodified script raises an uncaught `TypeError` (unhashable type) and
 crashes instead of returning any blocker at all, because the pre-fix code
 passes a present, non-string evidence value (a JSON array) straight into a
 Python set-membership check; capture that crash as the red state, and confirm
 the post-fix run instead exits cleanly with `ci_outcome_invalid` /
-`deployment_outcome_invalid` and `mutation_allowed: false`. A non-exempt test
-with no recorded red state, or with a T4 red state captured at the wrong
+`deployment_outcome_invalid` and `mutation_allowed: false`. T28's red capture
+is likewise not a clean wrong-blocker exit: the unmodified script raises an
+uncaught `OSError` (an `IsADirectoryError`, unwrapped by `load_json_file`)
+and crashes instead of returning any blocker at all; capture that crash as
+the red state, and confirm the post-fix run instead exits cleanly with a
+stable `{label}_unreadable`-class blocker and `mutation_allowed: false`. T27's
+red capture uses the opposite polarity from T4 (see above): it must be taken
+**before** D1 lands, not after. A non-exempt test
+with no recorded red state, or with a T4 or T27 red state captured at the wrong
 baseline, is a FAIL for this step. T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22
 must each be recorded as green both before and after: T6b proving the new
 identity precondition was not over-applied, T10b proving `--child-release-state
