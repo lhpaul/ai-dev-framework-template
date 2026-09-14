@@ -307,7 +307,7 @@ Each rule carries one outcome per plan revision.
 - Unsatisfied → Satisfied when a later plan revision supplies the required evidence for a claim that still fires the rule, and the outcome is determined again.
 - Unsatisfied → Not applicable when a later plan revision removes the claim that made the rule fire, and the record states the rationale this outcome requires.
 - Not applicable → Satisfied or Unsatisfied when a later plan revision introduces a claim of the rule's class.
-- Satisfied → Unsatisfied when a later plan revision changes the population an evidence record covers and the record is not derived again.
+- Satisfied → Unsatisfied when a later plan revision makes the rule's fired claim fail its pass condition — evidence is deleted or no longer reproduces, a disagreeing duplicate is introduced against the fact under Rule 2, or the population an evidence record covers changes and the record is not derived again.
 - Satisfied → Not applicable when a later plan revision removes the claim that made the rule fire, and the record states the rationale this outcome requires.
 - No outcome persists across plan revisions; every transition above is the result of determining the outcome afresh.
 
