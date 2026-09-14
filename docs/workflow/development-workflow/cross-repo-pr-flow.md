@@ -37,16 +37,25 @@ canonical ownership table for release branches, product cleanup evidence, and
 Tracker reconciliation evidence; this flow only adds the hub checkout execution
 step.
 
-Run from the hub checkout:
+Run from the hub checkout. Bind `$RELEASE_BRANCH` before creating the target: the
+target binding's `release_correlation_key` is a per-attempt value derived in part from
+`--release-branch`, and `component-release-evidence.sh` copies it verbatim rather than
+recomputing it, so the target itself — not only the evidence render below — must be
+resolved against the real release branch, or the correlation key later recorded in the
+evidence file will not match the one `prepare-release-post-merge-cleanup.sh` recomputes
+at cleanup time, causing the documented cleanup path to fail on a correlation-key
+mismatch:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 TARGET_REPO_KEY="faind-mobile-app"
+RELEASE_BRANCH="mobile-app/release/v1.4.0"
 TARGET_BINDING_SAFE_KEY="$(printf '%s' "$TARGET_REPO_KEY" | tr -c 'A-Za-z0-9._-' '_')"
 TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET_BINDING_SAFE_KEY}.XXXXXX")"
 TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
 scripts/development-workflow/component-release-target.sh \
   --repo "$TARGET_REPO_KEY" \
+  --release-branch "$RELEASE_BRANCH" \
   --json > "$TARGET_BINDING_TMP"
 mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```

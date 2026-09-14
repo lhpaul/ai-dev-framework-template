@@ -327,13 +327,27 @@ condemns: an optional overridable field whose absence is not a rejection. It mir
 (`tests/test-delivery-bundle-manifest.sh`, `scripts/development-workflow/README.md`,
 `05-prepare-release-protocol.md`) already passes it.
 
-**D3 — Charset for `--component-tag` and `--component-version` is `^[A-Za-z0-9._-]+$`,
-enforced at the producer.** This is the charset already used three times downstream:
-`TAG_RE` in `component-milestone-reconciliation.sh`, `KEY_RE` in
+**D3 — `--component-tag` is charset-validated at the producer against `^[A-Za-z0-9._-]+$`;
+`--component-version` is charset-validated separately, against the broader
+`^[A-Za-z0-9._+-]+$`.** `--component-tag`'s charset is the one already used three times
+downstream: `TAG_RE` in `component-milestone-reconciliation.sh`, `KEY_RE` in
 `delivery-bundle-manifest.sh`, and `_is_valid_milestone_title` in
 `multi-repo-release-assurance.sh`. Enforcing it at the producer makes it one choke point
 instead of three partial ones, and guarantees a milestone title `<repo>@<tag>` that the
-assurance validator will accept.
+assurance validator will accept. `--component-version` feeds none of those three
+downstream matchers in this plan's scope — it is never part of the `<repo>@<tag>`
+milestone title — so reusing the tag charset for it would be a stricter rule than any
+consumer actually needs, and would conflict with this repository's own already-accepted
+release-version shape: `VERSION_RE` in `component-milestone-reconciliation.sh`
+(`^v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$`) explicitly admits a `+`-prefixed SemVer
+build-metadata segment (e.g. `v1.4.0+build.7`), which the tag charset's `^[A-Za-z0-9._-]+$`
+rejects outright. Adding `+` to `--component-tag`'s charset instead (to keep one shared
+charset for both flags) was rejected: a tag value containing `+` would then pass producer
+validation while still failing all three downstream tag matchers, reintroducing the exact
+"producer accepts what no consumer can accept" defect class GAP-2 exists to close, just for
+a character no legitimate tag needs. The two flags therefore get their own charset constant,
+applied by the same parameterized helper described below — the helper is still the single
+choke point per flag; only the accepted character set differs by flag.
 
 **D4 — The producer refuses to emit when `canonical_repository_identity`,
 `release_correlation_key`, `contract_revision`, `routing_outcome`, or any `artifact_owners`
@@ -662,15 +676,15 @@ surface.
 
 - [ ] `scripts/development-workflow/component-release-evidence.sh`
   - Add `--component-version VERSION` argument parsing and usage text (D1).
-  - Add a `validate_identifier` helper applying `^[A-Za-z0-9._-]+$` to `--component-tag` and
-    `--component-version` when supplied; the helper takes the offending flag's own name as an
-    argument and exits `2` with `--<flag-name> must use letters, numbers, dot, underscore, or
-    hyphen`, i.e. exactly `--component-tag must use letters, numbers, dot, underscore, or hyphen`
-    when called for `--component-tag` and exactly `--component-version must use letters, numbers,
-    dot, underscore, or hyphen` when called for `--component-version` (D3) — T3 and T4
-    (Fabricated-value rejection cases table) and smoke Step 5 each assert the message names the
-    flag under test, and this parameterization is what makes both flags' diagnostics correct from
-    the one shared helper.
+  - Add a `validate_identifier` helper taking both the offending flag's own name and a charset
+    regex as arguments, applying `^[A-Za-z0-9._-]+$` to `--component-tag` and the broader
+    `^[A-Za-z0-9._+-]+$` to `--component-version` when supplied; it exits `2` with
+    `--<flag-name> must use letters, numbers, dot, underscore, or hyphen` (for `--component-tag`)
+    or `--<flag-name> must use letters, numbers, dot, underscore, plus, or hyphen` (for
+    `--component-version`, naming the one extra accepted character) (D3) — T3 and T4
+    (Fabricated-value rejection cases table), T27, and smoke Step 5 each assert the message names
+    the flag under test, and this two-parameter form is what makes both flags' diagnostics and
+    accepted character sets correct from the one shared helper.
   - After the six `compare_field` calls, refuse emission when `canonical_repository_identity`,
     `release_correlation_key`, `contract_revision`, or `routing_outcome` resolves empty, or when
     any `artifact_owners` sub-field (`release`, `ci`, `github_release`, `deployment`, `cleanup`,
@@ -1055,10 +1069,15 @@ fix for either test to be red against; they exist so the new parse-time closed e
 accidentally narrow to just `{"pending", "released", "merged", "failed"}` and silently reject
 these two established component-child states (spec #1358) before `blocker_for_component` can
 classify them. Record all nine as green-before and green-after.
-Every other numbered test must show a captured red state: T1-T26 other than T6b, T10b, T10c,
+Every other numbered test must show a captured red state: T1-T27 other than T6b, T10b, T10c,
 T10d, T13a, T14a, T15b, T15c, and T22, including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a,
-T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, T24, T25, and T26, all target behavior this plan
-introduces — T4's red capture is taken at step 6a rather than step 5, for the reason given above;
+T15a, T15d, T20b, T20c, T20d, T20e, T20f, T23, T24, T25, T26, and T27, all target behavior this
+plan introduces — T4's red capture is taken at step 6a rather than step 5, for the reason given
+above; T27's red state, unlike T4's, is captured cleanly at step 5, before D1 lands: the
+pre-D1 catch-all rejects `--component-version` as an unrecognized flag (exit 2), which fails
+T27's "exit 0, value stored" assertion for the right reason (no coincidental match, unlike T4);
+T27 goes green at step 6a once D1 lands and stays green through step 6b, when D3's split
+version charset is applied — step 6b must not regress it;
 T10a proves the new `choices=` validator rejects an unrecognized
 `--hub-tracker-reconciliation-outcome` value at parse time, the symmetric case to the
 already-existing T10; T15d proves the new `invalid_evidence_state` disposition now applies to a
@@ -1132,6 +1151,7 @@ distinct from every other non-exempt test's "the process exits 0 or names the wr
 | T24 | `test-component-milestone-reconciliation.sh` | evidence carrying `ci_outcome: "skipped"` on the hub path, otherwise valid | blocker `ci_outcome_skipped`, `mutation_allowed=false` (GAP-14) |
 | T25 | `test-component-milestone-reconciliation.sh` | evidence carrying `ci_outcome: []` (a JSON array — any non-`str` JSON value reproduces the defect identically) on the hub path, otherwise valid | `inspect-component` exits cleanly (no uncaught `TypeError`/traceback, no non-zero crash exit) with blocker `ci_outcome_invalid`, `mutation_allowed=false` (GAP-16) |
 | T26 | `test-component-milestone-reconciliation.sh` | evidence carrying `deployment_outcome: []` on the hub path, otherwise valid | `inspect-component` exits cleanly (no uncaught `TypeError`/traceback, no non-zero crash exit) with blocker `deployment_outcome_invalid`, `mutation_allowed=false` (GAP-16) |
+| T27 | `test-component-release-evidence.sh` | `--component-version "v1.4.0+build.7"` supplied, record inspected | exit 0; `component_version` present and equal to the supplied value including the `+build.7` segment — proves `--component-version`'s charset admits the same SemVer build-metadata character (`+`) that `VERSION_RE` already accepts elsewhere in this repository (D3). T27's red state is captured at step 5, before D1 lands: `--component-version` is not yet a recognized flag, so this input is rejected by the pre-existing catch-all (`Unknown argument: --component-version`, exit 2), which fails the "exit 0, value stored" assertion for the right reason. It goes green once D1 lands at step 6a (no charset check exists yet to reject the `+`) and must stay green through step 6b, when D3's split, per-flag charset is applied — unlike T4, T27 needs no intermediate re-check, because D3's version charset was never going to reject it |
 
 ### Charset validator input enumeration (D3)
 
@@ -1362,8 +1382,18 @@ The developer executes these after implementation; they are only identified here
 - [ ] `docs/workflow/development-workflow/cross-repo-pr-flow.md` — the producer snippet
       (around lines 59-70) renders a `pending` record with no tag. Add the second,
       post-release re-render that binds `--component-tag` and `--component-version`, and state
-      that bundle attachment requires that re-rendered file (GAP-11). Keep the
-      `<!-- workflow-shell-contract: bash-zsh -->` marker on every fenced snippet.
+      that bundle attachment requires that re-rendered file (GAP-11). Separately, the earlier
+      target-creation snippet (around lines 43-51) never binds `--release-branch`, unlike the
+      equivalent step in `05-prepare-release-protocol.md`; because `component-release-evidence.sh`
+      copies `target_binding.release_correlation_key` verbatim rather than recomputing it, a
+      target created without `--release-branch` bakes in a correlation key that does not match
+      the per-attempt key `prepare-release-post-merge-cleanup.sh` recomputes when it re-resolves
+      the target with the real `--release-branch` at cleanup time, failing the documented
+      cleanup path on a correlation-key mismatch even though the evidence file's own
+      `release_branch` field is populated. Bind `--release-branch "$RELEASE_BRANCH"` on the
+      target-creation call itself, mirroring `05-prepare-release-protocol.md`'s already-correct
+      pattern. Keep the `<!-- workflow-shell-contract: bash-zsh -->` marker on every fenced
+      snippet.
 - [ ] `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` — same
       two-phase correction for the producer snippet (around lines 158-170) so the documented
       sequence can actually reach the `update-component` snippet (around lines 183-198)
@@ -1434,8 +1464,8 @@ can be mistaken for production code.
    (`FIXTURE_HELPER`), and `test-component-milestone-reconciliation.sh` (step 9) sources
    `setup-component-milestone-fixture.sh` the same way, so both suites' first test-writing step
    must find fixtures already shaped for the tightened contract rather than the pre-plan shape.
-5. **Add the tests for the producer** (T1-T6h, including T5b, T6c, T6d, T6e, T6f, T6g, and T6h —
-   T6d run once per `artifact_owners` sub-field, six red-then-green pairs; T6b is the
+5. **Add the tests for the producer** (T1-T6h and T27, including T5b, T6c, T6d, T6e, T6f, T6g,
+   and T6h — T6d run once per `artifact_owners` sub-field, six red-then-green pairs; T6b is the
    red-capture exemption). Run
    `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
    and capture the failures.
@@ -1443,16 +1473,19 @@ can be mistaken for production code.
    capture that a single combined implementation step cannot provide (see the T4 row in
    Fabricated-value rejection cases and the parameterization note above it):
    1. **Step 6a**: implement D1 (`--component-version` argument parsing and emission) and D4
-      (the identity-field refusal guards), but not yet D3 (the charset validator). Re-run the
-      suite: T1, T2, T5, T5b, T6, T6a-T6h go green. T3 stays red (no charset validator yet,
+      (the identity-field refusal guards), but not yet D3 (the charset validators). Re-run the
+      suite: T1, T2, T5, T5b, T6, T6a-T6h, and T27 go green (T27 goes green here because no
+      charset check exists yet to reject its `+`). T3 stays red (no charset validator yet,
       unchanged from step 5). Capture T4's genuine red state here: with D1 landed,
       `--component-version` is now a recognized flag, so `--component-version "1.0.0;rm"` is
       accepted and emitted verbatim (`component_version: "1.0.0;rm"`, exit 0) rather than
       rejected by the pre-D1 catch-all `Unknown argument` path — this acceptance, not an exit-2
       result captured before D1 landed, is T4's red evidence.
-   2. **Step 6b**: implement D3 (the charset validator, applied to both `--component-tag` and
-      `--component-version`). Re-run the suite green: T3 and T4 both now reject their
-      fabricated inputs with exit 2 naming the offending flag.
+   2. **Step 6b**: implement D3 (the two charset validators — `^[A-Za-z0-9._-]+$` for
+      `--component-tag`, `^[A-Za-z0-9._+-]+$` for `--component-version`). Re-run the suite
+      green: T3 and T4 both now reject their fabricated inputs with exit 2 naming the offending
+      flag, and T27 stays green — its `+` is inside `--component-version`'s charset even though
+      it is outside `--component-tag`'s.
 7. **Add the red tests for `delivery-bundle-manifest.sh`** (T7-T11, including T10a; T23), and
    the green-by-construction T10b, T10c, and T10d, capture failures for everything except T10b,
    T10c, and T10d.
@@ -1502,5 +1535,5 @@ can be mistaken for production code.
 | A documented trust matrix covering every `component_release_evidence.v1` field against every consumer | New `component-release-evidence-contract.md` section 3; the matrix in this plan is its source | The published matrix's field column, diffed against the Producer emitted-field contract table (16 rows) and the never-emitted-fields list (7 rows), shows zero missing and zero extra fields across all four consumer columns (`delivery-bundle-manifest.sh`, `component-milestone-reconciliation.sh`, `multi-repo-release-assurance.sh`, `prepare-release-post-merge-cleanup.sh`) — a check that fails if the matrix section is absent, truncated, or omits any field, unlike a bare field-enumeration count. Verification Log field enumeration (15 emitted + never-emitted rows) x 4 consumers corroborates the source counts the diff is run against |
 | No consumer treats a missing overridable field as a match | GAP-1 (bundle `component_version`), GAP-4, GAP-5, GAP-6, GAP-7, GAP-8, GAP-13, GAP-14, GAP-15, GAP-16; `component_tag` already fixed in rounds 3-4 and pinned by existing tests | T7, T12, T13, T14, T15, T15a, T15d, T16, T19, T20, T20b, T20c, T20d, T20e, T20f, T20g, T23, T24, T25, T26 |
 | `component_version` is bound and matched wherever a caller can supply it | D1 (producer emits it), D2 + GAP-1 (bundle requires and matches); reconciliation accepts no `component_version` override on the hub path, and GAP-7 closes the `single_repo` `--version` surface | T1, T2, T7, T8, T9, T16, T17 |
-| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 6a/6b, 7, 9, 11 capture red before green | T1-T26 (plus T6f, T6g, T6h, T10a, T13a, T14a, T20g) other than T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T20g, T23, T24, T25, and T26) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T4's red capture is taken at step 6a (after D1, before D3) rather than step 5, because `--component-version` is not a recognized flag until D1 lands (see the T4 row in Fabricated-value rejection cases); T25/T26's red capture is the unmodified script's uncaught `TypeError` crash rather than a clean wrong-blocker exit (see the exemption paragraph above the Fabricated-value rejection cases table); T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22 are the nine declared red-capture exemptions and are recorded green-before and green-after |
+| Regression tests assert rejection for each fabricated-value case, each confirmed to fail before its fix | Testing Strategy AC-4 discipline; Implementation Order steps 5, 6a/6b, 7, 9, 11 capture red before green | T1-T27 (plus T6f, T6g, T6h, T10a, T13a, T14a, T20g) other than T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22 (including T5b, T6a, T6c, T6d, T6e, T6f, T6g, T6h, T10a, T15a, T15d, T20b, T20c, T20d, T20e, T20f, T20g, T23, T24, T25, T26, and T27) with captured red-then-green output on the implementation PR — T6d and T20f each capture six pairs, one per `artifact_owners` sub-field; T4's red capture is taken at step 6a (after D1, before D3) rather than step 5, because `--component-version` is not a recognized flag until D1 lands (see the T4 row in Fabricated-value rejection cases); T27's red capture is taken at step 5, before D1 lands, for the same reason but with the opposite polarity — see the T27 row in Fabricated-value rejection cases; T25/T26's red capture is the unmodified script's uncaught `TypeError` crash rather than a clean wrong-blocker exit (see the exemption paragraph above the Fabricated-value rejection cases table); T6b, T10b, T10c, T10d, T13a, T14a, T15b, T15c, and T22 are the nine declared red-capture exemptions and are recorded green-before and green-after |
 | The producer's emitted-field contract is documented, so a future consumer can tell required from optional without reading the producer | New contract document section 2 (the 16-field table, each field carrying exactly one class) and section 4 (never-emitted fields); no field contradicts the class it carries, so the class alone yields the duty | Document review; T2 pins the `null` emission of an unsupplied conditional field, T6a/T6e/T6f/T6g pin the two directions of the `producer_required_nullable` boundary (`null` if and only if `single_repo_release` routing — T6a pins that `component_release_routed` requires non-`null`; T6e, T6f, and T6g together pin that `single_repo_release` requires *exactly* `null`, rejecting a non-empty string (T6e), an empty string (T6f), and a missing key (T6g) alike) while T6b pins the `null` passthrough this plan leaves unchanged, T6c/T6d pin the `producer_required` promise for `routing_outcome` and `artifact_owners`, and T6h pins that the `producer_required_nullable` boundary's "if and only if" claim holds even when `routing_outcome` carries a third, unrecognized value |
