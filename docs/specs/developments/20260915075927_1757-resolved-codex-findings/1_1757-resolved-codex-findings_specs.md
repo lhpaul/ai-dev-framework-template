@@ -168,7 +168,10 @@ timestamp is aggregated by the matrix precedence below. A cycle limit escalates
 only when this evaluation requires another review or fix cycle after the
 allowance is exhausted; a submitted clean verdict in the final permitted
 evaluation proceeds to readiness only when the canonical evidence set is clean.
-A higher-precedence outcome cannot be overridden by a later input. In particular,
+Within the canonical newest timestamp, a higher-precedence outcome cannot be
+overridden by another tied input. Later non-dismissed terminal evidence for the
+same live head supersedes earlier current-head evidence before that precedence
+ordering is applied. In particular,
 incomplete terminal-finding evidence takes precedence
 over an otherwise valid unresolved conversation: the loop cannot selectively
 route only the correlated finding to fixes. Findings whose matching current-head
