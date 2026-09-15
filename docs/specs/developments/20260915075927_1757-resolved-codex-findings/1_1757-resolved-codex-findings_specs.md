@@ -101,6 +101,7 @@ The change applies to workflow operators and to repositories that use the templa
 - Only unresolved Codex review conversations with evidence applicable to the live pull-request revision may be counted as actionable blockers.
 - Resolved Codex review conversations are excluded from fallback, existing-finding, and stale-finding blocker counts, even if their comments remain visible or re-anchored on the diff.
 - A pull request with zero unresolved Codex review conversations must not receive a `needs_fixes` outcome solely from historical Codex comments.
+- A terminal Codex verdict that reports actionable feedback can produce `needs_fixes` only when each actionable finding is tied to an unresolved conversation applicable to the live revision.
 - After a pull-request update, a clean readiness path requires a submitted terminal Codex verdict for the live revision; clean or finding evidence from an older revision is stale.
 - A review-loop cycle-limit outcome is an explicit escalation for human review. It is never interchangeable with a clean, skipped, or readiness outcome.
 - If the workflow cannot determine whether review evidence is current or whether a conversation is resolved, it must not claim a clean result.
@@ -154,16 +155,17 @@ The change applies to workflow operators and to repositories that use the templa
 ## Complex Workflow Decision-Gate Matrix
 
 The loop evaluates inputs in this order: cycle limits first; then whether an
-unresolved conversation applies to the live revision; then the terminal verdict
-for the live revision. A higher-precedence outcome cannot be overridden by a
-later input. An unresolved conversation from an earlier revision is historical
-evidence, not an actionable blocker for the live revision; without a current
-terminal verdict, it produces the same wait outcome as any other stale evidence.
+unresolved conversation applies to the live revision; then whether each finding
+in a current terminal verdict is associated with that conversation. A
+higher-precedence outcome cannot be overridden by a later input. An unresolved
+conversation from an earlier revision is historical evidence, not an actionable
+blocker for the live revision; without a current terminal verdict, it produces
+the same wait outcome as any other stale evidence.
 
 | Gate input | Allowed outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
 | Per-run or lifetime cycle limit reached, regardless of conversation or verdict state | Explicit escalation | Stop the current run for human review; never label ready | Reviewer loop, PR summary, downstream readiness signals | Repeated retries reach `max_total_cycles_exceeded` |
 | Unresolved Codex conversation applies to the live revision, regardless of a clean, stale, or absent terminal verdict | Actionable blocker | Return `needs_fixes` and route to the fix loop | Reviewer-loop classification, summary output, regression tests | A current Codex finding remains unresolved while an earlier clean verdict is visible |
-| No unresolved current conversation; current terminal verdict contains actionable feedback | Actionable blocker | Return `needs_fixes` and route to the fix loop | Codex review adapter, reviewer loop, readiness checks | A newly submitted current-head verdict identifies a finding |
+| No unresolved current conversation; current terminal verdict contains a finding that cannot be associated with one | Incomplete evidence | Wait for or reconcile current review evidence; do not claim clean or return `needs_fixes` | Codex review adapter, reviewer loop, readiness checks | A submitted finding remains after its associated conversation was resolved |
 | No unresolved current conversation; submitted terminal clean verdict covers the live revision | Clean current evidence | Continue to readiness | Codex review adapter, reviewer loop, readiness checks | A current submitted clean review authorizes the Codex phase |
 | Resolved or unresolved historic conversation; terminal verdict is absent or covers an earlier revision | Stale or incomplete evidence | Wait for or trigger a current review; do not claim clean | Codex review adapter, reviewer loop, readiness checks | A push occurs after the last Codex review |
