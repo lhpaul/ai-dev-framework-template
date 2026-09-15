@@ -119,7 +119,7 @@ The change applies to workflow operators and to repositories that use the templa
 - [ ] A clean or finding verdict from an older revision is reported as stale and cannot authorize readiness for the live revision.
 - [ ] Per-run and lifetime cycle-limit outcomes are recorded as explicit escalations and never as clean or ready outcomes.
 - [ ] Automated regression coverage reproduces a resolved Codex finding that remains visible after a later revision and verifies the expected non-blocking terminal classification.
-- [ ] The behavior uses the same resolved-conversation/current-revision invariant as comparable reviewer integrations where that can be achieved without changing their platform-specific rate-limit behavior.
+- [ ] A comparable reviewer integration reuses the resolved-conversation/current-revision invariant only when its verified review data exposes both conversation resolution and revision correlation; otherwise, it retains its platform-specific classification and records the invariant as not applicable.
 
 ## Out of Scope (MVP)
 
@@ -153,10 +153,17 @@ The change applies to workflow operators and to repositories that use the templa
 
 ## Complex Workflow Decision-Gate Matrix
 
+The loop evaluates inputs in this order: cycle limits first; then whether an
+unresolved conversation applies to the live revision; then the terminal verdict
+for the live revision. A higher-precedence outcome cannot be overridden by a
+later input. An unresolved conversation from an earlier revision is historical
+evidence, not an actionable blocker for the live revision; without a current
+terminal verdict, it produces the same wait outcome as any other stale evidence.
+
 | Gate input | Allowed outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
-| Resolved historic Codex conversation; no unresolved current conversation | Non-blocking historical feedback | Continue evaluating current review evidence | Reviewer-loop classification, readiness checks, regression tests | A re-anchored old comment remains visible after its thread is resolved |
-| Unresolved Codex conversation applicable to the live revision | Actionable blocker | Return `needs_fixes` and route to the fix loop | Reviewer-loop classification, summary output, regression tests | A current Codex finding is still unresolved |
-| Submitted terminal verdict covers the live revision | Clean or actionable classification based on that verdict | Continue to readiness only when clean | Codex review adapter, reviewer loop, readiness checks | A current submitted clean review authorizes the Codex phase |
-| Terminal verdict covers an older revision or is absent | Stale or incomplete evidence | Wait for or trigger a current review; do not claim clean | Codex review adapter, reviewer loop, readiness checks | A push occurs after the last Codex review |
-| Per-run or lifetime cycle limit reached | Explicit escalation | Stop the current run for human review; never label ready | Reviewer loop, PR summary, downstream readiness signals | Repeated retries reach `max_total_cycles_exceeded` |
+| Per-run or lifetime cycle limit reached, regardless of conversation or verdict state | Explicit escalation | Stop the current run for human review; never label ready | Reviewer loop, PR summary, downstream readiness signals | Repeated retries reach `max_total_cycles_exceeded` |
+| Unresolved Codex conversation applies to the live revision, regardless of a clean, stale, or absent terminal verdict | Actionable blocker | Return `needs_fixes` and route to the fix loop | Reviewer-loop classification, summary output, regression tests | A current Codex finding remains unresolved while an earlier clean verdict is visible |
+| No unresolved current conversation; current terminal verdict contains actionable feedback | Actionable blocker | Return `needs_fixes` and route to the fix loop | Codex review adapter, reviewer loop, readiness checks | A newly submitted current-head verdict identifies a finding |
+| No unresolved current conversation; submitted terminal clean verdict covers the live revision | Clean current evidence | Continue to readiness | Codex review adapter, reviewer loop, readiness checks | A current submitted clean review authorizes the Codex phase |
+| Resolved or unresolved historic conversation; terminal verdict is absent or covers an earlier revision | Stale or incomplete evidence | Wait for or trigger a current review; do not claim clean | Codex review adapter, reviewer loop, readiness checks | A push occurs after the last Codex review |
