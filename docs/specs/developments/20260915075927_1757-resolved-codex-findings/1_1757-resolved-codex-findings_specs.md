@@ -102,6 +102,7 @@ The change applies to workflow operators and to repositories that use the templa
 - Resolved Codex review conversations are excluded from fallback, existing-finding, and stale-finding blocker counts, even if their comments remain visible or re-anchored on the diff.
 - A pull request with zero unresolved Codex review conversations must not receive a `needs_fixes` outcome solely from historical Codex comments.
 - A terminal Codex verdict that reports actionable feedback can produce `needs_fixes` only when each actionable finding carries the same GitHub GraphQL review-thread node ID as an unresolved conversation applicable to the live revision. A review-level finding or comment without a review-thread node ID is incomplete evidence, not an actionable blocker.
+- If a current terminal verdict contains both a finding correlated to an applicable unresolved conversation and a finding that is uncorrelated or correlated only to a resolved conversation, the incomplete finding evidence takes precedence. The loop must escalate rather than selectively return `needs_fixes` for the correlated finding.
 - After a pull-request update, a clean readiness path requires a submitted terminal Codex verdict for the live revision; clean or finding evidence from an older revision is stale.
 - A review-loop cycle-limit outcome is an explicit escalation for human review. It is never interchangeable with a clean, skipped, or readiness outcome.
 - If the workflow cannot determine a conversation's resolution state, live-revision applicability, or review-thread node ID, it retries the bounded evidence query and then emits an explicit evidence-unavailable escalation; it must not claim a clean result or return `needs_fixes` from the indeterminate evidence.
@@ -157,9 +158,12 @@ The change applies to workflow operators and to repositories that use the templa
 
 The loop evaluates inputs in this order: cycle limits first; then whether the
 resolution, revision, and review-thread identifiers can be established; then
-whether an unresolved conversation applies to the live revision; then whether
-each finding in a current terminal verdict is associated with that conversation.
-A higher-precedence outcome cannot be overridden by a later input. An unresolved
+whether every finding in a current terminal verdict is associated with an
+unresolved current conversation; then whether an unresolved conversation applies
+to the live revision. A higher-precedence outcome cannot be overridden by a
+later input. In particular, incomplete terminal-finding evidence takes precedence
+over an otherwise valid unresolved conversation: the loop cannot selectively
+route only the correlated finding to fixes. An unresolved
 conversation from an earlier revision is historical evidence, not an actionable
 blocker for the live revision; without a current submitted terminal verdict, it
 produces the same wait outcome as any other stale evidence. A current applicable
@@ -173,8 +177,8 @@ fixer. `escalate` is terminal for that run and does not apply `needs_fixes`.
 | --- | --- | --- | --- | --- |
 | Per-run or lifetime cycle limit reached, regardless of conversation or verdict state | Explicit escalation | Stop the current run for human review; never label ready | Reviewer loop, PR summary, downstream readiness signals | Repeated retries reach `max_total_cycles_exceeded` |
 | Resolution state, live-revision applicability, or review-thread node ID is unavailable or ambiguous after the bounded query retry | `escalate` with reason `evidence_unavailable_codex_thread_state` | Stop the current run for human review; do not claim clean or return `needs_fixes` | GitHub GraphQL adapter, reviewer loop, PR summary | The API omits a thread node ID for a review-level finding |
-| Unresolved Codex conversation applies to the live revision, regardless of a clean, stale, or absent terminal verdict | Actionable blocker | Return `needs_fixes` and route to the fix loop | Reviewer-loop classification, summary output, regression tests | A current Codex finding remains unresolved while an earlier clean verdict is visible |
-| No unresolved current conversation; current terminal verdict contains a finding that cannot be associated with one | `escalate` with reason `codex_finding_thread_correlation_missing` | Stop the current run for human review; do not claim clean or return `needs_fixes` | Codex review adapter, reviewer loop, readiness checks | A submitted finding remains after its associated conversation was resolved |
+| Current terminal verdict contains a finding that is uncorrelated or correlated only to a resolved conversation, including when another finding maps to an applicable unresolved conversation | `escalate` with reason `codex_finding_thread_correlation_missing` | Stop the current run for human review; do not claim clean or return `needs_fixes` for only the correlated finding | Codex review adapter, reviewer loop, readiness checks | A submitted verdict has one unresolved-thread finding and one review-level finding, or a finding remains after its associated conversation was resolved |
+| Unresolved Codex conversation applies to the live revision and all findings in any current terminal verdict correlate to applicable unresolved conversations | Actionable blocker | Return `needs_fixes` and route to the fix loop | Reviewer-loop classification, summary output, regression tests | A current Codex finding remains unresolved while an earlier clean verdict is visible |
 | No unresolved current conversation; submitted terminal clean verdict covers the live revision | Clean current evidence | Continue to readiness | Codex review adapter, reviewer loop, readiness checks | A current submitted clean review authorizes the Codex phase |
 | No unresolved current conversation; current terminal clean verdict is not submitted | `waiting_on_reviewer` with reason `codex_current_verdict_unsubmitted` | Await or request submission for the unchanged head; do not claim clean | Codex review adapter, reviewer loop, readiness checks | A draft review is visible but has not been submitted |
 | Resolved or unresolved historic conversation; terminal verdict is absent or covers an earlier revision | `waiting_on_reviewer` with reason `codex_current_verdict_pending` | Request or await a submitted current review for the unchanged head; do not claim clean | Codex review adapter, reviewer loop, readiness checks | A push occurs after the last Codex review |
