@@ -98,13 +98,14 @@ The change applies to workflow operators and to repositories that use the templa
 
 ## Business Rules
 
-- Only unresolved Codex review conversations with evidence applicable to the live pull-request revision may be counted as actionable blockers.
+- Only unresolved Codex review conversations with evidence applicable to the live pull-request revision may be counted as actionable blockers. A conversation is applicable only when its Codex review is submitted and its review commit SHA equals the live pull-request head SHA; `isOutdated: false`, a visible comment, or a re-anchored diff position alone does not establish live-revision applicability.
 - Resolved Codex review conversations are excluded from fallback, existing-finding, and stale-finding blocker counts, even if their comments remain visible or re-anchored on the diff.
 - A pull request with zero unresolved Codex review conversations must not receive a `needs_fixes` outcome solely from historical Codex comments.
 - A terminal Codex verdict that reports actionable feedback can produce `needs_fixes` only when each actionable finding carries the same GitHub GraphQL review-thread node ID as an unresolved conversation applicable to the live revision. A review-level finding or comment without a review-thread node ID is incomplete evidence, not an actionable blocker.
 - After a pull-request update, a clean readiness path requires a submitted terminal Codex verdict for the live revision; clean or finding evidence from an older revision is stale.
 - A review-loop cycle-limit outcome is an explicit escalation for human review. It is never interchangeable with a clean, skipped, or readiness outcome.
 - If the workflow cannot determine a conversation's resolution state, live-revision applicability, or review-thread node ID, it retries the bounded evidence query and then emits an explicit evidence-unavailable escalation; it must not claim a clean result or return `needs_fixes` from the indeterminate evidence.
+- An unresolved conversation that is applicable to the live revision is sufficient current actionable evidence and returns `needs_fixes` even when a terminal verdict is stale or absent. A submitted terminal verdict for the live revision is required only to classify the no-current-blocker path as clean.
 
 ## Operational Visibility
 
@@ -161,7 +162,9 @@ each finding in a current terminal verdict is associated with that conversation.
 A higher-precedence outcome cannot be overridden by a later input. An unresolved
 conversation from an earlier revision is historical evidence, not an actionable
 blocker for the live revision; without a current submitted terminal verdict, it
-produces the same wait outcome as any other stale evidence.
+produces the same wait outcome as any other stale evidence. A current applicable
+unresolved conversation is the exception: it is sufficient to route to fixes;
+the submitted-terminal-verdict requirement applies only before a clean result.
 
 | Gate input | Allowed outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
