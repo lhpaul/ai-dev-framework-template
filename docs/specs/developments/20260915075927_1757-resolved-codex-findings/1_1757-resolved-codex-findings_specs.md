@@ -88,7 +88,7 @@ The change applies to workflow operators and to repositories that use the templa
 
 **Actions available**:
 
-- Review the recorded evidence, resolve the underlying condition, and begin a new authorized run when appropriate.
+- Review the recorded evidence and resolve the underlying condition. Begin a new run only after a human explicitly authorizes a new cycle allowance.
 
 **Considerations**:
 
@@ -134,7 +134,7 @@ The change applies to workflow operators and to repositories that use the templa
 
 1. Exclude resolved Codex review threads from existing, stale, and fallback blocker counts.
 2. Prevent historical Codex comments from producing `needs_fixes` when no Codex threads remain unresolved.
-3. Require a submitted terminal Codex verdict for the live revision after a push.
+3. Require terminal Codex evidence for the live revision after a push: a submitted review with the live commit SHA or a SHA-pinned Codex root comment.
 4. Treat per-run and lifetime cycle-limit outcomes as terminal escalations, never clean readiness.
 5. Add a regression case for a resolved Codex finding that remains visible on a later revision.
 6. Reuse the resolved-thread/current-revision invariant only for an integration that exposes verified per-conversation resolution and review-head SHA correlation; otherwise record it as `not_applicable` with the missing capability, without conflating rate-limit behavior.
