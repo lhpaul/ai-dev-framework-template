@@ -104,6 +104,7 @@ The change applies to workflow operators and to repositories that use the templa
 - A terminal Codex verdict that reports actionable feedback can produce `needs_fixes` only when each actionable finding carries the same stable GitHub review-thread identifier as an unresolved conversation applicable to the live revision. A review-level finding or comment without a review-thread identifier is incomplete evidence, not an actionable blocker.
 - If a current terminal verdict contains both a finding correlated to an applicable unresolved conversation and a finding that is uncorrelated or correlated only to a resolved conversation, the incomplete finding evidence takes precedence. The loop must escalate rather than selectively return `needs_fixes` for the correlated finding.
 - After a pull-request update, a clean readiness path requires terminal Codex evidence for the live revision: either a submitted Codex review whose full commit SHA equals the live head and whose body is classified clean, or a Codex root pull-request comment whose `Reviewed commit` marker contains exactly one full 40-character commit OID equal to the live head and whose body is classified clean. Clean or finding evidence from an older revision, and a root comment without both the exact full-OID marker and a clean body, are stale or incomplete. Empty, abbreviated, malformed, or superstring marker matches are invalid revision evidence and escalate rather than authorizing readiness.
+- When multiple terminal Codex evidence items cover the live head, the workflow first ignores dismissed Codex reviews and then evaluates only the newest non-dismissed terminal evidence timestamp. Older clean evidence for the same SHA cannot authorize readiness after newer current-head finding, malformed-marker, unrecognized, or incomplete-correlation evidence exists. When multiple current-head evidence items share the newest timestamp, the workflow aggregates them by precedence: malformed-marker escalation, unrecognized-verdict escalation, incomplete-correlation escalation, actionable blocker, then clean.
 - A review-loop cycle-limit outcome is an explicit escalation for human review only when another review or fix cycle is required after the allowance is exhausted. A submitted current clean verdict received in the final permitted evaluation proceeds to readiness; escalation is never interchangeable with a clean, skipped, or readiness outcome.
 - If the bounded evidence query fails or leaves a conversation's resolution state or live-revision applicability indeterminate after its retry, the workflow emits an explicit evidence-unavailable escalation; it must not claim a clean result or return `needs_fixes` from indeterminate evidence. When that query succeeds, a finding with no review-thread node ID or no matching applicable unresolved conversation instead follows the correlation-missing escalation.
 - An unresolved conversation that is applicable to the live revision is sufficient current actionable evidence and returns `needs_fixes` even when terminal evidence is stale or absent. Terminal clean evidence for the live revision — either a submitted review with the full live commit SHA and a clean body, or a Codex root pull-request comment whose `Reviewed commit` marker contains exactly one full 40-character commit OID equal to that SHA and whose body is clean — is required only to classify the no-current-blocker path as clean.
@@ -145,7 +146,7 @@ The change applies to workflow operators and to repositories that use the templa
 | --- | --- |
 | Exclude resolved threads from blocker counts | Acceptance criteria 1-2; Business Rules 1-3 |
 | Avoid `needs_fixes` from historical comments | Acceptance criterion 2; Use Case 1 |
-| Require live-revision terminal evidence | Acceptance criteria 3-4; Use Case 2 |
+| Require live-revision terminal evidence | Acceptance criteria 3-4; Business Rule 6; Use Case 2 |
 | Escalate at cycle limits | Acceptance criterion 5; Use Case 3 |
 | Add resolved-finding regression coverage | Acceptance criterion 6; Operational Visibility |
 | Share the invariant without rate-limit coupling | Acceptance criterion 7; Out of Scope |
@@ -160,10 +161,14 @@ The loop evaluates current evidence before applying a cycle limit: it establishe
 resolution, revision, and stable review-thread identifiers; determines whether every
 finding in a current terminal verdict is associated with an unresolved current
 conversation; and determines whether an unresolved conversation applies to the
-live revision. A cycle limit escalates only when this evaluation requires another
-review or fix cycle after the allowance is exhausted; a submitted clean verdict in
-the final permitted evaluation proceeds to readiness. A higher-precedence outcome
-cannot be overridden by a later input. In particular, incomplete terminal-finding evidence takes precedence
+live revision. If multiple non-dismissed current-head terminal evidence items
+exist, the newest terminal-evidence timestamp is canonical; evidence tied at that
+timestamp is aggregated by the matrix precedence below. A cycle limit escalates
+only when this evaluation requires another review or fix cycle after the
+allowance is exhausted; a submitted clean verdict in the final permitted
+evaluation proceeds to readiness only when the canonical evidence set is clean.
+A higher-precedence outcome cannot be overridden by a later input. In particular,
+incomplete terminal-finding evidence takes precedence
 over an otherwise valid unresolved conversation: the loop cannot selectively
 route only the correlated finding to fixes. An unresolved
 conversation from an earlier revision is historical evidence, not an actionable
@@ -191,6 +196,7 @@ mandate for helper or parser structure.
 | Gate input | Allowed outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
 | Per-run or lifetime allowance is exhausted and current evidence requires another review or fix cycle | Explicit escalation | Stop the current run for human review; never label ready | Reviewer loop, PR summary, downstream readiness signals | Repeated unresolved findings require a cycle after `max_total_cycles` is consumed; a clean verdict received in the final permitted evaluation instead continues to readiness |
+| Newer non-dismissed terminal Codex evidence exists for the live head after an older clean evidence item for the same head | Evaluate only the newest terminal-evidence timestamp, aggregating ties by the matrix precedence below | Ignore superseded same-head clean evidence; do not authorize readiness from an older clean verdict | Codex review adapter, reviewer loop, readiness checks | A clean submitted review is followed by a root comment for the same SHA with actionable findings |
 | Bounded evidence query fails or leaves resolution state or live-revision applicability unavailable or ambiguous after its retry | `escalate` with reason `evidence_unavailable_codex_thread_state` | Stop the current run for human review; do not claim clean or return `needs_fixes` | GitHub GraphQL adapter, reviewer loop, PR summary | The API times out while loading the conversation state |
 | Current root pull-request comment evidence has a `Reviewed commit` marker that is empty, abbreviated, malformed, contains multiple OIDs, or only matches the live head by substring or superstring | `escalate` with reason `codex_current_verdict_malformed_revision_marker` | Stop the current run for human review; do not wait, claim clean, or infer an older-revision verdict from invalid marker evidence | Codex review adapter, reviewer loop, PR summary | A root comment says `Reviewed commit: d3455ae4` instead of the full live OID, or embeds the live OID inside a longer token |
 | Successful bounded evidence query; current terminal verdict contains a finding with no stable review-thread identifier, no matching applicable unresolved conversation, or only a resolved-conversation match, including when another finding maps to an applicable unresolved conversation | `escalate` with reason `codex_finding_thread_correlation_missing` | Stop the current run for human review; do not claim clean or return `needs_fixes` for only the correlated finding | Codex review adapter, reviewer loop, readiness checks | A submitted verdict has one unresolved-thread finding and one review-level finding, or a finding remains after its associated conversation was resolved |
