@@ -388,6 +388,20 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "quota_exhausted_without_reset_reason" "REASON=quota_exhausted" "$(line_for REASON)"
 run_test "quota_exhausted_without_reset_absent" "" "$(line_for QUOTA_RESET_AT)"
 
+# Regression: quota-pattern text in stderr while stdout contains valid JSON must not trigger
+# quota_exhausted — valid JSON in stdout takes priority over stderr probe patterns (#1762).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR="$(printf '%s\n' \
+  "session log: - Changing Codex GitHub App rate limits, usage limits, polling budgets" \
+  "or external service availability behavior.")"
+set_mock_stdout '{"result":"needs_fixes","findings":[{"severity":"blocking","path":"foo.md","line":1,"message":"usage limits prose in doc should not trip detector"}]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "quota_pattern_in_stderr_valid_stdout_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "quota_pattern_in_stderr_valid_stdout_no_reset" "" "$(line_for QUOTA_RESET_AT)"
+run_test "quota_pattern_in_stderr_valid_stdout_blocking" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
