@@ -428,6 +428,19 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "mistyped_issues_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "mistyped_issues_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
 
+# Mixed aliases: the downstream parser accepts each of findings/comments/issues independently,
+# so a valid comments array alongside a mistyped findings key must still count as a verdict
+# and skip the stderr probes (#1762 review follow-up).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"findings":"bad","comments":[{"severity":"blocking","path":"foo.md","line":2,"message":"real finding beside quota prose"}]}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "mixed_alias_comments_stdout_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "mixed_alias_comments_stdout_blocking" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'

@@ -1334,7 +1334,9 @@ elif printf '%s\n' "$command_stdout" | jq -e '
     type == "object"
     and (
       ((.result? | type) == "string" and (.result | length) > 0)
-      or (((.findings? // .comments? // .issues?) | type) == "array")
+      or ((.findings? | type) == "array")
+      or ((.comments? | type) == "array")
+      or ((.issues? | type) == "array")
     )
   ' >/dev/null 2>&1; then
   # A review-result object in stdout is the source of truth; do not let stderr
