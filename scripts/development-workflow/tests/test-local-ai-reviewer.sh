@@ -395,8 +395,9 @@ LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR="$(printf '%s\n' \
   "session log: - Changing Codex GitHub App rate limits, usage limits, polling budgets" \
   "or external service availability behavior.")"
+MOCK_LOCAL_REVIEWER_EXIT=1
 set_mock_stdout '{"result":"needs_fixes","findings":[{"severity":"blocking","path":"foo.md","line":1,"message":"usage limits prose in doc should not trip detector"}]}'
-export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "quota_pattern_in_stderr_valid_stdout_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "quota_pattern_in_stderr_valid_stdout_no_reset" "" "$(line_for QUOTA_RESET_AT)"
