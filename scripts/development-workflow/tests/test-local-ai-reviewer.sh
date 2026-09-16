@@ -388,6 +388,115 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "quota_exhausted_without_reset_reason" "REASON=quota_exhausted" "$(line_for REASON)"
 run_test "quota_exhausted_without_reset_absent" "" "$(line_for QUOTA_RESET_AT)"
 
+# Regression: quota-pattern text in stderr while stdout contains valid JSON must not trigger
+# quota_exhausted — valid JSON in stdout takes priority over stderr probe patterns (#1762).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR="$(printf '%s\n' \
+  "session log: - Changing Codex GitHub App rate limits, usage limits, polling budgets" \
+  "or external service availability behavior.")"
+MOCK_LOCAL_REVIEWER_EXIT=1
+set_mock_stdout '{"result":"needs_fixes","findings":[{"severity":"blocking","path":"foo.md","line":1,"message":"usage limits prose in doc should not trip detector"}]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "quota_pattern_in_stderr_valid_stdout_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "quota_pattern_in_stderr_valid_stdout_no_reset" "" "$(line_for QUOTA_RESET_AT)"
+run_test "quota_pattern_in_stderr_valid_stdout_blocking" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
+# Schemaless JSON (no result/findings keys) on nonzero exit keeps the stderr probes active,
+# so a genuine provider failure is still classified quota_exhausted (#1762 review follow-up).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "schemaless_json_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "schemaless_json_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
+# Key-bearing but mistyped JSON (issues as a string, not an array) on nonzero exit must keep
+# the stderr probes active too — the downstream parser treats non-array issues as empty and
+# would otherwise infer a clean verdict from a provider error (fail-open guard bypass).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"issues":"provider quota exceeded"}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "mistyped_issues_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "mistyped_issues_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
+# Mixed aliases: the downstream parser accepts each of findings/comments/issues independently,
+# so a valid comments array alongside a mistyped findings key must still count as a verdict
+# and skip the stderr probes (#1762 review follow-up).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"findings":"bad","comments":[{"severity":"blocking","path":"foo.md","line":2,"message":"real finding beside quota prose"}]}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "mixed_alias_comments_stdout_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "mixed_alias_comments_stdout_blocking" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
+# A `result` outside the downstream parser's accepted enum is not a verdict, so stderr probes
+# stay active and a genuine provider failure keeps its distinct escalation reason (#1762).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"result":"provider_error"}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "unknown_result_enum_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "unknown_result_enum_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
+# Exit 0 with schemaless stdout must not infer a clean verdict when the provider printed a
+# genuine quota refusal; the fail-closed gate keeps the probes in force on every exit code.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "zero_exit_schemaless_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "zero_exit_schemaless_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
+# Exit 0 with schemaless stdout and NO probe match must not reach the parser, where an empty
+# findings set would infer clean; the fail-closed contract rejects it as malformed_output.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{}'
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "zero_exit_schemaless_no_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "zero_exit_schemaless_no_probe_reason" "REASON=malformed_output" "$(line_for REASON)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"findings":"bad"}'
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "zero_exit_mistyped_stdout_no_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "zero_exit_mistyped_stdout_no_probe_reason" "REASON=malformed_output" "$(line_for REASON)"
+
+# Multiple JSON values on stdout: jq filters apply per value, so a trailing valid verdict must
+# not make the leading `{}` acceptable — the parser's awk consumers would then read the first
+# RESULT line. Require exactly one JSON object and reject the rest as malformed_output.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout "$(printf '%s\n%s' '{}' '{"result":"clean","findings":[]}')"
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "multi_value_stdout_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "multi_value_stdout_reason" "REASON=malformed_output" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
