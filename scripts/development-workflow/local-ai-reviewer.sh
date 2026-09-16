@@ -1330,18 +1330,22 @@ ${command_stderr}"
 # in force and is later rejected as malformed, so a provider failure is never downgraded to
 # an inferred clean verdict.
 stdout_is_verdict=0
-if printf '%s\n' "$command_stdout" | jq -e '
-    type == "object"
+if printf '%s\n' "$command_stdout" | jq -s -e '
+    length == 1
     and (
-      if (.result? // "") != "" then
-        ((.result | type) == "string"
-         and ((.result | ascii_downcase | gsub("-"; "_")) as $r
-              | ["clean","needs_fixes","needs_rerun","skipped","escalate"] | index($r)))
-      else
-        ((.findings? | type) == "array"
-         or (.comments? | type) == "array"
-         or (.issues? | type) == "array")
-      end
+      .[0]
+      | type == "object"
+        and (
+          if (.result? // "") != "" then
+            ((.result | type) == "string"
+             and ((.result | ascii_downcase | gsub("-"; "_")) as $r
+                  | ["clean","needs_fixes","needs_rerun","skipped","escalate"] | index($r)))
+          else
+            ((.findings? | type) == "array"
+             or (.comments? | type) == "array"
+             or (.issues? | type) == "array")
+          end
+        )
     )
   ' >/dev/null 2>&1; then
   stdout_is_verdict=1

@@ -485,6 +485,18 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "zero_exit_mistyped_stdout_no_probe_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "zero_exit_mistyped_stdout_no_probe_reason" "REASON=malformed_output" "$(line_for REASON)"
 
+# Multiple JSON values on stdout: jq filters apply per value, so a trailing valid verdict must
+# not make the leading `{}` acceptable — the parser's awk consumers would then read the first
+# RESULT line. Require exactly one JSON object and reject the rest as malformed_output.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout "$(printf '%s\n%s' '{}' '{"result":"clean","findings":[]}')"
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "multi_value_stdout_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "multi_value_stdout_reason" "REASON=malformed_output" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'

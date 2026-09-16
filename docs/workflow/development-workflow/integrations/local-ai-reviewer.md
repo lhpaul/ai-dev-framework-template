@@ -396,13 +396,14 @@ outranks a heuristic match on stderr — but only a real verdict. The gate is
 fail-closed: when stdout is not a valid verdict object the probes run against
 the combined output on every exit code; when it is, the probes are cleared.
 
-A *valid verdict object* is the shape the parser accepts: an object whose
-non-empty `result` is one of the underscore enum values above, or — when
-`result` is absent or empty — an object carrying an array in at least one of
-`findings`, `comments`, or `issues`. Emitters must keep using the underscore
-forms exactly as listed above; the guard and parser additionally tolerate
-case- and dash-variation (`NEEDS_FIXES`, `needs-fixes`) only so that a
-provider-side normalization quirk cannot masquerade as a setup failure.
+A *valid verdict object* is the shape the parser accepts: stdout must contain
+exactly one JSON value — an object whose non-empty `result` is one of the
+underscore enum values above, or — when `result` is absent or empty — an object
+carrying an array in at least one of `findings`, `comments`, or `issues`.
+Emitters must keep using the underscore forms exactly as listed above; the guard
+and parser additionally tolerate case- and dash-variation (`NEEDS_FIXES`,
+`needs-fixes`) only so that a provider-side normalization quirk cannot
+masquerade as a setup failure.
 
 The full decision gate, evaluated in this precedence order (first match wins;
 rows are mutually exclusive):
@@ -410,7 +411,7 @@ rows are mutually exclusive):
 | # | Precondition | stdout shape | probe pattern in combined output | Outcome | Next action |
 | --- | --- | --- | --- | --- | --- |
 | 1 | command exit 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
-| 2 | any command exit | not a valid verdict object (invalid JSON, empty, `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
+| 2 | any command exit | not exactly one valid verdict object (invalid JSON, empty, multiple JSON values, `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
 | 3 | any command exit | not a valid verdict object | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
 | 4 | any command exit | not a valid verdict object | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
 | 5 | any command exit | valid verdict object with `reviewed_head` differing from the live head | — (probes cleared) | `escalate` / `head_mismatch` | rerun — a stale review is not trustworthy |
