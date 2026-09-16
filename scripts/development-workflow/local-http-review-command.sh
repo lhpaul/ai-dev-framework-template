@@ -189,6 +189,22 @@ if [ "$http_code" != "200" ]; then
   exit 1
 fi
 
+# Some OpenAI-compatible proxies (notably 9router) append an SSE trailer
+# (`data: [DONE]`) to an otherwise non-streaming JSON body. Re-serialize the
+# first complete JSON value so jq can parse the response.
+python3 -c '
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+raw = path.read_text(encoding="utf-8", errors="replace").strip()
+if not raw:
+    raise SystemExit(0)
+try:
+    json.loads(raw)
+except json.JSONDecodeError:
+    obj, _idx = json.JSONDecoder().raw_decode(raw)
+    path.write_text(json.dumps(obj, separators=(",", ":")), encoding="utf-8")
+' "$body_file"
+
 content="$(jq -r '.choices[0].message.content // empty' "$body_file")"
 if [ -z "$content" ]; then
   echo "ERROR: HTTP reviewer returned empty message content" >&2
