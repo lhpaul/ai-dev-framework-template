@@ -180,15 +180,15 @@ The two waiting codes are the shipped reason codes and keep their existing names
 
 | Brief objective | Coverage |
 | --- | --- |
-| Exclude resolved threads from blocker counts | Acceptance criteria 1-2; Business Rules 1-3 |
-| Avoid `needs_fixes` from historical comments | Acceptance criterion 2; Use Case 1 |
-| Require live-revision terminal evidence | Acceptance criteria 3-4; Business Rules 7, 10; Use Case 2 |
-| Escalate at cycle limits | Acceptance criteria 5-6; Business Rule 9; Use Case 3 |
+| Exclude resolved threads from blocker counts | Acceptance criteria 1-2; Business Rules 1-4 |
+| Avoid `needs_fixes` from historical comments | Acceptance criterion 2; Business Rule 3; Use Case 1 |
+| Require live-revision terminal evidence | Acceptance criteria 3-4; Business Rules 7-8, 12; Use Case 2 |
+| Escalate at cycle limits | Acceptance criteria 5-6; Business Rule 10; Use Case 3 |
 | Add resolved-finding regression coverage | Acceptance criterion 15; Operational Visibility |
 | Share the invariant without rate-limit coupling | Acceptance criterion 16; Out of Scope |
-| Fail-closed Codex escalations | Acceptance criteria 7, 9, 14; Business Rules 5, 7, 11-13 |
+| Fail-closed Codex escalations | Acceptance criteria 7, 9, 14; Business Rules 5, 13-14, 16 |
 | Cleared-findings retrigger path | Acceptance criterion 8; Business Rule 6; Use Case 1 |
-| Conservative acknowledgement and trigger-less evidence | Acceptance criteria 10-13; Business Rules 7-8, 14-15 |
+| Conservative acknowledgement and trigger-less evidence | Acceptance criteria 10-13; Business Rules 8-9, 11, 15, 17 |
 
 ## Deferral Notes
 
