@@ -415,8 +415,8 @@ rows are mutually exclusive):
 | 4 | any command exit | not a valid verdict object | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
 | 5 | any command exit | valid verdict object with `reviewed_head` differing from the live head | — (probes cleared) | `escalate` / `head_mismatch` | rerun — a stale review is not trustworthy |
 | 6 | command exit non-zero | valid verdict object whose outcome is `clean` | — (probes cleared) | `escalate` / `malformed_output` | rerun — a clean verdict on a failed run is not trustworthy |
-| 7 | command exit 0 | valid verdict object | — (probes cleared) | parser outcome: `clean` | none |
-| 8 | any command exit | valid verdict object | — (probes cleared) | parser outcome: `needs_fixes` / `needs_rerun` / `skipped` / `escalate` | fix reported findings or act on the verdict |
+| 7 | command exit 0 | valid verdict object whose outcome is `clean` | — (probes cleared) | parser outcome: `clean` | none |
+| 8 | any command exit | valid verdict object whose outcome is `needs_fixes` / `needs_rerun` / `skipped` / `escalate` | — (probes cleared) | that parser outcome | fix reported findings or act on the verdict |
 | 9 | any command exit | not a valid verdict object | none of the three patterns | `escalate` / `malformed_output` | inspect raw output |
 
 A `result` outside the accepted enum, or a mistyped findings alias, already
