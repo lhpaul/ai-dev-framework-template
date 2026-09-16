@@ -418,7 +418,9 @@ The full decision gate:
 
 Genuine provider failures therefore keep their distinct reason codes on every
 exit path rather than degrading to an inferred clean verdict or a bare
-`malformed_output`.
+`malformed_output`. Non-verdict JSON that matches no probe pattern is rejected
+before the parser runs, so an empty findings set can never be read back as
+clean.
 
 ---
 

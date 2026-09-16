@@ -465,6 +465,26 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "zero_exit_schemaless_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "zero_exit_schemaless_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
 
+# Exit 0 with schemaless stdout and NO probe match must not reach the parser, where an empty
+# findings set would infer clean; the fail-closed contract rejects it as malformed_output.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{}'
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "zero_exit_schemaless_no_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "zero_exit_schemaless_no_probe_reason" "REASON=malformed_output" "$(line_for REASON)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"findings":"bad"}'
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "zero_exit_mistyped_stdout_no_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "zero_exit_mistyped_stdout_no_probe_reason" "REASON=malformed_output" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
