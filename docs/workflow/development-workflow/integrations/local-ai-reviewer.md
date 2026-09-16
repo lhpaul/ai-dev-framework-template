@@ -404,25 +404,30 @@ forms exactly as listed above; the guard and parser additionally tolerate
 case- and dash-variation (`NEEDS_FIXES`, `needs-fixes`) only so that a
 provider-side normalization quirk cannot masquerade as a setup failure.
 
-The full decision gate:
+The full decision gate, evaluated in this precedence order (first match wins;
+rows are mutually exclusive):
 
-| Command exit | stdout shape | probe pattern in combined output | Outcome | Next action |
-| --- | --- | --- | --- | --- |
-| 124 / 137 | any | — | `escalate` / `timeout` | none — hard timeout |
-| any | valid verdict object | — (probes cleared) | `escalate` / `malformed_output` if the verdict is `clean` but exit is non-zero; `escalate` / `head_mismatch` if `reviewed_head` differs from the live head | rerun — a failed or stale run is not trustworthy |
-| any | valid verdict object | — (probes cleared) | parser outcome from the verdict (`clean` / `needs_fixes` / `needs_rerun` / `skipped` / `escalate`) | fix reported findings or act on the verdict |
-| any | not JSON (including empty) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
-| any | not JSON (including empty) | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
-| any | not JSON (including empty) | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
-| any | not JSON (including empty) | none | `escalate` / `malformed_output` | inspect raw output |
-| any | JSON that is not a valid verdict object (e.g. `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | any of the three patterns above | that pattern's `escalate` reason | fix the named setup problem |
-| any | JSON that is not a valid verdict object | none | `escalate` / `malformed_output` | inspect raw output |
+| # | Precondition | stdout shape | probe pattern in combined output | Outcome | Next action |
+| --- | --- | --- | --- | --- | --- |
+| 1 | command exit 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
+| 2 | any command exit | not a valid verdict object (invalid JSON, empty, `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
+| 3 | any command exit | not a valid verdict object | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
+| 4 | any command exit | not a valid verdict object | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
+| 5 | any command exit | valid verdict object with `reviewed_head` differing from the live head | — (probes cleared) | `escalate` / `head_mismatch` | rerun — a stale review is not trustworthy |
+| 6 | command exit non-zero | valid verdict object whose outcome is `clean` | — (probes cleared) | `escalate` / `malformed_output` | rerun — a clean verdict on a failed run is not trustworthy |
+| 7 | command exit 0 | valid verdict object | — (probes cleared) | parser outcome: `clean` | none |
+| 8 | any command exit | valid verdict object | — (probes cleared) | parser outcome: `needs_fixes` / `needs_rerun` / `skipped` / `escalate` | fix reported findings or act on the verdict |
+| 9 | any command exit | not a valid verdict object | none of the three patterns | `escalate` / `malformed_output` | inspect raw output |
+
+A `result` outside the accepted enum, or a mistyped findings alias, already
+fails rows 2-4/9: the gate never classifies such output as a valid verdict
+object, so it cannot reach the parser's own enum check (kept as a backstop).
 
 Genuine provider failures therefore keep their distinct reason codes on every
 exit path rather than degrading to an inferred clean verdict or a bare
 `malformed_output`. Non-verdict JSON that matches no probe pattern is rejected
-before the parser runs, so an empty findings set can never be read back as
-clean.
+by row 9 before the parser runs, so an empty findings set can never be read
+back as clean.
 
 ---
 
