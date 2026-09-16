@@ -392,15 +392,17 @@ are derived from grep heuristics over the reviewer command's combined stdout and
 stderr. Because the underlying CLI echoes parts of the reviewed document into
 its log output, that text can contain quoted prose matching a heuristic (for
 example a spec section about "usage limits"). A verdict on stdout therefore
-outranks a heuristic match on stderr — but only a real verdict. The probe input
-is the combined output for every exit code except a cleared case; the gate is
-fail-closed: anything that is not a valid verdict object keeps the probes in
-force.
+outranks a heuristic match on stderr — but only a real verdict. The gate is
+fail-closed: when stdout is not a valid verdict object the probes run against
+the combined output on every exit code; when it is, the probes are cleared.
 
 A *valid verdict object* is the shape the parser accepts: an object whose
-non-empty `result` matches the accepted enum above (case- and dash-normalized),
-or — when `result` is absent or empty — an object carrying an array in at least
-one of `findings`, `comments`, or `issues`.
+non-empty `result` is one of the underscore enum values above, or — when
+`result` is absent or empty — an object carrying an array in at least one of
+`findings`, `comments`, or `issues`. Emitters must keep using the underscore
+forms exactly as listed above; the guard and parser additionally tolerate
+case- and dash-variation (`NEEDS_FIXES`, `needs-fixes`) only so that a
+provider-side normalization quirk cannot masquerade as a setup failure.
 
 The full decision gate:
 
