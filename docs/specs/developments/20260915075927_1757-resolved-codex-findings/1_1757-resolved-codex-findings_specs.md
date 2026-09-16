@@ -144,7 +144,8 @@ The two waiting codes are the shipped reason codes and keep their existing names
 - [ ] When all Codex review conversations are resolved, historical or re-anchored Codex comments alone cannot produce `needs_fixes`.
 - [ ] After a pull-request update, the workflow requires terminal clean Codex evidence for the live revision before permitting a clean readiness path: a submitted review with that full commit SHA and a clean body, or a fresh Codex root pull-request comment whose `Reviewed commit` marker contains exactly one hexadecimal commit token that is an unambiguous prefix of the live head and whose body is clean.
 - [ ] A clean or finding verdict from an older revision is reported as stale and cannot authorize readiness for the live revision.
-- [ ] Per-run and lifetime cycle-limit outcomes are recorded as explicit escalations when another review or fix cycle is required after the allowance is exhausted, and never as clean or ready outcomes in that case; this escalation takes precedence over the cleared-findings retrigger path. A submitted current clean verdict received in the final permitted evaluation instead proceeds to readiness. Omitting the settings keeps the documented 10/25 defaults, and an invalid configured value logs a warning and applies those same defaults.
+- [ ] Per-run and lifetime cycle-limit outcomes are recorded as explicit escalations when another review or fix cycle is required after the allowance is exhausted, and never as clean or ready outcomes in that case; this escalation takes precedence over the cleared-findings retrigger path. A submitted current clean verdict received in the final permitted evaluation instead proceeds to readiness, even though a further cycle would exceed the allowance; an exhausted allowance with any remaining actionable finding still escalates.
+- [ ] Per-run and lifetime allowances resolve independently: an allowance that is omitted or carries an invalid configured value falls back to its own documented default (10 per-run, 25 lifetime) while the other allowance keeps its explicitly configured value, and an invalid value logs a warning.
 - [ ] A current terminal Codex verdict that matches neither an approved clean template nor the documented blocking markers is recorded as `codex_current_verdict_unrecognized`, and a current terminal Codex finding with no stable review-thread identifier or no identifiable matching conversation is recorded as `codex_finding_thread_correlation_missing`; the loop stops for human review instead of waiting, returning `needs_fixes`, or claiming clean.
 - [ ] When every actionable finding in the current terminal verdict is cleared because all of its matching conversations are resolved and no other applicable current-head conversation is unresolved, the loop records `waiting_on_reviewer` with reason `codex-github-review-pending` and requests or awaits another current-head review rather than dispatching a fixer or escalating correlation-missing.
 - [ ] Every fail-closed Codex escalation — `evidence_unavailable_codex_thread_state`, `codex_current_verdict_malformed_revision_marker`, `codex_finding_thread_correlation_missing`, and `codex_current_verdict_unrecognized` — is recorded as a terminal human-review escalation and is never converted into `needs_fixes`, `waiting_on_reviewer`, or clean readiness.
@@ -180,12 +181,12 @@ The two waiting codes are the shipped reason codes and keep their existing names
 | Exclude resolved threads from blocker counts | Acceptance criteria 1-2; Business Rules 1-3 |
 | Avoid `needs_fixes` from historical comments | Acceptance criterion 2; Use Case 1 |
 | Require live-revision terminal evidence | Acceptance criteria 3-4; Business Rules 7, 10; Use Case 2 |
-| Escalate at cycle limits | Acceptance criterion 5; Business Rule 9; Use Case 3 |
-| Add resolved-finding regression coverage | Acceptance criterion 13; Operational Visibility |
-| Share the invariant without rate-limit coupling | Acceptance criterion 14; Out of Scope |
-| Fail-closed Codex escalations | Acceptance criteria 6, 8; Business Rules 5, 7, 11-13 |
-| Cleared-findings retrigger path | Acceptance criterion 7; Business Rule 6; Use Case 1 |
-| Conservative acknowledgement and trigger-less evidence | Acceptance criteria 9-12; Business Rules 7-8, 14-15 |
+| Escalate at cycle limits | Acceptance criteria 5-6; Business Rule 9; Use Case 3 |
+| Add resolved-finding regression coverage | Acceptance criterion 14; Operational Visibility |
+| Share the invariant without rate-limit coupling | Acceptance criterion 15; Out of Scope |
+| Fail-closed Codex escalations | Acceptance criteria 7, 9; Business Rules 5, 7, 11-13 |
+| Cleared-findings retrigger path | Acceptance criterion 8; Business Rule 6; Use Case 1 |
+| Conservative acknowledgement and trigger-less evidence | Acceptance criteria 10-13; Business Rules 7-8, 14-15 |
 
 ## Deferral Notes
 
