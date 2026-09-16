@@ -403,6 +403,18 @@ run_test "quota_pattern_in_stderr_valid_stdout_result" "RESULT=needs_fixes" "$(l
 run_test "quota_pattern_in_stderr_valid_stdout_no_reset" "" "$(line_for QUOTA_RESET_AT)"
 run_test "quota_pattern_in_stderr_valid_stdout_blocking" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
 
+# Schemaless JSON (no result/findings keys) on nonzero exit keeps the stderr probes active,
+# so a genuine provider failure is still classified quota_exhausted (#1762 review follow-up).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "schemaless_json_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "schemaless_json_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
