@@ -1333,10 +1333,15 @@ if ! printf '%s\n' "$command_stdout" | jq -e . >/dev/null 2>&1; then
 elif printf '%s\n' "$command_stdout" | jq -e '
     type == "object"
     and (
-      ((.result? | type) == "string" and (.result | length) > 0)
-      or ((.findings? | type) == "array")
-      or ((.comments? | type) == "array")
-      or ((.issues? | type) == "array")
+      if (.result? // "") != "" then
+        ((.result | type) == "string"
+         and ((.result | ascii_downcase | gsub("-"; "_")) as $r
+              | ["clean","needs_fixes","needs_rerun","skipped","escalate"] | index($r)))
+      else
+        ((.findings? | type) == "array"
+         or (.comments? | type) == "array"
+         or (.issues? | type) == "array")
+      end
     )
   ' >/dev/null 2>&1; then
   # A review-result object in stdout is the source of truth; do not let stderr

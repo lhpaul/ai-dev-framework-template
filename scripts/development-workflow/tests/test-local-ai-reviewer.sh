@@ -441,6 +441,18 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "mixed_alias_comments_stdout_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "mixed_alias_comments_stdout_blocking" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
 
+# A `result` outside the downstream parser's accepted enum is not a verdict, so stderr probes
+# stay active and a genuine provider failure keeps its distinct escalation reason (#1762).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"result":"provider_error"}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "unknown_result_enum_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "unknown_result_enum_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'
