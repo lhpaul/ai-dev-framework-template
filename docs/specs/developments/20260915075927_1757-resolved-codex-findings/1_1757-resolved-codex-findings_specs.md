@@ -125,7 +125,7 @@ This feature does not introduce new tracker statuses. The operator-visible revie
 | `codex-github-review-pending` | Waiting on Codex review | Shipped pending code, retained unchanged. No terminal Codex evidence for the live head yet, or only stale/cleared evidence; the loop requests or awaits a current-head review without dispatching a fixer |
 | `codex-github-reaction-without-review` | Waiting on submitted Codex verdict | Shipped acknowledgement-only code, retained unchanged. Clean-looking or acknowledgement evidence exists for the live-head review attempt, but with no submitted review marker and no explicit reviewed revision |
 | `codex_current_verdict_malformed_revision_marker` | Malformed reviewed-commit marker | New code. Root-comment `Reviewed commit` evidence is syntactically unusable: empty, non-hex, multiple-token, ambiguous, interior-substring, or superstring |
-| `codex_current_verdict_unrecognized` | Unrecognized Codex verdict | New code. The current terminal verdict reproduces neither an approved clean template nor the documented blocking markers |
+| `codex_current_verdict_unrecognized` | Unrecognized Codex verdict | New code. The current terminal verdict reproduces neither an approved clean template nor the documented blocking markers, and is not a response the shipped adapter recognizes as an availability outcome |
 | `codex_finding_thread_correlation_missing` | Codex finding thread correlation missing | New code. A current terminal finding has no stable review-thread identifier or no identifiable matching conversation |
 | `evidence_unavailable_codex_thread_state` | Codex thread state unavailable | New code. The bounded evidence query failed or left resolution state or live-revision applicability indeterminate after its retry |
 
