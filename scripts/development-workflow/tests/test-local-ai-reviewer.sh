@@ -453,6 +453,18 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "unknown_result_enum_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "unknown_result_enum_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
 
+# Exit 0 with schemaless stdout must not infer a clean verdict when the provider printed a
+# genuine quota refusal; the fail-closed gate keeps the probes in force on every exit code.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=0
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "zero_exit_schemaless_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "zero_exit_schemaless_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'

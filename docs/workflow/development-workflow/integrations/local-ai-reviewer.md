@@ -388,31 +388,37 @@ evidence.
 ### Setup-probe precedence (#1762)
 
 The `missing_model_access`, `missing_credentials`, and `quota_exhausted` reasons
-are derived from grep heuristics over the reviewer command's stderr. Because the
-underlying CLI echoes parts of the reviewed document into its log output, that
-stderr can contain quoted prose that matches a heuristic (for example a spec
-section about "usage limits"). A verdict on stdout therefore outranks a
-heuristic match on stderr. The full decision gate:
-
-| Command exit | stdout shape | probe pattern in stderr | Outcome | Next action |
-| --- | --- | --- | --- | --- |
-| 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
-| 0 | not JSON | model-access pattern | `escalate` / `missing_model_access` | fix model config |
-| 0 | not JSON | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
-| 0 | not JSON | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
-| 0 | not JSON | none | `escalate` / `malformed_output` | inspect raw output |
-| non-zero | not JSON, or JSON without verdict shape | any of the three patterns above | that pattern's `escalate` reason | fix the named setup problem |
-| non-zero | not JSON, or JSON without verdict shape | none | `escalate` / `malformed_output` | inspect raw output |
-| non-zero | valid verdict object | any (ignored) | `escalate` / `malformed_output` when the verdict is `clean`; `head_mismatch` when `reviewed_head` disagrees with the live head | rerun — a clean verdict on a failed exit is not trustworthy |
-| non-zero | valid verdict object | any (ignored) | `needs_fixes` / `needs_rerun` / `escalate` per the verdict's own findings | fix reported findings or act on the verdict |
-| 0 | valid verdict object | any (ignored) | parser outcome from the verdict (`clean` or `needs_fixes`) | fix reported findings |
+are derived from grep heuristics over the reviewer command's combined stdout and
+stderr. Because the underlying CLI echoes parts of the reviewed document into
+its log output, that text can contain quoted prose matching a heuristic (for
+example a spec section about "usage limits"). A verdict on stdout therefore
+outranks a heuristic match on stderr — but only a real verdict. The probe input
+is the combined output for every exit code except a cleared case; the gate is
+fail-closed: anything that is not a valid verdict object keeps the probes in
+force.
 
 A *valid verdict object* is the shape the parser accepts: an object whose
-non-empty `result` matches the accepted enum above, or — when `result` is
-absent or empty — an object carrying an array in at least one of `findings`,
-`comments`, or `issues`. Anything else keeps the stderr probes in force, so
-genuine provider failures retain their distinct reason codes rather than
-degrading to `malformed_output`.
+non-empty `result` matches the accepted enum above (case- and dash-normalized),
+or — when `result` is absent or empty — an object carrying an array in at least
+one of `findings`, `comments`, or `issues`.
+
+The full decision gate:
+
+| Command exit | stdout shape | probe pattern in combined output | Outcome | Next action |
+| --- | --- | --- | --- | --- |
+| 124 / 137 | any | — | `escalate` / `timeout` | none — hard timeout |
+| any | valid verdict object | — (probes cleared) | `escalate` / `malformed_output` if the verdict is `clean` but exit is non-zero; `escalate` / `head_mismatch` if `reviewed_head` differs from the live head | rerun — a failed or stale run is not trustworthy |
+| any | valid verdict object | — (probes cleared) | parser outcome from the verdict (`clean` / `needs_fixes` / `needs_rerun` / `skipped` / `escalate`) | fix reported findings or act on the verdict |
+| any | not JSON (including empty) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
+| any | not JSON (including empty) | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
+| any | not JSON (including empty) | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
+| any | not JSON (including empty) | none | `escalate` / `malformed_output` | inspect raw output |
+| any | JSON that is not a valid verdict object (e.g. `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | any of the three patterns above | that pattern's `escalate` reason | fix the named setup problem |
+| any | JSON that is not a valid verdict object | none | `escalate` / `malformed_output` | inspect raw output |
+
+Genuine provider failures therefore keep their distinct reason codes on every
+exit path rather than degrading to an inferred clean verdict or a bare
+`malformed_output`.
 
 ---
 

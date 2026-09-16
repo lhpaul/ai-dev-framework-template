@@ -1324,13 +1324,11 @@ fi
 
 combined_output="${command_stdout}
 ${command_stderr}"
-setup_probe_output=""
-if [ "$command_exit" -ne 0 ]; then
-  setup_probe_output="$command_stderr"
-fi
-if ! printf '%s\n' "$command_stdout" | jq -e . >/dev/null 2>&1; then
-  setup_probe_output="$combined_output"
-elif printf '%s\n' "$command_stdout" | jq -e '
+# Only a stdout object that matches the downstream parser's accepted verdict shape outranks
+# the stderr heuristics. Anything else — non-JSON, empty stdout, or schemaless/mistyped JSON
+# such as "{}" or {"issues":"quota exceeded"} — keeps the probes in force, so a provider
+# failure is never downgraded to an inferred clean verdict.
+if printf '%s\n' "$command_stdout" | jq -e '
     type == "object"
     and (
       if (.result? // "") != "" then
@@ -1344,12 +1342,9 @@ elif printf '%s\n' "$command_stdout" | jq -e '
       end
     )
   ' >/dev/null 2>&1; then
-  # A review-result object in stdout is the source of truth; do not let stderr
-  # fragments (e.g. quoted document text containing "usage limits") trigger
-  # probe heuristics such as quota_exhausted. The type checks mirror the
-  # downstream parser's accepted shape, so key-bearing but mistyped JSON
-  # (e.g. {"issues":"quota exceeded"}) keeps the probes and still escalates.
   setup_probe_output=""
+else
+  setup_probe_output="$combined_output"
 fi
 if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' <<< "$setup_probe_output"; then
   print_result escalate 0 0 0 missing_model_access missing_model_access
