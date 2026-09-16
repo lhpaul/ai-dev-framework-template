@@ -375,7 +375,7 @@ The local reviewer fails closed:
 | Missing `LOCAL_AI_REVIEWER_COMMAND` | `RESULT=escalate`, `REASON=missing_command` |
 | Missing model access | `RESULT=escalate`, `REASON=missing_model_access` |
 | Missing credentials or auth failure | `RESULT=escalate`, `REASON=missing_credentials` |
-| Provider usage/quota refusal | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
+| Provider usage/quota refusal (no verdict on stdout) | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
 | Checkout head mismatch | `RESULT=escalate`, `REASON=head_mismatch` |
 | Missing `REVIEW.md` | `RESULT=escalate`, `REASON=review_contract_missing` |
 | Timeout | `RESULT=escalate`, `REASON=timeout` |
@@ -384,6 +384,35 @@ The local reviewer fails closed:
 
 A skipped or escalated local result is availability evidence, not clean review
 evidence.
+
+### Setup-probe precedence (#1762)
+
+The `missing_model_access`, `missing_credentials`, and `quota_exhausted` reasons
+are derived from grep heuristics over the reviewer command's stderr. Because the
+underlying CLI echoes parts of the reviewed document into its log output, that
+stderr can contain quoted prose that matches a heuristic (for example a spec
+section about "usage limits"). A verdict on stdout therefore outranks a
+heuristic match on stderr. The full decision gate:
+
+| Command exit | stdout shape | probe pattern in stderr | Outcome | Next action |
+| --- | --- | --- | --- | --- |
+| 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
+| 0 | not JSON | model-access pattern | `escalate` / `missing_model_access` | fix model config |
+| 0 | not JSON | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
+| 0 | not JSON | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
+| 0 | not JSON | none | `escalate` / `malformed_output` | inspect raw output |
+| non-zero | not JSON, or JSON without verdict shape | any of the three patterns above | that pattern's `escalate` reason | fix the named setup problem |
+| non-zero | not JSON, or JSON without verdict shape | none | `escalate` / `malformed_output` | inspect raw output |
+| non-zero | valid verdict object | any (ignored) | `escalate` / `malformed_output` when the verdict is `clean`; `head_mismatch` when `reviewed_head` disagrees with the live head | rerun — a clean verdict on a failed exit is not trustworthy |
+| non-zero | valid verdict object | any (ignored) | `needs_fixes` / `needs_rerun` / `escalate` per the verdict's own findings | fix reported findings or act on the verdict |
+| 0 | valid verdict object | any (ignored) | parser outcome from the verdict (`clean` or `needs_fixes`) | fix reported findings |
+
+A *valid verdict object* is the shape the parser accepts: an object whose
+non-empty `result` matches the accepted enum above, or — when `result` is
+absent or empty — an object carrying an array in at least one of `findings`,
+`comments`, or `issues`. Anything else keeps the stderr probes in force, so
+genuine provider failures retain their distinct reason codes rather than
+degrading to `malformed_output`.
 
 ---
 
