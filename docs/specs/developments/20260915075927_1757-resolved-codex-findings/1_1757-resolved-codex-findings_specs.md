@@ -209,7 +209,9 @@ same live head supersedes earlier current-head evidence before that precedence
 ordering is applied. The escalation tiers themselves are ordered: malformed-marker
 first, then unrecognized-verdict, then incomplete-correlation, then
 evidence-unavailable; when two escalation-tier items tie, the earliest tier in that
-order supplies the recorded reason. In particular,
+order supplies the recorded reason. The decision-gate matrix below lists rows in
+presentational order only; its row order defines no precedence, and the tier order
+stated here governs every escalation tie. In particular,
 incomplete terminal-finding evidence takes precedence
 over an otherwise valid unresolved conversation: the loop cannot selectively
 route only the correlated finding to fixes. Findings whose matching current-head
