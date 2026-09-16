@@ -415,6 +415,19 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "schemaless_json_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "schemaless_json_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
 
+# Key-bearing but mistyped JSON (issues as a string, not an array) on nonzero exit must keep
+# the stderr probes active too — the downstream parser treats non-array issues as empty and
+# would otherwise infer a clean verdict from a provider error (fail-open guard bypass).
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"issues":"provider quota exceeded"}'
+MOCK_LOCAL_REVIEWER_STDERR="ERROR: You've hit your usage limit."
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "mistyped_issues_stdout_keeps_quota_probe_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "mistyped_issues_stdout_keeps_quota_probe_reason" "REASON=quota_exhausted" "$(line_for REASON)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDERR='reviewer crashed: segmentation fault'

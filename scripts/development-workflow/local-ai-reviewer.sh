@@ -1330,11 +1330,18 @@ if [ "$command_exit" -ne 0 ]; then
 fi
 if ! printf '%s\n' "$command_stdout" | jq -e . >/dev/null 2>&1; then
   setup_probe_output="$combined_output"
-elif printf '%s\n' "$command_stdout" | jq -e 'type == "object" and (has("result") or has("reviewed_head") or has("findings") or has("comments") or has("issues"))' >/dev/null 2>&1; then
+elif printf '%s\n' "$command_stdout" | jq -e '
+    type == "object"
+    and (
+      ((.result? | type) == "string" and (.result | length) > 0)
+      or (((.findings? // .comments? // .issues?) | type) == "array")
+    )
+  ' >/dev/null 2>&1; then
   # A review-result object in stdout is the source of truth; do not let stderr
   # fragments (e.g. quoted document text containing "usage limits") trigger
-  # probe heuristics such as quota_exhausted. Schemaless JSON (e.g. "{}")
-  # keeps the probes so genuine provider failures still escalate.
+  # probe heuristics such as quota_exhausted. The type checks mirror the
+  # downstream parser's accepted shape, so key-bearing but mistyped JSON
+  # (e.g. {"issues":"quota exceeded"}) keeps the probes and still escalates.
   setup_probe_output=""
 fi
 if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' <<< "$setup_probe_output"; then
