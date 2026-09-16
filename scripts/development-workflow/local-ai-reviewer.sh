@@ -1324,11 +1324,36 @@ fi
 
 combined_output="${command_stdout}
 ${command_stderr}"
-setup_probe_output=""
-if [ "$command_exit" -ne 0 ]; then
-  setup_probe_output="$command_stderr"
+# Only a stdout object that matches the downstream parser's accepted verdict shape outranks
+# the stderr heuristics or reaches the verdict parser. Anything else — non-JSON, empty stdout,
+# or schemaless/mistyped JSON such as "{}" or {"issues":"quota exceeded"} — keeps the probes
+# in force and is later rejected as malformed, so a provider failure is never downgraded to
+# an inferred clean verdict.
+stdout_is_verdict=0
+if printf '%s\n' "$command_stdout" | jq -s -e '
+    length == 1
+    and (
+      .[0]
+      | type == "object"
+        and (
+          if (.result? // "") != "" then
+            ((.result | type) == "string"
+             and ((.result | ascii_downcase | gsub("-"; "_")) as $r
+                  | ["clean","needs_fixes","needs_rerun","skipped","escalate"] | index($r)))
+          else
+            ((.findings? | type) == "array"
+             or (.comments? | type) == "array"
+             or (.issues? | type) == "array")
+          end
+        )
+    )
+  ' >/dev/null 2>&1; then
+  stdout_is_verdict=1
 fi
-if ! printf '%s\n' "$command_stdout" | jq -e . >/dev/null 2>&1; then
+
+if [ "$stdout_is_verdict" -eq 1 ]; then
+  setup_probe_output=""
+else
   setup_probe_output="$combined_output"
 fi
 if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' <<< "$setup_probe_output"; then
@@ -1358,6 +1383,18 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:s
 fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: local AI reviewer produced no machine output" >&2
+  if [ -n "$command_stderr" ]; then
+    echo "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" >&2
+  fi
+  print_result escalate 0 0 0 malformed_output malformed_output
+  exit 2
+fi
+
+# Fail closed: setup probes above had no pattern match, so anything that is not a valid
+# verdict object must not reach the parser, where an empty findings set would infer clean.
+if [ "$stdout_is_verdict" -ne 1 ]; then
+  echo "WARN: local AI reviewer output was not a valid review verdict object" >&2
   if [ -n "$command_stderr" ]; then
     echo "INFO: local AI reviewer command stderr:" >&2
     printf '%s\n' "$command_stderr" >&2

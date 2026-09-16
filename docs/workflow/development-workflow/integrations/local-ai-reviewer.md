@@ -375,7 +375,7 @@ The local reviewer fails closed:
 | Missing `LOCAL_AI_REVIEWER_COMMAND` | `RESULT=escalate`, `REASON=missing_command` |
 | Missing model access | `RESULT=escalate`, `REASON=missing_model_access` |
 | Missing credentials or auth failure | `RESULT=escalate`, `REASON=missing_credentials` |
-| Provider usage/quota refusal | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
+| Provider usage/quota refusal (no verdict on stdout) | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
 | Checkout head mismatch | `RESULT=escalate`, `REASON=head_mismatch` |
 | Missing `REVIEW.md` | `RESULT=escalate`, `REASON=review_contract_missing` |
 | Timeout | `RESULT=escalate`, `REASON=timeout` |
@@ -384,6 +384,51 @@ The local reviewer fails closed:
 
 A skipped or escalated local result is availability evidence, not clean review
 evidence.
+
+### Setup-probe precedence (#1762)
+
+The `missing_model_access`, `missing_credentials`, and `quota_exhausted` reasons
+are derived from grep heuristics over the reviewer command's combined stdout and
+stderr. Because the underlying CLI echoes parts of the reviewed document into
+its log output, that text can contain quoted prose matching a heuristic (for
+example a spec section about "usage limits"). A verdict on stdout therefore
+outranks a heuristic match on stderr — but only a real verdict. The gate is
+fail-closed: when stdout is not a valid verdict object the probes run against
+the combined output on every exit code; when it is, the probes are cleared.
+
+A *valid verdict object* is the shape the parser accepts: stdout must contain
+exactly one JSON value — an object whose non-empty `result` is one of the
+underscore enum values above, or — when `result` is absent or empty — an object
+carrying an array in at least one of `findings`, `comments`, or `issues`.
+Emitters must keep using the underscore forms exactly as listed above; the guard
+and parser additionally tolerate case- and dash-variation (`NEEDS_FIXES`,
+`needs-fixes`) only so that a provider-side normalization quirk cannot
+masquerade as a setup failure.
+
+The full decision gate, evaluated in this precedence order (first match wins;
+rows are mutually exclusive):
+
+| # | Precondition | stdout shape | probe pattern in combined output | Outcome | Next action |
+| --- | --- | --- | --- | --- | --- |
+| 1 | command exit 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
+| 2 | any command exit | not exactly one valid verdict object (invalid JSON, empty, multiple JSON values, `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
+| 3 | any command exit | not a valid verdict object | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
+| 4 | any command exit | not a valid verdict object | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
+| 5 | any command exit | valid verdict object with `reviewed_head` differing from the live head | — (probes cleared) | `escalate` / `head_mismatch` | rerun — a stale review is not trustworthy |
+| 6 | command exit non-zero | valid verdict object whose outcome is `clean` | — (probes cleared) | `escalate` / `malformed_output` | rerun — a clean verdict on a failed run is not trustworthy |
+| 7 | command exit 0 | valid verdict object whose outcome is `clean` | — (probes cleared) | parser outcome: `clean` | none |
+| 8 | any command exit | valid verdict object whose outcome is `needs_fixes` / `needs_rerun` / `skipped` / `escalate` | — (probes cleared) | that parser outcome | fix reported findings or act on the verdict |
+| 9 | any command exit | not a valid verdict object | none of the three patterns | `escalate` / `malformed_output` | inspect raw output |
+
+A `result` outside the accepted enum, or a mistyped findings alias, already
+fails rows 2-4/9: the gate never classifies such output as a valid verdict
+object, so it cannot reach the parser's own enum check (kept as a backstop).
+
+Genuine provider failures therefore keep their distinct reason codes on every
+exit path rather than degrading to an inferred clean verdict or a bare
+`malformed_output`. Non-verdict JSON that matches no probe pattern is rejected
+by row 9 before the parser runs, so an empty findings set can never be read
+back as clean.
 
 ---
 
