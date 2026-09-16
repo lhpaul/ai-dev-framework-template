@@ -91,7 +91,13 @@ content='{"result":"clean","reviewed_head":"abc123","findings":[]}'
 if [ -n "${MOCK_MODEL_CONTENT+x}" ]; then
   content="$MOCK_MODEL_CONTENT"
 fi
-printf '{"choices":[{"message":{"content":%s}}]}\n' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
+printf '{"choices":[{"message":{"content":%s}}]}' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
+# Some OpenAI-compatible proxies append an SSE trailer to non-streaming JSON.
+if [ "${MOCK_APPEND_SSE_DONE:-0}" = "1" ]; then
+  printf 'data: [DONE]\n\n' >> "$output_file"
+else
+  printf '\n' >> "$output_file"
+fi
 if [ "$write_fmt" = '%{http_code}' ]; then
   printf '%s' "${MOCK_HTTP_CODE:-200}"
 fi
@@ -180,6 +186,15 @@ export MOCK_MODEL_CONTENT
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
 run_test "http_strips_markdown_fence" "needs_fixes" "$(jq -r '.result' "$OUTPUT_FILE")"
 unset MOCK_MODEL_CONTENT
+
+MOCK_APPEND_SSE_DONE=1
+export MOCK_APPEND_SSE_DONE
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "http_strips_sse_done_trailer" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
+unset MOCK_APPEND_SSE_DONE
 
 MOCK_MODEL_CONTENT='not-json'
 export MOCK_MODEL_CONTENT
