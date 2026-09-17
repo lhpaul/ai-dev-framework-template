@@ -48,16 +48,15 @@ issue URL on stdout.
 
 ## Step 2: Framework-item lookup semantics
 
-1. With framework mode enabled, run the documented lookup (exact command from updated protocol
-   `05` or `06`):
+1. With framework mode enabled, run the documented lookup wrapper:
 
 ```bash
-bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
+./scripts/development-workflow/list_open_framework_items.sh
 ```
 
-**Expected**: JSON array includes open items regardless of Type when the board has open
-non-terminal items. When the board is genuinely empty, output indicates empty distinctly from
-lookup failure (per implemented status lines).
+**Expected**: Lines include `FRAMEWORK_ITEMS_LOOKUP_STATUS` and `FRAMEWORK_ITEMS_JSON=…`.
+Status is `ok` when open items exist (any Type), `empty` only for a completed read with no
+open items, and `unavailable` with a reason when the tracker read fails.
 
 2. Temporarily unset `GITHUB_PROJECT_NUMBER` and remove `project_number` from config in a local
    test checkout **or** use the harness fixture for unavailable mode.

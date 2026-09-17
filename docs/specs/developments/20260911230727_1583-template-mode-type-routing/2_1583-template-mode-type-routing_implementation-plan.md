@@ -93,19 +93,22 @@ scope and must not be bundled into this implementation PR.
     filter and stderr warning behavior exactly (AC: Consumer repositories are unchanged).
   - **Framework mode**: include every open, non-terminal project item linked to an open repo
     issue, regardless of Type (AC: Open framework items stay discoverable).
-- [ ] For **framework mode only**, introduce stable machine-readable status alongside JSON
-  results so release/retrospective agents can distinguish the three answers without guessing
-  from `[]`:
-  - Preferred shape: print `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok|empty|unavailable` and
-    `FRAMEWORK_ITEMS_LOOKUP_REASON=<text>` as leading key=value lines before the JSON array
-    when env `FRAMEWORK_ITEMS_LOOKUP_VERBOSE=1`, **or** add a dedicated wrapper
-    `list_open_framework_items.sh` that prints those keys always and delegates to the lib
-    function for the array body. Pick one approach and use it consistently in protocols
-    `05` and `06` snippets.
-  - On unavailable (tracker/project/read/parse failures that today yield `[]` + warning in
-    consumer mode): set `unavailable`, keep stdout JSON as `[]`, require stderr reason; do
-    **not** treat as empty board (AC: distinguishable unavailable in framework mode).
-  - On success with zero open items: set `empty` with empty JSON array.
+- [ ] Add `scripts/development-workflow/list_open_framework_items.sh` as the **only**
+  supported entrypoint for release/retrospective "open framework items" reads. Contract
+  (always, on stdout, before exit):
+  1. `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok|empty|unavailable`
+  2. `FRAMEWORK_ITEMS_LOOKUP_REASON=<human-readable text>` (empty when `ok` with items)
+  3. `FRAMEWORK_ITEMS_JSON=<compact JSON array>` on the final line
+  - **Consumer repositories**: delegate to today's `list_open_workflow_type_issues` behavior;
+    print `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok` and emit Workflow-filtered JSON (no new
+    unavailable-vs-empty requirement).
+  - **Framework mode**: `ok` when at least one open non-terminal item exists; `empty` when the
+    lookup completed and the board has none; `unavailable` when the lookup could not be
+    performed (preserve stderr detail). Never emit `empty` for a failed read.
+  - Keep `list_open_workflow_type_issues` as the consumer-mode primitive; framework mode
+    may call it internally only after changing filter semantics behind the wrapper.
+- [ ] Update protocols `05` and `06` snippets to call `list_open_framework_items.sh` (not the
+  raw lib function).
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh` (or
   add `tests/test-framework-mode-type-routing.sh`) with mocked `gh` fixtures for framework
   vs consumer filter differences and framework-mode unavailable vs empty-board cases.
@@ -124,14 +127,23 @@ scope and must not be bundled into this implementation PR.
   - Framework mode + item already past Backlog (status reconciled to Spec Ready / Writing Plan /
     In Development / etc., same set `workflow-next-action.sh` already treats as pipeline-chosen)
     → `RESULT=pass` even if Type is still Workflow (AC: mid-pipeline items continue).
-- [ ] Wire the gate into deterministic entrypoints that currently encode Workflow infer-path
-  behavior in code (minimum):
-  - `scripts/development-workflow/run-work-router.sh` scan/single routing paths that classify
-    Backlog items for batch proposal (hold category must surface reason per protocol `90`).
-  - Document invocation in protocols `91` and `90` replacing infer-path rows for framework
-    mode; keep consumer rows unchanged.
-- [ ] Add regression tests for the gate script (mock type/status inputs via existing GitHub
-  Projects test harness patterns).
+- [ ] Wire the gate into the **actual** classification paths (not `run-work-router.sh`, which
+  only redirects `/run-work` scope):
+  - **Single-item runs**: invoke from `scripts/development-workflow/run-bounded-prelude.sh`
+    once the target issue and tracker status are known; on `RESULT=stop`, emit prelude output
+    that maps to `missing_tracker_context` and abort before stage dispatch (Protocol `91`).
+  - **Portfolio / batch proposal**: invoke from `scripts/development-workflow/workflow-next-action.sh`
+    when classifying a development folder whose tracker Type is `Workflow`, status reconciles to
+    Backlog, and framework mode is active — return a deterministic `NEXT_ACTION` such as
+    `hold-misclassified-type` (exact name chosen in implementation) plus stable reason fields
+    so `workflow-batch-lanes.sh` categorizes the item under `HELD - not included in proposed
+    batch` without stopping the scan.
+  - **Mid-pipeline items**: gate returns `pass` when status is past Backlog even if Type is
+    still `Workflow` (reuse the same status reconciliation `workflow-next-action.sh` already
+    uses).
+- [ ] Extend `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` (or dedicated
+  gate tests) to prove a Backlog + Workflow item is `held` with misclassification reason while
+  a sibling Feature item remains `proposed_batch`.
 
 ### Documentation and mirror surfaces (spec Mirror surfaces table)
 
@@ -147,9 +159,13 @@ scope and must not be bundled into this implementation PR.
   reporting; retrospective item creation must not direct Workflow in framework mode.
 - [ ] `docs/workflow/development-workflow/integrations/github-projects.md` — Type field table:
   Workflow remains on board but invalid in framework mode; document lookup helper behavior.
-- [ ] `AGENTS.md` Tracker Classification section + per-runner mirrors under
-  `.cursor/rules/`, `.agents/skills/`, `.codex/skills/` (only where classification text is
-  duplicated — match canonical wording).
+- [ ] `AGENTS.md` Tracker Classification section + per-runner mirrors that duplicate that text:
+  `.cursor/agents/orchestrator.md`, `.cursor/agents/item-orchestrator.md` (and other agent
+  stubs under `.cursor/agents/` that restate tracker Type guidance), plus Codex/Claude skill
+  copies under `.agents/skills/` and `.codex/skills/` when they repeat the same paragraph.
+- [ ] `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` —
+  remove the instruction to set Type `Workflow` when creating issues in framework mode; align
+  with `06-retrospective-protocol.md`.
 - [ ] Update `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` only if
   its Workflow discovery steps contradict framework-mode semantics (otherwise leave unchanged
   and cover framework mode in the new runbook).
@@ -211,8 +227,8 @@ markdown lint on plan/spec/runbook/protocol edits.
 
 1. Add failing regression tests for creation refusal, lookup mode split, and backlog gate.
 2. Implement lib + `add-backlog-item.sh` refusal and framework-mode lookup status output.
-3. Implement and wire `framework-mode-backlog-type-gate.sh` into `run-work-router.sh` (and any
-   other script that proposes Backlog starts from tracker type).
+3. Implement `list_open_framework_items.sh` and wire the backlog gate into
+   `run-bounded-prelude.sh` + `workflow-next-action.sh`.
 4. Update protocols, integration guide, and `AGENTS.md` mirrors per Mirror surfaces table.
 5. Run full touched test suites + smoke runbook; add `changelog.d` fragment.
 
