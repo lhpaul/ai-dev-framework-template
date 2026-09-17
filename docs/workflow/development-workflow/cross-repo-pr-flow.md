@@ -47,6 +47,7 @@ TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET
 TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
 scripts/development-workflow/component-release-target.sh \
   --repo "$TARGET_REPO_KEY" \
+  --release-branch "$RELEASE_BRANCH" \
   --json > "$TARGET_BINDING_TMP"
 mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```
@@ -66,6 +67,28 @@ scripts/development-workflow/component-release-evidence.sh \
   --deployment-outcome pending \
   --cleanup-outcome not_started \
   --hub-tracker-ref "#123" \
+  --output /path/to/component-release-evidence.json
+```
+
+After the product release completes and the component tag/version are known,
+re-render the same evidence file so it binds `--component-tag` and
+`--component-version`. Bundle attachment (`delivery-bundle-manifest.sh
+update-component`) requires that re-rendered file — a pending record without a
+bound tag fails with `component_tag_unbound`:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "#123" \
+  --component-tag "$COMPONENT_TAG" \
+  --component-version "$COMPONENT_VERSION" \
   --output /path/to/component-release-evidence.json
 ```
 

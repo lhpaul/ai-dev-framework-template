@@ -169,6 +169,26 @@ scripts/development-workflow/component-release-evidence.sh \
   --output /path/to/component-release-evidence.json
 ```
 
+After the product release completes, re-render the evidence so it binds
+`--component-tag` and `--component-version` before attaching it to a delivery
+bundle (otherwise `update-component` fails with `component_tag_unbound`):
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "<tracker-item-or-epic>" \
+  --component-tag "${COMPONENT_TAG:?}" \
+  --component-version "${VERSION:?}" \
+  --output /path/to/component-release-evidence.json
+```
+
 When the component release belongs to an open hub-owned delivery bundle, attach
 that evidence to the bundle after the product release evidence file exists. The
 delivery bundle remains hub-owned; this handoff must not change the product

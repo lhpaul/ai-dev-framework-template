@@ -72,7 +72,14 @@ report product-owned mutable artifacts.
 
 `scripts/development-workflow/component-release-evidence.sh` renders
 deterministic `component_release_evidence.v1` records from an independent target
-binding.
+binding. The producer refuses to emit a record when repository identity fields
+(`canonical_repository_identity`, `release_correlation_key`, `contract_revision`,
+`routing_outcome`, `artifact_owners` sub-fields, or a routed
+`selected_product_repo_key`) are empty, and it binds optional
+`component_tag` / `component_version` only when those flags are supplied and
+charset-valid. See
+[Component release evidence contract](component-release-evidence-contract.md)
+for the field-level trust matrix.
 Release cleanup reruns must compare the current target binding to the persisted
 evidence before deleting product release branches, tags, cleanup evidence, or
 updating hub tracker state. Duplicate cleanup attempts use a per-release lease
@@ -103,8 +110,13 @@ the hub tracker release view after component evidence and delivery bundle
 evidence exist. In `workflow_hub` mode, component milestones are namespaced as
 `<product-repo>@<component-tag>` and may be assigned only to the component child
 whose `component_release_evidence.v1` matches the selected product repository,
-stable repository identity, release correlation key, contract revision, cleanup
-outcome, hub tracker reference, and child release state. Parent epics and
+stable repository identity, release correlation key, and contract revision.
+`hub_tracker_reconciliation_outcome` and `child_release_state` are hub-supplied
+CLI flags, not evidence fields. Mutation eligibility is a single combined
+decision gated by `routing_outcome`, `evidence_state`, and those two hub-input
+flags together, in the order documented in
+[Component release evidence contract](component-release-evidence-contract.md)
+section 7 — not as independent, unordered checks. Parent epics and
 delivery bundle issues remain milestone-free in workflow-hub mode; the hub-owned
 delivery manifest records customer-facing shipped composition instead.
 
