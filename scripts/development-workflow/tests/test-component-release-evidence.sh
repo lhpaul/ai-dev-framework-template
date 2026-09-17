@@ -248,6 +248,312 @@ run_test "handoff_outcome" "component_released" "$(jq -r '.reconciliation_outcom
 run_test "handoff_mutation_allowed" "true" "$(jq -r '.mutation_allowed' <<< "$handoff_with_flags")"
 run_test "handoff_no_blockers" "0" "$(jq '.blockers | length' <<< "$handoff_with_flags")"
 
+# --- #1529 trust-boundary producer cases (T1-T6i, T27) ---
+
+common_evidence_args=(
+  --target-file "$target_file"
+  --binding-file "$binding_file"
+  --release-branch mobile-app/release/v1.18.0
+  --release-outcome completed
+  --ci-outcome passed
+  --deployment-outcome recorded
+  --cleanup-outcome complete
+  --hub-tracker-ref "#1356"
+)
+
+# Capture helper output without aborting under set -e (needed for red-before-green).
+capture_evidence() {
+  local __out_var="$1"
+  local __status_var="$2"
+  shift 2
+  local __output="" __status=0
+  set +e
+  __output="$("$@" 2>&1)"
+  __status=$?
+  set -e
+  printf -v "$__out_var" '%s' "$__output"
+  printf -v "$__status_var" '%s' "$__status"
+}
+
+# T1: --component-version supplied is emitted
+capture_evidence t1_json t1_status bash "$EVIDENCE_HELPER" \
+  "${common_evidence_args[@]}" \
+  --component-tag mobile-v1.18.0 \
+  --component-version v99.0.0 \
+  --json
+if [ "$t1_status" -eq 0 ]; then
+  run_test "T1_component_version_emitted" "v99.0.0" "$(jq -r '.component_version' <<< "$t1_json")"
+else
+  run_test "T1_component_version_emitted" "v99.0.0" "exit_${t1_status}:${t1_json}"
+fi
+
+# T2: omitted --component-version emits JSON null; full 16-key list
+capture_evidence t2_json t2_status bash "$EVIDENCE_HELPER" \
+  "${common_evidence_args[@]}" \
+  --component-tag mobile-v1.18.0 \
+  --json
+if [ "$t2_status" -eq 0 ]; then
+  run_test "T2_component_version_null" "null" "$(jq -c '.component_version' <<< "$t2_json")"
+  EXPECTED_KEYS="artifact_owners,canonical_repository_identity,ci_outcome,cleanup_outcome,component_tag,component_version,contract_revision,deployment_outcome,hub_tracker_ref,release_branch,release_correlation_key,release_outcome,routing_outcome,schema_version,selected_product_repo_key,target_binding"
+  run_test "T2_emitted_key_list" "$EXPECTED_KEYS" "$(jq -r 'keys | join(",")' <<< "$t2_json")"
+else
+  run_test "T2_component_version_null" "null" "exit_${t2_status}:${t2_json}"
+  run_test "T2_emitted_key_list" "16_keys" "exit_${t2_status}"
+fi
+
+# T3: charset reject on --component-tag
+run_fails_contains \
+  "T3_component_tag_charset" \
+  "--component-tag" \
+  bash "$EVIDENCE_HELPER" \
+    "${common_evidence_args[@]}" \
+    --component-tag "bad tag" \
+    --json
+
+# T4: charset reject on --component-version (genuine red after D1, green after D3)
+run_fails_contains \
+  "T4_component_version_charset" \
+  "--component-version" \
+  bash "$EVIDENCE_HELPER" \
+    "${common_evidence_args[@]}" \
+    --component-version "1.0.0;rm" \
+    --json
+
+# Helper: write matching empty-identity target+binding pair
+write_identity_pair() {
+  local out_target="$1"
+  local jq_expr="$2"
+  jq "$jq_expr" "$target_file" > "$out_target"
+  cp "$out_target" "${out_target%.json}-binding.json"
+}
+
+# T5: empty contract_revision
+t5_target="$TMP_ROOT/t5-target.json"
+write_identity_pair "$t5_target" '.contract_revision = ""'
+run_fails_contains \
+  "T5_empty_contract_revision" \
+  "missing required identity field: contract_revision" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t5_target" \
+    --binding-file "${t5_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T5b: empty canonical_repository_identity
+t5b_target="$TMP_ROOT/t5b-target.json"
+write_identity_pair "$t5b_target" '.canonical_repository_identity = ""'
+run_fails_contains \
+  "T5b_empty_canonical_identity" \
+  "missing required identity field: canonical_repository_identity" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t5b_target" \
+    --binding-file "${t5b_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6: empty release_correlation_key
+t6_target="$TMP_ROOT/t6-target.json"
+write_identity_pair "$t6_target" '.release_correlation_key = ""'
+run_fails_contains \
+  "T6_empty_release_correlation_key" \
+  "missing required identity field: release_correlation_key" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6_target" \
+    --binding-file "${t6_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# Pattern-omitted base for routing/null-key cases (T6a-T6i)
+write_routing_pair() {
+  local out_target="$1"
+  local jq_expr="$2"
+  jq "$jq_expr | .release_branch_pattern = \"\"" "$target_file" > "$out_target"
+  cp "$out_target" "${out_target%.json}-binding.json"
+}
+
+# T6a: routed + null selected_product_repo_key
+t6a_target="$TMP_ROOT/t6a-target.json"
+write_routing_pair "$t6a_target" '.routing_outcome = "component_release_routed" | .selected_product_repo_key = null'
+run_fails_contains \
+  "T6a_routed_null_selected_key" \
+  "missing required identity field: selected_product_repo_key" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6a_target" \
+    --binding-file "${t6a_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6b: single_repo_release + null key (green-by-construction / exempt)
+t6b_target="$TMP_ROOT/t6b-target.json"
+write_routing_pair "$t6b_target" '.routing_outcome = "single_repo_release" | .selected_product_repo_key = null'
+capture_evidence t6b_json t6b_status bash "$EVIDENCE_HELPER" \
+  --target-file "$t6b_target" \
+  --binding-file "${t6b_target%.json}-binding.json" \
+  --release-branch mobile-app/release/v1.18.0 \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "#1356" \
+  --json
+if [ "$t6b_status" -eq 0 ]; then
+  run_test "T6b_single_repo_null_key" "null" "$(jq -c '.selected_product_repo_key' <<< "$t6b_json")"
+else
+  run_test "T6b_single_repo_null_key" "null" "exit_${t6b_status}:${t6b_json}"
+fi
+
+# T6c: empty routing_outcome
+t6c_target="$TMP_ROOT/t6c-target.json"
+write_identity_pair "$t6c_target" '.routing_outcome = ""'
+run_fails_contains \
+  "T6c_empty_routing_outcome" \
+  "missing required identity field: routing_outcome" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6c_target" \
+    --binding-file "${t6c_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6d: each artifact_owners sub-field emptied
+for owner_field in release ci github_release deployment cleanup tracker; do
+  t6d_target="$TMP_ROOT/t6d-${owner_field}-target.json"
+  write_identity_pair "$t6d_target" ".artifact_owners.${owner_field} = \"\""
+  run_fails_contains \
+    "T6d_empty_artifact_owners_${owner_field}" \
+    "missing required identity field: artifact_owners" \
+    bash "$EVIDENCE_HELPER" \
+      --target-file "$t6d_target" \
+      --binding-file "${t6d_target%.json}-binding.json" \
+      --release-branch mobile-app/release/v1.18.0 \
+      --release-outcome completed \
+      --ci-outcome passed \
+      --deployment-outcome recorded \
+      --cleanup-outcome complete \
+      --hub-tracker-ref "#1356" \
+      --json
+done
+
+# T6e: single_repo_release with bound non-null key
+t6e_target="$TMP_ROOT/t6e-target.json"
+write_routing_pair "$t6e_target" '.routing_outcome = "single_repo_release" | .selected_product_repo_key = "mobile-app"'
+run_fails_contains \
+  "T6e_single_repo_bound_key" \
+  "must not bind selected_product_repo_key under single_repo_release routing" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6e_target" \
+    --binding-file "${t6e_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6f: single_repo_release with empty-string key
+t6f_target="$TMP_ROOT/t6f-target.json"
+write_routing_pair "$t6f_target" '.routing_outcome = "single_repo_release" | .selected_product_repo_key = ""'
+run_fails_contains \
+  "T6f_single_repo_empty_string_key" \
+  "must not bind selected_product_repo_key under single_repo_release routing" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6f_target" \
+    --binding-file "${t6f_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6g: single_repo_release with key absent
+t6g_target="$TMP_ROOT/t6g-target.json"
+write_routing_pair "$t6g_target" '.routing_outcome = "single_repo_release" | del(.selected_product_repo_key)'
+run_fails_contains \
+  "T6g_single_repo_missing_key" \
+  "must not bind selected_product_repo_key under single_repo_release routing" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6g_target" \
+    --binding-file "${t6g_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6h: unrecognized routing_outcome
+t6h_target="$TMP_ROOT/t6h-target.json"
+write_routing_pair "$t6h_target" '.routing_outcome = "unknown" | .selected_product_repo_key = null'
+run_fails_contains \
+  "T6h_unknown_routing_outcome" \
+  "routing_outcome must be component_release_routed or single_repo_release, got: unknown" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6h_target" \
+    --binding-file "${t6h_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T6i: routed with selected_product_repo_key as JSON array
+t6i_target="$TMP_ROOT/t6i-target.json"
+write_routing_pair "$t6i_target" '.routing_outcome = "component_release_routed" | .selected_product_repo_key = []'
+run_fails_contains \
+  "T6i_routed_array_selected_key" \
+  "missing required identity field: selected_product_repo_key" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$t6i_target" \
+    --binding-file "${t6i_target%.json}-binding.json" \
+    --release-branch mobile-app/release/v1.18.0 \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# T27: SemVer build-metadata + accepted in --component-version
+capture_evidence t27_json t27_status bash "$EVIDENCE_HELPER" \
+  "${common_evidence_args[@]}" \
+  --component-version "v1.4.0+build.7" \
+  --json
+if [ "$t27_status" -eq 0 ]; then
+  run_test "T27_component_version_plus_build" "v1.4.0+build.7" "$(jq -r '.component_version' <<< "$t27_json")"
+else
+  run_test "T27_component_version_plus_build" "v1.4.0+build.7" "exit_${t27_status}:${t27_json}"
+fi
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAILURES: $FAIL_COUNT"
   exit 1
