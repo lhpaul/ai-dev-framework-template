@@ -20,7 +20,7 @@ bash scripts/development-workflow/tests/test-pr-review-loop.sh
 ```
 
 Confirm the run completes with no failures and that cases named
-`codex_resolved_visible_finding_waits_not_fixes` (or the plan’s final name) pass.
+`codex_resolved_visible_finding_waits_after_revision_push` pass.
 
 ## Manual PR exercise (recommended)
 

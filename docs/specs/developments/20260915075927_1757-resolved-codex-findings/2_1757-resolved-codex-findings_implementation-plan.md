@@ -11,24 +11,31 @@
 evidence model. Today, `run_codex_github_review()` in `pr-review-loop.sh` can
 emit `RESULT=needs_fixes` / `REASON=existing_findings` or
 `REASON=unresolved_review_threads` while every applicable Codex review
-conversation is resolved, because (a) phase 1 counts any non-outdated bot
-thread before live-revision applicability is established, and (b) on companion
-exit `1`, the wrapper forces `COMMENT_COUNT` to at least `1` even when a strict
-thread recount returns zero. The companion script (`codex-github-reviewer.sh`)
-also safe-fails unrecognized terminal verdicts to `NEEDS_REVISION` (exit `1`)
-instead of the spec’s terminal escalation outcomes, and its blocking-path logic
-does not yet implement the full newest-evidence matrix (cleared-findings wait,
-malformed-marker escalation, correlation-missing, head evidence windows).
+conversation is resolved, because (a) phase 1 relies on
+`check_unresolved_threads` (`isResolved` / `isOutdated` / provisional reply
+relaxation) without live-head `commit_id` / dismissed-review applicability, and
+(b) on companion exit `1`, the wrapper forces `COMMENT_COUNT` to at least `1`
+even when a strict thread recount returns zero. The companion script
+(`codex-github-reviewer.sh`) also safe-fails unrecognized terminal verdicts to
+`NEEDS_REVISION` (exit `1`) instead of the spec’s terminal escalation outcomes,
+and its blocking-path logic does not yet implement the full newest-evidence
+matrix (cleared-findings wait, malformed-marker escalation, correlation-missing,
+head evidence windows).
 
-Implementation centralizes head-level Codex classification in
-`codex-github-reviewer.sh` (new helper functions + structured `REASON=` /
-`VERDICT=` output), then makes `run_codex_github_review()` a thin adapter that
-maps companion outcomes to `RESULT=clean|needs_fixes|waiting_on_reviewer|escalate`
-without re-counting resolved or stale findings. Regression coverage extends the
-existing Area 13 harness in `test-pr-review-loop.sh` (mock-`gh` direct invocations
-of the companion) plus one harness case for `run_codex_github_review()` proving
-a resolved-but-visible finding yields `waiting_on_reviewer` /
-`codex-github-review-pending`, not `needs_fixes`.
+Implementation centralizes head-level Codex classification in a new shared
+library `scripts/development-workflow/codex-github-evidence-lib.sh` (functions
+only — no argv parsing or top-level `exit`), sourced by both
+`codex-github-reviewer.sh` and `pr-review-loop.sh`. The companion keeps
+structured `REASON=` / `VERDICT=` output; `run_codex_github_review()` becomes a
+thin adapter that maps companion outcomes to
+`RESULT=clean|needs_fixes|waiting_on_reviewer|escalate` without re-counting
+resolved or stale findings. Do **not** source `codex-github-reviewer.sh` from
+the loop — it runs unconditional argument parsing and can `exit` at load time.
+Regression coverage extends the existing Area 13 harness in
+`test-pr-review-loop.sh` (mock-`gh` direct invocations of the companion) plus
+one harness case for `run_codex_github_review()` proving a resolved-but-visible
+finding yields `waiting_on_reviewer` / `codex-github-review-pending`, not
+`needs_fixes`.
 
 **Estimated complexity**: L
 
@@ -80,7 +87,11 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 
 > Database, shared packages, frontend, and infrastructure layers do not apply.
 
-### Script layer — `codex-github-reviewer.sh` (primary)
+### Script layer — `codex-github-evidence-lib.sh` (new, shared) + `codex-github-reviewer.sh`
+
+Create `scripts/development-workflow/codex-github-evidence-lib.sh` for the
+classifier helpers below. Source that file from both the companion and
+`pr-review-loop.sh`. Keep poll/trigger orchestration in the companion.
 
 Record the **provider fields** the plan relies on (spec Business Rule 1):
 
@@ -137,7 +148,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   interior-substring / superstring rejection) and freshness boundary (after
   latest live-head trigger; same-second comment ID ordering).
 
-- [ ] **Head evidence window attribution** (AC-13, 16): For trigger-less root
+- [ ] **Head evidence window attribution** (AC-14): For trigger-less root
   comments, assign each comment to the head that was current when authored; if
   chronology cannot be established, escalate `evidence_unavailable_codex_thread_state`
   rather than attributing to live head.
@@ -153,13 +164,17 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   never enter the timestamp tournament. Otherwise apply newest-non-dismissed
   timestamp selection among live-head-covering items, then tie precedence:
   malformed-marker → unrecognized → correlation-missing → evidence-unavailable →
-  actionable blocker → availability hard stop (environment-setup retained) →
-  cleared-findings wait → clean.
+  actionable blocker → availability hard stop (usage-limit or
+  account-not-connected) → cleared-findings wait → clean. A retained
+  environment-setup response participates only when it is itself the newest
+  evidence and is superseded by any strictly newer terminal or review item
+  (spec BR-8); it is not the hard-stop tier above.
 
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
   - Actionable blocker → exit `1` with blocking summary (unchanged shape)
-  - Timed out / hard unavailable → exit `2` / `3` (unchanged)
+  - Timed out → exit `2` with `REASON=timeout` (or existing timeout reason);
+    hard unavailable → exit `3` (unchanged)
   - `waiting_on_reviewer` → exit `4` with `REASON=codex-github-review-pending` or
     `REASON=codex-github-reaction-without-review`
   - Fail-closed escalations → exit `2` with `REASON=` one of
@@ -167,7 +182,12 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     `codex_current_verdict_malformed_revision_marker`,
     `codex_finding_thread_correlation_missing`,
     `codex_current_verdict_unrecognized`
-  Replace “unrecognized → NEEDS_REVISION safe-fail” path (AC-7).
+    (reuse exit `2` with distinct `REASON=`; the loop adapter already maps
+    non-`0/1/3/4` exits via `kv_value_default REASON … timeout` to
+    `RESULT=escalate` — preserve that contract)
+  - Update the companion header exit-code comment block so exit `2` documents
+    both timeout and fail-closed escalation (discriminated by `REASON=`), and
+    remove the “unrecognized → NEEDS_REVISION safe-fail” wording (AC-7).
 
 - [ ] **Cleared-findings retrigger** (AC-8): When terminal finding verdict’s
   findings all correlate to resolved applicable conversations and no other
@@ -185,10 +205,11 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
 - [ ] **`run_codex_github_review()` phase 1** (AC-1–2): Stop using raw
   `check_unresolved_threads` provisional count as the sole `existing_findings`
-  gate. Instead call a shared classifier hook (sourced from companion helpers or
-  duplicate-minimal wrapper) that counts only **applicable unresolved** Codex
-  conversations for the live head. Resolved, outdated, and dismissed-attached
-  threads must not increment blocker counts.
+  gate. Instead call the shared classifier from
+  `codex-github-evidence-lib.sh` that counts only **applicable unresolved**
+  Codex conversations for the live head (head SHA / review `commit_id`
+  correlation, not merely `isOutdated`). Resolved, outdated, and
+  dismissed-attached threads must not increment blocker counts.
 
 - [ ] **Companion exit adapter** (AC-1–2, 7–9): On companion exit `1`, remove
   the `unresolved_count=1` floor when strict applicable-unresolved count is
@@ -240,7 +261,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   ignored, `CHANGES_REQUESTED` with all threads resolved, empty reviewed-commit
   field, freshness-failing marker-pinned comment). Update existing Area 13 tests
   that expect `NEEDS_REVISION (unrecognized response format — safe-fail)` to
-  expect escalate / `codex_current_verdict_unrecognized` instead.
+  expect escalate / `codex_current_verdict_unrecognized` instead, and update
+  `codex_cleared_thread_top_level_blocker_*` expectations from exit `1` /
+  `NEEDS_REVISION` to the correlation-missing escalation path when the body has
+  unthreaded blocking text with no matching inline comment id.
 
 - [ ] **`run_codex_github_review` integration**: One HARNESS_MODE case mocking
   companion output + GraphQL threads proving phase 1 no longer emits
@@ -355,7 +379,7 @@ uses any PR where Codex left resolved inline threads on the current head.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Area 13 mass-update breaks unrelated Codex cases | Med | Med | Change expectations incrementally; run full `test-pr-review-loop.sh` before PR |
-| Classifier divergence between companion and loop phase 1 | Med | High | Share one bash function file sourced by both scripts |
+| Classifier divergence between companion and loop phase 1 | Med | High | Single shared `codex-github-evidence-lib.sh` sourced by both; never source the companion executable |
 | False clean from provisional reply relaxation | Low | High | Keep provisional mode only on re-trigger path; strict on clean declaration |
 | Escalation reasons not surfaced in PR summary | Low | Med | Assert `REASON=` in harness + Step 7a alignment check |
 
@@ -381,8 +405,9 @@ esac
 
 ## Implementation Order
 
-1. Extract shared Codex thread + evidence helpers (new file or bottom of
-   companion) with unit-testable functions; commit.
+1. Create `scripts/development-workflow/codex-github-evidence-lib.sh` with
+   unit-testable Codex thread + evidence helpers (no top-level side effects);
+   source it from `codex-github-reviewer.sh` and `pr-review-loop.sh`; commit.
 2. Implement terminal evidence collector + marker parser + window attribution; commit.
 3. Implement `codex_classify_live_head_evidence()` decision matrix and wire all
    companion exit paths; commit.
@@ -411,20 +436,25 @@ esac
 - Spec/brief coverage: Checked — plan maps spec acceptance criteria 1–16 and the
   decision-gate matrix to layer tasks, tests, and docs; CodeRabbit assessment is
   explicit (AC-16).
-- Implementation-order consistency: Checked — helper extraction precedes
-  classifier, adapter, caps, tests, docs; step numbers updated after AC-6 harness
-  addition.
+- Implementation-order consistency: Checked — shared evidence lib extraction
+  precedes classifier, adapter, caps, tests, docs; step numbers updated after
+  AC-6 harness addition.
 - Verification support: Checked — Verification Log commands are reproducible from
   repo root; thread-correlation join cites GraphQL `databaseId` + REST `id`.
 - Parser-risk completeness: Checked — dedicated addendum with 13 enumerated
   marker cases and 1:1 Area 13 test name mapping.
 - Complex workflow decision-gate matrix: Checked — spec matrix is authoritative;
-  implementation mirrors spec rows via `codex_classify_live_head_evidence()`; no
-  contradictory next actions in plan layers.
+  implementation mirrors spec rows via `codex_classify_live_head_evidence()`; tie
+  precedence matches BR-8 (usage-limit / account-not-connected hard-stop tier;
+  environment-setup retained separately); no contradictory next actions in plan
+  layers.
 - Concurrent-event-source: Not applicable — single-threaded bash polling, no shared
   mutable async listeners.
 - CHANGELOG literal format: Checked — step 10 uses `**Bold Title** (#1757):` bullet.
 - Plan-stage artifacts only: Checked — plan + smoke runbook only on this branch.
+- Cross-section naming: Checked — primary regression harness name
+  `codex_resolved_visible_finding_waits_after_revision_push` matches the smoke
+  runbook; shared lib path is `codex-github-evidence-lib.sh` everywhere.
 
 ### Decision-gate matrix (plan mirror — normative source is spec)
 
