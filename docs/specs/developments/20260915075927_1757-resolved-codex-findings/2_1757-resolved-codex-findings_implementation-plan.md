@@ -50,7 +50,7 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision (worktree) | `git rev-parse --short HEAD` | `32605700` |
+| Repo revision (worktree) | `git rev-parse --short HEAD` | `1d9cd0e0` (refresh at implementation start) |
 | Spec merged | `gh pr view 1758 --json state,baseRefName,mergedAt` | `MERGED` into `develop` at `2026-09-16T23:05:22Z` |
 | Phase-1 existing-findings gate | `sed -n '2167,2203p' scripts/development-workflow/pr-review-loop.sh` | Uses `check_unresolved_threads … provisional`; returns `needs_fixes` / `existing_findings` when count > 0 |
 | Companion exit-1 wrapper floor | `sed -n '2252,2290p' scripts/development-workflow/pr-review-loop.sh` | On script exit `1`, sets `unresolved_count=1` when strict recount is `0` |
@@ -110,11 +110,14 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 4. **Finding extraction**: For a terminal blocking review, treat each distinct
    inline comment on the current head (step 2) as one finding with stable thread
    id = comment `id`. Review-body-only blocking sections with **no** matching
-   inline comment id in the index are correlation-missing findings. Top-level
-   review summaries without thread ids follow the existing
-   `codex_cleared_thread_top_level_blocker` harness pattern → correlation-missing
-   when mixed with thread-anchored findings, or structured `CHANGES_REQUESTED`
-   blocker when alone.
+   inline comment id in the index are **correlation-missing** findings (escalate
+   `codex_finding_thread_correlation_missing`), including top-level-only blocking
+   text like `codex_cleared_thread_top_level_blocker`. **Exception (orthogonal):**
+   GitHub `state == CHANGES_REQUESTED` on a current-head submitted review is an
+   actionable blocker by structured state even when no inline finding maps to a
+   thread — but if that same review body also contains a separate uncorrelated
+   finding marker, correlation-missing escalation takes precedence (spec matrix
+   row).
 
 - [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): Extend
   `codex_review_thread_evidence_counts()` (or successor) to return structured
@@ -142,11 +145,16 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
   `clean`, `needs_fixes`, `waiting_on_reviewer` (+ reason), `escalate` (+ reason).
-  Apply newest-non-dismissed timestamp selection among live-head-covering items,
-  then tie precedence: malformed-marker → unrecognized → correlation-missing →
-  evidence-unavailable → actionable blocker → availability hard stop →
-  cleared-findings wait → clean. Preserve immediate-precedence for usage-limit and
-  account-not-connected notices (spec: never superseded by clean in same fetch).
+  **Pre-selection guard:** before newest-evidence timestamp selection, scan the
+  fetched batch for genuine usage-limit or account-not-connected notices; if
+  present and no blocking/`CHANGES_REQUESTED` evidence exists, terminate
+  immediately with the shipped unavailable outcome (same as today’s
+  `codex_return_usage_limit` / account-not-connected path) — these hard stops
+  never enter the timestamp tournament. Otherwise apply newest-non-dismissed
+  timestamp selection among live-head-covering items, then tie precedence:
+  malformed-marker → unrecognized → correlation-missing → evidence-unavailable →
+  actionable blocker → availability hard stop (environment-setup retained) →
+  cleared-findings wait → clean.
 
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
@@ -218,10 +226,14 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 ### Tests — `scripts/development-workflow/tests/test-pr-review-loop.sh`
 
 - [ ] **Primary regression** (AC-15, Operational Visibility): Add harness case
-  `codex_resolved_visible_finding_waits_not_fixes`: mock GraphQL with
-  `isResolved=true` non-outdated Codex thread + current-head review body that
-  still lists blocking markers; expect companion exit `4` and
-  `REASON=codex-github-review-pending`, not exit `1`.
+  `codex_resolved_visible_finding_waits_after_revision_push`: fixture with **prior
+  head** `cccc…` where Codex left a blocking inline thread, operator resolves it
+  (`isResolved=true`), then PR advances to **live head** `ffff…` with the old
+  review/comment still visible (outdated or resolved-on-new-head). Expect companion
+  exit `4` / `REASON=codex-github-review-pending` — not `needs_fixes` from
+  historical visibility alone. Include a second sub-assertion on current head
+  `ffff…` with resolved non-outdated thread + current-head COMMENTED review body
+  listing blocking markers (cleared-findings retrigger path).
 
 - [ ] **Matrix spot checks** (AC-7–14): Add focused mock-`gh` cases (one per
   escalation reason, cleared-findings wait vs clean tie, stale-head malformed
@@ -262,7 +274,7 @@ threads.
 
 **Key scenarios** (map to acceptance criteria):
 
-1. Resolved applicable Codex thread + visible historical blocking text →
+1. Resolved thread after revision push + visible prior-head blocking artifact →
    `waiting_on_reviewer` / `codex-github-review-pending` (AC-1, 2, 8, 15)
 2. All threads resolved, no terminal clean evidence → wait, not `needs_fixes` (AC-2, 8)
 3. Current-head clean submitted review with full SHA → `APPROVED` / loop clean (AC-3)
