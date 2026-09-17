@@ -262,6 +262,10 @@ validate_component_release_cleanup() {
   # per-attempt release_correlation_key recorded in the persisted evidence,
   # instead of a contract-only key shared by every release of this product.
   evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
+  if [ -z "$evidence_branch" ]; then
+    echo "Component release evidence is missing required field: release_branch" >&2
+    exit 1
+  fi
 
   COMPONENT_TARGET_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.XXXXXX")"
   trap cleanup_component_lock EXIT
@@ -276,6 +280,31 @@ validate_component_release_cleanup() {
     echo "Component release target is not mutation-allowed: $target_outcome" >&2
     exit 1
   fi
+
+  require_evidence_identity_field() {
+    local field="$1"
+    local value
+    value="$(json_field "$EVIDENCE_FILE" ".target_binding${field}")"
+    if [ -z "$value" ]; then
+      echo "Component release evidence is missing required identity field: ${field#.}" >&2
+      exit 1
+    fi
+  }
+
+  require_evidence_identity_field '.routing_outcome'
+  require_evidence_identity_field '.selected_product_repo_key'
+  require_evidence_identity_field '.canonical_repository_identity'
+  require_evidence_identity_field '.release_correlation_key'
+  require_evidence_identity_field '.contract_revision'
+
+  owner_field=""
+  for owner_field in release ci github_release deployment cleanup tracker; do
+    owner_value="$(json_field "$EVIDENCE_FILE" ".target_binding.artifact_owners.${owner_field}")"
+    if [ -z "$owner_value" ]; then
+      echo "Component release evidence is missing required identity field: artifact_owners" >&2
+      exit 1
+    fi
+  done
 
   compare_component_field '.routing_outcome'
   compare_component_field '.selected_product_repo_key'
@@ -319,6 +348,10 @@ validate_component_release_cleanup() {
   fi
 
   evidence_cleanup="$(json_field "$EVIDENCE_FILE" '.cleanup_outcome')"
+  if [ -z "$evidence_cleanup" ]; then
+    echo "Component release evidence is missing required field: cleanup_outcome" >&2
+    exit 1
+  fi
   if [ "$evidence_cleanup" = "complete" ]; then
     cleanup_log "Component release cleanup evidence is already complete; exiting idempotently."
     if [ "$JSON_OUTPUT" = "true" ]; then

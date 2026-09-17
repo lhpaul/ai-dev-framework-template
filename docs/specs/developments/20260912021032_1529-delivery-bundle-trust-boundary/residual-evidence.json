@@ -1,0 +1,54 @@
+{
+  "residual_groups": [
+    {
+      "summary": "hub_tracker_ref is never matched against --issue or --child-item (RESIDUAL-1)",
+      "remaining_count": 2,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "component_tag has no enforced relation to the release_branch version segment (RESIDUAL-2)",
+      "remaining_count": 1,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "apply-component mutates milestones without re-resolving an independent target binding (RESIDUAL-3)",
+      "remaining_count": 1,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "multi-repo-release-assurance.sh has no shape validator for six fields with no established format (RESIDUAL-4)",
+      "remaining_count": 6,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "cleanup lease is hub-checkout-scoped and no release-tag deletion exists; carried forward from the brief (RESIDUAL-5)",
+      "remaining_count": 2,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "T2's hardcoded key list is not mechanically derived from the emitted-field contract table, so drift between the two is undetected (RESIDUAL-6)",
+      "remaining_count": 1,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "Spec #1357 documents ci_outcome: skipped as valid for a ci_policy: none product, but GAP-14 narrows both consumers to reject it because no ci_policy-equivalent field exists to condition admission; deferred to issue #1742 (RESIDUAL-7)",
+      "remaining_count": 1,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "release_branch/hub_tracker_ref's producer_required non-empty duty is enforced only by a separate, independently-invoked consumer, never by delivery-bundle-manifest.sh's own finalize path; deferred to issue #1747 (RESIDUAL-8)",
+      "remaining_count": 2,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "Spec #1357 requires an explicit human action for a deferred hub_tracker_reconciliation_outcome to count toward finalization, but no field or mechanism for that action exists; both delivery-bundle-manifest.sh's blocker_for_component and component-milestone-reconciliation.sh's component_is_released accept deferred identically to complete with no check at all; deferred to issue #1754 (RESIDUAL-9)",
+      "remaining_count": 2,
+      "disposition": "out_of_scope"
+    },
+    {
+      "summary": "Producer-emitted fields with no remaining unbound caller override after this work",
+      "remaining_count": 0,
+      "disposition": "completed"
+    }
+  ]
+}

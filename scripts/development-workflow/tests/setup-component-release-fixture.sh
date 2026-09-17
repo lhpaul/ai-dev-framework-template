@@ -166,7 +166,9 @@ jq -nS --slurpfile target "$TARGET_JSON" \
     ci_outcome:"passed",
     deployment_outcome:"recorded",
     cleanup_outcome:"not_started",
-    hub_tracker_ref:"fixture:1356"
+    hub_tracker_ref:"fixture:1356",
+    component_tag:"mobile-v9.9.9-test",
+    component_version:"9.9.9-test"
   }' > "$WORK_DIR/mismatched-cleanup-evidence.json"
 
 if [ "$JSON_OUTPUT" = "true" ]; then

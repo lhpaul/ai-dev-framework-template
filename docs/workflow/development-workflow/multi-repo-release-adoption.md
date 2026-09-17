@@ -107,12 +107,17 @@ revision, a product repository key, a GitHub `owner/repo` slug, or a
 `<product-repo>@<component-tag>` milestone title) must match that format, not
 merely be non-empty. This catches evidence that could not possibly be the
 artifact it claims to be without loading or re-verifying the referenced
-artifact itself.
+artifact itself. The assurance harness classifies its own scenario evidence as
+`trust_class: attestation`: it never loads a real evidence file, and six fields
+(`hub_config`, `product_config`, `run_id`, `step_id`, `supersedes`,
+`idempotency_guard`) have no established format validator. See
+[Component release evidence contract](component-release-evidence-contract.md).
 
 The harness output includes:
 
 - `schema_version`
 - `adoption_status`
+- `trust_class`
 - `scenario_results[]`
 - `historical_no_rewrite[]`
 - `owner_actions[]`

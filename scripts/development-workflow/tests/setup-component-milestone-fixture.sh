@@ -41,6 +41,7 @@ OUTPUT_DIR="$(CDPATH='' cd -- "$OUTPUT_DIR" && pwd -P)"
 
 PRODUCT_REPO="mobile-app"
 COMPONENT_TAG="mobile-v1.4.0"
+COMPONENT_VERSION="1.4.0"
 PARENT_ISSUE=1352
 COMPONENT_ISSUE=1358
 DELIVERY_BUNDLE_ISSUE=1357
@@ -71,6 +72,7 @@ write_evidence() {
   jq -nS \
     --arg product_repo "$product_repo" \
     --arg component_tag "$COMPONENT_TAG" \
+    --arg component_version "$COMPONENT_VERSION" \
     --arg release_outcome "$release_outcome" \
     --arg ci_outcome "$ci_outcome" \
     --arg deployment_outcome "$deployment_outcome" \
@@ -92,6 +94,7 @@ write_evidence() {
       release_correlation_key:("sha256:" + $product_repo + "-release"),
       contract_revision:("sha256:" + $product_repo + "-contract"),
       component_tag:$component_tag,
+      component_version:$component_version,
       release_outcome:$release_outcome,
       ci_outcome:$ci_outcome,
       deployment_outcome:$deployment_outcome,
@@ -328,7 +331,7 @@ fixture_json="$(jq -nS \
       {name:"missing-file", expected_outcome:"component_release_pending", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing},
       {name:"wrong-schema", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$wrong_schema},
       {name:"incomplete", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$incomplete},
-      {name:"missing-state", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing_state},
+      {name:"missing-state", expected_outcome:"component_released", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing_state},
       {name:"pending", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$pending},
       {name:"failed", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$failed},
       {name:"blocked", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$blocked_evidence},

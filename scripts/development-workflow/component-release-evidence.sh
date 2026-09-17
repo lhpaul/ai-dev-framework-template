@@ -10,6 +10,7 @@ BINDING_FILE=""
 OUTPUT_FILE=""
 RELEASE_BRANCH=""
 COMPONENT_TAG=""
+COMPONENT_VERSION=""
 RELEASE_OUTCOME=""
 CI_OUTCOME=""
 DEPLOYMENT_OUTCOME=""
@@ -19,7 +20,7 @@ JSON_OUTPUT=false
 
 usage() {
   cat >&2 <<'EOF'
-Usage: component-release-evidence.sh --target-file PATH --binding-file PATH --release-branch BRANCH --release-outcome OUTCOME --ci-outcome OUTCOME --deployment-outcome OUTCOME --cleanup-outcome OUTCOME --hub-tracker-ref REF [--component-tag TAG] [--output PATH] [--json]
+Usage: component-release-evidence.sh --target-file PATH --binding-file PATH --release-branch BRANCH --release-outcome OUTCOME --ci-outcome OUTCOME --deployment-outcome OUTCOME --cleanup-outcome OUTCOME --hub-tracker-ref REF [--component-tag TAG] [--component-version VERSION] [--output PATH] [--json]
 EOF
 }
 
@@ -48,6 +49,20 @@ validate_enum() {
   done
   echo "$label outcome '$value' is not allowed" >&2
   exit 2
+}
+
+validate_identifier() {
+  local flag_name="$1"
+  local charset="$2"
+  local value="$3"
+  local charset_desc="$4"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  if [[ ! "$value" =~ $charset ]]; then
+    echo "--${flag_name} must use ${charset_desc}" >&2
+    exit 2
+  fi
 }
 
 compare_field() {
@@ -91,6 +106,11 @@ while [ "$#" -gt 0 ]; do
     --component-tag)
       [ "$#" -ge 2 ] || { usage; exit 2; }
       COMPONENT_TAG="$2"
+      shift 2
+      ;;
+    --component-version)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      COMPONENT_VERSION="$2"
       shift 2
       ;;
     --ci-outcome)
@@ -150,6 +170,11 @@ if [ -z "$HUB_TRACKER_REF" ]; then
   exit 2
 fi
 
+validate_identifier "component-tag" '^[A-Za-z0-9._-]+$' "$COMPONENT_TAG" \
+  "letters, numbers, dot, underscore, or hyphen"
+validate_identifier "component-version" '^[A-Za-z0-9._+-]+$' "$COMPONENT_VERSION" \
+  "letters, numbers, dot, underscore, plus, or hyphen"
+
 if ! jq -e '.schema_version == "component_release_target.v1"' "$TARGET_FILE" >/dev/null; then
   echo "target file must use schema_version component_release_target.v1" >&2
   exit 2
@@ -196,6 +221,58 @@ compare_field '.artifact_owners'
 compare_field '.release_correlation_key'
 compare_field '.contract_revision'
 
+# D4: refuse emission when producer_required identity fields are empty, when
+# routing_outcome is unrecognized, or when selected_product_repo_key violates
+# the producer_required_nullable iff with routing_outcome.
+require_nonempty_identity() {
+  local field="$1"
+  local value
+  value="$(jq -r "$field // \"\"" "$TARGET_FILE")"
+  if [ -z "$value" ]; then
+    echo "target binding is missing required identity field: ${field#.}" >&2
+    exit 1
+  fi
+}
+
+require_nonempty_identity '.canonical_repository_identity'
+require_nonempty_identity '.release_correlation_key'
+require_nonempty_identity '.contract_revision'
+require_nonempty_identity '.routing_outcome'
+
+routing_outcome="$(jq -r '.routing_outcome' "$TARGET_FILE")"
+case "$routing_outcome" in
+  component_release_routed|single_repo_release) ;;
+  *)
+    echo "target binding routing_outcome must be component_release_routed or single_repo_release, got: $routing_outcome" >&2
+    exit 1
+    ;;
+esac
+
+# artifact_owners sub-fields must each be non-empty
+owner_field=""
+for owner_field in release ci github_release deployment cleanup tracker; do
+  owner_value="$(jq -r --arg f "$owner_field" '.artifact_owners[$f] // ""' "$TARGET_FILE")"
+  if [ -z "$owner_value" ]; then
+    echo "target binding is missing required identity field: artifact_owners" >&2
+    exit 1
+  fi
+done
+
+if [ "$routing_outcome" = "component_release_routed" ]; then
+  if ! jq -e '(.selected_product_repo_key | type) == "string" and (.selected_product_repo_key | length) > 0' "$TARGET_FILE" >/dev/null; then
+    echo "target binding is missing required identity field: selected_product_repo_key" >&2
+    exit 1
+  fi
+fi
+
+if [ "$routing_outcome" = "single_repo_release" ]; then
+  if ! jq -e 'has("selected_product_repo_key") and (.selected_product_repo_key == null)' "$TARGET_FILE" >/dev/null \
+    || ! jq -e 'has("selected_product_repo_key") and (.selected_product_repo_key == null)' "$BINDING_FILE" >/dev/null; then
+    echo "target binding must not bind selected_product_repo_key under single_repo_release routing" >&2
+    exit 1
+  fi
+fi
+
 evidence="$(jq -cnS \
   --slurpfile target "$TARGET_FILE" \
   --arg release_branch "$RELEASE_BRANCH" \
@@ -205,6 +282,7 @@ evidence="$(jq -cnS \
   --arg cleanup_outcome "$CLEANUP_OUTCOME" \
   --arg hub_tracker_ref "$HUB_TRACKER_REF" \
   --arg component_tag "$COMPONENT_TAG" \
+  --arg component_version "$COMPONENT_VERSION" \
   '{
     schema_version:"component_release_evidence.v1",
     target_binding:$target[0],
@@ -220,7 +298,8 @@ evidence="$(jq -cnS \
     deployment_outcome:$deployment_outcome,
     cleanup_outcome:$cleanup_outcome,
     hub_tracker_ref:$hub_tracker_ref,
-    component_tag:(if ($component_tag | length) > 0 then $component_tag else null end)
+    component_tag:(if ($component_tag | length) > 0 then $component_tag else null end),
+    component_version:(if ($component_version | length) > 0 then $component_version else null end)
   }')"
 
 if [ -n "$OUTPUT_FILE" ]; then

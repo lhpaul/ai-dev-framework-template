@@ -287,6 +287,7 @@ def main(argv: list[str]) -> int:
     result = {
         "schema_version": SCHEMA,
         "adoption_status": status,
+        "trust_class": "attestation",
         "scenario_results": scenarios,
         "historical_no_rewrite": historical,
         "owner_actions": owner_actions,
@@ -298,6 +299,7 @@ def main(argv: list[str]) -> int:
     else:
         print(f"SCHEMA_VERSION={SCHEMA}")
         print(f"ADOPTION_STATUS={status}")
+        print(f"TRUST_CLASS=attestation")
         print(f"SCENARIO_COUNT={len(scenarios)}")
         print(f"HISTORICAL_NO_REWRITE={all(item['unchanged'] for item in historical)}")
         print(f"REQUIRED_NEXT_ACTION={result['required_next_action']}")
