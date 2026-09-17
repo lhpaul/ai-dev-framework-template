@@ -189,20 +189,109 @@ if [ "$http_code" != "200" ]; then
   exit 1
 fi
 
-# Some OpenAI-compatible proxies (notably 9router) append an SSE trailer
-# (`data: [DONE]`) to an otherwise non-streaming JSON body. Re-serialize the
-# first complete JSON value so jq can parse the response.
+# Some OpenAI-compatible proxies (notably 9router) either:
+# 1) append an SSE trailer (`data: [DONE]`) to an otherwise non-streaming JSON
+#    body, or
+# 2) return a full SSE stream of `chat.completion.chunk` events even when the
+#    request did not set stream=true (common for long combo-model reviews).
+# Normalize either shape into one JSON chat.completion object for jq.
 python3 -c '
 import json, pathlib, sys
+
 path = pathlib.Path(sys.argv[1])
 raw = path.read_text(encoding="utf-8", errors="replace").strip()
 if not raw:
     raise SystemExit(0)
+
+def emit(obj):
+    path.write_text(json.dumps(obj, separators=(",", ":")), encoding="utf-8")
+
+def assemble_sse(text):
+    content_parts = []
+    reasoning_parts = []
+    role = "assistant"
+    model = None
+    finish_reason = None
+    usage = None
+    saw_data = False
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        saw_data = True
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(chunk.get("model"), str) and chunk["model"]:
+            model = chunk["model"]
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        # Non-stream JSON mistakenly framed as one SSE event.
+        if chunk.get("object") == "chat.completion" or (
+            isinstance(chunk.get("choices"), list)
+            and chunk["choices"]
+            and isinstance(chunk["choices"][0], dict)
+            and "message" in chunk["choices"][0]
+        ):
+            return chunk
+        choices = chunk.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            continue
+        choice = choices[0]
+        if choice.get("finish_reason"):
+            finish_reason = choice["finish_reason"]
+        delta = choice.get("delta") or {}
+        if not isinstance(delta, dict):
+            continue
+        if isinstance(delta.get("role"), str) and delta["role"]:
+            role = delta["role"]
+        if isinstance(delta.get("content"), str) and delta["content"]:
+            content_parts.append(delta["content"])
+        if isinstance(delta.get("reasoning_content"), str) and delta["reasoning_content"]:
+            reasoning_parts.append(delta["reasoning_content"])
+    if not saw_data:
+        return None
+    message = {"role": role, "content": "".join(content_parts)}
+    if reasoning_parts:
+        message["reasoning_content"] = "".join(reasoning_parts)
+    obj = {
+        "id": "chatcmpl-sse-assembled",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": finish_reason or "stop",
+        }],
+    }
+    if model:
+        obj["model"] = model
+    if usage:
+        obj["usage"] = usage
+    return obj
+
 try:
     json.loads(raw)
+    raise SystemExit(0)
 except json.JSONDecodeError:
+    pass
+
+if raw.lstrip().startswith("data:"):
+    assembled = assemble_sse(raw)
+    if assembled is None:
+        print("ERROR: HTTP reviewer returned undecodable SSE body", file=sys.stderr)
+        raise SystemExit(1)
+    emit(assembled)
+    raise SystemExit(0)
+
+try:
     obj, _idx = json.JSONDecoder().raw_decode(raw)
-    path.write_text(json.dumps(obj, separators=(",", ":")), encoding="utf-8")
+except json.JSONDecodeError as exc:
+    print(f"ERROR: HTTP reviewer returned undecodable body ({exc})", file=sys.stderr)
+    raise SystemExit(1)
+emit(obj)
 ' "$body_file"
 
 content="$(jq -r '.choices[0].message.content // empty' "$body_file")"
