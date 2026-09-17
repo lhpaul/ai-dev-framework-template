@@ -1,6 +1,6 @@
 # Smoke Test Runbook: Reviewer Preflight
 
-**Feature**: Reviewer preflight before batch/item dispatch
+**Feature**: Reviewer preflight before item dispatch
 **Spec**: [`1_1561-reviewer-preflight_specs.md`](../../specs/developments/20260911230501_1561-reviewer-preflight/1_1561-reviewer-preflight_specs.md)
 **Implementation plan**: [`2_1561-reviewer-preflight_implementation-plan.md`](../../specs/developments/20260911230501_1561-reviewer-preflight/2_1561-reviewer-preflight_implementation-plan.md)
 **Created in**: Plan Ready stage
@@ -52,14 +52,17 @@ Record: working tree clean before preflight.
 <!-- workflow-shell-contract: bash -->
 ```bash
 set -euo pipefail
+report="$(mktemp)"
 ./scripts/development-workflow/reviewer-preflight.sh \
   --repo-root "$(pwd -P)" \
   --mode pre-dispatch \
   --target-base develop \
-  --remaining-stages on_draft.runner,on_draft.github,on_ready.github
-rc=$?
+  --remaining-stages on_draft.runner,on_draft.github,on_ready.github \
+  | tee "$report"
+rc=${PIPESTATUS[0]}
 printf 'exit=%s\n' "$rc"
-grep '^OUTCOME=' 
+grep '^OUTCOME=' "$report"
+test -z "$(git status --porcelain)"
 ```
 
 **Expected**: Exit `0`; `OUTCOME` is `passed` or `passed-unverified` (not `blocked`). Tree still clean afterward.
@@ -70,7 +73,7 @@ grep '^OUTCOME='
 
 Use a temporary fixture directory with `.coderabbit.yaml` having `reviews.auto_review.enabled: false` and a workflow yaml listing `coderabbit` in `review.on_draft.github`. Point `--repo-root` at the fixture (implementation must support fixture root).
 
-**Expected**: Exit `1`; `OUTCOME=blocked`; platform names `Automatic review turned off` reason; names file and setting.
+**Expected**: Exit `1`; `OUTCOME=blocked`; platform names `Automatic review turned off` / reason `review-disabled`; names file and setting.
 
 ### Step 3: Branch-in-force documentation (AC-3)
 
@@ -96,7 +99,8 @@ set -euo pipefail
   --repo-root "$(pwd -P)" \
   --mode pr-resume \
   --pr <number> \
-  --owner lhpaul --repo ai-dev-framework-template
+  --owner lhpaul --repo ai-dev-framework-template \
+  --target-base develop
 ```
 
 **Expected**: Report distinguishes shared config checked against PR target base vs platform config checked against PR head branch (`CHECKED_*_REF` fields).
@@ -117,7 +121,7 @@ Invoke with `--remaining-stages` empty (or flag meaning no reviewer stages left)
 | --- | --- |
 | `prerequisite-failed` | Missing/invalid `--target-base` or malformed `--remaining-stages` |
 | All platforms undetermined | Local-only platforms without repo config — expected; outcome should be `passed-unverified` if nothing is Cannot review |
-| Timeout undetermined | Increase caps only under `WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE=1` in tests |
+| Timeout undetermined | Incomplete read with no prior disagreement → `check-inconclusive`; if disagreement was already proven, expect `cannot-review` instead. Increase caps only under `WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE=1` in tests |
 
 ## Known Limitations
 

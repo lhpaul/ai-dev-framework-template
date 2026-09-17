@@ -78,11 +78,11 @@ The bounded prelude (`run-bounded-prelude.sh`) stays read-only by contract. The 
 
 ### Decision 3 — Time budget: 15 seconds total, 4 seconds per platform read
 
-Satisfies the spec's product property (slow/unreachable → Undetermined, cost negligible vs guarded work). Constants: `PREFLIGHT_BUDGET_SECONDS=15`, `PREFLIGHT_PER_PLATFORM_CAP_SECONDS=4`. Test mode honors `WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE=1` with overridable caps for hermetic tests only.
+Satisfies the spec's product property (slow/unreachable → Undetermined, cost negligible vs guarded work). Constants: `PREFLIGHT_BUDGET_SECONDS=15`, `PREFLIGHT_PER_PLATFORM_CAP_SECONDS=4`, enforced by wrapping each platform config read with a wall-clock deadline in `reviewer-preflight.sh` and aborting remaining reads when the total budget is exhausted. Classification nuance (spec): a read that times out **after** a disagreement reason is already established for that platform is `cannot-review` with that reason, not `undetermined`/`check-inconclusive`. Only an incomplete read with **no** prior disagreement becomes `undetermined` / `check-inconclusive`. Test mode honors `WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE=1` with overridable caps for hermetic tests only.
 
 ### Decision 4 — Open Question 4: one report row per platform name; bucket detail in structured fields
 
-When the same platform name appears in multiple lifecycle buckets with different bucket-scoped outcomes, emit **one** `PLATFORM_N_*` group per platform name (spec "exactly once"). Set `PLATFORM_N_VERDICT` to the most severe bucket outcome (`cannot-review` > `undetermined` > `can-review`). Include `PLATFORM_N_BUCKET_JSON` — a JSON array of `{bucket, verdict, reasons[]}` — so operators see per-bucket contradictions without duplicate rows. Run outcome still uses the canonical most-severe rule across platforms.
+When the same platform name appears in multiple lifecycle buckets with different bucket-scoped outcomes, emit **one** `PLATFORM_N_*` group per platform name (spec "exactly once"). Set `PLATFORM_N_VERDICT` to the most severe bucket outcome (`cannot-review` > `undetermined` > `can-review`). Include `PLATFORM_N_BUCKET_JSON` — a JSON array of `{bucket, verdict, reasons[]}` — so operators see per-bucket contradictions without duplicate rows. Run outcome still uses the canonical most-severe rule across platforms. Enforcement: aggregation runs only after every remaining bucket has been classified; no second row is emitted for the same `PLATFORM_N_NAME`.
 
 ### Decision 5 — Open Question 3: no second malformed-scalar detector in preflight
 
@@ -119,7 +119,7 @@ scripts/development-workflow/reviewer-preflight.sh \
   [--json]
 ```
 
-Read-only: no `git` state changes, no `gh` mutations, no file writes under `--repo-root`.
+Read-only enforcement: the script may run only `git show` / `git rev-parse` / `git status --porcelain` (status check for AC-2 tests), `gh pr view` (read-only), and Python reads of temporary copies; it must not call `git checkout`, `git commit`, `git push`, `gh pr create`, `gh pr comment`, `gh pr edit`, label mutations, or write tracked files under `--repo-root`. Shell contract tests assert a clean porcelain tree before and after.
 
 **Exit codes**
 
@@ -132,16 +132,18 @@ Read-only: no `git` state changes, no `gh` mutations, no file writes under `--re
 
 **Summary block** (stable keys; extend only additively)
 
+Platform verdict codes match the spec's Can review / Cannot review / Undetermined / Excluded by override vocabulary (machine codes below; `OUTCOME_LABEL` and human detail fields use the spec display labels).
+
 ```text
 OUTCOME=<passed|passed-unverified|blocked|prerequisite-failed|no-review-remaining>
-OUTCOME_LABEL=<display label from spec>
+OUTCOME_LABEL=<Passed|Passed, some unverified|Blocked|Prerequisite not met|No review remaining>
 CHECKED_SHARED_CONFIG_REF=<ref description>
 CHECKED_PLATFORM_CONFIG_REF=<ref description>
 LOCAL_OVERRIDE_STATE=<none|applied|present-unpropagated details>
 PLATFORM_COUNT=<n>
 PLATFORM_1_NAME=<name>
-PLATFORM_1_VERDICT=<operable|not-operable|undetermined|override-excluded>
-PLATFORM_1_REASONS=<comma-separated reason codes>
+PLATFORM_1_VERDICT=<can-review|cannot-review|undetermined|override-excluded>
+PLATFORM_1_REASONS=<comma-separated reason codes: review-disabled|stage-excluded|base-branch-unmatched|value-not-supported|no-readable-surface|check-inconclusive>
 PLATFORM_1_SURFACE=<file path>
 PLATFORM_1_SETTING=<setting name>
 PLATFORM_1_DETAIL=<human contradiction text>
@@ -165,6 +167,100 @@ Input JSON carries: mode, target_base, branch, pr metadata, remaining stage buck
 
 ---
 
+## Spec → Plan Coverage
+
+| Spec surface | Plan coverage |
+| --- | --- |
+| UC1 coherent config → Passed / Passed some unverified | Contracts exit `0`; unit + shell + smoke Step 1 |
+| UC2 disagreement → Blocked before mutation | Decision 1; Protocol 91 hook; unit four reasons; smoke Step 2 |
+| UC3 branch-in-force docs | Layer AC-3 docs; smoke Step 3 |
+| UC4 Undetermined / no-readable-surface | Decision 8; unit undetermined paths; smoke note for local-runtime |
+| AC-1 all four reasons + multi-reason + override + value-not-supported + report fields | Unit suite enumerated cases; shell Blocked path |
+| AC-1 stage-excluded with draft→ready adjustment | Decision 7; unit case for adjusted PR state |
+| AC-1 prerequisite-failed / no-review-remaining precedence | Unit prerequisite ordering; smoke Step 5 |
+| AC-2 side-effect freedom | Shell porcelain before/after; Contracts read-only enforcement |
+| Unverifiable platforms never as verified | Unit `passed-unverified`; timeout nuance in Decision 3 |
+| AC-3 documentation | Integration docs steps; smoke Step 3 |
+| B-5 existing PR path | `--mode pr-resume`; smoke Step 4; `CHECKED_*_REF` |
+| Reachable where needed (fresh / branch-resume / PR-resume) | Decision 1; Protocol 91 + agent mirrors; surface suite |
+| Out of Scope 1–13 / OQ1–2 deferred | Out-of-scope notes; Decisions 4–5 close OQ4 / OQ3 |
+
+---
+
+## Decision-Gate Consistency Matrix
+
+The reviewer preflight is a complex workflow decision gate (spec § Decision-Gate Consistency Matrix). This section restates that matrix in implementation terms: CLI modes, `OUTCOME` / `PLATFORM_N_VERDICT` codes, exit codes, and Protocol 91 next actions.
+
+### Gate inputs
+
+| Spec input | Where implementation reads it | Carried as |
+| --- | --- | --- |
+| Reviewer list per lifecycle stage | `workflow-config-resolver.py` effective lists from shared YAML at shared-config ref (`origin/<target-base>` or PR `baseRefName`) | Per-bucket resolved lists in Python input JSON |
+| Machine-local override | `.ai-dev-workflow.local.yaml` on the machine running the script (never from item branch) | `LOCAL_OVERRIDE_STATE`; override-excluded platforms |
+| Each platform's own configuration | Branch in force: pre-dispatch → target base; branch-resume → `--branch`; pr-resume → PR head | Platform payload + `CHECKED_PLATFORM_CONFIG_REF` |
+| Targeted base branch | `--target-base` or PR `baseRefName` | Prerequisite step 1; `base-branch-unmatched` checks |
+| Remaining lifecycle stages | `--remaining-stages` CSV (Protocol 91 supplies remaining buckets) | Prerequisite steps 2–3; empty → `no-review-remaining` |
+| Per-stage PR state at dispatch | `--draft-state` / per-bucket adjusted state from Protocol 91 (Decision 7) | stage-excluded evaluation input |
+| Supported-platform membership | Per-bucket allow-lists in Python (aligned with Step 7a / config docs) | `value-not-supported` before other checks |
+
+### Allowed outcomes and required next actions
+
+| Gate input state | `OUTCOME` | Exit | Protocol 91 next action |
+| --- | --- | --- | --- |
+| `--target-base` empty / unresolved / malformed | `prerequisite-failed` | `2` | Do not dispatch; resolve base; re-run |
+| Base OK; remaining stages unresolved / malformed | `prerequisite-failed` | `2` | Do not dispatch; resolve stage set; re-run |
+| Base OK; remaining stages resolved empty | `no-review-remaining` | `0` | Dispatch proceeds (merge/cleanup path) |
+| Base OK; non-empty stages; any stage PR state empty / unresolved / malformed | `prerequisite-failed` | `2` | Do not dispatch; resolve PR state; re-run |
+| Prerequisites clear; ≥1 `cannot-review` in resolved list | `blocked` | `1` | Stop before first mutation; print report; no branch/PR/tracker mutation by this item |
+| Prerequisites clear; no `cannot-review`; ≥1 `undetermined` | `passed-unverified` | `0` | Dispatch; report names unverified platforms |
+| Prerequisites clear; every resolved platform `can-review` (incl. empty resolved list) | `passed` | `0` | Dispatch unchanged after pass |
+| Tooling failure (helper crash, missing python) | (may omit `OUTCOME`) | `3` | Treat as stop; fix tooling; re-run |
+
+**Fixed prerequisite order** (enforced in `reviewer_preflight.py` before any platform classification): (1) base → (2) stage-set resolvability → (3) empty stage-set short-circuit → (4) per-stage PR state → then per-platform checks. `value-not-supported` is evaluated first among per-platform checks and stands alone; otherwise all of `review-disabled`, `stage-excluded`, and `base-branch-unmatched` that apply are aggregated on one `cannot-review` verdict.
+
+Unreachable combinations (intentional):
+
+- Empty stage set producing `passed` or `prerequisite-failed` solely from emptiness — must be `no-review-remaining` once base is OK.
+- Malformed base producing `no-review-remaining` — base failure always wins.
+- `override-excluded` platforms changing `OUTCOME` — reported only; not in resolved list.
+- Timeout after a proven disagreement becoming `undetermined` — must remain `cannot-review` (Decision 3).
+
+### Mirror surfaces
+
+| Surface | What it must say | How this plan satisfies it |
+| --- | --- | --- |
+| Protocol 91 | Preflight before first mutation; three resume paths; outcomes/labels; gates unchanged after pass | Layer Backend / Protocol Surfaces + Implementation Order step 5 |
+| `.cursor/agents/item-orchestrator.md`, `.claude/agents/item-orchestrator.md` | Stop on `blocked` / `prerequisite-failed`; print report before item output | Same step; surface consistency suite |
+| Integration docs (`coderabbit.md`, `codex-github.md`, `pr-review-platform.md`) | Branch-in-force, two consequences, disagreement remedies, #1532 traceability | Implementation Order step 6; smoke Step 3 |
+| Workflow config commentary | No contradiction of cross-check / single-surface-sufficient claims | Touch only if commentary contradicts; otherwise leave defaults |
+| Codex `/run-item` and `workflow-item-orchestrator` skills | Point at Protocol 91 without duplicating gate rules | **Unchanged** — protocol pointer only (same pattern as #1495) |
+
+### Examples → implementation mapping
+
+| Spec example | Expected codes | Primary test |
+| --- | --- | --- |
+| Automatic review turned off | `OUTCOME=blocked`, reasons `review-disabled` | Unit + smoke Step 2 |
+| Stage not covered (no adjustment) | `blocked`, `stage-excluded` | Unit |
+| Base branch not covered | `blocked`, `base-branch-unmatched` | Unit |
+| Not a supported reviewer | `blocked`, `value-not-supported` | Unit |
+| Draft→ready adjustment resolves stage mismatch | `can-review` for that reason (other checks may still fail) | Unit (Decision 7) |
+| Hosted platform, no repo config | `undetermined`, `no-readable-surface` → often `passed-unverified` | Unit + Decision 8 |
+
+---
+
+## Behavioral Guarantees
+
+| Guarantee | Enforcement mechanism |
+| --- | --- |
+| No side effects from the preflight itself (AC-2) | Contracts allow-list of read-only commands; shell tests compare `git status --porcelain` before/after; no write APIs in script |
+| Always reaches an outcome (time bound) | `PREFLIGHT_BUDGET_SECONDS` / per-platform cap; incomplete read → `check-inconclusive` unless disagreement already proven |
+| Blocked stops before first mutation | Protocol 91 invokes preflight immediately before mutation; exit `1` forbids dispatch; agent mirrors require stop |
+| Platform appears exactly once | Decision 4 aggregation; surface suite asserts unique `PLATFORM_N_NAME` |
+| Most-severe outcome rule | Python outcome reducer: any `cannot-review` → `blocked`; else any `undetermined` → `passed-unverified`; else `passed` |
+| Prerequisite precedence over empty stages | Ordered checks in Python before platform loop |
+
+---
+
 ## Layer-by-Layer Changes
 
 ### Shared Packages / Libraries
@@ -183,6 +279,7 @@ Input JSON carries: mode, target_base, branch, pr metadata, remaining stage buck
 - [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`**: invoke preflight before first mutation; document three resume paths, outcomes, and that Step 7/7a behavior is unchanged after pass.
 - [ ] **`.cursor/agents/item-orchestrator.md`** and **`.claude/agents/item-orchestrator.md`**: require preflight stop on `blocked` / `prerequisite-failed`; print report before item output.
 - [ ] **`docs/workflow/development-workflow/README.md`**: short operator subsection linking to preflight behavior.
+- [ ] **Codex skills** (`.agents/skills/run-item/`, `.codex/skills/workflow-item-orchestrator/`): **no edit** — they already defer to Protocol 91; duplicating outcome vocabulary would drift from the canonical protocol.
 
 ### Integration Documentation (AC-3)
 
@@ -208,13 +305,13 @@ Input JSON carries: mode, target_base, branch, pr metadata, remaining stage buck
 
 | Suite | File | Covers |
 | --- | --- | --- |
-| Python unit | `scripts/development-workflow/tests/test_reviewer_preflight.py` | All four disagreement reasons, undetermined paths, prerequisite ordering, multi-reason aggregation, OQ4 bucket JSON, empty resolved list → passed, no-review-remaining |
-| Shell contract | `scripts/development-workflow/tests/test-reviewer-preflight.sh` | `# covers: reviewer-preflight.sh` — hermetic git fixtures via temp repos, exit codes, side-effect freedom (clean tree before/after), timeout → undetermined |
-| Surface consistency | `scripts/development-workflow/tests/test-reviewer-preflight-surfaces.sh` | Protocol 91 + agent mirrors name same outcomes/labels as spec matrix |
+| Python unit | `scripts/development-workflow/tests/test_reviewer_preflight.py` | Four disagreement reasons (distinct codes); multi-reason aggregation on one verdict; `value-not-supported` alone; stage-excluded with and without draft→ready adjustment; undetermined `no-readable-surface` / `check-inconclusive`; timeout-after-disagreement stays `cannot-review`; prerequisite order (bad base beats empty stages); empty resolved list → `passed`; empty remaining stages → `no-review-remaining`; OQ4 `PLATFORM_N_BUCKET_JSON` + severity; override-excluded does not block; override-added platform is cross-checked |
+| Shell contract | `scripts/development-workflow/tests/test-reviewer-preflight.sh` | `# covers: reviewer-preflight.sh` — hermetic git fixtures; modes `pre-dispatch` / `branch-resume` / `pr-resume`; exit codes `0`/`1`/`2`; side-effect freedom (clean tree before/after); budget timeout path; `CHECKED_*_REF` distinction on pr-resume |
+| Surface consistency | `scripts/development-workflow/tests/test-reviewer-preflight-surfaces.sh` | Protocol 91 + item-orchestrator mirrors name same `OUTCOME` codes and display labels as the Contracts / matrix tables |
 
 Run via existing `select-test-suites.sh` discovery (`# covers:` header).
 
-**Smoke test**: `docs/testing/workflow/1561-reviewer-preflight.smoke-test.md` — end-to-end on this repository with fixture overrides; maps to AC-1, AC-2, AC-3 spot checks.
+**Smoke test**: `docs/testing/workflow/1561-reviewer-preflight.smoke-test.md` — end-to-end on this repository with fixture overrides; maps to AC-1 (`review-disabled`), AC-2, AC-3, B-5 PR resume refs, and `no-review-remaining`. Remaining AC-1 reason codes are automated in the unit suite above (not duplicated as live smoke fixtures).
 
 ---
 
