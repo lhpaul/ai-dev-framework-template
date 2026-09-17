@@ -205,14 +205,16 @@ code/tests:
 - `scripts/development-workflow/tests/test-add-backlog-item.sh`
 - `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh` and/or
   `scripts/development-workflow/tests/test-framework-mode-type-routing.sh`
-- `scripts/development-workflow/tests/test-run-work-router.sh` (extend for HELD misclassification)
+- `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` (HELD misclassification via
+  `workflow-next-action.sh` output)
 
 **Key scenarios**:
 
 1. Framework mode refuses `--type Workflow` before issue creation with actionable message.
 2. Consumer configs still create Workflow items with identical stdout shape.
 3. Framework-mode lookup returns mixed-type open items; consumer returns Workflow-only.
-4. Framework mode: stderr/verbose keys distinguish unavailable vs empty vs populated.
+4. Framework mode: `list_open_framework_items.sh` status keys distinguish unavailable vs empty
+   vs populated.
 5. Gate: Backlog+Workflow stops single runner; scan caller yields hold, not global stop.
 6. Gate: Spec Ready + Workflow type passes (pipeline already chosen).
 
@@ -242,6 +244,25 @@ markdown lint on plan/spec/runbook/protocol edits.
 | Agents still infer Workflow path from stale skills | Update all mirrored classification snippets in the same PR |
 | `[]` still read as "no items" in release/retrospective | Require explicit lookup status lines in framework mode protocol steps |
 | Mid-pipeline Workflow items blocked | Gate must key off reconciled stage, not Type alone |
+
+---
+
+## Document Quality Gate
+
+| Surface | Applicability | Plan coverage |
+| --- | --- | --- |
+| Database / migrations | Not applicable | No persistent schema |
+| External HTTP APIs | Not applicable | GitHub CLI only (existing) |
+| Frontend / UI | Not applicable | Docs + shell only |
+| Infrastructure / config | Not applicable | Reuses `template.is_template` |
+| Parser-risk text grammars | Not applicable | No new free-text parser |
+| Concurrent event sources | Not applicable | Synchronous shell helpers |
+| Complex workflow decision gate | **Applicable** | Classification Decision Matrix + spec mirror table |
+| Cross-cutting operational assumptions | **Applicable** | Verified table (batch #1757, #1462, #1496, #1515, #1561, #1583, #1529) |
+| Agent/skill mirrors | **Applicable** | Listed concrete paths (orchestrator agents, protocols 06/06b, AGENTS.md) |
+
+Decision-gate matrix rows match the spec's allowed outcomes and required next actions. Mirror
+surfaces include `06b-meta-retrospective-protocol.md` and `.cursor/agents/orchestrator.md`.
 
 ---
 
