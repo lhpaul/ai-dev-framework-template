@@ -231,7 +231,7 @@ Unreachable combinations (intentional):
 | --- | --- | --- |
 | Protocol 91 | Preflight before first mutation; three resume paths; outcomes/labels; gates unchanged after pass | Layer Backend / Protocol Surfaces + Implementation Order step 5 |
 | `.cursor/agents/item-orchestrator.md`, `.claude/agents/item-orchestrator.md` | Stop on `blocked` / `prerequisite-failed`; print report before item output | Same step; surface consistency suite |
-| Integration docs (`coderabbit.md`, `codex-github.md`, `pr-review-platform.md`) | Branch-in-force, two consequences, disagreement remedies, #1532 traceability | Implementation Order step 6; smoke Step 3 |
+| Integration docs (`coderabbit.md`, `codex-github.md`, `pr-review-platform.md`) | Branch-in-force, two consequences, four disagreement cases with remedies, #1532 traceability | Implementation Order step 6; smoke Step 3 |
 | Workflow config commentary | No contradiction of cross-check / single-surface-sufficient claims | Touch only if commentary contradicts; otherwise leave defaults |
 | Codex `/run-item` and `workflow-item-orchestrator` skills | Point at Protocol 91 without duplicating gate rules | **Unchanged** — protocol pointer only (same pattern as #1495) |
 
@@ -283,8 +283,8 @@ Unreachable combinations (intentional):
 
 ### Integration Documentation (AC-3)
 
-- [ ] **`docs/workflow/development-workflow/integrations/coderabbit.md`**: branch-in-force rule, two consequences, PR #1532 observation reference.
-- [ ] **`docs/workflow/development-workflow/integrations/codex-github.md`**: same rule for `.github/codex/` or documented config path if applicable.
+- [ ] **`docs/workflow/development-workflow/integrations/coderabbit.md`**: branch-in-force rule, two consequences, PR #1532 observation reference, and the four disagreement cases with operator remedies (aligned with spec examples).
+- [ ] **`docs/workflow/development-workflow/integrations/codex-github.md`**: same branch-in-force rule for `.github/codex/` or documented config path if applicable; disagreement remedies where that platform has readable config.
 - [ ] **`docs/workflow/development-workflow/integrations/pr-review-platform.md`**: cross-link preflight vs Step 7 reachability (configuration coherence vs runtime probe).
 
 ### Configuration / Manifest
@@ -345,7 +345,7 @@ Confirm every hit is accounted for in the plan's file list. Re-run surface consi
    *Verify*: surface suite pass; grep confirms preflight before first mutation language.
 
 6. *(Spec — AC-3)* Update integration docs (CodeRabbit, codex-github, pr-review-platform).
-   *Verify*: read docs and confirm branch-in-force + two consequences + PR #1532 traceability.
+   *Verify*: read docs and confirm branch-in-force + two consequences + PR #1532 traceability + four disagreement cases with remedies.
 
 7. *(Process)* Execute smoke runbook; record results in implementation PR.
 

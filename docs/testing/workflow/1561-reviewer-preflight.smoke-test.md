@@ -85,6 +85,7 @@ Read `docs/workflow/development-workflow/integrations/coderabbit.md` and confirm
 2. Fix on branch applies to that PR without merge.
 3. Branch can diverge silently from integration policy.
 4. Traceability to live observation (PR #1532).
+5. The four disagreement cases (automatic review off, stage not covered, base branch not covered, unsupported reviewer) each appear with at least one remedy.
 
 ### Step 4: Existing PR resume path (B-5 / AC existing PR)
 
