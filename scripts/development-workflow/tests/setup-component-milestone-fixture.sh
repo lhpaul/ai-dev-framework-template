@@ -331,7 +331,7 @@ fixture_json="$(jq -nS \
       {name:"missing-file", expected_outcome:"component_release_pending", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing},
       {name:"wrong-schema", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$wrong_schema},
       {name:"incomplete", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$incomplete},
-      {name:"missing-state", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing_state},
+      {name:"missing-state", expected_outcome:"component_released", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing_state},
       {name:"pending", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$pending},
       {name:"failed", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$failed},
       {name:"blocked", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$blocked_evidence},

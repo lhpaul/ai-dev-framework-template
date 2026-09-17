@@ -240,8 +240,8 @@ run_fails_contains \
 # (read-only, does not call gh) so this test never touches a real repository.
 handoff_no_flags="$(bash "$MILESTONE_HELPER" inspect-component   --issue 1358   --target-kind component_child   --product-repo mobile-app   --component-tag mobile-v1.18.0   --evidence-file "$evidence_file"   --json)"
 run_test "handoff_no_flags_evidence_state_not_missing" "false"   "$(jq '([.blockers[]] | index("evidence_state_missing")) != null' <<< "$handoff_no_flags")"
-run_contains "handoff_no_flags_still_needs_hub_state" "hub_tracker_reconciliation_missing" "$handoff_no_flags"
-run_contains "handoff_no_flags_still_needs_child_state" "child_release_state_missing" "$handoff_no_flags"
+run_contains "handoff_no_flags_still_needs_hub_state" "hub_tracker_reconciliation_outcome_required" "$handoff_no_flags"
+run_contains "handoff_no_flags_still_needs_child_state" "child_release_state_required" "$handoff_no_flags"
 
 handoff_with_flags="$(bash "$MILESTONE_HELPER" inspect-component   --issue 1358   --target-kind component_child   --product-repo mobile-app   --component-tag mobile-v1.18.0   --evidence-file "$evidence_file"   --hub-tracker-reconciliation-outcome complete   --child-release-state released   --json)"
 run_test "handoff_outcome" "component_released" "$(jq -r '.reconciliation_outcome' <<< "$handoff_with_flags")"
