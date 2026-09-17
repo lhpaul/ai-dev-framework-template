@@ -1,0 +1,385 @@
+# Axis-Separated Architecture Decision Escalations — Implementation Plan
+
+**Spec**: [1_1515-architecture-decision-axes_specs.md](1_1515-architecture-decision-axes_specs.md)
+**Smoke test runbook**: [1515-architecture-decision-axes.smoke-test.md](../../../testing/workflow/1515-architecture-decision-axes.smoke-test.md)
+
+---
+
+## Summary
+
+**Approach**: Add one canonical workflow reference page that states the
+operational requirement for well-formed `architecture_decision` escalations
+(axis decomposition, coverage verdicts, conformance declarations, requested
+decision scoped to open axes only, and incompleteness handling). Wire that page
+into Protocol 91 (work-item runner stops), Protocol 93 (review-thread replies
+that cite specification lines as support), Protocol 90 (batch runner stop
+reporting parity), the stop-message contract in `guardrails-enforcement.md`, and
+the runner-facing agent/skill mirrors — without changing when
+`architecture_decision` fires or the three-element stop-message baseline.
+
+**Estimated complexity**: M
+
+**Rationale**: No application code or scripts change runtime behavior; the work
+is a broad documentation-and-protocol alignment across the canonical page,
+three orchestration protocols, stop-message contract text, README indexing,
+`REVIEW.md`, and nine agent/skill surfaces. The spec's Decision-Gate
+Consistency Matrix is already authoritative for behavior; this plan adds the
+concrete file names, PR durability marker, report outline, and the two
+spec-stage gap resolutions required before implementation.
+
+**Dependencies**: Spec PR [#1735](https://github.com/lhpaul/ai-dev-framework-template/pull/1735)
+merged to `develop`. No other work item is required first.
+
+**Design assets**: None. Workflow-documentation feature only.
+
+---
+
+## Verification Log
+
+| Check | Command / query | Result |
+| --- | --- | --- |
+| Repo revision | `git rev-parse --short HEAD` | `3260570` (worktree branch matches `origin/develop`) |
+| Spec merged | `gh pr view 1735 --json state,mergedAt,baseRefName` | Merged to `develop` (handoff: spec PR #1735 merged) |
+| No existing canonical escalation page | `ls docs/workflow/development-workflow/architecture-decision-escalation.md 2>/dev/null \|\| echo absent` | Absent — net-new canonical surface |
+| Current `architecture_decision` mentions | `grep -rl architecture_decision docs/workflow .ai-dev-workflow.yaml` | `guardrails.md`, `guardrails-enforcement.md`, `README.md`, `.ai-dev-workflow.yaml`, plus this spec only |
+| Protocol 91/93 lockstep targets | `grep -rl '91-orchestrate-work-protocol\|93-automated-reviewer-loop-protocol' .claude/agents/ .cursor/agents/ .codex/skills/ .agents/skills/` | Nine paths (see **Files to modify**) |
+| PR comment precedent for durable runner records | `grep -n 'gh pr comment' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md \| head` | Protocol 91 already mandates `gh pr comment` for several durable PR records |
+| Stop-surface audit helper | `grep -n audit_stop_surfaces scripts/development-workflow/tests/test-worktree-recipe.sh` | Existing audit covers `guardrails-enforcement.md` stop contract — extend to reference the new canonical page |
+
+---
+
+## Cross-Cutting Operational Assumption Check
+
+| Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
+| --- | --- | --- | --- | --- | --- |
+| Approved implementation base | `develop` | Batch handoff + `validate-branch-reuse.sh` | `3260570` | Batch items `1757,1462,1496,1515,1561,1583,1529`; same-surface open PRs: none | `Verified` |
+| Spec artifact location | `docs/specs/developments/20260911230558_1515-architecture-decision-axes/` | Issue #1515 handoff | Plan-write | No concurrent PR editing this development folder | `Verified` |
+
+No batch peer changes the escalation vocabulary, stop-condition trigger, or
+canonical stop-message three-element contract for this item.
+
+---
+
+## Spec-Stage Gap Resolutions (mandatory before implementation)
+
+The approved spec records two known gaps under **Known gaps deferred to plan
+stage**. This plan resolves both here; implementation must follow these
+decisions (implementation must **not** silently re-open spec edits unless a
+reviewer directs a spec follow-up PR).
+
+### Gap 1 — Operational Visibility "Stop message" raised-question gate
+
+**Decision**: Extend `guardrails-enforcement.md` §5 (Stop-Message Contract) with
+an `architecture_decision`-specific subsection that points to the canonical page
+and states explicitly:
+
+- For a **complete** escalation report, the required human action names
+  genuinely open axes only (never settled axes).
+- For an **incomplete** report under the malformed-input rule, the required
+  human action supplies what that rule names (missing question/source, redone
+  decomposition, conformance evidence, or substance confirmation).
+- Substance-confirmation requests apply **only where a reviewer or human
+  actually raised** the citation's substance and the runner could not resolve
+  it — matching Business Rule 188 and malformed-input row four in the spec.
+
+The canonical page repeats the raised-question gate in its report-outline
+section so readers need not infer it from the spec alone.
+
+### Gap 2 — Declaration requirement inside incomplete (mixed) reports
+
+**Decision**: The canonical page carries an explicit **Per-citation declaration
+rule (mixed reports)** bullet: every determinable citation offered as support
+must carry `Conforms`, `Departs`, or `Not yet implemented` even when the
+overall report is incomplete because a different citation triggered
+conformance-undetermined or substance-undetermined malformed input. Undetermined
+citations carry none of the three declarations, per spec. Implementation does
+**not** change the spec acceptance-criterion wording in this plan PR; the
+canonical page plus `REVIEW.md` checklist make the composition rule auditable
+for reviewers.
+
+---
+
+## Workflow Decision-Gate Matrix (Implementation-Detail Delta)
+
+The spec's **Decision-Gate Consistency Matrix** is authoritative for gate
+inputs, outcomes, malformed-input rows, composition, and examples. This table
+records only concrete names and surfaces deferred to the plan:
+
+| Deferred item | Concrete choice |
+| --- | --- |
+| Canonical runner reference | `docs/workflow/development-workflow/architecture-decision-escalation.md` |
+| PR durable-record HTML marker | `<!-- architecture-decision-escalation -->` |
+| PR comment section heading | `## Architecture decision escalation` |
+| Run-summary attachment | Full report body duplicated in the Work Item Runner Summary **Stops** section when stopping under `architecture_decision` |
+| Review-thread surface | Protocol 93 disposition/reply steps — conformance declaration inline when citing a workflow specification line **as support** |
+| Vocabulary source of truth | Display labels from spec **Statuses / Enum Values** (no new machine codes) |
+
+### Matrix coverage (changed gate behavior)
+
+| Gate inputs | Allowed outcome | Required next action | Mirror surfaces | Example |
+| --- | --- | --- | --- | --- |
+| Runner about to stop under `architecture_decision` | Escalated with axis-separated report **or** stop recategorized when analysis shows trigger not met | Complete coverage analysis per canonical page; attach report; stop **or** apply settled lines and continue | Protocol 91, item-orchestrator agents/skills, canonical page | Spec worked example: settled reset boundary + open cumulative-effort axis |
+| Determinable citation offered as support (report or review thread) | Declaration attached | State `Conforms` / `Departs` / `Not yet implemented` before treating citation as support | Protocol 93, developer agents, canonical page | Departs citation not offered as support |
+| Citation conformance cannot be determined | Incomplete escalation | Plain statement; no declaration enum value | Canonical page + malformed-input rows | — |
+| Reviewer/human raised substance; runner cannot resolve | Incomplete escalation | Substance confirmation request; coverage verdict unchanged | guardrails-enforcement §5 + canonical page | Spec gap 1 resolution |
+| Every axis settled, determined declarations, no disputes | Not an architecture decision | Continue without `architecture_decision` stop | Protocol 91 stop-and-name section | Spec matrix "No escalation" rows |
+
+---
+
+## Layer-by-Layer Changes
+
+> Documentation-and-protocol feature only. Database, API, UI, and infrastructure
+> layers are not applicable.
+
+### A. New canonical reference — `docs/workflow/development-workflow/architecture-decision-escalation.md`
+
+- [ ] **Purpose**: Canonical runner-facing requirement for
+      `architecture_decision` escalation **content** (spec Mirror surfaces
+      table). Do not duplicate the full spec prose; include:
+  - Scope boundary (escalation reports + review-thread replies that cite spec
+    lines as support; planning artifacts and source comments out of scope per
+    spec MVP).
+  - Vocabulary tables (coverage verdict, open-axis reason, conformance
+    declaration) matching spec display labels verbatim.
+  - Mandatory report outline: question + source; axes; per-axis verdict +
+    citation/reason; per-citation conformance; arguments tied to one axis;
+    requested decision (open axes only); incompleteness markers when
+    malformed-input rows apply.
+  - **Per-citation declaration rule (mixed reports)** (gap 2 resolution).
+  - **Raised-question gate** for substance-undetermined incomplete reports
+    (gap 1 resolution).
+  - Worked example copied from spec **Examples** table (review-cycle /
+    cumulative-effort incident) showing one settled axis, one open axis, a
+    `Departs` citation, and a mis-attached argument — satisfies AC "worked
+    example alongside requirement".
+  - Pointer: spec Decision-Gate Matrix for full outcome/precedence/composition
+    logic.
+- [ ] Maps to acceptance groups: *The escalation names the question and its
+      axes*, *Every axis carries a verdict*, *Citations carry a conformance
+      declaration*, *The requested decision covers only the open axes*, *The
+      requirement never suppresses a stop*, *The guidance carries a worked
+      example*, *Surfaces agree*.
+
+### B. Stop-message contract — `docs/workflow/development-workflow/guardrails-enforcement.md`
+
+- [ ] Add §5 subsection **`architecture_decision` escalation content**:
+  requires the canonical page report when stopping under this condition;
+  restates three baseline stop elements unchanged; documents human-action
+  shaping (open axes vs malformed-input requests) including the raised-question
+  gate (gap 1).
+- [ ] Maps to *Operational Visibility* / stop-message ACs and gap 1.
+
+### C. Protocol 91 — `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+
+- [ ] In **Step 11: Guardrails Audit Recording** / named stop-and-name behavior:
+  when the stop condition is `architecture_decision`, require the coverage
+  analysis and well-formed report per canonical page **before** emitting the
+  terminal Work Item Runner Summary.
+- [ ] Add PR durability step when a PR exists for the work item: upsert a PR
+  comment whose body starts with `<!-- architecture-decision-escalation -->`
+  and `## Architecture decision escalation`, containing the same report attached
+  to the run summary (spec durability AC).
+- [ ] Document the "analysis shows no genuinely open axis" continuation path:
+  does **not** stop under `architecture_decision` when the spec matrix says the
+  trigger was not met — without weakening baseline stops.
+- [ ] Link to canonical page; do not restate the full vocabulary inline.
+- [ ] Maps to escalation content ACs and PR durability AC.
+
+### D. Protocol 93 — `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
+
+- [ ] In the review-disposition / runner-reply guidance: when a runner cites a
+      workflow specification line **as support** for its behavior or decision
+      in a review-thread reply, require the conformance declaration per canonical
+      page (including undetermined-conformance plain statement path).
+- [ ] When a reviewer finding would lead to `architecture_decision`, point to
+      Protocol 91 + canonical page for the full escalation report (no lighter
+      requirement).
+- [ ] Maps to review-thread citation ACs and *Surfaces agree*.
+
+### E. Protocol 90 — `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+
+- [ ] In batch stop reporting: when a child item stops with
+      `architecture_decision`, require the batch summary to reference that the
+      child carried the canonical escalation report (not the whole question as
+      undifferentiated open).
+- [ ] Link to canonical page.
+- [ ] Maps to *Surfaces agree*.
+
+### F. README index — `docs/workflow/development-workflow/README.md`
+
+- [ ] Add `architecture-decision-escalation.md` under **Tooling And Configuration**
+      next to `guardrails-enforcement.md`.
+
+### G. Review contract — `REVIEW.md`
+
+- [ ] Add a concise checklist bullet under workflow-documentation review: when
+      a PR touches escalation/stop guidance, verify axis separation,
+      per-citation declarations (including mixed incomplete reports), open-axis
+      scoped requested decision, and that `Departs` citations are not used as
+      support.
+
+### H. Runner-facing mirrors (lockstep — do not weaken)
+
+Each file gets a short, direct requirement plus a link to the canonical page
+(no pointer-only edits):
+
+- [ ] `.cursor/agents/item-orchestrator.md`
+- [ ] `.claude/agents/item-orchestrator.md`
+- [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md`
+- [ ] `.agents/skills/run-item/SKILL.md`
+- [ ] `.cursor/agents/automated-reviewer-loop.md`
+- [ ] `.claude/agents/automated-reviewer-loop.md`
+- [ ] `.codex/skills/workflow-reviewer-loop/SKILL.md`
+- [ ] `.cursor/agents/developer.md`
+- [ ] `.claude/agents/developer.md`
+
+Orchestrator batch agents (`.cursor/agents/orchestrator.md`,
+`.claude/agents/orchestrator.md`, `.codex/skills/workflow-orchestrator/SKILL.md`)
+receive the Protocol 90 parity sentence only if not already covered by protocol
+pointer — verify during implementation; add if missing.
+
+### I. Tests (documentation parity)
+
+- [ ] `scripts/development-workflow/tests/test-worktree-recipe.sh` — extend
+      stop-surface audit fixture list to include
+      `docs/workflow/development-workflow/architecture-decision-escalation.md`
+      as a referenced stop/escalation surface (alongside
+      `guardrails-enforcement.md`), with one positive + one negative fixture
+      proving a weakened agent mirror is flagged.
+- [ ] Maps to *Surfaces agree* and REVIEW.md Verification Discipline.
+
+### Database / Backend / Frontend / Infrastructure
+
+- [ ] Not applicable.
+
+---
+
+## Testing Strategy
+
+**Test types**: Shell unit test (stop-surface audit extension), manual smoke
+test runbook.
+
+**Key scenarios**:
+
+1. Canonical page exists with vocabulary, outline, worked example, gap
+   resolutions — maps to all acceptance groups.
+2. Protocol 91 requires report + PR marker comment when PR exists — maps to
+   durability AC.
+3. Protocol 93 requires inline declaration on supportive spec citations in
+   review replies — maps to citation ACs.
+4. Agent/skill mirrors link to canonical page and forbid lighter escalation
+   wording — maps to *Surfaces agree*.
+5. Stop-message human action names open axes only on complete reports — maps to
+   requested-decision ACs.
+
+**Smoke test runbook**:
+`docs/testing/workflow/1515-architecture-decision-axes.smoke-test.md`
+
+**Regression suite**: Not applicable — no automated regression suite for
+workflow-doc parity beyond the shell audit extension above.
+
+---
+
+## Seed Data
+
+Not applicable — no database or runtime fixtures.
+
+---
+
+## Documentation Updates
+
+Implementation PR (not this plan PR) must add a changelog fragment only:
+
+- [ ] `changelog.d/1515.feature.architecture-decision-axes.md` with body:
+  `- **Axis-separated architecture decision escalations** (#1515): require
+    per-axis coverage analysis and conformance declarations before
+    architecture_decision stops; canonical guidance in
+    docs/workflow/development-workflow/architecture-decision-escalation.md.`
+
+Other project docs are updated **in this feature branch** as listed in Layer-by-Layer
+Changes; no additional `docs/project/` files expected.
+
+---
+
+## Risks & Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all nine paths |
+| Protocol 91 PR comment step conflicts with existing comment templates | Low | Med | Reuse upsert marker pattern from other workflow comments; idempotent section heading |
+| Runners treat "all settled" continuation as suppressing stops | Med | High | Canonical page + Protocol 91 repeat spec's "trigger not met" wording prominently |
+| Over-long duplication of spec matrix in protocols | Med | Low | Canonical page + pointer; protocols state requirement and durability only |
+
+---
+
+## Code Samples
+
+Illustrative PR comment skeleton only (adapt during implementation):
+
+```markdown
+<!-- architecture-decision-escalation -->
+## Architecture decision escalation
+
+**Question (source):** …
+
+### Axes
+1. … — **Settled by specification** — citation … — **Departs**
+2. … — **Genuinely open** — No governing line — surfaces consulted: …
+
+**Requested decision:** Axis 2 only.
+```
+
+---
+
+## Implementation Order
+
+1. Create `architecture-decision-escalation.md` (canonical vocabulary, outline,
+   gap resolutions, worked example).
+2. Update `guardrails-enforcement.md` §5 `architecture_decision` subsection.
+3. Update Protocol 91 (stop-and-name + PR durability + continuation path).
+4. Update Protocol 93 (review-thread declarations + escalation pointer).
+5. Update Protocol 90 (batch stop reporting parity).
+6. Update `README.md` index entry.
+7. Update `REVIEW.md` checklist bullet.
+8. Update all lockstep agent/skill files (incremental commits per 2–3 files).
+9. Extend `test-worktree-recipe.sh` audit fixtures; run the test file locally.
+10. Execute smoke test runbook on the implementation PR branch.
+11. Add `changelog.d` fragment on the **implementation** PR only.
+
+**Verification commands (implementation stage)**:
+
+```bash
+# Confirm canonical page is linked from protocols (expect multiple hits)
+grep -n architecture-decision-escalation docs/workflow/development-workflow/protocols/9*.md
+
+# Confirm marker string appears in Protocol 91
+grep -n 'architecture-decision-escalation' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
+
+# Run stop-surface audit tests
+bash scripts/development-workflow/tests/test-worktree-recipe.sh
+```
+
+---
+
+## Files to modify (implementation PR)
+
+| File | Action |
+| --- | --- |
+| `docs/workflow/development-workflow/architecture-decision-escalation.md` | Create |
+| `docs/workflow/development-workflow/guardrails-enforcement.md` | Edit §5 |
+| `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Edit |
+| `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | Edit |
+| `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | Edit |
+| `docs/workflow/development-workflow/README.md` | Edit index |
+| `REVIEW.md` | Edit |
+| `.cursor/agents/item-orchestrator.md` | Edit |
+| `.claude/agents/item-orchestrator.md` | Edit |
+| `.codex/skills/workflow-item-orchestrator/SKILL.md` | Edit |
+| `.agents/skills/run-item/SKILL.md` | Edit |
+| `.cursor/agents/automated-reviewer-loop.md` | Edit |
+| `.claude/agents/automated-reviewer-loop.md` | Edit |
+| `.codex/skills/workflow-reviewer-loop/SKILL.md` | Edit |
+| `.cursor/agents/developer.md` | Edit |
+| `.claude/agents/developer.md` | Edit |
+| `scripts/development-workflow/tests/test-worktree-recipe.sh` | Edit |
+| `changelog.d/1515.feature.architecture-decision-axes.md` | Create (implementation PR) |
