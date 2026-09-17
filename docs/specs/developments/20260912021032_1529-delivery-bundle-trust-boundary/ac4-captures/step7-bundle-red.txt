@@ -1,0 +1,434 @@
+
+=== Delivery bundle manifest ===
+PASS: create_schema
+PASS: create_bundle_key
+PASS: create_revision
+PASS: create_components
+PASS: create_nested_manifest_directory
+PASS: duplicate_component_rejected
+PASS: duplicate_component_manifest_not_created
+PASS: create_shell_output_result
+PASS: create_shell_output_manifest
+PASS: update_revision
+PASS: update_tag
+PASS: web_still_declared
+PASS: idempotent_revision_unchanged
+PASS: idempotent_audit_unchanged
+PASS: inspect_partial_status
+PASS: inspect_missing_routing
+PASS: conflict_rejected
+PASS: conflict_preserves_manifest
+PASS: component_key_repo_mismatch_rejected
+PASS: component_key_repo_mismatch_preserves_manifest
+PASS: fabricated_component_tag_rejected
+PASS: fabricated_component_tag_preserves_manifest
+PASS: unbound_component_tag_rejected
+PASS: unbound_component_tag_preserves_manifest
+PASS: same_release_pr_version_conflict_rejected
+PASS: same_release_pr_version_conflict_preserves_manifest
+PASS: new_release_pr_retag_accepted
+PASS: remove_revision_incremented
+PASS: remove_audited
+PASS: stale_revision_rejected
+PASS: stale_preserves_manifest
+PASS: ready_inspect_status
+PASS: add_invalidates_readiness
+PASS: add_component_idempotent_result
+PASS: add_component_idempotent_revision
+PASS: invalid_bundle_key_rejected
+PASS: hub_reconciliation_defaults_pending
+PASS: pending_default_persisted_partial
+PASS: pending_default_records_blocker
+PASS: finalize_rejects_missing_component_tag
+PASS: finalize_missing_component_tag_preserves_manifest
+PASS: finalize_rejects_missing_component_evidence
+PASS: finalize_missing_component_evidence_preserves_manifest
+PASS: finalize_rejects_blocked_component_outcome
+PASS: finalize_blocked_component_outcome_preserves_manifest
+PASS: finalize_rejects_pending_component_outcome
+PASS: finalize_pending_component_outcome_preserves_manifest
+PASS: finalize_rejects_conflicting_component_evidence
+PASS: finalize_conflicting_component_evidence_preserves_manifest
+PASS: finalize_rejects_stale_readiness
+PASS: finalize_stale_readiness_preserves_manifest
+PASS: finalized_status
+PASS: finalized_revision_incremented
+PASS: finalized_event
+PASS: finalized_no_shared_version
+PASS: mobile_evidence_unchanged
+PASS: web_evidence_unchanged
+PASS: bundle_key_mismatch_rejected
+FAIL: T7_component_version_unbound - expected failure containing 'ERROR_CODE=component_version_unbound'
+Status: 0
+Output:
+{
+  "manifest": {
+    "audit_events": [
+      {
+        "created_at": "2026-09-17T11:17:48Z",
+        "event": "bundle_created",
+        "revision": 1
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:49Z",
+        "event": "component_updated",
+        "revision": 2
+      }
+    ],
+    "bundle_key": "mobile-web-july-delivery",
+    "child_items": [
+      "#1356",
+      "#1357"
+    ],
+    "components": [
+      {
+        "blockers": [],
+        "canonical_repository_identity": "example/mobile-app",
+        "child_item": "#1356",
+        "child_release_state": "merged",
+        "ci_outcome": "passed",
+        "cleanup_outcome": "complete",
+        "component_key": "mobile-app",
+        "component_tag": "mobile-v1.4.0",
+        "component_version": "1.4.0",
+        "contract_revision": "sha256:mobile-app-contract",
+        "deployment_outcome": "recorded",
+        "evidence_hash": "sha256:6c8f2073a5484ac3fa246c4d5a3ac0ce9b2e8ae0b2b0e6d7597198d3eddddc8c",
+        "evidence_schema_version": "component_release_evidence.v1",
+        "evidence_state": "verified",
+        "hub_tracker_reconciliation_outcome": "complete",
+        "hub_tracker_ref": "#1357",
+        "release_correlation_key": "sha256:mobile-app-correlation",
+        "release_outcome": "completed",
+        "release_pr": "1501",
+        "routing_outcome": "component_release_routed",
+        "selected_product_repo_key": "mobile-app",
+        "source_pr": "1411"
+      },
+      {
+        "blockers": [
+          "routing_evidence_missing",
+          "release_evidence_missing",
+          "ci_evidence_missing",
+          "deployment_evidence_missing",
+          "cleanup_evidence_missing",
+          "hub_tracker_reconciliation_missing",
+          "child_release_state_missing"
+        ],
+        "component_key": "web-app",
+        "evidence_state": "missing"
+      }
+    ],
+    "finalization": null,
+    "finalization_owner": "@workflow-operator",
+    "parent_ref": "#1352",
+    "purpose": "Coordinated customer-facing July workflow-hub delivery",
+    "readiness": null,
+    "removed_components": [],
+    "revision": 2,
+    "rollout_notes": "No shared suite branch.",
+    "schema_version": "delivery_bundle_manifest.v1",
+    "status": "open",
+    "title": "Mobile and Web July delivery"
+  },
+  "result": "updated"
+}
+FAIL: T8_component_version_mismatch - expected failure containing 'ERROR_CODE=component_version_mismatch'
+Status: 1
+Output:
+ERROR_CODE=conflicting_component_evidence message='component evidence conflicts on component_version'
+FAIL: T9_component_version_required - expected failure containing 'ERROR_CODE=invalid_arguments'
+Status: 1
+Output:
+ERROR_CODE=conflicting_component_evidence message='component evidence conflicts on component_version'
+FAIL: T10_child_release_state_invalid - expected failure containing '--child-release-state'
+Status: 0
+Output:
+{
+  "manifest": {
+    "audit_events": [
+      {
+        "created_at": "2026-09-17T11:17:48Z",
+        "event": "bundle_created",
+        "revision": 1
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:49Z",
+        "event": "component_updated",
+        "revision": 2
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:49Z",
+        "event": "component_updated",
+        "revision": 3
+      }
+    ],
+    "bundle_key": "mobile-web-july-delivery",
+    "child_items": [
+      "#1356",
+      "#1357"
+    ],
+    "components": [
+      {
+        "blockers": [
+          "blocked_component_outcome"
+        ],
+        "canonical_repository_identity": "example/mobile-app",
+        "child_item": "#1356",
+        "child_release_state": "shipped",
+        "ci_outcome": "passed",
+        "cleanup_outcome": "complete",
+        "component_key": "mobile-app",
+        "component_tag": "mobile-v1.4.0",
+        "component_version": "1.4.0",
+        "contract_revision": "sha256:mobile-app-contract",
+        "deployment_outcome": "recorded",
+        "evidence_hash": "sha256:7c1e2397e72c1ca7cf9d498199902de8a02efa38075da0b4d39a3fe284ef0ae2",
+        "evidence_schema_version": "component_release_evidence.v1",
+        "evidence_state": "partial",
+        "hub_tracker_reconciliation_outcome": "complete",
+        "hub_tracker_ref": "#1357",
+        "release_correlation_key": "sha256:mobile-app-correlation",
+        "release_outcome": "completed",
+        "release_pr": "1501",
+        "routing_outcome": "component_release_routed",
+        "selected_product_repo_key": "mobile-app",
+        "source_pr": "1411"
+      },
+      {
+        "blockers": [
+          "routing_evidence_missing",
+          "release_evidence_missing",
+          "ci_evidence_missing",
+          "deployment_evidence_missing",
+          "cleanup_evidence_missing",
+          "hub_tracker_reconciliation_missing",
+          "child_release_state_missing"
+        ],
+        "component_key": "web-app",
+        "evidence_state": "missing"
+      }
+    ],
+    "finalization": null,
+    "finalization_owner": "@workflow-operator",
+    "parent_ref": "#1352",
+    "purpose": "Coordinated customer-facing July workflow-hub delivery",
+    "readiness": null,
+    "removed_components": [],
+    "revision": 3,
+    "rollout_notes": "No shared suite branch.",
+    "schema_version": "delivery_bundle_manifest.v1",
+    "status": "open",
+    "title": "Mobile and Web July delivery"
+  },
+  "result": "updated"
+}
+FAIL: T10a_hub_reconciliation_invalid - expected failure containing '--hub-tracker-reconciliation-outcome'
+Status: 0
+Output:
+{
+  "manifest": {
+    "audit_events": [
+      {
+        "created_at": "2026-09-17T11:17:48Z",
+        "event": "bundle_created",
+        "revision": 1
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:49Z",
+        "event": "component_updated",
+        "revision": 2
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:49Z",
+        "event": "component_updated",
+        "revision": 3
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:49Z",
+        "event": "component_updated",
+        "revision": 4
+      }
+    ],
+    "bundle_key": "mobile-web-july-delivery",
+    "child_items": [
+      "#1356",
+      "#1357"
+    ],
+    "components": [
+      {
+        "blockers": [
+          "blocked_component_outcome"
+        ],
+        "canonical_repository_identity": "example/mobile-app",
+        "child_item": "#1356",
+        "child_release_state": "released",
+        "ci_outcome": "passed",
+        "cleanup_outcome": "complete",
+        "component_key": "mobile-app",
+        "component_tag": "mobile-v1.4.0",
+        "component_version": "1.4.0",
+        "contract_revision": "sha256:mobile-app-contract",
+        "deployment_outcome": "recorded",
+        "evidence_hash": "sha256:7c1e2397e72c1ca7cf9d498199902de8a02efa38075da0b4d39a3fe284ef0ae2",
+        "evidence_schema_version": "component_release_evidence.v1",
+        "evidence_state": "partial",
+        "hub_tracker_reconciliation_outcome": "garbage",
+        "hub_tracker_ref": "#1357",
+        "release_correlation_key": "sha256:mobile-app-correlation",
+        "release_outcome": "completed",
+        "release_pr": "1501",
+        "routing_outcome": "component_release_routed",
+        "selected_product_repo_key": "mobile-app",
+        "source_pr": "1411"
+      },
+      {
+        "blockers": [
+          "routing_evidence_missing",
+          "release_evidence_missing",
+          "ci_evidence_missing",
+          "deployment_evidence_missing",
+          "cleanup_evidence_missing",
+          "hub_tracker_reconciliation_missing",
+          "child_release_state_missing"
+        ],
+        "component_key": "web-app",
+        "evidence_state": "missing"
+      }
+    ],
+    "finalization": null,
+    "finalization_owner": "@workflow-operator",
+    "parent_ref": "#1352",
+    "purpose": "Coordinated customer-facing July workflow-hub delivery",
+    "readiness": null,
+    "removed_components": [],
+    "revision": 4,
+    "rollout_notes": "No shared suite branch.",
+    "schema_version": "delivery_bundle_manifest.v1",
+    "status": "open",
+    "title": "Mobile and Web July delivery"
+  },
+  "result": "updated"
+}
+PASS: T10b_child_release_state_failed_accepted
+PASS: T10c_child_release_state_recorded
+PASS: T10c_update_blocker_blocked_component_outcome
+PASS: T10c_inspect_short_circuits_missing_evidence
+PASS: T10d_child_release_state_recorded
+PASS: T10d_update_blocker_blocked_component_outcome
+PASS: T10d_inspect_short_circuits_missing_evidence
+FAIL: T11_release_branch_recorded - expected 'mobile-app/release/v1.0.0', got 'null'
+FAIL: T23_ci_outcome_skipped_rejected - expected failure containing 'ERROR_CODE=blocked_component_outcome'
+Status: 0
+Output:
+{
+  "manifest": {
+    "audit_events": [
+      {
+        "created_at": "2026-09-17T11:17:50Z",
+        "event": "bundle_created",
+        "revision": 1
+      },
+      {
+        "component_key": "mobile-app",
+        "created_at": "2026-09-17T11:17:50Z",
+        "event": "component_updated",
+        "revision": 2
+      },
+      {
+        "component_key": "web-app",
+        "created_at": "2026-09-17T11:17:50Z",
+        "event": "component_updated",
+        "revision": 3
+      },
+      {
+        "created_at": "2026-09-17T11:17:50Z",
+        "event": "bundle_finalized",
+        "revision": 4
+      }
+    ],
+    "bundle_key": "mobile-web-july-delivery",
+    "child_items": [
+      "#1356",
+      "#1357"
+    ],
+    "components": [
+      {
+        "blockers": [],
+        "canonical_repository_identity": "example/mobile-app",
+        "child_item": "#1356",
+        "child_release_state": "merged",
+        "ci_outcome": "skipped",
+        "cleanup_outcome": "complete",
+        "component_key": "mobile-app",
+        "component_tag": "mobile-v1.4.0",
+        "component_version": "1.4.0",
+        "contract_revision": "sha256:mobile-app-contract",
+        "deployment_outcome": "recorded",
+        "evidence_hash": "sha256:7c1e2397e72c1ca7cf9d498199902de8a02efa38075da0b4d39a3fe284ef0ae2",
+        "evidence_schema_version": "component_release_evidence.v1",
+        "evidence_state": "verified",
+        "hub_tracker_reconciliation_outcome": "complete",
+        "hub_tracker_ref": "#1357",
+        "release_correlation_key": "sha256:mobile-app-correlation",
+        "release_outcome": "completed",
+        "release_pr": "1501",
+        "routing_outcome": "component_release_routed",
+        "selected_product_repo_key": "mobile-app",
+        "source_pr": "1411"
+      },
+      {
+        "blockers": [],
+        "canonical_repository_identity": "example/web-app",
+        "child_item": "#1357",
+        "child_release_state": "merged",
+        "ci_outcome": "passed",
+        "cleanup_outcome": "complete",
+        "component_key": "web-app",
+        "component_tag": "web-v2.8.1",
+        "component_version": "2.8.1",
+        "contract_revision": "sha256:web-app-contract",
+        "deployment_outcome": "recorded",
+        "evidence_hash": "sha256:3c86736ec6489ac50e93a9cc266935dfb3a39470ec3ce887cde13cefd8c2b56c",
+        "evidence_schema_version": "component_release_evidence.v1",
+        "evidence_state": "verified",
+        "hub_tracker_reconciliation_outcome": "complete",
+        "hub_tracker_ref": "#1357",
+        "release_correlation_key": "sha256:web-app-correlation",
+        "release_outcome": "completed",
+        "release_pr": "1503",
+        "routing_outcome": "component_release_routed",
+        "selected_product_repo_key": "web-app",
+        "source_pr": "1414"
+      }
+    ],
+    "finalization": {
+      "finalized_at": "2026-09-17T11:17:50Z",
+      "revision": 4
+    },
+    "finalization_owner": "@workflow-operator",
+    "parent_ref": "#1352",
+    "purpose": "Coordinated customer-facing July workflow-hub delivery",
+    "readiness": {
+      "blockers": [],
+      "ready": true,
+      "revision": 4,
+      "status": "finalized"
+    },
+    "removed_components": [],
+    "revision": 4,
+    "rollout_notes": "No shared suite branch.",
+    "schema_version": "delivery_bundle_manifest.v1",
+    "status": "finalized",
+    "title": "Mobile and Web July delivery"
+  },
+  "result": "finalized"
+}
+FAIL: T23_ci_skipped_preserves_revision - expected '3', got '4'
+FAILURES: 8
