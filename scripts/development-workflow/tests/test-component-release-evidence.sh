@@ -276,6 +276,9 @@ capture_evidence() {
 }
 
 # T1: --component-version supplied is emitted
+# Pre-declare outs so ShellCheck sees assignments through printf -v (SC2154).
+t1_json=""
+t1_status=1
 capture_evidence t1_json t1_status bash "$EVIDENCE_HELPER" \
   "${common_evidence_args[@]}" \
   --component-tag mobile-v1.18.0 \
@@ -288,6 +291,8 @@ else
 fi
 
 # T2: omitted --component-version emits JSON null; full 16-key list
+t2_json=""
+t2_status=1
 capture_evidence t2_json t2_status bash "$EVIDENCE_HELPER" \
   "${common_evidence_args[@]}" \
   --component-tag mobile-v1.18.0 \
@@ -406,6 +411,8 @@ run_fails_contains \
 # T6b: single_repo_release + null key (green-by-construction / exempt)
 t6b_target="$TMP_ROOT/t6b-target.json"
 write_routing_pair "$t6b_target" '.routing_outcome = "single_repo_release" | .selected_product_repo_key = null'
+t6b_json=""
+t6b_status=1
 capture_evidence t6b_json t6b_status bash "$EVIDENCE_HELPER" \
   --target-file "$t6b_target" \
   --binding-file "${t6b_target%.json}-binding.json" \
@@ -544,6 +551,8 @@ run_fails_contains \
     --json
 
 # T27: SemVer build-metadata + accepted in --component-version
+t27_json=""
+t27_status=1
 capture_evidence t27_json t27_status bash "$EVIDENCE_HELPER" \
   "${common_evidence_args[@]}" \
   --component-version "v1.4.0+build.7" \
