@@ -88,10 +88,33 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 | --- | --- | --- |
 | Conversation resolution | GraphQL `reviewThreads` | `isResolved`, `isOutdated`, `comments(first:1)` author login + body, `comments(last:1)` author + `createdAt` |
 | Live revision | REST reviews + PR head | Review `commit_id`, `state` (`CHANGES_REQUESTED` short-circuit), `submitted_at`; PR `headRefOid` |
-| Thread correlation | GraphQL / REST | Review thread `id` (databaseId) matched to inline review comments on current head |
+| Thread correlation | GraphQL + REST join | See **Finding–thread correlation contract** below |
 | Dismissed review | REST reviews | `state: DISMISSED` excluded from terminal evidence selection |
 | Root comment terminal evidence | REST issue comments | `Reviewed commit` marker, `created_at`, comment `id` ordering vs trigger comment |
 | Availability (unchanged) | Root comment body | Usage-limit, account-not-connected, environment-setup patterns already recognized |
+
+**Finding–thread correlation contract** (AC-7, spec Business Rules 4–6):
+
+1. **Thread index (GraphQL)**: Paginate `reviewThreads` and record per thread:
+   `thread_graphql_id`, `isResolved`, `isOutdated`, first-comment
+   `comments(first:1).nodes[0].databaseId`, first-comment `author.login`, review
+   attachment via parent review `commit_id` when available from REST review fetch.
+   Applicability: thread is **applicable** to live head when `isOutdated` is false
+   and the anchoring review’s `commit_id` equals `headRefOid` (or inline comment
+   `commit_id` equals `headRefOid` when review object lacks commit).
+2. **Inline comment index (REST)**: `GET repos/{owner}/{repo}/pulls/{pr}/comments`
+   (paginated); keep Codex-bot rows where `commit_id == headRefOid`.
+3. **Join key**: REST comment `id` **equals** GraphQL first-comment
+   `databaseId` for the same thread (same join `pr-review-loop.sh` already uses
+   for thread audit fixtures in `test-item-completion-self-check.sh`).
+4. **Finding extraction**: For a terminal blocking review, treat each distinct
+   inline comment on the current head (step 2) as one finding with stable thread
+   id = comment `id`. Review-body-only blocking sections with **no** matching
+   inline comment id in the index are correlation-missing findings. Top-level
+   review summaries without thread ids follow the existing
+   `codex_cleared_thread_top_level_blocker` harness pattern → correlation-missing
+   when mixed with thread-anchored findings, or structured `CHANGES_REQUESTED`
+   blocker when alone.
 
 - [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): Extend
   `codex_review_thread_evidence_counts()` (or successor) to return structured
@@ -172,6 +195,15 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   allowance with cleared-findings retrigger or remaining actionable findings
   escalates (cleared wait must not bypass cap — spec precedence).
 
+- [ ] **Independent allowance resolution** (AC-6): No change to
+  `reviewer_loop_resolve_max_cycles` / `reviewer_loop_resolve_max_total_cycles`
+  semantics — add harness coverage in `test-pr-review-loop.sh` that omits
+  `review.max_cycles` (defaults per-run to 10, lifetime stays configured/25),
+  sets only invalid `review.max_cycles` (warn + default 10 while lifetime keeps
+  explicit value), and sets only invalid `review.max_total_cycles` (warn + default
+  25 while per-run keeps explicit value). Assert WARN lines and resolved caps via
+  existing resolver helpers.
+
 - [ ] **Telemetry** (Operational Visibility): Ensure `print_kv` lines include
   `REVIEWED_HEAD`, `REASON`, and when waiting, existing `PENDING_REVIEW_*` keys.
   Escalation reasons must flow to PR summary unchanged via
@@ -249,6 +281,48 @@ threads.
 **Regression suite**: Extend `scripts/development-workflow/tests/test-pr-review-loop.sh`
 only (existing workflow regression surface for Codex).
 
+### Parser-risk addendum (`Reviewed commit` marker + blocking-body scan)
+
+**Edge-case enumeration** (concrete inputs for `codex_parse_reviewed_commit_marker`
+and head-attribution helpers):
+
+| Case | Example marker / input | Expected class |
+| --- | --- | --- |
+| Valid prefix | Live head `abc1234…`, marker `abc1234` | Well-formed, live-head |
+| Prior revision well-formed | Marker resolves to parent SHA, not live head | Stale / pending, not malformed |
+| Empty value | `Reviewed commit:` with no token | Malformed |
+| Non-hex token | `Reviewed commit: not-a-sha` | Malformed |
+| Multiple tokens | `Reviewed commit: abc def` | Malformed |
+| Ambiguous prefix | Two commits share prefix `abc1234` | Malformed |
+| Interior substring | Live `deadbeef…`, marker `adbeef` at offset > 0 | Malformed |
+| Superstring | Marker token strictly longer than live head containing live head | Malformed |
+| Freshness fail | Marker names live head but comment predates trigger | Stale pending |
+| Same-second tie | Trigger and comment share `created_at` second; lower comment id | Stale pending |
+| Same-second tie win | Comment id orders after trigger id | Fresh terminal |
+| Stale-head window | Malformed marker authored under prior head | Ignored for live head |
+| Indeterminate window | Cannot place trigger-less comment relative to prior head | Evidence unavailable |
+
+**Unit test mapping** (all in `scripts/development-workflow/tests/test-pr-review-loop.sh`
+Area 13 — one `run_test` per row):
+
+| Test name prefix | Edge case row |
+| --- | --- |
+| `codex_marker_valid_prefix` | Valid prefix |
+| `codex_marker_prior_revision_stale` | Prior revision well-formed |
+| `codex_marker_empty_value` | Empty value |
+| `codex_marker_non_hex` | Non-hex |
+| `codex_marker_multiple_tokens` | Multiple tokens |
+| `codex_marker_ambiguous_prefix` | Ambiguous prefix |
+| `codex_marker_interior_substring` | Interior substring |
+| `codex_marker_superstring` | Superstring |
+| `codex_marker_freshness_fail` | Freshness fail |
+| `codex_marker_same_second_stale` | Same-second tie (stale) |
+| `codex_marker_same_second_fresh` | Same-second tie win |
+| `codex_marker_stale_head_window` | Stale-head window |
+| `codex_marker_indeterminate_window` | Indeterminate window |
+
+**Suppression semantics**: Not applicable — no inline suppressions for marker parsing.
+
 ---
 
 ## Seed Data
@@ -303,17 +377,61 @@ esac
 4. Update `run_codex_github_review()` adapter (phase 1 + exit mapping + remove
    count floor); commit.
 5. Adjust cycle-limit block to evaluate canonical clean before cap escalation; commit.
-6. Add/update Area 13 harness cases + one `run_codex_github_review` case; commit.
-7. Update `codex-github.md` and Protocol 93 cross-links; commit.
-8. Run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` (or CI
+6. Add independent `review.max_cycles` / `review.max_total_cycles` resolver harness
+   cases (AC-6); commit.
+7. Add/update Area 13 harness cases (marker table + primary regression) + one
+   `run_codex_github_review` case; commit.
+8. Update `codex-github.md` and Protocol 93 cross-links; commit.
+9. Run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` (or CI
    equivalent) and fix failures.
-9. Add `changelog.d/1757.fix.resolved-codex-findings.md` fragment:
+10. Add `changelog.d/1757.fix.resolved-codex-findings.md` fragment:
 
    ```markdown
    - **Resolved Codex findings no longer block reviewer loop** (#1757): Count only applicable unresolved Codex review conversations toward `needs_fixes`; treat cleared findings as a wait for fresh terminal clean evidence; add fail-closed Codex escalation reason codes per spec.
    ```
 
-10. Verify smoke runbook steps on a test PR when possible.
+11. Verify smoke runbook steps on a test PR when possible.
+
+---
+
+## Document Quality Gate
+
+- Spec/brief coverage: Checked — plan maps spec acceptance criteria 1–16 and the
+  decision-gate matrix to layer tasks, tests, and docs; CodeRabbit assessment is
+  explicit (AC-16).
+- Implementation-order consistency: Checked — helper extraction precedes
+  classifier, adapter, caps, tests, docs; step numbers updated after AC-6 harness
+  addition.
+- Verification support: Checked — Verification Log commands are reproducible from
+  repo root; thread-correlation join cites GraphQL `databaseId` + REST `id`.
+- Parser-risk completeness: Checked — dedicated addendum with 13 enumerated
+  marker cases and 1:1 Area 13 test name mapping.
+- Complex workflow decision-gate matrix: Checked — spec matrix is authoritative;
+  implementation mirrors spec rows via `codex_classify_live_head_evidence()`; no
+  contradictory next actions in plan layers.
+- Concurrent-event-source: Not applicable — single-threaded bash polling, no shared
+  mutable async listeners.
+- CHANGELOG literal format: Checked — step 10 uses `**Bold Title** (#1757):` bullet.
+- Plan-stage artifacts only: Checked — plan + smoke runbook only on this branch.
+
+### Decision-gate matrix (plan mirror — normative source is spec)
+
+The merged spec’s **Complex Workflow Decision-Gate Matrix** is the authoritative
+row set. Implementation must not invent alternate outcomes. Mirror surfaces:
+`codex-github-reviewer.sh` exit/`REASON=`, `run_codex_github_review()` `print_kv`,
+Protocol 93, `codex-github.md`, PR summary.
+
+| Gate input (abbrev.) | Allowed outcome | Required next action |
+| --- | --- | --- |
+| Applicable unresolved thread on live head | Actionable blocker → `needs_fixes` | Fix loop |
+| All findings cleared, no other unresolved thread | `waiting_on_reviewer` / `codex-github-review-pending` | Retrigger / await clean verdict |
+| Terminal clean evidence for live head | Clean | Continue readiness |
+| Fail-closed escalation tiers | `escalate` + spec reason code | Human review |
+| Cycle cap exhausted after evidence requires another cycle | Escalate | Human review |
+| Canonical clean in final allowed cycle | Clean | Continue readiness |
+
+Full row detail, examples, and precedence ordering remain in the spec; the
+implementation plan’s classifier step implements that table verbatim.
 
 ---
 
