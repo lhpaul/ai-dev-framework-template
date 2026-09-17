@@ -109,9 +109,13 @@
 **Maps to**: Use Case 4
 
 1. In an environment with no subagent handoff, invoke a mutating bounded command.
-2. Confirm profile Inline fallback, read-only behavior, and `dispatch_handoff_unavailable` (or declaration missing stop) before mutation.
+2. Confirm the run declares **Inline fallback** (`cursor-inline-fallback`) with a
+   valid accountable role and **observing** posture at the read-only checkpoint,
+   then reaches the first mutating action.
+3. Confirm the run stops with named condition `dispatch_handoff_unavailable`
+   (not `dispatch_profile_declaration_missing`).
 
-**Expected result**: No artifact mutation.
+**Expected result**: No artifact mutation; stop reason matches a valid inline-fallback declaration, not a missing declaration.
 
 ---
 

@@ -50,8 +50,8 @@ denial) remain out of scope and must be referenced, not solved, here.
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| Integration / artifact base branch | `develop` | `.ai-dev-workflow.yaml` + batch handoff | `32605700` on worktree branch | Current invocation `#1462`; batch peers `#1757,#1462,#1496,#1515,#1561,#1583,#1529`; same-surface open PRs none | `Verified` |
-| Repository mode | `single_repo` | Batch handoff `WORKFLOW_MODE` | Same revision | Peers touch adjacent workflow docs but do not change base branch or mode for this item | `Verified` |
+| Integration / artifact base branch | `develop` | `.ai-dev-workflow.yaml` + batch handoff | `2026-09-17T11:15:00Z`; repo `32605700` | Current invocation `#1462`; batch peers `#1757,#1462,#1496,#1515,#1561,#1583,#1529`; same-surface open PRs none | `Verified` |
+| Repository mode | `single_repo` | Batch handoff `WORKFLOW_MODE` | `2026-09-17T11:15:00Z`; repo `32605700` | Peers touch adjacent workflow docs but do not change base branch or mode for this item | `Verified` |
 
 Peer item `#1529` references dispatch profiles in its plan narrative only; it
 does not alter the integration branch or artifact ownership for `#1462`.
@@ -155,18 +155,35 @@ feature does not add concurrent scheduling behavior (AC17).
 
 ## Workflow Decision-Gate Consistency Matrix
 
-This plan introduces a complex workflow decision gate (the spec matrix). The
-implementation must keep the canonical doc, protocols, and guardrails table
-aligned with the spec's Decision-Gate Consistency Matrix.
+This feature is a **complex workflow decision gate** (REVIEW.md). The **normative
+matrix is the merged spec** — do not maintain a shortened copy in this plan.
 
-| Gate inputs | Profile outcome | Required next action | Mirror surfaces |
-| --- | --- | --- | --- |
-| Valid declaration + native handoff facts + mutating command | Native handoff | Hand off orchestration role; stage roles in separate contexts | Commands, protocols 90/91/95, role agents |
-| Valid declaration + native handoff facts + read-only scan | Native handoff | Observe orchestration role; scan in current context | `/run-work` adapters + protocol 90 scan mode |
-| Valid declaration + onward handoff unavailable + mutating command | Parent orchestrated | Absorb full orchestration contract; delegate product stages only | Role agents + protocols |
-| Initial handoff unconfirmed | Inline fallback | Read-only; stop before mutation with `dispatch_handoff_unavailable` | All bounded mutating commands |
-| Invalid / missing declaration | None | Stop with `dispatch_profile_declaration_missing` | All bounded commands including scans |
-| Pre-branch explicit-list `/run-items` declaration stop | None | Same stop; affected item `explicit_list_invocation_targets=#...` | Protocol 90 + guardrails row text |
+**Authoritative sources** (implementation must match verbatim):
+
+- Spec [Decision-Gate Consistency Matrix](1_1462-cursor-dispatch-profiles_specs.md#decision-gate-consistency-matrix) — all input rows, evaluation order, mirror-surfaces list, examples requirement, and out-of-scope note for #1746.
+- Spec [Named Stop-Condition Mapping](1_1462-cursor-dispatch-profiles_specs.md#named-stop-condition-mapping) — including the plan-resolved pre-branch explicit-list affected-item format.
+
+**Implementation mapping** (where each authoritative row lands):
+
+| Spec matrix row (summary) | Canonical doc section | Guardrails / protocols |
+| --- | --- | --- |
+| Native handoff + mutating command | § Decision gate — full row text | Protocols 90/91/95 declaration + handoff |
+| Native handoff + read-only portfolio scan | § Decision gate + § Scan exception | `/run-work` mirrors |
+| Parent orchestrated + mutating command | § Decision gate + § Absorbed contract | Role agents + protocols |
+| Parent orchestrated + read-only scan | § Decision gate + § Scan exception | `/run-work` mirrors |
+| Unconfirmed onward-handoff capability (initial handoff confirmed) + mutating / scan | § Decision gate + § Conservative defaults | `agent-model-config.md` assumptions |
+| Native → parent re-declaration (mid-run orchestration failure, initial handoff still available) | § Transitions | Protocol 91 run summary |
+| Native → inline re-declaration (mid-run failure + initial handoff lost) | § Transitions | Stop `dispatch_handoff_unavailable` |
+| Parent → inline re-declaration (stage handoff unavailable) | § Transitions | Stop `dispatch_handoff_unavailable` |
+| Parent orchestrated + reachable stage credential/permission denial | § Delegation failures | Reuse `missing_required_secret_or_permission` |
+| No handoff / unconfirmed initial handoff + read-only | § Decision gate | Inline fallback observing posture |
+| No handoff / unconfirmed initial handoff + would mutate | § Decision gate | Stop `dispatch_handoff_unavailable` |
+| Declaration missing at first mutating action | § Declaration contract | `dispatch_profile_declaration_missing` |
+| Invalid profile value / missing accountable role | § Declaration contract | Same stop |
+| Declaration invalid at read-only checkpoint (scan / inline-fallback) | § Declaration contract | Same stop |
+| Posture mismatch (`observing` at mutation or absorbed/handoff at read-only checkpoint) | § Accountability postures | Same stop |
+| Profile/fact mismatch (more or less permissive than assigned outcome) | § Declaration contract + § Evaluation order | Same stop; excludes mid-run recovery rows per spec |
+| Pre-branch explicit-list `/run-items` declaration stop | § Named stop reporting | Plan gap `explicit_list_invocation_targets=#N1,#N2,...` |
 
 **Examples (required in canonical doc)**: one worked example per profile for the
 item layer; at minimum Native handoff `/run-item`, Parent orchestrated
@@ -250,6 +267,10 @@ read-only `/run-work` under each profile label.
       orchestration role agents, protocols 90/91/95, `agent-model-config.md`, or
       `workflow.mdc` omit a link to `integrations/cursor-dispatch-profiles.md`
       or required profile code strings. Maps to AC18 regression safety.
+- [ ] **Planted-violation proof** (same implementation PR): temporarily remove the
+      canonical link from `.cursor/commands/run-item.md`, run the surface guard
+      and confirm non-zero exit; restore the link and confirm exit 0. Record the
+      before/after command output in the PR test plan.
 
 ### Database / Backend / Frontend / Infrastructure
 
@@ -289,6 +310,7 @@ read-only `/run-work` under each profile label.
 | `.cursor/rules/workflow.mdc` | Requirement + link |
 | `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md` | Named stop affected-item alignment |
 | `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard |
+| `changelog.d/1462.feature.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Already created in Plan Ready |
 
 **Explicitly not in scope**: `REVIEW.md` checklist categories (no new review
@@ -334,11 +356,27 @@ Not applicable — no runtime data.
 
 ## Documentation Updates (post-implementation, developer checklist)
 
-- [ ] `CHANGELOG.md` — implementation PR only; fragment under `changelog.d/`:
+- [ ] `changelog.d/1462.feature.cursor-dispatch-profiles.md` — implementation PR
+      only; body:
       `- **Cursor dispatch profiles** (#1462): Document native-handoff, parent-orchestrated, and inline-fallback profiles for Cursor bounded commands with consistent declaration gates and named stop conditions.`
+      Do **not** edit `CHANGELOG.md` directly in the implementation PR.
 - [ ] `AGENTS.md` — optional one-line link under Key Documentation to
       `integrations/cursor-dispatch-profiles.md` if the workflow table is updated
       for discoverability (recommended, not strictly required by AC).
+
+---
+
+## Document Quality Gate (plan stage)
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
+| Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
+| Verification support | Pass | Verification Log + surface guard + planted-violation proof + smoke runbook |
+| Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
+| Parser-risk addendum | N/A | No new structured-text parser |
+| Concurrent-event-source addendum | N/A | No concurrent event handlers |
+| Cross-cutting checklist addendum | N/A | No new REVIEW.md checklist category |
 
 ---
 
@@ -374,7 +412,10 @@ Not applicable — no runtime data.
 9. **Verify** — run markdown lint commands from `AGENTS.md`, surface guard, and
    execute smoke runbook steps that do not require live Remote Control (document
    manual Remote Control steps as PASS/NOT RUN).
-10. **Changelog fragment** — add under `changelog.d/` in implementation PR only.
+10. **Changelog fragment** — create `changelog.d/1462.feature.cursor-dispatch-profiles.md`
+      with the literal bullet from **Documentation Updates** (implementation PR only).
+11. **Planted-violation proof** — run surface guard fail/pass cycle documented in
+      **Layer-by-Layer Changes → Workflow tooling**.
 
 ---
 
