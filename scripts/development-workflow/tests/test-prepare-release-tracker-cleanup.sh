@@ -1115,6 +1115,86 @@ run_contains "unshipped_item_marks_incomplete" "TRACKER_INCOMPLETE=1 REASON=omit
 rm -rf "$DETECT_UNSHIPPED_BIN"
 run_contains "detect_parent_epic_issues_list" "ISSUES=201" "$output"
 
+# --- #1529 trust-boundary cleanup cases (T19-T20g) ---
+# Use a fresh branch-bound fixture for empty-identity mutations.
+repo_t19="$(fixture_component_cleanup_repo component-cleanup-t19)"
+base_evidence="$repo_t19/component-release-evidence.json"
+issue_counter=152900
+
+run_empty_identity_case() {
+  local name="$1"
+  local jq_edit="$2"
+  local expected_msg="$3"
+  local ev="$repo_t19/evidence-${name}.json"
+  local issue_num
+  issue_counter=$((issue_counter + 1))
+  issue_num="$issue_counter"
+  jq "$jq_edit" "$base_evidence" > "$ev"
+  local result status output
+  result="$(run_cleanup "$repo_t19" --repo mobile-app --repo-root "$repo_t19" --evidence-file "$ev" --issue "$issue_num" --best-effort)"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  output="$(printf '%s\n' "$result" | sed '1d')"
+  run_test "${name}_exits_nonzero" "1" "$status"
+  run_contains "${name}_message" "$expected_msg" "$output"
+  run_not_contains "${name}_no_branch_delete" "Deleting remote branch" "$output"
+}
+
+run_empty_identity_case T19 \
+  '.target_binding.contract_revision = ""' \
+  "Component release evidence is missing required identity field: contract_revision"
+
+run_empty_identity_case T20 \
+  '.target_binding.canonical_repository_identity = ""' \
+  "Component release evidence is missing required identity field: canonical_repository_identity"
+
+run_empty_identity_case T20b \
+  '.target_binding.release_correlation_key = ""' \
+  "Component release evidence is missing required identity field: release_correlation_key"
+
+run_empty_identity_case T20d \
+  '.target_binding.routing_outcome = ""' \
+  "Component release evidence is missing required identity field: routing_outcome"
+
+run_empty_identity_case T20e \
+  '.target_binding.selected_product_repo_key = ""' \
+  "Component release evidence is missing required identity field: selected_product_repo_key"
+
+for owner_field in release ci github_release deployment cleanup tracker; do
+  run_empty_identity_case "T20f_${owner_field}" \
+    ".target_binding.artifact_owners.${owner_field} = \"\"" \
+    "Component release evidence is missing required identity field: artifact_owners"
+done
+
+# T20c: empty top-level release_branch must reject before correlation mismatch
+t20c_ev="$repo_t19/evidence-T20c.json"
+jq '.release_branch = ""' "$base_evidence" > "$t20c_ev"
+result="$(run_cleanup "$repo_t19" mobile-app/release/v9.9.9 --repo mobile-app --repo-root "$repo_t19" --evidence-file "$t20c_ev" --issue 152920 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "T20c_exits_nonzero" "1" "$status"
+run_contains "T20c_missing_release_branch" "missing required field: release_branch" "$output"
+run_not_contains "T20c_not_correlation_mismatch" "release_correlation_key" "$output"
+run_not_contains "T20c_no_branch_delete" "Deleting remote branch" "$output"
+
+# T20g: empty / absent cleanup_outcome
+t20g_empty="$repo_t19/evidence-T20g-empty.json"
+jq '.cleanup_outcome = ""' "$base_evidence" > "$t20g_empty"
+result="$(run_cleanup "$repo_t19" --repo mobile-app --repo-root "$repo_t19" --evidence-file "$t20g_empty" --issue 152921 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "T20g_empty_exits_nonzero" "1" "$status"
+run_contains "T20g_empty_message" "missing required field: cleanup_outcome" "$output"
+run_not_contains "T20g_empty_no_delete" "Deleting remote branch" "$output"
+
+t20g_absent="$repo_t19/evidence-T20g-absent.json"
+jq 'del(.cleanup_outcome)' "$base_evidence" > "$t20g_absent"
+result="$(run_cleanup "$repo_t19" --repo mobile-app --repo-root "$repo_t19" --evidence-file "$t20g_absent" --issue 152922 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "T20g_absent_exits_nonzero" "1" "$status"
+run_contains "T20g_absent_message" "missing required field: cleanup_outcome" "$output"
+run_not_contains "T20g_absent_no_delete" "Deleting remote branch" "$output"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 
