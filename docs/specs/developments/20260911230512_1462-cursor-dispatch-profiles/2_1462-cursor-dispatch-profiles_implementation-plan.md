@@ -39,7 +39,7 @@ denial) remain out of scope and must be referenced, not solved, here.
 | Repo revision | `git rev-parse --short HEAD` | `32605700` |
 | Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` |
 | Profile strings only in spec today | `rg -l 'cursor-native-handoff\|cursor-parent-orchestrated\|cursor-inline-fallback' --glob '!docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/*'` | No matches outside the spec folder |
-| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | 15 adapter/skill paths (see **Files to modify**) |
+| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | 18 adapter/skill paths including deprecated `/run-item-work` alias (see **Files to modify**) |
 | Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present |
 | Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` |
 | Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing\|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches (expected until implementation) |
@@ -208,13 +208,14 @@ read-only `/run-work` under each profile label.
 
 ### Documentation — mirror surfaces
 
-- [ ] `.cursor/commands/run-item.md`, `run-items.md`, `run-epic.md`, `run-work.md`
+- [ ] `.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
       — declaration requirement + link to canonical doc; `/run-work` read-only
       posture. Maps to AC9, AC11, AC18.
-- [ ] `.claude/commands/run-item.md`, `run-items.md`, `run-epic.md`, `run-work.md`
+- [ ] `.claude/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
       — same parity as Cursor commands. Maps to AC18.
-- [ ] `.agents/skills/run-item/SKILL.md`, `run-items/SKILL.md`, `run-epic/SKILL.md`,
-      `run-work/SKILL.md` — same parity for Codex discovery path. Maps to AC18.
+- [ ] `.agents/skills/run-item/SKILL.md`, `run-item-work/SKILL.md`, `run-items/SKILL.md`, `run-epic/SKILL.md`,
+      `run-work/SKILL.md` — same parity for Codex discovery path (including deprecated
+      `/run-item-work` alias). Maps to AC18.
 - [ ] `.cursor/agents/orchestrator.md` and `.claude/agents/orchestrator.md` —
       no-onward-handoff behavior: return to invoking context; no inline product
       work; profile declaration when absorbing portfolio layer. Maps to AC13.
@@ -264,9 +265,10 @@ read-only `/run-work` under each profile label.
 
 - [ ] `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
       (new) — lightweight guard that fails when bounded command adapters,
-      orchestration role agents, protocols 90/91/95, `agent-model-config.md`, or
-      `workflow.mdc` omit a link to `integrations/cursor-dispatch-profiles.md`
-      or required profile code strings. Maps to AC18 regression safety.
+      orchestration role agents, protocols 90/91/95, `agent-model-config.md`,
+      `workflow.mdc`, and deprecated `run-item-work` command/skill aliases omit a
+      link to `integrations/cursor-dispatch-profiles.md` or required profile code
+      strings. Maps to AC18 regression safety.
 - [ ] **Planted-violation proof** (same implementation PR): temporarily remove the
       canonical link from `.cursor/commands/run-item.md`, run the surface guard
       and confirm non-zero exit; restore the link and confirm exit 0. Record the
@@ -291,14 +293,17 @@ read-only `/run-work` under each profile label.
 | `docs/workflow/development-workflow/bounded-run-prelude.md` | Optional ordering note |
 | `docs/workflow/development-workflow/README.md` | Integrations list entry |
 | `.cursor/commands/run-item.md` | Mirror |
+| `.cursor/commands/run-item-work.md` | Mirror (deprecated alias) |
 | `.cursor/commands/run-items.md` | Mirror |
 | `.cursor/commands/run-epic.md` | Mirror |
 | `.cursor/commands/run-work.md` | Mirror |
 | `.claude/commands/run-item.md` | Mirror |
+| `.claude/commands/run-item-work.md` | Mirror (deprecated alias) |
 | `.claude/commands/run-items.md` | Mirror |
 | `.claude/commands/run-epic.md` | Mirror |
 | `.claude/commands/run-work.md` | Mirror |
 | `.agents/skills/run-item/SKILL.md` | Mirror |
+| `.agents/skills/run-item-work/SKILL.md` | Mirror (deprecated alias) |
 | `.agents/skills/run-items/SKILL.md` | Mirror |
 | `.agents/skills/run-epic/SKILL.md` | Mirror |
 | `.agents/skills/run-work/SKILL.md` | Mirror |

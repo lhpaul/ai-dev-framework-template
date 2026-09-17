@@ -42,7 +42,7 @@
 
 **Maps to**: AC18
 
-1. Open each bounded command adapter (`.cursor/commands/run-item.md`, `run-items.md`, `run-epic.md`, `run-work.md`).
+1. Open each bounded command adapter (`.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`, plus Claude and `.agents/skills` parity paths).
 2. Confirm each references `integrations/cursor-dispatch-profiles.md` and names the declaration requirement.
 3. Run `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` if present.
 
