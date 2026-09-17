@@ -30,6 +30,20 @@ spec-stage gap resolutions required before implementation.
 **Dependencies**: Spec PR [#1735](https://github.com/lhpaul/ai-dev-framework-template/pull/1735)
 merged to `develop`. No other work item is required first.
 
+**Implementation Order Gate — spec prerequisite (do not skip)**: Before
+implementation begins, confirm the approved spec is present on the integration
+base (`docs/specs/developments/20260911230558_1515-architecture-decision-axes/1_1515-architecture-decision-axes_specs.md` on `develop`). If absent, stop with
+`unclear_requirements` and wait for the spec merge — do not author canonical
+guidance against a missing spec.
+
+**Published contract change / rollback**: This feature tightens runner-facing
+documentation only (no script behavior change in the MVP). Rollback is a
+follow-up PR reverting the canonical page, protocol/agent edits, and audit
+fixture extension; downstream consumers see the prior lighter escalation wording
+again. The change is **not irreversible** but is **breaking for runner
+compliance expectations** once merged — treat as a published workflow contract
+update.
+
 **Design assets**: None. Workflow-documentation feature only.
 
 ---
@@ -42,8 +56,8 @@ merged to `develop`. No other work item is required first.
 | Spec merged | `gh pr view 1735 --json state,mergedAt,baseRefName` | Merged to `develop` (handoff: spec PR #1735 merged) |
 | No existing canonical escalation page | `ls docs/workflow/development-workflow/architecture-decision-escalation.md 2>/dev/null \|\| echo absent` | Absent — net-new canonical surface |
 | Current `architecture_decision` mentions | `grep -rl architecture_decision docs/workflow .ai-dev-workflow.yaml` | `guardrails.md`, `guardrails-enforcement.md`, `README.md`, `.ai-dev-workflow.yaml`, plus this spec only |
-| Protocol 91/93 lockstep targets | `grep -rl '91-orchestrate-work-protocol\|93-automated-reviewer-loop-protocol' .claude/agents/ .cursor/agents/ .codex/skills/ .agents/skills/` | Nine paths (see **Files to modify**) |
-| PR comment precedent for durable runner records | `grep -n 'gh pr comment' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md \| head` | Protocol 91 already mandates `gh pr comment` for several durable PR records |
+| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All nine `OK:` (orchestrator batch agents verified separately in Layer H) |
+| PR marker upsert precedent | `grep -n find_marker_comment_id scripts/development-workflow/run-epic-audit-trail.sh \| head` | Existing find-by-marker-then-PATCH-or-POST helper used for durable PR comments |
 | Stop-surface audit helper | `grep -n audit_stop_surfaces scripts/development-workflow/tests/test-worktree-recipe.sh` | Existing audit covers `guardrails-enforcement.md` stop contract — extend to reference the new canonical page |
 
 ---
@@ -143,7 +157,9 @@ records only concrete names and surfaces deferred to the plan:
     declaration) matching spec display labels verbatim.
   - Mandatory report outline: question + source; axes; per-axis verdict +
     citation/reason; per-citation conformance; arguments tied to one axis;
-    requested decision (open axes only); incompleteness markers when
+    requested decision (open axes only); optional **Recommendation** element
+    labelled separately from the requested decision (spec AC under *The
+    requested decision covers only the open axes*); incompleteness markers when
     malformed-input rows apply.
   - **Per-citation declaration rule (mixed reports)** (gap 2 resolution).
   - **Raised-question gate** for substance-undetermined incomplete reports
@@ -175,10 +191,17 @@ records only concrete names and surfaces deferred to the plan:
   when the stop condition is `architecture_decision`, require the coverage
   analysis and well-formed report per canonical page **before** emitting the
   terminal Work Item Runner Summary.
-- [ ] Add PR durability step when a PR exists for the work item: upsert a PR
-  comment whose body starts with `<!-- architecture-decision-escalation -->`
-  and `## Architecture decision escalation`, containing the same report attached
-  to the run summary (spec durability AC).
+- [ ] Add PR durability step when a PR exists for the work item: **upsert** (not
+      append-only) a PR issue comment whose body starts with
+      `<!-- architecture-decision-escalation -->` and
+      `## Architecture decision escalation`, containing the same report attached
+      to the run summary. Protocol text must name the algorithm: paginate issue
+      comments, locate an existing body containing the marker (reuse
+      `find_marker_comment_id` from `run-epic-audit-trail.sh`), `gh api` PATCH
+      that comment when found, otherwise POST a new comment — same idempotency
+      contract as checkpoint-status and security-advisory marker comments. Smoke
+      test step 3 verifies the algorithm is documented; no new script is
+      required for MVP unless implementation extracts a shared helper.
 - [ ] Document the "analysis shows no genuinely open axis" continuation path:
   does **not** stop under `architecture_decision` when the spec matrix says the
   trigger was not met — without weakening baseline stops.
@@ -259,18 +282,24 @@ pointer — verify during implementation; add if missing.
 **Test types**: Shell unit test (stop-surface audit extension), manual smoke
 test runbook.
 
-**Key scenarios**:
+**Key scenarios** (each names a falsifiable smoke or audit check):
 
 1. Canonical page exists with vocabulary, outline, worked example, gap
-   resolutions — maps to all acceptance groups.
-2. Protocol 91 requires report + PR marker comment when PR exists — maps to
-   durability AC.
-3. Protocol 93 requires inline declaration on supportive spec citations in
-   review replies — maps to citation ACs.
-4. Agent/skill mirrors link to canonical page and forbid lighter escalation
-   wording — maps to *Surfaces agree*.
-5. Stop-message human action names open axes only on complete reports — maps to
-   requested-decision ACs.
+   resolutions — smoke step 1.
+2. **Recommendation separation**: canonical outline requires a labelled
+   Recommendation distinct from requested decision — smoke step 1 checklist item.
+3. **Declaration misuse**: smoke/readme asserts `Not yet implemented` is never
+   used for built behavior (negative fixture in reviewer checklist).
+4. **No pre-answer / ratification**: canonical page + Protocol 91 state the
+   report must not act on or pre-answer open axes — smoke step 3.
+5. Protocol 91 requires report + **documented marker upsert algorithm** when a
+   PR exists — smoke step 3.
+6. Protocol 93 requires inline declaration on supportive spec citations in
+   review replies — smoke step 4.
+7. Agent/skill mirrors link to canonical page and forbid lighter escalation
+   wording — smoke step 5 + `test-worktree-recipe.sh` negative fixture.
+8. Stop-message human action names open axes only on complete reports — smoke
+   step 2.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1515-architecture-decision-axes.smoke-test.md`
@@ -320,13 +349,15 @@ Illustrative PR comment skeleton only (adapt during implementation):
 <!-- architecture-decision-escalation -->
 ## Architecture decision escalation
 
-**Question (source):** …
+**Question (source):** Reviewer asked to reset the review-cycle counter at orchestration start (PR review thread).
 
 ### Axes
-1. … — **Settled by specification** — citation … — **Departs**
-2. … — **Genuinely open** — No governing line — surfaces consulted: …
+1. Reset boundary for the counter — **Settled by specification** — citation: Protocol 91 `PR_REVIEW_LOOP_RUN_ID` paragraph — **Departs** — behavior today: counter is not reset at that boundary; **next action:** conform to the cited line (correction), not an architecture decision.
+2. Whether run-scoped counting alone bounds total effort across resumed runs — **Genuinely open** — No governing line — surfaces consulted: Protocol 91, guardrails-enforcement.md, REVIEW.md.
 
 **Requested decision:** Axis 2 only.
+
+**Recommendation (optional, separate):** Prefer documenting cumulative-effort policy in guardrails-enforcement if axis 2 is answered yes.
 ```
 
 ---

@@ -38,6 +38,9 @@ Open the canonical page and confirm it includes:
 - [ ] Scope (escalation reports + supportive citations in review-thread replies).
 - [ ] Vocabulary tables matching spec display labels.
 - [ ] Report outline with requested decision scoped to open axes only.
+- [ ] Optional **Recommendation** element documented as separate from requested
+      decision.
+- [ ] Prohibition on acting on, pre-answering, or ratifying open axes.
 - [ ] **Per-citation declaration rule (mixed reports)** (spec gap 2 resolution).
 - [ ] **Raised-question gate** for substance-undetermined incomplete reports
       (spec gap 1 resolution).
@@ -64,8 +67,11 @@ runner uncertainty when nobody raised the question.
 Search Protocol 91 for `architecture_decision` / canonical page link.
 
 - [ ] Coverage analysis is required before the terminal stop summary.
-- [ ] PR durability: when a PR exists, instructions require a comment with the
-      HTML marker and `## Architecture decision escalation` heading.
+- [ ] PR durability: when a PR exists, instructions require an **upsert** (find
+      marker in paginated issue comments, PATCH if present else POST) with the
+      HTML marker and `## Architecture decision escalation` heading — same
+      idempotency pattern as `find_marker_comment_id` in
+      `run-epic-audit-trail.sh`.
 - [ ] Continuation when all axes are settled is documented as "trigger not
       met", not as overriding a genuine stop.
 
