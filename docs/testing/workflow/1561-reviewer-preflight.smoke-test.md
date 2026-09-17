@@ -101,10 +101,12 @@ set -euo pipefail
   --mode pr-resume \
   --pr <number> \
   --owner lhpaul --repo ai-dev-framework-template \
-  --target-base develop
+  --target-base develop \
+  --remaining-stages on_draft.runner,on_draft.github,on_ready.github \
+  --pr-state on_draft.runner=draft,on_draft.github=draft,on_ready.github=ready
 ```
 
-**Expected**: Report distinguishes shared config checked against PR target base vs platform config checked against PR head branch (`CHECKED_*_REF` fields).
+**Expected**: Report distinguishes shared config checked against PR target base vs platform config checked against PR head branch (`CHECKED_*_REF` fields). Omitting `--remaining-stages` or any required `--pr-state` entry must yield `prerequisite-failed` (exit `2`), not `passed`.
 
 ### Step 5: No review remaining (resume cleanup)
 
