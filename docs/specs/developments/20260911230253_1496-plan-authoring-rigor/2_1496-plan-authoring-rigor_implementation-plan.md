@@ -54,7 +54,7 @@ blocking.
 | Rule headings in spec | `awk '/^### Rule [0-9]/{c++} END{print c}' docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | `6` |
 | Existing plan Document Quality Gate | `grep -n 'Document Quality Gate' docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Step 5 item 7 (~441+) — extension point for per-rule record |
 | Plan review checklist location | `awk '/^## Plan Review Checklist/{print NR; exit}' REVIEW.md` | line `117` |
-| Agent/skill protocol references | `grep -rl '02-generate-implementation-plan-protocol' .claude/agents/ .cursor/agents/ .codex/skills/` | six files: tech-lead + developer pairs, workflow-plan-writer, workflow-implementer skills |
+| Agent/skill protocol references | `grep -rl '02-generate-implementation-plan-protocol\|03-implement-development-protocol' .claude/agents/ .cursor/agents/ .codex/skills/` | six paths: `.claude/agents/developer.md`, `.claude/agents/tech-lead.md`, `.cursor/agents/developer.md`, `.cursor/agents/tech-lead.md`, `.codex/skills/workflow-implementer/SKILL.md`, `.codex/skills/workflow-plan-writer/SKILL.md` |
 | Plan reviewer agents | `ls .claude/agents/implementation-plan-reviewer.md .cursor/agents/implementation-plan-reviewer.md` | both present |
 | Strict plan checks (orthogonal) | `head -5 docs/workflow/development-workflow/strict-plan-checks.md` | non-blocking contract checks — unchanged scope |
 | Markdown CI covers workflow docs | `sed -n '12,16p' .github/workflows/markdown-lint.yml` | includes `docs/workflow/**` |
@@ -285,11 +285,24 @@ mirror table:
 | `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Already on plan branch — verify scenarios after implementation |
 | `AGENTS.md` | Key docs table row |
 
-**Explicitly out of scope for file edits** (spec Out of Scope): workflow
-scripts (`local-ai-reviewer.sh`, new linters), `strict-plan-checks.md` behavior,
-merged plans, Protocol 03 except if a future item adds implementer-facing text,
-Codex `workflow-implementer` (implementation stage), developer agents (no plan
-authoring change).
+### Cross-cutting checklist — Protocol 02 targets not edited
+
+Protocol 02 requires naming every surface in its cross-cutting checklist block.
+This plan modifies plan-stage authoring and review only; the spec **Out of
+Scope** entry "Extension to other artifacts" keeps specs, code reviews, and
+implementation protocols out of scope unless they duplicate plan-stage
+obligations.
+
+| Required Protocol 02 target | Disposition | Rationale |
+| --- | --- | --- |
+| `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | **No edit** | Rules apply at plan authoring/review; implementers execute approved plans. No new implementer checklist category is introduced. |
+| `.claude/agents/developer.md` | **No edit** | Developer role does not write implementation plans. |
+| `.cursor/agents/developer.md` | **No edit** | Same as Claude developer agent. |
+| `.codex/skills/workflow-implementer/SKILL.md` | **No edit** | Implementation skill delegates to Protocol 03; plan evidence is already fixed when implementation starts. |
+
+**Other explicit non-edits** (spec Out of Scope): workflow scripts
+(`local-ai-reviewer.sh`, new linters), `strict-plan-checks.md` behavior, merged
+plans retrofits.
 
 ---
 
@@ -322,6 +335,17 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   reference the canonical file.
 - Exit non-zero on first failure; follow pattern of
   `test-protocol-02-portable-parser-guidance.sh`.
+
+**Planted-violation proof (implementation PR evidence)** — required before the
+mirror test is considered done:
+
+1. Temporarily remove one rule name from the canonical file (for example delete
+   the `Rule 6` heading line) or break a mirror reference in `REVIEW.md`.
+2. Run `bash scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`
+   and confirm non-zero exit with a message naming the defect.
+3. Revert the deliberate defect; re-run the script and confirm exit `0`.
+4. Record the failing and passing exit codes in the implementation PR
+   description (no need to commit the planted defect).
 
 Wire into existing workflow test aggregator if one lists sibling `test-*.sh`
 files under `scripts/development-workflow/tests/` (grep for invocations and add
@@ -366,9 +390,9 @@ Not applicable.
 6. Update tech-lead, implementation-plan-reviewer, and workflow-plan-writer
    mirrors (four agent files + one skill).
 7. Add `test-plan-authoring-rigor-mirror.sh`; register in test aggregator if
-   present.
+   present; run planted-violation proof (fail then pass).
 8. Update `AGENTS.md` (and README pointer if applicable).
-9. Run markdown lint on all touched paths; run mirror test.
+9. Run markdown lint on all touched paths; run mirror test at exit `0`.
 10. Execute smoke runbook Scenarios 1–7 on a sample plan PR or dry-run checklist.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
