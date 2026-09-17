@@ -82,3 +82,32 @@ required mirror paths drift.
 
 Expected result: the per-rule record supplements — does not replace — internal
 review, `REVIEW.md`, strict plan checks, and CI.
+
+## Acceptance traceability matrix
+
+Manual desk-check during implementation QA (or scripted where noted). Each row
+names an acceptance theme, the exercise, and the expected gate class.
+
+| ID | Spec focus | Exercise | Expected result |
+| --- | --- | --- | --- |
+| B1 | Rule 1 — no record | Plan depending on vendor text with zero sampling/contract/enumeration | Blocking — missing sampling record |
+| B2 | Rule 1 — two occurrences | Sampling record with two locators only | Blocking — floor not met |
+| B3 | Rule 1 — contract fixed set | Design binds to literals with cited producer contract | Check passed — no sampling required |
+| B4 | Rule 1 — tolerant open set | No contract; plan states stable part + unseen behavior | Check passed when record complete |
+| C1 | Rule 2 — disagreeing duplicate | Same count stated differently in two sections | Blocking — contradiction |
+| C2 | Rule 2 — agreeing duplicate | Same fact twice, identical wording | Non-blocking consolidation; Satisfied |
+| D1 | Rule 3 — bad partition | Count by subtracting unrelated totals | Blocking — partition not shown |
+| D2 | Rule 3 — scope by count | Step uses number without enumeration | Blocking — missing enumeration |
+| E1 | Rule 4 — delegated support | "Test exists" from investigation summary only | Blocking — no recorded search |
+| E2 | Rule 4 — narrow non-existence | "Helper absent" after searching one directory | Blocking — implausible scope |
+| F1 | Rule 5 — unit-only expectation | Delete shared guard; expect new return at unit | Blocking — missing consumer site |
+| F2 | Rule 5 — branch removal | Remove branch without reroute statement | Blocking — absorbed inputs |
+| G1 | Rule 6 — scopeless conditional | "Required then" with no governed edges | Blocking — missing scope/discharge |
+| H1 | Missing outcome record | Plan PR with no per-rule table | Blocking — treated Unsatisfied |
+| H2 | Stale record SHA | Record names earlier commit than PR head | Blocking — revision mismatch |
+| H3 | Wrong N/A rationale | Rule 3 Satisfied while plan states artifact counts | Blocking — rationale contradicts claim |
+
+Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes
+that wiring alone cannot prove. Execute at least one blocking and one
+non-blocking row on real or fixture plan text before marking implementation
+complete.

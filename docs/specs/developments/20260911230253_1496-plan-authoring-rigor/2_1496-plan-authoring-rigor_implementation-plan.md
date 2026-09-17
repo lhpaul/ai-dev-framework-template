@@ -43,6 +43,11 @@ plan checks; strict checks stay non-blocking; this feature adds blocking
 backstop obligations in `REVIEW.md` only where the spec gate matrix says
 blocking.
 
+**Parser-risk classification**: **Applicable** — the mirror harness parses
+structured Markdown and agent docs with `grep`/`awk`/`sed` to find rule names,
+outcome labels, and canonical path references. A false match or missed mirror
+silently ships drift.
+
 ---
 
 ## Verification Log
@@ -322,6 +327,25 @@ plans retrofits.
 **Regression suite**: Not applicable — no browser/product regression suite for
 workflow docs.
 
+### Parser-risk addendum (mirror harness)
+
+**Edge-case enumeration** (concrete inputs the harness must handle):
+
+| Case | Example input | Expected harness behavior |
+| --- | --- | --- |
+| Boundary heading | `### Rule 1` vs `### Rule 10` vs `Rule 1 — foo` in prose | Count only spec-style rule headings in canonical file, not substring `Rule 1` inside `Rule 10` |
+| Negative lookalike | `Rule 1` mentioned only inside a code block or HTML comment in `REVIEW.md` | Do not treat comment/code fences as mirror requirements |
+| Multiple on one line | `Rule 1 and Rule 2` on one checklist line | Line-level grep may match both; heading-level checks remain authoritative for canonical file |
+| Nested context | Rule name inside markdown link text `[Rule 3](./plan-authoring-rigor-rules.md)` | Reference check passes when path matches; do not require bare `Rule 3` substring elsewhere |
+| Outcome label casing | `satisfied` vs `Satisfied` | Assert display labels from spec (`Satisfied`, `Not applicable`, `Unsatisfied`) appear in Protocol 02 / REVIEW mirror text, not code-value typos alone |
+
+**Unit test file**: `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`
+(executable test script — one `run_test` assertion per row above using fixture
+snippets under `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/`
+created during implementation).
+
+**Suppression semantics**: Not applicable — no inline suppressions.
+
 ### Mirror test harness (new)
 
 Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
@@ -389,8 +413,11 @@ Not applicable.
 5. Update `02-review-implementation-plan-protocol.md` pointer.
 6. Update tech-lead, implementation-plan-reviewer, and workflow-plan-writer
    mirrors (four agent files + one skill).
-7. Add `test-plan-authoring-rigor-mirror.sh`; register in test aggregator if
-   present; run planted-violation proof (fail then pass).
+7. Add mirror fixtures under
+   `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` and
+   `test-plan-authoring-rigor-mirror.sh` with one assertion per parser-risk row;
+   register in test aggregator if present; run planted-violation proof (fail
+   then pass).
 8. Update `AGENTS.md` (and README pointer if applicable).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
 10. Execute smoke runbook Scenarios 1–7 on a sample plan PR or dry-run checklist.
@@ -410,13 +437,16 @@ Not applicable.
 | Spec group | Plan coverage |
 | --- | --- |
 | A — Rules stated for both roles | Canonical file + mirror table + agents |
-| B — Rule 1 | Canonical Rule 1 text + gate rows |
-| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings |
-| D — Rule 3 | Template + Verification Log guidance |
-| E — Rule 4 | Template + REVIEW delegated-claim blocking |
-| F — Rule 5 | Template consumer enumeration guidance |
-| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop wording |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix |
+| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B4 |
+| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 |
+| D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 |
+| E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E2 |
+| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F2 |
+| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H3 |
+
+Detailed smoke traceability lives in the smoke runbook **Acceptance traceability
+matrix** section (added in the same plan branch).
 
 Brief Coverage Matrix objectives: all covered; no Out of Scope deferrals beyond
 spec's deliberate rejections (automation, size ceiling, etc.).
