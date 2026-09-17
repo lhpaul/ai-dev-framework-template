@@ -51,6 +51,20 @@ validate_enum() {
   exit 2
 }
 
+validate_identifier() {
+  local flag_name="$1"
+  local charset="$2"
+  local value="$3"
+  local charset_desc="$4"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  if [[ ! "$value" =~ $charset ]]; then
+    echo "--${flag_name} must use ${charset_desc}" >&2
+    exit 2
+  fi
+}
+
 compare_field() {
   local field="$1"
   local target binding
@@ -155,6 +169,11 @@ if [ -z "$HUB_TRACKER_REF" ]; then
   echo "--hub-tracker-ref is required" >&2
   exit 2
 fi
+
+validate_identifier "component-tag" '^[A-Za-z0-9._-]+$' "$COMPONENT_TAG" \
+  "letters, numbers, dot, underscore, or hyphen"
+validate_identifier "component-version" '^[A-Za-z0-9._+-]+$' "$COMPONENT_VERSION" \
+  "letters, numbers, dot, underscore, plus, or hyphen"
 
 if ! jq -e '.schema_version == "component_release_target.v1"' "$TARGET_FILE" >/dev/null; then
   echo "target file must use schema_version component_release_target.v1" >&2
