@@ -206,6 +206,9 @@ if not raw:
 def emit(obj):
     path.write_text(json.dumps(obj, separators=(",", ":")), encoding="utf-8")
 
+def emit_non_review_content():
+    emit({"choices": [{"message": {"content": "not-json"}}]})
+
 def assemble_sse(text):
     content_parts = []
     reasoning_parts = []
@@ -254,6 +257,8 @@ def assemble_sse(text):
             reasoning_parts.append(delta["reasoning_content"])
     if not saw_data:
         return None
+    if not content_parts and not reasoning_parts:
+        return None
     message = {"role": role, "content": "".join(content_parts)}
     if reasoning_parts:
         message["reasoning_content"] = "".join(reasoning_parts)
@@ -282,7 +287,8 @@ if raw.lstrip().startswith("data:"):
     assembled = assemble_sse(raw)
     if assembled is None:
         print("ERROR: HTTP reviewer returned undecodable SSE body", file=sys.stderr)
-        raise SystemExit(1)
+        emit_non_review_content()
+        raise SystemExit(0)
     emit(assembled)
     raise SystemExit(0)
 
@@ -290,7 +296,8 @@ try:
     obj, _idx = json.JSONDecoder().raw_decode(raw)
 except json.JSONDecodeError as exc:
     print(f"ERROR: HTTP reviewer returned undecodable body ({exc})", file=sys.stderr)
-    raise SystemExit(1)
+    emit_non_review_content()
+    raise SystemExit(0)
 emit(obj)
 ' "$body_file"
 

@@ -117,6 +117,10 @@ elif [ "${MOCK_APPEND_SSE_DONE:-0}" = "1" ]; then
   # Non-streaming JSON body with an SSE trailer appended.
   printf '{"choices":[{"message":{"content":%s}}]}' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
   printf 'data: [DONE]\n\n' >> "$output_file"
+elif [ "${MOCK_SSE_GARBAGE:-0}" = "1" ]; then
+  printf 'data: not-valid-json\n\ndata: [DONE]\n\n' > "$output_file"
+elif [ -n "${MOCK_RAW_HTTP_BODY+x}" ]; then
+  printf '%s' "$MOCK_RAW_HTTP_BODY" > "$output_file"
 else
   printf '{"choices":[{"message":{"content":%s}}]}\n' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
 fi
@@ -227,6 +231,26 @@ export MOCK_SSE_STREAM
 run_test "http_assembles_sse_chunk_stream" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
 run_test "http_assembles_sse_chunk_stream_head" "abc123" "$(jq -r '.reviewed_head' "$OUTPUT_FILE")"
 unset MOCK_SSE_STREAM
+
+MOCK_SSE_GARBAGE=1
+export MOCK_SSE_GARBAGE
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "http_undecodable_sse_malformed_stderr" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_undecodable_sse_stderr_hint" "yes" "$(grep -q 'undecodable SSE body' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_SSE_GARBAGE
+
+MOCK_RAW_HTTP_BODY='plain-text-not-json'
+export MOCK_RAW_HTTP_BODY
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "http_undecodable_body_malformed_stderr" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_undecodable_body_stderr_hint" "yes" "$(grep -q 'undecodable body' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_RAW_HTTP_BODY
 
 MOCK_MODEL_CONTENT='not-json'
 export MOCK_MODEL_CONTENT
