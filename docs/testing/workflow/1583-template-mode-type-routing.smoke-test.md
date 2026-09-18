@@ -21,14 +21,30 @@ bash scripts/development-workflow/tests/test-framework-mode-type-routing.sh
 ```
 
 (Use `test-workflow-lib-github-projects.sh` instead of the dedicated file if the plan collapses
-suites.)
+suites. Named scenarios `creation-refusal-no-bypass`, `stop-path-no-mutation`,
+`reclassify-then-route`, `consumer-prelude-workflow-unchanged`,
+`consumer-next-action-workflow-unchanged`, `release-unavailable-continues-unsatisfied`, and
+`retro-unavailable-continues-unsatisfied` must be covered by harness or the steps below.)
 
 ---
 
 ## Step 1: Creation refusal (framework mode)
 
-1. Dry-run the creation helper against a test title (do **not** keep the issue if created by
-   mistake — prefer the automated test fixture for CI):
+Prefer the automated fixture for CI. Live invocation against this template repo is **optional**
+and only safe after the refusal lands — if refusal is missing, the command would create a real
+issue (delete it immediately if that happens).
+
+1. Harness (required):
+
+```bash
+bash scripts/development-workflow/tests/test-add-backlog-item.sh
+```
+
+**Expected**: Framework-mode `--type Workflow` fails before create; scenario
+`creation-refusal-no-bypass` passes (no force/confirm/env bypass accepts Workflow; Linear
+`create` handoff refuses likewise).
+
+2. Optional live dry-run (only when refusal is already implemented):
 
 ```bash
 ./scripts/development-workflow/add-backlog-item.sh create \
@@ -40,7 +56,7 @@ suites.)
 **Expected**: Non-zero exit, stderr names Workflow as invalid and lists Feature/Bug/Refactor, no
 issue URL on stdout.
 
-2. Repeat with `--type Bug`.
+3. Optional: repeat with `--type Bug`.
 
 **Expected**: Success (issue URL printed) — delete the smoke issue from the tracker afterward.
 
@@ -52,17 +68,31 @@ issue URL on stdout.
 
 ```bash
 ./scripts/development-workflow/list_open_framework_items.sh
+echo "exit=$?"
 ```
 
-**Expected**: Lines include `FRAMEWORK_ITEMS_LOOKUP_STATUS` and `FRAMEWORK_ITEMS_JSON=…`.
-Status is `ok` when open items exist (any Type), `empty` only for a completed read with no
-open items, and `unavailable` with a reason when the tracker read fails.
+**Expected**: Stdout always includes all three keys:
+`FRAMEWORK_ITEMS_LOOKUP_STATUS=…`, `FRAMEWORK_ITEMS_LOOKUP_REASON=…` (may be empty), and
+`FRAMEWORK_ITEMS_JSON=…`. Status is `ok` when open items exist (any Type), `empty` only for a
+completed read with no open items, and `unavailable` with a non-empty reason when the tracker
+read fails. Exit code is `0` for `ok`, `empty`, and `unavailable`.
 
 2. Temporarily unset `GITHUB_PROJECT_NUMBER` and remove `project_number` from config in a local
    test checkout **or** use the harness fixture for unavailable mode.
 
-**Expected (framework mode)**: Unavailable reporting with reason — not silent "no framework
-items".
+**Expected (framework mode)**: `STATUS=unavailable`, non-empty `REASON` — not silent "no
+framework items". Exit `0`.
+
+3. Flow-level unavailable (required — harness or manual protocol walkthrough):
+
+- Protocol `05` (`release-unavailable-continues-unsatisfied`): with lookup forced unavailable,
+  release flow **continues**; output states lookup was not performed; open-script-bug review is
+  **not** recorded as satisfied.
+- Protocol `06` (`retro-unavailable-continues-unsatisfied`): same for retrospective — flow
+  continues; a finding is **not** recorded as having no related item solely because lookup was
+  unavailable.
+
+**Fail if**: either flow stops on unavailable, or marks the dependent check satisfied.
 
 ---
 
@@ -81,26 +111,77 @@ items".
 **Expected**: `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, message names
 re-classification.
 
-3. Repeat with `--caller scan`.
+3. Assert **no mutation** on that stop path (`stop-path-no-mutation`): Type and Status on the
+   tracker are unchanged; no new branch created for the item. Prefer the harness spy/mock; if
+   checking live, record Type/Status/branch before and after the stop and confirm equality.
+
+4. Repeat with `--caller scan`.
 
 **Expected**: `RESULT=hold` (not a global stop).
 
-4. Pick an item past Backlog (e.g. Plan Ready) that still shows Type `Workflow`.
+5. Pick an item past Backlog (e.g. Plan Ready) that still shows Type `Workflow`.
 
 **Expected**: `RESULT=pass`.
 
+6. **Post-reclassification** (`reclassify-then-route`): re-class the item to Feature, then Bug,
+   then Refactor; re-run through prelude / next-action. Each class routes as today. For Bug,
+   confirm the existing scope check still runs (scope-check failure fixture still blocks
+   fast-track).
+
+7. **Consumer fixtures** (`consumer-prelude-workflow-unchanged`,
+   `consumer-next-action-workflow-unchanged`): under consumer config, Backlog + Workflow through
+   `run-bounded-prelude.sh` and `workflow-next-action.sh` matches pre-feature routing (no
+   stop/hold from this gate). Harness golden/diff evidence required.
+
 ---
 
-## Step 4: Guidance spot-check
+## Step 4: Guidance mirror check (closed list + grep)
 
-1. Open `AGENTS.md` Tracker Classification and
-   `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`.
+Closed mirror list (must all agree; see plan):
+
+1. `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`
+2. `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
+3. `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
+4. `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
+5. `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`
+6. `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md`
+7. `docs/workflow/development-workflow/integrations/github-projects.md`
+8. `AGENTS.md`
+9. `CLAUDE.md`
+10. `GEMINI.md`
+11. `.cursor/agents/orchestrator.md`
+12. `.claude/agents/orchestrator.md`
+
+1. Spot-check `AGENTS.md` Tracker Classification and protocol `00`.
 
 **Expected**: Framework-mode rule visible; no instruction to file framework work as Workflow in
 this repository.
+
+2. Grep check that **must fail** if old framework-mode Workflow guidance survives (run from
+   repo root; adjust wrapper if harness owns this):
+
+```bash
+# Fail if root agent files still recommend Workflow for framework/process work:
+! rg -n 'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
+  .cursor/agents/orchestrator.md .claude/agents/orchestrator.md
+
+# Fail if retrospective create paths still direct Type Workflow in framework mode:
+! rg -n 'update_tracker_type_best_effort.*Workflow|Type `?Workflow`?' \
+  docs/workflow/development-workflow/protocols/06-retrospective-protocol.md \
+  docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md
+
+# Fail if protocols 90/91 still describe framework-mode Backlog+Workflow as infer-path:
+! rg -n 'Backlog \(Workflow\).*infer|infer.*Workflow' \
+  docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md \
+  docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
+```
+
+**Expected**: All three commands exit 0 (no matches). Any match = smoke failure.
 
 ---
 
 ## Pass criteria
 
-All steps match expected behavior; regression harness from Preconditions remains green.
+All steps match expected behavior; regression harness from Preconditions remains green; named
+scenarios listed in Preconditions are evidenced by harness output or the flow-level / routing /
+grep steps above.

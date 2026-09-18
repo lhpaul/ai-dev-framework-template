@@ -82,9 +82,21 @@ scope and must not be bundled into this implementation PR.
 - [ ] Mirror the same rule in the Linear `create` handoff path: when type would be Workflow
   and framework mode is true, exit `1` with the same message instead of emitting
   `TRACKER_ACTION_REQUIRED` (agents must not bypass via MCP).
+- [ ] Do **not** add any force/confirm/yes flag or override env var that accepts Workflow in
+  framework mode. Inventory at plan time: `add-backlog-item.sh` accepts only
+  `--title/--body/--body-file/--label/--priority/--size/--type` (no `--force`, `--yes`,
+  `--confirm`, `ALLOW_*`, `FORCE_*`, or `SKIP_*`). Implementation must keep that inventory
+  empty for bypass paths.
 - [ ] Extend `scripts/development-workflow/tests/test-add-backlog-item.sh` with template and
-  consumer config fixtures proving: framework mode + `--type Workflow` → exit `1`, no `gh`
-  create invocation; consumer config → existing success path unchanged.
+  consumer config fixtures proving:
+  - Framework mode + `--type Workflow` → exit `1`, no `gh` create invocation.
+  - **Negative bypass suite (named scenario `creation-refusal-no-bypass`)**: for every
+    force/confirm/yes-style flag and override env form the script currently accepts (today:
+    none — assert the inventory remains empty), refusal still holds; also invoke the Linear
+    `create` handoff path with type Workflow in framework mode and assert exit `1` with no
+    `TRACKER_ACTION_REQUIRED`. If a future PR adds a bypass flag/env, this scenario must fail
+    until the flag is rejected for Workflow in framework mode.
+  - Consumer config → existing success path unchanged.
 
 ### Enforcement point 2 — open "framework items" lookup
 
@@ -95,23 +107,47 @@ scope and must not be bundled into this implementation PR.
     issue, regardless of Type (AC: Open framework items stay discoverable).
 - [ ] Add `scripts/development-workflow/list_open_framework_items.sh` as the **only**
   supported entrypoint for release/retrospective "open framework items" reads. Contract
-  (always, on stdout, before exit):
+  (**always**, on stdout, before exit — **all three keys in every mode**, including consumer):
   1. `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok|empty|unavailable`
-  2. `FRAMEWORK_ITEMS_LOOKUP_REASON=<human-readable text>` (empty when `ok` with items)
+  2. `FRAMEWORK_ITEMS_LOOKUP_REASON=<human-readable text>` — **always emitted**; empty
+     string when `STATUS=ok` with items or when `STATUS=empty`; non-empty when
+     `STATUS=unavailable` (reason text also mirrored on stderr when useful).
   3. `FRAMEWORK_ITEMS_JSON=<compact JSON array>` on the final line
-  - **Consumer repositories**: delegate to today's `list_open_workflow_type_issues` behavior;
-    print `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok` and emit Workflow-filtered JSON (no new
-    unavailable-vs-empty requirement).
+  - **Exit codes (both modes)**: `ok` → `0`; `empty` → `0`; `unavailable` → `0`. Status is
+    carried only by `FRAMEWORK_ITEMS_LOOKUP_STATUS` so protocol callers under `set -e` can
+    capture stdout, branch on STATUS, and continue the release/retrospective flow without the
+    wrapper itself aborting the shell. Non-zero is reserved for wrapper usage errors (bad
+    args), not for lookup outcomes.
+  - **Consumer repositories**: always print all three keys; delegate body to today's
+    `list_open_workflow_type_issues` behavior; on success print `STATUS=ok`, `REASON=`
+    (empty), and Workflow-filtered JSON (including `[]` when none). On today's failure path
+    that yields `[]` + stderr warning, keep that failure semantics — still print
+    `STATUS=ok`, `REASON=` (empty), `JSON=[]` (no new unavailable-vs-empty requirement for
+    consumer). Do not omit `FRAMEWORK_ITEMS_LOOKUP_REASON` in consumer mode.
   - **Framework mode**: `ok` when at least one open non-terminal item exists; `empty` when the
     lookup completed and the board has none; `unavailable` when the lookup could not be
-    performed (preserve stderr detail). Never emit `empty` for a failed read.
+    performed (non-empty `REASON`, preserve stderr detail). Never emit `empty` for a failed
+    read.
   - Keep `list_open_workflow_type_issues` as the consumer-mode primitive; framework mode
     may call it internally only after changing filter semantics behind the wrapper.
 - [ ] Update protocols `05` and `06` snippets to call `list_open_framework_items.sh` (not the
-  raw lib function).
+  raw lib function). For framework-mode `STATUS=unavailable`, each protocol must:
+  1. **Continue** the release / retrospective flow (do not treat unavailable as a hard stop).
+  2. State in the flow's own output that the lookup was not performed and why (`REASON`).
+  3. **Not** record the dependent check as satisfied — release must not claim the
+     open-script-bug review ran; retrospective must not claim a finding was matched against
+     already-filed items — on the strength of an unavailable lookup.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh` (or
   add `tests/test-framework-mode-type-routing.sh`) with mocked `gh` fixtures for framework
   vs consumer filter differences and framework-mode unavailable vs empty-board cases.
+- [ ] Add **flow-level** named scenarios (protocol text + harness or smoke assertions) that
+  fail if unmet:
+  - `release-unavailable-continues-unsatisfied` (protocol `05`): fixture forces
+    `STATUS=unavailable`; release flow proceeds past the lookup step; output contains
+    unavailable/`REASON`; no "open framework bugs reviewed" / equivalent satisfied marker.
+  - `retro-unavailable-continues-unsatisfied` (protocol `06`): same for retrospective
+    finding de-duplication — flow continues; finding is not recorded as having no related
+    item solely because lookup was unavailable.
 
 ### Enforcement point 3 — Backlog routing for Type `Workflow`
 
@@ -144,40 +180,76 @@ scope and must not be bundled into this implementation PR.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` (or dedicated
   gate tests) to prove a Backlog + Workflow item is `held` with misclassification reason while
   a sibling Feature item remains `proposed_batch`.
+- [ ] **Consumer-fixture routing cases** (AC: Consumer repositories are unchanged) — named
+  scenarios that fail if gate wiring alters consumer paths:
+  - `consumer-prelude-workflow-unchanged`: under consumer config (`template.is_template` absent
+    / false / unrecognized), `run-bounded-prelude.sh` for a Backlog + Workflow item produces
+    the same routing outcome shape as today's pre-feature baseline (no stop/hold from this
+    gate; infer-path / existing tables).
+  - `consumer-next-action-workflow-unchanged`: under the same consumer fixtures,
+    `workflow-next-action.sh` for Backlog + Workflow matches today's NEXT_ACTION / lane
+    classification (not `hold-misclassified-type`). Diff evidence against recorded baseline
+    stdout or golden fixtures is required — batch-lanes framework-mode HELD alone is not
+    enough.
+- [ ] **No-mutation on stop** (named scenario `stop-path-no-mutation`): when framework mode
+  + Backlog + Workflow + caller `single` yields `RESULT=stop`, assert zero tracker mutations
+  (no Type update, no Status update) and no branch create / checkout side effects from the
+  stop path (mock or spy `gh` / git helpers). Gate output strings alone are insufficient.
+- [ ] **Post-reclassification routing** (named scenario `reclassify-then-route`): after the
+  fixture re-classes the same item to Feature, then Bug, then Refactor, re-run through
+  `run-bounded-prelude.sh` / `workflow-next-action.sh` and assert each class routes exactly as
+  that class routes today with no extra step from this feature. The Bug case **must** still
+  pass through the existing Bug scope check before any fast-track path (assert the scope-check
+  hook/function is invoked, or that the known scope-check failure fixture still blocks).
 
 ### Documentation and mirror surfaces (spec Mirror surfaces table)
 
-- [ ] `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` —
-  classification step + inference table: framework-mode rule; remove/adjust examples that
-  show Workflow for this repository.
-- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and
-  `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` —
-  Backlog (Workflow) rows: framework mode = misclassified stop/hold; consumer = unchanged
-  infer-path.
-- [ ] `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` and
-  `06-retrospective-protocol.md` — framework-mode lookup meaning (all open items) + unavailable
-  reporting; retrospective item creation must not direct Workflow in framework mode.
-- [ ] `docs/workflow/development-workflow/integrations/github-projects.md` — Type field table:
-  Workflow remains on board but invalid in framework mode; document lookup helper behavior.
-- [ ] `AGENTS.md` Tracker Classification section + per-runner mirrors that duplicate that text:
-  `.cursor/agents/orchestrator.md`, `.cursor/agents/item-orchestrator.md` (and other agent
-  stubs under `.cursor/agents/` that restate tracker Type guidance), plus Codex/Claude skill
-  copies under `.agents/skills/` and `.codex/skills/` when they repeat the same paragraph.
-- [ ] `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` —
-  remove the instruction to set Type `Workflow` when creating issues in framework mode; align
-  with `06-retrospective-protocol.md`.
+**Closed mirror list** (every path that today restates tracker Type / Workflow creation or
+Backlog→pipeline guidance for this feature — update all; do not leave an open-ended "and
+others"):
+
+| # | Path | Why it is in scope |
+| --- | --- | --- |
+| 1 | `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` | Classification step + inference table |
+| 2 | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Single-item Backlog routing table |
+| 3 | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | Portfolio Backlog routing table |
+| 4 | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` | Open-framework-item lookup |
+| 5 | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` | Lookup + create/classify |
+| 6 | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` | Create/classify with Workflow today |
+| 7 | `docs/workflow/development-workflow/integrations/github-projects.md` | Type field table |
+| 8 | `AGENTS.md` | Tracker Classification section |
+| 9 | `CLAUDE.md` | Same Tracker Classification paragraph |
+| 10 | `GEMINI.md` | Same Tracker Classification paragraph |
+| 11 | `.cursor/agents/orchestrator.md` | Tracker Classification section |
+| 12 | `.claude/agents/orchestrator.md` | Tracker Classification section |
+
+Out of list (verified no duplicate Tracker Classification / "file as Workflow" paragraph at
+plan time): `.cursor/agents/item-orchestrator.md`, `.agents/skills/**`, `.codex/skills/**`.
+If implementation discovers a new duplicate, add it to this table in the same PR.
+
+- [ ] Update every row in the closed mirror list per AC Guidance surfaces agree.
+- [ ] Add a **grep-based check** (harness step in `test-framework-mode-type-routing.sh` or
+  smoke Step 4) that **fails** if any surviving framework-mode Workflow instruction remains.
+  Minimum failing patterns (adjust wording to match pre-change text, but the check must be
+  red on today's tree and green after mirrors are updated):
+  - `Use \`Workflow\` for` in `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+    `.cursor/agents/orchestrator.md`, `.claude/agents/orchestrator.md`
+  - `update_tracker_type_best_effort` … `Workflow` (or equivalent "set Type Workflow") in
+    protocols `06` / `06b` under framework-mode create paths
+  - Backlog (Workflow) infer-path rows in protocols `90` / `91` that still describe framework
+    mode as inferring a pipeline
+  Command sketch (implementation may wrap in a small script): fail if `rg` still matches the
+  old framework-mode-as-Workflow guidance on the closed list after updates.
 - [ ] Update `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` only if
   its Workflow discovery steps contradict framework-mode semantics (otherwise leave unchanged
   and cover framework mode in the new runbook).
 
 ### Release documentation
 
-- [ ] Add under `CHANGELOG.md` → `[Unreleased]` → `### Added` (or `### Fixed` if reviewer
-  prefers behavior-fix framing):
+- [ ] Implementation PR adds a `changelog.d/` fragment (do **not** edit `CHANGELOG.md`
+  directly). Suggested fragment body:
 
   `- **Framework-mode work-item classification** (#1583): refuse Type Workflow on backlog creation in template repositories, stop or hold misclassified Backlog routing, and treat open-framework-item discovery as all open board items with distinguishable lookup-unavailable reporting in framework mode.`
-
-Implementation PR adds a `changelog.d/` fragment instead of editing `CHANGELOG.md` directly.
 
 ---
 
@@ -208,15 +280,29 @@ code/tests:
 - `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` (HELD misclassification via
   `workflow-next-action.sh` output)
 
-**Key scenarios**:
+**Key scenarios** (each must fail if unmet — named where noted):
 
 1. Framework mode refuses `--type Workflow` before issue creation with actionable message.
-2. Consumer configs still create Workflow items with identical stdout shape.
-3. Framework-mode lookup returns mixed-type open items; consumer returns Workflow-only.
-4. Framework mode: `list_open_framework_items.sh` status keys distinguish unavailable vs empty
-   vs populated.
-5. Gate: Backlog+Workflow stops single runner; scan caller yields hold, not global stop.
-6. Gate: Spec Ready + Workflow type passes (pipeline already chosen).
+2. **`creation-refusal-no-bypass`**: refusal persists for every force/confirm/env bypass form
+   accepted by `add-backlog-item.sh` (inventory empty today) and for the Linear `create`
+   handoff path.
+3. Consumer configs still create Workflow items with identical stdout shape.
+4. Framework-mode lookup returns mixed-type open items; consumer returns Workflow-only.
+5. Framework mode: `list_open_framework_items.sh` emits all three keys (`STATUS`, `REASON`,
+   `JSON`) and distinguishes unavailable vs empty vs populated; exit codes match the contract
+   (`0` for all three statuses). Consumer mode also emits all three keys (REASON may be empty).
+6. **`release-unavailable-continues-unsatisfied`** / **`retro-unavailable-continues-unsatisfied`**:
+   unavailable lookup does not stop protocol `05` / `06` and is not recorded as satisfied.
+7. Gate: Backlog+Workflow stops single runner; scan caller yields hold, not global stop.
+8. Gate: Spec Ready + Workflow type passes (pipeline already chosen).
+9. **`stop-path-no-mutation`**: stop path performs zero tracker/branch mutation.
+10. **`reclassify-then-route`**: post-reclassification Feature/Bug/Refactor routing matches
+    today, including Bug scope check.
+11. **`consumer-prelude-workflow-unchanged`** / **`consumer-next-action-workflow-unchanged`**:
+    consumer fixtures for `run-bounded-prelude.sh` and `workflow-next-action.sh` keep pre-feature
+    Workflow Backlog routing.
+12. **Guidance mirror grep**: closed mirror list updated; grep check fails on surviving
+    framework-mode Workflow instructions.
 
 **Quality checks**: ShellCheck on touched scripts; `workflow-shell-guard-lint.py`;
 markdown lint on plan/spec/runbook/protocol edits.
@@ -227,11 +313,12 @@ markdown lint on plan/spec/runbook/protocol edits.
 
 ## Implementation Order
 
-1. Add failing regression tests for creation refusal, lookup mode split, and backlog gate.
+1. Add failing regression tests for creation refusal (incl. no-bypass), lookup mode split,
+   flow-level unavailable, backlog gate (incl. no-mutation + reclassify + consumer callers).
 2. Implement lib + `add-backlog-item.sh` refusal and framework-mode lookup status output.
 3. Implement `list_open_framework_items.sh` and wire the backlog gate into
    `run-bounded-prelude.sh` + `workflow-next-action.sh`.
-4. Update protocols, integration guide, and `AGENTS.md` mirrors per Mirror surfaces table.
+4. Update every path on the closed mirror list; land the grep-based guidance check.
 5. Run full touched test suites + smoke runbook; add `changelog.d` fragment.
 
 ---
@@ -240,10 +327,46 @@ markdown lint on plan/spec/runbook/protocol edits.
 
 | Risk | Mitigation |
 | --- | --- |
-| Consumer lookup/regression drift | Guard consumer branches with copied fixtures from current green tests before editing shared function |
-| Agents still infer Workflow path from stale skills | Update all mirrored classification snippets in the same PR |
-| `[]` still read as "no items" in release/retrospective | Require explicit lookup status lines in framework mode protocol steps |
+| Consumer lookup/regression drift | Guard consumer branches with copied fixtures from current green tests before editing shared function; named consumer prelude/next-action scenarios |
+| Agents still infer Workflow path from stale skills | Closed mirror list + failing grep check in the same PR |
+| `[]` still read as "no items" in release/retrospective | Explicit STATUS lines + flow-level unsatisfied scenarios for protocols 05/06 |
 | Mid-pipeline Workflow items blocked | Gate must key off reconciled stage, not Type alone |
+| Bypass flag added later | `creation-refusal-no-bypass` inventory assertion |
+
+---
+
+## Reversal and Rollback
+
+Two published-contract changes need an explicit undo story:
+
+### (1) `list_open_workflow_type_issues` filter semantics in framework mode
+
+- **What changes**: In framework mode the shared lib function returns all open non-terminal
+  items instead of Workflow-only. Consumer-mode behavior of the same function stays byte-compatible
+  with today's filter.
+- **Rollback**: Revert-safe. Callers that still invoke the lib primitive directly regain
+  Workflow-only filtering when the merge commit is reverted (or when filter selection is
+  restored to Workflow-only). Protocols `05`/`06` that switched to
+  `list_open_framework_items.sh` must be reverted in the **same** rollback (or re-pointed to the
+  lib function) so release/retrospective do not keep expecting all-open-items semantics after
+  the filter flip is undone. Downstream syncs of this template pick up the revert on the next
+  `/sync-template` of `scripts/development-workflow/**` and `docs/workflow/**`.
+
+### (2) `FRAMEWORK_ITEMS_LOOKUP_*` stdout contract
+
+- **What changes**: `list_open_framework_items.sh` becomes the only supported entrypoint for
+  release/retrospective open-framework-item reads, publishing
+  `FRAMEWORK_ITEMS_LOOKUP_STATUS` / `_REASON` / `_JSON` on every invocation.
+- **Rollback**: **Not independently revertible** once protocols `05`/`06` (and any synced
+  downstream copies) parse those keys. Rolling back the wrapper without a matching protocol
+  revert leaves callers looking for keys that no longer exist (or re-reading raw `[]` as empty).
+  Stated one-way coupling: undo requires **paired** revert of (a) the wrapper + tests and
+  (b) protocol snippets that call it. Until that paired revert, the stdout contract is the
+  published interface. Consumer repositories that never adopt the wrapper keep using
+  `list_open_workflow_type_issues` and are unaffected by removing the wrapper alone.
+
+No durable tracker or board state is written by these contracts; rollback is repository-content
+only (plus downstream sync).
 
 ---
 
@@ -257,18 +380,25 @@ markdown lint on plan/spec/runbook/protocol edits.
 | Infrastructure / config | Not applicable | Reuses `template.is_template` |
 | Parser-risk text grammars | Not applicable | No new free-text parser |
 | Concurrent event sources | Not applicable | Synchronous shell helpers |
-| Complex workflow decision gate | **Applicable** | Classification Decision Matrix + spec mirror table |
+| Complex workflow decision gate | **Applicable** | Classification Decision Matrix + closed mirror list |
 | Cross-cutting operational assumptions | **Applicable** | Verified table (batch #1757, #1462, #1496, #1515, #1561, #1583, #1529) |
-| Agent/skill mirrors | **Applicable** | Listed concrete paths (orchestrator agents, protocols 06/06b, AGENTS.md) |
+| Agent/skill mirrors | **Applicable** | Closed mirror list (12 paths) + failing grep check |
+| Published-contract reversal | **Applicable** | Reversal and Rollback section (filter + stdout contract) |
 
 Decision-gate matrix rows match the spec's allowed outcomes and required next actions. Mirror
-surfaces include `06b-meta-retrospective-protocol.md` and `.cursor/agents/orchestrator.md`.
+surfaces are the closed list above (includes `06b`, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, and
+both orchestrator agent stubs).
 
 ---
 
 ## Residual Verification Strategy
 
 Before the implementation PR reaches `ready-for-human-review`, every matrix row above must map
-to a named passing test or smoke runbook step. Consumer-mode behavior requires diff evidence
-that existing Workflow discovery tests are unchanged (or byte-identical outputs) under consumer
-fixtures.
+to a named passing test or smoke runbook step (including the named scenarios in Key scenarios).
+Consumer-mode behavior requires diff evidence that:
+
+1. Existing Workflow **discovery** tests are unchanged (or byte-identical outputs) under
+   consumer fixtures, **and**
+2. Consumer **routing** through `run-bounded-prelude.sh` and `workflow-next-action.sh` matches
+   the recorded pre-feature baseline for Backlog + Workflow (scenarios
+   `consumer-prelude-workflow-unchanged` / `consumer-next-action-workflow-unchanged`).
