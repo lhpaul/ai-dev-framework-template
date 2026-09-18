@@ -14,7 +14,7 @@ per-rule outcome record without introducing automated rule enforcement.
 
 ## Preconditions
 
-- The feature branch for #1496 is merged into `develop`.
+- The feature branch for #1496 is under implementation QA (pre-merge). Execute these scenarios on that branch before merge into `develop`.
 - A test tracker issue exists with an approved spec suitable for a short plan
   exercise (or reuse a docs-only refactor brief).
 - Markdown lint passes on changed workflow documents.

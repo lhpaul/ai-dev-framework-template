@@ -306,8 +306,10 @@ Verification Log re-run) plus spec mirror table:
 | `.cursor/agents/implementation-plan-reviewer.md` | Reviewer routing |
 | `.codex/skills/workflow-plan-writer/SKILL.md` | Author routing |
 | `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh` | **Create** — mirror consistency harness |
+| `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` | **Create** — parser-risk fixture snippets (parser-risk addendum + Implementation Order step 7) |
 | `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Present on this plan branch — execute scenarios during implementation QA |
 | `AGENTS.md` | Key docs table row |
+| `docs/workflow/development-workflow/README.md` | One-line pointer under `### Implementation Plan` (Documentation Updates + Implementation Order step 8) |
 
 ### Cross-cutting checklist — Protocol 02 targets not edited
 
