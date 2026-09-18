@@ -50,13 +50,15 @@
 
 ### Step 3: Guardrails stop conditions
 
-**Maps to**: AC10–AC12
+**Maps to**: AC10–AC11
 
 1. Open `docs/workflow/development-workflow/guardrails-enforcement.md` section 4.
 2. Confirm rows exist for `dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable`.
 3. Confirm `dispatch_profile_declaration_missing` documents `explicit_list_invocation_targets=#N1,#N2,...` for pre-branch explicit-list `/run-items` stops.
+4. Confirm coarse-facts mismatch guidance rejects declarations that are either
+   more permissive or less permissive than the assigned decision-gate outcome.
 
-**Expected result**: Stop names match spec matrix exactly.
+**Expected result**: Stop names match spec matrix exactly; mismatch check is bidirectional.
 
 ### Step 4: Orchestration role no-handoff behavior
 
@@ -79,10 +81,12 @@
 
 ### Step 6: Read-only portfolio scan
 
-**Maps to**: AC11, Use Case 5
+**Maps to**: AC11, AC12, Use Case 5
 
 1. Read `/run-work` command doc and protocol 90 scan-mode guidance.
 2. Confirm scan declares **observing** posture and never escalates into execution.
+3. Confirm the command surface states that acting on scan results requires a
+   **new bounded run with its own declaration**.
 
 **Expected result**: Acting on scan output requires a new bounded run with its own declaration.
 
@@ -117,9 +121,41 @@
 
 **Expected result**: No artifact mutation; stop reason matches a valid inline-fallback declaration, not a missing declaration.
 
+### Step 10: Parent-orchestrated inline prohibition + #1746 honesty
+
+**Maps to**: AC19
+
+1. Open the canonical doc, `.cursor/agents/item-orchestrator.md`, and any
+   protocol/role surface that mentions inline fallback or stage permission denial.
+2. Confirm no document relaxes the parent-orchestrated prohibition on inline
+   product work by the absorbing orchestration context.
+3. Confirm #1746 remains an explicit Out-of-Scope / unresolved-gap callout (not
+   solved by this feature).
+4. Confirm `SUBAGENT_PERMISSION_DENIAL` is described as only observably similar
+   to stage-role harness denial (Work Item Runner boundary), not as a recovery
+   path for stage roles.
+
+**Expected result**: AC19 content present; removing any of the four checks would fail this step.
+
+### Step 11: Accountability postures
+
+**Maps to**: AC20
+
+1. Open the canonical doc accountability-posture section (and declaration
+   contract if postures are defined there).
+2. Confirm three named postures exist (absorbed / handed-off / observing — exact
+   labels per spec).
+3. Confirm `observing` is valid only at read-only checkpoints.
+4. Confirm posture mismatch (e.g. `observing` at a mutating action, or
+   absorbed/handoff at a read-only checkpoint) is treated the same as a missing
+   declaration (`dispatch_profile_declaration_missing`).
+
+**Expected result**: AC20 content present; posture mismatch maps to the missing-declaration stop.
+
 ---
 
 ## Pass criteria
 
 All automated steps pass; manual steps 7–9 are **PASS** or documented **NOT RUN**
-with reason (e.g. Remote Control unavailable in CI).
+with reason (e.g. Remote Control unavailable in CI). Steps 10–11 must **PASS**
+(documentation assertions; no live Cursor environment required).

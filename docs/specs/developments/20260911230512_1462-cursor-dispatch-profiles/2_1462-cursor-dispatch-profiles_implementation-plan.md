@@ -27,6 +27,12 @@ Cursor Remote Control. Wrong or drifted wording drops gates in production runs.
 is merged to `develop`. No other feature must merge first. Related gaps **#1745**
 (batch-context marker enforcement) and **#1746** (stage-role harness permission
 denial) remain out of scope and must be referenced, not solved, here.
+Verified `2026-09-18` via `gh issue view 1745 --json state` / `gh issue view 1746
+--json state`: both **OPEN**. Consequence if either closes before or during
+implementation: re-check the issue resolution text, then either (a) keep the
+canonical-doc / guardrails / role-agent "out of scope" callouts only if the
+closed issue did not land a conflicting contract, or (b) update those surfaces
+in the same implementation PR so they no longer assert an unresolved gap.
 
 **Design assets**: None. Workflow documentation only.
 
@@ -34,15 +40,20 @@ denial) remain out of scope and must be referenced, not solved, here.
 
 ## Verification Log
 
+Re-run `2026-09-18` at plan-review fix (repo `6be6ad46`). `rg` patterns use
+Rust-regex alternation (`a|b`), not grep-BRE `\|` (which matches a literal pipe).
+
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `32605700` |
+| Repo revision | `git rev-parse --short HEAD` | `6be6ad46` (plan-review fix baseline; earlier plan draft recorded `32605700`) |
 | Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` |
-| Profile strings only in spec today | `rg -l 'cursor-native-handoff\|cursor-parent-orchestrated\|cursor-inline-fallback' --glob '!docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/*'` | No matches outside the spec folder |
-| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | 18 adapter/skill paths including deprecated `/run-item-work` alias (see **Files to modify**) |
+| Profile strings outside development folder | `rg -l 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' --glob '!docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/*'` | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Plan Ready smoke runbook; no production mirror surfaces yet) |
+| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** paths: **15** command/`SKILL.md` mirrors listed in **Files to modify** (5 Cursor + 5 Claude + 5 `.agents/skills`, including deprecated `/run-item-work`) plus **4** `.agents/skills/run-*/agents/openai.yaml` metadata files (not mirror-edited). Query omits `.claude/commands/run-epic.md` (present; lacks substring `run-item`) — still required in **Files to modify** |
 | Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present |
 | Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` |
-| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing\|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches (expected until implementation) |
+| Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` — batch-context marker enforcement; out of scope here |
+| Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` — stage-role harness permission denial; out of scope here |
+| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches (expected until implementation) |
 
 ---
 
@@ -204,18 +215,21 @@ read-only `/run-work` under each profile label.
       workflow_hub artifact/tracker/cleanup notes, inline-fix prohibition and
       delegation outcomes (#1746 out of scope), batch-context marker honesty
       (#1745 out of scope), worked examples, pointer precedence (role contract
-      wins). Maps to AC1–AC8, AC10–AC12, AC17–AC20.
+      wins). Maps to AC1–AC8, AC10–AC11, AC17–AC20.
 
 ### Documentation — mirror surfaces
 
 - [ ] `.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
-      — declaration requirement + link to canonical doc; `/run-work` read-only
-      posture. Maps to AC9, AC11, AC18.
+      — declaration requirement + link to canonical doc; `/run-work` states
+      scanning is read-only under every profile and that acting on scan results
+      requires a **new bounded run with its own declaration**. Maps to AC9, AC11,
+      AC12, AC18.
 - [ ] `.claude/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
-      — same parity as Cursor commands. Maps to AC18.
+      — same parity as Cursor commands (including `/run-work` AC12 scan posture).
+      Maps to AC12, AC18.
 - [ ] `.agents/skills/run-item/SKILL.md`, `run-item-work/SKILL.md`, `run-items/SKILL.md`, `run-epic/SKILL.md`,
       `run-work/SKILL.md` — same parity for Codex discovery path (including deprecated
-      `/run-item-work` alias). Maps to AC18.
+      `/run-item-work` alias and `/run-work` AC12 clause). Maps to AC12, AC18.
 - [ ] `.cursor/agents/orchestrator.md` and `.claude/agents/orchestrator.md` —
       no-onward-handoff behavior: return to invoking context; no inline product
       work; profile declaration when absorbing portfolio layer. Maps to AC13.
@@ -247,7 +261,7 @@ read-only `/run-work` under each profile label.
       `dispatch_profile_declaration_missing` affected-item text for
       `explicit_list_invocation_targets=...`; document reuse of
       `missing_required_secret_or_permission` for reachable stage credential
-      denial. Maps to AC10–AC12, AC19.
+      denial. Maps to AC10–AC11, AC19.
 - [ ] `docs/workflow/development-workflow/README.md` — add integration doc to
       integrations list. Maps to discoverability (AC17).
 - [ ] `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md`
@@ -264,11 +278,14 @@ read-only `/run-work` under each profile label.
 ### Workflow tooling / tests
 
 - [ ] `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
-      (new) — lightweight guard that fails when bounded command adapters,
-      orchestration role agents, protocols 90/91/95, `agent-model-config.md`,
-      `workflow.mdc`, and deprecated `run-item-work` command/skill aliases omit a
-      link to `integrations/cursor-dispatch-profiles.md` or required profile code
-      strings. Maps to AC18 regression safety.
+      (**plan-added**; not named in the merged spec) — lightweight regression
+      guard that fails when bounded command adapters, orchestration role agents,
+      protocols 90/91/95, `agent-model-config.md`, `workflow.mdc`, and deprecated
+      `run-item-work` command/skill aliases omit a link to
+      `integrations/cursor-dispatch-profiles.md` or required profile code strings.
+      Rationale: AC18 mirror parity is easy to break across 15+ surfaces; a
+      cheap shell guard catches drift without requiring live Cursor Remote
+      Control. Maps to AC18 regression safety.
 - [ ] **Planted-violation proof** (same implementation PR): temporarily remove the
       canonical link from `.cursor/commands/run-item.md`, run the surface guard
       and confirm non-zero exit; restore the link and confirm exit 0. Record the
@@ -281,6 +298,11 @@ read-only `/run-work` under each profile label.
 ---
 
 ## Files to modify (implementation checklist)
+
+Adapter/skill documentation mirrors to edit: **15** paths (5 `.cursor/commands` +
+5 `.claude/commands` + 5 `.agents/skills/*/SKILL.md`). The Verification Log `rg`
+query returns **18** hits because it also matches four `agents/openai.yaml`
+files that are **not** edited here.
 
 | Path | Change |
 | --- | --- |
@@ -334,13 +356,21 @@ detection; stage-role permission denial recovery (#1746); enforcing
 1. Every mirror surface links to `cursor-dispatch-profiles.md` and names the three
    profile code values consistently (AC18).
 2. Guardrails section 4 lists both new stop conditions with definitions matching
-   the spec matrix (AC10–AC12).
+   the spec matrix (AC10–AC12), including coarse-facts mismatch rejection in both
+   directions (more and less permissive than assigned outcome).
 3. Orchestration role agents instruct return-to-invoker when onward handoff is
    unavailable (AC13).
 4. Agent-model-config states confirmed vs assumption for each Cursor environment
    (AC15).
 5. Smoke runbook walks Native handoff desktop, Parent orchestrated Remote
    Control, Inline fallback, and read-only scan paths (AC6, AC17).
+6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
+   not relaxed by any other document; #1746 remains Out of Scope; 
+   `SUBAGENT_PERMISSION_DENIAL` is worded as observably similar only (Work Item
+   Runner boundary).
+7. Smoke Step 11 (AC20): three accountability postures are defined; `observing`
+   is valid only at read-only checkpoints; posture mismatch is treated as a
+   missing declaration.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md`
@@ -412,7 +442,14 @@ Not applicable — no runtime data.
 6. **agent-model-config + workflow rule + README + optional bounded-prelude** —
    Commit.
 7. **Spec alignment** — update merged spec Named Stop-Condition Mapping row for
-   explicit-list affected item. Commit.
+   explicit-list affected item. Commit. **Order note / reversal risk**: do not
+   run this before step 2 (guardrails) or before the plan-gap wording is stable
+   in the canonical doc (step 1). Reversing step 7 ahead of guardrails risks
+   shipping a merged-spec row that disagrees with section 4 stop text, or
+   rewriting the spec twice when guardrail wording settles. Spec alignment may
+   land in the same commit as guardrails if both use the identical
+   `explicit_list_invocation_targets=...` string; otherwise keep this after
+   step 2.
 8. **Surface guard test** — add and register shell test; run locally. Commit.
 9. **Verify** — run markdown lint commands from `AGENTS.md`, surface guard, and
    execute smoke runbook steps that do not require live Remote Control (document
