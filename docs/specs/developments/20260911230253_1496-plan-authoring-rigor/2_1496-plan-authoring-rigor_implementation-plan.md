@@ -16,7 +16,11 @@ agents with the matching backstop check, extend the implementation-plan
 template so firing-rule evidence has a predictable home in the plan body, and
 extend Protocol 02's existing `Document Quality Gate` PR-description block with a
 mandatory **per-rule outcome record** (Groups A and H). No linter, bot, or
-script enforces the rules automatically — Out of Scope for MVP.
+script **detects or enforces the six authoring rules against plan text** —
+that remains Out of Scope for MVP. The mirror harness added below is an
+**addition** (not in the spec): a doc-consistency check that mirrors agree on
+rule names, outcome labels, and the canonical path — it does not score plan
+claims.
 
 **Canonical surface decision (spec Business Rules — mirror surfaces)**: The
 single canonical statement of the six rules **and** the plan review gate
@@ -54,16 +58,21 @@ silently ships drift.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short origin/develop` | `32605700` — every row below run at this revision |
+| Repo revision | `git rev-parse --short HEAD` | `b0491be3` — every row below re-run at this plan-branch revision (base `origin/develop` tip at re-run: `f1d5021a`) |
 | Spec merged | `test -f docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | present on branch |
 | Rule headings in spec | `awk '/^### Rule [0-9]/{c++} END{print c}' docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | `6` |
-| Existing plan Document Quality Gate | `grep -n 'Document Quality Gate' docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Step 5 item 7 (~441+) — extension point for per-rule record |
+| Existing plan Document Quality Gate | `grep -n 'Document Quality Gate' docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | first hit `441:7. **Document Quality Gate (mandatory — do not skip)**:` — Step 5 item 7; extension point for per-rule record |
 | Plan review checklist location | `awk '/^## Plan Review Checklist/{print NR; exit}' REVIEW.md` | line `117` |
 | Agent/skill protocol references | `grep -rl '02-generate-implementation-plan-protocol\|03-implement-development-protocol' .claude/agents/ .cursor/agents/ .codex/skills/` | six paths: `.claude/agents/developer.md`, `.claude/agents/tech-lead.md`, `.cursor/agents/developer.md`, `.cursor/agents/tech-lead.md`, `.codex/skills/workflow-implementer/SKILL.md`, `.codex/skills/workflow-plan-writer/SKILL.md` |
 | Plan reviewer agents | `ls .claude/agents/implementation-plan-reviewer.md .cursor/agents/implementation-plan-reviewer.md` | both present |
+| Mirror harness pattern file | `test -f scripts/development-workflow/tests/test-protocol-02-portable-parser-guidance.sh` | exit `0` — present; pattern for new mirror harness |
+| `AGENTS.md` Key Documentation table | `grep -n '## Key Documentation' AGENTS.md` | `25:## Key Documentation` — table exists for new rules-file row |
+| Workflow README plan-stage section | `grep -n '### Implementation Plan' docs/workflow/development-workflow/README.md` | `73:### Implementation Plan` — plan-stage section exists for one-line pointer |
+| Workflow test CI selector | `grep -n 'select-test-suites.sh\|Adding a suite' .github/workflows/workflow-tests.yml`; `grep -n "name 'test-\*\.sh'" scripts/development-workflow/select-test-suites.sh` | workflow lines `11`–`13` state suites are selected by `select-test-suites.sh` (no hard-coded list); `list_suites` at line `222` runs `find … -name 'test-*.sh'` — **enforced in CI**: a new `test-plan-authoring-rigor-mirror.sh` is discovered automatically; no separate aggregator file to edit |
 | Strict plan checks (orthogonal) | `head -5 docs/workflow/development-workflow/strict-plan-checks.md` | non-blocking contract checks — unchanged scope |
 | Markdown CI covers workflow docs | `sed -n '12,16p' .github/workflows/markdown-lint.yml` | includes `docs/workflow/**` |
-| No existing rules file | `test ! -e docs/workflow/development-workflow/plan-authoring-rigor-rules.md` | true at plan-write time — file is created in implementation |
+| Smoke runbook on plan branch | `test -f docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | present on this plan branch — execute scenarios during implementation QA (do not re-author) |
+| No existing rules file | `test ! -e docs/workflow/development-workflow/plan-authoring-rigor-rules.md` | true at recorded revision — file is created in implementation |
 
 ---
 
@@ -73,9 +82,9 @@ silently ships drift.
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| Approved base branch | `develop` | Batch handoff / Protocol 91 default | 2026-09-17, SHA `32605700` | Item #1496 only | `Verified` |
+| Approved base branch | `develop` | Batch handoff / Protocol 91 default | 2026-09-18, SHA `b0491be3` (plan HEAD); `origin/develop` tip `f1d5021a` | Item #1496 only | `Verified` |
 | Batch invocation peers | `1757,1462,1496,1515,1561,1583,1529` | Parent `/run-items` explicit list | 2026-09-17 | Same-surface open PRs: none per handoff | `Verified` — no same-surface plan/spec PR conflict for #1496 |
-| Canonical rules not yet on disk | rules file absent | Verification Log last row | 2026-09-17 | N/A | `Verified` — implementation creates it |
+| Canonical rules not yet on disk | rules file absent | Verification Log last row | 2026-09-18 | N/A | `Verified` — implementation creates it |
 
 **Overall result**: `Applicable` — re-verify base branch at implementation start.
 
@@ -202,6 +211,9 @@ Not applicable.
           applicable.
         - Authors refresh the record whenever plan text changes; revision SHA
           must match PR head before `ready-for-human-review`.
+      - These obligations apply to **every** Protocol 02 plan, including
+        Refactor / no-spec work items — there is no bypass when a product
+        spec is absent.
       - Step 3 cross-cutting checklist enumeration: this plan **is** a
         cross-cutting checklist change — the Files to modify section below is
         authoritative.
@@ -224,6 +236,13 @@ Not applicable.
       Do **not** duplicate the full matrix prose — reference the canonical file.
 
       Maps to Use Case 7; Group H.
+
+      **Reversal**: To undo after merge, revert in reverse mirror order —
+      remove the `REVIEW.md` backstop block and Protocol 02 outcome-record
+      schema, delete agent/skill pointers, remove the template evidence
+      subsection, delete `plan-authoring-rigor-rules.md` and the mirror
+      harness, then drop the `AGENTS.md` / README rows. Spec Out of Scope
+      defers per-repository opt-out; there is no feature flag.
 
 - [ ] **Plan review protocol pointer.**
       File:
@@ -271,8 +290,8 @@ Not applicable.
 
 ## Files to modify
 
-Live search at SHA `32605700` (`grep -rl` for protocol references) plus spec
-mirror table:
+Live search at plan HEAD `b0491be3` (`grep -rl` for protocol references;
+Verification Log re-run) plus spec mirror table:
 
 | File | Change |
 | --- | --- |
@@ -287,7 +306,7 @@ mirror table:
 | `.cursor/agents/implementation-plan-reviewer.md` | Reviewer routing |
 | `.codex/skills/workflow-plan-writer/SKILL.md` | Author routing |
 | `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh` | **Create** — mirror consistency harness |
-| `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Already on plan branch — verify scenarios after implementation |
+| `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Present on this plan branch — execute scenarios during implementation QA |
 | `AGENTS.md` | Key docs table row |
 
 ### Cross-cutting checklist — Protocol 02 targets not edited
@@ -313,16 +332,35 @@ plans retrofits.
 
 ## Testing Strategy
 
-**Test types**: Shell mirror-consistency test; manual smoke test runbook.
+**Test types**: Shell mirror-consistency test (**addition** — doc drift
+detection, not rule enforcement against plan claims); manual smoke test
+runbook.
 
 **Key scenarios**:
 
 1. Mirror harness — rule names and outcome labels appear in canonical file,
    `REVIEW.md`, and Protocol 02 (`test-plan-authoring-rigor-mirror.sh`).
+   Smoke Scenario 1 additionally requires that no mirror weakens a pass
+   condition relative to the canonical file (pass-condition equivalence).
 2. Smoke Scenarios 1–7 in
    `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md`.
 3. Negative: remove one rule from outcome record table in a test PR — reviewer
    checklist treats as blocking (Group H).
+
+**Mandatory smoke-matrix rows per acceptance group** (desk-check before
+implementation complete — at least these; prefer all matrix rows when time
+allows):
+
+| Spec group | Mandatory matrix IDs |
+| --- | --- |
+| A (wiring + no-spec inheritance) | Scenarios 1–2; confirm Protocol 02 applies to Refactor/no-spec plans |
+| B | B1 and B3 |
+| C | C1 and C2 |
+| D | D1 |
+| E | E1 |
+| F | F1 |
+| G | G1 |
+| H | H1 and H3 |
 
 **Regression suite**: Not applicable — no browser/product regression suite for
 workflow docs.
@@ -358,7 +396,12 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
 - Assert tech-lead and implementation-plan-reviewer agents (Claude + Cursor)
   reference the canonical file.
 - Exit non-zero on first failure; follow pattern of
-  `test-protocol-02-portable-parser-guidance.sh`.
+  `test-protocol-02-portable-parser-guidance.sh` (verified present — see
+  Verification Log).
+- Missing canonical file: fail immediately with a message naming the missing
+  path (same as other presence assertions).
+- Add `# covers:` headers for the canonical rules file, Protocol 02, and
+  `REVIEW.md` so change-scoped CI selects the suite.
 
 **Planted-violation proof (implementation PR evidence)** — required before the
 mirror test is considered done:
@@ -371,9 +414,13 @@ mirror test is considered done:
 4. Record the failing and passing exit codes in the implementation PR
    description (no need to commit the planted defect).
 
-Wire into existing workflow test aggregator if one lists sibling `test-*.sh`
-files under `scripts/development-workflow/tests/` (grep for invocations and add
-one line — record exact file in Verification Log during implementation).
+**CI wiring (verified)**: No separate aggregator file. `.github/workflows/workflow-tests.yml`
+delegates suite selection to `scripts/development-workflow/select-test-suites.sh`,
+which discovers every `scripts/development-workflow/tests/test-*.sh` via
+`list_suites` (`find … -name 'test-*.sh'`). Adding
+`test-plan-authoring-rigor-mirror.sh` with `# covers:` headers is sufficient —
+enforced in CI when those covered paths (or the suite itself) change, and on
+the nightly full run.
 
 ---
 
@@ -385,10 +432,10 @@ Not applicable.
 
 ## Documentation Updates
 
-- [ ] `AGENTS.md` — add Key Documentation row for `plan-authoring-rigor-rules.md`.
-- [ ] `docs/workflow/development-workflow/README.md` — optional one-line pointer
-      under plan stage if that index lists stage artifacts (skip if no such
-      section exists at implementation time).
+- [ ] `AGENTS.md` — add Key Documentation row for `plan-authoring-rigor-rules.md`
+      (table confirmed at line `25`).
+- [ ] `docs/workflow/development-workflow/README.md` — add one-line pointer under
+      `### Implementation Plan` (section confirmed at line `73`).
 
 ---
 
@@ -396,7 +443,7 @@ Not applicable.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Mirror surfaces drift after merge | Med | High | Mirror shell test in CI path via existing workflow test runner |
+| Mirror surfaces drift after merge | Med | High | Mirror shell test enforced in CI via `.github/workflows/workflow-tests.yml` + `select-test-suites.sh` auto-discovery of `test-*.sh` (Verification Log) |
 | Authors put evidence only in PR comments | Med | Med | Protocol 02 + template + blocking REVIEW findings |
 | Gate matrix copy introduces typos vs spec | Low | High | Verbatim copy from merged spec; spec reviewer diff in implementation PR |
 | Plan PR description record stale vs HEAD | Med | Med | Protocol 02 requires SHA match; REVIEW blocking row Group H |
@@ -415,12 +462,15 @@ Not applicable.
    mirrors (four agent files + one skill).
 7. Add mirror fixtures under
    `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` and
-   `test-plan-authoring-rigor-mirror.sh` with one assertion per parser-risk row;
-   register in test aggregator if present; run planted-violation proof (fail
-   then pass).
-8. Update `AGENTS.md` (and README pointer if applicable).
+   `test-plan-authoring-rigor-mirror.sh` with one assertion per parser-risk row
+   and `# covers:` headers; no aggregator edit — CI auto-discovers `test-*.sh`
+   via `select-test-suites.sh` (see Verification Log); run planted-violation
+   proof (fail then pass).
+8. Update `AGENTS.md` (and README plan-stage pointer — section exists at line
+   `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
-10. Execute smoke runbook Scenarios 1–7 on a sample plan PR or dry-run checklist.
+10. Execute smoke runbook Scenarios 1–7 plus the mandatory matrix rows named in
+    Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
@@ -434,19 +484,25 @@ Not applicable.
 
 ## Acceptance criteria traceability
 
-| Spec group | Plan coverage |
+| Spec group / criterion | Plan coverage |
 | --- | --- |
 | A — Rules stated for both roles | Canonical file + mirror table + agents |
-| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B4 |
-| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 |
-| D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 |
-| E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E2 |
-| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F2 |
-| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H3 |
+| A — Rules apply to every plan, including no-spec / Refactor | Protocol 02 authoring obligations + tech-lead / plan-writer mirrors apply to all Protocol 02 plans; no separate no-spec bypass — Refactor plans still open via Protocol 02 and must carry the per-rule outcome record |
+| A — Exactly one canonical surface; no divergent pass conditions | Canonical file is sole normative text; mirrors point to it; Smoke Scenario 1 + mirror harness presence checks; Scenario 1 desk-check for pass-condition equivalence |
+| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B4 (mandatory B1, B3) |
+| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 (both mandatory) |
+| D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 (mandatory D1) |
+| E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E2 (mandatory E1) |
+| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F2 (mandatory F1) |
+| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (mandatory) |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H3 (mandatory H1, H3) |
+
+**Addition vs spec**: Mirror harness + fixtures + planted-violation proof are
+plan additions for mirror-surface consistency only (Group A agreement), not
+automated detection of Rules 1–6 violations in plan prose (spec Out of Scope).
 
 Detailed smoke traceability lives in the smoke runbook **Acceptance traceability
-matrix** section (added in the same plan branch).
+matrix** section (present on this plan branch).
 
 Brief Coverage Matrix objectives: all covered; no Out of Scope deferrals beyond
-spec's deliberate rejections (automation, size ceiling, etc.).
+spec's deliberate rejections (automation of rule scoring, size ceiling, etc.).

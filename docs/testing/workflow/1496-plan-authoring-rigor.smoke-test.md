@@ -105,9 +105,10 @@ names an acceptance theme, the exercise, and the expected gate class.
 | G1 | Rule 6 — scopeless conditional | "Required then" with no governed edges | Blocking — missing scope/discharge |
 | H1 | Missing outcome record | Plan PR with no per-rule table | Blocking — treated Unsatisfied |
 | H2 | Stale record SHA | Record names earlier commit than PR head | Blocking — revision mismatch |
-| H3 | Wrong N/A rationale | Rule 3 Satisfied while plan states artifact counts | Blocking — rationale contradicts claim |
+| H3 | Wrong N/A rationale | Rule 3 recorded `Not applicable` while the plan states artifact counts | Blocking — rationale contradicts claim |
 
 Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes
-that wiring alone cannot prove. Execute at least one blocking and one
-non-blocking row on real or fixture plan text before marking implementation
-complete.
+that wiring alone cannot prove. Before marking implementation complete, execute
+at least the mandatory rows named in the implementation plan Testing Strategy
+(B1, B3, C1, C2, D1, E1, F1, G1, H1, H3), including one blocking and one
+non-blocking outcome on real or fixture plan text.
