@@ -108,22 +108,24 @@ scope and must not be bundled into this implementation PR.
 - [ ] Add `scripts/development-workflow/list_open_framework_items.sh` as the **only**
   supported entrypoint for release/retrospective "open framework items" reads. Contract
   (**always**, on stdout, before exit — **all three keys in every mode**, including consumer):
-  1. `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok|empty|unavailable`
-  2. `FRAMEWORK_ITEMS_LOOKUP_REASON=<human-readable text>` — **always emitted**; empty
-     string when `STATUS=ok` with items or when `STATUS=empty`; non-empty when
-     `STATUS=unavailable` (reason text also mirrored on stderr when useful).
+  1. `FRAMEWORK_ITEMS_LOOKUP_STATUS=ok|empty|unavailable` — `empty` and `unavailable` are
+     **framework-mode only**. Consumer mode always prints `STATUS=ok`.
+  2. `FRAMEWORK_ITEMS_LOOKUP_REASON=<human-readable text>` — **always emitted**. Empty string
+     when framework `STATUS=ok` (items present), framework `STATUS=empty`, or **any** consumer
+     `STATUS=ok` including `JSON=[]` (no items and the consumer failure path that today yields
+     `[]`). Non-empty only when framework `STATUS=unavailable` (reason text also mirrored on
+     stderr when useful).
   3. `FRAMEWORK_ITEMS_JSON=<compact JSON array>` on the final line
-  - **Exit codes (both modes)**: `ok` → `0`; `empty` → `0`; `unavailable` → `0`. Status is
-    carried only by `FRAMEWORK_ITEMS_LOOKUP_STATUS` so protocol callers under `set -e` can
-    capture stdout, branch on STATUS, and continue the release/retrospective flow without the
-    wrapper itself aborting the shell. Non-zero is reserved for wrapper usage errors (bad
-    args), not for lookup outcomes.
+  - **Exit codes**: framework `ok` / `empty` / `unavailable` → `0`; consumer `ok` → `0`.
+    Status is carried only by `FRAMEWORK_ITEMS_LOOKUP_STATUS` so protocol callers under
+    `set -e` can capture stdout, branch on STATUS, and continue the release/retrospective
+    flow without the wrapper itself aborting the shell. Non-zero is reserved for wrapper
+    usage errors (bad args), not for lookup outcomes.
   - **Consumer repositories**: always print all three keys; delegate body to today's
-    `list_open_workflow_type_issues` behavior; on success print `STATUS=ok`, `REASON=`
-    (empty), and Workflow-filtered JSON (including `[]` when none). On today's failure path
-    that yields `[]` + stderr warning, keep that failure semantics — still print
-    `STATUS=ok`, `REASON=` (empty), `JSON=[]` (no new unavailable-vs-empty requirement for
-    consumer). Do not omit `FRAMEWORK_ITEMS_LOOKUP_REASON` in consumer mode.
+    `list_open_workflow_type_issues` behavior; always `STATUS=ok` and `REASON=` (empty), with
+    Workflow-filtered JSON — `JSON=[]` when none **and** on today's failure path (`[]` +
+    stderr warning). Do not emit `empty` or `unavailable` in consumer mode. Do not omit
+    `FRAMEWORK_ITEMS_LOOKUP_REASON`.
   - **Framework mode**: `ok` when at least one open non-terminal item exists; `empty` when the
     lookup completed and the board has none; `unavailable` when the lookup could not be
     performed (non-empty `REASON`, preserve stderr detail). Never emit `empty` for a failed
@@ -151,17 +153,24 @@ scope and must not be bundled into this implementation PR.
 
 ### Enforcement point 3 — Backlog routing for Type `Workflow`
 
-- [ ] Add `scripts/development-workflow/framework-mode-backlog-type-gate.sh` (name may vary)
+- [ ] Add `scripts/development-workflow/framework-mode-backlog-type-gate.sh` (**pinned name** —
+  smoke and tests call this path; do not rename)
   that accepts `--issue`, `--status`, `--caller {single|scan}`, optional `--repo-root`, reads
   Type via `get_tracker_type_for_issue`, and prints stable key=value output:
-  - Consumer mode or non-Backlog status → `RESULT=pass` (no change).
+  - Consumer mode → `RESULT=pass` (no change), including when Type or status cannot be read.
+  - Framework mode + Type empty, unset, or Type read failed → `RESULT=stop` (caller `single`)
+    or `RESULT=hold` (caller `scan`), `STOP_CONDITION=missing_tracker_context`,
+    `REASON=type_unknown` (fail closed; do not pass).
+  - Framework mode + `--status` missing or not reconcilable to a tracker Status →
+    `RESULT=stop` / `RESULT=hold` as above, `REASON=status_unknown` (fail closed).
   - Framework mode + Backlog + Type `Workflow` + caller `single` → `RESULT=stop`,
     `STOP_CONDITION=missing_tracker_context`, human-readable reason + re-classify hint (AC:
     Routing stops instead of guessing).
   - Framework mode + Backlog + Type `Workflow` + caller `scan` → `RESULT=hold` with the same
     reason fields (AC: portfolio scan holds only that item).
-  - Framework mode + item already past Backlog (status reconciled to Spec Ready / Writing Plan /
-    In Development / etc., same set `workflow-next-action.sh` already treats as pipeline-chosen)
+  - Framework mode + item already past Backlog (status reconciled to exactly `Spec Ready`,
+    `Writing Plan`, or `In Development` — the pipeline-chosen set `workflow-next-action.sh`
+    already treats as past Backlog for this gate)
     → `RESULT=pass` even if Type is still Workflow (AC: mid-pipeline items continue).
 - [ ] Wire the gate into the **actual** classification paths (not `run-work-router.sh`, which
   only redirects `/run-work` scope):
@@ -170,8 +179,8 @@ scope and must not be bundled into this implementation PR.
     that maps to `missing_tracker_context` and abort before stage dispatch (Protocol `91`).
   - **Portfolio / batch proposal**: invoke from `scripts/development-workflow/workflow-next-action.sh`
     when classifying a development folder whose tracker Type is `Workflow`, status reconciles to
-    Backlog, and framework mode is active — return a deterministic `NEXT_ACTION` such as
-    `hold-misclassified-type` (exact name chosen in implementation) plus stable reason fields
+    Backlog, and framework mode is active — return `NEXT_ACTION=hold-misclassified-type`
+    (**pinned**; do not rename) plus stable reason fields
     so `workflow-batch-lanes.sh` categorizes the item under `HELD - not included in proposed
     batch` without stopping the scan.
   - **Mid-pipeline items**: gate returns `pass` when status is past Backlog even if Type is
@@ -234,12 +243,13 @@ If implementation discovers a new duplicate, add it to this table in the same PR
   red on today's tree and green after mirrors are updated):
   - `Use \`Workflow\` for` in `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
     `.cursor/agents/orchestrator.md`, `.claude/agents/orchestrator.md`
-  - `update_tracker_type_best_effort` … `Workflow` (or equivalent "set Type Workflow") in
-    protocols `06` / `06b` under framework-mode create paths
-  - Backlog (Workflow) infer-path rows in protocols `90` / `91` that still describe framework
-    mode as inferring a pipeline
-  Command sketch (implementation may wrap in a small script): fail if `rg` still matches the
-  old framework-mode-as-Workflow guidance on the closed list after updates.
+  - Exact pre-change assignment `update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"`
+    in protocols `06` / `06b` (do not match mere mentions of Type Workflow in refusal text)
+  - Exact pre-change routing phrases `Route by the brief's concrete path` (protocol `91`) and
+    `route by brief: full pipeline` (protocol `90`) on Backlog (Workflow) rows — not a generic
+    `infer.*Workflow` pattern, which also matches "do not infer"
+  Command sketch (implementation may wrap in a small script): fail if `rg` still matches those
+  pre-change strings on the closed list after updates.
 - [ ] Update `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` only if
   its Workflow discovery steps contradict framework-mode semantics (otherwise leave unchanged
   and cover framework mode in the new runbook).
@@ -263,7 +273,11 @@ code/tests:
 | Framework | Feature/Bug/Refactor | Backlog | any | Route unchanged | Existing pipelines |
 | Framework | Workflow | Backlog | single | Stop | `missing_tracker_context`; re-classify |
 | Framework | Workflow | Backlog | scan | Hold | Report in HELD / evaluated-not-proposed |
-| Framework | Workflow | past Backlog | any | Pass | Continue current pipeline |
+| Framework | Workflow | Spec Ready / Writing Plan / In Development | any | Pass | Continue current pipeline |
+| Framework | empty / unset / Type read failed | any | single | Stop | `type_unknown`; fail closed |
+| Framework | empty / unset / Type read failed | any | scan | Hold | `type_unknown`; fail closed |
+| Framework | any | status missing / unreconcilable | single | Stop | `status_unknown`; fail closed |
+| Framework | any | status missing / unreconcilable | scan | Hold | `status_unknown`; fail closed |
 | Consumer | Workflow | Backlog | any | Unchanged | Infer path / existing tables |
 | Framework | any | n/a | n/a | Lookup | All open items; unavailable ≠ empty |
 | Consumer | n/a | n/a | n/a | Lookup | Workflow-filtered; failure behavior unchanged |

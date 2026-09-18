@@ -119,7 +119,7 @@ re-classification.
 
 **Expected**: `RESULT=hold` (not a global stop).
 
-5. Pick an item past Backlog (e.g. Plan Ready) that still shows Type `Workflow`.
+5. Pick an item whose tracker Status is `Spec Ready`, `Writing Plan`, or `In Development` that still shows Type `Workflow`.
 
 **Expected**: `RESULT=pass`.
 
@@ -165,14 +165,17 @@ this repository.
 ! rg -n 'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
   .cursor/agents/orchestrator.md .claude/agents/orchestrator.md
 
-# Fail if retrospective create paths still direct Type Workflow in framework mode:
-! rg -n 'update_tracker_type_best_effort.*Workflow|Type `?Workflow`?' \
+# Fail if retrospective create paths still assign Type Workflow (pre-change string only;
+# refusal wording that mentions Type Workflow must not match):
+! rg -n 'update_tracker_type_best_effort "\$ISSUE_NUMBER" "Workflow"' \
   docs/workflow/development-workflow/protocols/06-retrospective-protocol.md \
   docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md
 
-# Fail if protocols 90/91 still describe framework-mode Backlog+Workflow as infer-path:
-! rg -n 'Backlog \(Workflow\).*infer|infer.*Workflow' \
-  docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md \
+# Fail if protocols 90/91 still route Backlog+Workflow by the brief (pre-change phrases only;
+# "do not infer" must not match):
+! rg -n 'route by brief: full pipeline' \
+  docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
+! rg -n "Route by the brief's concrete path" \
   docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 ```
 
