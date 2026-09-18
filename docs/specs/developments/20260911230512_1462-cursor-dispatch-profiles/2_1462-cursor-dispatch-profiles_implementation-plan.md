@@ -48,7 +48,7 @@ Rust-regex alternation (`a|b`), not grep-BRE `\|` (which matches a literal pipe)
 | Repo revision | `git rev-parse --short HEAD` | `6be6ad46` (plan-review fix baseline; earlier plan draft recorded `32605700`) |
 | Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` |
 | Profile strings outside development folder | `rg -l 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' --glob '!docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/*'` | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Plan Ready smoke runbook; no production mirror surfaces yet) |
-| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** paths: **15** command/`SKILL.md` mirrors listed in **Files to modify** (5 Cursor + 5 Claude + 5 `.agents/skills`, including deprecated `/run-item-work`) plus **4** `.agents/skills/run-*/agents/openai.yaml` metadata files (not mirror-edited). Query omits `.claude/commands/run-epic.md` (present; lacks substring `run-item`) — still required in **Files to modify** |
+| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits, re-run 2026-09-18: **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). Literal extras vs the **15** Files-to-modify mirrors: the four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
 | Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present |
 | Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` |
 | Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` — batch-context marker enforcement; out of scope here |
@@ -257,9 +257,15 @@ read-only `/run-work` under each profile label.
       link. Maps to AC16.
 - [ ] `docs/workflow/development-workflow/guardrails-enforcement.md` section 4 —
       add `dispatch_profile_declaration_missing` and
-      `dispatch_handoff_unavailable`; extend
-      `dispatch_profile_declaration_missing` affected-item text for
-      `explicit_list_invocation_targets=...`; document reuse of
+      `dispatch_handoff_unavailable`. Each stop message must name (a) the stop
+      condition string, (b) the affected work item, and (c) the human action to
+      unblock: for `dispatch_profile_declaration_missing`, declare one of
+      `cursor-native-handoff`, `cursor-parent-orchestrated`, or
+      `cursor-inline-fallback` in the run preamble and re-invoke the bounded
+      command; for `dispatch_handoff_unavailable`, either switch to a profile
+      whose next layer is available or restore the handoff target, then
+      re-invoke. Extend `dispatch_profile_declaration_missing` affected-item
+      text for `explicit_list_invocation_targets=...`; document reuse of
       `missing_required_secret_or_permission` for reachable stage credential
       denial. Maps to AC10–AC11, AC19.
 - [ ] `docs/workflow/development-workflow/README.md` — add integration doc to
@@ -301,8 +307,8 @@ read-only `/run-work` under each profile label.
 
 Adapter/skill documentation mirrors to edit: **15** paths (5 `.cursor/commands` +
 5 `.claude/commands` + 5 `.agents/skills/*/SKILL.md`). The Verification Log `rg`
-query returns **18** hits because it also matches four `agents/openai.yaml`
-files that are **not** edited here.
+returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-epic.md`)
++ **4** `agents/openai.yaml` files that are **not** edited (`14+4=18`).
 
 | Path | Change |
 | --- | --- |
@@ -375,11 +381,12 @@ detection; stage-role permission denial recovery (#1746); enforcing
 **Smoke test runbook**:
 `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md`
 
-**Regression suite**: Run the new surface guard from
-`scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
-in CI via the existing workflow test harness pattern used by other
-`scripts/development-workflow/tests/test-*.sh` files (wire into the same driver
-the implementation PR uses for sibling shell tests).
+**Regression suite**: Add
+`scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`.
+No extra registration step: `.github/workflows/workflow-tests.yml` runs suites
+discovered by `list_suites` in `scripts/development-workflow/select-test-suites.sh`
+(`find scripts/development-workflow/tests -maxdepth 1 -name 'test-*.sh'`).
+Placing the file in that directory is the harness entrypoint.
 
 ---
 
