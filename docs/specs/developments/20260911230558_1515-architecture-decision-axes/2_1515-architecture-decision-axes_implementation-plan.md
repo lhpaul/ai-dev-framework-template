@@ -288,10 +288,10 @@ test runbook.
    resolutions — smoke step 1.
 2. **Recommendation separation**: canonical outline requires a labelled
    Recommendation distinct from requested decision — smoke step 1 checklist item.
-3. **Declaration misuse**: smoke/readme asserts `Not yet implemented` is never
-   used for built behavior (negative fixture in reviewer checklist).
+3. **Declaration misuse**: `Not yet implemented` is never used for built
+   behavior — smoke step 4 checklist item.
 4. **No pre-answer / ratification**: canonical page + Protocol 91 state the
-   report must not act on or pre-answer open axes — smoke step 3.
+   report must not act on or pre-answer open axes — smoke step 1.
 5. Protocol 91 requires report + **documented marker upsert algorithm** when a
    PR exists — smoke step 3.
 6. Protocol 93 requires inline declaration on supportive spec citations in
@@ -412,5 +412,8 @@ bash scripts/development-workflow/tests/test-worktree-recipe.sh
 | `.codex/skills/workflow-reviewer-loop/SKILL.md` | Edit |
 | `.cursor/agents/developer.md` | Edit |
 | `.claude/agents/developer.md` | Edit |
+| `.cursor/agents/orchestrator.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
+| `.claude/agents/orchestrator.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
+| `.codex/skills/workflow-orchestrator/SKILL.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
 | `scripts/development-workflow/tests/test-worktree-recipe.sh` | Edit |
 | `changelog.d/1515.feature.architecture-decision-axes.md` | Create (implementation PR) |

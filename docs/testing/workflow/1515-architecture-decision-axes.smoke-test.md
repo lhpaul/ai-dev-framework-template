@@ -83,6 +83,8 @@ Search Protocol 93 for conformance declaration requirement.
 
 - [ ] Reply guidance requires `Conforms` / `Departs` / `Not yet implemented`
       when citing a workflow specification line as support.
+- [ ] `Not yet implemented` is never prescribed for behavior that already exists
+      in the cited surface (declaration misuse).
 - [ ] Undetermined conformance uses plain language without enum values.
 - [ ] Escalation to full report references Protocol 91 + canonical page.
 
@@ -102,6 +104,10 @@ to the canonical page:
 - [ ] `.codex/skills/workflow-reviewer-loop/SKILL.md`
 - [ ] `.cursor/agents/developer.md`
 - [ ] `.claude/agents/developer.md`
+- [ ] `.cursor/agents/orchestrator.md` — Protocol 90 parity sentence present, or
+      documented as already covered by protocol pointer (Layer H criterion)
+- [ ] `.claude/agents/orchestrator.md` — same criterion
+- [ ] `.codex/skills/workflow-orchestrator/SKILL.md` — same criterion
 
 **Expected**: No mirror describes a well-formed `architecture_decision`
 escalation without axis/coverage analysis.
