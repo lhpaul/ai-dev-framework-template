@@ -14,7 +14,7 @@ per-rule outcome record without introducing automated rule enforcement.
 
 ## Preconditions
 
-- The feature branch for #1496 is under implementation QA (pre-merge). Execute these scenarios on that branch before merge into `develop`.
+- Scenarios execute during implementation QA on the feature branch for #1496, before merge into `develop`.
 - A test tracker issue exists with an approved spec suitable for a short plan
   exercise (or reuse a docs-only refactor brief).
 - Markdown lint passes on changed workflow documents.
@@ -85,7 +85,7 @@ review, `REVIEW.md`, strict plan checks, and CI.
 
 ## Acceptance traceability matrix
 
-Manual desk-check during implementation QA (or scripted where noted). Each row
+Manual desk-check (or scripted where noted). Each row
 names an acceptance theme, the exercise, and the expected gate class.
 
 | ID | Spec focus | Exercise | Expected result |
