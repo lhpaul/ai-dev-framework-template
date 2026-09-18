@@ -91,12 +91,38 @@ content='{"result":"clean","reviewed_head":"abc123","findings":[]}'
 if [ -n "${MOCK_MODEL_CONTENT+x}" ]; then
   content="$MOCK_MODEL_CONTENT"
 fi
-printf '{"choices":[{"message":{"content":%s}}]}' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
-# Some OpenAI-compatible proxies append an SSE trailer to non-streaming JSON.
-if [ "${MOCK_APPEND_SSE_DONE:-0}" = "1" ]; then
+# Some OpenAI-compatible proxies return a full SSE stream of chat.completion.chunk
+# events even when the request did not set stream=true.
+if [ "${MOCK_SSE_STREAM:-0}" = "1" ]; then
+  python3 - "$content" "$output_file" <<'PY'
+import json, pathlib, sys
+content, path = sys.argv[1], pathlib.Path(sys.argv[2])
+chunks = []
+for i, ch in enumerate(content):
+    delta = {"content": ch}
+    if i == 0:
+        delta["role"] = "assistant"
+    choice = {"index": 0, "delta": delta}
+    if i == len(content) - 1:
+        choice["finish_reason"] = "stop"
+    else:
+        choice["finish_reason"] = None
+    chunks.append({"object": "chat.completion.chunk", "choices": [choice]})
+lines = [f"data: {json.dumps(c, separators=(',', ':'))}" for c in chunks]
+lines.append("data: [DONE]")
+lines.append("")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+elif [ "${MOCK_APPEND_SSE_DONE:-0}" = "1" ]; then
+  # Non-streaming JSON body with an SSE trailer appended.
+  printf '{"choices":[{"message":{"content":%s}}]}' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
   printf 'data: [DONE]\n\n' >> "$output_file"
+elif [ "${MOCK_SSE_GARBAGE:-0}" = "1" ]; then
+  printf 'data: not-valid-json\n\ndata: [DONE]\n\n' > "$output_file"
+elif [ -n "${MOCK_RAW_HTTP_BODY+x}" ]; then
+  printf '%s' "$MOCK_RAW_HTTP_BODY" > "$output_file"
 else
-  printf '\n' >> "$output_file"
+  printf '{"choices":[{"message":{"content":%s}}]}\n' "$(printf '%s' "$content" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > "$output_file"
 fi
 if [ "$write_fmt" = '%{http_code}' ]; then
   printf '%s' "${MOCK_HTTP_CODE:-200}"
@@ -195,6 +221,36 @@ export MOCK_APPEND_SSE_DONE
 ) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
 run_test "http_strips_sse_done_trailer" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
 unset MOCK_APPEND_SSE_DONE
+
+MOCK_SSE_STREAM=1
+export MOCK_SSE_STREAM
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE"
+run_test "http_assembles_sse_chunk_stream" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
+run_test "http_assembles_sse_chunk_stream_head" "abc123" "$(jq -r '.reviewed_head' "$OUTPUT_FILE")"
+unset MOCK_SSE_STREAM
+
+MOCK_SSE_GARBAGE=1
+export MOCK_SSE_GARBAGE
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "http_undecodable_sse_malformed_stderr" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_undecodable_sse_stderr_hint" "yes" "$(grep -q 'undecodable SSE body' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_SSE_GARBAGE
+
+MOCK_RAW_HTTP_BODY='plain-text-not-json'
+export MOCK_RAW_HTTP_BODY
+(
+  cd "$WORK_DIR"
+  PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" || true
+run_test "http_undecodable_body_malformed_stderr" "yes" "$(grep -q 'malformed JSON output' "$STDERR_FILE" && echo yes || echo no)"
+run_test "http_undecodable_body_stderr_hint" "yes" "$(grep -q 'undecodable body' "$STDERR_FILE" && echo yes || echo no)"
+unset MOCK_RAW_HTTP_BODY
 
 MOCK_MODEL_CONTENT='not-json'
 export MOCK_MODEL_CONTENT
