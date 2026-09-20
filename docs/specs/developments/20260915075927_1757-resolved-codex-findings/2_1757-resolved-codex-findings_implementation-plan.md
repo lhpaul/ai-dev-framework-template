@@ -58,7 +58,7 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision (worktree) | `git rev-parse --short HEAD` | `1d9cd0e0` (refresh at implementation start) |
+| Repo revision (worktree) | `git rev-parse --short HEAD` | `1d9cd0e0` — this plan branch's own revision while authoring (not on `develop`); refresh at implementation start. Distinct from the `develop` ancestor `32605700` cited in the Cross-Cutting Operational Assumption Check, which pins the base-branch assumption, not this worktree |
 | Spec merged | `gh pr view 1758 --json state,baseRefName,mergedAt` | `MERGED` into `develop` at `2026-09-16T23:05:22Z` |
 | Phase-1 existing-findings gate | `sed -n '2167,2203p' scripts/development-workflow/pr-review-loop.sh` | Uses `check_unresolved_threads … provisional`; returns `needs_fixes` / `existing_findings` when count > 0 |
 | Companion exit-1 wrapper floor | `sed -n '2252,2290p' scripts/development-workflow/pr-review-loop.sh` | On script exit `1`, sets `unresolved_count=1` when strict recount is `0` |
@@ -79,7 +79,7 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| Approved base branch | `develop` | Parent handoff + `gh pr view 1758` | 2026-09-17, SHA `32605700` | Item #1757 only | `Verified` |
+| Approved base branch | `develop` | Parent handoff + `gh pr view 1758` | 2026-09-17, `develop` ancestor SHA `32605700` (not the plan worktree revision `1d9cd0e0` in the Verification Log — different surfaces, both intentional) | Item #1757 only | `Verified` |
 | Same-surface concurrent PRs | none | Parent batch dispatch (`1757,1462,1496,1515,1561,1583,1529`) | 2026-09-17 | Same-surface open PRs at dispatch: none | `Verified` |
 | Codex companion exit-code contract | `0/1/2/3/4` documented in companion header | `codex-github-reviewer.sh` lines 29–34 | 2026-09-17 | No batch peer targets `codex-github-reviewer.sh` classification | `Verified` |
 
@@ -165,38 +165,48 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `Accept: application/vnd.github+json`) joined with the PR object's
   `created_at`:
 
-  1. **Lower bound of the earliest window** is the PR `created_at`.
-  2. **The instant a head `H` became current** is, in order of preference:
-     (a) the `created_at` of the `head_ref_force_pushed` timeline event that
-     introduced `H`, when one exists; otherwise (b) the `committer.date` of the
-     `committed` timeline event whose `sha == H`.
-  3. **A comment's window** is `[max(previous head's last review trigger,
-     previous head's transition instant, PR created_at), next head's transition
-     instant)`, per spec Business Rule "Every Codex root comment belongs to
-     exactly one head's evidence window". **The live head's window is
-     open-ended**: no later head exists, so it has no upper bound and a missing
-     next-transition event is the expected state for it, never an indeterminate
-     one. Only a *superseded* head requires an upper bound.
+  The spec fixes the two boundaries from **different** sources. Use each only
+  where named; do not substitute one for the other.
 
-  **Mandatory escalation cases.** Source (b) is a commit-authoring timestamp,
-  not a push timestamp, so it is a lower bound on when `H` became current. The
-  attribution is therefore *indeterminate* — escalate
+  1. **Lower bound `L(H)`** comes from *triggers*, never from transition
+     instants — per spec Business Rule "after any review trigger for that head,
+     or — for a trigger-less head — after the previous head's last review
+     trigger or the pull request's creation, whichever is later":
+     - `H` has at least one review trigger → `L(H)` is that trigger's
+       `created_at` (the latest such trigger for `H`).
+     - `H` is trigger-less → `L(H) = max(previous head's last review trigger,
+       PR created_at)`. When `H` is the first head, the PR `created_at` alone
+       applies.
+  2. **Upper bound `U(H)`** comes from *transition instants* — per the spec's
+     "and before any later head becomes current". `U(H)` is the instant the
+     **next** head became current, which is, in order of preference: (a) the
+     `created_at` of the `head_ref_force_pushed` timeline event that introduced
+     that next head, when one exists; otherwise (b) the `committer.date` of the
+     `committed` timeline event whose `sha` is that next head.
+  3. **A comment's window** is therefore `[L(H), U(H))`. **The live head's
+     window is open-ended**: no later head exists, so `U(live)` is unbounded and
+     a missing next-transition event is the expected state for it, never an
+     indeterminate one. Only a *superseded* head has a finite `U(H)`.
+
+  **Mandatory escalation cases.** These concern `U(H)` only, because `L(H)` is
+  trigger-derived and exact. `U(H)` source (b) is a commit-authoring timestamp,
+  not a push timestamp, so it is only a *lower bound* on when the next head
+  became current. Attribution is *indeterminate* — escalate
   `evidence_unavailable_codex_thread_state`, do not guess — whenever any of:
   - the timeline read fails or is truncated after one retry;
-  - no `head_ref_force_pushed` or `committed` event introduces `H`;
-  - **(superseded heads only)** the comment's `created_at` falls at or after the
-    boundary derived from (b) but at or before the next head's trigger, i.e. the
-    commit-date lower bound does not strictly separate the comment from the
-    adjacent window; or
+  - **(superseded heads only)** no `head_ref_force_pushed` or `committed` event
+    introduces the next head, so `U(H)` cannot be derived at all;
+  - **(superseded heads only)** `U(H)` came from source (b) and the comment's
+    `created_at` falls at or after it, so the commit-date lower bound does not
+    prove the comment preceded the next head; or
   - two candidate boundaries share the comment's timestamp second and no
     comment-ID ordering resolves them.
 
-  A comment is attributed to a head when source (a), or an unambiguous source
-  (b), places it in exactly one window: strictly inside for a superseded head,
-  or at/after the lower bound for the live head's open-ended window. Because the
-  live head has no upper bound, the third case above cannot arise for it — a
-  comment at or after the live head's lower bound is attributed to the live
-  head, not escalated.
+  A comment is attributed to head `H` when `L(H) <= created_at` and either
+  `U(H)` is unbounded (live head) or source (a), or an unambiguous source (b),
+  places `created_at` strictly before `U(H)`. The second and third cases above
+  cannot arise for the live head, which has no `U(H)`: a comment at or after
+  `L(live)` is attributed to the live head, not escalated.
 
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
@@ -232,7 +242,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
   - Actionable blocker → exit `1` with blocking summary (unchanged shape)
-  - Timed out → exit `2` with `REASON=timeout` (or existing timeout reason);
+  - Timed out → exit `2` with **exactly** `REASON=timeout`;
     hard unavailable → exit `3` (unchanged)
   - `waiting_on_reviewer` → exit `4` with `REASON=codex-github-review-pending` or
     `REASON=codex-github-reaction-without-review`
@@ -244,6 +254,18 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     (reuse exit `2` with distinct `REASON=`; the loop adapter already maps
     non-`0/1/3/4` exits via `kv_value_default REASON … timeout` to
     `RESULT=escalate` — preserve that contract)
+  - **Exit `2` `REASON=` is a closed set of exactly five values**: `timeout`,
+    `evidence_unavailable_codex_thread_state`,
+    `codex_current_verdict_malformed_revision_marker`,
+    `codex_finding_thread_correlation_missing`, and
+    `codex_current_verdict_unrecognized`. The companion must emit one of these
+    verbatim on every exit-`2` path. This is load-bearing, not stylistic:
+    `pr-review-loop.sh:2322` reads the reason via
+    `kv_value_default REASON "$script_output" timeout`, so an absent,
+    misspelled, or out-of-set `REASON` **silently degrades a fail-closed
+    escalation into `timeout`** — which the loop may retry rather than stop for
+    human review. Add a harness assertion that every exit-`2` path emits a
+    member of this set.
   - Update the companion header exit-code comment block so exit `2` documents
     both timeout and fail-closed escalation (discriminated by `REASON=`), and
     remove the “unrecognized → NEEDS_REVISION safe-fail” wording (AC-7).
