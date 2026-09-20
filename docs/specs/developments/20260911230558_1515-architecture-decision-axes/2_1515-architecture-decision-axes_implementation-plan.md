@@ -233,7 +233,10 @@ records only concrete names and surfaces deferred to the plan:
 ### F. README index — `docs/workflow/development-workflow/README.md`
 
 - [ ] Add `architecture-decision-escalation.md` under **Tooling And Configuration**
-      next to `guardrails-enforcement.md`.
+      next to `guardrails-enforcement.md`. *Addition beyond the spec's use
+      cases:* the index entry is needed so the new canonical page is
+      discoverable from the workflow README, which the *Surfaces agree*
+      criterion relies on to keep every surface pointing at one page.
 
 ### G. Review contract — `REVIEW.md`
 
@@ -281,12 +284,36 @@ pointer — verify during implementation; add if missing.
 
 ### I. Tests (documentation parity)
 
-- [ ] `scripts/development-workflow/tests/test-worktree-recipe.sh` — extend
-      stop-surface audit fixture list to include
-      `docs/workflow/development-workflow/architecture-decision-escalation.md`
-      as a referenced stop/escalation surface (alongside
-      `guardrails-enforcement.md`), with one positive + one negative fixture
-      proving a weakened agent mirror is flagged.
+- [ ] `scripts/development-workflow/tests/test-worktree-recipe.sh` — add a
+      **new** helper `audit_escalation_mirrors <repo-root>` beside
+      `audit_stop_surfaces` (`test-worktree-recipe.sh:366-415`). The existing
+      helper only discovers `stop_conditions:` surfaces and greps for
+      `push_verification_failed`, so it can neither validate the canonical
+      escalation page nor detect a weakened mirror; it is left unchanged.
+      - **Discovery scope**: the explicit thirteen-file mirror list from the
+        Lockstep mirror files row of the plan's Verification table (the same
+        list as section H), plus Protocol 91, Protocol 93, and the canonical
+        page. Discovery is by that list, not by grep, so a deleted mirror is
+        reported rather than silently skipped.
+      - **Invariants** (per file): a mirror and each protocol contain the
+        literal `architecture-decision-escalation.md` link **and** the three
+        declaration terms `Conforms`, `Departs`, `Not yet implemented` (agents
+        that only escalate carry the link plus the "no lighter escalation
+        wording" sentence instead — the helper takes the per-file required
+        terms as data). The canonical page contains the terms `Recommendation`,
+        `Conforms`, `Departs`, `Not yet implemented`.
+      - **Output contract**: prints `COUNT=<n>` and one
+        `MISSING=<file>:<term>` per violation, like `audit_stop_surfaces`.
+      - **Non-vacuous guard**: assert `COUNT` equals 16 (thirteen mirrors +
+        two protocols + canonical page) so an empty discovery cannot pass.
+      - **Planted-violation evidence**: copy the mirror tree to a temp root,
+        delete the canonical link from `.claude/agents/code-reviewer.md`, and
+        assert the audit prints exactly
+        `MISSING=.claude/agents/code-reviewer.md:architecture-decision-escalation.md`
+        (failure at a concrete mirror location); restore the file and assert
+        the audit prints no `MISSING=` line (passing run after restoration).
+        Repeat once for a weakened declaration term in a
+        `.codex/skills/workflow-code-reviewer/SKILL.md` copy.
 - [ ] Maps to *Surfaces agree* and REVIEW.md Verification Discipline.
 
 ### Database / Backend / Frontend / Infrastructure
@@ -335,7 +362,10 @@ Not applicable — no database or runtime fixtures.
 
 ## Documentation Updates
 
-Implementation PR (not this plan PR) must add a changelog fragment only:
+Implementation PR (not this plan PR) must add a changelog fragment only.
+*Addition beyond the spec's use cases:* required by the repository's
+CHANGELOG convention (`changelog.d/README.md`) for every feature PR, not by the
+spec itself:
 
 - [ ] `changelog.d/1515.added.architecture-decision-axes.md` with body:
   `- **Axis-separated architecture decision escalations** (#1515): require
