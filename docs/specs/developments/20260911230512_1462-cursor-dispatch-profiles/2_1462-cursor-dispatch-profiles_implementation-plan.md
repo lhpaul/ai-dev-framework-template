@@ -219,17 +219,45 @@ read-only `/run-work` under each profile label.
 
 ### Documentation — mirror surfaces
 
+**Mirror content contract (applies to every command/skill mirror below).** A
+link to the canonical doc plus a bare "declare a profile" sentence is **not
+sufficient** — AC10, AC11 and AC20 require each mirror to state the decisions
+themselves, because a constrained Cursor run may have only the mirror in
+context. Every mirror in the three bullets that follow must state, in its own
+words and not by pointer alone:
+
+1. **Evaluation order (AC10)**: initial handoff is evaluated first; onward-handoff
+   capability is evaluated **only once** initial handoff is confirmed available.
+2. **Unconfirmed-handoff outcomes (AC10)**: onward-handoff capability that cannot
+   be confirmed, once initial handoff is available, is treated as **unavailable**
+   and declared **parent-orchestrated** as the conservative default.
+3. **Exact named stop conditions (AC11)**, spelled verbatim:
+   `dispatch_profile_declaration_missing`, `dispatch_handoff_unavailable`, and
+   the reused `missing_required_secret_or_permission` for a reachable stage role
+   reporting a specific delegated action refused for a missing credential,
+   GitHub permission, or access token.
+4. **Invalid-profile, invalid-accountable-role, and invalid-posture cases
+   (AC11, AC20)**, and the coarse-fact mismatch boundary — what is a mismatch
+   and what is not.
+5. **The three accountability postures (AC20)**: personally accountable
+   (absorbed), handed off intact, and observing (not absorbed, not handed off) —
+   with `observing` valid **only** at a read-only checkpoint.
+
+A mirror that carries the link and omits any of the five does not satisfy the
+acceptance criteria, and the surface guard below must fail it.
+
 - [ ] `.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
-      — declaration requirement + link to canonical doc; `/run-work` states
+      — full mirror content contract above; `/run-work` additionally states
       scanning is read-only under every profile and that acting on scan results
-      requires a **new bounded run with its own declaration**. Maps to AC9, AC11,
-      AC12, AC18.
+      requires a **new bounded run with its own declaration**. Maps to AC9, AC10,
+      AC11, AC12, AC18, AC20.
 - [ ] `.claude/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
-      — same parity as Cursor commands (including `/run-work` AC12 scan posture).
-      Maps to AC12, AC18.
+      — same parity as Cursor commands, including the full content contract and
+      the `/run-work` AC12 scan posture. Maps to AC10, AC11, AC12, AC18, AC20.
 - [ ] `.agents/skills/run-item/SKILL.md`, `run-item-work/SKILL.md`, `run-items/SKILL.md`, `run-epic/SKILL.md`,
-      `run-work/SKILL.md` — same parity for Codex discovery path (including deprecated
-      `/run-item-work` alias and `/run-work` AC12 clause). Maps to AC12, AC18.
+      `run-work/SKILL.md` — same parity for Codex discovery path, including the
+      full content contract, the deprecated `/run-item-work` alias, and the
+      `/run-work` AC12 clause. Maps to AC10, AC11, AC12, AC18, AC20.
 - [ ] `.cursor/agents/orchestrator.md` and `.claude/agents/orchestrator.md` —
       no-onward-handoff behavior: return to invoking context; no inline product
       work; profile declaration when absorbing portfolio layer. Maps to AC13.
@@ -237,8 +265,17 @@ read-only `/run-work` under each profile label.
       `.claude/agents/item-orchestrator.md` — same for item layer; clarify
       parent-orchestrated stage delegation vs `SUBAGENT_PERMISSION_DENIAL`
       (Work Item Runner only). Maps to AC13, AC19.
-- [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md` — pointer to canonical
-      doc for Codex item-orchestrator alias. Maps to AC18.
+- [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md` — canonical-doc
+      reference for the Codex item-orchestrator alias, plus the item-layer
+      no-onward-handoff behavior mirrored from the agents above. Maps to AC13,
+      AC18.
+- [ ] `.codex/skills/workflow-orchestrator/SKILL.md` — **portfolio** layer for
+      the Codex discovery path, matching `.cursor/agents/orchestrator.md` and
+      `.claude/agents/orchestrator.md`. Required because a Codex user can enter
+      portfolio orchestration through this canonical skill directly; omitting it
+      would leave that entrypoint with no dispatch-profile declaration contract
+      while the plan claims coverage of every orchestration-role entrypoint.
+      Maps to AC13, AC18.
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
       — reference canonical doc when establishing execution arrangement;
       explicit-list declaration checkpoint; pre-branch affected-item string;
@@ -251,8 +288,14 @@ read-only `/run-work` under each profile label.
 - [ ] `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
       — same reference for epic layer entry. Maps to AC5, AC14.
 - [ ] `docs/workflow/development-workflow/agent-model-config.md` — Cursor
-      environment × layer profile table with confirmed vs assumption labels.
-      Maps to AC15.
+      environment × orchestration-layer table carrying **three** values per
+      combination, per AC15: (a) the applicable profile, (b) the applicable
+      **model assignment**, and (c) whether that assignment is confirmed by
+      observation or an explicit assumption. The model assignment is not
+      optional and is not covered by the existing role-level model table, which
+      does not say which assignment an **absorbing current context** uses under
+      parent-orchestrated Remote Control or under Cloud Agents — both
+      combinations must be answered explicitly. Maps to AC15.
 - [ ] `.cursor/rules/workflow.mdc` — profile declaration requirement + canonical
       link. Maps to AC16.
 - [ ] `docs/workflow/development-workflow/guardrails-enforcement.md` section 4 —
@@ -292,10 +335,21 @@ read-only `/run-work` under each profile label.
       Rationale: AC18 mirror parity is easy to break across 15+ surfaces; a
       cheap shell guard catches drift without requiring live Cursor Remote
       Control. Maps to AC18 regression safety.
-- [ ] **Planted-violation proof** (same implementation PR): temporarily remove the
-      canonical link from `.cursor/commands/run-item.md`, run the surface guard
-      and confirm non-zero exit; restore the link and confirm exit 0. Record the
-      before/after command output in the PR test plan.
+- [ ] **Planted-violation proofs — one per guard branch** (same implementation
+      PR). The guard checks two independent conditions, so a single proof can
+      leave the other branch inert while the documented fail/pass cycle still
+      passes. Run both:
+      1. **Link branch**: temporarily remove the canonical link from
+         `.cursor/commands/run-item.md`, run the surface guard, confirm non-zero
+         exit; restore and confirm exit 0.
+      2. **Profile-string branch**: temporarily remove or corrupt a required
+         profile code string in a mirror that keeps its canonical link intact,
+         run the guard, confirm non-zero exit; restore and confirm exit 0. The
+         link must stay intact so that a non-zero exit proves the *string*
+         check fired rather than the link check.
+
+      Record the before/after command output for **both** cycles in the PR test
+      plan.
 
 ### Database / Backend / Frontend / Infrastructure
 
@@ -339,11 +393,12 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `.cursor/agents/item-orchestrator.md` | No-handoff + profile |
 | `.claude/agents/orchestrator.md` | Parity |
 | `.claude/agents/item-orchestrator.md` | Parity |
-| `.codex/skills/workflow-item-orchestrator/SKILL.md` | Pointer |
+| `.codex/skills/workflow-item-orchestrator/SKILL.md` | Canonical reference + item-layer no-onward-handoff |
+| `.codex/skills/workflow-orchestrator/SKILL.md` | Canonical reference + portfolio-layer no-onward-handoff |
 | `.cursor/rules/workflow.mdc` | Requirement + link |
 | `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md` | Named stop affected-item alignment |
 | `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard |
-| `changelog.d/1462.feature.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
+| `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Already created in Plan Ready |
 
 **Explicitly not in scope**: `REVIEW.md` checklist categories (no new review
@@ -398,7 +453,7 @@ Not applicable — no runtime data.
 
 ## Documentation Updates (post-implementation, developer checklist)
 
-- [ ] `changelog.d/1462.feature.cursor-dispatch-profiles.md` — implementation PR
+- [ ] `changelog.d/1462.added.cursor-dispatch-profiles.md` — implementation PR
       only; body:
       `- **Cursor dispatch profiles** (#1462): Document native-handoff, parent-orchestrated, and inline-fallback profiles for Cursor bounded commands with consistent declaration gates and named stop conditions.`
       Do **not** edit `CHANGELOG.md` directly in the implementation PR.
@@ -461,7 +516,7 @@ Not applicable — no runtime data.
 9. **Verify** — run markdown lint commands from `AGENTS.md`, surface guard, and
    execute smoke runbook steps that do not require live Remote Control (document
    manual Remote Control steps as PASS/NOT RUN).
-10. **Changelog fragment** — create `changelog.d/1462.feature.cursor-dispatch-profiles.md`
+10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
 11. **Planted-violation proof** — run surface guard fail/pass cycle documented in
       **Layer-by-Layer Changes → Workflow tooling**.
