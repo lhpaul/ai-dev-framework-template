@@ -69,6 +69,8 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` | Documents pre-trigger scan and template approval; lacks new escalation/wait reason codes |
 | Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497` — extend in place, no successor needed |
 | Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded\\|max_cycles enforcement' scripts/development-workflow/pr-review-loop.sh` | Enforcement block at `pr-review-loop.sh:10958` (`#1502` dual-cap); escalation predicate is `reviewer_loop_cap_exceeded`, reason string `max_cycles_exceeded` |
+| Timeline event fields | `gh api repos/{owner}/{repo}/issues/1768/timeline -H 'Accept: application/vnd.github+json'` | `committed` events carry `sha` and `committer.date`; their own `created_at` is `null`. No `head_ref_force_pushed` events exist in this repo to sample (force-push on shared branches is prohibited), so the force-push event→head join is **unverified** — see source (a) above |
+| Environment-setup outcome | `sed -n '1372,1382p' scripts/development-workflow/codex-github-reviewer.sh` | `codex_return_environment_error` emits `REASON=codex-github-environment-missing` and `exit 2` — a sixth legal exit-`2` reason beyond timeout and the four fail-closed codes |
 | Exit-2 reason default | `sed -n '2320,2333p' scripts/development-workflow/pr-review-loop.sh` | `codex_reason="$(kv_value_default REASON "$script_output" timeout)"` at `:2322`; `print_kv RESULT escalate` (`:2323`) and `return 2` (`:2332`) are unconditional — an out-of-set `REASON` loses the reason string, not the escalation |
 | Cycle-cap defaults | `sed -n '11201,11250p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_resolve_max_cycles` defaults to **10** (`:11211`, `:11216`); `reviewer_loop_resolve_max_total_cycles` defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` still says “default 3” and is stale — do not encode it |
 
@@ -195,11 +197,24 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
      this — for a trigger-less head it can sit well before the push, which would
      sweep prior-head comments (including malformed ones) into `H` and escalate
      against the wrong head. **This floor applies to the live head too.**
-  2. **Transition instant `T(X)`** — the instant head `X` became current — is,
-     in order of preference: (a) the `created_at` of the
-     `head_ref_force_pushed` timeline event that introduced `X`, when one
-     exists; otherwise (b) the `committer.date` of the `committed` timeline
-     event whose `sha` is `X`.
+  2. **Transition instant `T(X)`** — the instant head `X` became current — is
+     derived as:
+     - **(b) — the stated path, verified.** The `committer.date` of the
+       `committed` timeline event whose `sha` is `X`. Confirmed against live
+       data (Verification Log): `committed` events carry `sha` and
+       `committer.date`. Note the event's own `created_at` is `null`; use
+       `committer.date`.
+     - **(a) — an optimization, UNVERIFIED — implementer must confirm before
+       relying on it.** The `created_at` of the `head_ref_force_pushed` event
+       that introduced `X`, *if* that payload can be joined to `X` at all. This
+       could not be confirmed: no `head_ref_force_pushed` events exist in this
+       repository to sample (its safety rules forbid force-pushing shared
+       branches), and the event's `commit_id` is reported to be commonly
+       `null`, which would make the event→SHA join impossible. **Implement
+       source (b) plus the escalation cases below as the complete path.** Adopt
+       (a) only after confirming on real data that the payload identifies the
+       head it introduced; until then a force-push is simply a case where (b)
+       governs or the escalation cases fire.
   3. **Upper bound `U(H)`** is `T(next head)`, per the spec's "and before any
      later head becomes current".
   4. **A comment's window** is therefore `[L(H), U(H))` with
@@ -284,12 +299,37 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
   **Phase 2 — newest-evidence tournament (only when phase 1 is empty).** Apply
   newest-non-dismissed timestamp selection among the remaining
-  live-head-covering items, whose classes are only: cleared-findings wait and
-  clean. On a timestamp tie, order them cleared-findings wait → clean. A
-  retained environment-setup response participates only when it is itself the
-  newest evidence and is superseded by any strictly newer terminal or review
-  item (spec BR-8); it is **not** an availability hard stop and does not enter
-  phase 1.
+  live-head-covering items. Exactly **three** classes can appear here:
+
+  | Phase-2 class | Outcome when it wins | Exit / `REASON=` |
+  | --- | --- | --- |
+  | Cleared-findings wait | `waiting_on_reviewer` | `4` / `codex-github-review-pending` |
+  | Clean | `clean` | `0` |
+  | Retained environment-setup response | Unavailable (shipped handling, not a hard stop) | `2` / `codex-github-environment-missing` (`codex_return_environment_error`, Verification Log) |
+
+  **Tie rule**: on an equal newest timestamp, order cleared-findings wait →
+  clean. The environment-setup response **loses every tie** — spec BR-8 lets it
+  participate "only when it is itself the newest evidence" and it is
+  "superseded by any strictly newer terminal or review item", so it wins only
+  when *strictly* newest. It is **not** an availability hard stop and never
+  enters phase 1; that is the whole difference between it and a usage-limit
+  notice, which terminates immediately and is never superseded.
+
+  **Phase 3 — no terminal live-head evidence at all (phases 1 and 2 both
+  empty).** Acknowledgement-only signals — a thumbs-up reaction, a draft review,
+  or a clean-looking root comment omitting any reviewed revision — are **not
+  terminal evidence**, so they never compete in phase 1 or phase 2 and have no
+  rank against those tiers. They are evaluated only here:
+
+  - an acknowledgement signal is present for the live-head attempt →
+    `waiting_on_reviewer`, exit `4`, `REASON=codex-github-reaction-without-review`;
+  - otherwise (only stale, prior-revision, freshness-failing, or no evidence)
+    → `waiting_on_reviewer`, exit `4`, `REASON=codex-github-review-pending`.
+
+  This is the spec's acknowledgement-precedence rule: the reaction reason "takes
+  precedence over `codex-github-review-pending` whenever an acknowledgement
+  signal is present". That precedence is **between the two phase-3 reasons
+  only** — it never promotes acknowledgement above a phase-1 or phase-2 class.
 
   The pre-selection guard is exactly **phase 1 evaluated early** — tiers 1–5
   empty with a tier-6 notice present — so the guard and the phase order cannot
@@ -313,11 +353,15 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     (reuse exit `2` with distinct `REASON=`; the loop adapter already maps
     non-`0/1/3/4` exits via `kv_value_default REASON … timeout` to
     `RESULT=escalate` — preserve that contract)
-  - **Exit `2` `REASON=` is a closed set of exactly five values**: `timeout`,
-    `evidence_unavailable_codex_thread_state`,
+  - **Exit `2` `REASON=` is a closed set of exactly six values**: `timeout`,
+    the four fail-closed codes — `evidence_unavailable_codex_thread_state`,
     `codex_current_verdict_malformed_revision_marker`,
-    `codex_finding_thread_correlation_missing`, and
-    `codex_current_verdict_unrecognized`. The companion must emit one of these
+    `codex_finding_thread_correlation_missing`,
+    `codex_current_verdict_unrecognized` — and
+    `codex-github-environment-missing`, which the shipped
+    `codex_return_environment_error` already emits on exit `2` (Verification
+    Log). The environment-setup reason is **not** a fail-closed escalation; it
+    keeps its shipped availability handling and must not be converted into one. The companion must emit one of these
     verbatim on every exit-`2` path. This is load-bearing, not stylistic:
     `pr-review-loop.sh:2322` (Verification Log) reads the reason via
     `kv_value_default REASON "$script_output" timeout`. `RESULT=escalate` and
