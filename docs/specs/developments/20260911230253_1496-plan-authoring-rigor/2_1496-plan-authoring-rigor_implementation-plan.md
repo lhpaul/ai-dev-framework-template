@@ -58,8 +58,9 @@ silently ships drift.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `abd57a5c` — every row below re-run at this plan-branch revision (base `origin/develop` tip: `f1d5021a`), including the `# covers:` / harness-assertion paths, which name `docs/workflow/development-workflow/templates/implementation-plan-template.md`. **Currency obligation (Group H):** this SHA and the PR body's Document Quality Gate record must both name the PR head before `ready-for-human-review`. Later commits that touch only this record or plan prose leave every verified claim unchanged; re-verify and refresh the record if any later commit touches a verified claim |
+| Repo revision | `git rev-parse --short HEAD` | `6c84855e` — every row below re-run at this plan-branch revision (base `origin/develop` tip: `f1d5021a`), including the `# covers:` / harness-assertion paths, which name `docs/workflow/development-workflow/templates/implementation-plan-template.md`. **Currency obligation (Group H):** this SHA and the PR body's Document Quality Gate record must both name the PR head before `ready-for-human-review`. The head commit that follows `6c84855e` only adds the Codex-alias row and label assertions and changes no verified claim; later commits that touch only this record or plan prose leave every verified claim unchanged; re-verify and refresh the record if any later commit touches a verified claim |
 | Template path | `test -f docs/workflow/development-workflow/templates/implementation-plan-template.md`; `test ! -f docs/workflow/development-workflow/implementation-plan-template.md` | exit `0` for both — the `templates/` path is the only real path; every plan reference uses it |
+| Codex skill alias | `test -L .agents/skills/workflow-plan-writer && readlink .agents/skills/workflow-plan-writer` | `../../.codex/skills/workflow-plan-writer` — symlink; the `.codex` edit is the only source edit |
 | Spec merged | `test -f docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | present on branch |
 | Protocol 02 review target | `test -f docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md` | Present — verified 2026-09-20. Named in Layer-by-Layer, Files to modify, and Implementation Order step 5 |
 | Protocol 02 authoring target | `test -f docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Present — verified 2026-09-20 |
@@ -309,7 +310,7 @@ Verification Log re-run) plus spec mirror table:
 | `.cursor/agents/tech-lead.md` | Author routing |
 | `.claude/agents/implementation-plan-reviewer.md` | Reviewer routing |
 | `.cursor/agents/implementation-plan-reviewer.md` | Reviewer routing |
-| `.codex/skills/workflow-plan-writer/SKILL.md` | Author routing |
+| `.codex/skills/workflow-plan-writer/SKILL.md` (also served as `.agents/skills/workflow-plan-writer/SKILL.md`, a symlink to it — one edit covers both) | Author routing |
 | `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh` | **Create** — mirror consistency harness |
 | `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` | **Create** — parser-risk fixture snippets (parser-risk addendum + Implementation Order step 7) |
 | `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Present on this plan branch — execute scenarios during implementation QA |
@@ -396,10 +397,13 @@ created during implementation).
 Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
 
 - Assert canonical file exists and contains headings `Rule 1` through `Rule 6`.
-- Assert `REVIEW.md` references `plan-authoring-rigor-rules.md` and all six
-  rule names.
-- Assert Protocol 02 references canonical path and
-  `Plan authoring rigor — per-rule outcome record`.
+- Assert `REVIEW.md` references `plan-authoring-rigor-rules.md`, all six
+  rule names, and all three outcome labels (`Satisfied`, `Not applicable`,
+  `Unsatisfied`).
+- Assert Protocol 02 references canonical path,
+  `Plan authoring rigor — per-rule outcome record`, and all three outcome
+  labels. Planted violation: delete one label from a fixture copy of each file
+  and confirm the assertion fails.
 - Assert tech-lead and implementation-plan-reviewer agents (Claude + Cursor)
   reference the canonical file.
 - Exit non-zero on first failure; follow pattern of
