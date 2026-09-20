@@ -72,6 +72,7 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 | Timeline event fields | `gh api repos/{owner}/{repo}/issues/1768/timeline -H 'Accept: application/vnd.github+json'` | `committed` events carry `sha` and `committer.date`; their own `created_at` is `null`. No `head_ref_force_pushed` events exist in this repo to sample (force-push on shared branches is prohibited), so the force-push event→head join is **unverified** — see source (a) above |
 | Environment-setup outcome | `sed -n '1372,1382p' scripts/development-workflow/codex-github-reviewer.sh` | `codex_return_environment_error` emits `REASON=codex-github-environment-missing` and `exit 2` — a sixth legal exit-`2` reason beyond timeout and the four fail-closed codes |
 | Exit-2 reason default | `sed -n '2320,2333p' scripts/development-workflow/pr-review-loop.sh` | `codex_reason="$(kv_value_default REASON "$script_output" timeout)"` at `:2322`; `print_kv RESULT escalate` (`:2323`) and `return 2` (`:2332`) are unconditional — an out-of-set `REASON` loses the reason string, not the escalation |
+| Inline-comment review join | `gh api repos/{owner}/{repo}/pulls/1768/comments?per_page=1 --jq '.[0] \| {id, pull_request_review_id, commit_id}'` and the matching GraphQL `reviewThreads → comments(first:1) → pullRequestReview.databaseId` | REST returns `id=4056981858`, `pull_request_review_id=5260609621`, `commit_id=37d5bd35…` for a `chatgpt-codex-connector[bot]` comment; GraphQL returns `databaseId=4056981858` with `pullRequestReview.databaseId=5260609621` for the same thread. Both review-scoping joins exist and agree |
 | Exit-`3` reason hardcode | `sed -n '2292,2302p' scripts/development-workflow/pr-review-loop.sh` | `print_kv REASON codex-github-usage-limit` is unconditional at `:2294`, discarding the companion's `REASON=`; the companion's `codex_return_account_not_connected` emits `REASON=codex-github-account-not-connected` then `exit 3` (`codex-github-reviewer.sh:1384–1393`), so that outcome is reported today as a usage limit |
 | Push-proving anchor availability | `gh api repos/{owner}/{repo}/commits/9d98fe2f/check-runs --jq '.check_runs[0].started_at'` and `gh api repos/{owner}/{repo}/statuses/9d98fe2f` | Check runs return `started_at` (`2026-09-20T16:17:04Z`) and commit statuses return `created_at` for a head SHA; both are attached only after a push, so either is a valid `P(H)`. Availability is repo-dependent — a trigger-less head with no CI has no anchor and takes the indeterminate-escalation path |
 | Cycle-cap defaults | `sed -n '11201,11250p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_resolve_max_cycles` defaults to **10** (`:11211`, `:11216`); `reviewer_loop_resolve_max_total_cycles` defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` still says “default 3” and is stale — do not encode it |
@@ -118,22 +119,49 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
 1. **Thread index (GraphQL)**: Paginate `reviewThreads` and record per thread:
    `thread_graphql_id`, `isResolved`, `isOutdated`, first-comment
-   `comments(first:1).nodes[0].databaseId`, first-comment `author.login`, review
+   `comments(first:1).nodes[0].databaseId`, first-comment
+   `comments(first:1).nodes[0].pullRequestReview.databaseId` (the **owning
+   review**), first-comment `author.login`, review
    attachment via parent review `commit_id` when available from REST review fetch.
    Applicability: thread is **applicable** to live head when `isOutdated` is false
    and the anchoring review’s `commit_id` equals `headRefOid` (or inline comment
    `commit_id` equals `headRefOid` when review object lacks commit).
 2. **Inline comment index (REST)**: `GET repos/{owner}/{repo}/pulls/{pr}/comments`
-   (paginated); keep Codex-bot rows where `commit_id == headRefOid`.
-3. **Join key**: REST comment `id` **equals** GraphQL first-comment
-   `databaseId` for the same thread (same join `pr-review-loop.sh` already uses
-   for thread audit fixtures in `test-item-completion-self-check.sh`).
-4. **Finding extraction**: For a terminal blocking review, treat each distinct
-   inline comment on the current head (step 2) as one finding with stable thread
-   id = comment `id`. Review-body-only blocking sections with **no** matching
-   inline comment id in the index are **correlation-missing** findings (escalate
-   `codex_finding_thread_correlation_missing`), including top-level-only blocking
-   text like `codex_cleared_thread_top_level_blocker`. **Exception (orthogonal)
+   (paginated); keep Codex-bot rows where `commit_id == headRefOid`, and record
+   each row's `pull_request_review_id` alongside its `id` and `commit_id`. Index
+   the rows **by `pull_request_review_id`**, not by head alone — a head-only
+   index is what allows an unrelated review's comment to supply false
+   correlation.
+3. **Join keys** (both verified live — see Verification Log):
+   - *thread join*: REST comment `id` **equals** GraphQL first-comment
+     `databaseId` for the same thread (same join `pr-review-loop.sh` already
+     uses for thread audit fixtures in `test-item-completion-self-check.sh`);
+   - *review-scoping join*: REST comment `pull_request_review_id` **equals** the
+     REST review `id` that reported it, and equals GraphQL
+     `comments(first:1).nodes[0].pullRequestReview.databaseId` for the same
+     thread. Use it to attribute each inline comment to exactly one review.
+4. **Finding extraction — scoped to the owning review**: a finding belongs to
+   the terminal verdict that reported it, so extraction is per review, never per
+   head. For terminal blocking review `R` (REST review `id`), the findings of
+   `R` are exactly the step-2 rows whose `pull_request_review_id == R.id`
+   **and** `commit_id == headRefOid`; each such row is one finding with stable
+   thread id = comment `id`. An inline comment on the live head belonging to a
+   *different* review — an earlier Codex review, or another bot — is not a
+   finding of `R` and **must never supply correlation for `R`**; correlating
+   against the head-wide comment index would turn a review-body-only finding
+   into a false `needs_fixes` or a false cleared-findings wait instead of the
+   spec-required escalation. Review-body-only blocking sections of `R` with
+   **no** inline comment of `R` to match are **correlation-missing** findings
+   (escalate `codex_finding_thread_correlation_missing`), including
+   top-level-only blocking text like `codex_cleared_thread_top_level_blocker`.
+   A terminal verdict delivered as a **root pull-request comment** owns no
+   review at all, so any blocking finding it carries has no review-thread
+   identifier and is correlation-missing by the same rule (spec: "A review-level
+   finding or comment without a review-thread identifier is incomplete
+   evidence, not an actionable blocker"). The cleared-findings rule consumes
+   this same per-review finding set: "every matching conversation is resolved"
+   is evaluated over `R`'s own findings, never over unrelated live-head
+   threads. **Exception (orthogonal)
    — canonical wording, restated verbatim in the "CHANGES_REQUESTED +
    correlation-missing" step below:** GitHub `state == CHANGES_REQUESTED` on a
    current-head submitted review is an actionable blocker by structured state
@@ -290,30 +318,38 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
   `clean`, `needs_fixes`, `waiting_on_reviewer` (+ reason), `escalate` (+ reason).
-  **Pre-selection guard:** before newest-evidence timestamp selection, first
-  classify every item in the fetched batch, then scan for genuine usage-limit or
-  account-not-connected notices. Terminate immediately with the shipped
-  unavailable outcome (same as today’s `codex_return_usage_limit` /
-  account-not-connected path) **only when the batch contains neither**:
+  **Pre-selection guard (early exit only):** before newest-evidence timestamp
+  selection, classify every item in the fetched batch, then scan for genuine
+  usage-limit or account-not-connected notices. Terminate immediately with the
+  shipped unavailable outcome (same as today’s `codex_return_usage_limit` /
+  account-not-connected path) **only when the batch contains none of**:
 
-  - blocking evidence or a `CHANGES_REQUESTED` submitted review, **nor**
+  - an applicable unresolved live-head conversation;
+  - blocking evidence or a `CHANGES_REQUESTED` submitted review; or
   - any fail-closed evidence — malformed-marker, unrecognized-verdict,
     correlation-missing, or evidence-unavailable.
 
-  When either is present alongside the notice, the availability hard stop does
-  **not** short-circuit. Classification then runs in **three phases, in this
-  order**. Phase 1 carries only the classes the spec exempts from
-  newest-evidence selection; every other terminal class is decided by timestamp
-  in phase 2, because the spec applies its tier list *after* selection: "Later
+  When any of those is present alongside the notice, the early exit is skipped
+  and the full order below decides — which frequently ends at the **same**
+  unavailable outcome through the hard-stop restoration rule, because mere
+  presence of a competitor is not enough to displace a hard stop; only a
+  *canonical* competitor is. The guard is an optimization for the unambiguous
+  case and must never be the reason a hard stop is dropped. Classification then
+  runs in **three phases, in this order**, executed as the normative
+  Evaluation-order list at the end of this step. Phase 1 carries only the
+  classes the spec exempts from newest-evidence selection; every other terminal
+  class is decided by timestamp in phase 2, because the spec applies its tier
+  list *after* selection: "Later
   non-dismissed terminal evidence for the same live head supersedes earlier
   current-head evidence before that precedence ordering is applied."
 
   **Phase 1 — absolute exceptions (timestamp-independent).** Only these classes
   bypass newest-evidence selection. Take the highest one present and stop. The
-  phases are a *precedence* description, not an instruction to skip work:
-  classes 2 and 3 are evaluated against the phase-2 winner where their deferral
-  bullets say so, so the implementation computes the phase-2 winner first and
-  then applies this order.
+  phases are a *precedence* description, not an execution order: classes 2 and 3
+  are evaluated against the phase-2 winner where their deferral bullets say so,
+  so the implementation always computes the phase-2 winner first and then
+  applies the Evaluation-order list below, which is normative wherever the
+  narrative and the list could be read differently.
 
   1. **Indeterminate evidence** → `escalate`
      `evidence_unavailable_codex_thread_state`. A bounded-query failure after
@@ -342,19 +378,29 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
      account-not-connected refusal → shipped unavailable outcome (exit `3`),
      because the spec makes the two hard stops "bypass newest-evidence selection
      entirely … and [they] are never superseded by a same-fetch or later
-     clean/newer review verdict". A usage-limit notice therefore beats a
-     **strictly newer** clean verdict. Two deferrals cancel the short-circuit:
-     - **Blocking evidence or a `CHANGES_REQUESTED` submitted review for the
-       live head, at any timestamp** — spec: "Blocking or `CHANGES_REQUESTED`
-       evidence always wins over any availability notice, including those hard
-       stops". Phase 2 then decides, so a strictly newer clean verdict can still
-       supersede that blocker under the ordinary newest-evidence rule.
-     - **Any live-head fail-closed item** (malformed-marker,
-       unrecognized-verdict, correlation-missing), so phase 2 can report the
-       escalation reason rather than the unavailable outcome. This follows the
-       spec's "an availability response never outranks an escalation or an
-       actionable blocker", and it only ever converts an unavailable stop into a
-       human-review escalation — never into clean, wait, or `needs_fixes`.
+     clean/newer review verdict". A hard stop present anywhere in the batch
+     therefore beats clean, cleared-findings-wait, and environment-setup
+     evidence of **any** timestamp, including strictly newer ones. It yields
+     only to a **canonical** competitor, which is exactly one of:
+     - an applicable unresolved live-head conversation (class 2 — canonical by
+       definition, since conversation state is not timestamped terminal
+       evidence): spec, "Blocking or `CHANGES_REQUESTED` evidence always wins
+       over any availability notice, including those hard stops"; or
+     - a **phase-2 winner in tiers 1–5** — a fail-closed escalation or an
+       actionable blocker that actually survives newest-evidence selection:
+       spec, "an availability response never outranks an escalation or an
+       actionable blocker".
+
+     **Hard-stop restoration (load-bearing).** "Canonical" is decided by
+     newest-evidence selection, never by mere presence in the batch. If the
+     competing blocker or fail-closed item is itself superseded —
+     {`CHANGES_REQUESTED` at T1, clean at T2, usage-limit notice} or {malformed
+     marker at T1, clean at T2, notice} — then the phase-2 winner is clean, the
+     competitor is no longer canonical, and the hard-stop outcome is
+     **restored**: the run ends unavailable (exit `3`), never clean. Letting the
+     superseded item suppress the hard stop would contradict "never superseded
+     by a same-fetch or later clean/newer review verdict". Regression:
+     `codex_hard_stop_restored_when_competitor_superseded`.
 
   **A phase-1 class beats a newer availability notice or clean verdict — but
   only these classes do.** Everything else is *terminal verdict evidence* and is
@@ -371,9 +417,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   narrow one the spec names: a later usage-limit notice burying an earlier
   `CHANGES_REQUESTED` review.
 
-  **Phase 2 — newest-evidence selection, then tie aggregation (only when phase 1
-  is empty).** Ignore dismissed reviews, keep only live-head-covering items
-  (evidence covering an earlier revision never competes), take the newest
+  **Phase 2 — newest-evidence selection, then tie aggregation (always computed;
+  it decides whenever phase 1 does not).** Ignore dismissed reviews, keep only
+  live-head-covering items (evidence covering an earlier revision never
+  competes), take the newest
   non-dismissed terminal timestamp, and aggregate the items sharing exactly that
   timestamp by the spec's tier order:
 
@@ -391,8 +438,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
   **Tie rule**: tiers 1–8 resolve strictly in the order above, so on an equal
   newest timestamp cleared-findings wait beats clean. Tier 6 appears here as
-  well as in phase 1 because a hard stop that reached phase 2 through a deferral
-  still outranks the wait and clean tiers at its own timestamp. The
+  well as in phase 1 so that a hard stop tied at the newest timestamp still
+  outranks the wait and clean tiers; a hard stop at an *older* timestamp is
+  handled by the hard-stop restoration rule instead, which reaches the same
+  unavailable outcome. The
   environment-setup response **loses every tie** — spec BR-8 lets it
   participate "only when it is itself the newest evidence" and it is
   "superseded by any strictly newer terminal or review item", so it wins only
@@ -416,13 +465,39 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   signal is present". That precedence is **between the two phase-3 reasons
   only** — it never promotes acknowledgement above a phase-1 or phase-2 class.
 
-  The pre-selection guard is exactly **phase-1 class 3 evaluated early** — a
-  notice present with neither deferral condition met — so the guard and the
-  phase order cannot disagree for any batch, including {usage-limit at T1,
-  strictly newer clean at T2}: both yield the unavailable outcome. The
-  `codex_tied_usage_limit_then_unrecognized` regression must expect escalation,
-  because an unrecognized item both cancels the short-circuit and outranks the
-  availability tier at the shared newest timestamp.
+  **Evaluation order (normative).** The phases above state *precedence*; this is
+  the order the implementation executes, and it is the tie-breaker for any
+  reading dispute between them:
+
+  1. Classify every fetched item; if evidence is indeterminate (bounded-query
+     failure after its retry, or an unestablishable head window) → `escalate`
+     `evidence_unavailable_codex_thread_state` (phase-1 class 1).
+  2. Compute the phase-2 winner `W`: the newest non-dismissed timestamp among
+     live-head-covering terminal items, with items sharing exactly that
+     timestamp aggregated by tiers 1–8. `W` may be empty.
+  3. `W` is a fail-closed escalation (tiers 1–4) → that escalation.
+  4. An applicable unresolved live-head conversation exists → `needs_fixes`.
+  5. `W` is an actionable blocker (tier 5) → `needs_fixes`.
+  6. The batch contains an availability hard stop (tier 6 at any timestamp) →
+     shipped unavailable outcome, exit `3`. **This step is the hard-stop
+     restoration rule**; it fires whether the hard stop won step 2 or lost it to
+     a clean, wait, or environment-setup item.
+  7. `W` exists (tiers 7–8, or a retained environment-setup response) → its
+     outcome from the phase-2 table.
+  8. Otherwise → phase 3 (acknowledgement vs pending wait).
+
+  The pre-selection guard is **step 6 hoisted to the front** for batches where
+  steps 3–5 are provably empty, so the guard and the full order cannot disagree
+  for any batch. Worked examples, all consistent both ways: {usage-limit at T1,
+  strictly newer clean at T2} → unavailable (step 6; guard also fires);
+  {`CHANGES_REQUESTED` at T1, clean at T2, notice} → unavailable (guard skipped,
+  step 5 does not fire because the blocker is superseded, step 6 restores);
+  {malformed at T1, clean at T2, notice} → unavailable (same path);
+  {notice and unrecognized tied at the newest timestamp} → escalate (step 3,
+  tier 2 outranks tier 6 — the `codex_tied_usage_limit_then_unrecognized`
+  regression); {notice and blocker tied} → `needs_fixes` (step 5 —
+  `codex_tied_usage_limit_then_blocker`); {unresolved live-head conversation +
+  notice} → `needs_fixes` (step 4).
 
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
@@ -620,6 +695,25 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   that code, not the usage-limit code). Assert on the loop's `REASON=` output,
   since the bug is invisible in `RESULT=` / the return code.
 
+- [ ] **Hard-stop restoration ordering** (spec: hard stops are "never superseded
+  by a same-fetch or later clean/newer review verdict"), one named case with two
+  fixtures: `codex_hard_stop_restored_when_competitor_superseded` — (a)
+  `CHANGES_REQUESTED` review at T1, clean live-head verdict at T2, usage-limit
+  notice in the same batch, and (b) malformed-marker comment at T1, clean
+  verdict at T2, account-not-connected notice in the same batch. Both expect the
+  shipped unavailable outcome (exit `3`, availability `REASON=`), **not** clean
+  and not the superseded competitor's outcome. This is the case the
+  presence-based pre-selection guard alone would get wrong.
+
+- [ ] **Owning-review correlation scoping** (AC-7, spec Business Rule 4):
+  `codex_body_finding_unrelated_review_comment_not_correlated` — a terminal
+  `R` whose blocking text appears only in the review body, while an unrelated
+  earlier review has an inline comment on the same live head. Expect
+  `codex_finding_thread_correlation_missing`, proving the join runs on
+  `pull_request_review_id`, not on the head-wide comment index. Pair it with
+  `codex_body_finding_own_review_comment_correlates` (the same shape where the
+  inline comment does belong to `R`) so the join is proved in both directions.
+
 - [ ] **Matrix spot checks** (AC-7–10 and AC-14 — AC-11, AC-12, and AC-13 have
   their own rows above; this bullet covers the remainder of the range, not all
   of it): Add
@@ -733,6 +827,9 @@ Area 13 — one `run_test` per row):
 | `codex_tied_usage_limit_then_unrecognized` | Availability notice tied with fail-closed evidence — **existing test, update to expect escalation** (not the unavailable outcome) |
 | `codex_tied_usage_limit_then_blocker` | Availability notice tied with an actionable blocker — expect `needs_fixes` |
 | `codex_older_malformed_superseded_by_newer_clean` | Older live-head malformed-marker comment with strictly newer live-head clean evidence — expect `clean` (newest-evidence selection precedes tier aggregation), **not** the malformed escalation |
+| `codex_hard_stop_restored_when_competitor_superseded` | Availability hard stop with a *superseded* blocker or malformed item and a newer clean verdict — expect the unavailable outcome (exit `3`), never clean |
+| `codex_body_finding_unrelated_review_comment_not_correlated` | Review-body-only finding with an unrelated review's inline comment on the same head — expect correlation-missing |
+| `codex_body_finding_own_review_comment_correlates` | Same shape, inline comment owned by the terminal review — expect correlation (no escalation) |
 
 **Suppression semantics**: Not applicable — no inline suppressions for marker parsing.
 
@@ -829,8 +926,9 @@ esac
 - Verification support: Checked — Verification Log commands are reproducible from
   repo root; thread-correlation join cites GraphQL `databaseId` + REST `id`.
 - Parser-risk completeness: Checked — dedicated addendum with 15 enumerated
-  marker and window cases plus three precedence cases, each mapped 1:1 to an
-  Area 13 test name.
+  marker and window cases (14 carrying a `codex_marker_` test name, plus the
+  superseded-malformed case whose test is a precedence name) and 20 mapped test
+  names in total, each row mapped 1:1 to an Area 13 test name.
 - Complex workflow decision-gate matrix: Checked — spec matrix is authoritative;
   implementation mirrors spec rows via `codex_classify_live_head_evidence()`.
   Newest-evidence selection runs **before** tier aggregation, per the spec's
@@ -838,9 +936,17 @@ esac
   earlier current-head evidence before that precedence ordering is applied";
   the only timestamp-independent exceptions are indeterminate evidence, an
   applicable unresolved live-head conversation, and the two availability hard
-  stops (which still yield to blocking / `CHANGES_REQUESTED` and to fail-closed
-  evidence). Environment-setup is retained separately and is never a hard stop.
-  No contradictory next actions across plan layers.
+  stops, which yield only to a *canonical* competitor — an applicable
+  unresolved live-head conversation or a phase-2 winner in tiers 1–5 — and are
+  otherwise restored by the hard-stop restoration rule). Environment-setup is
+  retained separately and is never a hard stop. The normative Evaluation-order
+  list is the single tie-breaker between the phase narrative and the
+  pre-selection guard, and its worked examples agree with the guard for every
+  listed batch. No contradictory next actions across plan layers.
+- Correlation scoping: Checked — finding extraction, the cleared-findings rule,
+  and the `CHANGES_REQUESTED` exception all consume the same per-review finding
+  set keyed on `pull_request_review_id`; no section correlates against the
+  head-wide inline-comment index.
 - Reversal risk: Checked — the outcome-mapping step states the revert path
   (Implementation Order steps 3–4 + 7–8), the two residues that do not revert,
   and that partial reversal of individual reason codes is unsupported.
@@ -858,7 +964,8 @@ esac
   named harness case in the Tests section appears once and only once, and the
   marker/window cases in the parser-risk mapping table use the `codex_marker_`
   prefix while the precedence cases use `codex_tied_` / `codex_triggerless_` /
-  `codex_cap_` / `codex_exit3_` / `codex_older_`. Phase names (`Phase 1`
+  `codex_cap_` / `codex_exit3_` / `codex_older_` / `codex_hard_stop_` /
+  `codex_body_finding_`. Phase names (`Phase 1`
   absolute exceptions, `Phase 2` newest-evidence selection, `Phase 3`
   acknowledgement) are used consistently in the decision-function step, the
   pre-selection-guard paragraph, and the decision-gate mirror; the unrelated
@@ -886,8 +993,9 @@ Protocol 93, `codex-github.md`, PR summary.
 *not* omitted by oversight and must still be implemented):
 
 - Availability hard stop (usage-limit / account-not-connected) → exit `3`
-  unavailable, ranked below every fail-closed escalation and below an actionable
-  blocker (see the Decision-function tie precedence above).
+  unavailable, ranked below a *canonical* fail-closed escalation or actionable
+  blocker and above every wait or clean outcome; a superseded competitor
+  restores the hard stop (see the Decision-function Evaluation order above).
 - Acknowledgement-only wait → exit `4`,
   `REASON=codex-github-reaction-without-review` (key scenario 10, AC-9), which
   takes precedence over `codex-github-review-pending`.
