@@ -103,6 +103,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 | Dismissed review | REST reviews | `state: DISMISSED` excluded from terminal evidence selection |
 | Root comment terminal evidence | REST issue comments | `Reviewed commit` marker, `created_at`, comment `id` ordering vs trigger comment |
 | Availability (unchanged) | Root comment body | Usage-limit, account-not-connected, environment-setup patterns already recognized |
+| Head evidence window bounds | REST PR object + issue timeline | PR `created_at`; `GET repos/{owner}/{repo}/issues/{pr}/timeline` (paginated) `head_ref_force_pushed.created_at` and `committed` events' `sha` + `committer.date` — see **Head evidence window attribution** for the derivation and its mandatory escalation cases |
 
 **Finding–thread correlation contract** (AC-7, spec Business Rules 4–6):
 
@@ -149,19 +150,64 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   latest live-head trigger; same-second comment ID ordering).
 
 - [ ] **Head evidence window attribution** (AC-14): For trigger-less root
-  comments, assign each comment to the head that was current when authored; if
-  chronology cannot be established, escalate `evidence_unavailable_codex_thread_state`
-  rather than attributing to live head.
+  comments, assign each comment to the head that was current when authored,
+  using the **head-transition timeline** below as the sole chronology source; if
+  the window boundary cannot be established deterministically from it, escalate
+  `evidence_unavailable_codex_thread_state` rather than attributing to live head.
+
+  **Head-transition timeline (deterministic source).** Build the window
+  boundaries from `GET repos/{owner}/{repo}/issues/{pr}/timeline` (paginated,
+  `Accept: application/vnd.github+json`) joined with the PR object's
+  `created_at`:
+
+  1. **Lower bound of the earliest window** is the PR `created_at`.
+  2. **The instant a head `H` became current** is, in order of preference:
+     (a) the `created_at` of the `head_ref_force_pushed` timeline event that
+     introduced `H`, when one exists; otherwise (b) the `committer.date` of the
+     `committed` timeline event whose `sha == H`.
+  3. **A comment's window** is `[max(previous head's last review trigger,
+     previous head's transition instant, PR created_at), next head's transition
+     instant)`, per spec Business Rule "Every Codex root comment belongs to
+     exactly one head's evidence window".
+
+  **Mandatory escalation cases.** Source (b) is a commit-authoring timestamp,
+  not a push timestamp, so it is a lower bound on when `H` became current. The
+  attribution is therefore *indeterminate* — escalate
+  `evidence_unavailable_codex_thread_state`, do not guess — whenever any of:
+  - the timeline read fails or is truncated after one retry;
+  - no `head_ref_force_pushed` or `committed` event introduces `H`;
+  - the comment's `created_at` falls at or after the boundary derived from (b)
+    but at or before the next head's trigger, i.e. the commit-date lower bound
+    does not strictly separate the comment from the adjacent window; or
+  - two candidate boundaries share the comment's timestamp second and no
+    comment-ID ordering resolves them.
+
+  Only a comment that both source (a), or an unambiguous source (b), places
+  strictly inside exactly one window is attributed to that head.
 
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
   `clean`, `needs_fixes`, `waiting_on_reviewer` (+ reason), `escalate` (+ reason).
-  **Pre-selection guard:** before newest-evidence timestamp selection, scan the
-  fetched batch for genuine usage-limit or account-not-connected notices; if
-  present and no blocking/`CHANGES_REQUESTED` evidence exists, terminate
-  immediately with the shipped unavailable outcome (same as today’s
-  `codex_return_usage_limit` / account-not-connected path) — these hard stops
-  never enter the timestamp tournament. Otherwise apply newest-non-dismissed
+  **Pre-selection guard:** before newest-evidence timestamp selection, first
+  classify every item in the fetched batch, then scan for genuine usage-limit or
+  account-not-connected notices. Terminate immediately with the shipped
+  unavailable outcome (same as today’s `codex_return_usage_limit` /
+  account-not-connected path) **only when the batch contains neither**:
+
+  - blocking evidence or a `CHANGES_REQUESTED` submitted review, **nor**
+  - any fail-closed evidence — malformed-marker, unrecognized-verdict,
+    correlation-missing, or evidence-unavailable.
+
+  When either is present alongside the notice, the availability hard stop does
+  **not** short-circuit: fall through to the tie precedence below, which ranks
+  all four fail-closed escalations and the actionable blocker above the
+  availability hard stop. This preserves the spec’s rule that “an availability
+  response never outranks an escalation or an actionable blocker”; a guard that
+  short-circuits on fail-closed evidence would invert it, and would contradict
+  the `codex_tied_usage_limit_then_unrecognized` regression, which must expect
+  escalation rather than the unavailable outcome. Only a notice standing alone
+  — with no blocker and no fail-closed evidence — skips the timestamp
+  tournament. Otherwise apply newest-non-dismissed
   timestamp selection among live-head-covering items, then tie precedence:
   malformed-marker → unrecognized → correlation-missing → evidence-unavailable →
   actionable blocker → availability hard stop (usage-limit or
@@ -356,6 +402,8 @@ Area 13 — one `run_test` per row):
 | `codex_marker_same_second_fresh` | Same-second tie win |
 | `codex_marker_stale_head_window` | Stale-head window |
 | `codex_marker_indeterminate_window` | Indeterminate window |
+| `codex_tied_usage_limit_then_unrecognized` | Availability notice tied with fail-closed evidence — **existing test, update to expect escalation** (not the unavailable outcome) |
+| `codex_tied_usage_limit_then_blocker` | Availability notice tied with an actionable blocker — expect `needs_fixes` |
 
 **Suppression semantics**: Not applicable — no inline suppressions for marker parsing.
 
