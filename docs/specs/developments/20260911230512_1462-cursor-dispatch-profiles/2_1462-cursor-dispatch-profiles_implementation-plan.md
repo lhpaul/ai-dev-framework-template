@@ -371,7 +371,7 @@ detection; stage-role permission denial recovery (#1746); enforcing
 5. Smoke runbook walks Native handoff desktop, Parent orchestrated Remote
    Control, Inline fallback, and read-only scan paths (AC6, AC17).
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
-   not relaxed by any other document; #1746 remains Out of Scope; 
+   not relaxed by any other document; #1746 remains Out of Scope;
    `SUBAGENT_PERMISSION_DENIAL` is worded as observably similar only (Work Item
    Runner boundary).
 7. Smoke Step 11 (AC20): three accountability postures are defined; `observing`
