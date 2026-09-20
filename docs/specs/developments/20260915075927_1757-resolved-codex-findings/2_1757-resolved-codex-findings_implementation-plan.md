@@ -69,6 +69,7 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` | Documents pre-trigger scan and template approval; lacks new escalation/wait reason codes |
 | Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497` — extend in place, no successor needed |
 | Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded\\|max_cycles enforcement' scripts/development-workflow/pr-review-loop.sh` | Enforcement block at `pr-review-loop.sh:10958` (`#1502` dual-cap); escalation predicate is `reviewer_loop_cap_exceeded`, reason string `max_cycles_exceeded` |
+| Exit-2 reason default | `sed -n '2320,2333p' scripts/development-workflow/pr-review-loop.sh` | `codex_reason="$(kv_value_default REASON "$script_output" timeout)"` at `:2322`; `print_kv RESULT escalate` (`:2323`) and `return 2` (`:2332`) are unconditional — an out-of-set `REASON` loses the reason string, not the escalation |
 | Cycle-cap defaults | `sed -n '11201,11250p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_resolve_max_cycles` defaults to **10** (`:11211`, `:11216`); `reviewer_loop_resolve_max_total_cycles` defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` still says “default 3” and is stale — do not encode it |
 
 ---
@@ -260,6 +261,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   4. evidence-unavailable → `escalate`
   5. actionable blocker (including a `CHANGES_REQUESTED` submitted review, and
      any applicable unresolved live-head conversation) → `needs_fixes`
+  6. availability hard stop — genuine usage-limit notice or account-not-connected
+     refusal → shipped unavailable outcome (exit `3`)
 
   **An older item in phase 1 beats a newer availability notice or clean
   verdict.** This is the spec's rule that "blocking or `CHANGES_REQUESTED`
@@ -270,18 +273,30 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   newest timestamp *first* would let a later usage-limit notice bury an earlier
   `CHANGES_REQUESTED` review — the exact inversion this phase prevents.
 
-  **Phase 2 — newest-evidence tournament (only when phase 1 is empty).** Apply
-  newest-non-dismissed timestamp selection among the remaining live-head-covering
-  items, whose classes are only: availability hard stop (usage-limit or
-  account-not-connected), cleared-findings wait, and clean. On a timestamp tie,
-  order them availability hard stop → cleared-findings wait → clean. A retained
-  environment-setup response participates only when it is itself the newest
-  evidence and is superseded by any strictly newer terminal or review item
-  (spec BR-8); it is not the hard-stop tier above.
+  Tier 6 sits in phase 1, not the tournament, because the spec makes the two
+  availability hard stops "bypass newest-evidence selection entirely … and
+  [they] are never superseded by a same-fetch or later clean/newer review
+  verdict". A usage-limit notice therefore beats a **strictly newer** clean
+  verdict — while still losing to every tier above it, per "an availability
+  response never outranks an escalation or an actionable blocker". Both spec
+  rules hold simultaneously only if availability is an absolute tier below
+  blockers and above the tournament.
 
-  The pre-selection guard is exactly "phase 1 is empty" evaluated early, and the
-  `codex_tied_usage_limit_then_unrecognized` regression must expect escalation
-  rather than the unavailable outcome under both readings.
+  **Phase 2 — newest-evidence tournament (only when phase 1 is empty).** Apply
+  newest-non-dismissed timestamp selection among the remaining
+  live-head-covering items, whose classes are only: cleared-findings wait and
+  clean. On a timestamp tie, order them cleared-findings wait → clean. A
+  retained environment-setup response participates only when it is itself the
+  newest evidence and is superseded by any strictly newer terminal or review
+  item (spec BR-8); it is **not** an availability hard stop and does not enter
+  phase 1.
+
+  The pre-selection guard is exactly **phase 1 evaluated early** — tiers 1–5
+  empty with a tier-6 notice present — so the guard and the phase order cannot
+  disagree for any batch, including {usage-limit at T1, strictly newer clean at
+  T2}: both yield the unavailable outcome. The
+  `codex_tied_usage_limit_then_unrecognized` regression must expect escalation,
+  since tier 2 outranks tier 6.
 
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
@@ -304,12 +319,17 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     `codex_finding_thread_correlation_missing`, and
     `codex_current_verdict_unrecognized`. The companion must emit one of these
     verbatim on every exit-`2` path. This is load-bearing, not stylistic:
-    `pr-review-loop.sh:2322` reads the reason via
-    `kv_value_default REASON "$script_output" timeout`, so an absent,
-    misspelled, or out-of-set `REASON` **silently degrades a fail-closed
-    escalation into `timeout`** — which the loop may retry rather than stop for
-    human review. Add a harness assertion that every exit-`2` path emits a
-    member of this set.
+    `pr-review-loop.sh:2322` (Verification Log) reads the reason via
+    `kv_value_default REASON "$script_output" timeout`. `RESULT=escalate` and
+    the `return 2` are unconditional at that site, so an out-of-set `REASON`
+    does **not** change the control flow or cause a retry — the run still stops
+    for human review. What is lost is the *reason string*: the escalation is
+    reported as `timeout` in `REASON=`, the Automated Reviewer Loop Summary, and
+    `reviewer_loop_history.v1`, making the four fail-closed escalations
+    indistinguishable from a poll-budget timeout and from each other. That
+    directly defeats this item's own acceptance criterion that every fail-closed
+    escalation "is recorded as a terminal human-review escalation". Add a
+    harness assertion that every exit-`2` path emits a member of this set.
   - Update the companion header exit-code comment block so exit `2` documents
     both timeout and fail-closed escalation (discriminated by `REASON=`), and
     remove the “unrecognized → NEEDS_REVISION safe-fail” wording (AC-7).
