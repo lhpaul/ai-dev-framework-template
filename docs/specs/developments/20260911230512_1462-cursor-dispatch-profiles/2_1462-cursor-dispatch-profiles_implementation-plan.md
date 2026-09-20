@@ -145,7 +145,8 @@ mutation class). No inline product work (AC4, AC19).
 ### Decision 6: Cursor environment defaults in agent-model-config
 
 Add a **Cursor dispatch profiles** subsection listing, per environment ×
-orchestration layer:
+orchestration layer, the profile, the **model assignment**, and the evidence
+class (AC15). Profile and evidence:
 
 | Environment | Portfolio layer | Epic layer | Item layer | Evidence |
 | --- | --- | --- | --- | --- |
@@ -153,8 +154,26 @@ orchestration layer:
 | Cursor Remote Control | Parent orchestrated | Parent orchestrated | Parent orchestrated | Confirmed by observation (recorded failure mode) |
 | Cursor Cloud Agents | Parent orchestrated | Parent orchestrated | Parent orchestrated | Explicit assumption (conservative default per spec) |
 
-Unobserved environments use the more restrictive applicable profile until an
-operator confirms otherwise in run output.
+**Model assignments** (explicit, so implementation does not invent them). The
+tiers come from the existing role table in `agent-model-config.md`: Portfolio
+Orchestrator `economy` / `fast`; Work Item Runner `balanced` / `auto`. The
+epic layer has no dedicated agent file; it is a coordination loop that makes
+delegated merge decisions, so it takes the Work Item Runner tier (`balanced`)
+as its floor. Stage roles (spec, plan, implement, review) always keep their own
+configured models under every profile.
+
+| Environment | Portfolio layer model | Epic layer model | Item layer model | Model evidence |
+| --- | --- | --- | --- | --- |
+| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | Confirmed by observation (agent frontmatter applies on native handoff) |
+| Cursor Remote Control | Absorbing current context runs at the `economy` floor; any session model at or above `economy` is acceptable, `fast` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Confirmed by observation for the profile; **explicit assumption** for the model (the remote session's model is not switched by role frontmatter) |
+| Cursor Cloud Agents | Same as Remote Control portfolio: `economy` floor, `fast` where selectable | Same as Remote Control epic: `balanced` floor, `auto` where selectable | Same as Remote Control item: `balanced` floor, `auto` where selectable | **Explicit assumption** (profile and model both conservative defaults) |
+
+Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
+as a substitute for the floor: if the session model is below the absorbed
+role's tier, the declaration records the shortfall and the operator switches
+the session model before the first mutating action. Unobserved environments use
+the more restrictive applicable profile and the higher of the applicable model
+floors until an operator confirms otherwise in run output.
 
 ### Decision 7: Portfolio batch scheduling unchanged
 
@@ -246,6 +265,15 @@ words and not by pointer alone:
 A mirror that carries the link and omits any of the five does not satisfy the
 acceptance criteria, and the surface guard below must fail it.
 
+The same contract applies, scoped to the layer each surface covers, to the
+orchestration role documents (`orchestrator`, `item-orchestrator`, Codex
+workflow skills), Protocols 90/91/95, `agent-model-config.md`, and
+`.cursor/rules/workflow.mdc`. Each of those entries below must reference the
+mirror content contract and carry the elements relevant to its layer (a
+protocol states evaluation order and stop names at its declaration checkpoint;
+a role document states the postures and unconfirmed-handoff outcome for its
+layer; `workflow.mdc` states all five compactly).
+
 - [ ] `.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
       — full mirror content contract above; `/run-work` additionally states
       scanning is read-only under every profile and that acting on scan results
@@ -260,44 +288,57 @@ acceptance criteria, and the surface guard below must fail it.
       `/run-work` AC12 clause. Maps to AC10, AC11, AC12, AC18, AC20.
 - [ ] `.cursor/agents/orchestrator.md` and `.claude/agents/orchestrator.md` —
       no-onward-handoff behavior: return to invoking context; no inline product
-      work; profile declaration when absorbing portfolio layer. Maps to AC13.
+      work; profile declaration when absorbing portfolio layer; portfolio-layer
+      mirror content (contract elements 1-5, in particular the three postures
+      and the unconfirmed-handoff outcome). Maps to AC10, AC11, AC13, AC20.
 - [ ] `.cursor/agents/item-orchestrator.md` and
       `.claude/agents/item-orchestrator.md` — same for item layer; clarify
       parent-orchestrated stage delegation vs `SUBAGENT_PERMISSION_DENIAL`
-      (Work Item Runner only). Maps to AC13, AC19.
+      (Work Item Runner only); item-layer mirror content (contract elements 1-5). Maps to
+      AC10, AC11, AC13, AC19, AC20.
 - [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md` — canonical-doc
       reference for the Codex item-orchestrator alias, plus the item-layer
-      no-onward-handoff behavior mirrored from the agents above. Maps to AC13,
-      AC18.
+      no-onward-handoff behavior mirrored from the agents above, including the item-layer mirror content
+      contract. Maps to AC10, AC11, AC13, AC18, AC20.
 - [ ] `.codex/skills/workflow-orchestrator/SKILL.md` — **portfolio** layer for
       the Codex discovery path, matching `.cursor/agents/orchestrator.md` and
       `.claude/agents/orchestrator.md`. Required because a Codex user can enter
       portfolio orchestration through this canonical skill directly; omitting it
       would leave that entrypoint with no dispatch-profile declaration contract
       while the plan claims coverage of every orchestration-role entrypoint.
-      Maps to AC13, AC18.
+      Carries the portfolio-layer mirror content contract. Maps to AC10, AC11,
+      AC13, AC18, AC20.
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
       — reference canonical doc when establishing execution arrangement;
       explicit-list declaration checkpoint; pre-branch affected-item string;
-      parent-orchestrated Step 4 fallback cross-reference. Maps to AC5, AC14,
-      AC17, plan gap resolution.
+      parent-orchestrated Step 4 fallback cross-reference; mirror content contract
+      elements 1-5 at the declaration checkpoint (evaluation order, unconfirmed
+      outcomes, exact stop names, invalid cases, postures). Maps to AC5, AC10,
+      AC11, AC14, AC17, AC20, plan gap resolution.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
       — reference at execution arrangement; declaration before first mutation;
       parent-orchestrated item-runner obligations; run summary fields (profile,
-      transitions, absorbed layers, stage handoffs). Maps to AC5, AC9, AC14.
+      transitions, absorbed layers, stage handoffs); mirror content contract elements 1-5 at the declaration
+      checkpoint. Maps to AC5, AC9, AC10, AC11, AC14, AC20.
 - [ ] `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
-      — same reference for epic layer entry. Maps to AC5, AC14.
+      — same reference for epic layer entry, with mirror content contract elements
+      1-5. Maps to AC5, AC10, AC11, AC14, AC20.
 - [ ] `docs/workflow/development-workflow/agent-model-config.md` — Cursor
       environment × orchestration-layer table carrying **three** values per
       combination, per AC15: (a) the applicable profile, (b) the applicable
       **model assignment**, and (c) whether that assignment is confirmed by
-      observation or an explicit assumption. The model assignment is not
+      observation or an explicit assumption. The exact values are fixed in
+      Decision 6 (Desktop: role's own model; Remote Control and Cloud Agents:
+      `economy` floor for portfolio, `balanced` floor for epic and item, with
+      Cloud Agents an explicit assumption for both profile and model);
+      implementation copies them, it does not choose them. The model assignment is not
       optional and is not covered by the existing role-level model table, which
       does not say which assignment an **absorbing current context** uses under
       parent-orchestrated Remote Control or under Cloud Agents — both
       combinations must be answered explicitly. Maps to AC15.
 - [ ] `.cursor/rules/workflow.mdc` — profile declaration requirement + canonical
-      link. Maps to AC16.
+      link + compact mirror content contract (elements 1-5). Maps to AC10, AC11,
+      AC16, AC20.
 - [ ] `docs/workflow/development-workflow/guardrails-enforcement.md` section 4 —
       add `dispatch_profile_declaration_missing` and
       `dispatch_handoff_unavailable`. Each stop message must name (a) the stop
@@ -327,29 +368,76 @@ acceptance criteria, and the surface guard below must fail it.
 ### Workflow tooling / tests
 
 - [ ] `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
-      (**plan-added**; not named in the merged spec) — lightweight regression
-      guard that fails when bounded command adapters, orchestration role agents,
-      protocols 90/91/95, `agent-model-config.md`, `workflow.mdc`, and deprecated
-      `run-item-work` command/skill aliases omit a link to
-      `integrations/cursor-dispatch-profiles.md` or required profile code strings.
-      Rationale: AC18 mirror parity is easy to break across 15+ surfaces; a
-      cheap shell guard catches drift without requiring live Cursor Remote
-      Control. Maps to AC18 regression safety.
+      (**plan-added**; not named in the merged spec) — regression guard with
+      **three independent check branches** over the mirror surfaces (bounded
+      command adapters, deprecated `run-item-work` aliases, orchestration role
+      agents and Codex workflow skills, protocols 90/91/95,
+      `agent-model-config.md`, `workflow.mdc`):
+      1. **Link branch**: the surface links to
+         `integrations/cursor-dispatch-profiles.md`.
+      2. **Profile-string branch**: the surface names the profile code values
+         it is required to carry (`cursor-native-handoff`,
+         `cursor-parent-orchestrated`, `cursor-inline-fallback`).
+      3. **Mirror-content branch (one assertion per contract element)**: every
+         mirror-contract element in **Mirror content contract** must be present,
+         each checked by its own fixed-string assertion so a failure names the
+         missing element. Per-element required tokens:
+         - E1 evaluation order: the phrase `initial handoff` and the phrase
+           `only once initial handoff is confirmed`.
+         - E2 unconfirmed-handoff outcome: the phrase `treated as unavailable`
+           and the token `cursor-parent-orchestrated` in the same sentence
+           (checked by a single-line `grep` on the sentence anchor
+           `conservative default`).
+         - E3 named stops: all three strings `dispatch_profile_declaration_missing`,
+           `dispatch_handoff_unavailable`, and
+           `missing_required_secret_or_permission`.
+         - E4 invalid cases and mismatch boundary: the phrases
+           `invalid profile`, `invalid accountable role`, `invalid posture`, and
+           `coarse-fact mismatch`.
+         - E5 postures: the three posture labels `personally accountable`,
+           `handed off intact`, and `observing`, plus the phrase
+           `only at a read-only checkpoint`.
+         Which elements a given surface class must carry is a table inside the
+         script (command/skill mirrors and `workflow.mdc`: E1-E5; role agents
+         and Codex skills: E2, E3, E5 plus E1/E4 for the layer they cover;
+         protocols 90/91/95: E1, E3, E4, E5; `agent-model-config.md`: profile
+         and model-assignment table rows for all three environments, no E1-E5).
+         Exact phrases are pinned by the canonical doc wording and recorded in
+         one shared token list at the top of the script so canonical wording
+         changes touch one place.
+      Rationale: AC18 mirror parity is easy to break across 15+ surfaces and a
+      link alone does not satisfy AC10/AC11/AC20; a cheap shell guard catches
+      drift without requiring live Cursor Remote Control. Maps to AC10, AC11,
+      AC18, AC20 regression safety.
 - [ ] **Planted-violation proofs — one per guard branch** (same implementation
-      PR). The guard checks two independent conditions, so a single proof can
-      leave the other branch inert while the documented fail/pass cycle still
-      passes. Run both:
-      1. **Link branch**: temporarily remove the canonical link from
-         `.cursor/commands/run-item.md`, run the surface guard, confirm non-zero
-         exit; restore and confirm exit 0.
-      2. **Profile-string branch**: temporarily remove or corrupt a required
-         profile code string in a mirror that keeps its canonical link intact,
-         run the guard, confirm non-zero exit; restore and confirm exit 0. The
-         link must stay intact so that a non-zero exit proves the *string*
-         check fired rather than the link check.
-
-      Record the before/after command output for **both** cycles in the PR test
-      plan.
+      PR). Each branch can go inert while the others keep the suite green, so
+      every branch needs its own proof. For each cycle: apply the edit to a
+      mirror, run the guard and confirm non-zero exit **and that the failure
+      message names that branch/element**, restore, confirm exit 0. Keep every
+      other branch intact in each cycle so a non-zero exit proves the targeted
+      check fired.
+      1. **Link branch**: remove the canonical link from
+         `.cursor/commands/run-item.md`.
+      2. **Profile-string branch**: corrupt one profile code string in a mirror
+         whose link is intact.
+      3. **E1 evaluation order**: delete the `only once initial handoff is
+         confirmed` sentence from `.claude/commands/run-items.md`.
+      4. **E2 unconfirmed outcome**: delete the `conservative default` sentence
+         from `.agents/skills/run-epic/SKILL.md`.
+      5. **E3 named stops**: remove `missing_required_secret_or_permission`
+         from `.cursor/commands/run-work.md`; repeat removing
+         `dispatch_handoff_unavailable` from a protocol (91) to prove the
+         protocol row of the table is live.
+      6. **E4 invalid cases / mismatch boundary**: delete the `coarse-fact
+         mismatch` sentence from `.cursor/rules/workflow.mdc`.
+      7. **E5 postures**: delete the `observing` posture line (and, separately,
+         the `only at a read-only checkpoint` qualifier) from
+         `.cursor/commands/run-item.md`.
+      Record the before/after command output for **every** cycle in the PR test
+      plan. Where a cycle cannot be automated, the implementation PR states so
+      explicitly and substitutes an exhaustive `rg -c` count per contract
+      element across all mirror surfaces (expected count = number of
+      surfaces the table assigns that element to).
 
 ### Database / Backend / Frontend / Infrastructure
 
@@ -414,8 +502,10 @@ detection; stage-role permission denial recovery (#1746); enforcing
 
 **Key scenarios**:
 
-1. Every mirror surface links to `cursor-dispatch-profiles.md` and names the three
-   profile code values consistently (AC18).
+1. Every mirror surface links to `cursor-dispatch-profiles.md`, names the three
+   profile code values consistently (AC18), and carries each required
+   mirror-content element E1-E5 (AC10, AC11, AC20); each element has a
+   planted-violation proof.
 2. Guardrails section 4 lists both new stop conditions with definitions matching
    the spec matrix (AC10–AC12), including coarse-facts mismatch rejection in both
    directions (more and less permissive than assigned outcome).
@@ -432,6 +522,21 @@ detection; stage-role permission denial recovery (#1746); enforcing
 7. Smoke Step 11 (AC20): three accountability postures are defined; `observing`
    is valid only at read-only checkpoints; posture mismatch is treated as a
    missing declaration.
+
+**Canonical-document coverage for AC2, AC3, AC5, AC7, AC8**: the surface guard
+gains a canonical-doc branch, and each requirement has a named check that
+fails when unmet (each with a planted-violation cycle: delete the section,
+confirm non-zero exit naming the check, restore):
+
+| AC | Check name in guard | Fails when the canonical doc lacks |
+| --- | --- | --- |
+| AC2 | `canonical_layers` | the three layer headings (portfolio, epic, item) each stating governing contract, entering commands, and constrained-environment behavior |
+| AC3 | `canonical_matrix` | the perform / hand off / prohibit matrix with one row per layer, each row linking a role contract or protocol |
+| AC5 | `canonical_declared_not_detected` | the decision-indicator list and the sentence that the decision is declared rather than automatically detected |
+| AC7 | `canonical_handoff_metadata` | all handoff fields: `BATCH_CONTEXT`, isolation classification, expected branch, approved base, artifact repository root, mutation class |
+| AC8 | `canonical_workflow_hub` | the workflow_hub artifact-ownership, tracker, and post-merge cleanup notes |
+
+Smoke Step coverage remains the human-facing check for the same ACs.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md`
@@ -453,8 +558,12 @@ Not applicable — no runtime data.
 
 ## Documentation Updates (post-implementation, developer checklist)
 
-- [ ] `changelog.d/1462.added.cursor-dispatch-profiles.md` — implementation PR
-      only; body:
+- [ ] `changelog.d/1462.added.cursor-dispatch-profiles.md` — **plan-added
+      release-note fragment; traces to no AC**. Rationale: repository
+      convention (`AGENTS.md` CHANGELOG & Versioning) requires a
+      `changelog.d/` fragment for feature PRs, and Prepare Release assembles
+      those fragments. It is a process addition, not a scope expansion.
+      Implementation PR only; body:
       `- **Cursor dispatch profiles** (#1462): Document native-handoff, parent-orchestrated, and inline-fallback profiles for Cursor bounded commands with consistent declaration gates and named stop conditions.`
       Do **not** edit `CHANGELOG.md` directly in the implementation PR.
 - [ ] `AGENTS.md` — optional one-line link under Key Documentation to
@@ -469,7 +578,7 @@ Not applicable — no runtime data.
 | --- | --- | --- |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
-| Verification support | Pass | Verification Log + surface guard + planted-violation proof + smoke runbook |
+| Verification support | Pass | Verification Log + surface guard (link, profile string, E1-E5, canonical-doc checks) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
 | Parser-risk addendum | N/A | No new structured-text parser |
 | Concurrent-event-source addendum | N/A | No concurrent event handlers |
@@ -518,8 +627,25 @@ Not applicable — no runtime data.
    manual Remote Control steps as PASS/NOT RUN).
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
-11. **Planted-violation proof** — run surface guard fail/pass cycle documented in
-      **Layer-by-Layer Changes → Workflow tooling**.
+11. **Planted-violation proofs** — run every fail/pass cycle (link, profile
+      string, E1-E5, and canonical-doc checks) documented in
+      **Layer-by-Layer Changes → Workflow tooling** and **Testing Strategy**.
+
+---
+
+## Reversal / Rollback
+
+The change publishes a workflow contract (declaration gate, two new named stop
+conditions) across many mirror surfaces. It is documentation-only with no data
+or runtime state, so reversal is a plain `git revert` of the implementation PR
+merge commit (or of its per-step commits in reverse order, keeping the
+step 2 / step 7 ordering constraint). Consequences to note in the revert PR:
+runs started during the window may have emitted declaration blocks and stop
+names that no longer exist; those are informational text in past run output and
+need no cleanup. If only the surface guard is faulty, revert or fix the script
+alone; docs stand independently. Partial reversal of the guardrails stop
+conditions without the mirrors leaves mirrors naming unknown stops, so revert
+guardrails and mirrors together.
 
 ---
 
