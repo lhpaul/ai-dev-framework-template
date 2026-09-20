@@ -67,7 +67,7 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 | Harness surface | `grep -c '^run_test.*codex' scripts/development-workflow/tests/test-pr-review-loop.sh` | 418 `codex`-named tests (Area 13) |
 | CodeRabbit thread API | `grep -n 'check_unresolved_threads' scripts/development-workflow/pr-review-loop.sh \| head` | CodeRabbit pass uses same GraphQL `isResolved` / `isOutdated` model — candidate for `shared` assessment |
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` | Documents pre-trigger scan and template approval; lacks new escalation/wait reason codes |
-| Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497` — extend in place, no successor needed |
+| Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497`. Today's only definition — the plan **moves** it to `codex-github-evidence-lib.sh` under the same name and repoints `:1497`, rather than extending it in place, so both scripts share one implementation |
 | Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded\\|max_cycles enforcement' scripts/development-workflow/pr-review-loop.sh` | Enforcement block at `pr-review-loop.sh:10958` (`#1502` dual-cap); escalation predicate is `reviewer_loop_cap_exceeded`, reason string `max_cycles_exceeded` |
 | Timeline event fields | `gh api repos/{owner}/{repo}/issues/1768/timeline -H 'Accept: application/vnd.github+json'` | `committed` events carry `sha` and `committer.date`; their own `created_at` is `null`. No `head_ref_force_pushed` events exist in this repo to sample (force-push on shared branches is prohibited), so the force-push event→head join is **unverified** — see source (a) above |
 | Environment-setup outcome | `sed -n '1372,1382p' scripts/development-workflow/codex-github-reviewer.sh` | `codex_return_environment_error` emits `REASON=codex-github-environment-missing` and `exit 2` — a sixth legal exit-`2` reason beyond timeout and the four fail-closed codes |
@@ -146,9 +146,16 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
    or no identifiable matching conversation, the correlation-missing escalation
    takes precedence").
 
-- [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): Extend
-  `codex_review_thread_evidence_counts()` (`codex-github-reviewer.sh:273`,
-  confirmed in the Verification Log) to return structured
+- [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): **Move**
+  `codex_review_thread_evidence_counts()` out of the companion
+  (`codex-github-reviewer.sh:273`, confirmed in the Verification Log) **into**
+  `codex-github-evidence-lib.sh`, keeping the name so the move is traceable.
+  This is a move, not a copy — the Risks table's mitigation is a single shared
+  lib sourced by both and "never a second implementation", so no classification
+  logic may remain in the companion. Update its sole caller
+  (`codex-github-reviewer.sh:1497`) to call the sourced function, and have
+  `run_codex_github_review()` phase 1 in `pr-review-loop.sh` call **this same
+  function**; no second function is introduced. Extend it to return structured
   status on GraphQL failure (`evidence_unavailable_codex_thread_state`) after
   one retry, and to classify each non-outdated Codex thread as
   `applicable_unresolved`, `applicable_resolved`, `cleared`, `outdated`, or
@@ -398,9 +405,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
 - [ ] **`run_codex_github_review()` phase 1** (AC-1–2): Stop using raw
   `check_unresolved_threads` provisional count as the sole `existing_findings`
-  gate. Instead call the shared classifier from
-  `codex-github-evidence-lib.sh` that counts only **applicable unresolved**
-  Codex conversations for the live head (head SHA / review `commit_id`
+  gate. Instead call `codex_review_thread_evidence_counts()` — the shared
+  classifier moved into `codex-github-evidence-lib.sh` by the Bounded evidence
+  query step above, not a new function — which counts only **applicable
+  unresolved** Codex conversations for the live head (head SHA / review `commit_id`
   correlation, not merely `isOutdated`). Resolved, outdated, and
   dismissed-attached threads must not increment blocker counts.
 
