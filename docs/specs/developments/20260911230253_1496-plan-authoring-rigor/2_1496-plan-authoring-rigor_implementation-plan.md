@@ -58,8 +58,12 @@ silently ships drift.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `b0491be3` — every row below re-run at this plan-branch revision (base `origin/develop` tip at re-run: `f1d5021a`) |
+| Repo revision | `git rev-parse --short HEAD` | `b0491be3` — every row below re-run at this plan-branch revision (base `origin/develop` tip at re-run: `f1d5021a`). **Currency obligation (Group H):** this SHA and the PR body's Document Quality Gate record must both name the PR head before `ready-for-human-review`. Commits after `b0491be3` — including `aab8d04f` and `1116141d` — touched plan prose only and changed no verified claim in the rows below; the record must be refreshed to the final head, and re-verified if any later commit touches a verified claim |
 | Spec merged | `test -f docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | present on branch |
+| Protocol 02 review target | `test -f docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md` | Present — verified 2026-09-20. Named in Layer-by-Layer, Files to modify, and Implementation Order step 5 |
+| Protocol 02 authoring target | `test -f docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Present — verified 2026-09-20 |
+| Mirror agent/skill targets | `for f in .claude/agents/tech-lead.md .cursor/agents/tech-lead.md .claude/agents/implementation-plan-reviewer.md .cursor/agents/implementation-plan-reviewer.md .codex/skills/workflow-plan-writer/SKILL.md; do test -f "$f" \|\| echo MISSING:$f; done` | All five present — verified 2026-09-20 |
+| Spec Decision-Gate Consistency Matrix | `grep -n 'Decision-Gate Consistency Matrix' docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | Present as a top-level `## Decision-Gate Consistency Matrix` section at spec line 338 — verified 2026-09-20. Copy verbatim during implementation (Rule 4 backstop) |
 | Rule headings in spec | `awk '/^### Rule [0-9]/{c++} END{print c}' docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | `6` |
 | Existing plan Document Quality Gate | `grep -n 'Document Quality Gate' docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | first hit `441:7. **Document Quality Gate (mandatory — do not skip)**:` — Step 5 item 7; extension point for per-rule record |
 | Plan review checklist location | `awk '/^## Plan Review Checklist/{print NR; exit}' REVIEW.md` | line `117` |
@@ -402,8 +406,31 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   Verification Log).
 - Missing canonical file: fail immediately with a message naming the missing
   path (same as other presence assertions).
-- Add `# covers:` headers for the canonical rules file, Protocol 02, and
-  `REVIEW.md` so change-scoped CI selects the suite.
+- Add `# covers:` headers for **every path the harness asserts**, so
+  change-scoped CI selects the suite whenever any of them drifts. Listing only
+  a subset means a drifting mirror is caught solely by the nightly full run,
+  while the Risks table claims per-change CI enforcement — the guarantee and
+  the mechanism must agree. The full list:
+  - `docs/workflow/development-workflow/plan-authoring-rigor-rules.md`
+  - `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
+  - `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
+  - `REVIEW.md`
+  - `docs/workflow/development-workflow/implementation-plan-template.md`
+  - `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`
+  - `.claude/agents/implementation-plan-reviewer.md`,
+    `.cursor/agents/implementation-plan-reviewer.md`
+  - `.codex/skills/workflow-plan-writer/SKILL.md`
+
+- **Harness assertions must cover every Mirror-surfaces row.** The table above
+  requires implementation to update all seven rows, so the harness asserts all
+  seven. Three had no drift assertion and must gain one — this is exactly the
+  drift the feature exists to prevent:
+  - `.codex/skills/workflow-plan-writer/SKILL.md`
+  - `docs/workflow/development-workflow/implementation-plan-template.md`
+  - `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
+
+  Any row deliberately left unasserted must carry an explicit out-of-scope
+  rationale in this plan; silence is not an acceptable record.
 
 **Planted-violation proof (implementation PR evidence)** — required before the
 mirror test is considered done:
