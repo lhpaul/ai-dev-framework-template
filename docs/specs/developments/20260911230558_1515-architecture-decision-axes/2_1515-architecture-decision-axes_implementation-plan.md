@@ -22,7 +22,8 @@ the runner-facing agent/skill mirrors — without changing when
 **Rationale**: No application code or scripts change runtime behavior; the work
 is a broad documentation-and-protocol alignment across the canonical page,
 three orchestration protocols, stop-message contract text, README indexing,
-`REVIEW.md`, and nine agent/skill surfaces. The spec's Decision-Gate
+`REVIEW.md`, and thirteen agent/skill surfaces (plus three conditional
+orchestrator files). The spec's Decision-Gate
 Consistency Matrix is already authoritative for behavior; this plan adds the
 concrete file names, PR durability marker, report outline, and the two
 spec-stage gap resolutions required before implementation.
@@ -351,7 +352,7 @@ Changes; no additional `docs/project/` files expected.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all nine paths |
+| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all thirteen mandatory paths (plus the three conditional orchestrator files) |
 | Protocol 91 PR comment step conflicts with existing comment templates | Low | Med | Reuse upsert marker pattern from other workflow comments; idempotent section heading |
 | Runners treat "all settled" continuation as suppressing stops | Med | High | Canonical page + Protocol 91 repeat spec's "trigger not met" wording prominently |
 | Over-long duplication of spec matrix in protocols | Med | Low | Canonical page + pointer; protocols state requirement and durability only |
@@ -429,8 +430,12 @@ bash scripts/development-workflow/tests/test-worktree-recipe.sh
 | `.codex/skills/workflow-reviewer-loop/SKILL.md` | Edit |
 | `.cursor/agents/developer.md` | Edit |
 | `.claude/agents/developer.md` | Edit |
+| `.codex/skills/workflow-implementer/SKILL.md` | Edit |
+| `.cursor/agents/code-reviewer.md` | Edit |
+| `.claude/agents/code-reviewer.md` | Edit |
+| `.codex/skills/workflow-code-reviewer/SKILL.md` | Edit |
 | `.cursor/agents/orchestrator.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
 | `.claude/agents/orchestrator.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
 | `.codex/skills/workflow-orchestrator/SKILL.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
 | `scripts/development-workflow/tests/test-worktree-recipe.sh` | Edit |
-| `changelog.d/1515.feature.architecture-decision-axes.md` | Create (implementation PR) |
+| `changelog.d/1515.added.architecture-decision-axes.md` | Create (implementation PR) |

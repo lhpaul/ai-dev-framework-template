@@ -104,6 +104,10 @@ to the canonical page:
 - [ ] `.codex/skills/workflow-reviewer-loop/SKILL.md`
 - [ ] `.cursor/agents/developer.md`
 - [ ] `.claude/agents/developer.md`
+- [ ] `.codex/skills/workflow-implementer/SKILL.md`
+- [ ] `.cursor/agents/code-reviewer.md`
+- [ ] `.claude/agents/code-reviewer.md`
+- [ ] `.codex/skills/workflow-code-reviewer/SKILL.md`
 - [ ] `.cursor/agents/orchestrator.md` — Protocol 90 parity sentence present, or
       documented as already covered by protocol pointer (Layer H criterion)
 - [ ] `.claude/agents/orchestrator.md` — same criterion
