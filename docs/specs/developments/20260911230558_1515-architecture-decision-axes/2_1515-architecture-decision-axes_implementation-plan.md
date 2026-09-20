@@ -56,7 +56,7 @@ update.
 | Spec merged | `gh pr view 1735 --json state,mergedAt,baseRefName` | Merged to `develop` (handoff: spec PR #1735 merged) |
 | No existing canonical escalation page | `ls docs/workflow/development-workflow/architecture-decision-escalation.md 2>/dev/null \|\| echo absent` | Absent — net-new canonical surface |
 | Current `architecture_decision` mentions | `grep -rl architecture_decision docs/workflow .ai-dev-workflow.yaml` | `guardrails.md`, `guardrails-enforcement.md`, `README.md`, `.ai-dev-workflow.yaml`, plus this spec only |
-| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All nine `OK:` (orchestrator batch agents verified separately in Layer H) |
+| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md .codex/skills/workflow-implementer/SKILL.md .cursor/agents/code-reviewer.md .claude/agents/code-reviewer.md .codex/skills/workflow-code-reviewer/SKILL.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All thirteen `OK:` — verified 2026-09-20, every path exists (orchestrator batch agents verified separately in Layer H) |
 | PR marker upsert precedent | `grep -n find_marker_comment_id scripts/development-workflow/run-epic-audit-trail.sh \| head` | Existing find-by-marker-then-PATCH-or-POST helper used for durable PR comments |
 | Stop-surface audit helper | `grep -n audit_stop_surfaces scripts/development-workflow/tests/test-worktree-recipe.sh` | Existing audit covers `guardrails-enforcement.md` stop contract — extend to reference the new canonical page |
 
@@ -133,10 +133,11 @@ records only concrete names and surfaces deferred to the plan:
 | Gate inputs | Allowed outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
 | Runner about to stop under `architecture_decision` | Escalated with axis-separated report **or** stop recategorized when analysis shows trigger not met | Complete coverage analysis per canonical page; attach report; stop **or** apply settled lines and continue | Protocol 91, item-orchestrator agents/skills, canonical page | Spec worked example: settled reset boundary + open cumulative-effort axis |
-| Determinable citation offered as support (report or review thread) | Declaration attached | State `Conforms` / `Departs` / `Not yet implemented` before treating citation as support | Protocol 93, developer agents, canonical page | Departs citation not offered as support |
+| Determinable citation offered as support (report or review thread) | Declaration attached | State `Conforms` / `Departs` / `Not yet implemented` before treating citation as support | Protocol 93, developer **and code-reviewer** agents/skills, canonical page | Departs citation not offered as support |
 | Citation conformance cannot be determined | Incomplete escalation | Plain statement; no declaration enum value | Canonical page + malformed-input rows | — |
 | Reviewer/human raised substance; runner cannot resolve | Incomplete escalation | Substance confirmation request; coverage verdict unchanged | guardrails-enforcement §5 + canonical page | Spec gap 1 resolution |
-| Every axis settled, determined declarations, no disputes | Not an architecture decision | Continue without `architecture_decision` stop | Protocol 91 stop-and-name section | Spec matrix "No escalation" rows |
+| Every axis settled, every citation `Conforms` **or** `Not yet implemented`, no disputes | Not an architecture decision | Continue without `architecture_decision` stop | Protocol 91 stop-and-name section | Spec matrix "No escalation" rows |
+| Every axis settled but some citation declares `Departs` | Not eligible for the no-escalation path | Correct the behavior to conform where that is the obvious correction (the axis is then settled by the correction), otherwise raise the departure as its own genuinely open axis and stop | Protocol 91 stop-and-name section, canonical page | Spec: a `Departs` citation "is never presented as support for the current behavior" |
 
 ---
 
@@ -255,6 +256,22 @@ Each file gets a short, direct requirement plus a link to the canonical page
 - [ ] `.codex/skills/workflow-reviewer-loop/SKILL.md`
 - [ ] `.cursor/agents/developer.md`
 - [ ] `.claude/agents/developer.md`
+- [ ] `.codex/skills/workflow-implementer/SKILL.md` (completes the developer
+      triple — its cursor and claude counterparts are listed above)
+- [ ] `.cursor/agents/code-reviewer.md`
+- [ ] `.claude/agents/code-reviewer.md`
+- [ ] `.codex/skills/workflow-code-reviewer/SKILL.md`
+
+The `code-reviewer` mirrors are **required, not optional**: Protocol 91
+dispatches `code-reviewer` during implementation review-fix cycles and makes
+replying to each addressed inline comment mandatory
+(`91-orchestrate-work-protocol.md`, "Resolve inline review comments"). A
+review-thread reply is one of the two surfaces this feature covers — the spec's
+Business Rules say a declaration is required on "every citation the runner
+offers in an escalation report **or in a reply on a review thread**". Updating
+only the `developer` mirrors would leave the agents that actually post those
+replies free to cite a specification line as support without declaring
+`Conforms` / `Departs` / `Not yet implemented`.
 
 Orchestrator batch agents (`.cursor/agents/orchestrator.md`,
 `.claude/agents/orchestrator.md`, `.codex/skills/workflow-orchestrator/SKILL.md`)
@@ -319,7 +336,7 @@ Not applicable — no database or runtime fixtures.
 
 Implementation PR (not this plan PR) must add a changelog fragment only:
 
-- [ ] `changelog.d/1515.feature.architecture-decision-axes.md` with body:
+- [ ] `changelog.d/1515.added.architecture-decision-axes.md` with body:
   `- **Axis-separated architecture decision escalations** (#1515): require
     per-axis coverage analysis and conformance declarations before
     architecture_decision stops; canonical guidance in
