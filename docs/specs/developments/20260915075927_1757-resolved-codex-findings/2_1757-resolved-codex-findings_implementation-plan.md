@@ -128,12 +128,20 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
    id = comment `id`. Review-body-only blocking sections with **no** matching
    inline comment id in the index are **correlation-missing** findings (escalate
    `codex_finding_thread_correlation_missing`), including top-level-only blocking
-   text like `codex_cleared_thread_top_level_blocker`. **Exception (orthogonal):**
-   GitHub `state == CHANGES_REQUESTED` on a current-head submitted review is an
-   actionable blocker by structured state even when no inline finding maps to a
-   thread — but if that same review body also contains a separate uncorrelated
-   finding marker, correlation-missing escalation takes precedence (spec matrix
-   row).
+   text like `codex_cleared_thread_top_level_blocker`. **Exception (orthogonal)
+   — canonical wording, restated verbatim in the "CHANGES_REQUESTED +
+   correlation-missing" step below:** GitHub `state == CHANGES_REQUESTED` on a
+   current-head submitted review is an actionable blocker by structured state
+   when the review carries **no finding requiring correlation at all** — the
+   structured state alone is the blocker, and the absence of inline findings is
+   not correlation-missing. If the review carries **any** finding that lacks a
+   stable thread identifier or has no identifiable matching conversation,
+   `codex_finding_thread_correlation_missing` escalation takes precedence over
+   the structured blocker — including when *every* such finding lacks thread
+   identity, not only when one lacks it alongside a correlated one (spec: "when
+   such a review also carries a finding with no stable review-thread identifier
+   or no identifiable matching conversation, the correlation-missing escalation
+   takes precedence").
 
 - [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): Extend
   `codex_review_thread_evidence_counts()` (`codex-github-reviewer.sh:273`,
@@ -277,9 +285,13 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `1`. `CHANGES_REQUESTED` submitted review remains exit `1` even if every
   thread is resolved.
 
-- [ ] **CHANGES_REQUESTED + correlation-missing** (AC-7, matrix row): When
-  structured state is `CHANGES_REQUESTED` and any finding lacks thread identity,
-  escalate `codex_finding_thread_correlation_missing` (precedence over structured
+- [ ] **CHANGES_REQUESTED + correlation-missing** (AC-7, matrix row) —
+  canonical wording, identical to the Finding-extraction exception above: a
+  `CHANGES_REQUESTED` current-head review carrying **no finding requiring
+  correlation at all** is an actionable blocker by structured state alone. If it
+  carries **any** finding lacking a stable thread identifier or an identifiable
+  matching conversation — including when *every* finding lacks one — escalate
+  `codex_finding_thread_correlation_missing` (precedence over the structured
   blocker).
 
 ### Script layer — `pr-review-loop.sh`
@@ -555,6 +567,18 @@ Protocol 93, `codex-github.md`, PR summary.
 | Fail-closed escalation tiers | `escalate` + spec reason code | Human review |
 | Cycle cap exhausted after evidence requires another cycle | Escalate | Human review |
 | Canonical clean in final allowed cycle | Clean | Continue readiness |
+
+**Deliberately deferred to the spec** (abbreviated mirror — these outcomes are
+*not* omitted by oversight and must still be implemented):
+
+- Availability hard stop (usage-limit / account-not-connected) → exit `3`
+  unavailable, ranked below every fail-closed escalation and below an actionable
+  blocker (see the Decision-function tie precedence above).
+- Acknowledgement-only wait → exit `4`,
+  `REASON=codex-github-reaction-without-review` (key scenario 10, AC-9), which
+  takes precedence over `codex-github-review-pending`.
+- Environment-setup supersession (BR-8): retained through the poll window,
+  superseded by any strictly newer terminal or review evidence.
 
 Full row detail, examples, and precedence ordering remain in the spec; the
 implementation plan’s classifier step implements that table verbatim.
