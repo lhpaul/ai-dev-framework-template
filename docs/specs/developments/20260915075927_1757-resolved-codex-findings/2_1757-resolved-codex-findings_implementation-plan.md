@@ -43,7 +43,8 @@ finding yields `waiting_on_reviewer` / `codex-github-review-pending`, not
 review-head SHA correlation, submitted-review GitHub state, root-comment marker
 grammar, freshness boundaries, evidence-window attribution, tie precedence,
 cycle-limit interaction, and four new escalation reason codes. The companion
-script is already ~2.5k lines with ~150+ harness cases; this item extends the
+script is already ~2.5k lines, and Area 13 of `test-pr-review-loop.sh` carries
+418 `codex`-named `run_test` cases (see Verification Log); this item extends the
 classifier and loop adapter without changing rate limits or polling budgets.
 CodeRabbit reuse is assessment-only (AC-16).
 
@@ -66,6 +67,9 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 | Harness surface | `grep -c '^run_test.*codex' scripts/development-workflow/tests/test-pr-review-loop.sh` | 418 `codex`-named tests (Area 13) |
 | CodeRabbit thread API | `grep -n 'check_unresolved_threads' scripts/development-workflow/pr-review-loop.sh \| head` | CodeRabbit pass uses same GraphQL `isResolved` / `isOutdated` model — candidate for `shared` assessment |
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` | Documents pre-trigger scan and template approval; lacks new escalation/wait reason codes |
+| Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497` — extend in place, no successor needed |
+| Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded\\|max_cycles enforcement' scripts/development-workflow/pr-review-loop.sh` | Enforcement block at `pr-review-loop.sh:10958` (`#1502` dual-cap); escalation predicate is `reviewer_loop_cap_exceeded`, reason string `max_cycles_exceeded` |
+| Cycle-cap defaults | `sed -n '11201,11250p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_resolve_max_cycles` defaults to **10** (`:11211`, `:11216`); `reviewer_loop_resolve_max_total_cycles` defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` still says “default 3” and is stale — do not encode it |
 
 ---
 
@@ -132,7 +136,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
    row).
 
 - [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): Extend
-  `codex_review_thread_evidence_counts()` (or successor) to return structured
+  `codex_review_thread_evidence_counts()` (`codex-github-reviewer.sh:273`,
+  confirmed in the Verification Log) to return structured
   status on GraphQL failure (`evidence_unavailable_codex_thread_state`) after
   one retry, and to classify each non-outdated Codex thread as
   `applicable_unresolved`, `applicable_resolved`, `cleared`, `outdated`, or
@@ -168,7 +173,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   3. **A comment's window** is `[max(previous head's last review trigger,
      previous head's transition instant, PR created_at), next head's transition
      instant)`, per spec Business Rule "Every Codex root comment belongs to
-     exactly one head's evidence window".
+     exactly one head's evidence window". **The live head's window is
+     open-ended**: no later head exists, so it has no upper bound and a missing
+     next-transition event is the expected state for it, never an indeterminate
+     one. Only a *superseded* head requires an upper bound.
 
   **Mandatory escalation cases.** Source (b) is a commit-authoring timestamp,
   not a push timestamp, so it is a lower bound on when `H` became current. The
@@ -176,14 +184,19 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `evidence_unavailable_codex_thread_state`, do not guess — whenever any of:
   - the timeline read fails or is truncated after one retry;
   - no `head_ref_force_pushed` or `committed` event introduces `H`;
-  - the comment's `created_at` falls at or after the boundary derived from (b)
-    but at or before the next head's trigger, i.e. the commit-date lower bound
-    does not strictly separate the comment from the adjacent window; or
+  - **(superseded heads only)** the comment's `created_at` falls at or after the
+    boundary derived from (b) but at or before the next head's trigger, i.e. the
+    commit-date lower bound does not strictly separate the comment from the
+    adjacent window; or
   - two candidate boundaries share the comment's timestamp second and no
     comment-ID ordering resolves them.
 
-  Only a comment that both source (a), or an unambiguous source (b), places
-  strictly inside exactly one window is attributed to that head.
+  A comment is attributed to a head when source (a), or an unambiguous source
+  (b), places it in exactly one window: strictly inside for a superseded head,
+  or at/after the lower bound for the live head's open-ended window. Because the
+  live head has no upper bound, the third case above cannot arise for it — a
+  comment at or after the live head's lower bound is attributed to the live
+  head, not escalated.
 
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
@@ -264,7 +277,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   codes to `RESULT=escalate` (not `timeout` unless reason says so).
 
 - [ ] **Cycle-limit interaction** (AC-5–6): In the reviewer-loop cap check
-  (`reviewer_loop_cap_exceeded` / max_cycles block ~10958+), evaluate current
+  (`reviewer_loop_cap_exceeded`, the enforcement block confirmed in the
+  Verification Log), evaluate current
   head evidence **before** escalating for exhausted allowance: canonical terminal
   clean evidence in the final permitted cycle proceeds to readiness; exhausted
   allowance with cleared-findings retrigger or remaining actionable findings
