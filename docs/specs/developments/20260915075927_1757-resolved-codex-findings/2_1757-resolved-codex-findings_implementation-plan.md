@@ -406,10 +406,24 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `ffff…` with resolved non-outdated thread + current-head COMMENTED review body
   listing blocking markers (cleared-findings retrigger path).
 
-- [ ] **Matrix spot checks** (AC-7–14): Add focused mock-`gh` cases (one per
-  escalation reason, cleared-findings wait vs clean tie, stale-head malformed
-  ignored, `CHANGES_REQUESTED` with all threads resolved, empty reviewed-commit
-  field, freshness-failing marker-pinned comment). Update existing Area 13 tests
+- [ ] **AC-11 — empty vs absent `Reviewed commit` field**: two cases, since the
+  two shapes diverge. A root comment carrying the field **with no value**
+  escalates `codex_current_verdict_malformed_revision_marker`; a root comment
+  that **never carries the field** is acknowledgement evidence and takes the
+  wait path (`codex-github-reaction-without-review`). Named explicitly so the
+  pair is not read as one case.
+
+- [ ] **AC-12 — freshness-failing marker-pinned comment**: a root comment whose
+  well-formed marker names the live head but falls outside the freshness
+  boundary is neither acknowledgement nor clean evidence. Expect
+  `waiting_on_reviewer` / `REASON=codex-github-review-pending` — explicitly
+  **not** an escalation, which is the easy wrong answer here.
+
+- [ ] **Matrix spot checks** (AC-7–10, 13–14 — AC-11 and AC-12 have their own
+  rows above; this bullet covers the remainder of the range, not all of it): Add
+  focused mock-`gh` cases (one per escalation reason, cleared-findings wait vs
+  clean tie, stale-head malformed ignored, `CHANGES_REQUESTED` with all threads
+  resolved). Update existing Area 13 tests
   that expect `NEEDS_REVISION (unrecognized response format — safe-fail)` to
   expect escalate / `codex_current_verdict_unrecognized` instead, and update
   `codex_cleared_thread_top_level_blocker_*` expectations from exit `1` /
