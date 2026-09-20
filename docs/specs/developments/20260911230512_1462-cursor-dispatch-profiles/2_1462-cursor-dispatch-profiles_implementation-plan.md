@@ -40,20 +40,24 @@ in the same implementation PR so they no longer assert an unresolved gap.
 
 ## Verification Log
 
-Re-run `2026-09-18` at plan-review fix (repo `6be6ad46`). `rg` patterns use
-Rust-regex alternation (`a|b`), not grep-BRE `\|` (which matches a literal pipe).
+Re-run `2026-09-20` against pre-log head **`bb80c6ff`**. A log committed inside
+the same commit cannot name its own SHA, so the evidence cites the parent
+(pre-log) head that the checks actually ran against; the commit carrying this
+log is its child and changes only plan and smoke-runbook prose. Patterns are
+extended-regex alternation (`grep -E 'a|b'`); the recorded results were
+produced with `grep -rlE` because the local `rg` is shadowed.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `6be6ad46` (plan-review fix baseline; earlier plan draft recorded `32605700`) |
-| Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` |
-| Profile strings outside development folder | `rg -l 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' --glob '!docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/*'` | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Plan Ready smoke runbook; no production mirror surfaces yet) |
-| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits, re-run 2026-09-18: **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). Literal extras vs the **15** Files-to-modify mirrors: the four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
-| Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present |
-| Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` |
-| Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` — batch-context marker enforcement; out of scope here |
-| Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` — stage-role harness permission denial; out of scope here |
-| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches (expected until implementation) |
+| Repo revision | `git rev-parse --short HEAD` | `bb80c6ff` (pre-log head; earlier runs recorded `6be6ad46`, `32605700`). `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` is **not** satisfied now and remains an implementation-start check (rebase or merge `develop` before implementing) |
+| Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` (re-run `2026-09-20`) |
+| Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (unchanged at `bb80c6ff`) |
+| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits, re-run 2026-09-20 at `bb80c6ff` (`grep -rl`): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). Literal extras vs the **15** Files-to-modify mirrors: the four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
+| Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present (re-run `2026-09-20`) |
+| Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` (re-run `2026-09-20`) |
+| Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` (re-run `2026-09-20`) — batch-context marker enforcement; out of scope here |
+| Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` (re-run `2026-09-20`) — stage-role harness permission denial; out of scope here |
+| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches at `bb80c6ff` (expected until implementation; `grep -E` count `0`) |
 
 ---
 
@@ -139,7 +143,7 @@ edit that changes tracked artifacts, tracker mutation, PR open). For
 Under `cursor-parent-orchestrated`, the current context performs every
 orchestration obligation from the absorbed role's agent + protocol surfaces and
 **delegates** spec/plan/implement/review work to stage roles with full handoff
-metadata (`BATCH_CONTEXT`, isolation, branch, base, artifact repo root,
+metadata (`BATCH_CONTEXT`, isolation, **worktree path**, branch, base, artifact repo root,
 mutation class). No inline product work (AC4, AC19).
 
 ### Decision 6: Cursor environment defaults in agent-model-config
@@ -409,6 +413,18 @@ layer; `workflow.mdc` states all five compactly).
       link alone does not satisfy AC10/AC11/AC20; a cheap shell guard catches
       drift without requiring live Cursor Remote Control. Maps to AC10, AC11,
       AC18, AC20 regression safety.
+- [ ] **Executable path simulation** (same test file, branch
+      `simulate_bounded_paths`; supports smoke Steps 12-14). For each bounded
+      path (`/run-item`, `/run-items` explicit list, `/run-epic`) the guard
+      replays a table of declaration scenarios (native handoff, parent
+      orchestrated, inline fallback with read-only checkpoint, missing
+      declaration, invalid profile, posture mismatch) against the decision-gate
+      rows in the canonical doc and guardrails section 4, asserting the terminal
+      outcome (declared-and-proceed, `dispatch_handoff_unavailable`,
+      `dispatch_profile_declaration_missing`, or absorbed re-declaration) and,
+      for the pre-branch explicit-list case, the single
+      `explicit_list_invocation_targets=#N1,#N2,...` affected-item string. This
+      is the executable equivalent when live Remote Control is unavailable.
 - [ ] **Planted-violation proofs — one per guard branch** (same implementation
       PR). Each branch can go inert while the others keep the suite green, so
       every branch needs its own proof. For each cycle: apply the edit to a
@@ -533,7 +549,7 @@ confirm non-zero exit naming the check, restore):
 | AC2 | `canonical_layers` | the three layer headings (portfolio, epic, item) each stating governing contract, entering commands, and constrained-environment behavior |
 | AC3 | `canonical_matrix` | the perform / hand off / prohibit matrix with one row per layer, each row linking a role contract or protocol |
 | AC5 | `canonical_declared_not_detected` | the decision-indicator list and the sentence that the decision is declared rather than automatically detected |
-| AC7 | `canonical_handoff_metadata` | all handoff fields: `BATCH_CONTEXT`, isolation classification, expected branch, approved base, artifact repository root, mutation class |
+| AC7 | `canonical_handoff_metadata` | one assertion per handoff field, failing if any is absent (each field gets a planted-violation cycle, including worktree path): `BATCH_CONTEXT`, isolation classification (`isolation`), **expected worktree path** (spec AC7 and Protocol 91 isolation handoff), expected branch, approved base, artifact repository root, mutation class |
 | AC8 | `canonical_workflow_hub` | the workflow_hub artifact-ownership, tracker, and post-merge cleanup notes |
 
 Smoke Step coverage remains the human-facing check for the same ACs.
@@ -576,6 +592,7 @@ Not applicable — no runtime data.
 
 | Check | Result | Notes |
 | --- | --- | --- |
+| Evidence currency | Pass | Verification Log re-run `2026-09-20` against pre-log head `bb80c6ff` (log's own commit is its child; only prose changed); the one non-passing check (`develop` ancestry) is recorded, not hidden |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass | Verification Log + surface guard (link, profile string, E1-E5, canonical-doc checks) + per-branch planted-violation proofs + smoke runbook |

@@ -154,8 +154,62 @@
 
 ---
 
+### Step 12: `/run-item` terminal behavior at current head
+
+**Maps to**: AC6, AC9, AC10, AC17, AC20
+
+1. Record the current head SHA (`git rev-parse HEAD`).
+2. Either run `/run-item` in a constrained (or simulated no-handoff) environment
+   on a doc-only target, or run
+   `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
+   and confirm its `simulate_bounded_paths` branch passes the `/run-item`
+   scenarios.
+3. Record the declaration block emitted and the terminal outcome (proceeds,
+   `dispatch_handoff_unavailable`, or `dispatch_profile_declaration_missing`).
+
+**Expected result**: Terminal outcome matches the canonical decision-gate row for the declared profile; evidence names the head SHA.
+
+### Step 13: `/run-items` explicit-list terminal behavior at current head
+
+**Maps to**: AC9, AC10, AC14, AC17
+
+1. Record the current head SHA.
+2. Run `/run-items #A #B` with no declaration in a throwaway clone, or run the
+   `simulate_bounded_paths` branch for the `/run-items` scenarios.
+3. Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
+   reported for the whole invocation with affected item
+   `explicit_list_invocation_targets=#A,#B`, before any branch or artifact is
+   created.
+
+**Expected result**: Single invocation-level stop with the ordered target string; no per-target stops; no mutation.
+
+### Step 14: `/run-epic` terminal behavior at current head
+
+**Maps to**: AC9, AC10, AC17
+
+1. Record the current head SHA.
+2. Run `/run-epic --items #A,#B` under a Parent orchestrated declaration (or the
+   `simulate_bounded_paths` branch for `/run-epic`).
+3. Confirm the epic layer is declared absorbed, stage work is delegated with
+   handoff metadata, and an invalid or missing declaration stops with
+   `dispatch_profile_declaration_missing`.
+
+**Expected result**: Terminal condition or named stop matches the canonical doc; evidence names the head SHA.
+
+---
+
 ## Pass criteria
 
-All automated steps pass; manual steps 7–9 are **PASS** or documented **NOT RUN**
-with reason (e.g. Remote Control unavailable in CI). Steps 10–11 must **PASS**
-(documentation assertions; no live Cursor environment required).
+- Steps 1-6 and 10-11 must **PASS** (documentation and automated assertions; no
+  live Cursor environment required).
+- Steps 12, 13, and 14 must each **PASS** with recorded evidence naming the head
+  SHA under test. For each bounded path (`/run-item`, `/run-items`, `/run-epic`)
+  the evidence is either a live constrained-environment run or the executable
+  `simulate_bounded_paths` result for that path. **NOT RUN is not acceptable**
+  for these three steps: if live Remote Control is unavailable, the executable
+  simulation is mandatory, not optional.
+- Manual live steps 7-9 (Desktop, Remote Control, inline fallback) may be
+  documented **NOT RUN** with a reason, provided Steps 12-14 passed via
+  simulation at the same head SHA.
+- Evidence recorded against an older head than the one being merged is stale and
+  must be re-run.
