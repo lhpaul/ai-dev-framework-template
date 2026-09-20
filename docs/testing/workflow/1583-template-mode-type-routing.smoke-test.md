@@ -179,7 +179,7 @@ this repository.
   docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 ```
 
-**Expected**: All three commands exit 0 (no matches). Any match = smoke failure.
+**Expected**: All four commands exit 0 (no matches). Any match = smoke failure.
 
 ---
 

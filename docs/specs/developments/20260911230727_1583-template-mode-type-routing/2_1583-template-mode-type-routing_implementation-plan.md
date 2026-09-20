@@ -49,6 +49,11 @@ scope and must not be bundled into this implementation PR.
 | Routing tables (docs) | `rg 'Backlog \\(Workflow\\)' docs/workflow/development-workflow/protocols/{90,91}-*.md` | Both still describe infer-path / batch-start for Workflow |
 | Agent guidance | `rg 'Workflow' AGENTS.md` (Tracker Classification) | Still recommends Workflow for framework/process/tooling items |
 | Retrospective create path | `06-retrospective-protocol.md` | Instructs `update_tracker_type_best_effort … Workflow` |
+| Mirror-check anchor literal 1 | `grep -c 'Use `Workflow` for' AGENTS.md` | **1 match** — verified 2026-09-20 |
+| Mirror-check anchor literal 2 | `grep -rn 'update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"' .` | **2 matches** — `integrations/github-projects.md:202`, `protocols/06-retrospective-protocol.md:510`; verified 2026-09-20. Note the retrospective match is at `:510`, not the `:124` lookup line |
+| Mirror-check anchor literal 3 | `grep -c 'Route by the brief' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | **1 match** — verified 2026-09-20 |
+| Mirror-check anchor literal 4 | `grep -ric 'route by brief' docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | **1 match** — verified 2026-09-20 (case-insensitive; the tree's casing differs from the plan's earlier lowercase rendering) |
+| `list_open_workflow_type_issues` call sites | `grep -rn 'list_open_workflow_type_issues' . --exclude-dir=.git` | Definition + 2 protocol snippets + 2 harness assertions + 2 doc references + 1 smoke runbook — enumerated in Enforcement point 2; verified 2026-09-20 |
 | Design assets | Spec folder + issue #1583 | No UI scope |
 
 ---
@@ -130,8 +135,30 @@ scope and must not be bundled into this implementation PR.
     lookup completed and the board has none; `unavailable` when the lookup could not be
     performed (non-empty `REASON`, preserve stderr detail). Never emit `empty` for a failed
     read.
-  - Keep `list_open_workflow_type_issues` as the consumer-mode primitive; framework mode
-    may call it internally only after changing filter semantics behind the wrapper.
+  - **Normative location of the mode branch — the wrapper, not the lib primitive.**
+    `list_open_workflow_type_issues` keeps **Workflow-only filtering in both modes** and is
+    not changed by this item. The framework-vs-consumer branch lives **entirely** in
+    `list_open_framework_items.sh`, which in framework mode performs its own all-open
+    non-terminal lookup rather than delegating, and in consumer mode delegates to the
+    unchanged primitive. Stated here, in the Decision Matrix, and in Reversal (1) — all
+    three must agree.
+
+    Rationale: this repository **is** framework mode, so flipping the lib primitive would
+    silently change every existing direct caller. Enumerated call sites of
+    `list_open_workflow_type_issues` as of 2026-09-20:
+
+    | Call site | Kind |
+    | --- | --- |
+    | `scripts/development-workflow/workflow-lib.sh:3265` | Definition |
+    | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md:393` | Protocol snippet — repointed to the wrapper by this item |
+    | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md:124` | Protocol snippet — repointed to the wrapper by this item |
+    | `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh:630,663` | Harness — asserts Workflow-only filtering; **must keep passing unchanged** |
+    | `docs/workflow/development-workflow/integrations/github-projects.md:203,212` | Documentation of the primitive |
+    | `docs/testing/workflow/tracker-type-field-classification.smoke-test.md:60` | Smoke runbook |
+
+    The two harness assertions are the decisive evidence: they encode Workflow-only
+    filtering today, and under the rejected reading they would silently begin exercising
+    all-open-items semantics in this repo while still passing for the wrong reason.
 - [ ] Update protocols `05` and `06` snippets to call `list_open_framework_items.sh` (not the
   raw lib function). For framework-mode `STATUS=unavailable`, each protocol must:
   1. **Continue** the release / retrospective flow (do not treat unavailable as a hard stop).
@@ -183,9 +210,13 @@ scope and must not be bundled into this implementation PR.
     (**pinned**; do not rename) plus stable reason fields
     so `workflow-batch-lanes.sh` categorizes the item under `HELD - not included in proposed
     batch` without stopping the scan.
-  - **Mid-pipeline items**: gate returns `pass` when status is past Backlog even if Type is
-    still `Workflow` (reuse the same status reconciliation `workflow-next-action.sh` already
-    uses).
+  - **Mid-pipeline items**: gate returns `pass` when status reconciles to **any** value past
+    Backlog even if Type is still `Workflow` — not only `Spec Ready` / `Writing Plan` /
+    `In Development`, but equally `In Review`, `Blocked`, `Ready for Release`, `Done`, and any
+    other reconcilable non-Backlog status (reuse the same status reconciliation
+    `workflow-next-action.sh` already uses). Only Backlog stops or holds; only an
+    **unreconcilable** status fails closed as `status_unknown`. No reconcilable status may
+    fall through to undefined behavior.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` (or dedicated
   gate tests) to prove a Backlog + Workflow item is `held` with misclassification reason while
   a sibling Feature item remains `proposed_batch`.
@@ -274,6 +305,7 @@ code/tests:
 | Framework | Workflow | Backlog | single | Stop | `missing_tracker_context`; re-classify |
 | Framework | Workflow | Backlog | scan | Hold | Report in HELD / evaluated-not-proposed |
 | Framework | Workflow | Spec Ready / Writing Plan / In Development | any | Pass | Continue current pipeline |
+| Framework | Workflow | any other reconcilable status past Backlog (e.g. `In Review`, `Blocked`, `Ready for Release`, `Done`) | any | Pass | Continue current pipeline. The misclassification gate exists to stop work being **started** on a mis-typed Backlog item; an item already past Backlog has started, so re-classification is a tracker-hygiene follow-up, not a reason to halt in-flight work. Applies only to statuses that reconcile — an unreconcilable status is covered by the `status_unknown` rows below and still fails closed |
 | Framework | empty / unset / Type read failed | any | single | Stop | `type_unknown`; fail closed |
 | Framework | empty / unset / Type read failed | any | scan | Hold | `type_unknown`; fail closed |
 | Framework | any | status missing / unreconcilable | single | Stop | `status_unknown`; fail closed |
@@ -355,18 +387,27 @@ Two published-contract changes need an explicit undo story:
 
 ### (1) `list_open_workflow_type_issues` filter semantics in framework mode
 
-- **What changes**: In framework mode the shared lib function returns all open non-terminal
-  items instead of Workflow-only. Consumer-mode behavior of the same function stays byte-compatible
-  with today's filter.
-- **Rollback**: Revert-safe. Callers that still invoke the lib primitive directly regain
-  Workflow-only filtering when the merge commit is reverted (or when filter selection is
-  restored to Workflow-only). Protocols `05`/`06` that switched to
+- **What changes**: Nothing in the lib primitive. `list_open_workflow_type_issues` keeps
+  Workflow-only filtering in **both** modes; the framework-mode all-open-items lookup lives in
+  `list_open_framework_items.sh`. Direct callers of the primitive are therefore unaffected by
+  this item, which is why the branch is placed in the wrapper — see the normative location
+  note in Enforcement point 2.
+- **Rollback**: Revert-safe, and narrower than a filter flip would be. Because the primitive
+  never changes, reverting removes only the wrapper's framework-mode branch; no direct caller
+  silently changes semantics in either direction. Protocols `05`/`06` that switched to
   `list_open_framework_items.sh` must be reverted in the **same** rollback (or re-pointed to the
   lib function) so release/retrospective do not keep expecting all-open-items semantics after
   the filter flip is undone. Downstream syncs of this template pick up the revert on the next
   `/sync-template` of `scripts/development-workflow/**` and `docs/workflow/**`.
 
-### (2) `FRAMEWORK_ITEMS_LOOKUP_*` stdout contract
+### (2) `FRAMEWORK_ITEMS_LOOKUP_STATUS` / `FRAMEWORK_ITEMS_LOOKUP_REASON` / `FRAMEWORK_ITEMS_JSON` stdout contract
+
+> **Exact key spellings — no glob shorthand.** The three published keys are
+> `FRAMEWORK_ITEMS_LOOKUP_STATUS`, `FRAMEWORK_ITEMS_LOOKUP_REASON`, and
+> `FRAMEWORK_ITEMS_JSON`. Note the third has **no** `LOOKUP_` segment, so a
+> `FRAMEWORK_ITEMS_LOOKUP_*` glob does not cover it. Protocol `05`/`06` snippets parse these
+> literals, so every section of this plan, the smoke runbook, and the protocol snippets must
+> use these exact spellings.
 
 - **What changes**: `list_open_framework_items.sh` becomes the only supported entrypoint for
   release/retrospective open-framework-item reads, publishing
