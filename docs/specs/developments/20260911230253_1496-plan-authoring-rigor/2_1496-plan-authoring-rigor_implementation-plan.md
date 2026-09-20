@@ -58,7 +58,8 @@ silently ships drift.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `b0491be3` — every row below re-run at this plan-branch revision (base `origin/develop` tip at re-run: `f1d5021a`). **Currency obligation (Group H):** this SHA and the PR body's Document Quality Gate record must both name the PR head before `ready-for-human-review`. Commits after `b0491be3` — including `aab8d04f` and `1116141d` — touched plan prose only and changed no verified claim in the rows below; the record must be refreshed to the final head, and re-verified if any later commit touches a verified claim |
+| Repo revision | `git rev-parse --short HEAD` | `abd57a5c` — every row below re-run at this plan-branch revision (base `origin/develop` tip: `f1d5021a`), including the `# covers:` / harness-assertion paths, which name `docs/workflow/development-workflow/templates/implementation-plan-template.md`. **Currency obligation (Group H):** this SHA and the PR body's Document Quality Gate record must both name the PR head before `ready-for-human-review`. Later commits that touch only this record or plan prose leave every verified claim unchanged; re-verify and refresh the record if any later commit touches a verified claim |
+| Template path | `test -f docs/workflow/development-workflow/templates/implementation-plan-template.md`; `test ! -f docs/workflow/development-workflow/implementation-plan-template.md` | exit `0` for both — the `templates/` path is the only real path; every plan reference uses it |
 | Spec merged | `test -f docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | present on branch |
 | Protocol 02 review target | `test -f docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md` | Present — verified 2026-09-20. Named in Layer-by-Layer, Files to modify, and Implementation Order step 5 |
 | Protocol 02 authoring target | `test -f docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Present — verified 2026-09-20 |
@@ -415,7 +416,7 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   - `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
   - `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
   - `REVIEW.md`
-  - `docs/workflow/development-workflow/implementation-plan-template.md`
+  - `docs/workflow/development-workflow/templates/implementation-plan-template.md`
   - `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`
   - `.claude/agents/implementation-plan-reviewer.md`,
     `.cursor/agents/implementation-plan-reviewer.md`
@@ -426,7 +427,7 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   seven. Three had no drift assertion and must gain one — this is exactly the
   drift the feature exists to prevent:
   - `.codex/skills/workflow-plan-writer/SKILL.md`
-  - `docs/workflow/development-workflow/implementation-plan-template.md`
+  - `docs/workflow/development-workflow/templates/implementation-plan-template.md`
   - `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`
 
   Any row deliberately left unasserted must carry an explicit out-of-scope
