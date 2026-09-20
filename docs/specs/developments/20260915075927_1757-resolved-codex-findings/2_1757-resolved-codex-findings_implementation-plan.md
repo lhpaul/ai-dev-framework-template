@@ -173,48 +173,64 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `Accept: application/vnd.github+json`) joined with the PR object's
   `created_at`:
 
-  The spec fixes the two boundaries from **different** sources. Use each only
-  where named; do not substitute one for the other.
+  The two boundaries draw on different sources and must not be substituted for
+  one another: `L(H)` combines a *trigger-derived* bound with `H`'s own
+  transition instant, while `U(H)` is purely a transition instant.
 
-  1. **Lower bound `L(H)`** comes from *triggers*, never from transition
-     instants — per spec Business Rule "after any review trigger for that head,
-     or — for a trigger-less head — after the previous head's last review
-     trigger or the pull request's creation, whichever is later":
+  1. **Lower bound `L(H)`** starts from a *trigger-derived* bound — per spec
+     Business Rule "after any review trigger for that head, or — for a
+     trigger-less head — after the previous head's last review trigger or the
+     pull request's creation, whichever is later":
      - `H` has at least one review trigger → `L(H)` is that trigger's
        `created_at` (the latest such trigger for `H`).
      - `H` is trigger-less → `L(H) = max(previous head's last review trigger,
        PR created_at)`. When `H` is the first head, the PR `created_at` alone
        applies.
-  2. **Upper bound `U(H)`** comes from *transition instants* — per the spec's
-     "and before any later head becomes current". `U(H)` is the instant the
-     **next** head became current, which is, in order of preference: (a) the
-     `created_at` of the `head_ref_force_pushed` timeline event that introduced
-     that next head, when one exists; otherwise (b) the `committer.date` of the
-     `committed` timeline event whose `sha` is that next head.
-  3. **A comment's window** is therefore `[L(H), U(H))`. **The live head's
-     window is open-ended**: no later head exists, so `U(live)` is unbounded and
-     a missing next-transition event is the expected state for it, never an
-     indeterminate one. Only a *superseded* head has a finite `U(H)`.
+     **`L(H)` is additionally floored by `T(H)`, the instant `H` itself became
+     current**: `L(H) = max(trigger-derived bound, T(H))`. The spec's governing
+     clause is "the live head that was **current when the comment was
+     authored**", and a comment authored before `H` was pushed was not authored
+     while `H` was current. The trigger-derived bound alone does not enforce
+     this — for a trigger-less head it can sit well before the push, which would
+     sweep prior-head comments (including malformed ones) into `H` and escalate
+     against the wrong head. **This floor applies to the live head too.**
+  2. **Transition instant `T(X)`** — the instant head `X` became current — is,
+     in order of preference: (a) the `created_at` of the
+     `head_ref_force_pushed` timeline event that introduced `X`, when one
+     exists; otherwise (b) the `committer.date` of the `committed` timeline
+     event whose `sha` is `X`.
+  3. **Upper bound `U(H)`** is `T(next head)`, per the spec's "and before any
+     later head becomes current".
+  4. **A comment's window** is therefore `[L(H), U(H))` with
+     `L(H) = max(trigger-derived bound, T(H))`. **Only the live head's *upper*
+     bound is open-ended**: no later head exists, so `U(live)` is unbounded and
+     a missing next-transition event is expected for it, never indeterminate.
+     The live head's *lower* bound still requires `T(live)` like any other.
 
-  **Mandatory escalation cases.** These concern `U(H)` only, because `L(H)` is
-  trigger-derived and exact. `U(H)` source (b) is a commit-authoring timestamp,
-  not a push timestamp, so it is only a *lower bound* on when the next head
-  became current. Attribution is *indeterminate* — escalate
-  `evidence_unavailable_codex_thread_state`, do not guess — whenever any of:
+  **Mandatory escalation cases.** Both bounds depend on transition instants, and
+  `T(X)` source (b) is a commit-authoring timestamp, not a push timestamp, so it
+  is only a *lower bound* on when `X` became current. Attribution is
+  *indeterminate* — escalate `evidence_unavailable_codex_thread_state`, do not
+  guess — whenever any of:
   - the timeline read fails or is truncated after one retry;
-  - **(superseded heads only)** no `head_ref_force_pushed` or `committed` event
-    introduces the next head, so `U(H)` cannot be derived at all;
-  - **(superseded heads only)** `U(H)` came from source (b) and the comment's
-    `created_at` falls at or after it, so the commit-date lower bound does not
-    prove the comment preceded the next head; or
+  - **`T(H)` cannot be derived** — no `head_ref_force_pushed` or `committed`
+    event introduces `H`. This applies to the live head as well: without
+    `T(live)` there is no floor, and a prior-head comment could be escalated
+    against the live head;
+  - **`T(H)` came from source (b)** and the comment's `created_at` falls at or
+    before it, so the commit-date bound does not prove the comment was authored
+    after `H` became current;
+  - **(superseded heads only)** `U(H)` cannot be derived, or came from source
+    (b) and the comment's `created_at` falls at or after it, so the bound does
+    not prove the comment preceded the next head; or
   - two candidate boundaries share the comment's timestamp second and no
     comment-ID ordering resolves them.
 
-  A comment is attributed to head `H` when `L(H) <= created_at` and either
-  `U(H)` is unbounded (live head) or source (a), or an unambiguous source (b),
-  places `created_at` strictly before `U(H)`. The second and third cases above
-  cannot arise for the live head, which has no `U(H)`: a comment at or after
-  `L(live)` is attributed to the live head, not escalated.
+  A comment is attributed to head `H` only when `L(H) <= created_at` — with
+  `T(H)` established by source (a) or an unambiguous source (b) — **and** either
+  `U(H)` is unbounded (live head) or `created_at` falls strictly before an
+  equally well-established `U(H)`. The live head is exempt from the `U(H)` cases
+  only; it is never exempt from the `T(H)` cases.
 
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
@@ -230,22 +246,42 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     correlation-missing, or evidence-unavailable.
 
   When either is present alongside the notice, the availability hard stop does
-  **not** short-circuit: fall through to the tie precedence below, which ranks
-  all four fail-closed escalations and the actionable blocker above the
-  availability hard stop. This preserves the spec’s rule that “an availability
-  response never outranks an escalation or an actionable blocker”; a guard that
-  short-circuits on fail-closed evidence would invert it, and would contradict
-  the `codex_tied_usage_limit_then_unrecognized` regression, which must expect
-  escalation rather than the unavailable outcome. Only a notice standing alone
-  — with no blocker and no fail-closed evidence — skips the timestamp
-  tournament. Otherwise apply newest-non-dismissed
-  timestamp selection among live-head-covering items, then tie precedence:
-  malformed-marker → unrecognized → correlation-missing → evidence-unavailable →
-  actionable blocker → availability hard stop (usage-limit or
-  account-not-connected) → cleared-findings wait → clean. A retained
+  **not** short-circuit. Classification then runs in **two phases, in this
+  order**. The tier list is *not* merely a tie-break; phase 1 is absolute and
+  timestamp-independent.
+
+  **Phase 1 — absolute precedence (ignores timestamps entirely).** Among all
+  live-head-covering, non-dismissed items, if any of these classes is present,
+  resolve here and stop, taking the highest tier present:
+
+  1. malformed-marker → `escalate`
+  2. unrecognized-verdict → `escalate`
+  3. correlation-missing → `escalate`
+  4. evidence-unavailable → `escalate`
+  5. actionable blocker (including a `CHANGES_REQUESTED` submitted review, and
+     any applicable unresolved live-head conversation) → `needs_fixes`
+
+  **An older item in phase 1 beats a newer availability notice or clean
+  verdict.** This is the spec's rule that "blocking or `CHANGES_REQUESTED`
+  evidence always wins over any availability notice, including those hard
+  stops", and that an applicable unresolved conversation "remains an actionable
+  blocker regardless of which terminal evidence item is newest, so a later
+  availability response or clean verdict does not erase it". Selecting the
+  newest timestamp *first* would let a later usage-limit notice bury an earlier
+  `CHANGES_REQUESTED` review — the exact inversion this phase prevents.
+
+  **Phase 2 — newest-evidence tournament (only when phase 1 is empty).** Apply
+  newest-non-dismissed timestamp selection among the remaining live-head-covering
+  items, whose classes are only: availability hard stop (usage-limit or
+  account-not-connected), cleared-findings wait, and clean. On a timestamp tie,
+  order them availability hard stop → cleared-findings wait → clean. A retained
   environment-setup response participates only when it is itself the newest
   evidence and is superseded by any strictly newer terminal or review item
   (spec BR-8); it is not the hard-stop tier above.
+
+  The pre-selection guard is exactly "phase 1 is empty" evaluated early, and the
+  `codex_tied_usage_limit_then_unrecognized` regression must expect escalation
+  rather than the unavailable outcome under both readings.
 
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
