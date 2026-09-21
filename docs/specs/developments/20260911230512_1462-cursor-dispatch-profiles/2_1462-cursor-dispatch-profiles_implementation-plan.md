@@ -721,20 +721,38 @@ layer; `workflow.mdc` states all five compactly).
           `canonical_declared_not_detected`, one per
           `canonical_handoff_metadata` field including worktree path,
           `canonical_workflow_hub`).
-      16. **`simulate_bounded_paths`**: for each scenario ID S1-S19 (including
-          S10b), alter that decision-gate row in the canonical doc so its
-          expected outcome or stop name changes; expect non-zero naming the
-          scenario ID and each applicable path. Separately, for C1-C4: delete
+      16. **`simulate_bounded_paths`**: for each **row-backed** scenario (every
+          scenario in S1-S19 except S10b, each mapped to a spec row R1-R18),
+          alter that decision-gate row in the canonical doc so its expected
+          outcome or stop name changes; expect non-zero naming the scenario ID
+          and each applicable path. **S10b is excluded from row mutation**: it is
+          a subcase with no matrix row, no outcome and no named stop, so its
+          proofs mutate the canonical doc's out-of-scope prose instead, one
+          mutation per cycle: (a) remove the `#1746` token from the out-of-scope
+          paragraph, (b) delete the sentence stating that the harness/local-path
+          denial `is not a named stop condition`, and (c) add a statement that
+          maps the harness/local-path denial to
+          `missing_required_secret_or_permission` or
+          `dispatch_handoff_unavailable`; each must fail naming S10b. Separately, for C1-C4: delete
           one canonical row (C1 and C2 fail), add an unmatched extra canonical
           row (C1 fails), remove a scenario's mapping (C3 fails), map S10b to a
           row (C3 fails), and swap two rows' tokens (C4 fails); restore each.
 
       17. **Selector wiring / header consistency**: remove one path from the
           `# covers:` header, in turn for: one mirror, the merged spec path,
-          the fixtures-directory glob, the canonical guide, and the smoke
-          runbook; expect the guard's header-consistency check to fail and the
-          selector verification (step 3 of Testing Strategy) to show the suite
-          unselected for that path; restore. Also make the guard read one
+          the canonical guide, and the smoke runbook; expect the guard's
+          header-consistency check to fail **and** the selector verification
+          (step 3 of Testing Strategy) to show this suite absent from the
+          selector output for that path (other suites may still be selected for
+          it); restore. **Fixtures-directory glob is different**: removing its
+          `# covers:` entry cannot make the suite unselected, because
+          `select-test-suites.sh` both auto-covers a suite's own fixture
+          directory (`tests/fixtures/<suite-name>/**`) and lists
+          `scripts/development-workflow/tests/fixtures/**` in
+          `FULL_RUN_TRIGGER_PATTERNS`, so any fixture change short-circuits
+          selection to a full run. For that glob the cycle removes the entry,
+          expects only the guard's header-consistency check to fail (no
+          unselected check), and restores. Also make the guard read one
           undeclared path (a stray file) and expect `read_path()` to fail.
 
       **Coverage rules (every branch must have a real cycle).** Each multi-token
@@ -1168,13 +1186,26 @@ surface table are kept in step by a header-consistency check inside the guard
 - **Selector verification (implementation-time, planted check)**:
   1. `select-test-suites.sh --print-map` lists this suite against every path in
      the header above (assert one row per protected path).
-  2. For each protected surface and for the spec and fixtures-directory paths
-     (a path under the fixtures directory, and the merged spec file), write that single path to a temp changed-files
-     list and run `select-test-suites.sh --changed-files <list>`; confirm the
-     output contains `test-cursor-dispatch-profile-surfaces.sh`. This is the
-     planted check: a touched mirror path must select the suite.
-  3. Remove one `# covers:` path from the header, rerun step 2 for that path,
-     confirm the suite is **not** selected (proves the check is live), restore.
+  2. For each protected surface and for the merged spec file, write that
+     single path to a temp changed-files list and run
+     `select-test-suites.sh --changed-files <list>`; confirm the output
+     contains `test-cursor-dispatch-profile-surfaces.sh`. This is the planted
+     check: a touched mirror path must select the suite.
+  2a. **Fixtures directory, exact selector behavior** (read from
+     `select-test-suites.sh`, and observed by running it): a changed path under
+     `scripts/development-workflow/tests/fixtures/` matches the
+     `FULL_RUN_TRIGGER_PATTERNS` entry `scripts/development-workflow/tests/fixtures/**`;
+     the selector prints `INFO: full run triggered by <path> (matches
+     <pattern>)` to stderr and emits **every** suite, which includes this one.
+     The check is therefore positive only: confirm that INFO line and that the
+     output contains `test-cursor-dispatch-profile-surfaces.sh`. No
+     "unselected" planted check exists for this path, and none is claimed. The selector's own suite already asserts this trigger behavior for
+     every full-run trigger pattern (`test-select-test-suites.sh`, the
+     `full_run_trigger_*` cases), so step 5 also covers it.
+  3. For the non-fixtures paths of step 2, remove one `# covers:` path from
+     the header, rerun step 2 for that path, and confirm this suite is **not**
+     in the output (other suites may be; only this suite's absence is
+     asserted), which proves the check is live; restore.
   4. `select-test-suites.sh --report-gaps` shows no gap for this suite (it is
      selectable by a PR change set).
   5. Run `bash scripts/development-workflow/tests/test-select-test-suites.sh`
@@ -1213,7 +1244,7 @@ Not applicable — no runtime data.
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control Step 8 (AC17 behavior) + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
-| CI wiring | Pass (design; execution deferred) | `# covers:` header for every protected surface, selector planted check and `--report-gaps`, per-suite time cap, no path filter change; see Testing Strategy |
+| CI wiring | Pass (design; execution deferred) | `# covers:` header for every protected surface, selector planted check (unselected-when-removed for non-fixtures paths; a fixtures change is a full-run trigger, checked positively only) and `--report-gaps`, per-suite time cap, no path filter change; see Testing Strategy |
 | Shell-script lint | Pass (design; execution deferred) | New `.sh` verified by `bash -n`, `shellcheck --severity=warning`, and `workflow-shell-guard-lint.py --base-ref origin/develop` per REVIEW.md; Implementation Order step 9 |
 | Parser-risk addendum | Pass | Surface guard is a structured-Markdown scanner; boundary, lookalike, multiple-occurrence and nested/overlap cases each mapped to a fixture and self-test (see Parser-Risk Addendum) |
 | Concurrent-event-source addendum | N/A | No concurrent event handlers |
