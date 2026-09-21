@@ -130,7 +130,7 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H8 | Invalid outcome label | Record uses a label outside the three defined | Blocking — invalid label |
 | H9 | External-source finding not persisted | Rule 1 outcome cites an inspection with no persisted finding | Blocking — persisted finding missing |
 | H10 | Incomplete evidence record | Rule 3/4/5 evidence record missing its revision, command, or result | Blocking — record incomplete |
-| H11 | Non-reproducing or population-stale evidence | Recorded command no longer reproduces, or the population changed since gathering | Blocking — evidence not current |
+| H11 | Non-reproducing or population-changed evidence | Recorded command does not reproduce at its recorded revision, or later plan text changes the population the evidence describes | Blocking — evidence does not support the claim |
 | H12 | Repository-only drift | Repository changed after gathering but no claim the plan makes is affected | Non-outcome — no finding; record unchanged |
 | H13 | Evidence only in PR comments | Evidence lives in a PR comment, not in the plan or PR description record | Blocking — evidence not in the durable record |
 
