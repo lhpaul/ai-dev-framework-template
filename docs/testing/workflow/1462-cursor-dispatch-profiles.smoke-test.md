@@ -12,6 +12,7 @@
 - [ ] Implementation PR for #1462 is checked out locally
 - [ ] `origin/develop` is fetched
 - [ ] You can open the template repository in Cursor (Desktop and, if available, Remote Control)
+- [ ] For the required live steps (8, 13 Part B, 14 Part B): the **disposable sandbox** below is provisioned and its pre-flight check passes. **Never run the live steps against the real repository or its real backlog.**
 
 ---
 
@@ -20,9 +21,77 @@
 | Item | Value |
 | --- | --- |
 | Canonical doc | `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md` |
-| Sample item (single) | An open, non-epic, router-resolvable issue number `<N>` the operator picks (a doc-only item is safest); confirm with `./scripts/development-workflow/run-work-router.sh <N>` returning `MODE=redirect_item` |
-| Explicit-list batch | Two real, open, non-epic issue numbers `<N1> <N2>`; confirm `./scripts/development-workflow/run-work-router.sh <N1> <N2>` returns `MODE=redirect_items`. The router accepts only positive-integer issue/PR numbers (optionally `#`-prefixed), existing workflow-prefixed branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`, `plan/`) and existing `docs/specs/developments/` folders, splits every argument on commas and removes duplicates. Tracker IDs and comma-containing targets yield `MODE=ambiguous` before any declaration gate, so they are covered as documented-unreachable cases in the fixtures only |
-| Epic | A real open epic number `<E>` with native sub-issues; confirm `./scripts/development-workflow/run-work-router.sh --epic <E>` returns `MODE=redirect_epic` |
+| Sandbox repository | A private, disposable repository (for example `<owner>/ai-dev-framework-sandbox-1462`) seeded from the implementation PR head; see **Controlled test artifacts** |
+| Sample item (single) | Sandbox issue **C** `[SANDBOX-1462] single doc-only item` (label `sandbox-test`); confirm with `./scripts/development-workflow/run-work-router.sh <C>` returning `MODE=redirect_item`, run from the sandbox clone |
+| Explicit-list batch | Sandbox issues **A** and **B** `[SANDBOX-1462] batch doc-only item A` / `B`; confirm `./scripts/development-workflow/run-work-router.sh <A> <B>` returns `MODE=redirect_items`. The router accepts only positive-integer issue/PR numbers (optionally `#`-prefixed), existing workflow-prefixed branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`, `plan/`) and existing `docs/specs/developments/` folders, splits every argument on commas and removes duplicates. Tracker IDs and comma-containing targets yield `MODE=ambiguous` before any declaration gate, so they are covered as documented-unreachable cases in the fixtures only |
+| Epic | Sandbox epic **E** `[SANDBOX-1462] epic` with two native sub-issues **D1** and **D2** (`[SANDBOX-1462] epic child D1` / `D2`, doc-only); confirm `./scripts/development-workflow/run-work-router.sh --epic <E>` returns `MODE=redirect_epic` |
+
+### Controlled test artifacts (sandbox, authorized disposable targets)
+
+The live steps run `/run-item`, `/run-items` and `/run-epic`, which create
+branches, commits, pull requests, tracker updates and worktrees. They must
+therefore run **only** against disposable test artifacts created for this
+sign-off, never against real backlog items, real branches or the real
+repository. The operator (not an agent) provisions and removes the sandbox and
+records each action; an agent must not create or delete repositories.
+
+**Provisioning (operator checklist)**
+
+1. Create a **private sandbox repository** dedicated to this sign-off (name it
+   with `sandbox` and `1462`) and push the implementation PR head to it as its
+   `develop` branch (this is the **safe base branch**; the real repository's
+   `develop` and `main` are never targeted). In the sandbox clone only, set
+   `issue_tracker.provider: github_issues` in `.ai-dev-workflow.yaml` (issues
+   without a project board) and do not commit that change anywhere else.
+2. Create the label `sandbox-test` (`gh label create sandbox-test`).
+3. Create the test issues with the repo's tracker tooling (`/add-backlog-item`,
+   or `gh issue create --label sandbox-test`), each titled with the prefix
+   `[SANDBOX-1462]` and each a doc-only change (for example "add one line to a
+   sandbox-only doc"): **C** (single), **A** and **B** (batch), epic **E**, and
+   its children **D1** and **D2** linked as native sub-issues (GitHub UI, or the
+   `addSubIssue` GraphQL mutation via `gh api graphql`).
+4. **Pre-flight check** in the clone the Remote Control session will use:
+   `git remote get-url origin` must be the sandbox repository, and
+   `gh repo view --json nameWithOwner` must name it. If either names the real
+   repository, **stop**: the live steps must not run.
+5. Confirm the three router checks in the table above return the stated MODEs.
+
+**Expected mutations (all confined to the sandbox)**: worktrees and branches per
+item (`feature/...`, `spec/...`, `implementation-plan/...`), commits and pushes,
+pull requests targeting the sandbox `develop`, PR labels and review-loop
+comments, issue status and comment updates, and changelog fragments. No merge
+is requested (the sign-off runs pass no `--may-merge`), so runs stop at
+`ready-for-human-review`, a blocked state, an escalation, or a named stop.
+
+**Cleanup / rollback checklist (run after Steps 8, 13 and 14, before recording
+sign-off)**
+
+1. Close every sandbox pull request and delete its branch
+   (`gh pr close <n> --delete-branch`); delete any remaining remote branch other
+   than `develop` and `main`.
+2. Close every issue labelled `sandbox-test` (children, batch items, epic).
+3. In the sandbox clone remove worktrees and local branches
+   (`git worktree remove <path>`, `git branch -D <branch>`), then
+   `git worktree prune`.
+4. Remove any project-board items and delete the `sandbox-test` label if the
+   sandbox is kept; otherwise delete the whole sandbox repository (requires the
+   operator's own `delete_repo` authorization).
+5. Verify the **real repository is untouched**: no new branch, pull request,
+   issue or comment referencing `SANDBOX-1462`
+   (`gh pr list --search "SANDBOX-1462" --state all` and
+   `gh issue list --search "SANDBOX-1462" --state all` in the real repository
+   return nothing), and `git status` is clean in the real checkout.
+
+**Cleanup is complete when**: the sandbox has no open issue, no open pull
+request, no branch other than `develop`/`main`, no worktree, or the sandbox
+repository is deleted; and the real-repository check in item 5 is empty.
+Record the command outputs as evidence. If the run is interrupted, perform the
+checklist before any retry; leftover sandbox artifacts block sign-off.
+
+**Prohibited**: running Step 8, 13 Part B or 14 Part B against a real backlog
+issue, a real epic, or the real repository's branches or base branch. A run that
+did so is a FAIL and must be reported, and the mutations rolled back by the
+repository owner.
 
 ---
 
@@ -96,7 +165,7 @@
 
 **Maps to**: AC6, Use Case 2
 
-1. In Cursor Desktop, invoke `/run-item <N>` (the sample item from Test Data, or a trivial doc-only item on a throwaway branch). The bounded prelude prints read-only scope and policy first.
+1. In Cursor Desktop, invoke `/run-item <C>` (the sandbox single-item issue from Test Data; optional steps also use the sandbox, never real items). The bounded prelude prints read-only scope and policy first.
 2. Confirm run output includes the dispatch profile declaration immediately before the first mutating action.
 
 **Expected result**: Declaration visible; orchestration handed off when subagents work.
@@ -114,7 +183,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
 
 1. Record the head SHA under test (`git rev-parse HEAD`) and the environment
    (Cursor Remote Control session identifier or a note of how it was reached).
-2. Start `/run-item <N>` on the sample doc-only item from Test Data.
+2. From the sandbox clone (pre-flight check passed), start `/run-item <C>` on the sandbox single-item issue from Test Data.
 3. Confirm the declaration block names Parent orchestrated, the accountable
    role and the `absorbed` posture before the first mutating action, that
    orchestration is absorbed by the current context, and that every stage of
@@ -133,7 +202,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
 
 **Maps to**: Use Case 4
 
-1. In an environment with no subagent handoff, or one whose initial handoff cannot be confirmed (the Cloud Agents default), invoke `/run-item <N>` (a mutating bounded command).
+1. In an environment with no subagent handoff, or one whose initial handoff cannot be confirmed (the Cloud Agents default), invoke `/run-item <C>` (a mutating bounded command).
 2. Confirm the run declares **Inline fallback** (`cursor-inline-fallback`) with a
    valid accountable role and **observing** posture at the read-only checkpoint,
    then reaches the first mutating action.
@@ -212,11 +281,10 @@ Control session**, not a simulated one, on the **implementation PR head**.
 **Maps to**: AC9, AC10, AC14, AC17
 
 1. Record the current head SHA.
-2. Pick two real, open, non-epic issue numbers `<N1> <N2>` (Test Data; doc-only
-   items are safest) and run
-   `./scripts/development-workflow/run-work-router.sh <N1> <N2>`; proceed only
-   on `MODE=redirect_items`. (Any other MODE, including `ambiguous`, stops
-   before the declaration gate; pick different targets.)
+2. In the sandbox clone, use the sandbox issues `<A> <B>` (Test Data) and run
+   `./scripts/development-workflow/run-work-router.sh <A> <B>`; proceed only on
+   `MODE=redirect_items`. (Any other MODE, including `ambiguous`, stops before
+   the declaration gate; fix the sandbox items, never substitute real ones.)
 
 **Part A (mandatory, simulation)**: run the `simulate_bounded_paths` branch for
 **every** `/run-items` scenario marked Y in the plan's scenario table (same set
@@ -226,14 +294,16 @@ without `#`, a workflow-prefixed branch, a development-folder path; tracker IDs
 and comma-containing targets are documented-unreachable cases, not accepted
 forms). Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
 reported for the whole invocation with affected item
-`explicit_list_invocation_targets=<N1>,<N2>` (targets as they appear in the
+`explicit_list_invocation_targets=<A>,<B>` (targets as they appear in the
 router's normalized list: comma-split, trimmed, deduplicated, in order, no `#`
 rewriting), before any branch or artifact is created.
 
 **Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
-session** on the implementation PR head, run `/run-items <N1> <N2>` with a valid
-Parent orchestrated declaration (the portfolio layer is absorbed and Protocol 90
-Step 4's one-at-a-time fallback applies), and do not intervene mid-run
+session** on the implementation PR head, run `/run-items <A> <B>` with a valid
+Parent orchestrated declaration (the current context absorbs the portfolio layer
+and, per item in turn, the item layer; no Work Item Runner is dispatched; the
+items run one at a time per Protocol 90 Step 4 as amended, and only stage work
+is delegated), and do not intervene mid-run
 (answering the bounded prelude's policy confirmation up front is allowed).
 Record the environment, the declaration block, and the terminal state. The
 terminal condition is, precisely: **either** the completed one-at-a-time run,
@@ -242,7 +312,7 @@ human review or merge, blocked dependency, or escalation) in sequence, **or** a
 named stop from the decision matrix reported with the affected work item. A run
 that needed a human rescue mid-orchestration is a FAIL.
 
-**Part C (optional)**: run `/run-items <N1> <N2>` in a throwaway clone with the
+**Part C (optional)**: run `/run-items <A> <B>` in a throwaway clone with the
 declaration deliberately withheld and confirm the single invocation-level
 `dispatch_profile_declaration_missing` stop.
 
@@ -256,8 +326,7 @@ Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
 **Maps to**: AC9, AC10, AC17
 
 1. Record the current head SHA.
-2. With a real open epic `<E>` (Test Data; one whose sub-issues are doc-only is
-   safest) confirm `./scripts/development-workflow/run-work-router.sh --epic <E>`
+2. With the sandbox epic `<E>` (Test Data) confirm `./scripts/development-workflow/run-work-router.sh --epic <E>`
    returns `MODE=redirect_epic`. (`--items` is internal-only and is not a
    user-facing option per Protocol 95.)
 
@@ -290,7 +359,11 @@ Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
 - Steps 1-6 and 10-11 must **PASS** (documentation and automated assertions; no
   live Cursor environment required).
 - **Live Cursor Remote Control evidence is required for all three bounded
-  commands** at implementation sign-off, each on the implementation PR head in a
+  commands** at implementation sign-off, run **only** against the disposable
+  sandbox artifacts (never real backlog items or the real repository), with the
+  cleanup checklist completed and its completion criteria met and recorded
+  before sign-off (leftover sandbox artifacts, or any mutation of the real
+  repository, block sign-off), each on the implementation PR head in a
   **real** Remote Control session with no human rescue mid-orchestration:
   Step 8 (`/run-item`), Step 13 Part B (`/run-items`, terminal condition = the
   completed one-at-a-time run or a named stop), and Step 14 Part B
