@@ -27,6 +27,8 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `scan-misclassified-item-held`, `scan-misclassified-not-informational`,
 `scan-backlog-no-artifacts-held`, `scan-stale-backlog-with-artifacts-continues`,
 `scan-status-unreadable-defers`, `gate-usage-errors`, `prelude-issue-no-folder-stops`,
+`stale-backlog-active-fix-branch-continues`, `stale-backlog-merged-fix-pr-continues`,
+`backlog-no-folder-no-branch-stops`, `branch-evidence-unavailable-defers`,
 `prelude-issue-one-folder-uses-its-stage`, `prelude-issue-multiple-folders-passes`,
 `guidance-check-planted-violation`,
 the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
@@ -165,13 +167,16 @@ keeps today's behavior, including its existing "Type field unreadable" stderr wa
 
 ```bash
 ./scripts/development-workflow/framework-mode-backlog-type-gate.sh \
-  --issue <number> --status Backlog --artifact-stage '' --caller single
+  --issue <number> --status Backlog --artifact-stage '' \
+  --branch-pr-evidence none --caller single
 ```
 
-All four flags — `--issue`, `--status`, `--artifact-stage`, `--caller` — are **required**, and
-`--status` / `--artifact-stage` accept the empty string as a value. Pass `--artifact-stage ''`
-when the item has no spec, plan, or branch; omitting the flag is a usage error (exit `64`, no
-`RESULT=` line), not a shorthand for "no artifacts".
+All five flags — `--issue`, `--status`, `--artifact-stage`, `--branch-pr-evidence`,
+`--caller` — are **required**, and `--status` / `--artifact-stage` accept the empty string as a
+value. Pass `--artifact-stage ''` when the item has no development-folder spec or plan, and
+state the branch/PR evidence explicitly (`none` / `present` / `unavailable`). Omitting either
+flag is a usage error (exit `64`, no `RESULT=` line), not a shorthand for "no work": fast-track
+items use no development folder at all, so the folder's absence alone never justifies a stop.
 
 **Expected**: `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, `ITEM=#<number>`, and a
 `REASON_TEXT` that **names the item** by number, states the class is not valid in a
@@ -189,11 +194,13 @@ not name the item fails this step.
 
 4a. Argument validation (`gate-usage-errors`). Run the gate with each of: a missing `--issue`,
 a missing `--status`, a missing `--artifact-stage`, a missing `--caller`, `--caller bogus`,
-`--artifact-stage Frobnicated`, `--issue abc`, a flag given with no value, and an unknown flag.
+`--artifact-stage Frobnicated`, a missing `--branch-pr-evidence`, `--branch-pr-evidence maybe`,
+`--issue abc`, a flag given with no value, and an unknown flag.
 
 **Expected**: each run exits `64` with a usage message on stderr and prints **no** `RESULT=`
-line. Then confirm the empty-string forms are accepted values rather than errors: `--status ''`
-and `--artifact-stage ''` produce a normal routing outcome and exit `0`. **Fail if** a
+line. Then confirm the empty and `none` forms are accepted values rather than errors:
+`--status ''`, `--artifact-stage ''` and `--branch-pr-evidence none` produce a normal routing
+outcome and exit `0`. **Fail if** a
 malformed invocation produces a `RESULT=` line of any kind — a usage error must never be
 readable as a routing decision.
 
@@ -231,6 +238,30 @@ baseline, and the gate reports `REASON=stale_backlog_reconciled`. **Fail if** th
 held — a stale tracker status must not re-decide a pipeline that has already started, and the
 spec does not re-evaluate an item already on one. Repeat with `Plan Ready` and
 `In Development` folders.
+
+4c-iii. Effective stage, part 3 — fast-track work has no folder
+(`stale-backlog-active-fix-branch-continues`, `stale-backlog-merged-fix-pr-continues`,
+`backlog-no-folder-no-branch-stops`). `fix/` and `hotfix/` items use no development folder at
+all (`workflow-next-action.sh:601`), so "no folder" alone must never justify a stop. For an
+issue whose tracker says `Backlog` with Type `Workflow` and which has **no** development
+folder, run the single-item path three ways:
+
+1. with an **open** `fix/<issue>-<slug>` branch or PR for the item;
+2. with a **merged** `fix/` or `hotfix/` PR and no live branch;
+3. with neither.
+
+**Expected**: (1) and (2) `RESULT=pass` with `REASON=branch_or_pr_in_flight` — nothing stopped;
+(3) `RESULT=stop` (or `hold` for `--caller scan`). **Fail if** (1) or (2) stops: that is live
+fast-track work being halted because it does not use a development folder. **Fail if** (3)
+passes: that is the case the feature exists for.
+
+4c-iv. Unreadable branch/PR evidence (`branch-evidence-unavailable-defers`). Repeat case (3)
+with `gh` unavailable or `gh pr list` failing.
+
+**Expected**: `RESULT=pass` with `REASON=branch_evidence_unavailable`, and the caller records
+`MISCLASSIFIED_TYPE_CHECK=deferred`. **Fail if** the item is stopped or held on evidence that
+could not be read — unreadable inputs fail open here, exactly as an unreadable status or Type
+does.
 
 4d. Unreadable status (`scan-status-unreadable-defers`). Repeat 4c with the tracker status read
 returning empty (Linear provider, no `project_number` / `GITHUB_PROJECT_NUMBER`, or an issue

@@ -45,6 +45,7 @@ scope and must not be bundled into this implementation PR.
 | 2026-09-21 | **Explicit-list and epic scopes cut from this item.** Only the two routing callers the spec names are implemented: the single-item runner stop and the portfolio-scan hold | `--items` / `/run-items` and `--epic` / `/run-epic` keep today's behavior; deferred to `#1779` | Approved by the human on 2026-09-21; recorded in Scope and Out of Scope below |
 | 2026-09-21 | **Spec amended** — `1_1583-template-mode-type-routing_specs.md` reworded so a framework-mode `unavailable` lookup covers only the enumerated read failures, and states that the framework-mode lookup does not read Type, so the classification field's readability is not an input | Removes the contradiction between the spec's unavailable causes and a lookup that ignores Type; the plan already matched the amended wording | **Stage exception granted by the human on 2026-09-21** (REVIEW.md normally restricts an implementation-plan branch to the plan and its smoke runbook): the spec amendments — the `unavailable` wording and the explicit-list/epic caller boundary (spec Out of Scope item 8, tracked in #1779) — ship on this plan branch, and approval of this PR is their re-approval. The spec change ships on this plan branch and must be re-reviewed before the implementation PR proceeds |
 | 2026-09-21 | **Issue-list response validation added** as a distinct lookup failure (`issue_list_blank_or_malformed`) | A `gh issue list` that exits `0` with blank or malformed JSON is `unavailable`, never `empty` and never `item_list_unparseable`; closed cause list grows to nine | Approved by the human on 2026-09-21 |
+| 2026-09-21 | **Branch/PR evidence added as a third gate input.** Equating "no development folder" with "no work" was false for fast-track items: `workflow-next-action.sh:601` states that `fix/` and `hotfix/` branches use no development folder, so an item with an open fix branch or a merged hotfix PR is already on a pipeline and has no folder | The gate holds only when the folder artifacts **and** the branch/PR evidence are both empty. Evidence comes from sources that already match fix and hotfix heads — `pullRequests` in the scope JSON for the single-item path, `open_implementation_pr_metadata` for the scan — and unreadable evidence passes as `branch_evidence_unavailable` with `MISCLASSIFIED_TYPE_CHECK=deferred`. New scenarios: `stale-backlog-active-fix-branch-continues`, `stale-backlog-merged-fix-pr-continues`, `backlog-no-folder-no-branch-stops`, `branch-evidence-unavailable-defers` | Reviewer finding, 2026-09-21 |
 | 2026-09-21 | **Gate input corrected to the effective stage.** The gate had keyed off the raw tracker status, so a stale `Backlog` on an item that already had a spec or plan would have been held — contradicting the spec's "reconciled against work already completed for it" and its rule that items already on a pipeline are not re-evaluated | The gate now requires reconciled `Backlog` **and** an empty artifact stage from `workflow-next-action.sh`; a stale Backlog with artifacts passes as `stale_backlog_reconciled`. This **reverses** the earlier scenario `scan-uses-tracker-status-not-artifacts`, which asserted that a tracker-Backlog item with a merged spec is held; it is replaced by `scan-backlog-no-artifacts-held` and `scan-stale-backlog-with-artifacts-continues`. The earlier finding that prompted it still holds in its valid half — artifacts alone cannot identify a Backlog item, so the tracker read stays a required input. The scan's gate call also moves **after** the next-action call, since that call supplies the artifact stage | Reviewer finding, 2026-09-21 |
 
 ---
@@ -107,7 +108,11 @@ scope and must not be bundled into this implementation PR.
 | Linear deferred scope placeholder | `run-item-scope-resolver.sh:375`, `:396`–`:397` | Emits `trackerReadDeferred: true` with a literal `status: "Backlog"` and `type: ""`; the gate must key off `trackerReadDeferred`, not the placeholder — verified 2026-09-20 |
 | Cost of reading Status and Type | `workflow_github_project_item_for_issue` (`workflow-lib.sh:1781`) selects both fields, but `get_tracker_status_for_issue` (`:2250`) and `get_tracker_type_for_issue` (`:2293`) call it separately; caches exist only for the project id (`:1641`–`:1643`), field metadata (`:1644`–`:1648`), and named fields (`:1651`–`:1652`) | **No item-level cache**, so two reads of the same item are two GraphQL requests. The scan path therefore costs one extra request per scanned non-terminal folder in framework mode; no "single read" guarantee is claimed — verified 2026-09-20 |
 | How routing reconciles a stale tracker status today | `workflow-batch-plan.sh:542` (tracker read, used only for the terminal skip) vs `:639` (emits next-action's artifact-derived `STATUS`); `workflow-next-action.sh:677`–`:696` | The scan already lets artifacts override a stale tracker status in its own report — the mechanism this item reuses for the effective stage instead of inventing one — verified 2026-09-21 |
-| Artifact-absence signal | `workflow-next-action.sh:559`–`:562` (folder missing) and `:578`–`:581` (neither spec nor plan) both `exit 66`; `workflow-batch-plan.sh:571`–`:582` treats that as "no merged spec/plan PR yet" and emits an abbreviated block | A non-zero next-action is the existing, verifiable "no completed work" signal, so the gate needs no new artifact detector — verified 2026-09-21 |
+| Artifact-absence signal | `workflow-next-action.sh:559`–`:562` (folder missing) and `:578`–`:581` (neither spec nor plan) both `exit 66`; `workflow-batch-plan.sh:571`–`:582` treats that as "no merged spec/plan PR yet" and emits an abbreviated block | A non-zero next-action is the existing, verifiable "no folder artifacts" signal, so the gate needs no new artifact detector — verified 2026-09-21 |
+| Fast-track work has no development folder | `workflow-next-action.sh:601` ("fix/ and hotfix/ don't use development folders"); its branch and merged-PR probes are scoped to the `feature`/`refactor` `dev_prefix` (`:596`–`:660`) | A missing folder therefore does **not** mean an unstarted item: an open `fix/` branch or a merged `hotfix/` PR is a pipeline already chosen. Branch/PR evidence is required as a third gate input — verified 2026-09-21 |
+| Branch/PR evidence, single-item path | `run-epic-scope-resolver.sh:397` and `:411` select PRs by head ref `^(spec\|implementation-plan\|feature\|fix\|refactor\|hotfix)/<team-prefix>?<issue>(-\|$)`; `:709` filters merged implementation PRs with `^(feature\|fix\|refactor\|hotfix)/`; `:769` emits `pullRequests` per item | Fix and hotfix are already covered, keyed on the issue number, and already in the scope JSON — no new query and no new pattern — verified 2026-09-21 |
+| Branch/PR evidence, scan path | `open_implementation_pr_metadata` (`workflow-batch-plan.sh:363`–`:433`) matches `feature\|fix\|refactor\|hotfix/<slug>` and `…/<issue>-<slug-core>` heads, and reports its own failures as `PR_METADATA_STATUS=unavailable` with `gh_unavailable` / `gh_pr_list_failed` / `jq_parse_failed` (`:374`–`:402`) | Existing matcher **and** an existing unreadable-evidence convention to map onto `--branch-pr-evidence unavailable` — verified 2026-09-21 |
+| Branch-name to issue convention | `workflow-next-action.sh:102`: `^(feature\|fix\|refactor\|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($\|-)` | The existing convention for reading an issue number out of an implementation branch; this item introduces no new pattern — verified 2026-09-21 |
 | Status reconciliation primitive | `workflow_status_order` in `workflow-lib.sh:1610` | `Backlog` → `0`, recognized statuses `Writing Spec`…`Released` → `> 0`, unrecognized → `-1` — verified 2026-09-20 |
 | Stop-emission precedent | `emit_guardrails_unreadable_stop` in `run-bounded-prelude.sh:47` | Existing `stopCondition` / `affectedWorkItem` / `humanActionRequired` / `readOnlyGuarantee` shape to reuse — verified 2026-09-20 |
 | Backlog items without a development folder | `workflow-batch-plan.sh` scan input; `workflow-batch-lanes.sh --scan` usage (`:12`) | Both take development folder paths, so folderless Backlog items are held by Protocol `90` text, not by these scripts — verified 2026-09-20 |
@@ -331,7 +336,8 @@ scope and must not be bundled into this implementation PR.
   | --- | --- | --- | --- |
   | `--issue` | yes | positive integer, with or without a leading `#` | Used in `ITEM=` and the reason text |
   | `--status` | yes | any string, **including the empty string** | Empty means the tracker status could not be read; it is a value, not a missing argument |
-  | `--artifact-stage` | yes | empty string, or one of `Spec Ready`, `Plan Ready`, `In Development`, `Done`, `Unknown` | Empty means no artifacts. Required **and** empty-able: the caller must state the stage it observed, so a forgotten flag can never be read as "no artifacts" |
+  | `--artifact-stage` | yes | empty string, or one of `Spec Ready`, `Plan Ready`, `In Development`, `Done`, `Unknown` | Empty means no **development-folder** artifacts — it says nothing about branches or PRs, which `--branch-pr-evidence` carries. Required **and** empty-able: the caller must state the stage it observed, so a forgotten flag can never be read as "no work" |
+  | `--branch-pr-evidence` | yes | `none`, `present`, or `unavailable` | The caller states what it observed about implementation branches/PRs for the item. Required and never defaulted, for the same reason as `--artifact-stage`: a forgotten flag must not read as "no work" |
   | `--caller` | yes | `single` or `scan` | Any other value is a usage error |
   | `--type` | no | any string | When omitted, the gate reads Type itself; see "Tracker-read cost" |
   | `--repo-root` | no | existing directory | Defaults to `workflow_repo_root` |
@@ -343,13 +349,14 @@ scope and must not be bundled into this implementation PR.
     `RESULT=` line at all. A caller must never be able to mistake a malformed invocation for a
     `pass`. Routing outcomes — `pass`, `hold`, `stop` — always exit `0`, so a caller under
     `set -e` branches on `RESULT` rather than on the exit status.
-  - **Every documented invocation passes all four required flags**, including
-    `--artifact-stage ''` when there are no artifacts. The smoke runbook's invocations use
-    that exact form.
+  - **Every documented invocation passes all five required flags**, including
+    `--artifact-stage ''` and an explicit `--branch-pr-evidence` value. The smoke runbook's
+    invocations use that exact form.
   - Named test **`gate-usage-errors`**: for each of missing `--issue`, missing `--status`,
     missing `--artifact-stage`, missing `--caller`, `--caller bogus`,
-    `--artifact-stage Frobnicated`, `--issue abc`, a flag with no value, and an unknown flag,
-    assert exit `64`, a usage message on stderr, and **no** `RESULT=` in stdout. A companion
+    `--artifact-stage Frobnicated`, missing `--branch-pr-evidence`, `--branch-pr-evidence maybe`,
+    `--issue abc`, a flag with no value, and an unknown flag, assert exit `64`, a usage message
+    on stderr, and **no** `RESULT=` in stdout. A companion
     assertion checks that `--status ''` and `--artifact-stage ''` are accepted values that
     produce a normal routing outcome with exit `0`.
 
@@ -362,8 +369,8 @@ scope and must not be bundled into this implementation PR.
   input is the item's board status *"reconciled against work already completed for it, exactly
   as routing reconciles a stale status today"*, and items already on a pipeline are not
   re-evaluated. `workflow_status_order` maps a literal status string and reconciles nothing, so
-  it is **not** sufficient on its own. The gate therefore takes two inputs and fires on their
-  conjunction:
+  it is **not** sufficient on its own. The gate therefore takes **three** inputs and holds only
+  on their conjunction:
 
   1. **Tracker status** reconciled through `workflow_status_order` (`workflow-lib.sh:1610`):
      `Backlog` → `0`; any other recognized status → `> 0`; unrecognized → `-1`.
@@ -373,31 +380,53 @@ scope and must not be bundled into this implementation PR.
      merged) and exits `66` when the folder is missing (`:559`–`:562`) or holds neither a spec
      nor a plan (`:578`–`:581`) — which `workflow-batch-plan.sh` already reads as "no merged
      spec/plan PR yet" (`:571`–`:582`). The gate consumes that value through
-     `--artifact-stage`; the empty string means **no artifacts** (no folder, or next-action
-     exited non-zero). This reuses the existing reconciliation rather than inventing one.
+     `--artifact-stage`.
+  3. **Branch / PR evidence** — because a missing development folder does **not** mean no work.
+     `workflow-next-action.sh:601` states it outright: *"fix/ and hotfix/ don't use development
+     folders"*, and its branch and merged-PR probes are scoped to the `feature`/`refactor`
+     `dev_prefix` only (`:596`–`:660`). A fast-track item with an open `fix/` branch, or one
+     whose `hotfix/` PR has already merged, is **on a pipeline and has no folder** — treating
+     that as "no artifacts" would stop live work. The gate consumes this through
+     `--branch-pr-evidence {none|present|unavailable}`.
+
+  **Effective "no artifacts" therefore means both**: no matching development folder carrying a
+  spec or plan, **and** no active or merged implementation branch/PR for the item. Evidence
+  sources, both pre-existing:
+
+  | Caller | Where branch/PR evidence comes from |
+  | --- | --- |
+  | Single-item (prelude `item` scope) | The scope JSON the resolver already produced: `pullRequests.open[]` and `pullRequests.merged[]` (`run-epic-scope-resolver.sh:769`), which are selected by head ref `^(spec\|implementation-plan\|feature\|fix\|refactor\|hotfix)/<team-prefix>?<issue>(-\|$)` at `:397` and `:411` — fix and hotfix included. `present` when any entry's head matches an implementation prefix (`^(feature\|fix\|refactor\|hotfix)/`), the same filter `:709` already uses for `merged_impl_count`. No extra API call |
+  | Portfolio scan | `open_implementation_pr_metadata` (`workflow-batch-plan.sh:363`–`:433`), which matches `feature\|fix\|refactor\|hotfix/<slug>` and `…/<issue>-<slug-core>` heads. It already reports its own failures as `PR_METADATA_STATUS=unavailable` with `gh_unavailable` / `gh_pr_list_failed` / `jq_parse_failed` (`:374`–`:402`) — those map straight to `--branch-pr-evidence unavailable` |
+
+  The branch-name–to-issue convention is the existing one
+  (`workflow-next-action.sh:102`: `^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-)`);
+  no new pattern is introduced.
 
   The gate holds or stops on **exactly one** combination: framework mode **and** Type reads as
   `Workflow` **and** reconciled tracker status is `Backlog` **and** `--artifact-stage` is empty
-  — a Backlog item with no work completed for it. A **stale Backlog** — tracker still says
-  `Backlog` while the artifacts show `Spec Ready`, `Plan Ready`, `In Development`, or `Done` —
-  **continues**, because its pipeline has already been chosen and the spec forbids
-  re-evaluating it. Every other combination is `RESULT=pass`, which is what "unchanged from
-  today" means for this gate. Nothing fails closed: the spec adds **no** acceptance criterion
-  for an absent class or an unreadable status, and its matrix rows for those cases read
-  "Unchanged from today" (spec Decision-Gate Consistency Matrix; Out of Scope item 7).
+  **and** `--branch-pr-evidence` is `none`. A **stale Backlog** — tracker still says `Backlog`
+  while artifacts show `Spec Ready`, `Plan Ready`, `In Development`, or `Done`, **or** while a
+  `fix`/`hotfix`/`feature`/`refactor` branch or PR exists for the item — **continues**, because
+  its pipeline has already been chosen and the spec forbids re-evaluating it. Every other
+  combination is `RESULT=pass`, which is what "unchanged from today" means for this gate.
+  Nothing fails closed: unreadable evidence passes, matching the existing rule for an unreadable
+  status or Type, and the spec adds **no** acceptance criterion for an absent class or an
+  unreadable input (spec Decision-Gate Consistency Matrix; Out of Scope item 7).
 
-  | Mode | Type read | Reconciled status | Artifact stage | Caller | Output |
-  | --- | --- | --- | --- | --- | --- |
-  | Consumer | any (including unreadable) | any (including unreadable) | any | any | `RESULT=pass`, `REASON=consumer_mode` |
-  | Framework | `Workflow` | `Backlog` (order `0`) | empty — no folder, or next-action exit `66` | `single` | `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, `ITEM=#<issue>`, `REASON=misclassified_type`, `REASON_TEXT=<names the item and the re-classification>` |
-  | Framework | `Workflow` | `Backlog` (order `0`) | empty | `scan` | `RESULT=hold`, `ITEM=#<issue>`, `REASON=misclassified_type`, `REASON_TEXT=<same text>`, and **no** `STOP_CONDITION` key (a hold is not a stop) |
-  | Framework | `Workflow` | `Backlog` (order `0`) | `Spec Ready` / `Plan Ready` / `In Development` / `Done` | any | `RESULT=pass`, `REASON=stale_backlog_reconciled` — the tracker status is stale; the pipeline was already chosen and this gate does not re-decide it |
-  | Framework | `Workflow` | any recognized non-`Backlog` status (order `> 0`) | any | any | `RESULT=pass`, `REASON=pipeline_already_chosen` |
-  | Framework | `Workflow` | unrecognized / missing (order `-1`) | any | any | `RESULT=pass`, `REASON=status_unreconciled` |
-  | Framework | `Feature` / `Bug` / `Refactor` | any | any | `RESULT=pass`, `REASON=type_routes_today` |
-  | Framework | **missing or empty** — no Type set, provider not `github_projects`, no project configured, or the issue is not on the board (`get_tracker_type_for_issue` prints empty and exits `0`) | any | any | `RESULT=pass`, `REASON=type_absent` |
-  | Framework | **parse failure** — item JSON exists but Type cannot be parsed (`get_tracker_type_for_issue` warns at `workflow-lib.sh:2321` and exits **non-zero**) | any | `scan` | `RESULT=pass`, `REASON=type_unreadable`, and the caller records `MISCLASSIFIED_TYPE_CHECK=deferred`. The gate must capture the helper's non-zero exit (`set +e` / `|| true`) so it does not inherit the failure under `set -e` |
-  | Framework | **parse failure** (same condition) | any | `single` | **The gate is never reached.** `run-epic-scope-resolver.sh:687` already `error_exit`s with "failed to read tracker type for issue #N" during scope resolution — today's behavior on the single-item path, not introduced or changed by this item |
+  | Mode | Type read | Reconciled status | Artifact stage | Branch/PR evidence | Caller | Output |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Consumer | any (including unreadable) | any (including unreadable) | any | any | any | `RESULT=pass`, `REASON=consumer_mode` |
+  | Framework | `Workflow` | `Backlog` (order `0`) | empty — no folder, or next-action exit `66` | `none` | `single` | `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, `ITEM=#<issue>`, `REASON=misclassified_type`, `REASON_TEXT=<names the item and the re-classification>` |
+  | Framework | `Workflow` | `Backlog` (order `0`) | empty | `none` | `scan` | `RESULT=hold`, `ITEM=#<issue>`, `REASON=misclassified_type`, `REASON_TEXT=<same text>`, and **no** `STOP_CONDITION` key (a hold is not a stop) |
+  | Framework | `Workflow` | `Backlog` (order `0`) | `Spec Ready` / `Plan Ready` / `In Development` / `Done` | any | any | `RESULT=pass`, `REASON=stale_backlog_reconciled` — the tracker status is stale; the pipeline was already chosen and this gate does not re-decide it |
+  | Framework | `Workflow` | `Backlog` (order `0`) | empty | `present` — an open or merged `feature`/`fix`/`refactor`/`hotfix` branch or PR for this item | any | `RESULT=pass`, `REASON=branch_or_pr_in_flight` — fast-track work has no development folder by design, so the folder's absence is not evidence of an unstarted item |
+  | Framework | `Workflow` | `Backlog` (order `0`) | empty | `unavailable` — `gh` missing, `gh pr list` failed, or its JSON could not be parsed | any | `RESULT=pass`, `REASON=branch_evidence_unavailable`, and the caller records `MISCLASSIFIED_TYPE_CHECK=deferred`. Fail open, and say the check did not run |
+  | Framework | `Workflow` | any recognized non-`Backlog` status (order `> 0`) | any | any | any | `RESULT=pass`, `REASON=pipeline_already_chosen` |
+  | Framework | `Workflow` | unrecognized / missing (order `-1`) | any | any | any | `RESULT=pass`, `REASON=status_unreconciled` |
+  | Framework | `Feature` / `Bug` / `Refactor` | any | any | any | any | `RESULT=pass`, `REASON=type_routes_today` |
+  | Framework | **missing or empty** — no Type set, provider not `github_projects`, no project configured, or the issue is not on the board (`get_tracker_type_for_issue` prints empty and exits `0`) | any | any | any | any | `RESULT=pass`, `REASON=type_absent` |
+  | Framework | **parse failure** — item JSON exists but Type cannot be parsed (`get_tracker_type_for_issue` warns at `workflow-lib.sh:2321` and exits **non-zero**) | any | any | any | `scan` | `RESULT=pass`, `REASON=type_unreadable`, and the caller records `MISCLASSIFIED_TYPE_CHECK=deferred`. The gate must capture the helper's non-zero exit (`set +e` / `|| true`) so it does not inherit the failure under `set -e` |
+  | Framework | **parse failure** (same condition) | any | any | any | `single` | **The gate is never reached.** `run-epic-scope-resolver.sh:687` already `error_exit`s with "failed to read tracker type for issue #N" during scope resolution — today's behavior on the single-item path, not introduced or changed by this item |
 
   - **Why the parse-failure row splits by caller.** The two callers obtain Type differently, so
     they meet its failure differently, and this plan changes neither. On the single-item path
@@ -445,8 +474,8 @@ scope and must not be bundled into this implementation PR.
 
   | Path | Who supplies each input | How they reach the gate | What the gate call looks like |
   | --- | --- | --- | --- |
-  | Portfolio scan | Tracker status: `workflow-batch-plan.sh:542`. Artifact stage: the `STATUS` line of the `workflow-next-action.sh` call batch-plan already makes at `:569`–`:582` (empty when that call exits non-zero — the "no merged spec/plan PR yet" branch). Type: the gate's own `get_tracker_type_for_issue` read, since batch-plan retains no Type | In-process shell variables `$issue_number` / `$tracker_status` / the parsed `$status`; no new env var, no file | `framework-mode-backlog-type-gate.sh --issue "$issue_number" --status "$tracker_status" --artifact-stage "$status" --caller scan --repo-root "$repo_root"`, invoked **after** the next-action call (`:582`) and before the block is printed (`:634`). Costs one extra GraphQL request per scanned non-terminal folder — see "Tracker-read cost" below |
-  | Single-item run (bounded prelude scope `item` only) | Tracker status and Type: `run-epic-scope-resolver.sh:678` / `:687`, which `run-item-scope-resolver.sh` delegates to. Artifact stage: `workflow-next-action.sh --development <folder>` for the item's development folder, or empty when the item has no folder | The resolved scope JSON that `run-bounded-prelude.sh` writes to `$scope_file` (`:460`–`:481`), whose item object already carries `status` and `type` (`:766`), plus the next-action call for the folder | Same script with `--caller single`, `--status` / `--type` from `$scope_file` and `--artifact-stage` from next-action — **no extra tracker API call**. The `items` and `epic` scope modes are **not** wired to this gate; see Out of Scope |
+  | Portfolio scan | Tracker status: `workflow-batch-plan.sh:542`. Artifact stage: the `STATUS` line of the `workflow-next-action.sh` call batch-plan already makes at `:569`–`:582` (empty when that call exits non-zero — the "no merged spec/plan PR yet" branch). Branch/PR evidence: `open_implementation_pr_metadata` (`:363`–`:433`), whose existing `PR_METADATA_STATUS=unavailable` reasons map to `--branch-pr-evidence unavailable`. Type: the gate's own `get_tracker_type_for_issue` read, since batch-plan retains no Type | In-process shell variables `$issue_number` / `$tracker_status` / the parsed `$status`; no new env var, no file | `framework-mode-backlog-type-gate.sh --issue "$issue_number" --status "$tracker_status" --artifact-stage "$status" --branch-pr-evidence "$pr_evidence" --caller scan --repo-root "$repo_root"`, invoked **after** the next-action call (`:582`) and before the block is printed (`:634`). Costs one extra GraphQL request per scanned non-terminal folder — see "Tracker-read cost" below |
+  | Single-item run (bounded prelude scope `item` only) | Tracker status and Type: `run-epic-scope-resolver.sh:678` / `:687`, which `run-item-scope-resolver.sh` delegates to. Artifact stage: `workflow-next-action.sh --development <folder>` for the item's development folder, or empty when the item has no folder. Branch/PR evidence: `pullRequests.open[]` / `pullRequests.merged[]` already in the scope JSON (`run-epic-scope-resolver.sh:769`) | The resolved scope JSON that `run-bounded-prelude.sh` writes to `$scope_file` (`:460`–`:481`), whose item object already carries `status` and `type` (`:766`), plus the next-action call for the folder | Same script with `--caller single`, `--status` / `--type` / `--branch-pr-evidence` from `$scope_file` and `--artifact-stage` from next-action — **no extra tracker API call**. The `items` and `epic` scope modes are **not** wired to this gate; see Out of Scope |
 
   - **Ordering: the gate runs after `workflow-next-action.sh`, not before it.** An earlier
     revision of this plan placed the gate before the next-action call and skipped next-action
@@ -529,13 +558,18 @@ scope and must not be bundled into this implementation PR.
     2. **Enumerate folders the way the scan already does**: `find docs/specs/developments
        -mindepth 1 -maxdepth 1 -type d | sort` (`workflow-batch-plan.sh:478`–`:481`). A folder
        matches when `extract_github_issue_number "$folder"` equals the target issue.
-    3. **Zero matches** → the item has no development folder, therefore no artifacts:
-       `--artifact-stage ''`. Combined with a tracker `Backlog` and Type `Workflow`, this is
-       the stop case, which is correct — a Backlog item that has never been started has no
-       folder (`prelude-issue-no-folder-stops`).
+    3. **Zero matches** → `--artifact-stage ''`, but that is **not** on its own a decision.
+       Fast-track work has no development folder by design
+       (`workflow-next-action.sh:601`), so the prelude must then read
+       `pullRequests.open[]` / `pullRequests.merged[]` from the scope JSON and pass
+       `--branch-pr-evidence present` when any entry's head matches
+       `^(feature|fix|refactor|hotfix)/`. Only when both are empty does the stop fire — an item
+       with no folder **and** no branch or PR has genuinely not been started
+       (`prelude-issue-no-folder-stops`, `stale-backlog-active-fix-branch-continues`).
     4. **Exactly one match** → run `workflow-next-action.sh --development <folder>` and pass
-       its `STATUS` as `--artifact-stage`; a non-zero exit means no artifacts, so pass the
-       empty string (`prelude-issue-one-folder-uses-its-stage`).
+       its `STATUS` as `--artifact-stage`; a non-zero exit means no folder artifacts, so pass
+       the empty string and still supply the branch/PR evidence
+       (`prelude-issue-one-folder-uses-its-stage`).
     5. **Two or more matches** → `RESULT=pass` with `REASON=artifact_stage_ambiguous`, and
        name every matching folder in the message. Deterministic and non-destructive: duplicate
        folders for one issue mean work exists somewhere, and holding on an ambiguity the spec
@@ -799,9 +833,11 @@ completed for it". Raw tracker status alone never decides a row.
 | Mode | Classification | Stage (tracker + artifacts) | Caller | Outcome | Required next action |
 | --- | --- | --- | --- | --- | --- |
 | Framework | `Feature` / `Bug` / `Refactor` | any | any | `pass` (`type_routes_today`) | Existing pipelines; a Bug still goes through the existing scope check first |
-| Framework | `Workflow` | `Backlog` **and no artifacts** (no spec, no plan, no branch) | `single` | `stop`, `STOP_CONDITION=missing_tracker_context` | Report the stop naming `#<issue>` and the re-classification; start no pipeline; mutate nothing (`stop-path-no-mutation`) |
-| Framework | `Workflow` | `Backlog` **and no artifacts** | `scan` | `hold` (no `STOP_CONDITION`) | That item only: `DISPATCH=held`, `REPORT_CATEGORY=held`, `HOLD_REASON` naming the item. Scan continues, exits `0`, and still proposes every other valid item (`scan-backlog-no-artifacts-held`) |
+| Framework | `Workflow` | `Backlog`, **no folder artifacts and no branch/PR** for the item | `single` | `stop`, `STOP_CONDITION=missing_tracker_context` | Report the stop naming `#<issue>` and the re-classification; start no pipeline; mutate nothing (`stop-path-no-mutation`) |
+| Framework | `Workflow` | `Backlog`, **no folder artifacts and no branch/PR** | `scan` | `hold` (no `STOP_CONDITION`) | That item only: `DISPATCH=held`, `REPORT_CATEGORY=held`, `HOLD_REASON` naming the item. Scan continues, exits `0`, and still proposes every other valid item (`scan-backlog-no-artifacts-held`) |
 | Framework | `Workflow` | `Backlog` **but artifacts show `Spec Ready` / `Plan Ready` / `In Development` / `Done`** — a stale tracker status | any | `pass` (`stale_backlog_reconciled`) | Continue: the pipeline was already chosen, and the spec does not re-evaluate an item already on one. Re-typing it is tracker hygiene (`scan-stale-backlog-with-artifacts-continues`) |
+| Framework | `Workflow` | `Backlog`, no folder, **but an open or merged `feature`/`fix`/`refactor`/`hotfix` branch or PR exists** — fast-track work, which uses no development folder (`workflow-next-action.sh:601`) | any | `pass` (`branch_or_pr_in_flight`) | Continue: the item is already on a pipeline (`stale-backlog-active-fix-branch-continues`, `stale-backlog-merged-fix-pr-continues`) |
+| Framework | `Workflow` | `Backlog`, no folder, branch/PR evidence **unreadable** (`gh` missing, `gh pr list` failed, unparseable JSON) | any | `pass` (`branch_evidence_unavailable`) + `MISCLASSIFIED_TYPE_CHECK=deferred` | Continue and report that the check did not run — same fail-open rule as an unreadable status or Type (`branch-evidence-unavailable-defers`) |
 | Framework | `Workflow` | any recognized non-Backlog status (`Writing Spec` … `Released`) | any | `pass` (`pipeline_already_chosen`) | Continue the pipeline the item already started. The gate stops work being **started** on a mis-typed item; re-classification here is tracker hygiene, not a reason to halt in-flight work |
 | Framework | `Workflow` | unrecognized or missing status (`-1`) | any | `pass` (`status_unreconciled`) | None — unchanged from today. The spec adds no AC for an unreconcilable status, so this does not fail closed |
 | Framework | missing or empty (helper exits `0`) | any | any | `pass` (`type_absent`) | None — unchanged from today (spec matrix "Framework / Unset / Unchanged from today"; Out of Scope 7) |
@@ -923,13 +959,28 @@ Workflow item that continues.
     hold, and no silent claim that the check ran.
 9d. **`gate-usage-errors`**: every malformed invocation (missing required flag, flag without a
     value, unknown flag, non-numeric `--issue`, bad `--caller` / `--artifact-stage` value)
-    exits `64` with a usage message and **no** `RESULT=` line; `--status ''` and
-    `--artifact-stage ''` are accepted values that yield a routing outcome with exit `0`.
+    exits `64` with a usage message and **no** `RESULT=` line; `--status ''`,
+    `--artifact-stage ''` and `--branch-pr-evidence none` are accepted values that yield a
+    routing outcome with exit `0`.
 9e. **`prelude-issue-no-folder-stops`** / **`prelude-issue-one-folder-uses-its-stage`** /
     **`prelude-issue-multiple-folders-passes`**: single-item folder resolution — zero matching
-    development folders means no artifacts (stop on a Backlog + Workflow item), exactly one
-    match supplies its next-action stage, and two or more matches pass with
+    development folders **and** no branch/PR evidence stops a Backlog + Workflow item, exactly
+    one match supplies its next-action stage, and two or more matches pass with
     `REASON=artifact_stage_ambiguous` while naming every match.
+9f. **`stale-backlog-active-fix-branch-continues`**: tracker `Backlog`, Type `Workflow`, no
+    development folder, but an **open** `fix/<issue>-<slug>` branch or PR for the item →
+    `RESULT=pass`, `REASON=branch_or_pr_in_flight`, nothing stopped or held. Fast-track work
+    uses no development folder, so the folder's absence must not be read as "never started".
+9g. **`stale-backlog-merged-fix-pr-continues`**: the same item with a **merged** `fix/` or
+    `hotfix/` PR instead of an open one → same `pass` outcome. Covers the post-merge window in
+    which the branch is gone but the work is done.
+9h. **`backlog-no-folder-no-branch-stops`**: tracker `Backlog`, Type `Workflow`, no folder and
+    no branch or PR of any implementation prefix → still `stop` for `single` and `hold` for
+    `scan`. This is the case the feature exists for, and it must survive the two scenarios
+    above.
+9i. **`branch-evidence-unavailable-defers`**: with `gh` unavailable or `gh pr list` failing,
+    the same no-folder item **passes** with `REASON=branch_evidence_unavailable` and the caller
+    records `MISCLASSIFIED_TYPE_CHECK=deferred` — fail open, and say the check did not run.
 10. **`framework-post-backlog-statuses-pass`**: Type Workflow passes at every recognized
     non-Backlog status (`Writing Spec` through `Released`), not only `Spec Ready`; an
     unrecognized status also passes as `status_unreconciled`.
@@ -999,7 +1050,8 @@ markdown lint on plan/spec/runbook/protocol edits.
 | Mid-pipeline Workflow items blocked | Gate must key off reconciled stage, not Type alone; `framework-post-backlog-statuses-pass` covers every recognized non-Backlog status |
 | Bypass flag added later | `creation-refusal-no-bypass` inventory assertion |
 | Misclassified scan item silently dispatched | A new `NEXT_ACTION` name alone lands in the review lane as `proposed`; the `workflow-batch-lanes.sh` dispatch/report changes are mandatory, and `scan-misclassified-item-held` asserts the end state (`DISPATCH=held`), not the action name |
-| Gate keys off raw status and stops in-flight work | `workflow_status_order` reconciles nothing, so a stale `Backlog` on an item that already has a spec or plan would halt work the spec says must continue. The gate therefore requires **both** a reconciled `Backlog` **and** an empty artifact stage; `scan-stale-backlog-with-artifacts-continues` fails if a stale Backlog with artifacts is held |
+| Gate keys off raw status and stops in-flight work | `workflow_status_order` reconciles nothing, so a stale `Backlog` on an item that already has a spec or plan would halt work the spec says must continue. The gate therefore requires a reconciled `Backlog` **and** an empty artifact stage **and** no branch/PR evidence; `scan-stale-backlog-with-artifacts-continues` fails if a stale Backlog with artifacts is held |
+| Fast-track work stopped because it has no folder | `fix/` and `hotfix/` items use no development folder at all (`workflow-next-action.sh:601`), so "no folder" alone would stop live fast-track work. Branch/PR evidence is a required third input, read from sources that already match fix and hotfix heads; `stale-backlog-active-fix-branch-continues` and `stale-backlog-merged-fix-pr-continues` fail if either is held |
 | Gate keys off artifacts alone and misses a real Backlog | `workflow-next-action.sh` can never emit `Backlog`, so artifacts alone cannot identify the case the feature exists for. The tracker status stays a required input, read from `get_tracker_status_for_issue` in `workflow-batch-plan.sh` and from the scope JSON on the single-item path; `scan-backlog-no-artifacts-held` fails if a genuine Backlog item with no work is dispatched |
 | Unreadable tracker status read as clean | The status read returns empty with exit `0` for four different failure modes, so silence is indistinguishable from success. The gate passes (no fail-closed), but the block carries `MISCLASSIFIED_TYPE_CHECK=deferred` with its reason, and `scan-status-unreadable-defers` asserts both the absence of a false hold and the presence of the deferred marker |
 | Runbooks assert the pre-feature classification | `docs/testing/workflow/retrospective-protocol.smoke-test.md` and `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` are closed-list rows 13–14 with single-match grep anchors, so the guidance check fails while either still directs a framework-mode operator to Type `Workflow` |
@@ -1137,7 +1189,7 @@ final edit pass):
 | Published lookup keys | `FRAMEWORK_ITEMS_LOOKUP_STATUS`, `FRAMEWORK_ITEMS_LOOKUP_REASON`, `FRAMEWORK_ITEMS_JSON` (no `LOOKUP_` in the third; no globs) |
 | Gate script name | `framework-mode-backlog-type-gate.sh` |
 | Scan action name | `hold-misclassified-type`, emitted by `workflow-batch-plan.sh` (keys `MISCLASSIFIED_TYPE`, `MISCLASSIFIED_TYPE_REASON`, `MISCLASSIFIED_TYPE_CHECK`) |
-| Effective-stage inputs | Tracker status from `get_tracker_status_for_issue` (`workflow-batch-plan.sh:542` for the scan, scope JSON for a single-item run) **and** artifact stage from `workflow-next-action.sh`; the gate holds only when both say Backlog-with-no-work |
+| Effective-stage inputs | Three: tracker status from `get_tracker_status_for_issue` (`workflow-batch-plan.sh:542` for the scan, scope JSON for a single-item run), artifact stage from `workflow-next-action.sh`, and branch/PR evidence (`pullRequests` in the scope JSON for single-item; `open_implementation_pr_metadata` for the scan). The gate holds only when all three say Backlog-with-no-work |
 | `workflow-next-action.sh` | Not modified by this item, on any path |
 | Scan tracker-read cost | Two reads (status, then Type) = two GraphQL requests; no single-read guarantee, and `--type` saves a read only for the single-item path |
 | Framework-mode `unavailable` causes | The closed list of nine read failures, each with a `REASON` and a named case; the classification field is **not** one of them, because framework mode never reads Type |
@@ -1148,7 +1200,7 @@ final edit pass):
 | Unreadable status or Type | `pass` plus `MISCLASSIFIED_TYPE_CHECK=deferred` (a report field only; no routing effect) |
 | Closed mirror list size | 15 paths, with an explicit out-of-list table |
 | Stop condition | `missing_tracker_context`, single-item caller only; a `scan` hold emits no stop condition |
-| Status contract | stop/hold only at reconciled `Backlog` **with an empty artifact stage**; a stale `Backlog` carrying spec/plan/branch artifacts passes as `stale_backlog_reconciled`, and every other recognized or unrecognized status passes |
+| Status contract | stop/hold only at reconciled `Backlog` **with an empty artifact stage and no branch/PR evidence**; a stale `Backlog` carrying spec/plan artifacts passes as `stale_backlog_reconciled`, one with a `feature`/`fix`/`refactor`/`hotfix` branch or PR passes as `branch_or_pr_in_flight`, unreadable evidence passes as `branch_evidence_unavailable`, and every other recognized or unrecognized status passes |
 | Absent / unreadable Type | `pass` — never a fail-closed stop |
 
 ---
