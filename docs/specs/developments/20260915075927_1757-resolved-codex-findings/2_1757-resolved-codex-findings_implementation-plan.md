@@ -1458,12 +1458,73 @@ only (existing workflow regression surface for Codex).
 
 ### Parser-risk addendum (`Reviewed commit` marker + blocking-body scan)
 
+**`Reviewed commit` field grammar — derived from the shipped extractor, not
+invented.** The whole grammar is one `sed` expression,
+`codex-github-reviewer.sh:496`:
+
+```text
+sed -n 's/.*Reviewed commit:[^`]*`\([0-9a-fA-F]\{7,40\}\)`.*/\1/p' | tail -n 1
+```
+
+Every statement below is a property of that expression (or of the comparison at
+`:497`), so the list is closed by the pattern itself rather than by enumerating
+input shapes. The canonical form Codex actually emits —
+`**Reviewed commit:** \`37d5bd35da\`` on this pull request (Verification Log row
+`Codex marker token width`) — matches it.
+
+| Property | Behaviour, and what establishes it |
+| --- | --- |
+| Decoration is irrelevant | The leading `.*` absorbs anything before the field name and `[^\`]*` absorbs anything between the colon and the opening backtick, so `**Reviewed commit:**` and a bare `Reviewed commit:` behave identically (`:496`) |
+| Field name is literal and case-sensitive | `Reviewed commit:` is a BRE literal with no `I` flag, so `reviewed commit:` does not match; the `-i` at `:497` applies to the SHA comparison only, not the field name |
+| Exactly one space, and the colon is required | The literal contains a single space and a trailing colon; a tab, a double space, or a missing colon does not match (`:496`) |
+| The token must be backtick-delimited | The capture is bracketed by literal backticks, so `Reviewed commit: 37d5bd35da` extracts nothing (`:496`) |
+| Token charset and length | `[0-9a-fA-F]\{7,40\}` — hex only, 7 to 40 characters. A 6-character token fails the lower bound; a 41-character hex run cannot match because the character after a 40-character capture must be a backtick (`:496`) |
+| An intervening backticked span defeats extraction | `[^\`]*` cannot cross a backtick, so in `Reviewed commit: \`x\` \`abcdef1\`` the first backtick ends the run and the candidate token is `x`, which fails the charset/length test; the line yields nothing (`:496`) |
+| Multiple occurrences on one line: the last wins | The leading `.*` is greedy, so it consumes up to the final `Reviewed commit:` on the line (`:496`) |
+| Multiple lines: the last matching line wins | `sed` is line-scoped and `tail -n 1` keeps the final matching line (`:496`) |
+| Fenced and quoted text are **not** excluded | Unlike `codex_response_is_account_not_connected` (`:487`), `codex_response_reviews_current_head` (`:493–498`) never calls `codex_response_has_fence_marker`, so a marker inside a code fence or blockquote is extracted like any other (`:493–498`) |
+| Head comparison is a mutual prefix test | `:497` accepts when either string is a case-insensitive prefix of the other. The token is hex-constrained by `:496`, which is what makes passing it to `grep` as a pattern safe |
+
+**Three places where the shipped extractor and the spec disagree.** Each is a
+change this item must make, not a description to soften:
+
+1. **Multiple tokens.** The spec classifies a marker with "multiple commit
+   tokens" as syntactically unusable →
+   `codex_current_verdict_malformed_revision_marker`. The extractor instead
+   silently takes the last occurrence (line-greedy `.*`, then `tail -n 1`). The
+   new classifier must therefore **count occurrences before selecting one**;
+   it cannot reuse `:496` as a well-formedness test.
+2. **Superstring tokens.** `:497` accepts a token that *contains* the live head
+   as a prefix, because the comparison is mutual. The spec calls that
+   syntactically unusable. The existing **Superstring** edge-case row already
+   pins the spec's answer; this citation records that it is a change to shipped
+   behaviour, covered by the classifier revert scope (Implementation Order
+   steps 3–4).
+3. **Empty versus absent field.** At `:496` both yield no extraction and are
+   indistinguishable. AC-11 requires them to diverge — empty escalates
+   malformed, absent is acknowledgement evidence — so field **presence** must be
+   detected separately from token extraction. The AC-11 test pair already pins
+   the two outcomes; this is why it needs new code rather than a reused helper.
+
+Cases the pattern does **not** decide are not invented here. Where a form simply
+fails to match (case variants, spacing variants, missing colon, unbackticked or
+out-of-range tokens), the result is "no token extracted", which the classifier
+treats as an absent value and routes through the empty-versus-absent rule above.
+
 **Edge-case enumeration** (concrete inputs for `codex_parse_reviewed_commit_marker`
 and head-attribution helpers):
 
 | Case | Example marker / input | Expected class |
 | --- | --- | --- |
 | Valid prefix | Live head `abc1234…`, marker `abc1234` | Well-formed, live-head |
+| Field grammar: canonical form | `**Reviewed commit:** \`abc1234\`` | Extracted — decoration is absorbed by `.*` / `[^\`]*` |
+| Field grammar: no decoration | `Reviewed commit: \`abc1234\`` | Extracted — identical behaviour to the canonical form |
+| Field grammar: unbackticked token | `Reviewed commit: abc1234` | Not extracted — the capture requires backticks |
+| Field grammar: literal variants | `reviewed commit:`, `Reviewed  commit:`, `Reviewed commit` (no colon) | Not extracted — the field name is a case-sensitive literal with one space and a colon |
+| Field grammar: token length bounds | Backticked `abc123` (6) and a 41-character hex run | Not extracted — `[0-9a-fA-F]\{7,40\}` |
+| Field grammar: intervening backtick span | `Reviewed commit: \`x\` \`abc1234\`` | Not extracted — `[^\`]*` cannot cross a backtick |
+| Field grammar: repeated field | Two `Reviewed commit:` fields on one line, or on two lines | Shipped takes the last; spec requires **malformed** for multiple tokens |
+| Field grammar: inside a fence | Marker inside a code fence or blockquote | Extracted — this function has no fence guard |
 | Prior revision well-formed | Marker resolves to parent SHA, not live head | Stale / pending, not malformed |
 | Empty value | `Reviewed commit:` with no token | Malformed |
 | Non-hex token | `Reviewed commit: not-a-sha` | Malformed |
@@ -1494,6 +1555,14 @@ Area 13 — one `run_test` per row):
 | Test name prefix | Edge case row |
 | --- | --- |
 | `codex_marker_valid_prefix` | Valid prefix |
+| `codex_marker_field_canonical_bold_backtick` | Field grammar: canonical form |
+| `codex_marker_field_plain_backtick_no_bold` | Field grammar: no decoration |
+| `codex_marker_field_unbackticked_token_not_extracted` | Field grammar: unbackticked token |
+| `codex_marker_field_literal_variants_not_extracted` | Field grammar: literal variants |
+| `codex_marker_field_token_length_bounds` | Field grammar: token length bounds |
+| `codex_marker_field_intervening_backtick_span` | Field grammar: intervening backtick span |
+| `codex_marker_field_repeated_field_malformed` | Field grammar: repeated field |
+| `codex_marker_field_inside_fence_extracted` | Field grammar: inside a fence |
 | `codex_marker_prior_revision_stale` | Prior revision well-formed |
 | `codex_marker_empty_value` | Empty value |
 | `codex_marker_non_hex` | Non-hex token |
@@ -1740,8 +1809,18 @@ esac
   command that produces each). The correlation joins cite GraphQL `databaseId`
   + REST `id` for threads and `pull_request_review_id` +
   `pullRequestReview.databaseId` for review scoping.
+- Field-grammar completeness: Checked — the `Reviewed commit` grammar is derived
+  from the shipped extractor at `codex-github-reviewer.sh:496` and the head
+  comparison at `:497`, with every property citing the line that establishes it
+  (decoration, case sensitivity, spacing, backtick delimitation, charset and
+  7–40 length bounds, intervening-backtick behaviour, last-occurrence and
+  last-line selection, and the absent fence guard). Three spec-versus-shipped
+  disagreements are named as changes this item makes — multiple tokens, the
+  superstring comparison, and empty-versus-absent field presence — rather than
+  described away. No hypothetical syntax is enumerated: forms the pattern simply
+  fails to match resolve as "no token extracted".
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
-  table has 24 rows and its mapping table has 29 test names, of which 21 carry
+  table has 32 rows and its mapping table has 37 test names, of which 29 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
   the eight remaining mapping rows are the tie/precedence and correlation cases
