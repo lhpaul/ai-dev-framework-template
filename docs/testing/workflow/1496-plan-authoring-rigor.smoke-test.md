@@ -54,9 +54,11 @@ uses an explicit, temporary stacked base:
    shown. Supply the pushed implementation
    branch as the **artifact base** (never `develop`). Protocol 02 itself checks
    out that base at its remote head and creates its own `implementation-plan/*`
-   branch and draft PR — do not create a branch by hand. Use a fixture from
-   `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` as the
-   scratch plan content when Protocol 02 asks for it.
+   branch and draft PR — do not create a branch by hand. Author the scratch plan by hand while following Protocol 02: a short
+   plan (one page) for a hypothetical refactor of a single small script, written
+   to Protocol 02's template, with its per-rule outcome record. No fixture file
+   or Protocol 02 input step is involved. Scenario 4 then deliberately edits
+   that plan (see there).
 3. Run Scenarios 3–7 against that PR.
 4. Cleanup (required, recorded in the implementation PR): close the scratch PR
    unmerged, delete the `implementation-plan/*` branch Protocol 02 created,

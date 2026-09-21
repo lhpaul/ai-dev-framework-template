@@ -181,8 +181,10 @@ Not applicable.
       2. Rules 1–6 — port **verbatim** from the spec **Business Rules**
          section (including "Rules that apply across all six"). Do not introduce
          repository-specific paths or stack names.
-      3. Status labels — table from spec **Statuses / Enum Values** (code values
-         may stay in backticks for tooling; display labels must match Group H).
+      3. Status labels — the **complete** spec **Statuses / Enum Values** section
+         (label table **and** the `Valid transitions` subsection, including
+         same-head correction semantics), copied verbatim; code values may stay
+         in backticks for tooling; display labels must match Group H.
       4. **Plan review gate** — copy spec **Decision-Gate Consistency Matrix**
          subsections (Gate inputs, Triggers, Allowed outcomes and required next
          actions, Mirror surfaces, Examples) unchanged in substance.
