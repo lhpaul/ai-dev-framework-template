@@ -125,7 +125,7 @@ records only concrete names and surfaces deferred to the plan:
 | Canonical runner reference | `docs/workflow/development-workflow/architecture-decision-escalation.md` |
 | PR durable-record HTML marker | `<!-- architecture-decision-escalation -->` |
 | PR comment section heading | `## Architecture decision escalation` |
-| Run-summary attachment | Full report body duplicated in the Work Item Runner Summary **Stops** section when stopping under `architecture_decision` |
+| Run-summary attachment | Full report body placed in the Work Item Runner Summary **Stops** section when stopping under `architecture_decision`. Protocol 91's prose ("Stop conditions", ~line 3546) already requires every stop to appear under a "Stops" section, but the summary template (`## Work Item Runner Summary`, ~line 1451) has no such line; the implementation adds `- Stops: [named cause, affected item, unblocking action; for `architecture_decision`, the full escalation report]` to that template immediately after the `- Next human action:` line, so the template matches the existing prose |
 | Review-thread surface | Protocol 93 disposition/reply steps — conformance declaration inline when citing a workflow specification line **as support** |
 | Vocabulary source of truth | Display labels from spec **Statuses / Enum Values** (no new machine codes) |
 
@@ -415,6 +415,8 @@ Illustrative PR comment skeleton only (adapt during implementation):
 ### Axes
 1. Reset boundary for the counter — **Settled by specification** — citation: Protocol 91 `PR_REVIEW_LOOP_RUN_ID` paragraph — **Departs** — behavior today: counter is not reset at that boundary; **next action:** conform to the cited line (correction), not an architecture decision.
 2. Whether run-scoped counting alone bounds total effort across resumed runs — **Genuinely open** — No governing line — surfaces consulted: Protocol 91, guardrails-enforcement.md, REVIEW.md.
+
+**Mis-attached argument (labelled):** The argument that resetting would make the cap ineffective, because the incident had a new head almost every cycle, addresses axis 2, not axis 1 — it is attached to axis 2 and is not an answer to the reset-boundary question.
 
 **Requested decision:** Axis 2 only.
 
