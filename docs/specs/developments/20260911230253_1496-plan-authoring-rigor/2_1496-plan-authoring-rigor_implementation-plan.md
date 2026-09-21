@@ -254,6 +254,12 @@ Not applicable.
         consolidation and adequacy judgments.
       - Treat missing outcome record, missing N/A rationale, stale revision SHA,
         or evidence only in PR comments as blocking per Group H.
+      - **Required content (so the mirror harness assertions hold):** the block
+        names all six rules by their canonical names (`Rule 1` … `Rule 6`, one
+        line each in the form `Rule N — <canonical name>: <one-line trigger>`),
+        the three outcome labels (`Satisfied`, `Not applicable`,
+        `Unsatisfied`), and links `plan-authoring-rigor-rules.md` as the
+        canonical statement; it never restates pass conditions.
 
       Do **not** duplicate the full matrix prose — reference the canonical file.
 
