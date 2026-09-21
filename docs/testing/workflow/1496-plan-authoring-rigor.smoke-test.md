@@ -131,7 +131,7 @@ names an acceptance theme, the exercise, and the expected gate class.
 | C1 | Rule 2 — disagreeing duplicate | Same count stated differently in two sections | Blocking — contradiction |
 | C2 | Rule 2 — agreeing duplicate | Same fact twice, identical wording | Non-blocking consolidation; Satisfied |
 | C3 | Rule 2 — size is not a criterion | Very long plan, no other defect | No finding — size never fails a rule |
-| C4 | Rule 2 — correction round | Correction adds a second statement instead of editing the first | Blocking — fact asserted twice |
+| C4 | Rule 2 — correction round | Correction adds a second statement of the fact instead of editing the first, and the second **disagrees** with the first | Blocking — disagreeing duplicate; an agreeing second statement is non-blocking consolidation (Satisfied), as in C2 |
 | D1 | Rule 3 — bad partition | Count by subtracting unrelated totals | Blocking — partition not shown |
 | D2 | Rule 3 — scope by count | Step uses number without enumeration | Blocking — missing enumeration |
 | D3 | Rule 3 — non-homogeneous population | Correct arithmetic over a population whose members do not share the reasoned-about property | Blocking — population not homogeneous |
