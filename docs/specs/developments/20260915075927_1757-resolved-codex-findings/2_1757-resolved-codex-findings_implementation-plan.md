@@ -92,6 +92,8 @@ checks in the implementation-start assumption table below.
 | Commit-token resolution semantics | `git rev-parse --disambiguate=<prefix>`; `git rev-parse --verify "<token>^{commit}"`; `gh api repos/{owner}/{repo}/commits/<token>` | Unique token `490bde2` → exit `0`, full SHA. Ambiguous prefix `0003` (found via `git rev-list --all --objects \| cut -c1-4 \| sort \| uniq -d`) → exit `128`, `error: short object ID 0003 is ambiguous`. Unknown `deadbee` → exit `128`, `fatal: Needed a single revision`. `--disambiguate=490b` → one line (the full SHA); a 2-character prefix returns zero lines with no error. GitHub REST: `commits/490bde2` and `commits/490b` both return HTTP `200` with a full `.sha` — no ambiguity signal — while `commits/dead` returns HTTP `422` `No commit found for SHA: dead` |
 | Head-transition source investigation | `gh api repos/{owner}/{repo}/issues/1768/timeline --paginate --jq '.[].event' \| sort \| uniq -c`; `gh api repos/{owner}/{repo}/events --paginate --jq '.[] \| select(.type=="PushEvent")'` | The pull-request timeline for a four-head pull request contains **no** push- or head-transition event of any kind: only `commented`, `committed`, `labeled`, `unlabeled`, `subscribed`, `mentioned`, `reviewed`, `cross-referenced`. `committed` events carry `sha` + `committer.date` with `created_at: null`. Ordinary (non-force) pushes surface no pull-request-scoped event, so `head_ref_force_pushed` is the only timeline transition event and this repository has none to sample. The repository `events` feed *does* carry `PushEvent` with a true push instant per branch ref — `490bde2c` at `2026-09-21T00:05:21Z` versus its `committer.date` of `00:05:14Z`, empirically confirming the 7-second commit-date-vs-push gap — but the feed is repository-wide and bounded: `--paginate` returned ~286 events reaching back only to `2026-09-16`, entries for one ref came back out of chronological order, and a fork head ref would not appear at all. **Historical — no longer consumed by any step.** Recorded because it is the evidence that a transition instant cannot be sourced at all; the **Live-head evidence window** section no longer needs one, so no substitute is required |
 | Sync-manifest scope for a new shared library | `sed -n '105,132p' sync-manifest.yaml`; `grep -n 'product_repo' scripts/development-workflow/tests/test-sync-template-mode-scopes.sh` | `scripts/development-workflow/` is declared `glob: "**/*"`, `mode_scope: hub_only` (`sync-manifest.yaml:105–108`), and each product-repo runtime file overrides it with its **own explicit entry**: `workflow-config-resolver.py` (`:109`), `resolve-reviewer-availability.sh` (`:112`), `validate-workflow-config.sh` (`:115`), `workflow-lib.sh` (`:118–120`, note "shared shell helpers required by product-repo runtime scripts"), `pr-review-loop.sh` (`:121–123`), `pr-ci-loop.sh` (`:124`), `changelog-fragments.sh` (`:127`), `post-merge-cleanup.sh` (`:130`). So a **new** sibling file is `hub_only` by default even though its caller is injected. `workflow-lib.sh` is the precedent to mirror. Selection is testable through `select-sync-manifest-entries.py`, and `test-sync-template-mode-scopes.sh` already asserts against the **real** manifest (`:309–338`) as well as fixtures (`:180`) |
+| Product-repo runtime path set: every enumerating surface | `grep -rln 'PRODUCT_RELEASE_RUNTIME_PATHS' .`; `grep -rln 'workflow-lib\.sh' . --exclude-dir=.git` then filtering to files that *enumerate* the set | Four surfaces enumerate it, and all four must list a new runtime path: (1) `scripts/development-workflow/validate-workflow-hub-skeletons.py:18–27`, the `PRODUCT_RELEASE_RUNTIME_PATHS` constant that is the source of truth; (2) `sync-manifest.yaml:105–132`; (3) `template/product-repo-injection/skeleton-manifest.yaml:29–62`, whose entries carry `required_for_product_repo: true` under `enforce_release_runtime: true` (`:4`); (4) `docs/workflow/development-workflow/product-repo-injection.md:85–90`. Checked and **excluded** with evidence: `docs/workflow/development-workflow/repository-modes.md:539` only describes `workflow-lib.sh`'s `KEY=value` helper output and enumerates no set; the ~120 other files naming `workflow-lib.sh` either source it or are historical specs. **Pre-existing drift, not introduced here**: the documentation list at `:85–90` has six paths and omits `resolve-reviewer-availability.sh` and `changelog-fragments.sh`, which the constant requires |
+| Runtime-set validator: fails closed in both directions | `sed -n '94,104p;182,194p' scripts/development-workflow/validate-workflow-hub-skeletons.py` | For the skeleton manifest (only when `enforce_release_runtime: true`, `:94`): a **missing** path raises "missing required product release runtime entries" (`:97–100`) and an **extra** one raises "unexpected required_for_product_repo entries" (`:101–104`). For the sync manifest it computes `product_runtime_paths` as every `product_repo_injection` path under `scripts/development-workflow/` and compares the **symmetric difference** against the constant (`:182–194`), so an unknown path and a missing path both fail. Consequence for this item: the `sync-manifest.yaml` entry added by Implementation Order step 1 **fails validation on its own** — the constant must be updated in the same commit |
 | Trigger comment names the head | `sed -n '1685p;2019p' scripts/development-workflow/codex-github-reviewer.sh` | `codex-github-reviewer.sh:1685` posts `… (review triggered by workflow runner, commit: $CURRENT_SHA)` and `:2019` posts `… (sha: $CURRENT_SHA)` on retrigger, both after `headRefOid` is resolved. Every trigger therefore names its SHA, which is what lets the boundary `B` be computed by string comparison against `headRefOid` with no head enumeration |
 | Blocking-marker vocabulary (shipped) | `grep -n 'CODEX_BLOCKING_PATTERN\|codex_response_is_blocking()' scripts/development-workflow/codex-github-reviewer.sh` | `CODEX_BLOCKING_PATTERN` is defined at `codex-github-reviewer.sh:532` (`changes requested`, `blocking issues:`, `blocking finding`, `blocking:`, `must fix`, `action required`, `required:`, `❌`) and extended at `:578` with `CODEX_MERGE_REFUSAL_PATTERN` (`:577`); `codex_response_is_blocking()` at `:698` is the classifier. Body findings reuse this surface, so the plan adds no marker vocabulary — which is what the spec requires |
 | Force-push event payload | `gh api repos/kubernetes/kubernetes/issues/142190/timeline --jq '.[] \| select(.event=="head_ref_force_pushed")'` (this repository has no force-pushes to sample; kubernetes/kubernetes used as a live source) | `head_ref_force_pushed` carries `created_at` — a true push instant — and a populated `commit_id` naming the **new** head: on PR 142190 the newest event (`2026-09-17T18:35:21Z`, `commit_id=1a39d080…`) matches that PR's current head, and its commit's own `committer.date` is `18:35:18Z`, three seconds earlier. Populated in 8 of 8 sampled events across 5 pull requests. `head_ref_deleted` also carries `created_at` (with `commit_id: null`); `head_ref_restored` was not sampled. The occupancy guard needs only existence and `created_at`, so it does not depend on `commit_id` being present |
@@ -1053,9 +1055,14 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
       `codex_review_thread_evidence_counts()` into it and add the evidence
       collector, marker parser, and window boundary): revert by restoring the
       function to `codex-github-reviewer.sh` at its original call site and
-      deleting the library file **and its `sync-manifest.yaml` entry**, which
-      must go with it — a manifest entry for a deleted path would offer
-      downstream repos a file that no longer exists. The revert order is the
+      deleting the library file **and all four runtime-set entries** — the
+      `PRODUCT_RELEASE_RUNTIME_PATHS` constant, the `sync-manifest.yaml` entry,
+      the skeleton-manifest entry, and the documentation list line. They revert
+      together for the same reason they land together: the validator compares
+      the constant against both manifests in both directions, so removing any
+      subset leaves the repository failing its own validation, and a manifest
+      entry for a deleted path would offer downstream repos a file that no
+      longer exists. The revert order is the
       reverse of the creation order — steps 3–4 must be reverted first, since
       they source the library; reverting 1–2 while 3–4 stand would leave both
       callers sourcing a file that no longer exists. Nothing outside this repository consumes
@@ -1372,6 +1379,18 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   caller's guard at `codex-github-reviewer.sh:1340` enforces before the
   timestamp selector is consulted, and the direction a selector-only reading
   would get wrong.
+
+- [ ] **Runtime-set contract** (V1) — in the **existing** harness
+  `scripts/development-workflow/tests/test-workflow-hub-skeletons.sh`, which
+  already guards both drift directions with fixtures
+  (`sync_manifest_product_runtime_drift_fails` at `:176–180`,
+  `product_repo_missing_release_runtime_fails` at `:212`). Extend its Area 1
+  real-file block (`:113–125`) rather than adding a parallel harness: run
+  `validate-workflow-hub-skeletons.py` against the repository's **real**
+  `sync-manifest.yaml` and `template/product-repo-injection/skeleton-manifest.yaml`
+  and assert it exits `0` — `real_manifests_validate_with_evidence_lib`. That
+  single assertion catches any of the four surfaces being updated without the
+  others, because the validator's comparison is symmetric.
 
 - [ ] **Sync-manifest mode scope** (U1) — in the **existing** harness
   `scripts/development-workflow/tests/test-sync-template-mode-scopes.sh`, not a
@@ -1804,7 +1823,25 @@ esac
    Without it the recursive `hub_only` rule at `:105–108` excludes the file
    while `pr-review-loop.sh` (`:121–123`) is still injected, so a synced
    product repo would receive a loop that **fails at load time** — the library
-   is sourced unconditionally, not lazily. Commit.
+   is sourced unconditionally, not lazily.
+
+   **The runtime path set is enumerated in four places and the validator
+   compares them both ways, so all four change in this same commit** — a
+   manifest entry alone makes `validate-workflow-hub-skeletons.py` fail with
+   "unexpected", not pass (Verification Log rows
+   `Product-repo runtime path set: every enumerating surface` and
+   `Runtime-set validator: fails closed in both directions`):
+
+   | Surface | Change |
+   | --- | --- |
+   | `scripts/development-workflow/validate-workflow-hub-skeletons.py:18–27` | Add the path to the `PRODUCT_RELEASE_RUNTIME_PATHS` constant |
+   | `sync-manifest.yaml:105–132` | The `product_repo_injection` entry shown above |
+   | `template/product-repo-injection/skeleton-manifest.yaml:29–62` | Add an entry with `mode_scope: product_repo_injection` and `required_for_product_repo: true`, mirroring the `workflow-lib.sh` block at `:43–47` |
+   | `docs/workflow/development-workflow/product-repo-injection.md:85–90` | Add the path to the enumerated list. Note that list is already missing `resolve-reviewer-availability.sh` and `changelog-fragments.sh`; **do not** fix that drift here — it is out of this item's scope and belongs in its own change |
+
+   `docs/workflow/development-workflow/repository-modes.md` is **not** such a
+   surface: `:539` describes `workflow-lib.sh`'s helper output and enumerates no
+   set. Commit.
 2. Implement terminal evidence collector + marker parser + marker-first
    routing and the live-head window boundary `B`; commit.
 3. Implement `codex_classify_live_head_evidence()` decision matrix and wire all
@@ -1817,8 +1854,10 @@ esac
 7. Add/update Area 13 harness cases (marker table + primary regression) + one
    `run_codex_github_review` case; commit.
 8. Update `codex-github.md` and Protocol 93 cross-links; commit.
-9. Run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` (or CI
-   equivalent) and fix failures; then produce the three planted-violation
+9. Run `bash scripts/development-workflow/tests/test-pr-review-loop.sh`,
+   `bash scripts/development-workflow/tests/test-sync-template-mode-scopes.sh`,
+   and `bash scripts/development-workflow/tests/test-workflow-hub-skeletons.sh`
+   (or the CI equivalent) and fix failures; then produce the three planted-violation
    proofs from the Testing Strategy table — plant, run the named test, record
    the failure, restore, re-run, record the pass — and paste the evidence into
    the implementation pull request before requesting review.
@@ -1909,14 +1948,21 @@ esac
   authored after it. AC-14 (spec line 157) supplies the escalation. No head
   enumeration, no head ordering, no transition instant, and no commit date
   appears anywhere in the algorithm.
-- Packaging scope: Checked — the new shared library carries its own
-  `sync-manifest.yaml` entry with `mode_scope: product_repo_injection`,
-  mirroring the `workflow-lib.sh` precedent, because the recursive `hub_only`
-  rule on `scripts/development-workflow/` would otherwise exclude it while its
-  caller `pr-review-loop.sh` is injected. Declared in Implementation Order step
-  1, removed with the library in the reversal path, and guarded by two named
-  assertions in the existing `test-sync-template-mode-scopes.sh` real-manifest
-  block.
+- Packaging scope: Checked by enumeration — the product-repo runtime path set
+  is declared in **four** surfaces, found by grepping the repository for
+  `PRODUCT_RELEASE_RUNTIME_PATHS` and for an existing member of the set rather
+  than from a supplied list: the validator constant
+  (`validate-workflow-hub-skeletons.py:18–27`), `sync-manifest.yaml`, the
+  product-injection skeleton manifest, and `product-repo-injection.md`. All four
+  are updated in Implementation Order step 1 and revert together, because the
+  validator compares the constant against both manifests **in both directions**
+  and so fails closed on an unknown path as well as a missing one. One
+  candidate surface was checked and excluded with evidence
+  (`repository-modes.md:539` describes a helper, enumerates no set), and a
+  pre-existing drift in the documentation list is recorded without being fixed
+  here. Guarded by a real-manifest validator assertion in the existing
+  `test-workflow-hub-skeletons.sh` plus the two selector assertions in
+  `test-sync-template-mode-scopes.sh`.
 - Executable interfaces: Checked — the shared helper declares parameters,
   stdout shape, and return codes; both call sites are mapped from their actual
   variable names; a `set -u` no-global-reads test is named; and the helper
