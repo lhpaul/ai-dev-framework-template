@@ -166,7 +166,7 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H7 | Absent trigger recorded Satisfied | Rule's trigger absent, record says `Satisfied` | Blocking — must be `Not applicable` with rationale |
 | H8 | Invalid outcome label | Record uses a label outside the three defined | Blocking — invalid label |
 | H9 | External-source finding not persisted | Rule 1 outcome cites an inspection with no persisted finding | Blocking — persisted finding missing |
-| H10 | Incomplete evidence record | Rule 3/4/5 evidence record missing its revision, command, or result | Blocking — record incomplete |
+| H10 | Rules 3–5 incomplete evidence record | Otherwise-complete record with exactly one required field omitted, run once per field — Rule 3: command or query, revision, counted population; Rule 4: search terms or query, places searched, revision; Rule 5: search or query, places searched, revision, the outcome at each consumer | Blocking — names the missing field |
 | H11 | Non-reproducing or population-changed evidence | Recorded command does not reproduce at its recorded revision, or later plan text changes the population the evidence describes | Blocking — evidence does not support the claim |
 | H12 | Repository-only drift | Repository changed after gathering but no claim the plan makes is affected | Non-outcome — no finding; record unchanged |
 | H13 | Evidence only in PR comments | Firing rule's evidence exists only in a PR comment or chat transcript | Blocking — evidence must be moved into the plan document |
