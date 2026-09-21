@@ -1130,10 +1130,10 @@ esac
   earlier current-head evidence before that precedence ordering is applied";
   the only timestamp-independent exceptions are indeterminate evidence, an
   applicable unresolved live-head conversation, and the two availability hard
-  stops, which yield only to a *canonical* competitor — an applicable
-  unresolved live-head conversation or a phase-2 winner in tiers 1–5 — and are
-  otherwise restored by the hard-stop restoration rule). Environment-setup is
-  retained separately and is never a hard stop. The normative Evaluation-order
+  stops. A hard stop yields only to a *canonical* competitor — that same
+  unresolved conversation, or a phase-2 winner in tiers 1–5 — and is otherwise
+  restored by the hard-stop restoration rule. Environment-setup is retained
+  separately and is never a hard stop. The normative Evaluation-order
   list is the single tie-breaker between the phase narrative and the
   pre-selection guard, and its worked examples agree with the guard for every
   listed batch. No contradictory next actions across plan layers.
