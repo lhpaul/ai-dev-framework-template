@@ -53,11 +53,22 @@ scope and must not be bundled into this implementation PR.
 | Mirror-check anchor literal 2 | `grep -rn 'update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"' .` | **2 matches** — `integrations/github-projects.md:202`, `protocols/06-retrospective-protocol.md:510`; verified 2026-09-20. Note the retrospective match is at `:510`, not the `:124` lookup line |
 | Mirror-check anchor literal 3 | `grep -c 'Route by the brief' docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | **1 match** — verified 2026-09-20 |
 | Mirror-check anchor literal 4 | `grep -ric 'route by brief' docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | **1 match** — verified 2026-09-20 (case-insensitive; the tree's casing differs from the plan's earlier lowercase rendering) |
+| Mirror-check anchor literal 5 | `grep -c 'with Type `Workflow`' docs/testing/workflow/retrospective-protocol.smoke-test.md` | **1 match** (`:88`) — verified 2026-09-20 |
+| Mirror-check anchor literal 6 | `grep -c 'project Type will be set to `Workflow`' docs/testing/workflow/tracker-type-field-classification.smoke-test.md` | **1 match** (`:32`) — verified 2026-09-20 |
+| Instructing-surface sweep | The three commands recorded under the closed mirror list (pattern sweep over `*.md`/`*.sh`/`*.yaml`/`*.yml`, the `docs/testing/` classification sweep, and a direct `grep -n 'Workflow' scripts/development-workflow/add-backlog-item.sh` — the last is needed because that file's help text splits "Type" and "Workflow" across lines `:40`–`:41`) | Yielded closed-list rows 13–15 (`retrospective-protocol.smoke-test.md:88`, `tracker-type-field-classification.smoke-test.md:32`, `add-backlog-item.sh:41`). Remaining hits are `workflow-lib.sh`'s unchanged primitive, test fixtures, `CHANGELOG.md`, and historical specs/plans — excluded with reasons in the out-of-list table — verified 2026-09-20 |
+| Runner-guidance symlinks | `ls -l AGENTS.md CLAUDE.md GEMINI.md` | `CLAUDE.md` and `GEMINI.md` are symlinks to `AGENTS.md`; one edit updates all three, and recursive greps report only `AGENTS.md` — verified 2026-09-20 |
 | `list_open_workflow_type_issues` call sites | `grep -rn 'list_open_workflow_type_issues' scripts docs/workflow docs/testing --include='*.sh' --include='*.md'` (scoped to production scripts, protocols, integrations, and smoke runbooks; excludes `CHANGELOG.md`, `docs/specs/**` history and this plan's own self-references) | Definition (2 lines: header comment 3245 + function 3265) + 2 protocol snippets + 9 harness invocation lines in `test-workflow-lib-github-projects.sh` (630, 663, 684, 685, 701, 702, 715, 813, 816; plus a header comment at line 9) + 2 lines in the integration doc + 1 smoke runbook line — enumerated in Enforcement point 2; re-verified 2026-09-20 |
 | Lane mapping for an unknown action | `stage_lane_for_next_action` in `workflow-batch-lanes.sh:25`–`:34` | `*)` fallback returns `review`; a new `NEXT_ACTION` name alone is **not** held — verified 2026-09-20 |
 | Dispatch default | `workflow-batch-lanes.sh:374` | `dispatch="proposed"` unless a lane cap, exclusivity, or overlap rule fires — verified 2026-09-20 |
 | HELD report category precondition | `report_category_for_item` in `workflow-batch-lanes.sh:50`–`:102` | Returns `held` only when `dispatch` is already `held` (`:91`), and the `ready-for-human-review` (`:81`) / in-review-status (`:74`) branches return `informational` first — verified 2026-09-20 |
-| Key pass-through in batch plan | `workflow-batch-plan.sh:592`–`:603` (reader) and `:634`–`:649` (emitter) | Fixed `case` allow-list both ways; unlisted keys from `workflow-next-action.sh` are dropped — verified 2026-09-20 |
+| Key pass-through in batch plan | `workflow-batch-plan.sh:592`–`:603` (reader) and `:634`–`:649` (emitter) | Fixed `case` allow-list both ways; unlisted keys from `workflow-next-action.sh` are dropped — which is why the scan hold is emitted by batch-plan itself rather than forwarded — verified 2026-09-20 |
+| `workflow-next-action.sh` status source | `:677`–`:696` (status derivation), `:670`–`:676` (comment), `:43`–`:77` (arg parser) | Status is derived from spec/plan files and branch state only; possible values are `Spec Ready`, `Plan Ready`, `In Development`, `Done`, `Unknown` — **never `Backlog`**. No `--issue` / `--status` option exists, and the script's own comment forbids using its STATUS to override the tracker — verified 2026-09-20 |
+| Authoritative tracker status in the scan | `workflow-batch-plan.sh:516` (issue number), `:542` (`get_tracker_status_for_issue`), `:554`–`:557` (terminal skip), `:569`–`:571` (next-action call), `:639` (emitted STATUS) | Batch-plan reads the tracker status but uses it only for the terminal skip and Linear deferral; it does not pass it to next-action and emits next-action's artifact-derived STATUS instead — the gap this item closes — verified 2026-09-20 |
+| Tracker status failure modes | `get_tracker_status_for_issue` in `workflow-lib.sh:2250`–`:2285` | Returns empty string with exit `0` for Linear deferral, missing project config, missing project item, and unparseable JSON; never non-zero, so callers cannot distinguish them — verified 2026-09-20 |
+| Tracker Type failure modes | `get_tracker_type_for_issue` in `workflow-lib.sh:2293`–`:2325` | Empty string for non-`github_projects` providers, missing project config, or missing item; **non-zero** only when item JSON exists but Type cannot be parsed — verified 2026-09-20 |
+| Authoritative status + Type on the single-item path | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type); consumed via `run-bounded-prelude.sh:461`–`:480` scope JSON | Both values are already resolved per item and carried in the scope JSON, so the single-item gate needs no additional tracker call; `:687` hard-fails on an unparseable Type before the gate is reached — verified 2026-09-20 |
+| Linear deferred scope placeholder | `run-item-scope-resolver.sh:375`, `:396`–`:397` | Emits `trackerReadDeferred: true` with a literal `status: "Backlog"` and `type: ""`; the gate must key off `trackerReadDeferred`, not the placeholder — verified 2026-09-20 |
+| Status and Type share one project read | `workflow_github_project_item_for_issue` (`workflow-lib.sh:1781`); its GraphQL selection includes both `status` and `type` | One item JSON carries both fields, but the two helpers call it separately — hence the gate's optional `--type` to avoid a second round-trip per scanned folder — verified 2026-09-20 |
 | Status reconciliation primitive | `workflow_status_order` in `workflow-lib.sh:1610` | `Backlog` → `0`, recognized statuses `Writing Spec`…`Released` → `> 0`, unrecognized → `-1` — verified 2026-09-20 |
 | Stop-emission precedent | `emit_guardrails_unreadable_stop` in `run-bounded-prelude.sh:47` | Existing `stopCondition` / `affectedWorkItem` / `humanActionRequired` / `readOnlyGuarantee` shape to reuse — verified 2026-09-20 |
 | Backlog items without a development folder | `workflow-batch-plan.sh` scan input; `workflow-batch-lanes.sh --scan` usage (`:12`) | Both take development folder paths, so folderless Backlog items are held by Protocol `90` text, not by these scripts — verified 2026-09-20 |
@@ -247,54 +258,106 @@ scope and must not be bundled into this implementation PR.
     `emit_guardrails_unreadable_stop` in `run-bounded-prelude.sh:47` — same shape
     (`stopCondition` / `affectedWorkItem` / `humanActionRequired` / `readOnlyGuarantee`),
     with `affectedWorkItem` carrying `#<issue>`.
-- [ ] Wire the gate into the **actual** classification paths (not `run-work-router.sh`, which
-  only redirects `/run-work` scope):
-  - **Single-item runs**: invoke from `scripts/development-workflow/run-bounded-prelude.sh`
-    once the target issue and tracker status are known; on `RESULT=stop`, emit prelude output
-    that maps to `missing_tracker_context` and abort before stage dispatch (Protocol `91`).
-  - **Portfolio / batch proposal**: `NEXT_ACTION=hold-misclassified-type` on its own does
-    **not** produce a held item. Verified against the tree at plan time:
-    `workflow-batch-lanes.sh:32` maps any unrecognized action to the `review` lane via the
-    `*)` fallback, `:374` initializes `dispatch="proposed"`, and
-    `report_category_for_item` only returns `held` when `dispatch` is already `held`
-    (`:91`). A new action name alone would therefore be **proposed for dispatch in the review
-    lane** — the opposite of the spec's hold. The held outcome needs four concrete changes,
-    all in this item's scope:
-    1. `workflow-next-action.sh`: when framework mode is active, the folder's tracker Type
-       reads `Workflow`, and its status reconciles to `Backlog`, emit
-       `NEXT_ACTION=hold-misclassified-type` (**pinned**; do not rename) **plus**
-       `MISCLASSIFIED_TYPE=Workflow` and `MISCLASSIFIED_TYPE_REASON=<REASON_TEXT naming the
-       item>`, and exit `0` so the scan continues.
-    2. `workflow-batch-plan.sh`: forward the two new keys. Its reader (`:592`–`:603`) is a
-       fixed `case` allow-list and its emitter (`:634`–`:649`) re-prints only known keys, so
-       **unforwarded keys are silently dropped** before lanes ever sees them. Use
-       `MISCLASSIFIED_TYPE_REASON` (not `HOLD_REASON`) as the transport key: lanes echoes the
-       whole input block before printing its own `HOLD_REASON` (`:542`, `:552`), so reusing
-       that name would emit a duplicate key with two different values.
-    3. `workflow-batch-lanes.sh`, lane assignment loop (`:355`–`:420`): read
-       `MISCLASSIFIED_TYPE_REASON` alongside `NEXT_ACTION`, and **before** the
-       `stage_lane = none` branch set `dispatch="held"` with
-       `hold_reason="$MISCLASSIFIED_TYPE_REASON"` (fallback text if empty) when
-       `next_action = hold-misclassified-type`, without consuming a stage-lane cap slot. Add
-       an explicit `hold-misclassified-type)` arm to `stage_lane_for_next_action` (`:25`)
-       returning `review` rather than relying on the `*)` fallback, and **not** `none` —
-       `none` forces `dispatch="skip"`, which reports as `INFORMATIONAL`, not `HELD`.
-    4. `workflow-batch-lanes.sh`, `report_category_for_item` (`:50`): add an early
-       `hold-misclassified-type` → `held` arm placed **before** the
-       `ready-for-human-review` label check (`:81`) and the in-review status check (`:74`),
-       so no upstream branch can downgrade a misclassified item to `informational`. The
-       existing `dispatch = held` output path then prints `HOLD_REASON` and `HELD_SUMMARY`
-       (`:551`–`:556`) unchanged.
-    **Required end state** (what the tests assert, not the action name): for that item
-    `DISPATCH=held`, `REPORT_CATEGORY=held`, `REPORT_LABEL=HELD - not included in proposed
-    batch`, and a non-empty `HOLD_REASON` naming the item and the re-classification — while
-    the scan exits `0` and every sibling item keeps its own lane and dispatch.
-    **Backlog items with no development folder** are outside this script pipeline entirely
-    (`workflow-batch-plan.sh` scans development folders; `workflow-batch-lanes.sh --scan`
-    takes development paths). For those, the hold is produced by Protocol `90`'s Backlog
-    routing table and its `HELD - not included in proposed batch` report category, which the
-    closed mirror list already requires this item to update — the script changes above cover
-    the folder-bearing case, and the protocol text covers the rest. Both must be present.
+- [ ] **Status data flow — the gate must read the tracker status, never an artifact-derived
+  one.** `workflow-next-action.sh` cannot host this gate. Verified at plan time: its
+  `status_line` is computed purely from repository artifacts — spec file present, plan file
+  present, feature branch exists or merged (`:677`–`:696`) — so it emits `Spec Ready`,
+  `Plan Ready`, `In Development`, `Done`, or `Unknown` and **can never emit `Backlog`**; its
+  own comment (`:670`–`:676`) states the VCS-derived status is a heuristic that must not
+  override the tracker; and its argument parser (`:43`–`:77`) accepts only
+  `--branch` / `--pr` / `--development` / `--repo` / `--repo-root` — there is no `--issue` or
+  `--status`. Gating there would let a tracker-`Backlog` item that already has a merged spec
+  present as `Spec Ready` and bypass the hold entirely. The authoritative reader is
+  `workflow-batch-plan.sh`, which resolves the issue number (`extract_github_issue_number`,
+  `:516`) and reads the tracker status (`get_tracker_status_for_issue`, `:542`) — but today it
+  uses that value only for the terminal-status skip (`:554`–`:557`) and the Linear deferred
+  flag (`:547`–`:553`), does **not** pass it to `workflow-next-action.sh` (`:569`–`:571`), and
+  emits the artifact-derived `STATUS` from next-action's output instead (`:639`). The data
+  flow this item establishes:
+
+  | Path | Who reads the authoritative status/Type | How it reaches the gate | What the gate call looks like |
+  | --- | --- | --- | --- |
+  | Portfolio scan | `workflow-batch-plan.sh:542` (`get_tracker_status_for_issue`), plus a Type read the gate performs or the caller passes | In-process shell variables `$issue_number` / `$tracker_status`; no new env var, no file | `framework-mode-backlog-type-gate.sh --issue "$issue_number" --status "$tracker_status" [--type "$tracker_type"] --caller scan --repo-root "$repo_root"`, inserted **after** the terminal-status skip (`:557`) and **before** the next-action invocation (`:569`) |
+  | Single-item run | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type), already called for every item by `run-item-scope-resolver.sh` | The resolved scope JSON that `run-bounded-prelude.sh` writes to `$scope_file` (`:461`–`:480`), whose per-item objects already carry `status` and `type` | Same script with `--caller single`, reading `--status` / `--type` out of `$scope_file` — **no extra tracker API call** |
+
+  - **Scan hold is emitted by `workflow-batch-plan.sh`, not by `workflow-next-action.sh`.** On
+    `RESULT=hold` the batch-plan loop prints the item block itself — `TARGET`,
+    `DEVELOPMENT_PATH`, `SLUG`, `TOOL_FIX` (already computed at `:562`), the **tracker**
+    `STATUS` (`Backlog`, not the artifact-derived value),
+    `NEXT_ACTION=hold-misclassified-type` (**pinned**; do not rename),
+    `MISCLASSIFIED_TYPE=Workflow`, and `MISCLASSIFIED_TYPE_REASON=<REASON_TEXT naming the
+    item>` — then `continue`s to the next folder without calling `workflow-next-action.sh` at
+    all. Consequences, all deliberate: `workflow-next-action.sh` is **not modified by this
+    item** (so its consumers and its artifact-only contract are untouched), and the
+    `case`-allow-list key-forwarding problem at `:592`–`:603` / `:634`–`:649` never arises,
+    because the keys originate in batch-plan rather than passing through it.
+  - **Fallback when the tracker status cannot be read.** `get_tracker_status_for_issue`
+    (`workflow-lib.sh:2250`–`:2285`) returns an **empty string and exit `0`** for every
+    failure mode: Linear provider (after emitting `TRACKER_ACTION_REQUIRED=read_status`), no
+    project configured, issue not on the board, and unparseable item JSON. It never signals
+    failure by exit code, so the caller cannot distinguish them. The gate is therefore called
+    with `--status ""`, returns `pass` (`status_unreconciled`) per the single status contract,
+    and the item continues down today's next-action path **unchanged**. No stop, no hold, no
+    fail-closed behavior.
+  - **Deferred checks are reported, not silently treated as clean.** When the gate passes only
+    because the status or the Type could not be read, batch-plan emits
+    `MISCLASSIFIED_TYPE_CHECK=deferred` with a short reason (alongside the existing
+    `TRACKER_STATUS_DEFERRED` key it already prints for Linear at `:638`); when both reads
+    succeeded it emits `MISCLASSIFIED_TYPE_CHECK=applied`, and in consumer mode
+    `not_applicable`. This is a **report field only** — it changes no lane, no dispatch, and
+    no routing decision; it exists so the scan report and Protocol `90` can say the
+    misclassification check did not run, and so the orchestrator knows to re-apply the gate
+    for a Linear item once it has resolved that item's status and Type from its own context.
+  - **Linear placeholder must not be mistaken for a real Backlog.** `run-item-scope-resolver.sh`
+    emits a deferred scope object with `trackerReadDeferred: true` (`:375`) and a literal
+    `status: "Backlog"` / `type: ""` (`:396`–`:397`, repeated in the `items[]` copy). The
+    single-item wiring must check
+    `trackerReadDeferred` first and skip the gate (recording `deferred`) rather than reading
+    that placeholder as an authoritative Backlog; the empty `type` would pass anyway, but the
+    check must not depend on that coincidence.
+  - **One project read, not two.** Status and Type come from the same project item JSON
+    (`workflow_github_project_item_for_issue` selects both `status` and `type`), yet
+    `get_tracker_status_for_issue` and `get_tracker_type_for_issue` each call it separately.
+    The gate therefore accepts an optional `--type` so a caller that already holds the value
+    passes it instead of forcing a second GraphQL round-trip per scanned folder — this
+    repository has repeatedly hit tracker rate limits during batch scans.
+  - **Single-item stop**: on `RESULT=stop`, `run-bounded-prelude.sh` emits stop output that
+    maps to `missing_tracker_context`, naming the item, and aborts before stage dispatch
+    (Protocol `91`). Note `run-epic-scope-resolver.sh:687` already hard-fails when the Type
+    read returns non-zero (unparseable Type JSON), so that case never reaches the gate on this
+    path and needs no new handling.
+- [ ] **Lane wiring — `NEXT_ACTION=hold-misclassified-type` alone does not hold anything.**
+  Verified against the tree at plan time: `workflow-batch-lanes.sh:32` maps any unrecognized
+  action to the `review` lane via the `*)` fallback, `:374` initializes `dispatch="proposed"`,
+  and `report_category_for_item` returns `held` only when `dispatch` is already `held` (`:91`).
+  The new action name alone would therefore be **proposed for dispatch in the review lane** —
+  the opposite of the spec's hold. Three concrete changes are required:
+  1. `workflow-batch-lanes.sh`, lane assignment loop (`:355`–`:420`): read
+     `MISCLASSIFIED_TYPE_REASON` alongside `NEXT_ACTION`, and **before** the
+     `stage_lane = none` branch set `dispatch="held"` with
+     `hold_reason="$MISCLASSIFIED_TYPE_REASON"` (fallback text if empty) when
+     `next_action = hold-misclassified-type`, without consuming a stage-lane cap slot.
+  2. Add an explicit `hold-misclassified-type)` arm to `stage_lane_for_next_action` (`:25`)
+     returning `review` rather than relying on the `*)` fallback, and **not** `none` — `none`
+     forces `dispatch="skip"`, which reports as `INFORMATIONAL`, not `HELD`.
+  3. `report_category_for_item` (`:50`): add an early `hold-misclassified-type` → `held` arm
+     placed **before** the `ready-for-human-review` label check (`:81`) and the in-review
+     status check (`:74`), so no upstream branch can downgrade a misclassified item to
+     `informational`. The existing `dispatch = held` output path then prints `HOLD_REASON` and
+     `HELD_SUMMARY` (`:551`–`:556`) unchanged.
+  `MISCLASSIFIED_TYPE_REASON` is deliberately **not** named `HOLD_REASON`: lanes echoes the
+  whole input block (`:542`) before printing its own `HOLD_REASON` (`:552`), so reusing that
+  name would emit a duplicate key with two different values.
+  **Required end state** (what the tests assert, not the action name): for that item
+  `DISPATCH=held`, `REPORT_CATEGORY=held`, `REPORT_LABEL=HELD - not included in proposed
+  batch`, and a non-empty `HOLD_REASON` naming the item and the re-classification — while the
+  scan exits `0` and every sibling item keeps its own lane and dispatch.
+  **Backlog items with no development folder** are outside this script pipeline entirely
+  (`workflow-batch-plan.sh` scans development folders; `workflow-batch-lanes.sh --scan` takes
+  development paths). For those, the hold is produced by Protocol `90`'s Backlog routing table
+  and its `HELD - not included in proposed batch` report category, which the closed mirror
+  list already requires this item to update — the script changes above cover the folder-bearing
+  case, and the protocol text covers the rest. Both must be present.
   - **Mid-pipeline items**: the gate returns `pass` whenever the reconciled status is any
     recognized value other than `Backlog` (`workflow_status_order` > `0`) even if Type is
     still `Workflow` — `Writing Spec`, `Spec in Review`, `Spec Ready`, `Writing Plan`,
@@ -323,15 +386,20 @@ scope and must not be bundled into this implementation PR.
     / false / unrecognized), `run-bounded-prelude.sh` for a Backlog + Workflow item produces
     the same routing outcome shape as today's pre-feature baseline (no stop/hold from this
     gate; infer-path / existing tables).
-  - `consumer-next-action-workflow-unchanged`: under the same consumer fixtures,
-    `workflow-next-action.sh` for Backlog + Workflow matches today's NEXT_ACTION / lane
-    classification (not `hold-misclassified-type`). Diff evidence against recorded baseline
-    stdout or golden fixtures is required — batch-lanes framework-mode HELD alone is not
-    enough.
-  - `consumer-routing-all-classes-unchanged`: under the same consumer fixtures, repeat the two
-    scenarios above for **every** class — `Feature`, `Bug`, `Refactor`, `Workflow`, and no
-    class at all — at Backlog, and assert each matches the recorded pre-feature baseline. The
-    AC is "routing for every class, including Workflow, is identical", so Workflow-only
+  - `consumer-next-action-workflow-unchanged`: `workflow-next-action.sh` output for the same
+    folder matches today's NEXT_ACTION / lane classification byte-for-byte. Because this item
+    does not modify that script at all, the scenario doubles as a regression guard that the
+    gate was never wired into it — in **either** mode. Diff evidence against recorded baseline
+    stdout or golden fixtures is required.
+  - `consumer-batch-plan-workflow-unchanged`: under consumer fixtures,
+    `workflow-batch-plan.sh --scan` for a Backlog + Workflow folder emits the pre-feature
+    block (same `STATUS`, same `NEXT_ACTION`), with `MISCLASSIFIED_TYPE_CHECK=not_applicable`
+    and no `MISCLASSIFIED_TYPE*` hold keys. This is the scenario that fails if the new gate
+    call leaks into consumer mode.
+  - `consumer-routing-all-classes-unchanged`: under the same consumer fixtures, repeat the
+    three scenarios above for **every** class — `Feature`, `Bug`, `Refactor`, `Workflow`, and
+    no class at all — at Backlog, and assert each matches the recorded pre-feature baseline.
+    The AC is "routing for every class, including Workflow, is identical", so Workflow-only
     evidence does not discharge it.
 - [ ] **No-mutation on stop** (named scenario `stop-path-no-mutation`): when framework mode
   + Backlog + Workflow + caller `single` yields `RESULT=stop`, assert zero tracker mutations
@@ -358,16 +426,56 @@ others"):
 | 4 | `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md` | Open-framework-item lookup |
 | 5 | `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md` | Lookup + create/classify |
 | 6 | `docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md` | Create/classify with Workflow today |
-| 7 | `docs/workflow/development-workflow/integrations/github-projects.md` | Type field table |
+| 7 | `docs/workflow/development-workflow/integrations/github-projects.md` | Type field table (`:97`, `:107`–`:110`), the setup step that tells an operator to verify open framework items carry `Type = Workflow` (`:138`), and the retrospective create snippet that assigns it (`:202`) |
 | 8 | `AGENTS.md` | Tracker Classification section |
 | 9 | `CLAUDE.md` | Same Tracker Classification paragraph |
 | 10 | `GEMINI.md` | Same Tracker Classification paragraph |
 | 11 | `.cursor/agents/orchestrator.md` | Tracker Classification section |
 | 12 | `.claude/agents/orchestrator.md` | Tracker Classification section |
+| 13 | `docs/testing/workflow/retrospective-protocol.smoke-test.md` | Step 5 (`:88`) instructs the operator to confirm the retrospective-created issue carries Type `Workflow`, and the step's Expected result (`:93`) repeats it — this is exactly the create-and-classify path protocol `06` changes, so leaving it makes the runbook assert the behavior this item removes. Its "Related existing item" check (`:86`) is also fed by the framework-item lookup, so it must state that in framework mode an unavailable lookup is reported as unavailable and never as "No existing backlog item found" |
+| 14 | `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` | Steps 1–2 (`:32`–`:48`) direct an operator to create an issue in this repository and set its Type to `Workflow`, and Step 4 (`:68`–`:77`) asserts that a Backlog Workflow item routes as discoverable framework work — which in framework mode is now a misclassification hold. Step 3 (`:55`–`:66`) stays valid as written **because** `list_open_workflow_type_issues` keeps Workflow-only filtering; scope the creation and routing steps to consumer mode (or to a consumer fixture) and state the framework-mode outcome instead of deleting the coverage |
+| 15 | `scripts/development-workflow/add-backlog-item.sh` (`--help` text, `:40`–`:41`) | The usage text lists `Workflow` among the valid `--type` values with no note that a framework-mode repository refuses it, so an agent reading `--help` is still pointed at the class the same command rejects. The exit-code list immediately below (from `:43`) documents `1` only as a Priority-resolution failure and must also name the framework-mode Workflow refusal, since this plan pins that refusal to exit `1` |
 
-Out of list (verified no duplicate Tracker Classification / "file as Workflow" paragraph at
-plan time): `.cursor/agents/item-orchestrator.md`, `.agents/skills/**`, `.codex/skills/**`.
-If implementation discovers a new duplicate, add it to this table in the same PR.
+Out of list, each with the reason it is excluded (re-verified 2026-09-20 by the live search
+recorded below; if implementation finds a new instructing surface, add it to this table in the
+same PR):
+
+| Path or glob | Why it is not a mirror surface |
+| --- | --- |
+| `.cursor/agents/item-orchestrator.md`, `.agents/skills/**`, `.codex/skills/**` | No Tracker Classification paragraph and no "file as Workflow" instruction; the tree-wide `Type…Workflow` search returns zero hits under these paths |
+| `scripts/development-workflow/tests/**` | Fixtures and assertions, not guidance. `test-workflow-lib-github-projects.sh` deliberately encodes Workflow-typed fixtures to pin the unchanged primitive and **must keep passing**; changing them would hide the regression they exist to catch |
+| `docs/specs/developments/**` (other items' specs and plans), `CHANGELOG.md` | Historical records of past decisions, not live instructions. Rewriting them would falsify the record |
+| `docs/testing/workflow/native-github-projects-issue-type.smoke-test.md` | Covers Type **resolution precedence** (native vs custom fields), not how to classify an item; no instruction to set Workflow |
+| `scripts/development-workflow/workflow-lib.sh` (9 sweep hits) | Implementation of the unchanged primitive: the `item_type(.) == "Workflow"` filter (`:3345`) and its "cannot discover Workflow Type issues" warnings. It is code, not guidance, and this item explicitly does not change it |
+| `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md:368`, `.../90-…:473`, `.../91-…:448` | These only say the project Type field replaces the legacy `workflow` **label**; they are already in scope through rows 2–4 for their routing and lookup text, and no separate change is needed for the label sentence |
+
+**Symlink note (do not "fix")**: in this repository `CLAUDE.md` and `GEMINI.md` are symlinks
+to `AGENTS.md`, so rows 8–10 are one file and a single edit satisfies all three. They stay
+listed separately because downstream repositories created from this template may hold real
+files, and because the grep check names all three paths explicitly — `rg` and `grep` follow a
+symlink given as an explicit argument but do **not** follow symlinks found during recursion,
+which is why a recursive search reports only `AGENTS.md`.
+
+**Live search that produced rows 13–15** (re-run before readiness; see Residual Verification):
+
+```bash
+# grep --include patterns match basenames while recursing, so these single-star forms
+# are correct; a '**/' prefix would not mean here what it means to a shell.
+# <!-- markdown-heuristic-disable GLOB001 -->
+INCLUDES=(--include='*.md' --include='*.sh' --include='*.yaml' --include='*.yml')
+grep -rn -E 'Type.{0,15}`?Workflow|--type Workflow|Workflow.{0,15}Type' \
+  "${INCLUDES[@]}" . \
+  | grep -v '^\./\.git/' | grep -v '^\./docs/specs/developments/'
+grep -rn -E -- '--type|Type `|Type =|type field|Tracker Classification' docs/testing/
+# The creation script's help text splits "Type" and "Workflow" across two lines, so the
+# pattern sweep above cannot see it; check that file directly:
+grep -n 'Workflow' scripts/development-workflow/add-backlog-item.sh
+```
+
+Hits from the first two commands resolve to closed-list rows 1, 5, 6, 7, 13, 14 and this
+plan's own runbook, plus the out-of-list rows above (`workflow-lib.sh`,
+`scripts/development-workflow/tests/**`, `CHANGELOG.md`, `docs/specs/developments/**`). The
+third command yields the single `add-backlog-item.sh:41` hit that is row 15.
 
 - [ ] Update every row in the closed mirror list per AC Guidance surfaces agree.
 - [ ] Add a **grep-based check** (harness step in `test-framework-mode-type-routing.sh` or
@@ -381,11 +489,43 @@ If implementation discovers a new duplicate, add it to this table in the same PR
   - Exact pre-change routing phrases `Route by the brief's concrete path` (protocol `91`) and
     `route by brief: full pipeline` (protocol `90`) on Backlog (Workflow) rows — not a generic
     `infer.*Workflow` pattern, which also matches "do not infer"
+  - Exact pre-change runbook strings on rows 13–14: `with Type \`Workflow\`` in
+    `docs/testing/workflow/retrospective-protocol.smoke-test.md` and
+    `project Type will be set to \`Workflow\`` in
+    `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` — both are
+    single-match anchors verified on today's tree, so the check is red before the runbooks are
+    updated and green after
   Command sketch (implementation may wrap in a small script): fail if `rg` still matches those
   pre-change strings on the closed list after updates.
-- [ ] Update `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` only if
-  its Workflow discovery steps contradict framework-mode semantics (otherwise leave unchanged
-  and cover framework mode in the new runbook).
+- [ ] **Row 13 — `docs/testing/workflow/retrospective-protocol.smoke-test.md`** (unconditional;
+  this runbook contradicts framework mode today):
+  - Step 5 (`:88`) and its Expected result (`:93`): state that in framework mode the
+    retrospective creates the item with `Feature`, `Bug`, or `Refactor` — never `Workflow` —
+    and keep the consumer-repository expectation (Type `Workflow`, or the configured label
+    convention for GitHub Issues-only setups) as the other branch.
+  - "Related existing item" (`:86`): add that in framework mode an unavailable lookup is
+    reported as unavailable with its reason and must not be recorded as
+    "No existing backlog item found" (AC: Open framework items stay discoverable).
+- [ ] **Row 14 — `docs/testing/workflow/tracker-type-field-classification.smoke-test.md`**
+  (unconditional; replaces the earlier "only if it contradicts" note, which this plan's live
+  search resolved — it does contradict):
+  - Steps 1–2 (`:32`–`:48`): scope the "create an issue and set Type `Workflow`" instructions
+    to a consumer-mode fixture or repository, and state that in a framework-mode repository
+    the creation command refuses that class.
+  - Step 4 (`:68`–`:77`): keep the consumer expectation and add the framework-mode outcome —
+    a Backlog Workflow item is held as misclassified rather than routed as discoverable
+    framework work.
+  - Step 3 (`:55`–`:66`) and the `list_open_workflow_type_issues` call at `:60`: leave
+    unchanged, and say why — the primitive keeps Workflow-only filtering in both modes, so
+    this step remains a correct test of it. Framework-mode discovery is covered by the new
+    runbook's wrapper steps instead.
+  - Assertions checklist (`:96`–`:99`): mark the Workflow-discovery and Backlog-routing
+    assertions as consumer-mode, and add the framework-mode counterparts.
+- [ ] **Row 15 — `scripts/development-workflow/add-backlog-item.sh` help text**: update the
+  `--type` usage lines (`:40`–`:41`) so the valid-value list notes that framework-mode
+  repositories refuse `Workflow`, and add the refusal to the exit-code list (from `:43`), where
+  `1` currently documents only a Priority-resolution failure. Both edits land with the
+  Enforcement point 1 refusal, in the same PR.
 
 ### Release documentation
 
@@ -449,11 +589,12 @@ Consistency Matrix one-for-one; where the spec says "Unchanged from today", this
 
 ### Mirror surfaces and examples
 
-Mirror surfaces for all three gates are the closed 12-path list in "Documentation and mirror
+Mirror surfaces for all three gates are the closed 15-path list in "Documentation and mirror
 surfaces" above, which covers every row of the spec's Mirror surfaces table (creation protocol
 `00`; routing tables `90` / `91`; scan report categories in `90`; lookup flows `05` / `06`;
-create-and-classify flows `06` / `06b`; the tracker integration guide; and the five
-agent-guidance copies). The spec's worked examples map row-for-row onto the tables above and
+create-and-classify flows `06` / `06b`; the tracker integration guide; the five agent-guidance
+copies; the two smoke runbooks that assert the old classification behavior; and the creation
+script's own help text). The spec's worked examples map row-for-row onto the tables above and
 are exercised by the named scenarios in Testing Strategy — creation refusal and retry, the
 single-item stop, the ten-item scan that holds three and still proposes the rest, the
 unavailable release lookup, the consumer Workflow creation and routing, and the mid-pipeline
@@ -469,10 +610,14 @@ Workflow item that continues.
 - `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh` and/or
   `scripts/development-workflow/tests/test-framework-mode-type-routing.sh`
 - `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` — the HELD end state
-  (`DISPATCH=held` / `REPORT_CATEGORY=held`) for a `hold-misclassified-type` block, including
-  the `MISCLASSIFIED_TYPE_REASON` forwarded by `workflow-batch-plan.sh`
+  (`DISPATCH=held` / `REPORT_CATEGORY=held`) for a `hold-misclassified-type` block carrying
+  `MISCLASSIFIED_TYPE_REASON`
 - `scripts/development-workflow/tests/test-run-bounded-prelude.sh` — the single-item stop under
-  `missing_tracker_context` and the consumer-fixture no-op
+  `missing_tracker_context`, the `trackerReadDeferred` skip, and the consumer-fixture no-op
+- A `workflow-batch-plan.sh` scan fixture (new file, or a section of
+  `test-framework-mode-type-routing.sh`) — the tracker-status data flow: mocked
+  `get_tracker_status_for_issue` / `get_tracker_type_for_issue` returning `Backlog` +
+  `Workflow` for a folder whose artifacts would otherwise read `Spec Ready`
 
 **Key scenarios** (each must fail if unmet — named where noted):
 
@@ -500,6 +645,16 @@ Workflow item that continues.
    item reaches `DISPATCH=held` + `REPORT_CATEGORY=held` with a naming `HOLD_REASON`, a
    sibling Feature stays `proposed_batch`, and label/status branches cannot downgrade the held
    item to informational.
+9b. **`scan-uses-tracker-status-not-artifacts`**: a development folder whose artifacts would
+    make `workflow-next-action.sh` report `Spec Ready` (merged spec, no plan) but whose tracker
+    status is `Backlog` and Type is `Workflow` is held — proving the gate reads
+    `get_tracker_status_for_issue`, not the artifact-derived status. The emitted block carries
+    the tracker `STATUS=Backlog`, and `workflow-next-action.sh` is not invoked for that item.
+9c. **`scan-status-unreadable-defers`**: with the tracker status read returning empty (Linear
+    deferral, missing project config, or missing board item), the same item is **not** held —
+    it proceeds down today's path with `MISCLASSIFIED_TYPE_CHECK=deferred` and its reason, and
+    `DISPATCH` matches the pre-feature baseline for that folder. Asserts both halves: no false
+    hold, and no silent claim that the check ran.
 10. **`framework-post-backlog-statuses-pass`**: Type Workflow passes at every recognized
     non-Backlog status (`Writing Spec` through `Released`), not only `Spec Ready`; an
     unrecognized status also passes as `status_unreconciled`.
@@ -507,14 +662,17 @@ Workflow item that continues.
 12. **`reclassify-then-route`**: post-reclassification Feature/Bug/Refactor routing matches
     today, including Bug scope check.
 13. **`consumer-prelude-workflow-unchanged`** / **`consumer-next-action-workflow-unchanged`** /
-    **`consumer-routing-all-classes-unchanged`**: consumer fixtures for
-    `run-bounded-prelude.sh` and `workflow-next-action.sh` keep pre-feature Backlog routing for
-    every class, including Workflow.
-14. **Guidance mirror grep**: closed mirror list updated; grep check fails on surviving
-    framework-mode Workflow instructions. Each grep command is a `! rg …` shell command whose
-    **non-zero exit is the failure signal** — a surviving match makes `rg` exit `0`, the `!`
-    inverts it to non-zero, and the step fails. Under `set -e` in a harness wrapper, that
-    non-zero exit aborts the suite, which is the intended behavior.
+    **`consumer-batch-plan-workflow-unchanged`** / **`consumer-routing-all-classes-unchanged`**:
+    consumer fixtures for `run-bounded-prelude.sh`, `workflow-next-action.sh`, and
+    `workflow-batch-plan.sh` keep pre-feature Backlog routing for every class, including
+    Workflow. `workflow-next-action.sh` is not modified by this item, so its scenario doubles
+    as a regression guard that the gate was not wired into it.
+14. **Guidance mirror grep**: closed mirror list updated — including the two smoke runbooks and
+    the `add-backlog-item.sh` help text — and the grep check fails on surviving framework-mode
+    Workflow instructions. Each grep command is a `! rg …` shell command whose **non-zero exit
+    is the failure signal** — a surviving match makes `rg` exit `0`, the `!` inverts it to
+    non-zero, and the step fails. Under `set -e` in a harness wrapper, that non-zero exit
+    aborts the suite, which is the intended behavior.
 
 **Quality checks**: ShellCheck on touched scripts; `workflow-shell-guard-lint.py`;
 markdown lint on plan/spec/runbook/protocol edits.
@@ -536,11 +694,14 @@ markdown lint on plan/spec/runbook/protocol edits.
    contract — the wrapper must exist before anything emits or consumes those keys.
 4. Repoint protocols `05` / `06` snippets at the wrapper and give each its framework-mode
    `unavailable` handling (continue, report, do not mark satisfied).
-5. Add `framework-mode-backlog-type-gate.sh` and wire it into `run-bounded-prelude.sh`
-   (`single`) and `workflow-next-action.sh` (`scan`), then land the paired
-   `workflow-batch-plan.sh` key forwarding and the `workflow-batch-lanes.sh` lane, dispatch,
-   and report-category changes that actually produce `DISPATCH=held`.
-6. Update every path on the closed mirror list; land the grep-based guidance check.
+5. Add `framework-mode-backlog-type-gate.sh` and wire it into the two paths that hold the
+   authoritative tracker status: `run-bounded-prelude.sh` (`single`, reading `status` / `type`
+   from the resolved scope JSON) and `workflow-batch-plan.sh` (`scan`, after its tracker-status
+   read and terminal skip). `workflow-next-action.sh` is not modified. Land the
+   `workflow-batch-lanes.sh` lane, dispatch, and report-category changes in the same change,
+   since the emitted `hold-misclassified-type` action is inert without them.
+6. Update every path on the closed mirror list — including the two smoke runbooks (rows 13–14)
+   and the `add-backlog-item.sh` help text (row 15) — and land the grep-based guidance check.
 7. Run full touched test suites + smoke runbook; add `changelog.d` fragment.
 
 ---
@@ -554,7 +715,10 @@ markdown lint on plan/spec/runbook/protocol edits.
 | `[]` still read as "no items" in release/retrospective | Explicit STATUS lines + flow-level unsatisfied scenarios for protocols 05/06 |
 | Mid-pipeline Workflow items blocked | Gate must key off reconciled stage, not Type alone; `framework-post-backlog-statuses-pass` covers every recognized non-Backlog status |
 | Bypass flag added later | `creation-refusal-no-bypass` inventory assertion |
-| Misclassified scan item silently dispatched | A new `NEXT_ACTION` name alone lands in the review lane as `proposed`; the paired `workflow-batch-plan.sh` forwarding + `workflow-batch-lanes.sh` dispatch/report changes are mandatory, and `scan-misclassified-item-held` asserts the end state (`DISPATCH=held`), not the action name |
+| Misclassified scan item silently dispatched | A new `NEXT_ACTION` name alone lands in the review lane as `proposed`; the `workflow-batch-lanes.sh` dispatch/report changes are mandatory, and `scan-misclassified-item-held` asserts the end state (`DISPATCH=held`), not the action name |
+| Artifact-derived status hides a tracker Backlog | `workflow-next-action.sh` can never emit `Backlog`, so a tracker-Backlog item with a merged spec would present as `Spec Ready` and bypass the hold. The gate is therefore fed from `get_tracker_status_for_issue` in `workflow-batch-plan.sh` and from the scope JSON on the single-item path; `scan-uses-tracker-status-not-artifacts` fails if the artifact status is ever used |
+| Unreadable tracker status read as clean | The status read returns empty with exit `0` for four different failure modes, so silence is indistinguishable from success. The gate passes (no fail-closed), but the block carries `MISCLASSIFIED_TYPE_CHECK=deferred` with its reason, and `scan-status-unreadable-defers` asserts both the absence of a false hold and the presence of the deferred marker |
+| Runbooks assert the pre-feature classification | `docs/testing/workflow/retrospective-protocol.smoke-test.md` and `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` are closed-list rows 13–14 with single-match grep anchors, so the guidance check fails while either still directs a framework-mode operator to Type `Workflow` |
 | Gate over-reach beyond the spec | Only framework mode + reconciled `Backlog` + Type `Workflow` stops or holds; absent/unreadable Type and unreconcilable status `pass`, matching the spec's "Unchanged from today" rows. Any new fail-closed case requires a new spec AC first |
 
 ---
@@ -620,18 +784,22 @@ for an existing input:
 
 - **What changes**: `framework-mode-backlog-type-gate.sh` is new, and three existing surfaces
   begin consulting it: `run-bounded-prelude.sh` (single-item stop under
-  `missing_tracker_context`), `workflow-next-action.sh` (new `hold-misclassified-type`
-  action plus `MISCLASSIFIED_TYPE` / `MISCLASSIFIED_TYPE_REASON` keys), and the paired
-  `workflow-batch-plan.sh` forwarding + `workflow-batch-lanes.sh` dispatch/report handling
-  that turns that action into `DISPATCH=held`. A framework-mode Backlog + Workflow run that
-  previously started a pipeline now stops.
+  `missing_tracker_context`, fed from the resolved scope JSON), `workflow-batch-plan.sh` (scan
+  hold — it now uses the tracker status it already reads at `:542` for a routing decision, and
+  emits `NEXT_ACTION=hold-misclassified-type` plus `MISCLASSIFIED_TYPE` /
+  `MISCLASSIFIED_TYPE_REASON` / `MISCLASSIFIED_TYPE_CHECK` and the tracker `STATUS` instead of
+  calling next-action for that folder), and `workflow-batch-lanes.sh` (dispatch/report handling
+  that turns that action into `DISPATCH=held`). `workflow-next-action.sh` is deliberately
+  untouched. A framework-mode Backlog + Workflow run that previously started a pipeline now
+  stops.
 - **Rollback**: **Paired, not independent.** Reverting the gate alone leaves
-  `workflow-next-action.sh` emitting an action that lanes no longer holds — which would put
+  `workflow-batch-plan.sh` emitting an action that lanes no longer holds — which would put
   misclassified items back into the proposed batch **in the review lane**, a worse state than
   either endpoint. Undo requires reverting, in one change: (a) the gate script and its tests,
-  (b) the `run-bounded-prelude.sh` call site, (c) the `workflow-next-action.sh` emission,
-  (d) the `workflow-batch-plan.sh` key forwarding, and (e) the `workflow-batch-lanes.sh`
-  lane/dispatch/report arms. Protocol `90`/`91` routing-table text reverts with them.
+  (b) the `run-bounded-prelude.sh` call site, (c) the `workflow-batch-plan.sh` gate call and
+  block emission, and (d) the `workflow-batch-lanes.sh` lane/dispatch/report arms. Protocol
+  `90`/`91` routing-table text reverts with them. Because `workflow-next-action.sh` never
+  changed, nothing outside these four surfaces is affected in either direction.
   No durable state is involved: the stop and hold paths are asserted to make zero tracker or
   branch mutations (`stop-path-no-mutation`), so a revert needs no data repair — items simply
   become startable again under their old class.
@@ -653,14 +821,16 @@ repository-content only (plus downstream sync).
 | Concurrent event sources | Not applicable | Synchronous shell helpers |
 | Complex workflow decision gate | **Applicable** | Classification Decision Matrix: gate inputs, plus separate tables for the **creation** gate, the **routing** gate, and the **lookup** gate, each with every allowed outcome and its required next action; mirror surfaces and examples mapped at the end of that section |
 | Cross-cutting operational assumptions | **Applicable** | Verified table (batch #1757, #1462, #1496, #1515, #1561, #1583, #1529) |
-| Agent/skill mirrors | **Applicable** | Closed mirror list (12 paths) + failing grep check |
+| Agent/skill mirrors | **Applicable** | Closed mirror list (15 paths, incl. two smoke runbooks and the creation script's help text) + failing grep check, with the out-of-list exclusions and the live search that produced them recorded |
 | Published-contract reversal | **Applicable** | Reversal and Rollback section: (1) lookup primitive/wrapper split, (2) stdout key contract, (3) creation refusal, (4) routing gate paired revert |
 
 Decision-gate matrix rows match the spec's allowed outcomes and required next actions, row for
 row, including the "Unchanged from today" rows (absent/unreadable Type, unreconcilable status,
 consumer lookup failure) which this plan implements as `pass` rather than as new behavior.
 Mirror surfaces are the closed list above (includes `06b`,
-`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, and both orchestrator agent stubs).
+`AGENTS.md`/`CLAUDE.md`/`GEMINI.md` — one file behind two symlinks — both orchestrator agent
+stubs, the retrospective and tracker-Type smoke runbooks, and the `add-backlog-item.sh` help
+text).
 
 **Cross-section consistency self-check** (items appearing more than once, checked after the
 final edit pass):
@@ -671,7 +841,11 @@ final edit pass):
 | Mode branch location | `list_open_framework_items.sh` only |
 | Published lookup keys | `FRAMEWORK_ITEMS_LOOKUP_STATUS`, `FRAMEWORK_ITEMS_LOOKUP_REASON`, `FRAMEWORK_ITEMS_JSON` (no `LOOKUP_` in the third; no globs) |
 | Gate script name | `framework-mode-backlog-type-gate.sh` |
-| Scan action name | `hold-misclassified-type` (transport keys `MISCLASSIFIED_TYPE`, `MISCLASSIFIED_TYPE_REASON`) |
+| Scan action name | `hold-misclassified-type`, emitted by `workflow-batch-plan.sh` (keys `MISCLASSIFIED_TYPE`, `MISCLASSIFIED_TYPE_REASON`, `MISCLASSIFIED_TYPE_CHECK`) |
+| Authoritative status source | `get_tracker_status_for_issue` — via `workflow-batch-plan.sh:542` for the scan, via the resolved scope JSON for a single-item run; never `workflow-next-action.sh`'s artifact-derived status |
+| `workflow-next-action.sh` | Not modified by this item, on any path |
+| Unreadable status or Type | `pass` plus `MISCLASSIFIED_TYPE_CHECK=deferred` (a report field only; no routing effect) |
+| Closed mirror list size | 15 paths, with an explicit out-of-list table |
 | Stop condition | `missing_tracker_context`, single-item caller only; a `scan` hold emits no stop condition |
 | Status contract | stop/hold only at reconciled `Backlog`; every other recognized or unrecognized status is `pass` |
 | Absent / unreadable Type | `pass` — never a fail-closed stop |
@@ -686,20 +860,25 @@ Consumer-mode behavior requires diff evidence that:
 
 1. Existing Workflow **discovery** tests are unchanged (or byte-identical outputs) under
    consumer fixtures, **and**
-2. Consumer **routing** through `run-bounded-prelude.sh` and `workflow-next-action.sh` matches
-   the recorded pre-feature baseline for Backlog at **every** class — Feature, Bug, Refactor,
-   Workflow, and none (scenarios `consumer-prelude-workflow-unchanged` /
-   `consumer-next-action-workflow-unchanged` / `consumer-routing-all-classes-unchanged`), and
+2. Consumer **routing** through `run-bounded-prelude.sh`, `workflow-next-action.sh`, and
+   `workflow-batch-plan.sh` matches the recorded pre-feature baseline for Backlog at **every**
+   class — Feature, Bug, Refactor, Workflow, and none (scenarios
+   `consumer-prelude-workflow-unchanged` / `consumer-next-action-workflow-unchanged` /
+   `consumer-batch-plan-workflow-unchanged` / `consumer-routing-all-classes-unchanged`), and
 3. Consumer **creation** output is byte-identical for every class
    (`consumer-creation-all-classes-unchanged`).
 
-**Residual sweep evidence.** Two enumerations in this plan claim completeness and must be
+**Residual sweep evidence.** Three enumerations in this plan claim completeness and must be
 re-verified on the implementation branch head before readiness, with the command and its
 output pasted into the PR:
 
-- The closed mirror list (12 paths): re-run the guidance greps in Step 4 of the smoke runbook.
+- The closed mirror list (15 paths): re-run the guidance greps in Step 4 of the smoke runbook.
   Zero matches is the evidence; any new duplicate found must be added to the table in the same
   PR rather than left out of the list.
+- The instructing-surface sweep that produced rows 13–15: re-run the three commands recorded
+  under the closed mirror list. Every remaining hit must be accounted for by a closed-list row
+  or by a row of the out-of-list table; an unaccounted hit is a missing mirror surface, not
+  noise.
 - The bypass inventory for `add-backlog-item.sh`: re-run the flag/env inventory assertion in
   `creation-refusal-no-bypass`. An empty inventory is the evidence; a non-empty one must be
   rejected for Workflow in framework mode before the scenario can pass.

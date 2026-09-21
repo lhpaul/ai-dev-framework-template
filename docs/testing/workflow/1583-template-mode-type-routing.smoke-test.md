@@ -25,9 +25,11 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `framework-creation-valid-types-preserved`, `consumer-creation-all-classes-unchanged`,
 `stop-path-no-mutation`, `reclassify-then-route`, `framework-post-backlog-statuses-pass`,
 `scan-misclassified-item-held`, `scan-misclassified-not-informational`,
+`scan-uses-tracker-status-not-artifacts`, `scan-status-unreadable-defers`,
 `consumer-prelude-workflow-unchanged`, `consumer-next-action-workflow-unchanged`,
-`consumer-routing-all-classes-unchanged`, `release-unavailable-continues-unsatisfied`, and
-`retro-unavailable-continues-unsatisfied` must be covered by harness or the steps below.)
+`consumer-batch-plan-workflow-unchanged`, `consumer-routing-all-classes-unchanged`,
+`release-unavailable-continues-unsatisfied`, and `retro-unavailable-continues-unsatisfied`
+must be covered by harness or the steps below.)
 
 **Exit-code convention for this runbook**: every command block below fails the smoke test when
 it exits non-zero, unless the step says otherwise. This matters most in Step 4, where the
@@ -150,6 +152,30 @@ the sibling, `DISPATCH=proposed` / `REPORT_CATEGORY=proposed_batch`. The script 
 unrecognized `NEXT_ACTION`, which falls through to the review lane) or `REPORT_CATEGORY`
 `informational`.
 
+4c. Status source (`scan-uses-tracker-status-not-artifacts`) — the scan must gate on the
+**tracker** status, not the artifact-derived one. Use a development folder whose merged spec
+and missing plan would make `workflow-next-action.sh` report `Spec Ready`, while the tracker
+says Status `Backlog` and Type `Workflow`, then run the scan:
+
+```bash
+./scripts/development-workflow/workflow-batch-plan.sh --scan <development-path>
+```
+
+**Expected**: the emitted block carries `STATUS=Backlog` (the tracker value),
+`NEXT_ACTION=hold-misclassified-type`, `MISCLASSIFIED_TYPE=Workflow`, a
+`MISCLASSIFIED_TYPE_REASON` naming the item, and `MISCLASSIFIED_TYPE_CHECK=applied`.
+**Fail if** the block shows `STATUS=Spec Ready` or any next action other than the hold — that
+is the bypass this step exists to catch.
+
+4d. Unreadable status (`scan-status-unreadable-defers`). Repeat 4c with the tracker status read
+returning empty (Linear provider, no `project_number` / `GITHUB_PROJECT_NUMBER`, or an issue
+absent from the board).
+
+**Expected**: the item is **not** held — its `NEXT_ACTION` and `DISPATCH` match the pre-feature
+baseline for that folder — and the block carries `MISCLASSIFIED_TYPE_CHECK=deferred` with a
+reason. **Fail if** the item is held (a false hold on an unread status) **or** if the deferred
+marker is absent (a silent claim that the check ran).
+
 5. Pick an item that still shows Type `Workflow` at **any** recognized non-Backlog status —
    check at least two, e.g. `Spec Ready` and `Development in Review`
    (`framework-post-backlog-statuses-pass` covers `Writing Spec` through `Released` in the
@@ -172,12 +198,19 @@ add one.
    fast-track).
 
 7. **Consumer fixtures** (`consumer-prelude-workflow-unchanged`,
-   `consumer-next-action-workflow-unchanged`, `consumer-routing-all-classes-unchanged`): under
-   consumer config, Backlog routing through `run-bounded-prelude.sh` and
-   `workflow-next-action.sh` matches pre-feature behavior for **every** class — Feature, Bug,
-   Refactor, Workflow, and no class at all (no stop/hold from this gate). Harness golden/diff
-   evidence required; Workflow-only evidence does not discharge the "every class" acceptance
-   criterion.
+   `consumer-next-action-workflow-unchanged`, `consumer-batch-plan-workflow-unchanged`,
+   `consumer-routing-all-classes-unchanged`): under consumer config, Backlog routing through
+   `run-bounded-prelude.sh`, `workflow-next-action.sh`, and `workflow-batch-plan.sh` matches
+   pre-feature behavior for **every** class — Feature, Bug, Refactor, Workflow, and no class at
+   all (no stop/hold from this gate; `MISCLASSIFIED_TYPE_CHECK=not_applicable`). Harness
+   golden/diff evidence required; Workflow-only evidence does not discharge the "every class"
+   acceptance criterion.
+
+8. **`workflow-next-action.sh` untouched**: confirm the implementation diff contains no change
+   to `scripts/development-workflow/workflow-next-action.sh`. Its status is artifact-derived
+   and can never be `Backlog`, which is why the gate is fed from the tracker read in
+   `workflow-batch-plan.sh` and from the resolved scope JSON instead. A diff touching that
+   script means the gate was wired into the wrong place.
 
 ---
 
@@ -197,6 +230,14 @@ Closed mirror list (must all agree; see plan):
 10. `GEMINI.md`
 11. `.cursor/agents/orchestrator.md`
 12. `.claude/agents/orchestrator.md`
+13. `docs/testing/workflow/retrospective-protocol.smoke-test.md`
+14. `docs/testing/workflow/tracker-type-field-classification.smoke-test.md`
+15. `scripts/development-workflow/add-backlog-item.sh` (`--type` help text and exit-code list)
+
+In this repository `CLAUDE.md` and `GEMINI.md` are symlinks to `AGENTS.md`, so rows 8–10 are
+one file; the grep below still names all three because `rg` follows a symlink passed as an
+explicit argument (it does not follow symlinks during recursion), and downstream repositories
+may hold real files there.
 
 1. Spot-check `AGENTS.md` Tracker Classification and protocol `00`.
 
@@ -208,7 +249,7 @@ this repository.
 
    **Exit-code semantics**: each block is a negated `rg`. `rg` exits `0` when it finds a
    match and `1` when it finds none, so `! rg …` exits **non-zero exactly when stale guidance
-   survives**. A non-zero exit from any of these four commands is a smoke failure — not a
+   survives**. A non-zero exit from any of these six commands is a smoke failure — not a
    warning, and not "no output, so fine". Run the block under `set -e` (or inspect `$?` after
    each command); piping these into something that swallows the status makes the check
    vacuous.
@@ -230,10 +271,51 @@ this repository.
   docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
 ! rg -n "Route by the brief's concrete path" \
   docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
+
+# Fail if the retrospective runbook still expects the created issue to carry Type Workflow
+# without the framework-mode branch (single-match anchor, verified on the pre-change tree):
+! rg -n 'with Type `Workflow`' \
+  docs/testing/workflow/retrospective-protocol.smoke-test.md
+
+# Fail if the tracker-Type runbook still tells an operator to create a Workflow-typed issue
+# here without scoping that step to consumer mode (single-match anchor):
+! rg -n 'project Type will be set to `Workflow`' \
+  docs/testing/workflow/tracker-type-field-classification.smoke-test.md
 ```
 
-**Expected**: All four commands exit `0`, which for a negated `rg` means **no matches**. Any
+**Expected**: All six commands exit `0`, which for a negated `rg` means **no matches**. Any
 match makes the command exit non-zero, and that non-zero exit is the smoke failure.
+
+3. Instructing-surface sweep (residual completeness evidence for the closed list):
+
+```bash
+# grep --include patterns match basenames while recursing, so these single-star forms
+# are correct; a '**/' prefix would not mean here what it means to a shell.
+# <!-- markdown-heuristic-disable GLOB001 -->
+INCLUDES=(--include='*.md' --include='*.sh' --include='*.yaml' --include='*.yml')
+grep -rn -E 'Type.{0,15}`?Workflow|--type Workflow|Workflow.{0,15}Type' \
+  "${INCLUDES[@]}" . \
+  | grep -v '^\./\.git/' | grep -v '^\./docs/specs/developments/'
+
+# The creation script's help text splits "Type" and "Workflow" across two lines, so the
+# pattern sweep above cannot see it; check that file directly (closed-list row 15):
+grep -n 'Workflow' scripts/development-workflow/add-backlog-item.sh
+```
+
+**Expected**: every remaining hit is accounted for by a closed-list row above or by the
+out-of-list table in the plan (`workflow-lib.sh`'s unchanged primitive, test fixtures,
+`CHANGELOG.md`, historical specs and plans, the legacy-label sentences in protocols `05` /
+`90` / `91`). An unaccounted hit is a missing mirror surface and must be added to the closed
+list in the same PR.
+
+4. Spot-check the creation script's help text (closed-list row 15):
+
+```bash
+./scripts/development-workflow/add-backlog-item.sh --help
+```
+
+**Expected**: the `--type` line notes that framework-mode repositories refuse `Workflow`, and
+the exit-code list names that refusal alongside the existing exit `1` case.
 
 ---
 
