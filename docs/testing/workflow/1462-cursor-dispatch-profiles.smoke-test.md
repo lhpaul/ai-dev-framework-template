@@ -162,8 +162,11 @@
 2. Either run `/run-item` in a constrained (or simulated no-handoff) environment
    on a doc-only target, or run
    `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
-   and confirm its `simulate_bounded_paths` branch passes the `/run-item`
-   scenarios.
+   and confirm its `simulate_bounded_paths` branch passes **every** `/run-item`
+   scenario marked Y in the plan's scenario table (S1, S3, S5, S7-S10, S10b,
+   S11-S19), including unconfirmed initial/onward handoff, profile/fact
+   mismatch in both directions, mid-run recovery, and reachable-stage
+   credential denial.
 3. Record the declaration block emitted and the terminal outcome (proceeds,
    `dispatch_handoff_unavailable`, or `dispatch_profile_declaration_missing`).
 
@@ -175,7 +178,9 @@
 
 1. Record the current head SHA.
 2. Run `/run-items #A ENG-123 feature/b,c` with no declaration in a throwaway clone, or run the
-   `simulate_bounded_paths` branch for the `/run-items` scenarios.
+   `simulate_bounded_paths` branch for **every** `/run-items` scenario marked Y
+   in the plan's scenario table (same set as `/run-item`, with pre-branch stops
+   asserting the single invocation-level affected-item string).
 3. Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
    reported for the whole invocation with affected item
    `explicit_list_invocation_targets=#A,ENG-123,feature/b%2Cc` (verbatim, no `#` rewriting, comma encoded), before any branch or artifact is
@@ -189,7 +194,8 @@
 
 1. Record the current head SHA.
 2. Run `/run-epic --items #A,#B` under a Parent orchestrated declaration (or the
-   `simulate_bounded_paths` branch for `/run-epic`).
+   `simulate_bounded_paths` branch for **every** `/run-epic` scenario marked Y
+   in the plan's scenario table, S1, S3, S5, S7-S10, S10b, S11-S19).
 3. Confirm the epic layer is declared absorbed, stage work is delegated with
    handoff metadata, and an invalid or missing declaration stops with
    `dispatch_profile_declaration_missing`.
@@ -205,7 +211,10 @@
 - Steps 12, 13, and 14 must each **PASS** with recorded evidence naming the head
   SHA under test. For each bounded path (`/run-item`, `/run-items`, `/run-epic`)
   the evidence is either a live constrained-environment run or the executable
-  `simulate_bounded_paths` result for that path. **NOT RUN is not acceptable**
+  `simulate_bounded_paths` result for that path covering **every** scenario
+  the plan's table marks Y for it (a live run alone does not exercise the
+  recovery, mismatch, and unconfirmed-handoff rows, so those always require the
+  simulation). **NOT RUN is not acceptable**
   for these three steps: if live Remote Control is unavailable, the executable
   simulation is mandatory, not optional.
 - Manual live steps 7-9 (Desktop, Remote Control, inline fallback) may be

@@ -514,19 +514,55 @@ layer; `workflow.mdc` states all five compactly).
       drift without requiring live Cursor Remote Control. Maps to AC10, AC11,
       AC18, AC20 regression safety.
 - [ ] **Executable path simulation** (same test file, branch
-      `simulate_bounded_paths`; supports smoke Steps 12-14). For each bounded
-      path (`/run-item`, `/run-items` explicit list, `/run-epic`) the guard
-      replays a table of declaration scenarios (native handoff, parent
-      orchestrated, inline fallback with read-only checkpoint, missing
-      declaration, invalid profile, posture mismatch) against the decision-gate
-      rows in the canonical doc and guardrails section 4, asserting the terminal
-      outcome (declared-and-proceed, `dispatch_handoff_unavailable`,
-      `dispatch_profile_declaration_missing`, or absorbed re-declaration) and,
-      for the pre-branch explicit-list case, the single
-      `explicit_list_invocation_targets=<t1>,<t2>,...` affected-item string, over
-      a mixed-form target list (issue number with and without `#`, tracker ID,
-      branch name containing `,`, PR number). This
-      is the executable equivalent when live Remote Control is unavailable.
+      `simulate_bounded_paths`; supports smoke Steps 12-14). The simulation is a
+      data table `scenario x path -> expected next action`; it asserts every
+      row of the spec's Decision-Gate Consistency Matrix (below) for every path
+      it applies to, by (a) checking the canonical doc's decision-gate row for
+      that input carries the expected profile outcome, next action and stop
+      name in one block (scanner rules R2-R5), and (b) checking
+      `guardrails-enforcement.md` section 4 maps each stop to its affected work
+      item and human unblocking action. A **completeness assertion** counts the
+      decision-gate rows in the canonical doc and fails if that count differs
+      from the number of scenario rows, so a matrix row cannot be added or
+      dropped without a scenario. Paths: `/run-item` (item layer), `/run-items`
+      explicit list (item layer, pre-branch stops use the
+      `explicit_list_invocation_targets=<t1>,<t2>,...` form over a mixed-form
+      target list), `/run-epic` (epic layer), and `/run-work` (portfolio layer,
+      read-only scan rows only).
+
+      | ID | Spec matrix input | Expected outcome and next action | run-item | run-items | run-epic | run-work |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | S1 | Handoff available, onward available, not a scan | Native handoff; declare, handed off intact, follow protocol | Y | Y | Y | N/A |
+      | S2 | Same, read-only scan | Native handoff; observing, scan in current context | N/A | N/A | N/A | Y |
+      | S3 | Handoff available, onward unavailable, not a scan | Parent orchestrated; declare absorbed layers, absorb full contract, delegate every stage | Y | Y | Y | N/A |
+      | S4 | Same, read-only scan | Parent orchestrated; observing, scan in current context | N/A | N/A | N/A | Y |
+      | S5 | Initial confirmed, onward **unconfirmed**, not a scan | Parent orchestrated (conservative default); record unconfirmed, absorb, delegate only | Y | Y | Y | N/A |
+      | S6 | Same, read-only scan | Parent orchestrated; record unconfirmed, observing | N/A | N/A | N/A | Y |
+      | S7 | Mid-run: native, role unreliable, initial handoff still available | Re-declare parent orchestrated with reason; earlier mutations preserved | Y | Y | Y | N/A |
+      | S8 | Mid-run: native, role unreliable, initial handoff lost or unconfirmed | Re-declare inline fallback; stop next mutation with `dispatch_handoff_unavailable` | Y | Y | Y | N/A |
+      | S9 | Mid-run: parent orchestrated, stage handoff for one action lost | Re-declare inline fallback; stop that action with `dispatch_handoff_unavailable` | Y | Y | Y | N/A |
+      | S10 | Parent orchestrated, reachable stage role, credential/permission/token denial | Unchanged profile; stop that action with `missing_required_secret_or_permission`, naming denied target | Y | Y | Y | N/A |
+      | S10b | Reachable stage role, harness tool or local-path denial (Out of Scope, #1746) | **No named stop and no outcome defined**; must not map to `missing_required_secret_or_permission` or `dispatch_handoff_unavailable`; #1746 callout present | Y | Y | Y | N/A |
+      | S11 | No handoff, or **initial handoff unconfirmed**, read-only checkpoint | Inline fallback; observing, complete read-only work, report; record unconfirmed | Y | Y | Y | Y |
+      | S12 | No handoff, or **initial handoff unconfirmed**, would mutate | Inline fallback; observing, report; stop `dispatch_handoff_unavailable`; record unconfirmed | Y | Y | Y | N/A |
+      | S13 | Declaration missing at first mutating action | Stop `dispatch_profile_declaration_missing` before mutating | Y | Y | Y | N/A |
+      | S14 | Profile value outside the three | Same stop; report invalid value and the three valid values | Y | Y | Y | Y |
+      | S15 | No accountable role (incl. empty) | Same stop; report missing role | Y | Y | Y | Y |
+      | S16 | Missing/invalid declaration at a read-only checkpoint | Same stop before reporting or the next action | Y | Y | Y | Y |
+      | S17a | Posture `observing` at a mutating action | Same stop; report invalid posture | Y | Y | Y | N/A |
+      | S17b | Posture absorbed/handed off at a read-only checkpoint | Same stop; report invalid posture | Y | Y | Y | Y |
+      | S18 | Declared **more permissive** than facts assign (native while onward unavailable/unconfirmed or initial unavailable; parent while initial unavailable) | Same stop; report fact and required outcome | Y | Y | Y | Y |
+      | S19 | Declared **less permissive** than facts assign (parent or inline while facts assign native; inline while facts assign parent) | Same stop; report fact and required outcome | Y | Y | Y | Y |
+
+      Each expected outcome names its terminal state (proceed, re-declare, or
+      stop with the exact stop string) and, for stops, the affected work item and
+      human unblocking action from guardrails section 4. S7-S9 and S10 are
+      **recovery** rows: they are validated against their own action-specific
+      fact and are explicitly **not** rejected by S18/S19 (E4c exemption); the
+      simulation includes a scenario proving a S7 re-declaration is not
+      treated as a coarse mismatch. Pre-branch `/run-items` stops (S13-S19) also
+      assert the single invocation-level affected-item string.
+      This is the executable equivalent when live Remote Control is unavailable.
 - [ ] **Planted-violation proofs — one per guard branch** (same implementation
       PR). Each branch can go inert while the others keep the suite green, so
       every branch needs its own proof. For each cycle: apply the edit to a
@@ -584,9 +620,12 @@ layer; `workflow.mdc` states all five compactly).
           `canonical_declared_not_detected`, one per
           `canonical_handoff_metadata` field including worktree path,
           `canonical_workflow_hub`).
-      16. **`simulate_bounded_paths`**: alter one decision-gate row in the
-          canonical doc so a scenario's expected outcome changes; expect
-          non-zero naming the path (`/run-item`, `/run-items`, or `/run-epic`).
+      16. **`simulate_bounded_paths`**: for each scenario ID S1-S19 (including
+          S10b), alter that decision-gate row in the canonical doc so its
+          expected outcome or stop name changes; expect non-zero naming the
+          scenario ID and each applicable path. Separately delete one row
+          (completeness assertion must fail) and add an unmatched extra row
+          (must fail); restore each.
 
       17. **Selector wiring / header consistency**: remove one path from the
           `# covers:` header; expect the guard's header-consistency check to
@@ -682,7 +721,31 @@ as the opener (longer closers are valid), be indented at most 3 spaces, and
 carry no info string. A fence of the other character, or a shorter run, is
 content, not a closer. An **unclosed** fence runs to **end of file** and
 everything after the opener is stripped. HTML comments run from `<!--` to
-`-->`, or to end of file if unclosed; (R3) normalize each
+`-->`, or to end of file if unclosed;
+(R2b) **indented code blocks are stripped too**, per CommonMark: a line indented
+**4 or more spaces (or a tab)** relative to the enclosing container starts an
+indented code block only when it is **not** a paragraph continuation (an
+indented line directly after a paragraph line, with no blank line between,
+cannot interrupt the paragraph and is prose) and is **not** a list-item
+continuation (inside a list item the threshold is the item's content offset
+plus 4, so a line indented only to the content offset, or 4+ spaces under a
+list marker that has not yet reached that offset plus 4, is item prose). The
+block continues through further lines indented 4+ (blank lines between such
+lines stay inside the block) and ends at the first non-blank line indented
+less than 4; it also starts after a heading, thematic break, fenced block, or
+blank line. Blockquote content is evaluated after removing `>` markers, so
+code inside a quote is stripped by the same rules;
+(R2c) other constructs, each decided explicitly. **Counts as prose**:
+blockquote text, table cells (a row is one block for R3), list items, headings,
+link text, and inline HTML tag *text* (tags removed). **Counts for identifier
+tokens only** (R4): inline code spans, because stop names and profile codes are
+conventionally written as code; a prose phrase (E1-E5 sentences, `treated as
+unavailable`, and similar) that appears only inside an inline code span does
+**not** count. **Never counts**: link-reference definitions (`[label]: url
+"title"`, whole line), link and image destinations and titles, image alt text,
+autolinks, `<pre>` and `<code>` HTML blocks, and backslash-escaped identifiers
+(`dispatch\_handoff\_unavailable` is not the token; entities are not decoded);
+(R3) normalize each
 paragraph by joining soft-wrapped lines and collapsing whitespace, so phrases
 wrapped across lines still match and "same paragraph" means one blank-line-
 delimited block (list item, blockquote line and table cell each count as a
@@ -722,11 +785,32 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Fence semantics | Backtick fence closed by a tilde run (mismatched character); token after it still inside | `fence-mismatched-char-closer` | fail (R2) |
 | Fence semantics | Unclosed fence at EOF with required token after opener | `fence-unclosed-eof` | fail (stripped to EOF) |
 | Fence semantics | Unclosed fence at EOF, required token **before** the opener | `fence-unclosed-token-before` | pass |
-| Fence semantics | Fence opener indented 3 spaces (is a fence) vs 4 spaces (is not) with token inside | `fence-indent-3` / `fence-indent-4` | fail / pass (4 spaces is not a fence, so the token counts) |
+| Fence semantics | Fence opener indented 3 spaces (is a fence) with token inside | `fence-indent-3` | fail (R2) |
+| Fence semantics | Opener line indented 4 spaces after a blank line (indented code, not a fence); token on a later **unindented** line | `fence-indent-4` | pass (the opener is code, the token line is prose) |
+| Indented code | Required token on a line indented 4 spaces after a blank line | `indented-code-token` | **fail** (R2b; previously treated as valid prose) |
+| Indented code | Same, indented with a tab | `indented-code-tab` | fail (R2b) |
+| Indented code | Indented block after a heading | `indented-code-after-heading` | fail (R2b) |
+| Indented code | Blank line inside an indented block; token in the second chunk | `indented-code-multi-blank` | fail (R2b) |
+| Indented code | 4-space-indented line directly after a paragraph line (no blank): paragraph continuation | `indented-code-paragraph-continuation` | pass (cannot interrupt a paragraph) |
+| Indented code | Line indented to a list item's content offset (not +4) | `indented-code-list-continuation` | pass (item prose) |
+| Indented code | Line indented content offset + 4 inside a list item after a blank line | `indented-code-in-list` | fail (R2b) |
+| Indented code | Indented code inside a blockquote (`>` plus 4 spaces) | `indented-code-blockquote` | fail (R2b after `>` removal) |
+| Construct sweep | Clause sentence inside a blockquote | `construct-blockquote-prose` | pass |
+| Construct sweep | Clause sentence in a table cell (one row is one block) | `construct-table-cell` | pass |
+| Construct sweep | Token only in a link-reference definition title | `construct-linkref-def` | fail (R2c) |
+| Construct sweep | Token only in a link destination or image alt text | `construct-link-destination-alt` | fail (R2c) |
+| Construct sweep | Identifier token in an inline code span | `construct-code-span-identifier` | pass (R2c, R4) |
+| Construct sweep | Prose phrase only inside an inline code span | `construct-code-span-phrase` | fail (R2c) |
+| Construct sweep | Token only inside a `<pre>` HTML block | `construct-pre-block` | fail (R2c) |
+| Construct sweep | Backslash-escaped identifier (`dispatch\_handoff\_unavailable`) | `construct-escaped-identifier` | fail (R2c, R4) |
 | Fence semantics | Closer indented 4 spaces does not close; token after it still inside | `fence-closer-indent-4` | fail (R2) |
 | Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
 | Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
 | Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
+| Simulation | Canonical-doc fixture missing the S5 row (onward unconfirmed) | `sim-missing-row-s5` | fail (completeness count) |
+| Simulation | Fixture whose S12 row says `dispatch_profile_declaration_missing` instead of `dispatch_handoff_unavailable` | `sim-wrong-stop-s12` | fail naming S12 |
+| Simulation | Fixture where S7 recovery re-declaration is described as a coarse mismatch | `sim-recovery-rejected-s7` | fail (E4c exemption) |
+| Simulation | Fixture mapping harness denial (S10b) to `missing_required_secret_or_permission` | `sim-harness-denial-mapped-s10b` | fail naming S10b |
 | Serialization | Mixed-form target list (`#1462`, `ENG-123`, `feature/x`, `1771`) shown verbatim | `serialization-mixed-forms` | pass |
 | Serialization | Example rewrites targets (adds `#` to `ENG-123` or strips `#`) | `serialization-hash-rewritten` | fail (contradicts `verbatim`) |
 | Serialization | Target containing `,` shown unescaped | `serialization-comma-unescaped` | fail (`percent-encoded` rule) |
