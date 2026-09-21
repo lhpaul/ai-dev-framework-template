@@ -66,7 +66,9 @@ scope and must not be bundled into this implementation PR.
 | Authoritative tracker status in the scan | `workflow-batch-plan.sh:516` (issue number), `:542` (`get_tracker_status_for_issue`), `:554`–`:557` (terminal skip), `:569`–`:571` (next-action call), `:639` (emitted STATUS) | Batch-plan reads the tracker status but uses it only for the terminal skip and Linear deferral; it does not pass it to next-action and emits next-action's artifact-derived STATUS instead — the gap this item closes — verified 2026-09-20 |
 | Tracker status failure modes | `get_tracker_status_for_issue` in `workflow-lib.sh:2250`–`:2285` | Returns empty string with exit `0` for Linear deferral, missing project config, missing project item, and unparseable JSON; never non-zero, so callers cannot distinguish them — verified 2026-09-20 |
 | Tracker Type failure modes | `get_tracker_type_for_issue` in `workflow-lib.sh:2293`–`:2325` | Empty string for non-`github_projects` providers, missing project config, or missing item; **non-zero** only when item JSON exists but Type cannot be parsed — verified 2026-09-20 |
-| Authoritative status + Type on the single-item path | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type); consumed via `run-bounded-prelude.sh:461`–`:480` scope JSON | Both values are already resolved per item and carried in the scope JSON, so the single-item gate needs no additional tracker call; `:687` hard-fails on an unparseable Type before the gate is reached — verified 2026-09-20 |
+| Authoritative status + Type on every prelude scope | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type); consumed via the scope JSON `run-bounded-prelude.sh` writes at `:460`–`:481` | Both values are resolved per item for `--epic`, `--items`, and single-item targets alike (`run-item-scope-resolver.sh` delegates to the same resolver), so the gate needs no additional tracker call on any prelude path; `:687`–`:689` hard-fails on an unparseable Type before the gate is reached — verified 2026-09-20 |
+| Prelude scope modes | `run-bounded-prelude.sh:404`–`:411` (mode selection) and `:460`–`:481` (resolver dispatch) | Three modes — `epic`, `items`, `item` — all reaching the same `$scope_file`, so one gate placement covers them; mutual exclusivity is already enforced at `:376`–`:394` — verified 2026-09-20 |
+| Existing per-item tracker-context disposition in epic/items | `run-epic-scope-resolver.sh:730`–`:732` (`ambiguous` for missing/unrecognized status) and `:983`–`:990` (non-empty `ambiguous` → terminal `missing_tracker_context`) | A single `ambiguous` member already terminates the whole resolution, so misclassified items must **not** be routed into that group; the prelude reports them separately instead — verified 2026-09-20 |
 | Linear deferred scope placeholder | `run-item-scope-resolver.sh:375`, `:396`–`:397` | Emits `trackerReadDeferred: true` with a literal `status: "Backlog"` and `type: ""`; the gate must key off `trackerReadDeferred`, not the placeholder — verified 2026-09-20 |
 | Cost of reading Status and Type | `workflow_github_project_item_for_issue` (`workflow-lib.sh:1781`) selects both fields, but `get_tracker_status_for_issue` (`:2250`) and `get_tracker_type_for_issue` (`:2293`) call it separately; caches exist only for the project id (`:1641`–`:1643`), field metadata (`:1644`–`:1648`), and named fields (`:1651`–`:1652`) | **No item-level cache**, so two reads of the same item are two GraphQL requests. The scan path therefore costs one extra request per scanned non-terminal folder in framework mode; no "single read" guarantee is claimed — verified 2026-09-20 |
 | Status reconciliation primitive | `workflow_status_order` in `workflow-lib.sh:1610` | `Backlog` → `0`, recognized statuses `Writing Spec`…`Released` → `> 0`, unrecognized → `-1` — verified 2026-09-20 |
@@ -177,18 +179,25 @@ scope and must not be bundled into this implementation PR.
     lookup completed and the board has none; `unavailable` when the lookup could not be
     performed (non-empty `REASON`, preserve stderr detail). Never emit `empty` for a failed
     read.
-  - **Detectable `unavailable` causes — a closed list.** The framework-mode lookup reads the
-    same surfaces the primitive reads, so it can detect exactly the failures that are already
-    distinct early returns in `list_open_workflow_type_issues` (`workflow-lib.sh:3273`–`:3361`),
-    each mapping to its own `REASON`:
-    1. the configured provider is not `github_projects` — the tracker does not support this
-       lookup (`:3273`);
-    2. project number missing (`:3280`) or non-numeric (`:3286`);
-    3. project owner unresolvable (`:3297`), or repo owner/name unresolvable (`:3305`);
-    4. `gh issue list` failed (`:3312`);
-    5. `gh project item-list` failed (`:3322`);
-    6. the item-list JSON could not be parsed (`:3361`).
-    Where the primitive warns and returns `[]`, the framework-mode wrapper returns
+  - **Detectable `unavailable` causes — a closed list of eight, each with its own `REASON` and
+    its own named test.** The framework-mode lookup reads the same surfaces the primitive
+    reads, so it can detect exactly the failures that are already distinct early returns in
+    `list_open_workflow_type_issues`. Every row here is mandatory: a cause without a passing
+    named case is an unimplemented claim.
+
+    | # | Cause | Code site | `REASON` | Named case |
+    | --- | --- | --- | --- | --- |
+    | 1 | Configured provider is not `github_projects` — the tracker does not support this lookup | `workflow-lib.sh:3273` | `provider_unsupported` | `lookup-unavailable-provider-unsupported` |
+    | 2 | Project number missing | `:3280` | `project_number_missing` | `lookup-unavailable-project-number-missing` |
+    | 3 | Project number non-numeric | `:3286` | `project_number_invalid` | `lookup-unavailable-project-number-invalid` |
+    | 4 | Project owner unresolvable | `:3297` | `project_owner_unresolvable` | `lookup-unavailable-project-owner-unresolvable` |
+    | 5 | Repository owner/name unresolvable | `:3305` | `repo_unresolvable` | `lookup-unavailable-repo-unresolvable` |
+    | 6 | `gh issue list` failed | `:3312` | `issue_list_failed` | `lookup-unavailable-issue-list-failed` |
+    | 7 | `gh project item-list` failed | `:3322` | `item_list_failed` | `lookup-unavailable-item-list-failed` |
+    | 8 | Item-list JSON could not be parsed | `:3361` | `item_list_unparseable` | `lookup-unavailable-item-list-unparseable` |
+
+    Each named case asserts `STATUS=unavailable`, its own non-empty `REASON`, `JSON=[]`, and
+    exit `0`. Where the primitive warns and returns `[]`, the framework-mode wrapper returns
     `STATUS=unavailable` with the corresponding `REASON` — that substitution *is* this item's
     change, and it is why the wrapper cannot simply delegate in framework mode.
   - **There is no Type-unreadable case in framework mode.** The framework-mode lookup returns
@@ -234,11 +243,14 @@ scope and must not be bundled into this implementation PR.
      already-filed items — on the strength of an unavailable lookup.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh` (or
   add `tests/test-framework-mode-type-routing.sh`) with mocked `gh` fixtures for framework
-  vs consumer filter differences, a framework-mode empty-board case, and **one fixture per
-  detectable `unavailable` cause** from the closed list above — at minimum a failing
-  `gh project item-list`, a failing `gh issue list`, an unparseable item list, and a missing
-  project number, each asserting `STATUS=unavailable` with its own non-empty `REASON` and
-  `JSON=[]`. Do **not** add a Type-unreadable fixture for framework mode: the framework-mode
+  vs consumer filter differences, a framework-mode empty-board case, and **all eight** named
+  cases from the closed cause list above — `lookup-unavailable-provider-unsupported`,
+  `-project-number-missing`, `-project-number-invalid`, `-project-owner-unresolvable`,
+  `-repo-unresolvable`, `-issue-list-failed`, `-item-list-failed`, and
+  `-item-list-unparseable` — each asserting `STATUS=unavailable` with its own distinct
+  non-empty `REASON`, `JSON=[]`, and exit `0`. Eight causes, eight cases: any cause left
+  without a case must be deleted from the closed list instead of being claimed. Do **not** add
+  a Type-unreadable fixture for framework mode: the framework-mode
   lookup does not read Type, so such a fixture could only pass by asserting behavior the
   implementation does not have. A fixture whose board carries a renamed Type field must assert
   the opposite — `STATUS=ok` (or `empty`) with the board's open items — proving the
@@ -280,8 +292,22 @@ scope and must not be bundled into this implementation PR.
   | Framework | `Workflow` | any recognized non-`Backlog` status (order `> 0`) | any | `RESULT=pass`, `REASON=pipeline_already_chosen` |
   | Framework | `Workflow` | unrecognized / missing (order `-1`) | any | `RESULT=pass`, `REASON=status_unreconciled` |
   | Framework | `Feature` / `Bug` / `Refactor` | any | any | `RESULT=pass`, `REASON=type_routes_today` |
-  | Framework | empty, unset, or unreadable | any | any | `RESULT=pass`, `REASON=type_absent_or_unreadable` |
+  | Framework | **missing or empty** — no Type set, provider not `github_projects`, no project configured, or the issue is not on the board (`get_tracker_type_for_issue` prints empty and exits `0`) | any | any | `RESULT=pass`, `REASON=type_absent` |
+  | Framework | **parse failure** — item JSON exists but Type cannot be parsed (`get_tracker_type_for_issue` warns at `workflow-lib.sh:2321` and exits **non-zero**) | any | `scan` | `RESULT=pass`, `REASON=type_unreadable`, and the caller records `MISCLASSIFIED_TYPE_CHECK=deferred`. The gate must capture the helper's non-zero exit (`set +e` / `|| true`) so it does not inherit the failure under `set -e` |
+  | Framework | **parse failure** (same condition) | any | `single` | **The gate is never reached.** `run-epic-scope-resolver.sh:687` already `error_exit`s with "failed to read tracker type for issue #N" during scope resolution — today's behavior on every prelude path, not introduced or changed by this item |
 
+  - **Why the parse-failure row splits by caller.** The two callers obtain Type differently, so
+    they meet its failure differently, and this plan changes neither. On the three prelude
+    scopes the Type is read during scope resolution (`run-epic-scope-resolver.sh:687`–`:689`),
+    where an unparseable value already aborts the run before any gate exists; the gate
+    therefore never sees that state and needs no handling for it. On the scan path the gate performs the read itself, so it does see the
+    non-zero exit and treats it as a `pass` — consistent with the single status contract, which
+    stops only on a Type that positively reads `Workflow`. `run-item-scope-resolver.sh` inherits
+    the resolver behavior because it delegates to `run-epic-scope-resolver.sh` for GitHub
+    items; its Linear branch never reads Type at all and is covered by the
+    `trackerReadDeferred` rule below. **Do not change the resolver** to soften its hard failure:
+    that is pre-existing behavior for a genuinely corrupt tracker read, and altering it is
+    outside this item's spec.
   - The `REASON` values on `pass` rows are **informational only** — they exist so harness
     assertions can distinguish why the gate passed. No `pass` reason changes any caller's
     behavior, and no `pass` row may be turned into a stop or hold without a new spec AC.
@@ -314,7 +340,7 @@ scope and must not be bundled into this implementation PR.
   | Path | Who reads the authoritative status/Type | How it reaches the gate | What the gate call looks like |
   | --- | --- | --- | --- |
   | Portfolio scan | `workflow-batch-plan.sh:542` (`get_tracker_status_for_issue`) for the status; the gate performs its own `get_tracker_type_for_issue` read, because batch-plan retains no Type value to pass | In-process shell variables `$issue_number` / `$tracker_status`; no new env var, no file | `framework-mode-backlog-type-gate.sh --issue "$issue_number" --status "$tracker_status" --caller scan --repo-root "$repo_root"`, inserted **after** the terminal-status skip (`:557`) and **before** the next-action invocation (`:569`). Costs one extra GraphQL request per scanned non-terminal folder — see "Tracker-read cost" below |
-  | Single-item run | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type), already called for every item by `run-item-scope-resolver.sh` | The resolved scope JSON that `run-bounded-prelude.sh` writes to `$scope_file` (`:461`–`:480`), whose per-item objects already carry `status` and `type` | Same script with `--caller single`, reading `--status` / `--type` out of `$scope_file` — **no extra tracker API call** |
+  | Bounded prelude — **all three** scope modes (`item`, `items`, `epic`) | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type), called for every item on every one of those paths (`run-item-scope-resolver.sh` delegates to it) | The resolved scope JSON that `run-bounded-prelude.sh` writes to `$scope_file` (`:460`–`:481`), whose per-item objects already carry `status` and `type` (`:766`) | Same script, once per item in `.items[]`, reading `--status` / `--type` out of `$scope_file` — **no extra tracker API call**. `--caller` follows the scope mode; see the scope table below |
 
   - **Scan hold is emitted by `workflow-batch-plan.sh`, not by `workflow-next-action.sh`.** On
     `RESULT=hold` the batch-plan loop prints the item block itself — `TARGET`,
@@ -368,11 +394,45 @@ scope and must not be bundled into this implementation PR.
     tracker rate limits during batch scans, the mitigation that actually applies here is
     placement, not caching: the gate is invoked only in framework mode, only after the
     terminal-status skip, and never for folders the scan already discarded.
-  - **Single-item stop**: on `RESULT=stop`, `run-bounded-prelude.sh` emits stop output that
-    maps to `missing_tracker_context`, naming the item, and aborts before stage dispatch
-    (Protocol `91`). Note `run-epic-scope-resolver.sh:687` already hard-fails when the Type
-    read returns non-zero (unparseable Type JSON), so that case never reaches the gate on this
-    path and needs no new handling.
+  - **Prelude scopes — one placement, one rule, three dispositions.** `run-bounded-prelude.sh`
+    resolves three scope modes, not one: `epic` (`--epic`), `items` (`--items`, the
+    `/run-items` explicit list), and `item` (`--target` / `--issue` / `--branch` / `--pr` /
+    `--development`) — set at `:404`–`:411` and dispatched at `:460`–`:481`. The gate is
+    evaluated in **one place** for all three: after the chosen resolver writes `$scope_file`
+    and before the policy/confirmation output, once per entry in `.items[]`. The **single
+    rule** for disposition is the spec's: a misclassification is scoped to the item, never to
+    the run that found it — so `--caller` is chosen by how many items the run advances, not by
+    which command was typed.
+
+    | Prelude scope | `--caller` | Disposition | Rationale |
+    | --- | --- | --- | --- |
+    | `item` (exactly one named item) | `single` | `RESULT=stop` → prelude emits the `missing_tracker_context` stop naming the item and exits non-zero before any dispatch (Protocol `91`) | The whole run *is* that item, so stopping the run and stopping the item are the same act (AC: "asking a runner to advance a Backlog item classified Workflow stops the run") |
+    | `items` (two or more explicitly listed items, `/run-items`) | `scan` | `RESULT=hold` for that item only → prelude emits `MISCLASSIFIED_HELD_ITEMS=#N[,#M…]` plus a per-item reason line, does **not** exit non-zero, and the remaining items proceed to policy and dispatch | "Never to the run that found it": one mis-typed member must not cancel the other members' work |
+    | `epic` (epic-resolved child items) | `scan` | Same as `items` — hold and report the affected children, every other child keeps the group the resolver gave it | Same rule; an epic run advances many items |
+
+    `single` and `scan` therefore name **arity and disposition**, not commands: `single` means
+    "this run advances exactly one named item, so a misclassification stops it", and `scan`
+    means "this run evaluates many items, so a misclassification holds one and the run
+    continues". The portfolio scan, `/run-items`, and `/run-epic` all pass `scan`.
+  - **No resolver change, and no new scope-JSON group.** The held items are reported by the
+    prelude's own output key, not by re-grouping the scope JSON.
+    `run-epic-scope-resolver.sh` already owns an `ambiguous` group whose non-empty presence
+    makes the *whole* resolution terminal under `missing_tracker_context` (`:983`–`:990`, the
+    same treatment it gives "tracker status missing or unrecognized" at `:730`–`:732`). Routing
+    misclassified items into that group would therefore terminate the entire `items` / `epic`
+    run — the outcome the rule above exists to avoid — so this item does **not** touch the
+    resolver, its groups, or its outcome mapping. Protocols `91`, `95`, and `90` state that
+    items listed in `MISCLASSIFIED_HELD_ITEMS` are excluded from dispatch and reported with the
+    re-classification that unblocks them; those three protocols are already closed-list rows.
+  - **Named tests for the three prelude scopes** (in `tests/test-run-bounded-prelude.sh`):
+    `prelude-item-scope-stops` (one misclassified item → non-zero exit,
+    `missing_tracker_context`, item named, nothing dispatched);
+    `prelude-items-scope-holds-one-continues` (three listed items, one misclassified → exit
+    `0`, `MISCLASSIFIED_HELD_ITEMS` names exactly that item, the other two still appear in the
+    policy/confirmation output);
+    `prelude-epic-scope-holds-one-continues` (same assertions for an epic with three children);
+    `prelude-consumer-scopes-unchanged` (all three scope modes under consumer fixtures produce
+    byte-identical output to the pre-feature baseline, with no `MISCLASSIFIED_HELD_ITEMS` key).
 - [ ] **Lane wiring — `NEXT_ACTION=hold-misclassified-type` alone does not hold anything.**
   Verified against the tree at plan time: `workflow-batch-lanes.sh:32` maps any unrecognized
   action to the `review` lane via the `*)` fallback, `:374` initializes `dispatch="proposed"`,
@@ -430,9 +490,11 @@ scope and must not be bundled into this implementation PR.
 - [ ] **Consumer-fixture routing cases** (AC: Consumer repositories are unchanged) — named
   scenarios that fail if gate wiring alters consumer paths:
   - `consumer-prelude-workflow-unchanged`: under consumer config (`template.is_template` absent
-    / false / unrecognized), `run-bounded-prelude.sh` for a Backlog + Workflow item produces
-    the same routing outcome shape as today's pre-feature baseline (no stop/hold from this
-    gate; infer-path / existing tables).
+    / false / unrecognized), `run-bounded-prelude.sh` in scope `item` for a Backlog + Workflow
+    item produces the same routing outcome shape as today's pre-feature baseline (no stop/hold
+    from this gate; infer-path / existing tables). `prelude-consumer-scopes-unchanged` extends
+    exactly this assertion to the `items` and `epic` scope modes; the two scenarios are one
+    check across three scope modes, not competing claims.
   - `consumer-next-action-workflow-unchanged`: `workflow-next-action.sh` output for the same
     folder matches today's NEXT_ACTION / lane classification byte-for-byte. Because this item
     does not modify that script at all, the scenario doubles as a regression guard that the
@@ -595,9 +657,9 @@ Consistency Matrix one-for-one; where the spec says "Unchanged from today", this
 | Input | Values | Source in this implementation |
 | --- | --- | --- |
 | Repository mode | framework / consumer | `workflow_template_is_template` in `workflow-lib.sh` (affirmative `template.is_template` only) |
-| Item classification | `Feature` / `Bug` / `Refactor` / `Workflow` / empty, unset, or unreadable | `get_tracker_type_for_issue` (`workflow-lib.sh:2293`); for creation, the `--type` argument |
+| Item classification | `Feature` / `Bug` / `Refactor` / `Workflow` / missing or empty (helper exits `0`) / parse failure (helper exits non-zero) | `get_tracker_type_for_issue` (`workflow-lib.sh:2293`), read by the gate on the scan path and by `run-epic-scope-resolver.sh:687` on the prelude paths; for creation, the `--type` argument |
 | Item stage | reconciled `Backlog` (`workflow_status_order` = `0`) / recognized non-Backlog (`> 0`) / unrecognized or missing (`-1`) | `workflow_status_order` (`workflow-lib.sh:1610`), the same reconciliation routing uses today |
-| Routing caller | `single` (a named single-item run) / `scan` (portfolio proposal) | `--caller` on `framework-mode-backlog-type-gate.sh`; `run-bounded-prelude.sh` passes `single`, the scan path passes `scan` |
+| Routing caller | `single` (the run advances exactly one named item) / `scan` (the run evaluates many items) | `--caller` on `framework-mode-backlog-type-gate.sh`. Prelude scope `item` passes `single`; prelude scopes `items` and `epic` pass `scan`, as does the portfolio scan. The value names arity and disposition, not the command |
 | Lookup result | completed with items / completed with no items / could not be performed | `list_open_framework_items.sh` — `FRAMEWORK_ITEMS_LOOKUP_STATUS` |
 
 ### Creation gate (`add-backlog-item.sh`, before `gh issue create`)
@@ -610,16 +672,22 @@ Consistency Matrix one-for-one; where the spec says "Unchanged from today", this
 | Framework | `Workflow` via the Linear `create` handoff | Same refusal: exit `1`, same message, **no** `TRACKER_ACTION_REQUIRED` emitted | Re-run with a valid class; the MCP handoff is not a bypass |
 | Consumer | any class, or none | Created as today, byte-identical output | None — unchanged (`consumer-creation-all-classes-unchanged`) |
 
-### Routing gate (`framework-mode-backlog-type-gate.sh` and its two callers)
+### Routing gate (`framework-mode-backlog-type-gate.sh` and its callers)
+
+Callers: prelude scope `item` (`single`); prelude scopes `items` and `epic`, and the portfolio
+scan (`scan`).
 
 | Mode | Classification | Stage | Caller | Outcome | Required next action |
 | --- | --- | --- | --- | --- | --- |
 | Framework | `Feature` / `Bug` / `Refactor` | `Backlog` | any | `pass` (`type_routes_today`) | Existing pipelines; a Bug still goes through the existing scope check first |
-| Framework | `Workflow` | `Backlog` | `single` | `stop`, `STOP_CONDITION=missing_tracker_context` | Report the stop naming `#<issue>` and the re-classification; start no pipeline; mutate nothing (`stop-path-no-mutation`) |
-| Framework | `Workflow` | `Backlog` | `scan` | `hold` (no `STOP_CONDITION`) | That item only: `DISPATCH=held`, `REPORT_CATEGORY=held`, `HOLD_REASON` naming the item. Scan continues, exits `0`, and still proposes every other valid item |
+| Framework | `Workflow` | `Backlog` | `single` (prelude scope `item`) | `stop`, `STOP_CONDITION=missing_tracker_context` | Report the stop naming `#<issue>` and the re-classification; start no pipeline; mutate nothing (`stop-path-no-mutation`, `prelude-item-scope-stops`) |
+| Framework | `Workflow` | `Backlog` | `scan`, prelude scopes `items` / `epic` | `hold` (no `STOP_CONDITION`) | That item only: prelude emits `MISCLASSIFIED_HELD_ITEMS=#<issue>` with its reason, exits `0`, and every other item in the list or epic proceeds (`prelude-items-scope-holds-one-continues`, `prelude-epic-scope-holds-one-continues`) |
+| Framework | `Workflow` | `Backlog` | `scan`, portfolio scan | `hold` (no `STOP_CONDITION`) | That item only: `DISPATCH=held`, `REPORT_CATEGORY=held`, `HOLD_REASON` naming the item. Scan continues, exits `0`, and still proposes every other valid item |
 | Framework | `Workflow` | any recognized non-Backlog status (`Writing Spec` … `Released`) | any | `pass` (`pipeline_already_chosen`) | Continue the pipeline the item already started. The gate stops work being **started** on a mis-typed item; re-classification here is tracker hygiene, not a reason to halt in-flight work |
 | Framework | `Workflow` | unrecognized or missing status (`-1`) | any | `pass` (`status_unreconciled`) | None — unchanged from today. The spec adds no AC for an unreconcilable status, so this does not fail closed |
-| Framework | empty, unset, or unreadable | any | any | `pass` (`type_absent_or_unreadable`) | None — unchanged from today (spec matrix "Framework / Unset / Unchanged from today"; Out of Scope 7) |
+| Framework | missing or empty (helper exits `0`) | any | any | `pass` (`type_absent`) | None — unchanged from today (spec matrix "Framework / Unset / Unchanged from today"; Out of Scope 7) |
+| Framework | parse failure (helper exits non-zero) | any | `scan` | `pass` (`type_unreadable`), caller records `MISCLASSIFIED_TYPE_CHECK=deferred` | None for routing — the item proceeds as today; the deferred marker says the check did not run |
+| Framework | parse failure (helper exits non-zero) | any | `single` and the `items` / `epic` prelude scopes | Gate not reached | Unchanged from today: `run-epic-scope-resolver.sh:687`–`:689` already aborts scope resolution with "failed to read tracker type for issue #N". This item neither introduces nor softens that failure |
 | Consumer | any class, including `Workflow` | any | any | `pass` (`consumer_mode`) | None — existing routing tables, including infer-the-path for Workflow (`consumer-routing-all-classes-unchanged`) |
 | Either | any class | already on a pipeline | any | Not re-evaluated | Unchanged — the item continues on the pipeline it started |
 
@@ -629,7 +697,7 @@ Consistency Matrix one-for-one; where the spec says "Unchanged from today", this
 | --- | --- | --- | --- |
 | Framework | Completed; at least one open item on the board | `STATUS=ok`, `REASON=` (empty), `JSON=[…]` — every open non-terminal item, whatever its Type | Review the list as today |
 | Framework | Completed; board has no open items | `STATUS=empty`, `REASON=` (empty), `JSON=[]` | Legitimate empty answer; the flow continues and may record the review as performed against an empty board |
-| Framework | Could not be performed — one of the six detectable causes: provider does not support the lookup, project number missing or non-numeric, owner/repo unresolvable, `gh issue list` failed, `gh project item-list` failed, or the item list could not be parsed | `STATUS=unavailable`, `REASON=<non-empty text>`, `JSON=[]` | **Continue** the flow; state in its own output that the lookup was not performed and why; do **not** record the open-script-bug review or the finding de-duplication as satisfied (`release-unavailable-continues-unsatisfied`, `retro-unavailable-continues-unsatisfied`) |
+| Framework | Could not be performed — one of the eight detectable causes, each with its own `REASON` and named case: `provider_unsupported`, `project_number_missing`, `project_number_invalid`, `project_owner_unresolvable`, `repo_unresolvable`, `issue_list_failed`, `item_list_failed`, `item_list_unparseable` | `STATUS=unavailable`, `REASON=<one of the eight, non-empty>`, `JSON=[]` | **Continue** the flow; state in its own output that the lookup was not performed and why; do **not** record the open-script-bug review or the finding de-duplication as satisfied (`release-unavailable-continues-unsatisfied`, `retro-unavailable-continues-unsatisfied`) |
 | Framework | Classification field renamed, misconfigured, or otherwise unreadable | **Not an outcome of this gate.** The framework-mode lookup never reads Type, so the field's readability cannot affect its result: the answer is `ok` or `empty` on the board's open items exactly as if the field were fine | None — no `REASON`, no fixture, and no detection mechanism is defined for this case in framework mode |
 | Consumer | Completed | `STATUS=ok`, `REASON=` (empty), `JSON=` Workflow-filtered items | Unchanged |
 | Consumer | Could not be performed | `STATUS=ok`, `REASON=` (empty), `JSON=[]` plus today's stderr warning — unchanged; consumer mode never emits `empty` or `unavailable` | Unchanged — out of scope for this feature (spec: consumer failure behavior is not touched) |
@@ -660,8 +728,9 @@ Workflow item that continues.
 - `scripts/development-workflow/tests/test-workflow-batch-lanes.sh` — the HELD end state
   (`DISPATCH=held` / `REPORT_CATEGORY=held`) for a `hold-misclassified-type` block carrying
   `MISCLASSIFIED_TYPE_REASON`
-- `scripts/development-workflow/tests/test-run-bounded-prelude.sh` — the single-item stop under
-  `missing_tracker_context`, the `trackerReadDeferred` skip, and the consumer-fixture no-op
+- `scripts/development-workflow/tests/test-run-bounded-prelude.sh` — all three scope modes:
+  the `item`-scope stop under `missing_tracker_context`, the `items`- and `epic`-scope
+  hold-and-continue, the `trackerReadDeferred` skip, and the consumer-fixture no-op
 - A `workflow-batch-plan.sh` scan fixture (new file, or a section of
   `test-framework-mode-type-routing.sh`) — the tracker-status data flow: mocked
   `get_tracker_status_for_issue` / `get_tracker_type_for_issue` returning `Backlog` +
@@ -685,17 +754,27 @@ Workflow item that continues.
    exact literals, no glob) and distinguishes unavailable vs empty vs populated; exit codes
    match the contract (`0` for all three statuses). Consumer mode also emits all three keys
    (`REASON` may be empty).
-6b. **`framework-lookup-unavailable-causes`**: one fixture per detectable cause (failing
-    `gh project item-list`, failing `gh issue list`, unparseable item list, missing project
-    number) yields `STATUS=unavailable` with its own non-empty `REASON`.
+6b. **Eight named unavailable cases, one per declared cause**:
+    `lookup-unavailable-provider-unsupported`, `lookup-unavailable-project-number-missing`,
+    `lookup-unavailable-project-number-invalid`,
+    `lookup-unavailable-project-owner-unresolvable`, `lookup-unavailable-repo-unresolvable`,
+    `lookup-unavailable-issue-list-failed`, `lookup-unavailable-item-list-failed`, and
+    `lookup-unavailable-item-list-unparseable`. Each yields `STATUS=unavailable` with its own
+    distinct `REASON` (`provider_unsupported`, `project_number_missing`,
+    `project_number_invalid`, `project_owner_unresolvable`, `repo_unresolvable`,
+    `issue_list_failed`, `item_list_failed`, `item_list_unparseable`), `JSON=[]`, and exit `0`.
 6c. **`framework-lookup-ignores-type-field`**: with the board's Type field renamed or absent,
     the framework-mode lookup still returns the open items (`STATUS=ok`, or `empty` on an
     empty board) — **not** `unavailable`. This is the fixture that keeps the criteria, the
     matrix, and the implementation agreeing that framework mode never reads Type.
 7. **`release-unavailable-continues-unsatisfied`** / **`retro-unavailable-continues-unsatisfied`**:
    unavailable lookup does not stop protocol `05` / `06` and is not recorded as satisfied.
-8. Gate: Backlog + Workflow stops the single runner, and the stop text names the item; the
-   `scan` caller yields a hold, not a global stop.
+8. **`prelude-item-scope-stops`** / **`prelude-items-scope-holds-one-continues`** /
+   **`prelude-epic-scope-holds-one-continues`** / **`prelude-consumer-scopes-unchanged`**:
+   the three prelude scope modes take the disposition their arity dictates — `item` stops with
+   `missing_tracker_context` and names the item; `items` and `epic` hold only the misclassified
+   member via `MISCLASSIFIED_HELD_ITEMS`, exit `0`, and leave every other member proceeding;
+   consumer fixtures for all three modes are byte-identical to the pre-feature baseline.
 9. **`scan-misclassified-item-held`** / **`scan-misclassified-not-informational`**: the scan
    item reaches `DISPATCH=held` + `REPORT_CATEGORY=held` with a naming `HOLD_REASON`, a
    sibling Feature stays `proposed_batch`, and label/status branches cannot downgrade the held
@@ -747,7 +826,7 @@ markdown lint on plan/spec/runbook/protocol edits.
 3. Create `scripts/development-workflow/list_open_framework_items.sh` with the full
    `FRAMEWORK_ITEMS_LOOKUP_STATUS` / `FRAMEWORK_ITEMS_LOOKUP_REASON` / `FRAMEWORK_ITEMS_JSON`
    contract — the wrapper must exist before anything emits or consumes those keys. Its
-   framework-mode branch maps each of the six detectable read failures to its own `REASON`
+   framework-mode branch maps each of the eight detectable read failures to its own `REASON`
    and reads no Type field.
 4. Repoint protocols `05` / `06` snippets at the wrapper and give each its framework-mode
    `unavailable` handling (continue, report, do not mark satisfied).
@@ -778,7 +857,8 @@ markdown lint on plan/spec/runbook/protocol edits.
 | Runbooks assert the pre-feature classification | `docs/testing/workflow/retrospective-protocol.smoke-test.md` and `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` are closed-list rows 13–14 with single-match grep anchors, so the guidance check fails while either still directs a framework-mode operator to Type `Workflow` |
 | Gate over-reach beyond the spec | Only framework mode + reconciled `Backlog` + Type `Workflow` stops or holds; absent/unreadable Type and unreconcilable status `pass`, matching the spec's "Unchanged from today" rows. Any new fail-closed case requires a new spec AC first |
 | Extra tracker read on every scanned folder | Accepted and budgeted, not claimed away: no item-level cache exists, so the scan's Type read is a second GraphQL request. Contained by placement — framework mode only, after the terminal-status skip, never for discarded folders. A single-read refactor of the two lib helpers is explicitly out of scope for this item |
-| Lookup claims an unavailability it cannot detect | The framework-mode `unavailable` causes are a closed list of six real read failures, each with a fixture; the classification field is not among them because framework mode never reads Type, and `framework-lookup-ignores-type-field` asserts a renamed Type field still yields `ok`/`empty` |
+| Lookup claims an unavailability it cannot detect | The framework-mode `unavailable` causes are a closed list of eight real read failures, each with its own `REASON` and its own named case; the classification field is not among them because framework mode never reads Type, and `framework-lookup-ignores-type-field` asserts a renamed Type field still yields `ok`/`empty` |
+| Gate silently skipped on a multi-item prelude scope | The gate runs in one place for all three prelude scopes (`item`, `items`, `epic`) over `.items[]` in the scope JSON; `prelude-items-scope-holds-one-continues` and `prelude-epic-scope-holds-one-continues` fail if a misclassified member is neither held nor reported, and `prelude-item-scope-stops` fails if a single-item run does not stop |
 
 ---
 
@@ -842,8 +922,9 @@ for an existing input:
 ### (4) Backlog routing gate (stop / hold) in framework mode
 
 - **What changes**: `framework-mode-backlog-type-gate.sh` is new, and three existing surfaces
-  begin consulting it: `run-bounded-prelude.sh` (single-item stop under
-  `missing_tracker_context`, fed from the resolved scope JSON), `workflow-batch-plan.sh` (scan
+  begin consulting it: `run-bounded-prelude.sh` (all three scope modes, fed from the resolved
+  scope JSON — `item` stops under `missing_tracker_context`, `items` and `epic` emit
+  `MISCLASSIFIED_HELD_ITEMS` and continue), `workflow-batch-plan.sh` (scan
   hold — it now uses the tracker status it already reads at `:542` for a routing decision, and
   emits `NEXT_ACTION=hold-misclassified-type` plus `MISCLASSIFIED_TYPE` /
   `MISCLASSIFIED_TYPE_REASON` / `MISCLASSIFIED_TYPE_CHECK` and the tracker `STATUS` instead of
@@ -855,10 +936,12 @@ for an existing input:
   `workflow-batch-plan.sh` emitting an action that lanes no longer holds — which would put
   misclassified items back into the proposed batch **in the review lane**, a worse state than
   either endpoint. Undo requires reverting, in one change: (a) the gate script and its tests,
-  (b) the `run-bounded-prelude.sh` call site, (c) the `workflow-batch-plan.sh` gate call and
-  block emission, and (d) the `workflow-batch-lanes.sh` lane/dispatch/report arms. Protocol
-  `90`/`91` routing-table text reverts with them. Because `workflow-next-action.sh` never
-  changed, nothing outside these four surfaces is affected in either direction.
+  (b) the `run-bounded-prelude.sh` call site and its `MISCLASSIFIED_HELD_ITEMS` output,
+  (c) the `workflow-batch-plan.sh` gate call and block emission, and (d) the
+  `workflow-batch-lanes.sh` lane/dispatch/report arms. Protocol `90`/`91`/`95` routing and
+  held-item text reverts with them. Because `workflow-next-action.sh` and
+  `run-epic-scope-resolver.sh` never changed, nothing outside these four surfaces is affected
+  in either direction.
   No durable state is involved: the stop and hold paths are asserted to make zero tracker or
   branch mutations (`stop-path-no-mutation`), so a revert needs no data repair — items simply
   become startable again under their old class.
@@ -904,7 +987,10 @@ final edit pass):
 | Authoritative status source | `get_tracker_status_for_issue` — via `workflow-batch-plan.sh:542` for the scan, via the resolved scope JSON for a single-item run; never `workflow-next-action.sh`'s artifact-derived status |
 | `workflow-next-action.sh` | Not modified by this item, on any path |
 | Scan tracker-read cost | Two reads (status, then Type) = two GraphQL requests; no single-read guarantee, and `--type` saves a read only for the single-item path |
-| Framework-mode `unavailable` causes | The closed list of six read failures; the classification field is **not** one of them, because framework mode never reads Type |
+| Framework-mode `unavailable` causes | The closed list of eight read failures, each with a `REASON` and a named case; the classification field is **not** one of them, because framework mode never reads Type |
+| Gate placement | One call site per caller family: `run-bounded-prelude.sh` over `.items[]` for scopes `item` / `items` / `epic`, and `workflow-batch-plan.sh` for the portfolio scan |
+| `--caller` values | `single` = the run advances exactly one named item (stop); `scan` = the run evaluates many items (hold one, continue). Scope `item` → `single`; scopes `items` / `epic` and the portfolio scan → `scan` |
+| Unparseable Type | Prelude scopes never reach the gate — `run-epic-scope-resolver.sh:687` already aborts resolution (unchanged); the scan caller passes as `type_unreadable` with `MISCLASSIFIED_TYPE_CHECK=deferred` |
 | Unreadable status or Type | `pass` plus `MISCLASSIFIED_TYPE_CHECK=deferred` (a report field only; no routing effect) |
 | Closed mirror list size | 15 paths, with an explicit out-of-list table |
 | Stop condition | `missing_tracker_context`, single-item caller only; a `scan` hold emits no stop condition |
