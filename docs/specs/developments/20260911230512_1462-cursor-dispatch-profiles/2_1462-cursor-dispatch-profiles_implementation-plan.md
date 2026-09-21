@@ -797,7 +797,7 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `.cursor/rules/workflow.mdc` | Requirement + link |
 | `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md` | Named stop affected-item alignment |
 | `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) with `# covers:` header for every protected surface |
-| `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures (one per Parser-Risk case) |
+| `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures: exactly the fixture manifest, one `*.fixture.md` file per manifest row (`MANIFEST_COUNT`) |
 | `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Created in Plan Ready; Steps 12-14, real-command invocations (router-resolvable targets, `--epic <N>`) and tightened Pass criteria added in plan review (no further edit expected) |
 
@@ -864,133 +864,191 @@ non-identifier characters or edges on both sides; prose phrases match
 case-sensitively as fixed strings; (R5) every assertion runs on the surface's
 own content, never a concatenation of files.
 
-Each case below maps to a fixture under
+Each manifest row below maps to one fixture file under
 `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/`
 and to a self-test (`test-cursor-dispatch-profile-surfaces.sh --self-test`,
 also invoked by the default run). Each fail fixture must exit non-zero with a
 message naming its clause ID; each pass fixture must exit 0. These are separate
 from, and in addition to, the planted-deletion proofs on real surfaces.
 
-| Class | Case | Fixture ID | Expected |
-| --- | --- | --- | --- |
-| Boundary | Token at first byte / last byte of file, no trailing newline | `boundary-edge-token` | pass |
-| Boundary | Required phrase soft-wrapped across two lines | `boundary-wrapped-phrase` | pass (R3) |
-| Boundary | Token followed by punctuation or backtick (`` `dispatch_handoff_unavailable`, ``) | `boundary-punct-token` | pass |
-| Boundary | Empty file / file with only the link | `boundary-empty-surface` | fail, all clauses named |
-| Negative / lookalike | Longer identifier (`dispatch_handoff_unavailable_x`, `cursor-native-handoffs`) | `lookalike-longer-identifier` | fail (R4) |
-| Negative / lookalike | Wrong case (`Observing`, `DISPATCH_HANDOFF_UNAVAILABLE`) | `lookalike-case` | fail |
-| Negative / lookalike | Required token only inside a fenced code block or HTML comment | `lookalike-fenced-or-comment` | fail (R2) |
-| Negative / lookalike | `observing` only as an unrelated word (`observing the output`) without posture phrase | `lookalike-observing-word` | fail (E5 phrase tokens missing) |
-| Negative / lookalike | E2b tokens present but in different paragraphs (read-only in one, inline-fallback in another) | `lookalike-split-paragraph` | fail (R3 same-paragraph) |
-| Multiple occurrence | Token appears many times; only one clause satisfied | `multi-token-many` | pass for that clause, fail for the unmet one |
-| Multiple occurrence | Token satisfied in surface A, absent from surface B | `multi-cross-surface` | fail for B (R5) |
-| Multiple occurrence | Two of three stop actions present, one missing | `multi-partial-actions` | fail (E3c per stop) |
-| Multiple occurrence | Duplicate canonical link lines | `multi-duplicate-link` | pass |
-| Nested / overlap | Clause inside list item, blockquote, and table cell | `nested-block-kinds` | pass |
-| Nested / overlap | Required phrase inside a fenced block nested in a list item | `nested-fenced-in-list` | fail (R2) |
-| Fence semantics | Required token only inside a tilde (`~~~`) fence | `fence-tilde` | fail (R2) |
-| Fence semantics | Tilde fence closed by a longer tilde run; token after the closer | `fence-tilde-longer-closer` | pass (token after closer counts) |
-| Fence semantics | Backtick fence (3) closed by a longer backtick run (5); token after closer | `fence-backtick-longer-closer` | pass |
-| Fence semantics | 4-backtick opener; inner 3-backtick line does not close; token after inner line still inside | `fence-shorter-closer-inside` | fail (token stripped, R2) |
-| Fence semantics | Backtick fence closed by a tilde run (mismatched character); token after it still inside | `fence-mismatched-char-closer` | fail (R2) |
-| Fence semantics | Unclosed fence at EOF with required token after opener | `fence-unclosed-eof` | fail (stripped to EOF) |
-| Fence semantics | Unclosed fence at EOF, required token **before** the opener | `fence-unclosed-token-before` | pass |
-| Fence semantics | Fence opener indented 3 spaces (is a fence) with token inside | `fence-indent-3` | fail (R2) |
-| Fence semantics | Opener line indented 4 spaces after a blank line (indented code, not a fence); token on a later **unindented** line | `fence-indent-4` | pass (the opener is code, the token line is prose) |
-| Indented code | Required token on a line indented 4 spaces after a blank line | `indented-code-token` | **fail** (R2b; previously treated as valid prose) |
-| Indented code | Same, indented with a tab | `indented-code-tab` | fail (R2b) |
-| Indented code | Indented block after a heading | `indented-code-after-heading` | fail (R2b) |
-| Indented code | Blank line inside an indented block; token in the second chunk | `indented-code-multi-blank` | fail (R2b) |
-| Indented code | 4-space-indented line directly after a paragraph line (no blank): paragraph continuation | `indented-code-paragraph-continuation` | pass (cannot interrupt a paragraph) |
-| Indented code | Line indented to a list item's content offset (not +4) | `indented-code-list-continuation` | pass (item prose) |
-| Indented code | Line indented content offset + 4 inside a list item after a blank line | `indented-code-in-list` | fail (R2b) |
-| Indented code | Indented code inside a blockquote (`>` plus 4 spaces) | `indented-code-blockquote` | fail (R2b after `>` removal) |
-| Construct sweep | Clause sentence inside a blockquote | `construct-blockquote-prose` | pass |
-| Construct sweep | Clause sentence in a table cell (one row is one block) | `construct-table-cell` | pass |
-| Construct sweep | E2b tokens split across two cells of the same table row | `table-row-spans-cells` | pass (row is one block) |
-| Construct sweep | E2b tokens in two adjacent table rows | `table-rows-split` | fail (different blocks) |
-| Construct sweep | Token only in a table header or `---` separator row | `table-header-separator` | fail (header and separator are not blocks) |
-| Construct sweep | Token only in a link-reference definition title | `construct-linkref-def` | fail (R2c) |
-| Construct sweep | Token only in a link destination or image alt text | `construct-link-destination-alt` | fail (R2c) |
-| Construct sweep | Identifier token in an inline code span | `construct-code-span-identifier` | pass (R2c, R4) |
-| Construct sweep | Prose phrase only inside an inline code span | `construct-code-span-phrase` | fail (R2c) |
-| Construct sweep | Token only inside a `<pre>` HTML block | `construct-pre-block` | fail (R2c) |
-| Construct sweep | Backslash-escaped identifier (`dispatch\_handoff\_unavailable`) | `construct-escaped-identifier` | fail (R2c, R4) |
-| Fence semantics | Closer indented 4 spaces does not close; token after it still inside | `fence-closer-indent-4` | fail (R2) |
-| Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
-| Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
-| Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
-| Simulation | Canonical-doc fixture that matches the spec's 18 rows exactly (no per-scenario extras) | `sim-row-count-matches-spec` | pass (C1-C4; 21 scenarios do not need 21 rows) |
-| Simulation | Canonical-doc fixture missing the R5 row (onward unconfirmed) | `sim-missing-row-r5` | fail (C1, C2) |
-| Simulation | Canonical-doc fixture with a 19th row added | `sim-extra-row` | fail (C1) |
-| Simulation | Scenario with no mapping, or S10b mapped to a row | `sim-unmapped-scenario` | fail (C3) |
-| Simulation | Two rows' tokens swapped | `sim-rows-swapped` | fail (C4) |
-| Simulation | Fixture whose S12 row says `dispatch_profile_declaration_missing` instead of `dispatch_handoff_unavailable` | `sim-wrong-stop-s12` | fail naming S12 |
-| Simulation | Fixture where S7 recovery re-declaration is described as a coarse mismatch | `sim-recovery-rejected-s7` | fail (E4c exemption) |
-| Simulation | Fixture mapping harness denial (S10b) to `missing_required_secret_or_permission` | `sim-harness-denial-mapped-s10b` | fail naming S10b |
-| Serialization | Mixed-form target list (`#1462`, `ENG-123`, `feature/x`, `1771`) shown verbatim | `serialization-mixed-forms` | pass |
-| Serialization | Example rewrites targets (adds `#` to `ENG-123` or strips `#`) | `serialization-hash-rewritten` | fail (contradicts `verbatim`) |
-| Serialization | Target containing `,` shown unescaped | `serialization-comma-unescaped` | fail (`percent-encoded` rule) |
-| Surface-class table | Protocol fixture lacking only E3d (all other clauses present) | `class-protocol-missing-e3d` | fail naming E3d |
-| Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) | `class-guardrails-exempt-clauses` | pass (absent `-` clauses are not required) |
-| Surface-class table | Guardrails fixture lacking E4b `less permissive` direction | `class-guardrails-missing-e4b` | fail naming E4b |
-| Surface-class table | `agent-model-config.md` fixture missing one environment row | `class-model-config-missing-row` | fail |
-| E3c cause completeness | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) | `e3c-stop1-profile-only` | fail (missing-role, invalid-posture, mismatch causes unblocked) |
-| E3c cause completeness | Stop-1 action lacking only the posture element | `e3c-stop1-no-posture` | fail naming the cause |
-| E3c cause completeness | Stop-1 action lacking only the named-accountable-role element | `e3c-stop1-no-role` | fail naming the cause |
-| E3c cause completeness | Stop-1 action lacking the `profile the known facts assign` clause | `e3c-stop1-no-facts-profile` | fail naming the cause |
-| E3c cause completeness | Stop-2 action lacking the `specific stage role` exception, or the read-only-accept alternative | `e3c-stop2-missing-cause` | fail naming the cause |
-| E3c cause completeness | Stop-3 action lacking the structural-restriction path | `e3c-stop3-no-structural-path` | fail naming the cause |
-| E3c cause completeness | All three stop actions cause-complete | `e3c-all-causes-present` | pass |
-| Serialization rule | `%` alone in a target (`50%`) encoded `50%25` | `ser-percent-alone` | pass |
-| Serialization rule | Pre-existing `%25` in a target encoded to `%2525` (no double-encode skip) | `ser-percent-preexisting` | pass |
-| Serialization rule | Target that already looks like `%2C` encoded `%252C` (comma-lookalike) | `ser-looks-like-2c` | pass |
-| Serialization rule | Encoding order wrong (`,` then `%`, yielding `%252C` for a comma) | `ser-order-comma-double-encoded` | fail (percent-first) |
-| Serialization rule | Interior tab encoded `%09`; interior space `%20` | `ser-interior-whitespace` | pass |
-| Serialization rule | Interior newline `%0A` and CR `%0D`; output stays on one line | `ser-newline-cr-one-line` | pass |
-| Serialization rule | Other control character (`0x1F`, `0x7F`) encoded `%1F`, `%7F`, uppercase hex | `ser-control-chars` | pass |
-| Serialization rule | Lowercase hex (`%2c`) in the example | `ser-lowercase-hex` | fail (uppercase required) |
-| Serialization rule | Non-ASCII UTF-8 byte sequence emitted unchanged | `ser-non-ascii-unchanged` | pass |
-| Serialization rule | Leading and trailing whitespace trimmed, interior kept and encoded | `ser-edge-trim-only` | pass |
-| Serialization rule | Interior whitespace trimmed away (over-trim) | `ser-interior-trimmed` | fail |
-| Serialization rule | Edge whitespace encoded instead of trimmed | `ser-edge-encoded` | fail |
-| Serialization rule | Duplicate targets preserved (`1462,1462`) | `ser-duplicates-preserved` | pass |
-| Serialization rule | Duplicates collapsed | `ser-duplicates-collapsed` | fail |
-| Serialization rule | Invocation order preserved (`b,a`) | `ser-order-preserved` | pass |
-| Serialization rule | Targets sorted | `ser-order-sorted` | fail |
-| Serialization rule | Delimiter with a space (`a, b`) | `ser-delimiter-space` | fail |
-| Serialization rule | Single-target form rendered in the doc | `ser-single-target-rendered` | fail (unreachable at the gate) |
-| Serialization rule | Empty target rendered (`a,,b`) | `ser-empty-target-rendered` | fail (unreachable at the gate) |
-| Serialization rule | Doc states single and empty targets are unreachable | `ser-unreachable-stated` | pass |
-| Serialization rule | Case changed (`eng-123`) or `/` in branch name rewritten | `ser-case-slash-rewritten` | fail (verbatim) |
-| Clause completeness | All E1-E5 clauses present on a command mirror | `clause-all-present` | pass |
-| Clause completeness | One fixture per clause with exactly that clause missing: `clause-missing-e1`, `-e2a`, `-e2b`, `-e3a`, `-e3b`, `-e3c`, `-e3d`, `-e4a`, `-e4b`, `-e4c`, `-e5` (11 fixtures) | `clause-missing-<id>` | fail naming that clause only |
-| Scanner rule R1 | UTF-8 file with a BOM and with multibyte characters around the token | `r1-utf8-bom-multibyte` | pass |
-| Scanner rule R1 | File that is not valid UTF-8 | `r1-invalid-utf8` | fail (unreadable surface named) |
-| Scanner rule R3 | Tabs and repeated spaces inside a required phrase | `r3-whitespace-collapse` | pass |
-| Scanner rule R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) | `r4-prefix-identifier` | fail |
-| Scanner rule R2c | Clause in a list item; in a heading; in link text | `construct-list-heading-linktext` | pass |
-| Scanner rule R2c | Token in inline HTML tag text (`<em>...</em>`) | `construct-inline-html-text` | pass |
-| Scanner rule R2c | Token only in an autolink or a `<code>` HTML block | `construct-autolink-code-block` | fail |
-| Scanner rule R2c | HTML entity for an underscore in a stop name (entities not decoded) | `construct-entity-not-decoded` | fail |
-| Simulation | Scenario marked N/A for a path (for example S2 on `/run-item`) must not be asserted for it | `sim-path-applicability` | pass; asserting it fails |
+**Fixture manifest (`MANIFEST_COUNT = 135`).** This is the literal, complete
+list of scanner fixtures: one row per file, exact filename, expected result,
+and the rule or clause covered. It is derived by counting the rows below and
+is stated here **once**; every other mention refers to "the manifest count".
+Every fixture is a single Markdown file in
+`scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/`
+named after its manifest ID with the suffix `.fixture.md`. The surface class the scanner applies is derived from
+the ID prefix: `class-protocol-*` is a protocol, `class-guardrails-*` and
+`e3c-*` are guardrails, `class-model-config-*` is `agent-model-config.md`,
+`sim-*`, `ser-*` and `serialization-*` are the canonical doc, and every other
+prefix is a command mirror. Expected `pass` means exit 0; expected
+`fail: <check>` means non-zero exit whose message names `<check>` (a scanner
+rule, clause ID, scenario ID, simulation check, or serialization rule).
+Independent alternatives are separate rows (no row combines alternatives).
+
+| # | Fixture file | Expected | Covers | Case |
+| --- | --- | --- | --- | --- |
+| 1 | `boundary-token-first-byte.fixture.md` | pass | R1, R4 | Required token at the first byte of the file |
+| 2 | `boundary-token-last-byte-no-newline.fixture.md` | pass | R1, R4 | Required token at the last byte, no trailing newline |
+| 3 | `boundary-wrapped-phrase.fixture.md` | pass | R1, R3, R4 | Required phrase soft-wrapped across two lines |
+| 4 | `boundary-token-punctuation.fixture.md` | pass | R4 | Identifier token followed by a comma or period |
+| 5 | `boundary-token-backtick.fixture.md` | pass | R4, R2c | Identifier token wrapped in backticks |
+| 6 | `boundary-empty-file.fixture.md` | fail: E1-E5 each named | E1-E5 | Empty file |
+| 7 | `boundary-link-only.fixture.md` | fail: E1-E5 each named | E1-E5 | File containing only the canonical link |
+| 8 | `lookalike-longer-stop-name.fixture.md` | fail: R4 | R4 | `dispatch_handoff_unavailable_x` in place of the stop name |
+| 9 | `lookalike-longer-profile-code.fixture.md` | fail: R4 | R4 | `cursor-native-handoffs` in place of the profile code |
+| 10 | `lookalike-case-posture.fixture.md` | fail: E5 | R4, E5 | `Observing` in place of the posture label |
+| 11 | `lookalike-case-stop-name.fixture.md` | fail: E3a | R4, E3a | `DISPATCH_HANDOFF_UNAVAILABLE` in place of the stop name |
+| 12 | `lookalike-fenced-block.fixture.md` | fail: R2 | R2 | Required token only inside a fenced code block |
+| 13 | `lookalike-html-comment.fixture.md` | fail: R2 | R2 | Required token only inside an HTML comment |
+| 14 | `lookalike-observing-word.fixture.md` | fail: E5 | R2-R5 | `observing` only as an unrelated word (`observing the output`) without posture phrase |
+| 15 | `lookalike-split-paragraph.fixture.md` | fail: R3 | R2-R5 | E2b tokens present but in different paragraphs (read-only in one, inline-fallback in another) |
+| 16 | `multi-token-many-clause-met.fixture.md` | pass | R5 | Token appears many times; the clause it belongs to is met |
+| 17 | `multi-token-many-clause-unmet.fixture.md` | fail: the unmet clause | R5 | Same file; a different clause is unmet |
+| 18 | `multi-cross-surface-a-present.fixture.md` | pass | R5 | Surface A carries the token |
+| 19 | `multi-cross-surface-b-absent.fixture.md` | fail: R5 | R5 | Surface B lacks the token that A carries |
+| 20 | `multi-partial-actions.fixture.md` | fail: E3c | R5 | Two of three stop actions present, one missing |
+| 21 | `multi-duplicate-link.fixture.md` | pass | R5 | Duplicate canonical link lines |
+| 22 | `nested-clause-list-item.fixture.md` | pass | R3 | Clause inside a list item |
+| 23 | `nested-clause-blockquote.fixture.md` | pass | R3 | Clause inside a blockquote |
+| 24 | `nested-clause-table-cell.fixture.md` | pass | R3 | Clause inside a table cell (row block) |
+| 25 | `nested-fenced-in-list.fixture.md` | fail: R2 | R3, R2 | Required phrase inside a fenced block nested in a list item |
+| 26 | `fence-tilde.fixture.md` | fail: R2 | R2 | Required token only inside a tilde (`~~~`) fence |
+| 27 | `fence-tilde-longer-closer.fixture.md` | pass | R2 | Tilde fence closed by a longer tilde run; token after the closer |
+| 28 | `fence-backtick-longer-closer.fixture.md` | pass | R2 | Backtick fence (3) closed by a longer backtick run (5); token after closer |
+| 29 | `fence-shorter-closer-inside.fixture.md` | fail: R2 | R2 | 4-backtick opener; inner 3-backtick line does not close; token after inner line still inside |
+| 30 | `fence-mismatched-char-closer.fixture.md` | fail: R2 | R2 | Backtick fence closed by a tilde run (mismatched character); token after it still inside |
+| 31 | `fence-unclosed-eof.fixture.md` | fail: R2 | R2 | Unclosed fence at EOF with required token after opener |
+| 32 | `fence-unclosed-token-before.fixture.md` | pass | R2 | Unclosed fence at EOF, required token **before** the opener |
+| 33 | `fence-indent-3.fixture.md` | fail: R2 | R2 | Fence opener indented 3 spaces (is a fence) with token inside |
+| 34 | `fence-indent-4.fixture.md` | pass | R2 | Opener line indented 4 spaces after a blank line (indented code, not a fence); token on a later **unindented** line |
+| 35 | `indented-code-token.fixture.md` | fail: R2b | R2b | Required token on a line indented 4 spaces after a blank line |
+| 36 | `indented-code-tab.fixture.md` | fail: R2b | R2b | Same, indented with a tab |
+| 37 | `indented-code-after-heading.fixture.md` | fail: R2b | R2b | Indented block after a heading |
+| 38 | `indented-code-multi-blank.fixture.md` | fail: R2b | R2b | Blank line inside an indented block; token in the second chunk |
+| 39 | `indented-code-paragraph-continuation.fixture.md` | pass | R2b | 4-space-indented line directly after a paragraph line (no blank): paragraph continuation |
+| 40 | `indented-code-list-continuation.fixture.md` | pass | R2b | Line indented to a list item's content offset (not +4) |
+| 41 | `indented-code-in-list.fixture.md` | fail: R2b | R2b | Line indented content offset + 4 inside a list item after a blank line |
+| 42 | `indented-code-blockquote.fixture.md` | fail: R2b | R2b | Indented code inside a blockquote (`>` plus 4 spaces) |
+| 43 | `construct-blockquote-prose.fixture.md` | pass | R2c, R3 | Clause sentence inside a blockquote |
+| 44 | `construct-table-cell.fixture.md` | pass | R2c, R3 | Clause sentence in a table cell (one row is one block) |
+| 45 | `table-row-spans-cells.fixture.md` | pass | R2c, R3 | E2b tokens split across two cells of the same table row |
+| 46 | `table-rows-split.fixture.md` | fail: R3 | R2c, R3 | E2b tokens in two adjacent table rows |
+| 47 | `table-header-separator.fixture.md` | fail: R3 | R2c, R3 | Token only in a table header or `---` separator row |
+| 48 | `construct-linkref-def.fixture.md` | fail: R2c | R2c, R3 | Token only in a link-reference definition title |
+| 49 | `construct-link-destination.fixture.md` | fail: R2c | R2c | Token only in a link destination |
+| 50 | `construct-image-alt.fixture.md` | fail: R2c | R2c | Token only in image alt text |
+| 51 | `construct-code-span-identifier.fixture.md` | pass | R2c, R3 | Identifier token in an inline code span |
+| 52 | `construct-code-span-phrase.fixture.md` | fail: R2c | R2c, R3 | Prose phrase only inside an inline code span |
+| 53 | `construct-pre-block.fixture.md` | fail: R2c | R2c, R3 | Token only inside a `<pre>` HTML block |
+| 54 | `construct-escaped-identifier.fixture.md` | fail: R2c, R4 | R2c, R3 | Backslash-escaped identifier (`dispatch\_handoff\_unavailable`) |
+| 55 | `fence-closer-indent-4.fixture.md` | fail: R2 | R2 | Closer indented 4 spaces does not close; token after it still inside |
+| 56 | `comment-unclosed-eof.fixture.md` | fail: R2 | R2 | Unclosed HTML comment at EOF with token after `<!--` |
+| 57 | `overlap-substring.fixture.md` | fail: E1 | R3, R2 | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present |
+| 58 | `overlap-e2a-deleted.fixture.md` | fail: E2a | E2a, E2b | E2a sentence deleted, E2b intact, shared tokens |
+| 59 | `overlap-e2b-deleted.fixture.md` | fail: E2b | E2a, E2b | E2b sentence deleted, E2a intact, shared tokens |
+| 60 | `sim-row-count-matches-spec.fixture.md` | pass | Simulation C1-C4 | Canonical-doc fixture that matches the spec's 18 rows exactly (no per-scenario extras) |
+| 61 | `sim-missing-row-r5.fixture.md` | fail: C1, C2 | Simulation C1-C4 | Canonical-doc fixture missing the R5 row (onward unconfirmed) |
+| 62 | `sim-extra-row.fixture.md` | fail: C1 | Simulation C1-C4 | Canonical-doc fixture with a 19th row added |
+| 63 | `sim-unmapped-scenario.fixture.md` | fail: C3 | C3 | A scenario with no row mapping and not flagged subcase |
+| 64 | `sim-s10b-mapped-to-row.fixture.md` | fail: C3 | C3 | S10b (subcase) mapped to a matrix row |
+| 65 | `sim-rows-swapped.fixture.md` | fail: C4 | Simulation C1-C4 | Two rows' tokens swapped |
+| 66 | `sim-wrong-stop-s12.fixture.md` | fail: S12 | Simulation C1-C4 | Fixture whose S12 row says `dispatch_profile_declaration_missing` instead of `dispatch_handoff_unavailable` |
+| 67 | `sim-recovery-rejected-s7.fixture.md` | fail: E4c | Simulation C1-C4 | Fixture where S7 recovery re-declaration is described as a coarse mismatch |
+| 68 | `sim-harness-denial-mapped-s10b.fixture.md` | fail: S10b | Simulation C1-C4 | Fixture mapping harness denial (S10b) to `missing_required_secret_or_permission` |
+| 69 | `serialization-mixed-forms.fixture.md` | pass | Serialization | Mixed-form target list (`#1462`, `ENG-123`, `feature/x`, `1771`) shown verbatim |
+| 70 | `serialization-hash-added.fixture.md` | fail: verbatim | Serialization | Example adds `#` to `ENG-123` |
+| 71 | `serialization-hash-stripped.fixture.md` | fail: verbatim | Serialization | Example strips `#` from `#1462` |
+| 72 | `serialization-comma-unescaped.fixture.md` | fail: percent-encoded | Serialization | Target containing `,` shown unescaped |
+| 73 | `class-protocol-missing-e3d.fixture.md` | fail: E3d | Surface-class table | Protocol fixture lacking only E3d (all other clauses present) |
+| 74 | `class-guardrails-exempt-clauses.fixture.md` | pass | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) |
+| 75 | `class-guardrails-missing-e4b.fixture.md` | fail: E4b | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction |
+| 76 | `class-model-config-missing-row.fixture.md` | fail: model-config rows | Surface-class table | `agent-model-config.md` fixture missing one environment row |
+| 77 | `e3c-stop1-profile-only.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) |
+| 78 | `e3c-stop1-no-posture.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the posture element |
+| 79 | `e3c-stop1-no-role.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the named-accountable-role element |
+| 80 | `e3c-stop1-no-facts-profile.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking the `profile the known facts assign` clause |
+| 81 | `e3c-stop2-no-stage-role-exception.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the `specific stage role` exception |
+| 82 | `e3c-stop2-no-accept-read-only.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the accept-read-only alternative |
+| 83 | `e3c-stop3-no-structural-path.fixture.md` | fail: E3c stop 3 | E3c | Stop-3 action lacking the structural-restriction path |
+| 84 | `e3c-all-causes-present.fixture.md` | pass | E3c | All three stop actions cause-complete |
+| 85 | `ser-percent-alone.fixture.md` | pass | Serialization | `%` alone in a target (`50%`) encoded `50%25` |
+| 86 | `ser-percent-preexisting.fixture.md` | pass | Serialization | Pre-existing `%25` in a target encoded to `%2525` (no double-encode skip) |
+| 87 | `ser-looks-like-2c.fixture.md` | pass | Serialization | Target that already looks like `%2C` encoded `%252C` (comma-lookalike) |
+| 88 | `ser-order-comma-double-encoded.fixture.md` | fail: percent-first | Serialization | Encoding order wrong (`,` then `%`, yielding `%252C` for a comma) |
+| 89 | `ser-interior-tab.fixture.md` | pass | Serialization | Interior tab encoded `%09` |
+| 90 | `ser-interior-space.fixture.md` | pass | Serialization | Interior space encoded `%20` |
+| 91 | `ser-interior-newline.fixture.md` | pass | Serialization | Interior newline encoded `%0A`, output one line |
+| 92 | `ser-interior-cr.fixture.md` | pass | Serialization | Interior CR encoded `%0D`, output one line |
+| 93 | `ser-control-0x1f.fixture.md` | pass | Serialization | Control character 0x1F encoded `%1F` |
+| 94 | `ser-control-0x7f.fixture.md` | pass | Serialization | Control character 0x7F encoded `%7F` |
+| 95 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`) in the example |
+| 96 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
+| 97 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
+| 98 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
+| 99 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
+| 100 | `ser-duplicates-preserved.fixture.md` | pass | Serialization | Duplicate targets preserved (`1462,1462`) |
+| 101 | `ser-duplicates-collapsed.fixture.md` | fail: duplicates-preserved | Serialization | Duplicates collapsed |
+| 102 | `ser-order-preserved.fixture.md` | pass | Serialization | Invocation order preserved (`b,a`) |
+| 103 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted |
+| 104 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
+| 105 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
+| 106 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
+| 107 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
+| 108 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `ENG-123` rewritten as `eng-123` |
+| 109 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
+| 110 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
+| 111 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
+| 112 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
+| 113 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
+| 114 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
+| 115 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
+| 116 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
+| 117 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
+| 118 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
+| 119 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
+| 120 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
+| 121 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
+| 122 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
+| 123 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
+| 124 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
+| 125 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
+| 126 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
+| 127 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
+| 128 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
+| 129 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
+| 130 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
+| 131 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
+| 132 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
+| 133 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
+| 134 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
+| 135 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
 
 **Coverage completeness map.** Every enumerated contract list has a fixture or
-proof; the self-test also asserts that every fixture ID in this table exists on
-disk and vice versa.
+proof. The self-test asserts that the on-disk fixture set **equals the
+manifest exactly**: (a) the number of `*.fixture.md` files equals the manifest
+count, (b) every manifest filename exists on disk, (c) no file exists on disk
+that is not in the manifest, and (d) no filename appears twice; the manifest is
+embedded in the guard script and its row count is asserted against the constant
+`MANIFEST_COUNT` from the manifest heading. A removed, renamed, added or
+duplicated fixture fails the self-test. The family prefixes in the map below
+(`clause-`, `ser-`, and so on) are prefix filters over manifest rows; the
+self-test also asserts each prefix matches at least one manifest row and every
+manifest row matches at least one prefix family.
 
 | Enumerated list | Covered by |
 | --- | --- |
-| Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` fixtures plus proof cycles 3-11 and 12-14 |
+| Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` and `e3c-*` fixtures plus proof cycles 3-11 and 12-14 |
 | Serialization rules (trim, verbatim, delimiter, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, duplicates, order, one line, single/empty unreachable) | `ser-*` and `serialization-*` fixtures |
-| Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*`, `table-*` fixtures (table row is the single R3 block boundary) |
+| Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*`, `table-*`, `comment-*` fixtures (table row is the single R3 block boundary) |
 | Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions C1-C4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus C1-C4 cycles), `sim-*` fixtures |
 | Surface classes | `class-*` fixtures and proof cycles 12-14 |
 | CI wiring header and complete read set (including the merged spec and fixtures glob) | proof cycle 17, header-consistency check (`covers == read set + selection-only`) |
 
 
-Fixture-only self-tests are the regression net for the scanner itself; if a
-fixture is removed the self-test count assertion (expected N fixtures) fails.
+Fixture-only self-tests are the regression net for the scanner itself; the
+exact-equality assertion above (manifest count and names) is what fails when a
+fixture is removed, renamed, or added without a manifest row.
 
 ---
 
@@ -1199,8 +1257,8 @@ Not applicable — no runtime data.
    step 2.
 8. **Surface guard test** — add the shell guard (link, profile-string, E1-E5
    clause, canonical-doc, and `simulate_bounded_paths` branches), the scanner
-   fixtures directory with one fixture per Parser-Risk case (including the
-   fence-semantics rows), and the `--self-test` mode; with the `# covers:` header
+   fixtures directory containing exactly the fixture manifest (`MANIFEST_COUNT`
+   rows, including the fence-semantics rows), and the `--self-test` mode; with the `# covers:` header
    declared (Testing Strategy: discovery alone does not wire it into PR suite
    selection) and the selector verification run. Run locally. Commit.
 9. **Verify** — run every repo lint that applies to the files the PR adds:
