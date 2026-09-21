@@ -106,8 +106,19 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H1 | Missing outcome record | Plan PR with no per-rule table | Blocking — treated Unsatisfied |
 | H2 | Stale record SHA | Record names earlier commit than PR head | Blocking — revision mismatch |
 | H3 | Wrong N/A rationale | Rule 3 recorded `Not applicable` while the plan states artifact counts | Blocking — rationale contradicts claim |
+| B5 | Rule 1 — short-retention source | Sampling locator only to a deletable log | Blocking — durable copy or retained artifact required |
+| B6 | Rule 1 — restricted occurrence | Sampling occurrence contains secrets/PII with raw text pasted | Blocking — must use redacted shape record |
+| B7 | Rule 1 — restricted and short-retention | Source is both deletable and access-restricted | Blocking unless both handling requirements are met |
+| B8 | Rule 1 — heterogeneous sample adequacy | Sample drawn from one producer variant only | Blocking — adequacy rationale missing |
+| B9 | Rule 1 — curated examples | Occurrences are hand-picked examples | Blocking — not a sample of the population |
+| D3 | Rule 3 — closed-population enumeration | Closed set counted without listing members | Blocking — enumeration missing |
+| E3 | Rule 4 — completeness claim | "All X verified" with no search scope | Blocking — completeness unsupported |
+| F3 | Rule 5 — search scope | Consumer enumeration omits searched scope | Blocking — scope not recorded |
+| F4 | Rule 5 — untouched consumer | Consumer left unchanged with no reason | Blocking — untouched consumer unexplained |
+| H4 | Outcome record — malformed | Record names a nonexistent commit | Blocking — revision does not resolve |
+| H5 | Outcome record — label reassessed | Round re-reads recorded finding, label not reassessed | Blocking — label stale |
 
-Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes
+Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. Acceptance criteria not named by a row above are covered by the Group's nearest row through the rule-name/label assertions of the mirror harness; any criterion with neither must be added as a row before implementation is marked done
 that wiring alone cannot prove. Before marking implementation complete, execute
 at least the mandatory rows named in the implementation plan Testing Strategy
 (B1, B3, C1, C2, D1, E1, F1, G1, H1, H3), including one blocking and one

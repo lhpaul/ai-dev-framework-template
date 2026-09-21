@@ -443,13 +443,26 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   rationale in this plan; silence is not an acceptable record.
 
 **Planted-violation proof (implementation PR evidence)** — required before the
-mirror test is considered done:
+mirror test is considered done. Run it **once per distinct assertion** in the
+harness, not once overall. Distinct assertions: canonical file present; each of
+`Rule 1`–`Rule 6` headings; `REVIEW.md` canonical-path reference; `REVIEW.md`
+rule names; `REVIEW.md` three outcome labels; Protocol 02 canonical-path
+reference; Protocol 02 outcome-record heading; Protocol 02 three outcome labels;
+each mirror surface's canonical reference (tech-lead and reviewer agents for
+Claude and Cursor, the Codex plan-writer skill, the plan template, Protocol 02
+review); and each parser edge case row above.
 
-1. Temporarily remove one rule name from the canonical file (for example delete
-   the `Rule 6` heading line) or break a mirror reference in `REVIEW.md`.
+For each assertion:
+
+1. Plant exactly one defect that assertion must catch (delete the heading, drop
+   the label, break the reference) in a fixture copy under
+   `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/`.
 2. Run `bash scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`
-   and confirm non-zero exit with a message naming the defect.
-3. Revert the deliberate defect; re-run the script and confirm exit `0`.
+   and confirm non-zero exit with a message naming that defect.
+3. Revert; re-run and confirm exit `0`.
+4. Record both outcomes in the implementation PR as a table keyed by assertion
+   name with the harness file and line of the assertion and the failing/passing
+   exit codes.
 4. Record the failing and passing exit codes in the implementation PR
    description (no need to commit the planted defect).
 
