@@ -461,15 +461,25 @@ layer; `workflow.mdc` states all five compactly).
            `observing`, `only at a read-only checkpoint`, and `current
            checkpoint`.
          Which clauses a surface class must carry is a table inside the
-         script: command/skill mirrors and `workflow.mdc`: all clauses;
-         role agents and Codex skills: E2a, E2b, E3a-E3d, E5, plus E1 and
-         E4a-E4c for the layer they cover; protocols 90/91/95: E1, E2a, E2b,
-         E3a-E3c, E4a-E4c, E5 (E3b's `explicit_list_invocation_targets=` on
-         Protocol 90 only); `guardrails-enforcement.md`: E3a-E3d;
-         `agent-model-config.md`: profile and model-assignment rows for all
-         three environments, no E1-E5. Exact phrases live in one shared token
-         list at the top of the script so canonical wording changes touch one
-         place.
+         script (rows are surface classes, columns are clauses), fixed as:
+
+         | Surface class | E1 | E2a | E2b | E3a | E3b | E3c | E3d | E4a | E4b | E4c | E5 |
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+         | Command / skill mirrors (15) | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | Role agents (4) and Codex workflow skills (2) | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | Protocols 90, 91, 95 | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | `.cursor/rules/workflow.mdc` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | `guardrails-enforcement.md` section 4 | - | - | - | Y | Y | Y | Y | Y | Y | - | - |
+         | `agent-model-config.md` | profile and model-assignment rows for all three environments only | | | | | | | | | | |
+
+         Layer scoping is by wording, not by omission: a portfolio-layer
+         surface states the clause for the portfolio layer and an item-layer
+         surface for the item layer, but every clause token must be present.
+         E3b's `explicit_list_invocation_targets=` token is required on
+         Protocol 90, `run-items` mirrors, and guardrails only; the generic
+         `affected work item` token is required everywhere E3b is `Y`.
+         Exact phrases live in one shared token list at the top of the script so
+         canonical wording changes touch one place.
       Rationale: AC18 mirror parity is easy to break across 15+ surfaces and a
       link alone does not satisfy AC10/AC11/AC20; a cheap shell guard catches
       drift without requiring live Cursor Remote Control. Maps to AC10, AC11,
@@ -528,11 +538,36 @@ layer; `workflow.mdc` states all five compactly).
           separately, the `only at a read-only checkpoint` qualifier, and
           separately the `current checkpoint` sentence) from
           `.cursor/commands/run-item.md`.
-      Record the before/after command output for **every** cycle in the PR test
-      plan. Where a cycle cannot be automated, the implementation PR states so
-      explicitly and substitutes an exhaustive `rg -c` count per contract
-      element across all mirror surfaces (expected count = number of
-      surfaces the table assigns that element to).
+      12. **Guardrails clause coverage**: in `guardrails-enforcement.md`
+          section 4, separately remove each of E3b, E3d, and the `more
+          permissive` direction of E4b, leaving the stop names.
+      13. **Protocol E3d**: remove the harness/local-path denial paragraph from
+          each of Protocols 90, 91, and 95 in turn (three cycles), leaving the
+          stop names, E3b and E3c.
+      14. **`agent-model-config.md` rows**: remove one environment row (and,
+          separately, the model-assignment cell of one row); expect non-zero.
+      15. **Canonical-doc checks**: one cycle per check name in Testing Strategy
+          (`canonical_layers`, `canonical_matrix`,
+          `canonical_declared_not_detected`, one per
+          `canonical_handoff_metadata` field including worktree path,
+          `canonical_workflow_hub`).
+      16. **`simulate_bounded_paths`**: alter one decision-gate row in the
+          canonical doc so a scenario's expected outcome changes; expect
+          non-zero naming the path (`/run-item`, `/run-items`, or `/run-epic`).
+
+      **Coverage rules (every branch must have a real cycle).** Each multi-token
+      clause is proved token by token: one cycle deletes only one token while
+      the rest of the clause remains. Each of cycles 3-11 is repeated once per
+      surface class in the table above that carries the clause (command / skill
+      mirror, role agent or Codex skill, protocol, `workflow.mdc`), using a
+      representative surface of that class; the named surface above is one such
+      representative, not the only one. Guardrails classes are covered by cycle
+      12. The PR test plan records the resulting clause-by-class matrix with
+      the before/after command output of **every** cycle (non-zero exit naming
+      the branch or clause, then restore and exit 0). There is no substitute
+      for an actual fail/pass cycle: a guard branch that cannot be proved by
+      one is **removed from the guard** in the implementation PR rather than
+      shipped unproved, and the plan's coverage table is updated to match.
 
 ### Database / Backend / Frontend / Infrastructure
 
@@ -654,6 +689,10 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
 | Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
 | Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
+| Surface-class table | Protocol fixture lacking only E3d (all other clauses present) | `class-protocol-missing-e3d` | fail naming E3d |
+| Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) | `class-guardrails-exempt-clauses` | pass (absent `-` clauses are not required) |
+| Surface-class table | Guardrails fixture lacking E4b `less permissive` direction | `class-guardrails-missing-e4b` | fail naming E4b |
+| Surface-class table | `agent-model-config.md` fixture missing one environment row | `class-model-config-missing-row` | fail |
 
 Fixture-only self-tests are the regression net for the scanner itself; if a
 fixture is removed the self-test count assertion (expected N fixtures) fails.
