@@ -63,7 +63,7 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
 | Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
-| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 151 rows, numbered 1-151, 151 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
+| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 153 rows, numbered 1-153, 153 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
 | Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `800c0e8a` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
 | Protocol 90 Step 4 current text | `grep -cF` for the exact current Step 4 sentence quoted in Decision 7 in `protocols/90-batch-orchestrate-work-protocol.md` | 1 match, so the "current text" in the exact edit is verbatim (Pass); the edit itself and the `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence` and `canonical_dispatch_decision` checks are **Deferred to implementation** |
 | Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps`; a fixtures-path `--changed-files` probe | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
@@ -79,8 +79,8 @@ implementation are marked **Deferred to implementation**, not Pass.
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| Integration / artifact base branch | `develop` | `.ai-dev-workflow.yaml` + batch handoff | `2026-09-17T11:15:00Z`; repo `32605700` | Current invocation `#1462`; batch peers `#1757,#1462,#1496,#1515,#1561,#1583,#1529`; same-surface open PRs none | `Verified` |
-| Repository mode | `single_repo` | Batch handoff `WORKFLOW_MODE` | `2026-09-17T11:15:00Z`; repo `32605700` | Peers touch adjacent workflow docs but do not change base branch or mode for this item | `Verified` |
+| Integration / artifact base branch | `develop` | `.ai-dev-workflow.yaml` + batch handoff | See the Verification Log (A1-A6 re-run at the log's verified head) | Current invocation `#1462`; batch peers `#1757,#1462,#1496,#1515,#1561,#1583,#1529`; same-surface open PRs none | `Verified` |
+| Repository mode | `single_repo` | Batch handoff `WORKFLOW_MODE` | See the Verification Log (A1-A6 re-run at the log's verified head) | Peers touch adjacent workflow docs but do not change base branch or mode for this item | `Verified` |
 
 Peer item `#1529` references dispatch profiles in its plan narrative only; it
 does not alter the integration branch or artifact ownership for `#1462`.
@@ -929,6 +929,11 @@ layer; `workflow.mdc` states all five compactly).
           to fail; delete the `/run-items` row of the canonical dispatch table
           and expect `canonical_dispatch_decision` to fail; restore each.
 
+      19. **Explicit-list format parity (post-edit)**: change the format string in
+          each of the four files in turn (canonical guide, guardrails row,
+          Protocol 90, merged spec row) and expect `explicit_list_format_parity`
+          to fail naming the file; restore each.
+
       **Coverage rules (every branch must have a real cycle).** Each multi-token
       clause is proved token by token: one cycle deletes only one token while
       the rest of the clause remains. Each of cycles 3-11 is repeated once per
@@ -1064,7 +1069,7 @@ also invoked by the default run). Each fail fixture must exit non-zero with a
 message naming its clause ID; each pass fixture must exit 0. These are separate
 from, and in addition to, the planted-deletion proofs on real surfaces.
 
-**Fixture manifest (`MANIFEST_COUNT = 151`).** This is the literal, complete
+**Fixture manifest (`MANIFEST_COUNT = 153`).** This is the literal, complete
 list of scanner fixtures: one row per file, exact filename, expected result,
 and the rule or clause covered. It is derived by counting the rows below and
 is stated here **once**; every other mention refers to "the manifest count".
@@ -1074,7 +1079,7 @@ named after its manifest ID with the suffix `.fixture.md`. The surface class the
 the ID prefix: `class-protocol-*` is a protocol, `class-guardrails-*` and
 `e3c-*` are guardrails, `class-model-config-*` is `agent-model-config.md`,
 `sim-*`, `ser-*`, `serialization-*` and `canonical-*` are the canonical doc,
-`proto90-*`, `proto91-*` and `proto95-*` are the corresponding protocol, and
+`proto90-*`, `proto91-*` and `proto95-*` are the corresponding protocol, `parity-*` are the canonical doc, and
 every other prefix is a command mirror. Expected `pass` means exit 0; expected
 `fail: <check>` means non-zero exit whose message names `<check>` (a scanner
 rule, clause ID, scenario ID, simulation check, or serialization rule).
@@ -1233,6 +1238,8 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 149 | `proto95-arrangement-missing.fixture.md` | fail: protocol95_execution_arrangement | Protocol Step 4 | Protocol 95 Step 6 without the Execution arrangement paragraph |
 | 150 | `proto91-absorbed-sentence-missing.fixture.md` | fail: protocol91_absorbed_layer_sentence | Protocol Step 4 | Protocol 91 without the absorbed-layer sentence |
 | 151 | `canonical-dispatch-table-missing.fixture.md` | fail: canonical_dispatch_decision | Protocol Step 4 | Canonical doc without the per-command dispatch table row for `/run-items` |
+| 152 | `parity-explicit-list-format-match.fixture.md` | pass | Explicit-list parity | Canonical guide, guardrails row, Protocol 90 and spec row all carry the identical format string |
+| 153 | `parity-guardrails-mismatch.fixture.md` | fail: explicit_list_format_parity | Explicit-list parity | Guardrails row carries a different format string than the canonical guide |
 
 **Coverage completeness map.** Every enumerated contract list has a fixture or
 proof. The self-test asserts that the on-disk fixture set **equals the
@@ -1254,6 +1261,7 @@ manifest row matches at least one prefix family.
 | Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions C1-C4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus C1-C4 cycles), `sim-*` fixtures |
 | Surface classes | `class-*` fixtures and proof cycles 12-14 |
 | Dispatch decision (Decision 7): Protocol 90 Step 4 condition, Protocol 91 sentence, Protocol 95 Execution arrangement, canonical dispatch table | `proto90-*`, `proto91-*`, `proto95-*`, `canonical-*` fixtures and proof cycle 18 |
+| Explicit-list format parity across canonical guide, guardrails, Protocol 90 and spec row | `parity-*` fixtures and proof cycle 19 |
 | CI wiring header and complete read set (including the merged spec and fixtures glob) | proof cycle 17, header-consistency check (`covers == read set + selection-only`) |
 
 
@@ -1322,6 +1330,7 @@ confirm non-zero exit naming the check, restore):
 | AC5 | `canonical_declared_not_detected` | the decision-indicator list and the sentence that the decision is declared rather than automatically detected |
 | AC7 | `canonical_handoff_metadata` | one assertion per handoff field, failing if any is absent (each field gets a planted-violation cycle, including worktree path): `BATCH_CONTEXT`, isolation classification (`isolation`), **expected worktree path** (spec AC7 and Protocol 91 isolation handoff), expected branch, approved base, artifact repository root, mutation class |
 | Decision 7 | `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence`, `canonical_dispatch_decision` | Canonical doc lacks the per-command dispatch table (Decision 7; tokens `absorbs the portfolio layer`, `dispatches no Work Item Runner`, one row per `/run-item`, `/run-items`, `/run-epic`, `/run-work`); Protocol 90 Step 4 lacks the new condition (tokens in one block: `cursor-parent-orchestrated`, `do not dispatch Work Item Runners`, `one at a time`, `absorbed the portfolio layer`, `stage role`); Protocol 95 Step 6 lacks the Execution arrangement paragraph (`absorbs the epic layer`, `dispatches no Work Item Runner`); Protocol 91 lacks the absorbed-layer sentence (these three checks read Protocols 90, 91 and 95, already in the read set) |
+| Plan gap | `explicit_list_format_parity` | Any of the canonical guide, guardrails section 4, Protocol 90 declaration checkpoint or the merged spec's Named Stop-Condition Mapping row lacks the identical `explicit_list_invocation_targets=<t1>,<t2>,...` format string |
 | AC8 | `canonical_workflow_hub` | the workflow_hub artifact-ownership, tracker, and post-merge cleanup notes |
 
 Smoke Step coverage remains the human-facing check for the same ACs.
@@ -1555,11 +1564,31 @@ guardrails and mirrors together.
 
 ## Cross-Cutting Operational Assumption Records (for implementer)
 
-| ID | Assumption | Authoritative source | Implementation-start check |
-| --- | --- | --- | --- |
-| A1 | Artifact base branch remains `develop` | `.ai-dev-workflow.yaml` / handoff | `git merge-base --is-ancestor origin/develop HEAD` |
-| A2 | `single_repo` — hub owns all artifacts | Batch handoff | No product-repo selector required |
-| A3 | Pre-branch explicit-list affected item format | This plan § Plan-Stage Gap Resolution | Still valid if canonical + guardrails rows match |
+Protocol 03 requires, before the first file edit, re-reading each authoritative
+source and recording `Still valid` or `Stale or conflicting`. Every check below
+runs **before any edit** and only against something that **exists now** (the
+existing config, the merged spec, existing scripts, tracker and PR state). The
+artifacts this feature creates (canonical doc, guardrails rows, Protocol edits)
+do not exist yet and are therefore verified **after** editing by the surface
+guard, never as an assumption check.
 
-Implementer must record `Still valid` or `Stale or conflicting` before file
-edits per Protocol 03 assumption check.
+| ID | Assumption | Authoritative source (exists now) | Pre-edit check | Valid when |
+| --- | --- | --- | --- | --- |
+| A1 | Artifact and integration base branch is `develop` | `.ai-dev-workflow.yaml`, batch handoff, `origin/develop` | Run this **remediation sequence first**, then the check: (i) confirm plan PR #1771 and spec PR #1732 are merged (`gh pr view <n> --json state`); (ii) `git fetch origin develop`; (iii) create the implementation worktree and branch **from `origin/develop`** per Protocol 91's worktree recipe (the implementation is never cut from the plan branch, so the plan branch being behind `develop` is irrelevant); (iv) then `git ls-remote --exit-code origin develop` and `git merge-base --is-ancestor origin/develop HEAD` in the new worktree | Both succeed. If step (iv) fails because `develop` moved during setup, repeat (ii)-(iii) once; if it still fails, record `Stale or conflicting` |
+| A2 | `single_repo`: the hub owns all artifacts | `.ai-dev-workflow.yaml` (its documented default when no `mode:` is set) and the batch handoff `WORKFLOW_MODE` | `git grep -nE '^\s*mode:' -- .ai-dev-workflow.yaml` | Prints nothing (default `single_repo`) or `mode: single_repo`, and the handoff says `single_repo` |
+| A3 | The pre-branch explicit-list affected-item format in this plan's Plan-Stage Gap Resolution has no competing definition and matches the router | Merged spec Known-gaps item 1; `run-work-router.sh`; the repository tree | (a) `git grep -c "does not define what it names for a pre-branch" -- <merged spec>` is `1` (the gap is still recorded, not since resolved another way); (b) `git grep -l explicit_list_invocation_targets` outside this development folder and the smoke runbook prints nothing (no competing definition); (c) run `run-work-router.sh` read-only on two existing targets and confirm `RESOLVED_SCOPE` is the comma-joined, deduplicated, ordered list the serialization is defined over | (a) 1, (b) empty, (c) comma-joined normalized list |
+| A4 | No open PR changes the same surfaces | Tracker and PR state | `gh pr list --state open --json number,files` filtered to the mirror, protocol, guardrails, model-config and workflow-rule paths in Files to modify | Empty (or only this feature's own PRs) |
+| A5 | Related gaps #1745 and #1746 are still open and out of scope | Tracker state | `gh issue view 1745 --json state` and `gh issue view 1746 --json state` | Both `OPEN`; if either is closed, apply the Dependencies consequence (re-check its resolution text before editing) |
+| A6 | The spec PR is merged, so the spec is the normative source | Tracker state | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` |
+
+**Post-edit parity (not an assumption check).** That the canonical guide, the
+guardrails `dispatch_profile_declaration_missing` row, Protocol 90's
+declaration checkpoint and the merged spec's Named Stop-Condition Mapping row all
+carry the identical `explicit_list_invocation_targets=<t1>,<t2>,...` format is
+verified after the edits by the surface guard check
+`explicit_list_format_parity` (reads those four files, all in the read set;
+planted proof cycle 19; fixtures `parity-explicit-list-format-match` and
+`parity-guardrails-mismatch`).
+
+Implementer must record `Still valid` or `Stale or conflicting` for A1-A6
+before file edits per Protocol 03 assumption check.
