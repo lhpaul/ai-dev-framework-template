@@ -38,11 +38,16 @@ records each action; an agent must not create or delete repositories.
 **Provisioning (operator checklist)**
 
 1. Create a **private sandbox repository** dedicated to this sign-off (name it
-   with `sandbox` and `1462`) and push the implementation PR head to it as its
-   `develop` branch (this is the **safe base branch**; the real repository's
-   `develop` and `main` are never targeted). In the sandbox clone only, set
-   `issue_tracker.provider: github_issues` in `.ai-dev-workflow.yaml` (issues
-   without a project board) and do not commit that change anywhere else.
+   with `sandbox` and `1462`) and push the implementation PR head **H**
+   (`git rev-parse HEAD` of the implementation PR) to it as its `develop`
+   branch (the **safe base branch**; the real repository's `develop` and `main`
+   are never targeted). Item worktrees are created from `origin/develop`, so a
+   local uncommitted edit would not reach them. Therefore make **one dedicated
+   commit S on the sandbox's `develop`**, pushed **only to the sandbox**, whose
+   sole change is `issue_tracker.provider: github_issues` in
+   `.ai-dev-workflow.yaml` (issues without a project board). Every worktree and
+   PR base created afterwards inherits this config. S is never pushed, merged
+   or cherry-picked anywhere else.
 2. Create the label `sandbox-test` (`gh label create sandbox-test`).
 3. Create the test issues with the repo's tracker tooling (`/add-backlog-item`,
    or `gh issue create --label sandbox-test`), each titled with the prefix
@@ -50,16 +55,26 @@ records each action; an agent must not create or delete repositories.
    sandbox-only doc"): **C** (single), **A** and **B** (batch), epic **E**, and
    its children **D1** and **D2** linked as native sub-issues (GitHub UI, or the
    `addSubIssue` GraphQL mutation via `gh api graphql`).
-4. **Pre-flight check** in the clone the Remote Control session will use:
-   `git remote get-url origin` must be the sandbox repository, and
-   `gh repo view --json nameWithOwner` must name it. If either names the real
-   repository, **stop**: the live steps must not run.
+4. **Pre-flight check** in the clone the Remote Control session will use
+   (every check must pass, otherwise **stop**: the live steps must not run):
+   - `git remote get-url origin` is the sandbox repository, and
+     `gh repo view --json nameWithOwner` names it (neither names the real
+     repository);
+   - `git rev-parse origin/develop` equals **S**, and
+     `git merge-base --is-ancestor H S` succeeds (S sits directly on the
+     implementation head);
+   - `git diff H S --stat` lists **only** `.ai-dev-workflow.yaml`, and
+     `git diff --name-only H S` prints exactly that one path, so the
+     implementation-head evidence is preserved (the code under test is
+     byte-identical to H except for the tracker config);
+   - `git show S:.ai-dev-workflow.yaml` shows `provider: github_issues`.
 5. Confirm the three router checks in the table above return the stated MODEs.
 
 **Expected mutations (all confined to the sandbox)**: worktrees and branches per
 item (`feature/...`, `spec/...`, `implementation-plan/...`), commits and pushes,
-pull requests targeting the sandbox `develop`, PR labels and review-loop
-comments, issue status and comment updates, and changelog fragments. No merge
+pull requests targeting the sandbox `develop` (whose tip is S), PR labels and
+review-loop comments, issue status and comment updates, and changelog
+fragments. The only sandbox-only commit that exists before the runs is S. No merge
 is requested (the sign-off runs pass no `--may-merge`), so runs stop at
 `ready-for-human-review`, a blocked state, an escalation, or a named stop.
 
@@ -80,7 +95,10 @@ sign-off)**
    issue or comment referencing `SANDBOX-1462`
    (`gh pr list --search "SANDBOX-1462" --state all` and
    `gh issue list --search "SANDBOX-1462" --state all` in the real repository
-   return nothing), and `git status` is clean in the real checkout.
+   return nothing), `git status` is clean in the real checkout, and the
+   sandbox config commit S is absent from the real repository
+   (`git fetch origin && git branch -r --contains S` in the real checkout
+   prints nothing).
 
 **Cleanup is complete when**: the sandbox has no open issue, no open pull
 request, no branch other than `develop`/`main`, no worktree, or the sandbox
@@ -91,7 +109,8 @@ checklist before any retry; leftover sandbox artifacts block sign-off.
 **Prohibited**: running Step 8, 13 Part B or 14 Part B against a real backlog
 issue, a real epic, or the real repository's branches or base branch. A run that
 did so is a FAIL and must be reported, and the mutations rolled back by the
-repository owner.
+repository owner. Pushing or merging the sandbox config commit S into the real
+repository is likewise prohibited.
 
 ---
 
@@ -146,9 +165,9 @@ repository owner.
 
 1. Open `docs/workflow/development-workflow/agent-model-config.md`.
 2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile **and model** assignments per layer: Desktop native handoff; Remote Control parent orchestrated at every layer; Cloud Agents inline fallback at every layer (initial handoff unconfirmed).
-3. Confirm each row is labeled confirmed-by-observation or explicit assumption, for both the profile and the model assignment.
+3. Confirm every cell carries exactly one marker, `confirmed by observation` or `explicit assumption`, for both the profile and the model assignment: `confirmed by observation` only for Desktop at every layer and Remote Control at the item layer; `explicit assumption` for Remote Control portfolio and epic, all Cloud Agents cells, and every model cell.
 
-**Expected result**: Remote Control defaults to Parent orchestrated at every layer; Cloud Agents defaults to Inline fallback as an explicit assumption (read-only, `dispatch_handoff_unavailable` on a mutating run) until initial handoff is confirmed by observation; no environment defaults to parent orchestrated without confirmed initial handoff.
+**Expected result**: Remote Control defaults to Parent orchestrated at every layer (item layer observed; portfolio and epic layers explicit assumptions); Cloud Agents defaults to Inline fallback as an explicit assumption (read-only, `dispatch_handoff_unavailable` on a mutating run) until initial handoff is confirmed by observation; no environment defaults to parent orchestrated without confirmed initial handoff.
 
 ### Step 6: Read-only portfolio scan
 
@@ -181,8 +200,10 @@ environment runs a bounded command to a terminal condition without human
 rescue) that the decision-matrix simulation in Steps 12-14 cannot exercise. It must run in a **real Cursor Remote
 Control session**, not a simulated one, on the **implementation PR head**.
 
-1. Record the head SHA under test (`git rev-parse HEAD`) and the environment
-   (Cursor Remote Control session identifier or a note of how it was reached).
+1. Record the **implementation head H** and the **sandbox config commit S**
+   (with the output of `git diff H S --stat`, which must list only
+   `.ai-dev-workflow.yaml`) and the environment (Cursor Remote Control session
+   identifier or a note of how it was reached).
 2. From the sandbox clone (pre-flight check passed), start `/run-item <C>` on the sandbox single-item issue from Test Data.
 3. Confirm the declaration block names Parent orchestrated, the accountable
    role and the `absorbed` posture before the first mutating action, that
@@ -196,7 +217,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
    human review or merge, blocked dependency, or escalation) or a named stop
    from the decision matrix, plus the transcript excerpt or PR link.
 
-**Expected result**: The run reaches a terminal condition or a named stop with no human rescue mid-orchestration; evidence names the head SHA and the Remote Control environment. **NOT RUN is not acceptable for this step at implementation sign-off**, and a run that needed a human rescue is a FAIL.
+**Expected result**: The run reaches a terminal condition or a named stop with no human rescue mid-orchestration; evidence names the implementation head H, the sandbox config commit S and the Remote Control environment. **NOT RUN is not acceptable for this step at implementation sign-off**, and a run that needed a human rescue is a FAIL.
 
 ### Step 9: Inline fallback (manual, optional)
 
@@ -280,7 +301,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
 
 **Maps to**: AC9, AC10, AC14, AC17
 
-1. Record the current head SHA.
+1. Record the implementation head H, the sandbox config commit S and the `git diff H S --stat` output (only `.ai-dev-workflow.yaml`).
 2. In the sandbox clone, use the sandbox issues `<A> <B>` (Test Data) and run
    `./scripts/development-workflow/run-work-router.sh <A> <B>`; proceed only on
    `MODE=redirect_items`. (Any other MODE, including `ambiguous`, stops before
@@ -318,14 +339,14 @@ declaration deliberately withheld and confirm the single invocation-level
 
 **Expected result**: The simulation passes every scenario for this path (Part
 A), and the live Remote Control run reaches the completed one-at-a-time run or a
-named stop with no human rescue (Part B); evidence names the head SHA and the
+named stop with no human rescue (Part B); evidence names H, S and the
 Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
 
 ### Step 14: `/run-epic` terminal behavior at current head
 
 **Maps to**: AC9, AC10, AC17
 
-1. Record the current head SHA.
+1. Record the implementation head H, the sandbox config commit S and the `git diff H S --stat` output (only `.ai-dev-workflow.yaml`).
 2. With the sandbox epic `<E>` (Test Data) confirm `./scripts/development-workflow/run-work-router.sh --epic <E>`
    returns `MODE=redirect_epic`. (`--items` is internal-only and is not a
    user-facing option per Protocol 95.)
@@ -349,7 +370,7 @@ mid-orchestration is a FAIL.
 
 **Expected result**: The simulation passes every scenario for this path (Part
 A), and the live Remote Control run reaches a `continuation` terminal outcome or
-a named stop with no human rescue (Part B); evidence names the head SHA and the
+a named stop with no human rescue (Part B); evidence names H, S and the
 Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
 
 ---
@@ -363,7 +384,10 @@ Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
   sandbox artifacts (never real backlog items or the real repository), with the
   cleanup checklist completed and its completion criteria met and recorded
   before sign-off (leftover sandbox artifacts, or any mutation of the real
-  repository, block sign-off), each on the implementation PR head in a
+  repository, block sign-off). The evidence fields are the implementation head
+  **H** plus the sandbox config commit **S**, with `git diff H S --stat` proving
+  S touches only `.ai-dev-workflow.yaml`; evidence without H, S and that diff
+  is invalid, and evidence against a sandbox `develop` other than S is stale, each on the implementation PR head in a
   **real** Remote Control session with no human rescue mid-orchestration:
   Step 8 (`/run-item`), Step 13 Part B (`/run-items`, terminal condition = the
   completed one-at-a-time run or a named stop), and Step 14 Part B

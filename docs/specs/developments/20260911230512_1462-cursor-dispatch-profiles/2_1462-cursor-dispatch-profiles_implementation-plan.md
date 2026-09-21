@@ -63,7 +63,7 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
 | Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
-| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 148 rows, numbered 1-148, 148 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
+| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 151 rows, numbered 1-151, 151 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
 | Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `3dc9eca7` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
 | Protocol 90 Step 4 current text | `grep -cF` for the exact current Step 4 sentence quoted in Decision 7 in `protocols/90-batch-orchestrate-work-protocol.md` | 1 match, so the "current text" in the exact edit is verbatim (Pass); the edit itself and the `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence` and `canonical_dispatch_decision` checks are **Deferred to implementation** |
 | Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps`; a fixtures-path `--changed-files` probe | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
@@ -260,18 +260,40 @@ mutation class). No inline product work (AC4, AC19).
 
 Add a **Cursor dispatch profiles** subsection listing, per environment ×
 orchestration layer, the profile, the **model assignment**, and the evidence
-class (AC15). Every profile below is justified by a row of the spec's
-Decision-Gate Consistency Matrix applied to the facts the spec supports; no
-evidence is invented. The spec's evidence: on the Cursor desktop application
-the two-hop handoff holds; under Remote Control the context a command hands
-off to frequently cannot hand off again (initial handoff works, onward handoff
-does not); nothing is recorded for Cursor Cloud Agents.
+class (AC15), each marked with exactly one of the two markers
+`confirmed by observation` (only where the spec itself cites the fact for that
+environment and layer) or `explicit assumption` (everything else, with its
+rationale). Every profile is justified by a row of the spec's Decision-Gate
+Consistency Matrix applied to the facts the spec supports; no evidence is
+invented.
 
-| Environment | Portfolio layer | Epic layer | Item layer | Matrix row applied | Evidence |
+**What the spec actually cites** (re-read from its background, BO-6 and
+Business Rules): (1) On the Cursor desktop application the assumption that a
+runner can hand work to a specialist role (it lists the portfolio
+orchestrator, the epic runner, the work item runner and the stage roles) holds.
+(2) Under Remote Control "the orchestration context a command hands off to
+frequently cannot hand off again": an environment-level statement, hedged with
+"frequently", covering commands generally. (3) One **recorded case** under
+Remote Control in which one context ended up doing orchestration and
+implementation at once, which is an **item-layer** incident. (4) BO-6 requires
+`/run-item`, `/run-items` and `/run-epic` to be operable under Remote Control.
+(5) Nothing is recorded for Cursor Cloud Agents, and the spec's Business Rule
+says an unobserved environment or layer is an explicit assumption that takes
+the more restrictive profile until confirmed. The spec does **not** record the
+fact separately for the portfolio or epic layer under Remote Control, and cites
+no observation about which model a role runs on.
+
+| Environment | Layer | Profile | Matrix row applied | Evidence marker | Rationale |
 | --- | --- | --- | --- | --- | --- |
-| Cursor Desktop (local app) | Native handoff | Native handoff | Native handoff | Initial handoff available, onward available (S1) | Confirmed by observation (spec background: assumption holds on desktop) |
-| Cursor Remote Control | Parent orchestrated | Parent orchestrated | Parent orchestrated | Initial handoff available, onward (Work Item Runner or stage-role) handoff unavailable (S3 for mutating runs, S4 for a read-only scan). At the portfolio layer this is Decision 7: the current context absorbs the portfolio and item layers and runs the items one at a time, which requires the Protocol 90 Step 4 condition change recorded there | Confirmed by observation (recorded failure mode is environment-level: the context a command hands off to frequently cannot hand off again; it covers `/run-item`, `/run-items`, `/run-epic`, and the portfolio scan runs read-only in the current context under this profile with the `observing` posture) |
-| Cursor Cloud Agents | Inline fallback | Inline fallback | Inline fallback | **Initial handoff itself cannot be confirmed**: no handoff behavior is observed for this environment, so the matrix assigns inline fallback, read-only (S11 read-only, S12 mutating stop `dispatch_handoff_unavailable`). Parent orchestrated is valid only after initial handoff is confirmed, and evaluating onward capability before that is prohibited | **Explicit assumption** (spec: unobserved environments assume the more restrictive profile until confirmed by observation) |
+| Cursor Desktop | Portfolio | Native handoff | Initial and onward handoff available (S1) | `confirmed by observation` | Spec citation (1): the two-hop handoff holds on desktop, and the citation names the portfolio orchestrator |
+| Cursor Desktop | Epic | Native handoff | S1 | `confirmed by observation` | Spec citation (1), which names the epic runner |
+| Cursor Desktop | Item | Native handoff | S1 | `confirmed by observation` | Spec citation (1), which names the work item runner |
+| Cursor Remote Control | Portfolio | Parent orchestrated | Onward-handoff capability unconfirmed, initial handoff available (S5 mutating, S6 scan): the conservative default | `explicit assumption` | The spec cites the onward failure only environment-wide ("frequently") and records no portfolio-layer case, so onward capability at this layer cannot be confirmed; the matrix assigns parent orchestrated as the conservative default. At this layer it means Decision 7: the current context absorbs the portfolio and item layers and runs items one at a time (requires the Protocol 90 Step 4 condition change) |
+| Cursor Remote Control | Epic | Parent orchestrated | S5 (the conservative default) | `explicit assumption` | Same: no epic-layer case is recorded; onward capability is unconfirmed, so the conservative default applies (BO-6 requires the command to be operable) |
+| Cursor Remote Control | Item | Parent orchestrated | Initial handoff available, onward unavailable (S3) | `confirmed by observation` | Spec citation (3): the recorded case is an item-layer incident, together with citation (2) |
+| Cursor Cloud Agents | Portfolio | Inline fallback | Initial handoff cannot be confirmed (S11 read-only, S12 mutating stop `dispatch_handoff_unavailable`) | `explicit assumption` | Citation (5): nothing observed, so initial handoff is unconfirmed and the matrix assigns inline fallback; parent orchestrated is valid only after initial handoff is confirmed |
+| Cursor Cloud Agents | Epic | Inline fallback | S11 / S12 | `explicit assumption` | Same |
+| Cursor Cloud Agents | Item | Inline fallback | S11 / S12 | `explicit assumption` | Same |
 
 Consequence for Cloud Agents: a
 mutating bounded run stops with `dispatch_handoff_unavailable` recording that
@@ -279,8 +301,11 @@ initial handoff is unconfirmed, rather than absorbing a role. An operator who
 observes and records in run output that initial handoff is available makes the
 **next** run declare afresh against the confirmed facts (parent orchestrated if
 onward handoff is unavailable or unconfirmed, native handoff if both are
-available); a run never upgrades in place. The agent-model-config table
-records these as assumptions, not observations.
+available); a run never upgrades in place. The same applies to a Remote
+Control portfolio or epic layer once an operator observes and records the onward
+fact for that layer: the next run declares afresh against it. The
+agent-model-config table records these cells with the `explicit assumption`
+marker, not `confirmed by observation`.
 
 **Model assignments** (explicit, so implementation does not invent them). The
 tiers come from the existing role table in `agent-model-config.md`: Portfolio
@@ -292,9 +317,9 @@ configured models under every profile.
 
 | Environment | Portfolio layer model | Epic layer model | Item layer model | Model evidence |
 | --- | --- | --- | --- | --- |
-| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | Confirmed by observation (agent frontmatter applies on native handoff) |
-| Cursor Remote Control | The floor is the highest tier among the layers the run absorbs: a `/run-work` scan absorbs nothing (`observing`), so the `economy` floor applies (`fast` where selectable); `/run-items` absorbs the portfolio **and** item layers, so the `balanced` floor applies (`auto` where selectable) | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Profile confirmed by observation at every layer; **model an explicit assumption** (the remote session's model is not switched by role frontmatter) |
-| Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | **Explicit assumption** (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row that the confirmed facts assign, including its model floor |
+| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | `explicit assumption`: the framework documents that a Cursor subagent's frontmatter `model` applies on native handoff, but the spec cites no observation of which model a role runs on |
+| Cursor Remote Control | The floor is the highest tier among the layers the run absorbs: a `/run-work` scan absorbs nothing (`observing`), so the `economy` floor applies (`fast` where selectable); `/run-items` absorbs the portfolio **and** item layers, so the `balanced` floor applies (`auto` where selectable) | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | `explicit assumption` at every layer (the remote session's model is not switched by role frontmatter, and the spec cites no model observation) |
+| Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | `explicit assumption` (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row that the confirmed facts assign, including its model floor |
 
 Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
 as a substitute for the floor: if the session model is below the absorbed
@@ -320,7 +345,7 @@ makes ownership explicit. Per command and profile:
 
 Why absorbing both layers: under parent-orchestrated the receiving role (the
 Work Item Runner) is reachable but **cannot hand stage work onward**, so
-dispatching it would recreate the recorded failure. Its item-layer work is
+dispatching it risks the recorded environment-level failure (onward handoff frequently unavailable). Its item-layer work is
 therefore performed by the absorbing context, and only stage work is handed
 off.
 
@@ -545,7 +570,11 @@ layer; `workflow.mdc` states all five compactly).
       environment × orchestration-layer table carrying **three** values per
       combination, per AC15: (a) the applicable profile, (b) the applicable
       **model assignment**, and (c) whether that assignment is confirmed by
-      observation or an explicit assumption. The exact values are fixed in
+      observation or an explicit assumption, using exactly the markers
+      `confirmed by observation` and `explicit assumption` per cell as fixed in
+      Decision 6 (observed only for Desktop at every layer and Remote Control
+      at the item layer; every other profile cell and every model cell is an
+      explicit assumption). The exact values are fixed in
       Decision 6 (Desktop: native handoff, role's own model; Remote Control epic
       and item: parent orchestrated with a `balanced` floor, portfolio: parent
       orchestrated, with an `economy` floor for a `/run-work` scan and a
@@ -676,7 +705,7 @@ layer; `workflow.mdc` states all five compactly).
          | Protocols 90, 91, 95 | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
          | `.cursor/rules/workflow.mdc` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
          | `guardrails-enforcement.md` section 4 | - | - | - | Y | Y | Y | Y | Y | Y | - | - |
-         | `agent-model-config.md` | the exact Decision 6 profile, model assignment and evidence class for every environment x layer cell (Desktop native; Remote Control parent orchestrated at every layer; Cloud Agents inline fallback everywhere) | | | | | | | | | | |
+         | `agent-model-config.md` | the exact Decision 6 profile, model assignment and evidence marker for every environment x layer cell (Desktop native; Remote Control parent orchestrated at every layer; Cloud Agents inline fallback everywhere; markers `confirmed by observation` for Desktop at every layer and Remote Control item only, `explicit assumption` for every other profile cell and every model cell) | | | | | | | | | | |
 
          Layer scoping is by wording, not by omission: a portfolio-layer
          surface states the clause for the portfolio layer and an item-layer
@@ -848,7 +877,10 @@ layer; `workflow.mdc` states all five compactly).
           (Cloud Agents item layer to `cursor-parent-orchestrated`; Remote
           Control portfolio to `cursor-native-handoff`); expect non-zero, since
           the guard asserts the exact Decision 6 profile per environment and
-          layer.
+          layer. Also flip an evidence marker to an overclaim (Remote Control
+          epic profile to `confirmed by observation`; Desktop model to
+          `confirmed by observation`) and drop one marker; expect non-zero for
+          each.
       15. **Canonical-doc checks**: one cycle per check name in Testing Strategy
           (`canonical_layers`, `canonical_matrix`,
           `canonical_declared_not_detected`, one per
@@ -1032,7 +1064,7 @@ also invoked by the default run). Each fail fixture must exit non-zero with a
 message naming its clause ID; each pass fixture must exit 0. These are separate
 from, and in addition to, the planted-deletion proofs on real surfaces.
 
-**Fixture manifest (`MANIFEST_COUNT = 148`).** This is the literal, complete
+**Fixture manifest (`MANIFEST_COUNT = 151`).** This is the literal, complete
 list of scanner fixtures: one row per file, exact filename, expected result,
 and the rule or clause covered. It is derived by counting the rows below and
 is stated here **once**; every other mention refers to "the manifest count".
@@ -1125,79 +1157,82 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 73 | `class-guardrails-exempt-clauses.fixture.md` | pass | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) |
 | 74 | `class-guardrails-missing-e4b.fixture.md` | fail: E4b | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction |
 | 75 | `class-model-config-missing-row.fixture.md` | fail: model-config rows | Surface-class table | `agent-model-config.md` fixture missing one environment row |
-| 76 | `e3c-stop1-profile-only.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) |
-| 77 | `e3c-stop1-no-posture.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the posture element |
-| 78 | `e3c-stop1-no-role.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the named-accountable-role element |
-| 79 | `e3c-stop1-no-facts-profile.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking the `profile the known facts assign` clause |
-| 80 | `e3c-stop2-no-stage-role-exception.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the `specific stage role` exception |
-| 81 | `e3c-stop2-no-accept-read-only.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the accept-read-only alternative |
-| 82 | `e3c-stop3-no-structural-path.fixture.md` | fail: E3c stop 3 | E3c | Stop-3 action lacking the structural-restriction path |
-| 83 | `e3c-all-causes-present.fixture.md` | pass | E3c | All three stop actions cause-complete |
-| 84 | `ser-percent-alone.fixture.md` | pass | Serialization | Branch `feature/100%-done` encoded `feature/100%25-done` |
-| 85 | `ser-percent-preexisting.fixture.md` | pass | Serialization | Branch `feature/a%25b` encoded `feature/a%2525b` (no double-encode skip) |
-| 86 | `ser-interior-tab.fixture.md` | pass | Serialization | Defensive: interior tab in a development-folder path encoded `%09` |
-| 87 | `ser-interior-space.fixture.md` | pass | Serialization | Defensive: interior space in a development-folder path encoded `%20` |
-| 88 | `ser-newline-unreachable-stated.fixture.md` | pass | Serialization | Doc states a line feed cannot appear inside a target (the router keeps only the first line of an argument) and is never encoded |
-| 89 | `ser-newline-encoded-shown.fixture.md` | fail: router-grammar | Serialization | Doc shows an interior newline encoded `%0A` as a reachable case |
-| 90 | `ser-interior-cr.fixture.md` | pass | Serialization | Defensive: interior CR in a development-folder path encoded `%0D` (the router keeps CR inside the token) |
-| 91 | `ser-control-0x1f.fixture.md` | pass | Serialization | Defensive: control character 0x1F in a development-folder path encoded `%1F` |
-| 92 | `ser-control-0x7f.fixture.md` | pass | Serialization | Defensive: control character 0x7F in a development-folder path encoded `%7F` |
-| 93 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`, `%0a`) in the example |
-| 94 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
-| 95 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
-| 96 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
-| 97 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
-| 98 | `ser-order-preserved.fixture.md` | pass | Serialization | Router-normalized order preserved (`feature/b,1771,#1462` for that input order) |
-| 99 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted instead of kept in router order |
-| 100 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
-| 101 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
-| 102 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
-| 103 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
-| 104 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `feature/Cursor-Dispatch` rewritten in lowercase |
-| 105 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
-| 106 | `ser-comma-not-in-target.fixture.md` | pass | Serialization | Doc states a comma cannot occur inside an accepted target (router splits on commas) and the `%2C` rule is defensive only |
-| 107 | `ser-comma-target-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example shows a comma inside an accepted target (`feature/x%2Cy`) |
-| 108 | `ser-percent-not-reencoded.fixture.md` | fail: percent-encoding | Serialization | Doc shows `feature/a%25b` emitted unchanged |
-| 109 | `ser-duplicates-deduped-first-kept.fixture.md` | pass | Serialization | Doc example: repeated `#1462` in the input rendered once, first occurrence kept |
-| 110 | `ser-duplicates-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example renders a repeated target (`#1462,...,#1462`) |
-| 111 | `ser-hash-and-bare-distinct.fixture.md` | pass | Serialization | Doc example renders `1462` and `#1462` as two distinct targets, as typed |
-| 112 | `ser-hash-and-bare-deduped.fixture.md` | fail: router-grammar | Serialization | Doc example merges `1462` and `#1462` into one target |
-| 113 | `ser-tracker-id-accepted.fixture.md` | fail: router-grammar | Serialization | Doc shows a tracker ID such as `ENG-123` as an accepted target |
-| 114 | `ser-tracker-id-unreachable-stated.fixture.md` | pass | Serialization | Doc states a tracker ID stops at `MODE=ambiguous` before the gate and has no serialization |
-| 115 | `ser-router-grammar-stated.fixture.md` | pass | Serialization | Doc states the router grammar: comma split, trim, drop empties, first-occurrence dedup, and the accepted forms |
-| 116 | `ser-dot-slash-kept.fixture.md` | pass | Serialization | Development-folder path typed `./docs/specs/developments/x` kept with its leading `./` |
-| 117 | `ser-dot-slash-stripped.fixture.md` | fail: verbatim | Serialization | Leading `./` stripped from a development-folder path |
-| 118 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
-| 119 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
-| 120 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
-| 121 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
-| 122 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
-| 123 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
-| 124 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
-| 125 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
-| 126 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
-| 127 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
-| 128 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
-| 129 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
-| 130 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
-| 131 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
-| 132 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
-| 133 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
-| 134 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
-| 135 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
-| 136 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
-| 137 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
-| 138 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
-| 139 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
-| 140 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
-| 141 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
-| 142 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
-| 143 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
-| 144 | `proto90-step4-condition-present.fixture.md` | pass | Protocol Step 4 | Protocol 90 Step 4 block carries the new parent-orchestrated condition (all tokens in one block) |
-| 145 | `proto90-step4-native-only.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | Protocol 90 Step 4 block with only the old `does not support Work Item Runner handoff natively` condition |
-| 146 | `proto95-arrangement-missing.fixture.md` | fail: protocol95_execution_arrangement | Protocol Step 4 | Protocol 95 Step 6 without the Execution arrangement paragraph |
-| 147 | `proto91-absorbed-sentence-missing.fixture.md` | fail: protocol91_absorbed_layer_sentence | Protocol Step 4 | Protocol 91 without the absorbed-layer sentence |
-| 148 | `canonical-dispatch-table-missing.fixture.md` | fail: canonical_dispatch_decision | Protocol Step 4 | Canonical doc without the per-command dispatch table row for `/run-items` |
+| 76 | `class-model-config-rc-epic-overclaimed.fixture.md` | fail: evidence-marker | Surface-class table | `agent-model-config.md` fixture marking the Remote Control epic profile `confirmed by observation` |
+| 77 | `class-model-config-desktop-model-overclaimed.fixture.md` | fail: evidence-marker | Surface-class table | `agent-model-config.md` fixture marking the Desktop model `confirmed by observation` |
+| 78 | `class-model-config-marker-absent.fixture.md` | fail: evidence-marker | Surface-class table | `agent-model-config.md` fixture with a cell that carries neither marker |
+| 79 | `e3c-stop1-profile-only.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) |
+| 80 | `e3c-stop1-no-posture.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the posture element |
+| 81 | `e3c-stop1-no-role.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the named-accountable-role element |
+| 82 | `e3c-stop1-no-facts-profile.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking the `profile the known facts assign` clause |
+| 83 | `e3c-stop2-no-stage-role-exception.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the `specific stage role` exception |
+| 84 | `e3c-stop2-no-accept-read-only.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the accept-read-only alternative |
+| 85 | `e3c-stop3-no-structural-path.fixture.md` | fail: E3c stop 3 | E3c | Stop-3 action lacking the structural-restriction path |
+| 86 | `e3c-all-causes-present.fixture.md` | pass | E3c | All three stop actions cause-complete |
+| 87 | `ser-percent-alone.fixture.md` | pass | Serialization | Branch `feature/100%-done` encoded `feature/100%25-done` |
+| 88 | `ser-percent-preexisting.fixture.md` | pass | Serialization | Branch `feature/a%25b` encoded `feature/a%2525b` (no double-encode skip) |
+| 89 | `ser-interior-tab.fixture.md` | pass | Serialization | Defensive: interior tab in a development-folder path encoded `%09` |
+| 90 | `ser-interior-space.fixture.md` | pass | Serialization | Defensive: interior space in a development-folder path encoded `%20` |
+| 91 | `ser-newline-unreachable-stated.fixture.md` | pass | Serialization | Doc states a line feed cannot appear inside a target (the router keeps only the first line of an argument) and is never encoded |
+| 92 | `ser-newline-encoded-shown.fixture.md` | fail: router-grammar | Serialization | Doc shows an interior newline encoded `%0A` as a reachable case |
+| 93 | `ser-interior-cr.fixture.md` | pass | Serialization | Defensive: interior CR in a development-folder path encoded `%0D` (the router keeps CR inside the token) |
+| 94 | `ser-control-0x1f.fixture.md` | pass | Serialization | Defensive: control character 0x1F in a development-folder path encoded `%1F` |
+| 95 | `ser-control-0x7f.fixture.md` | pass | Serialization | Defensive: control character 0x7F in a development-folder path encoded `%7F` |
+| 96 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`, `%0a`) in the example |
+| 97 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
+| 98 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
+| 99 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
+| 100 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
+| 101 | `ser-order-preserved.fixture.md` | pass | Serialization | Router-normalized order preserved (`feature/b,1771,#1462` for that input order) |
+| 102 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted instead of kept in router order |
+| 103 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
+| 104 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
+| 105 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
+| 106 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
+| 107 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `feature/Cursor-Dispatch` rewritten in lowercase |
+| 108 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
+| 109 | `ser-comma-not-in-target.fixture.md` | pass | Serialization | Doc states a comma cannot occur inside an accepted target (router splits on commas) and the `%2C` rule is defensive only |
+| 110 | `ser-comma-target-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example shows a comma inside an accepted target (`feature/x%2Cy`) |
+| 111 | `ser-percent-not-reencoded.fixture.md` | fail: percent-encoding | Serialization | Doc shows `feature/a%25b` emitted unchanged |
+| 112 | `ser-duplicates-deduped-first-kept.fixture.md` | pass | Serialization | Doc example: repeated `#1462` in the input rendered once, first occurrence kept |
+| 113 | `ser-duplicates-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example renders a repeated target (`#1462,...,#1462`) |
+| 114 | `ser-hash-and-bare-distinct.fixture.md` | pass | Serialization | Doc example renders `1462` and `#1462` as two distinct targets, as typed |
+| 115 | `ser-hash-and-bare-deduped.fixture.md` | fail: router-grammar | Serialization | Doc example merges `1462` and `#1462` into one target |
+| 116 | `ser-tracker-id-accepted.fixture.md` | fail: router-grammar | Serialization | Doc shows a tracker ID such as `ENG-123` as an accepted target |
+| 117 | `ser-tracker-id-unreachable-stated.fixture.md` | pass | Serialization | Doc states a tracker ID stops at `MODE=ambiguous` before the gate and has no serialization |
+| 118 | `ser-router-grammar-stated.fixture.md` | pass | Serialization | Doc states the router grammar: comma split, trim, drop empties, first-occurrence dedup, and the accepted forms |
+| 119 | `ser-dot-slash-kept.fixture.md` | pass | Serialization | Development-folder path typed `./docs/specs/developments/x` kept with its leading `./` |
+| 120 | `ser-dot-slash-stripped.fixture.md` | fail: verbatim | Serialization | Leading `./` stripped from a development-folder path |
+| 121 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
+| 122 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
+| 123 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
+| 124 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
+| 125 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
+| 126 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
+| 127 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
+| 128 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
+| 129 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
+| 130 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
+| 131 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
+| 132 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
+| 133 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
+| 134 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
+| 135 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
+| 136 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
+| 137 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
+| 138 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
+| 139 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
+| 140 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
+| 141 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
+| 142 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
+| 143 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
+| 144 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
+| 145 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
+| 146 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
+| 147 | `proto90-step4-condition-present.fixture.md` | pass | Protocol Step 4 | Protocol 90 Step 4 block carries the new parent-orchestrated condition (all tokens in one block) |
+| 148 | `proto90-step4-native-only.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | Protocol 90 Step 4 block with only the old `does not support Work Item Runner handoff natively` condition |
+| 149 | `proto95-arrangement-missing.fixture.md` | fail: protocol95_execution_arrangement | Protocol Step 4 | Protocol 95 Step 6 without the Execution arrangement paragraph |
+| 150 | `proto91-absorbed-sentence-missing.fixture.md` | fail: protocol91_absorbed_layer_sentence | Protocol Step 4 | Protocol 91 without the absorbed-layer sentence |
+| 151 | `canonical-dispatch-table-missing.fixture.md` | fail: canonical_dispatch_decision | Protocol Step 4 | Canonical doc without the per-command dispatch table row for `/run-items` |
 
 **Coverage completeness map.** Every enumerated contract list has a fixture or
 proof. The self-test asserts that the on-disk fixture set **equals the
@@ -1262,7 +1297,10 @@ fixture is removed, renamed, or added without a manifest row.
    live parts never substitute for it. The live parts run **only** against the
    smoke runbook's disposable sandbox artifacts (sandbox repository, `[SANDBOX-1462]`
    test issues and epic, sandbox `develop` as the safe base) with a completed
-   cleanup checklist; running them against real backlog items or the real
+   cleanup checklist; the evidence is the implementation head **H** plus a
+   single sandbox-only config commit **S** whose diff against H touches only
+   `.ai-dev-workflow.yaml` (`git diff H S --stat`, so worktrees created from
+   sandbox `develop` inherit the `github_issues` tracker config); running them against real backlog items or the real
    repository is prohibited.
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
@@ -1487,7 +1525,8 @@ Not applicable — no runtime data.
    Steps 7 and 9 and Step 13 Part C may be documented NOT RUN, per the
    runbook's Pass criteria. The live steps run **only** in the disposable
    sandbox (operator-provisioned repository, `[SANDBOX-1462]` issues and epic,
-   sandbox `develop` base), after the pre-flight `origin` check, and are
+   sandbox `develop` base at S), after the pre-flight `origin` and `git diff H S`
+   checks, and are
    followed by the runbook's cleanup checklist; sign-off is blocked until the
    completion criteria are met and the real repository is verified untouched.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
