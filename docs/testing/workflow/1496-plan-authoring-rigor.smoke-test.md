@@ -152,6 +152,7 @@ names an acceptance theme, the exercise, and the expected gate class.
 | B8 | Rule 1 — heterogeneous sample adequacy | Population documented as having two producer variants; sample drawn from one; record silent on the other | Blocking — known heterogeneity unaddressed |
 | B11 | Rule 1 — unpersuasive adequacy rationale | Same population, record states an adequacy rationale that is complete in form but weak | Non-blocking — recorded as a suggestion; Satisfied |
 | B12 | Rule 1 — fixed literal set, no contract | Design binds to a fixed set of literals; large sample; no contract fixing the set | Blocking — contract required |
+| B13 | Rule 1 — incomplete sampling record | Otherwise-complete record with exactly one required field omitted (producer; population and window; occurrences examined; distinct variants; saturation status; a per-occurrence locator) — run once per omitted field | Blocking — names the missing field |
 | B9 | Rule 1 — curated examples | Occurrences are hand-picked examples | Blocking — not a sample of the population |
 | B10 | Rule 1 — closed-population enumeration | Enumeration command shown with no closure provenance (nothing shows the set cannot grow), or members not listed | Blocking — enumeration record incomplete |
 | E3 | Rule 4 — completeness claim | "All X verified" with no search scope | Blocking — completeness unsupported |
@@ -170,12 +171,13 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H12 | Repository-only drift | Repository changed after gathering but no claim the plan makes is affected | Non-outcome — no finding; record unchanged |
 | H13 | Evidence only in PR comments | Firing rule's evidence exists only in a PR comment or chat transcript | Blocking — evidence must be moved into the plan document |
 | H17 | Evidence only in the PR description | Firing rule's evidence exists only in the PR description, not in the plan document | Blocking — evidence must be moved into the plan document |
+| H18 | Occurrence locator re-inspected every round | Round 1 inspects a sampling locator; before round 2 the locator's target changes or disappears; round 2 reuses a stored finding for it | Blocking — locators have no persisted-finding path and must be inspected directly each round |
 | H14 | Not applicable, no rationale | Rule recorded `Not applicable` with an empty rationale | Blocking — treated as Unsatisfied |
 | H15 | Single rule with no recorded outcome | Table present but one rule has no row | Blocking — that rule treated as Unsatisfied |
 | H16 | Blocking outcomes enumerated with clearing action | Read the canonical gate section for every outcome that holds a plan back | Each outcome states whether it blocks and the action that clears it |
 
 Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix below plus the Scenarios, the mirror harness, and the mapping table in the next section together exercise every acceptance criterion. **Per-row assertion for every Blocking row:** the observed finding must name the applicable rule and the specific defect (what was missing, failed to reproduce, or was contradicted, naming the claim or the contradicting outcome); a Blocking result whose finding lacks either fails that row (spec line 533). Every matrix row is **required** (executed and recorded in the implementation PR). The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
-every matrix row above (B1–B12, C1–C4, D1–D3, E1–E3, F1–F6, G1–G4, H1–H17), as
+every matrix row above (B1–B13, C1–C4, D1–D3, E1–E3, F1–F6, G1–G4, H1–H18), as
 the implementation plan Testing Strategy requires, including at least one
 blocking and one non-blocking outcome on real or fixture plan text.
 
@@ -194,7 +196,7 @@ is unmet. **H** = mirror-harness assertion; **S** = smoke scenario.
 | 467 | A — no language/framework/path in rule text | S1 (read rule text for stack or path names) |
 | 468 | A — applies to no-spec and Refactor plans | S3 on the mandatory Refactor/no-spec scratch plan from the test setup (the outcome record is present) |
 | 472 | B — no record fails | B1, B12 |
-| 473 | B — record completeness | B2 + H10 |
+| 473 | B — record completeness | B2, B13 |
 | 474 | B — short-retention locator | B5 |
 | 475 | B — access-restricted occurrence | B6 |
 | 476 | B — both short-retention and restricted | B7 |
@@ -232,7 +234,7 @@ is unmet. **H** = mirror-harness assertion; **S** = smoke scenario.
 | 526 | H — absent trigger recorded Satisfied/Unsatisfied | H7 |
 | 527 | H — invalid label is Unsatisfied | H8 |
 | 528 | H — gate log lists rules, revision, rationale | S3 + H2, H4 |
-| 529 | H — first-inspection finding carried | H9 |
+| 529 | H — first-inspection finding carried; locators re-inspected | H9, H18 |
 | 530 | H — outcomes re-determined every round | H5, H11, H12 |
 | 531 | H — blocking outcomes enumerated with clearing action | H16 |
 | 532 | H — evidence in the plan document | H13, H17 |

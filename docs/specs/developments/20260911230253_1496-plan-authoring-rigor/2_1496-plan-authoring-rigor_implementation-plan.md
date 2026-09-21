@@ -390,13 +390,13 @@ The index below groups the IDs by acceptance group:
 | Spec group | Required matrix IDs |
 | --- | --- |
 | A (wiring + no-spec inheritance) | Scenarios 1–2; confirm Protocol 02 applies to Refactor/no-spec plans |
-| B | B1–B12 |
+| B | B1–B13 |
 | C | C1–C4 |
 | D | D1–D3 |
 | E | E1, E2, E3 |
 | F | F1–F6 |
 | G | G1–G4 |
-| H | H1–H17 |
+| H | H1–H18 |
 
 **Regression suite**: Not applicable as a deliberate testing-scope decision —
 this feature changes only workflow docs, agent files, and a shell harness. The
@@ -572,8 +572,8 @@ Not applicable.
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
 10. Execute the runbook's temporary integration-branch setup (see the smoke runbook), then
     record its cleanup.
-11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B12, C1–C4,
-    D1–D3, E1–E3, F1–F6, G1–G4, H1–H17) named in Testing Strategy.
+11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B13, C1–C4,
+    D1–D3, E1–E3, F1–F6, G1–G4, H1–H18) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
@@ -592,13 +592,13 @@ Not applicable.
 | A — Rules stated for both roles | Canonical file + mirror table + agents |
 | A — Rules apply to every plan, including no-spec / Refactor | Protocol 02 authoring obligations + tech-lead / plan-writer mirrors apply to all Protocol 02 plans; no separate no-spec bypass — Refactor plans still open via Protocol 02 and must carry the per-rule outcome record |
 | A — Exactly one canonical surface; no divergent pass conditions | Canonical file is sole normative text; mirrors point to it; Smoke Scenario 1 + mirror harness presence checks; Scenario 1 desk-check for pass-condition equivalence |
-| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B12 (all required) |
+| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B13 (all required) |
 | C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C4 (all required) |
 | D — Rule 3 | Template + Verification Log guidance + smoke D1–D3 (all required) |
 | E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E3 (all required) |
 | F — Rule 5 | Template consumer enumeration guidance + smoke F1–F6 (all required) |
 | G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1–G4 (all required) |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H17 (all required) |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H18 (all required) |
 
 **Addition vs spec**: Mirror harness + fixtures + planted-violation proof are
 plan additions for mirror-surface consistency only (Group A agreement), not
