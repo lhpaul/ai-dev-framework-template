@@ -22,8 +22,8 @@ the runner-facing agent/skill mirrors — without changing when
 **Rationale**: No application code or scripts change runtime behavior; the work
 is a broad documentation-and-protocol alignment across the canonical page,
 three orchestration protocols, stop-message contract text, README indexing,
-`REVIEW.md`, and fourteen agent/skill surfaces (plus three conditional
-orchestrator files). The spec's Decision-Gate
+`REVIEW.md`, and seventeen agent/skill surfaces (all required, including
+the three batch orchestrator files). The spec's Decision-Gate
 Consistency Matrix is already authoritative for behavior; this plan adds the
 concrete file names, PR durability marker, report outline, and the two
 spec-stage gap resolutions required before implementation.
@@ -57,7 +57,7 @@ update.
 | Spec merged | `gh pr view 1735 --json state,mergedAt,baseRefName` | Merged to `develop` (handoff: spec PR #1735 merged) |
 | No existing canonical escalation page | `ls docs/workflow/development-workflow/architecture-decision-escalation.md 2>/dev/null \|\| echo absent` | Absent — net-new canonical surface |
 | Current `architecture_decision` mentions | `grep -rl architecture_decision docs/workflow .ai-dev-workflow.yaml` | `guardrails.md`, `guardrails-enforcement.md`, `README.md`, `.ai-dev-workflow.yaml`, plus this spec only |
-| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .agents/skills/run-items/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md .codex/skills/workflow-implementer/SKILL.md .cursor/agents/code-reviewer.md .claude/agents/code-reviewer.md .codex/skills/workflow-code-reviewer/SKILL.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All fourteen `OK:` — verified 2026-09-20, every path exists (orchestrator batch agents verified separately in Layer H) |
+| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .agents/skills/run-items/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md .codex/skills/workflow-implementer/SKILL.md .cursor/agents/code-reviewer.md .claude/agents/code-reviewer.md .codex/skills/workflow-code-reviewer/SKILL.md .cursor/agents/orchestrator.md .claude/agents/orchestrator.md .codex/skills/workflow-orchestrator/SKILL.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All seventeen `OK:` — verified 2026-09-20, every path exists |
 | PR marker upsert precedent | `grep -n find_marker_comment_id scripts/development-workflow/run-epic-audit-trail.sh \| head` | Existing find-by-marker-then-PATCH-or-POST helper used for durable PR comments |
 | Stop-surface audit helper | `grep -n audit_stop_surfaces scripts/development-workflow/tests/test-worktree-recipe.sh` | Existing audit covers `guardrails-enforcement.md` stop contract — extend to reference the new canonical page |
 
@@ -281,6 +281,9 @@ Each file gets a short, direct requirement plus a link to the canonical page
 - [ ] `.cursor/agents/code-reviewer.md`
 - [ ] `.claude/agents/code-reviewer.md`
 - [ ] `.codex/skills/workflow-code-reviewer/SKILL.md`
+- [ ] `.cursor/agents/orchestrator.md`
+- [ ] `.claude/agents/orchestrator.md`
+- [ ] `.codex/skills/workflow-orchestrator/SKILL.md`
 
 The `code-reviewer` mirrors are **required, not optional**: Protocol 91
 dispatches `code-reviewer` during implementation review-fix cycles and makes
@@ -293,10 +296,12 @@ only the `developer` mirrors would leave the agents that actually post those
 replies free to cite a specification line as support without declaring
 `Conforms` / `Departs` / `Not yet implemented`.
 
-Orchestrator batch agents (`.cursor/agents/orchestrator.md`,
-`.claude/agents/orchestrator.md`, `.codex/skills/workflow-orchestrator/SKILL.md`)
-receive the Protocol 90 parity sentence only if not already covered by protocol
-pointer — verify during implementation; add if missing.
+The three batch orchestrator files are **required, not conditional**. They
+currently carry only a protocol pointer, and a pointer alone is not accepted
+anywhere in this plan: each gets the Protocol 90 parity sentence (the batch
+summary must reference the child's canonical escalation report for an
+`architecture_decision` stop) plus the canonical link, so the smoke step, the
+file list, the audit scope, and the files table all use one requirement.
 
 ### I. Tests (documentation parity)
 
@@ -306,13 +311,18 @@ pointer — verify during implementation; add if missing.
       helper only discovers `stop_conditions:` surfaces and greps for
       `push_verification_failed`, so it can neither validate the canonical
       escalation page nor detect a weakened mirror; it is left unchanged.
-      - **Discovery scope**: the explicit fourteen-file mirror list from the
+      - **Discovery scope**: the explicit seventeen-file mirror list from the
         Lockstep mirror files row of the plan's Verification table (the same
         list as section H), plus Protocol 90, Protocol 91, Protocol 93, and the
         canonical page. Discovery is by that list, not by grep, so a deleted mirror is
         reported rather than silently skipped.
       - **Invariants** (per file, matching each layer's responsibility; the
         helper takes the required terms per file as data):
+        - **Matching is section-scoped**: a term counts only when it appears
+          inside the file's escalation section (from its
+          `architecture_decision` / escalation heading to the next heading of
+          the same or higher level), outside fenced code blocks and HTML
+          comments. A mention elsewhere in the file does not satisfy the check.
         - *Every audited file* contains the literal
           `architecture-decision-escalation.md` link.
         - *Protocol 91, Protocol 93, developer and code-reviewer mirrors*
@@ -330,7 +340,7 @@ pointer — verify during implementation; add if missing.
         heading found with `grep -n` (the concrete location the term belongs
         under), or `0` with `ANCHOR_MISSING=<file>` when that heading is
         absent.
-      - **Non-vacuous guard**: assert `COUNT` equals 18 (fourteen mirrors +
+      - **Non-vacuous guard**: assert `COUNT` equals 21 (seventeen mirrors +
         three protocols + canonical page) so an empty discovery cannot pass.
       - **Planted-violation evidence**: copy the mirror tree to a temp root,
         delete the canonical link from `.claude/agents/code-reviewer.md`, and
@@ -342,6 +352,23 @@ pointer — verify during implementation; add if missing.
         the audit prints no `MISSING=` line (passing run after restoration).
         Repeat once for a weakened declaration term in a
         `.codex/skills/workflow-code-reviewer/SKILL.md` copy.
+- [ ] **Parser-risk edge-case enumeration** (the audit scans structured
+      Markdown, so protocol `02` Step 3 parser-risk rules apply). Unit test
+      file: `scripts/development-workflow/tests/test-worktree-recipe.sh`; one
+      automated case per input below, each with a fixture and an asserted
+      `MISSING=` / `ANCHOR_MISSING=` (or no-output) result:
+      1. Required term present **only outside** the escalation section (an
+         out-of-section decoy) — must be reported `MISSING`.
+      2. Escalation heading absent — `ANCHOR_MISSING=<file>`, line `0`.
+      3. Term only inside a fenced code block within the section — reported.
+      4. Term only inside an HTML comment within the section — reported.
+      5. Two escalation headings — the first is scoped; a term only under the
+         second is reported.
+      6. Term with different case (`conforms`) — reported (match is exact).
+      7. CRLF line endings — a correct file still passes; `<line>` unchanged.
+      8. Empty file and deleted file — reported, not silently skipped.
+      9. Correct file — no output (pass), asserted after each planted case is
+         restored.
 - [ ] Maps to *Surfaces agree* and REVIEW.md Verification Discipline.
 
 ### Database / Backend / Frontend / Infrastructure
@@ -410,7 +437,7 @@ Changes; no additional `docs/project/` files expected.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all fourteen mandatory paths (plus the three conditional orchestrator files) |
+| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all seventeen mandatory paths |
 | Protocol 91 PR comment step conflicts with existing comment templates | Low | Med | Reuse upsert marker pattern from other workflow comments; idempotent section heading |
 | Runners treat "all settled" continuation as suppressing stops | Med | High | Canonical page + Protocol 91 repeat spec's "trigger not met" wording prominently |
 | Over-long duplication of spec matrix in protocols | Med | Low | Canonical page + pointer; protocols state requirement and durability only |
@@ -495,8 +522,8 @@ bash scripts/development-workflow/tests/test-worktree-recipe.sh
 | `.cursor/agents/code-reviewer.md` | Edit |
 | `.claude/agents/code-reviewer.md` | Edit |
 | `.codex/skills/workflow-code-reviewer/SKILL.md` | Edit |
-| `.cursor/agents/orchestrator.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
-| `.claude/agents/orchestrator.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
-| `.codex/skills/workflow-orchestrator/SKILL.md` | Edit if missing Protocol 90 parity sentence (Layer H) |
+| `.cursor/agents/orchestrator.md` | Edit (Layer H) |
+| `.claude/agents/orchestrator.md` | Edit (Layer H) |
+| `.codex/skills/workflow-orchestrator/SKILL.md` | Edit (Layer H) |
 | `scripts/development-workflow/tests/test-worktree-recipe.sh` | Edit |
 | `changelog.d/1515.added.architecture-decision-axes.md` | Create (implementation PR) |

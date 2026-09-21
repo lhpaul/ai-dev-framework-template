@@ -96,7 +96,8 @@ Search Protocol 93 for conformance declaration requirement.
 ### Step 5: Mirror surfaces (agents and skills)
 
 For each path below, confirm a direct requirement (not link-only) and a pointer
-to the canonical page:
+to the canonical page (the three batch orchestrator files carry the Protocol 90
+parity sentence as their direct requirement):
 
 - [ ] `.cursor/agents/item-orchestrator.md`
 - [ ] `.claude/agents/item-orchestrator.md`
@@ -112,10 +113,9 @@ to the canonical page:
 - [ ] `.cursor/agents/code-reviewer.md`
 - [ ] `.claude/agents/code-reviewer.md`
 - [ ] `.codex/skills/workflow-code-reviewer/SKILL.md`
-- [ ] `.cursor/agents/orchestrator.md` — Protocol 90 parity sentence present, or
-      documented as already covered by protocol pointer (Layer H criterion)
-- [ ] `.claude/agents/orchestrator.md` — same criterion
-- [ ] `.codex/skills/workflow-orchestrator/SKILL.md` — same criterion
+- [ ] `.cursor/agents/orchestrator.md`
+- [ ] `.claude/agents/orchestrator.md`
+- [ ] `.codex/skills/workflow-orchestrator/SKILL.md`
 
 **Expected**: No mirror describes a well-formed `architecture_decision`
 escalation without axis/coverage analysis.
