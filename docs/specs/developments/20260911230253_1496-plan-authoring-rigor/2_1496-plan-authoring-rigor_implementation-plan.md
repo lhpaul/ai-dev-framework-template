@@ -431,7 +431,9 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   repository file. The harness does not assert it; it is verified by smoke
   Scenario 3 and the review gate (H1/H2/H4 matrix rows). This is the explicit
   out-of-scope rationale required below for that row.
-- Exit non-zero on first failure; follow pattern of
+- Run every assertion, accumulating failures (`PASS_COUNT`/`FAIL_COUNT`), print a
+  message naming each failing assertion, and exit non-zero after the last one if
+  any failed — the same behavior as
   `test-protocol-02-portable-parser-guidance.sh` (verified present — see
   Verification Log).
 - Missing canonical file: fail immediately with a message naming the missing
@@ -452,8 +454,10 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   - `.codex/skills/workflow-plan-writer/SKILL.md`
 
 - **Harness assertions must cover every Mirror-surfaces row.** The table above
-  requires implementation to update all seven rows, so the harness asserts all
-  seven. Three had no drift assertion and must gain one — this is exactly the
+  requires implementation to update all seven rows. The harness asserts the six
+  repository-backed rows; the seventh (the live plan-PR `Document Quality Gate`
+  record) is a PR-body input covered by smoke Scenario 3 and the review gate.
+  Three of the six had no drift assertion and must gain one — this is exactly the
   drift the feature exists to prevent:
   - `.codex/skills/workflow-plan-writer/SKILL.md`
   - `docs/workflow/development-workflow/templates/implementation-plan-template.md`
@@ -564,13 +568,13 @@ Not applicable.
 | A — Rules stated for both roles | Canonical file + mirror table + agents |
 | A — Rules apply to every plan, including no-spec / Refactor | Protocol 02 authoring obligations + tech-lead / plan-writer mirrors apply to all Protocol 02 plans; no separate no-spec bypass — Refactor plans still open via Protocol 02 and must carry the per-rule outcome record |
 | A — Exactly one canonical surface; no divergent pass conditions | Canonical file is sole normative text; mirrors point to it; Smoke Scenario 1 + mirror harness presence checks; Scenario 1 desk-check for pass-condition equivalence |
-| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B4 (mandatory B1, B3) |
-| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 (both mandatory) |
-| D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 (mandatory D1) |
-| E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E2 (mandatory E1) |
-| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F2 (mandatory F1) |
-| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (mandatory) |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H3 (mandatory H1, H3) |
+| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B10 (all required) |
+| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 (both required) |
+| D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 (both required) |
+| E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E3 (all required) |
+| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F4 (all required) |
+| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (required) |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H9 (all required) |
 
 **Addition vs spec**: Mirror harness + fixtures + planted-violation proof are
 plan additions for mirror-surface consistency only (Group A agreement), not
