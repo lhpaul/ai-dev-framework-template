@@ -155,23 +155,30 @@
 
 ---
 
+> **Steps 12-14 rule**: the executable `simulate_bounded_paths` result is
+> **mandatory** for each bounded path; a live run is optional and
+> supplementary and never substitutes for it (a live run cannot exercise the
+> recovery, mismatch, or unconfirmed-handoff rows).
+
 ### Step 12: `/run-item` terminal behavior at current head
 
 **Maps to**: AC6, AC9, AC10, AC17, AC20
 
 1. Record the current head SHA (`git rev-parse HEAD`).
-2. Either run `/run-item <N>` in a constrained (or simulated no-handoff) environment
-   on the sample doc-only item, or run
+2. **Mandatory**: run
    `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
    and confirm its `simulate_bounded_paths` branch passes **every** `/run-item`
    scenario marked Y in the plan's scenario table (S1, S3, S5, S7-S10, S10b,
    S11-S19), including unconfirmed initial/onward handoff, profile/fact
    mismatch in both directions, mid-run recovery, and reachable-stage
    credential denial.
-3. Record the declaration block emitted and the terminal outcome (proceeds,
+3. **Optional, supplementary**: run `/run-item <N>` live in a constrained (or
+   simulated no-handoff) environment on the sample doc-only item and record the
+   declaration block emitted and the terminal outcome (proceeds,
    `dispatch_handoff_unavailable`, or `dispatch_profile_declaration_missing`).
+   A live run never replaces step 2.
 
-**Expected result**: Terminal outcome matches the canonical decision-gate row for the declared profile; evidence names the head SHA.
+**Expected result**: The simulation passes every scenario for this path; any live run's terminal outcome matches the canonical decision-gate row for the declared profile; evidence names the head SHA.
 
 ### Step 13: `/run-items` explicit-list terminal behavior at current head
 
@@ -182,18 +189,20 @@
    `./scripts/development-workflow/run-work-router.sh <N1> <N2>`; proceed only
    on `MODE=redirect_items`. (Any other MODE, including `ambiguous`, stops
    before the declaration gate; pick different targets.)
-3. Either run `/run-items <N1> <N2>` in a throwaway clone with the dispatch
-   profile declaration deliberately withheld, or run the
-   `simulate_bounded_paths` branch for **every** `/run-items` scenario marked Y
-   in the plan's scenario table (same set as `/run-item`, with pre-branch stops
-   asserting the single invocation-level affected-item string, including the
-   mixed-form target list, which is simulation-only).
-4. Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
+3. **Mandatory**: run the `simulate_bounded_paths` branch for **every**
+   `/run-items` scenario marked Y in the plan's scenario table (same set as
+   `/run-item`, with pre-branch stops asserting the single invocation-level
+   affected-item string, including the mixed-form target list, which is
+   simulation-only).
+4. **Optional, supplementary**: run `/run-items <N1> <N2>` live in a throwaway
+   clone with the dispatch profile declaration deliberately withheld. A live run
+   never replaces step 3.
+5. In the simulation (and in the live run if performed) confirm exactly **one** `dispatch_profile_declaration_missing` stop is
    reported for the whole invocation with affected item
    `explicit_list_invocation_targets=<N1>,<N2>` (targets exactly as typed, in
    order, no `#` rewriting), before any branch or artifact is created.
 
-**Expected result**: Single invocation-level stop with the ordered target string; no per-target stops; no mutation.
+**Expected result**: The simulation passes every scenario for this path; the single invocation-level stop carries the ordered target string; no per-target stops; no mutation.
 
 ### Step 14: `/run-epic` terminal behavior at current head
 
@@ -202,17 +211,18 @@
 1. Record the current head SHA.
 2. With a real open epic `<E>` (Test Data) and
    `./scripts/development-workflow/run-work-router.sh --epic <E>` returning
-   `MODE=redirect_epic`, run `/run-epic --epic <E>` under a Parent orchestrated
-   declaration (`--items` is internal-only and is not a user-facing option per
-   Protocol 95), or run the `simulate_bounded_paths` branch for **every**
-   `/run-epic` scenario marked Y in the plan's scenario table (S1, S3, S5,
-   S7-S10, S10b, S11-S19).
+   `MODE=redirect_epic`, **mandatory**: run the `simulate_bounded_paths` branch
+   for **every** `/run-epic` scenario marked Y in the plan's scenario table
+   (S1, S3, S5, S7-S10, S10b, S11-S19). **Optional, supplementary**: also run
+   `/run-epic --epic <E>` live under a Parent orchestrated declaration
+   (`--items` is internal-only and is not a user-facing option per Protocol
+   95). A live run never replaces the simulation.
 3. Confirm the epic layer is declared absorbed, stage work is delegated with
    handoff metadata, and an invalid or missing declaration stops with
    `dispatch_profile_declaration_missing` (affected work item per
    `guardrails-enforcement.md` section 4).
 
-**Expected result**: Terminal condition or named stop matches the canonical doc; evidence names the head SHA.
+**Expected result**: The simulation passes every scenario for this path; any live run's terminal condition or named stop matches the canonical doc; evidence names the head SHA.
 
 ---
 
@@ -221,16 +231,15 @@
 - Steps 1-6 and 10-11 must **PASS** (documentation and automated assertions; no
   live Cursor environment required).
 - Steps 12, 13, and 14 must each **PASS** with recorded evidence naming the head
-  SHA under test. For each bounded path (`/run-item`, `/run-items`, `/run-epic`)
-  the evidence is either a live constrained-environment run or the executable
-  `simulate_bounded_paths` result for that path covering **every** scenario
-  the plan's table marks Y for it (a live run alone does not exercise the
-  recovery, mismatch, and unconfirmed-handoff rows, so those always require the
-  simulation). **NOT RUN is not acceptable**
-  for these three steps: if live Remote Control is unavailable, the executable
-  simulation is mandatory, not optional.
+  SHA under test. The executable `simulate_bounded_paths` result covering
+  **every** scenario the plan's table marks Y for that path (`/run-item`,
+  `/run-items`, `/run-epic`) is **mandatory** for each step. A live
+  constrained-environment run is **optional and supplementary**: it cannot
+  exercise the recovery, mismatch, and unconfirmed-handoff rows, so it never
+  substitutes for the simulation. **NOT RUN is not acceptable** for these three
+  steps, and a step with only a live run and no simulation result is a FAIL.
 - Manual live steps 7-9 (Desktop, Remote Control, inline fallback) may be
-  documented **NOT RUN** with a reason, provided Steps 12-14 passed via
-  simulation at the same head SHA.
+  documented **NOT RUN** with a reason, provided Steps 12-14 passed via the
+  mandatory simulation at the same head SHA.
 - Evidence recorded against an older head than the one being merged is stale and
   must be re-run.

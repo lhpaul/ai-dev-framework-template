@@ -106,8 +106,17 @@ exists yet.
     double-encoded): `%` becomes `%25`, `,` becomes `%2C`, and any ASCII
     whitespace or control character inside a target becomes `%XX` (uppercase
     hex of the UTF-8 byte). All other bytes are emitted unchanged.
-  - Duplicates are preserved; the value is always one line; at least two
+  - Duplicates are preserved and order is preserved; the value is always one
+    line (an interior newline or CR is encoded, never emitted); at least two
     targets are present (the `/run-items` minimum).
+  - Encoding is **not idempotent by design**: a target that already contains
+    `%25` or `%2C` text is encoded again (`%` becomes `%25`), so decoding once
+    always returns the original bytes; the `%`-first ordering is what
+    guarantees this.
+  - A single target and an empty target are **unreachable** at this gate (the
+    router stops at `MODE=redirect_item` or `MODE=ambiguous` before any
+    declaration gate), so the serialization is undefined for them; the
+    canonical doc says so and never renders a one-target or empty form.
   - Example: invoked as `/run-items #1462 ENG-123 feature/x,y 1771` yields
     `explicit_list_invocation_targets=#1462,ENG-123,feature/x%2Cy,1771`.
 - Report **once** for the whole invocation; do not emit one stop per target.
@@ -845,6 +854,52 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) | `class-guardrails-exempt-clauses` | pass (absent `-` clauses are not required) |
 | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction | `class-guardrails-missing-e4b` | fail naming E4b |
 | Surface-class table | `agent-model-config.md` fixture missing one environment row | `class-model-config-missing-row` | fail |
+| Serialization rule | `%` alone in a target (`50%`) encoded `50%25` | `ser-percent-alone` | pass |
+| Serialization rule | Pre-existing `%25` in a target encoded to `%2525` (no double-encode skip) | `ser-percent-preexisting` | pass |
+| Serialization rule | Target that already looks like `%2C` encoded `%252C` (comma-lookalike) | `ser-looks-like-2c` | pass |
+| Serialization rule | Encoding order wrong (`,` then `%`, yielding `%252C` for a comma) | `ser-order-comma-double-encoded` | fail (percent-first) |
+| Serialization rule | Interior tab encoded `%09`; interior space `%20` | `ser-interior-whitespace` | pass |
+| Serialization rule | Interior newline `%0A` and CR `%0D`; output stays on one line | `ser-newline-cr-one-line` | pass |
+| Serialization rule | Other control character (`0x1F`, `0x7F`) encoded `%1F`, `%7F`, uppercase hex | `ser-control-chars` | pass |
+| Serialization rule | Lowercase hex (`%2c`) in the example | `ser-lowercase-hex` | fail (uppercase required) |
+| Serialization rule | Non-ASCII UTF-8 byte sequence emitted unchanged | `ser-non-ascii-unchanged` | pass |
+| Serialization rule | Leading and trailing whitespace trimmed, interior kept and encoded | `ser-edge-trim-only` | pass |
+| Serialization rule | Interior whitespace trimmed away (over-trim) | `ser-interior-trimmed` | fail |
+| Serialization rule | Edge whitespace encoded instead of trimmed | `ser-edge-encoded` | fail |
+| Serialization rule | Duplicate targets preserved (`1462,1462`) | `ser-duplicates-preserved` | pass |
+| Serialization rule | Duplicates collapsed | `ser-duplicates-collapsed` | fail |
+| Serialization rule | Invocation order preserved (`b,a`) | `ser-order-preserved` | pass |
+| Serialization rule | Targets sorted | `ser-order-sorted` | fail |
+| Serialization rule | Delimiter with a space (`a, b`) | `ser-delimiter-space` | fail |
+| Serialization rule | Single-target form rendered in the doc | `ser-single-target-rendered` | fail (unreachable at the gate) |
+| Serialization rule | Empty target rendered (`a,,b`) | `ser-empty-target-rendered` | fail (unreachable at the gate) |
+| Serialization rule | Doc states single and empty targets are unreachable | `ser-unreachable-stated` | pass |
+| Serialization rule | Case changed (`eng-123`) or `/` in branch name rewritten | `ser-case-slash-rewritten` | fail (verbatim) |
+| Clause completeness | All E1-E5 clauses present on a command mirror | `clause-all-present` | pass |
+| Clause completeness | One fixture per clause with exactly that clause missing: `clause-missing-e1`, `-e2a`, `-e2b`, `-e3a`, `-e3b`, `-e3c`, `-e3d`, `-e4a`, `-e4b`, `-e4c`, `-e5` (11 fixtures) | `clause-missing-<id>` | fail naming that clause only |
+| Scanner rule R1 | UTF-8 file with a BOM and with multibyte characters around the token | `r1-utf8-bom-multibyte` | pass |
+| Scanner rule R1 | File that is not valid UTF-8 | `r1-invalid-utf8` | fail (unreadable surface named) |
+| Scanner rule R3 | Tabs and repeated spaces inside a required phrase | `r3-whitespace-collapse` | pass |
+| Scanner rule R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) | `r4-prefix-identifier` | fail |
+| Scanner rule R2c | Clause in a list item; in a heading; in link text | `construct-list-heading-linktext` | pass |
+| Scanner rule R2c | Token in inline HTML tag text (`<em>...</em>`) | `construct-inline-html-text` | pass |
+| Scanner rule R2c | Token only in an autolink or a `<code>` HTML block | `construct-autolink-code-block` | fail |
+| Scanner rule R2c | HTML entity for an underscore in a stop name (entities not decoded) | `construct-entity-not-decoded` | fail |
+| Simulation | Scenario marked N/A for a path (for example S2 on `/run-item`) must not be asserted for it | `sim-path-applicability` | pass; asserting it fails |
+
+**Coverage completeness map.** Every enumerated contract list has a fixture or
+proof; the self-test also asserts that every fixture ID in this table exists on
+disk and vice versa.
+
+| Enumerated list | Covered by |
+| --- | --- |
+| Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` fixtures plus proof cycles 3-11 and 12-14 |
+| Serialization rules (trim, verbatim, delimiter, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, duplicates, order, one line, single/empty unreachable) | `ser-*` and `serialization-*` fixtures |
+| Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*` fixtures |
+| Scenarios S1-S19, S10b | proof cycle 16 (one mutation per scenario), `sim-*` fixtures |
+| Surface classes | `class-*` fixtures and proof cycles 12-14 |
+| CI wiring header | proof cycle 17 |
+
 
 Fixture-only self-tests are the regression net for the scanner itself; if a
 fixture is removed the self-test count assertion (expected N fixtures) fails.
@@ -871,8 +926,9 @@ fixture is removed the self-test count assertion (expected N fixtures) fails.
    assumption (AC15).
 5. Smoke runbook walks Native handoff desktop, Parent orchestrated Remote
    Control, Inline fallback, and read-only scan paths (AC6, AC17), and Steps
-   12-14 require current-head evidence (live run or `simulate_bounded_paths`)
-   for `/run-item`, `/run-items`, and `/run-epic` (AC9, AC10, AC14, AC17).
+   12-14 require current-head evidence: the `simulate_bounded_paths` result is
+   **mandatory** for `/run-item`, `/run-items`, and `/run-epic` (AC9, AC10,
+   AC14, AC17), and a live run is optional and supplementary only.
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
    `SUBAGENT_PERMISSION_DENIAL` is worded as observably similar only (Work Item
@@ -1050,8 +1106,9 @@ Not applicable — no runtime data.
    (`--print-map`, per-surface `--changed-files` planted check,
    `--report-gaps`, `test-select-test-suites.sh`), then run the surface guard, run
    the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
-   10-14 must PASS at the implementation head (Steps 12-14 via live run or
-   `simulate_bounded_paths`); only live Steps 7-9 may be documented NOT RUN,
+   10-14 must PASS at the implementation head (Steps 12-14 require the
+   mandatory `simulate_bounded_paths` result; a live run is optional and
+   supplementary); only live Steps 7-9 may be documented NOT RUN,
    per the runbook's Pass criteria.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
