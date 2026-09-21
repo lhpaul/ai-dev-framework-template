@@ -48,7 +48,10 @@ uses an explicit, temporary stacked base:
 
 1. Push the implementation PR's branch so its remote head carries the unmerged
    changes.
-2. Run Protocol 02 for a scratch work item, supplying the pushed implementation
+2. Run Protocol 02 for a scratch **Refactor work item with no spec** (mandatory
+   — this is the only exercise of the no-spec path, spec line 468), then repeat
+   once for a scratch item that has a spec if the spec path is also to be
+   shown. Supply the pushed implementation
    branch as the **artifact base** (never `develop`). Protocol 02 itself checks
    out that base at its remote head and creates its own `implementation-plan/*`
    branch and draft PR — do not create a branch by hand. Use a fixture from
@@ -185,7 +188,7 @@ is unmet. **H** = mirror-harness assertion; **S** = smoke scenario.
 | 465 | A — exactly one canonical surface | S1 + H (canonical path referenced from every mirror) |
 | 466 | A — checks need only plan, repo, record, search | S4 (reviewer applies backstop with those inputs only) |
 | 467 | A — no language/framework/path in rule text | S1 (read rule text for stack or path names) |
-| 468 | A — applies to no-spec and Refactor plans | S2 (Refactor/no-spec plan carries the record) |
+| 468 | A — applies to no-spec and Refactor plans | S3 on the mandatory Refactor/no-spec scratch plan from the test setup (the outcome record is present) |
 | 472 | B — no record fails | B1, B12 |
 | 473 | B — record completeness | B2 + H10 |
 | 474 | B — short-retention locator | B5 |

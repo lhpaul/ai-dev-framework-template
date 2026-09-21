@@ -187,12 +187,12 @@ Not applicable.
          subsections (Gate inputs, Triggers, Allowed outcomes and required next
          actions, Mirror surfaces, Examples) unchanged in substance.
       5. **Referenced material** — the Business Rules text cross-references
-         spec `Group A`, `Group H`, and `Out of Scope` (spec lines 236, 262,
-         285, 287). Copy those referenced sections verbatim into this part as an
+         spec `Group A`, `Group H`, `Out of Scope`, and `Use Case 7` (spec lines
+         236, 241, 262, 285, 287). Copy those referenced sections verbatim into this part as an
          appendix so every reference in the copied rules resolves inside the
          canonical file; `verbatim` then holds without dangling targets. Any
          further cross-reference found by
-         `grep -nE 'Group [A-H]|Out of Scope|Acceptance' <canonical file>` must
+         `grep -nE 'Group [A-H]|Out of Scope|Use Case [0-9]+|Acceptance' <canonical file>` must
          resolve inside the file the same way before implementation is done.
       6. Cross-link to spec dev folder for historical context only.
 
