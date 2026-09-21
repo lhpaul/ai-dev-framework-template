@@ -421,7 +421,9 @@ created during implementation).
 
 Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
 
-- Assert canonical file exists and contains headings `Rule 1` through `Rule 6`.
+- Assert canonical file exists and contains headings `Rule 1` through `Rule 6`
+  and all three outcome labels (`Satisfied`, `Not applicable`, `Unsatisfied`),
+  case-sensitively.
 - Assert `REVIEW.md` references `plan-authoring-rigor-rules.md`, all six
   rule names, and all three outcome labels (`Satisfied`, `Not applicable`,
   `Unsatisfied`).
@@ -483,7 +485,7 @@ mirror test is considered done. Run it **once per distinct assertion** in the
 harness, not once overall, each with `PLAN_RIGOR_ROOT` pointing at the mutated
 temp tree. Distinct assertions: canonical file present; each of
 `Rule 1`–`Rule 6` headings; `REVIEW.md` canonical-path reference; `REVIEW.md`
-rule names; `REVIEW.md` three outcome labels; Protocol 02 canonical-path
+rule names; canonical file three outcome labels; `REVIEW.md` three outcome labels; Protocol 02 canonical-path
 reference; Protocol 02 outcome-record heading; Protocol 02 three outcome labels;
 each mirror surface's canonical reference (tech-lead and reviewer agents for
 Claude and Cursor, the Codex plan-writer skill, the plan template, Protocol 02
