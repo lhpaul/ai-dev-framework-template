@@ -388,7 +388,7 @@ The index below groups the IDs by acceptance group:
 | E | E1, E2, E3 |
 | F | F1–F6 |
 | G | G1–G4 |
-| H | H1–H16 |
+| H | H1–H17 |
 
 **Regression suite**: Not applicable as a deliberate testing-scope decision —
 this feature changes only workflow docs, agent files, and a shell harness. The
@@ -563,7 +563,7 @@ Not applicable.
 10. Execute the runbook's stacked test-branch setup (see the smoke runbook), then
     record its cleanup.
 11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B12, C1–C4,
-    D1–D3, E1–E3, F1–F6, G1–G4, H1–H16) named in Testing Strategy.
+    D1–D3, E1–E3, F1–F6, G1–G4, H1–H17) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
@@ -587,8 +587,8 @@ Not applicable.
 | D — Rule 3 | Template + Verification Log guidance + smoke D1–D3 (all required) |
 | E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E3 (all required) |
 | F — Rule 5 | Template consumer enumeration guidance + smoke F1–F6 (all required) |
-| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (required) |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H16 (all required) |
+| G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1–G4 (all required) |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H17 (all required) |
 
 **Addition vs spec**: Mirror harness + fixtures + planted-violation proof are
 plan additions for mirror-surface consistency only (Group A agreement), not

@@ -46,16 +46,19 @@ and `REVIEW.md` changes under test. Protocol 02 normally branches plans from the
 resolved artifact base (`develop`), which lacks those changes, so this runbook
 uses an explicit, temporary stacked base:
 
-1. From the implementation PR's branch, create `test/1496-smoke-plan` and add a
-   scratch plan under `docs/specs/developments/smoke-1496-scratch/` (use a
-   fixture from `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/`
-   as the plan body).
-2. Open the draft plan PR with **base = the implementation branch** (never
-   `develop`), and run Protocol 02 with that base supplied as the artifact base.
+1. Push the implementation PR's branch so its remote head carries the unmerged
+   changes.
+2. Run Protocol 02 for a scratch work item, supplying the pushed implementation
+   branch as the **artifact base** (never `develop`). Protocol 02 itself checks
+   out that base at its remote head and creates its own `implementation-plan/*`
+   branch and draft PR — do not create a branch by hand. Use a fixture from
+   `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` as the
+   scratch plan content when Protocol 02 asks for it.
 3. Run Scenarios 3–7 against that PR.
-4. Cleanup (required, recorded in the implementation PR): close the test PR
-   unmerged, delete `test/1496-smoke-plan` locally and on the remote, and confirm
-   the implementation PR's diff is unchanged.
+4. Cleanup (required, recorded in the implementation PR): close the scratch PR
+   unmerged, delete the `implementation-plan/*` branch Protocol 02 created,
+   locally and on the remote, and confirm the implementation PR's diff is
+   unchanged.
 
 ## Scenario 3: Per-rule outcome record on a plan PR
 
@@ -158,13 +161,14 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H10 | Incomplete evidence record | Rule 3/4/5 evidence record missing its revision, command, or result | Blocking — record incomplete |
 | H11 | Non-reproducing or population-changed evidence | Recorded command does not reproduce at its recorded revision, or later plan text changes the population the evidence describes | Blocking — evidence does not support the claim |
 | H12 | Repository-only drift | Repository changed after gathering but no claim the plan makes is affected | Non-outcome — no finding; record unchanged |
-| H13 | Evidence only in PR comments | Evidence lives in a PR comment, not in the plan or PR description record | Blocking — evidence not in the durable record |
+| H13 | Evidence only in PR comments | Firing rule's evidence exists only in a PR comment or chat transcript | Blocking — evidence must be moved into the plan document |
+| H17 | Evidence only in the PR description | Firing rule's evidence exists only in the PR description, not in the plan document | Blocking — evidence must be moved into the plan document |
 | H14 | Not applicable, no rationale | Rule recorded `Not applicable` with an empty rationale | Blocking — treated as Unsatisfied |
 | H15 | Single rule with no recorded outcome | Table present but one rule has no row | Blocking — that rule treated as Unsatisfied |
 | H16 | Blocking outcomes enumerated with clearing action | Read the canonical gate section for every outcome that holds a plan back | Each outcome states whether it blocks and the action that clears it |
 
 Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix below plus the Scenarios, the mirror harness, and the mapping table in the next section together exercise every acceptance criterion. Every matrix row is **required** (executed and recorded in the implementation PR). The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
-every matrix row above (B1–B12, C1–C4, D1–D3, E1–E3, F1–F6, G1–G4, H1–H16), as
+every matrix row above (B1–B12, C1–C4, D1–D3, E1–E3, F1–F6, G1–G4, H1–H17), as
 the implementation plan Testing Strategy requires, including at least one
 blocking and one non-blocking outcome on real or fixture plan text.
 
@@ -224,5 +228,5 @@ is unmet. **H** = mirror-harness assertion; **S** = smoke scenario.
 | 529 | H — first-inspection finding carried | H9 |
 | 530 | H — outcomes re-determined every round | H5, H11, H12 |
 | 531 | H — blocking outcomes enumerated with clearing action | H16 |
-| 532 | H — evidence in the plan document | H13 |
+| 532 | H — evidence in the plan document | H13, H17 |
 | 533 | H — findings name the rule and what failed | S4 (every Blocking row's finding names its rule and defect) |
