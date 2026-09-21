@@ -26,6 +26,7 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `stop-path-no-mutation`, `reclassify-then-route`, `framework-post-backlog-statuses-pass`,
 `scan-misclassified-item-held`, `scan-misclassified-not-informational`,
 `scan-uses-tracker-status-not-artifacts`, `scan-status-unreadable-defers`,
+`framework-lookup-unavailable-causes`, `framework-lookup-ignores-type-field`,
 `consumer-prelude-workflow-unchanged`, `consumer-next-action-workflow-unchanged`,
 `consumer-batch-plan-workflow-unchanged`, `consumer-routing-all-classes-unchanged`,
 `release-unavailable-continues-unsatisfied`, and `retro-unavailable-continues-unsatisfied`
@@ -100,7 +101,20 @@ point 2 and Reversal (2).)
    test checkout **or** use the harness fixture for unavailable mode.
 
 **Expected (framework mode)**: `STATUS=unavailable`, non-empty `REASON` — not silent "no
-framework items". Exit `0`.
+framework items". Exit `0`. The detectable causes are a closed list (see plan): unsupported
+provider, missing or non-numeric project number, unresolvable owner/repo, failing
+`gh issue list`, failing `gh project item-list`, and an unparseable item list
+(`framework-lookup-unavailable-causes`).
+
+2b. Type field independence (`framework-lookup-ignores-type-field`). Point the lookup at a
+board whose Type field is renamed, misconfigured, or absent — or use the harness fixture.
+
+**Expected (framework mode)**: `STATUS=ok` with the board's open items (or `empty` on an empty
+board) — **not** `unavailable`. Framework mode returns every open non-terminal item regardless
+of Type, so it never reads the classification field and that field's readability cannot change
+the answer. **Fail if** the lookup reports `unavailable` here: that would mean a Type read was
+added, contradicting the criteria and the decision matrix. (Consumer mode is unchanged and
+keeps today's behavior, including its existing "Type field unreadable" stderr warning.)
 
 3. Flow-level unavailable (required — harness or manual protocol walkthrough):
 

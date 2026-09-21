@@ -68,7 +68,7 @@ scope and must not be bundled into this implementation PR.
 | Tracker Type failure modes | `get_tracker_type_for_issue` in `workflow-lib.sh:2293`–`:2325` | Empty string for non-`github_projects` providers, missing project config, or missing item; **non-zero** only when item JSON exists but Type cannot be parsed — verified 2026-09-20 |
 | Authoritative status + Type on the single-item path | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type); consumed via `run-bounded-prelude.sh:461`–`:480` scope JSON | Both values are already resolved per item and carried in the scope JSON, so the single-item gate needs no additional tracker call; `:687` hard-fails on an unparseable Type before the gate is reached — verified 2026-09-20 |
 | Linear deferred scope placeholder | `run-item-scope-resolver.sh:375`, `:396`–`:397` | Emits `trackerReadDeferred: true` with a literal `status: "Backlog"` and `type: ""`; the gate must key off `trackerReadDeferred`, not the placeholder — verified 2026-09-20 |
-| Status and Type share one project read | `workflow_github_project_item_for_issue` (`workflow-lib.sh:1781`); its GraphQL selection includes both `status` and `type` | One item JSON carries both fields, but the two helpers call it separately — hence the gate's optional `--type` to avoid a second round-trip per scanned folder — verified 2026-09-20 |
+| Cost of reading Status and Type | `workflow_github_project_item_for_issue` (`workflow-lib.sh:1781`) selects both fields, but `get_tracker_status_for_issue` (`:2250`) and `get_tracker_type_for_issue` (`:2293`) call it separately; caches exist only for the project id (`:1641`–`:1643`), field metadata (`:1644`–`:1648`), and named fields (`:1651`–`:1652`) | **No item-level cache**, so two reads of the same item are two GraphQL requests. The scan path therefore costs one extra request per scanned non-terminal folder in framework mode; no "single read" guarantee is claimed — verified 2026-09-20 |
 | Status reconciliation primitive | `workflow_status_order` in `workflow-lib.sh:1610` | `Backlog` → `0`, recognized statuses `Writing Spec`…`Released` → `> 0`, unrecognized → `-1` — verified 2026-09-20 |
 | Stop-emission precedent | `emit_guardrails_unreadable_stop` in `run-bounded-prelude.sh:47` | Existing `stopCondition` / `affectedWorkItem` / `humanActionRequired` / `readOnlyGuarantee` shape to reuse — verified 2026-09-20 |
 | Backlog items without a development folder | `workflow-batch-plan.sh` scan input; `workflow-batch-lanes.sh --scan` usage (`:12`) | Both take development folder paths, so folderless Backlog items are held by Protocol `90` text, not by these scripts — verified 2026-09-20 |
@@ -177,6 +177,30 @@ scope and must not be bundled into this implementation PR.
     lookup completed and the board has none; `unavailable` when the lookup could not be
     performed (non-empty `REASON`, preserve stderr detail). Never emit `empty` for a failed
     read.
+  - **Detectable `unavailable` causes — a closed list.** The framework-mode lookup reads the
+    same surfaces the primitive reads, so it can detect exactly the failures that are already
+    distinct early returns in `list_open_workflow_type_issues` (`workflow-lib.sh:3273`–`:3361`),
+    each mapping to its own `REASON`:
+    1. the configured provider is not `github_projects` — the tracker does not support this
+       lookup (`:3273`);
+    2. project number missing (`:3280`) or non-numeric (`:3286`);
+    3. project owner unresolvable (`:3297`), or repo owner/name unresolvable (`:3305`);
+    4. `gh issue list` failed (`:3312`);
+    5. `gh project item-list` failed (`:3322`);
+    6. the item-list JSON could not be parsed (`:3361`).
+    Where the primitive warns and returns `[]`, the framework-mode wrapper returns
+    `STATUS=unavailable` with the corresponding `REASON` — that substitution *is* this item's
+    change, and it is why the wrapper cannot simply delegate in framework mode.
+  - **There is no Type-unreadable case in framework mode.** The framework-mode lookup returns
+    every open non-terminal item *regardless of Type*, so it never reads the classification
+    field and that field's readability cannot change its result. The spec lists an unreadable
+    classification field among the things that may make a lookup unperformable; in framework
+    mode that particular cause cannot arise, because the field is never consulted. A
+    misconfigured or renamed Type field therefore does **not** produce `unavailable` here, and
+    no fixture or `REASON` string is defined for it. (The primitive's existing
+    "Cannot distinguish 'no open Workflow items' from 'Type field unreadable'" warning at
+    `:3373` stays exactly where it is, serving consumer mode, unchanged — consumer mode reports
+    `STATUS=ok` in every case by contract, so it gains no new reporting from this feature.)
   - **Normative location of the mode branch — the wrapper, not the lib primitive.**
     `list_open_workflow_type_issues` keeps **Workflow-only filtering in both modes** and is
     not changed by this item. The framework-vs-consumer branch lives **entirely** in
@@ -210,7 +234,16 @@ scope and must not be bundled into this implementation PR.
      already-filed items — on the strength of an unavailable lookup.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-lib-github-projects.sh` (or
   add `tests/test-framework-mode-type-routing.sh`) with mocked `gh` fixtures for framework
-  vs consumer filter differences and framework-mode unavailable vs empty-board cases.
+  vs consumer filter differences, a framework-mode empty-board case, and **one fixture per
+  detectable `unavailable` cause** from the closed list above — at minimum a failing
+  `gh project item-list`, a failing `gh issue list`, an unparseable item list, and a missing
+  project number, each asserting `STATUS=unavailable` with its own non-empty `REASON` and
+  `JSON=[]`. Do **not** add a Type-unreadable fixture for framework mode: the framework-mode
+  lookup does not read Type, so such a fixture could only pass by asserting behavior the
+  implementation does not have. A fixture whose board carries a renamed Type field must assert
+  the opposite — `STATUS=ok` (or `empty`) with the board's open items — proving the
+  framework-mode result is independent of the classification field. The existing consumer-mode
+  Type-key assertions in `test-workflow-lib-github-projects.sh` stay unchanged.
 - [ ] Add **flow-level** named scenarios (protocol text + harness or smoke assertions) that
   fail if unmet:
   - `release-unavailable-continues-unsatisfied` (protocol `05`): fixture forces
@@ -224,8 +257,11 @@ scope and must not be bundled into this implementation PR.
 
 - [ ] Add `scripts/development-workflow/framework-mode-backlog-type-gate.sh` (**pinned name** —
   smoke and tests call this path; do not rename)
-  that accepts `--issue`, `--status`, `--caller {single|scan}`, optional `--repo-root`, reads
-  Type via `get_tracker_type_for_issue`, and prints stable key=value output.
+  that accepts `--issue`, `--status`, `--caller {single|scan}`, optional `--repo-root`, and
+  optional `--type`; reads Type via `get_tracker_type_for_issue` when `--type` is not supplied;
+  and prints stable key=value output. `--type` is an accepted value, not a saving mechanism:
+  it avoids a tracker read only for a caller that already holds the Type (the single-item path,
+  which takes it from the scope JSON), and the scan path does not — see "Tracker-read cost".
 
   **Single status contract (one rule, stated once, used everywhere).** The gate fires on
   **exactly one** condition: framework mode **and** reconciled status `Backlog` **and** Type
@@ -277,7 +313,7 @@ scope and must not be bundled into this implementation PR.
 
   | Path | Who reads the authoritative status/Type | How it reaches the gate | What the gate call looks like |
   | --- | --- | --- | --- |
-  | Portfolio scan | `workflow-batch-plan.sh:542` (`get_tracker_status_for_issue`), plus a Type read the gate performs or the caller passes | In-process shell variables `$issue_number` / `$tracker_status`; no new env var, no file | `framework-mode-backlog-type-gate.sh --issue "$issue_number" --status "$tracker_status" [--type "$tracker_type"] --caller scan --repo-root "$repo_root"`, inserted **after** the terminal-status skip (`:557`) and **before** the next-action invocation (`:569`) |
+  | Portfolio scan | `workflow-batch-plan.sh:542` (`get_tracker_status_for_issue`) for the status; the gate performs its own `get_tracker_type_for_issue` read, because batch-plan retains no Type value to pass | In-process shell variables `$issue_number` / `$tracker_status`; no new env var, no file | `framework-mode-backlog-type-gate.sh --issue "$issue_number" --status "$tracker_status" --caller scan --repo-root "$repo_root"`, inserted **after** the terminal-status skip (`:557`) and **before** the next-action invocation (`:569`). Costs one extra GraphQL request per scanned non-terminal folder — see "Tracker-read cost" below |
   | Single-item run | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type), already called for every item by `run-item-scope-resolver.sh` | The resolved scope JSON that `run-bounded-prelude.sh` writes to `$scope_file` (`:461`–`:480`), whose per-item objects already carry `status` and `type` | Same script with `--caller single`, reading `--status` / `--type` out of `$scope_file` — **no extra tracker API call** |
 
   - **Scan hold is emitted by `workflow-batch-plan.sh`, not by `workflow-next-action.sh`.** On
@@ -315,12 +351,23 @@ scope and must not be bundled into this implementation PR.
     `trackerReadDeferred` first and skip the gate (recording `deferred`) rather than reading
     that placeholder as an authoritative Backlog; the empty `type` would pass anyway, but the
     check must not depend on that coincidence.
-  - **One project read, not two.** Status and Type come from the same project item JSON
-    (`workflow_github_project_item_for_issue` selects both `status` and `type`), yet
-    `get_tracker_status_for_issue` and `get_tracker_type_for_issue` each call it separately.
-    The gate therefore accepts an optional `--type` so a caller that already holds the value
-    passes it instead of forcing a second GraphQL round-trip per scanned folder — this
-    repository has repeatedly hit tracker rate limits during batch scans.
+  - **Tracker-read cost, stated accurately.** On the **scan** path this gate adds **one extra
+    GraphQL request per scanned non-terminal folder in framework mode**. Status and Type do
+    live in the same project item JSON (`workflow_github_project_item_for_issue` selects both),
+    but `get_tracker_status_for_issue` and `get_tracker_type_for_issue` each call it
+    separately, and there is **no item-level cache** — `workflow-lib.sh` caches only the
+    project id (`:1641`–`:1643`), the Status/Type field metadata (`:1644`–`:1648`), and named
+    field lookups (`:1651`–`:1652`). Nothing in this plan changes that, so the second read is
+    real and must be budgeted rather than claimed away. The optional `--type` argument helps
+    only where the caller **already holds** the value — the single-item path, which reads it
+    from the scope JSON — and it does not prevent a second request on the scan path, where
+    batch-plan retains only the status string. Reducing the scan to a single read would mean
+    calling `workflow_github_project_item_for_issue` directly and parsing both fields, which
+    bypasses the two public helpers and their failure semantics; that is a separate
+    optimization, deliberately **not** part of this item. Given this repository's history of
+    tracker rate limits during batch scans, the mitigation that actually applies here is
+    placement, not caching: the gate is invoked only in framework mode, only after the
+    terminal-status skip, and never for folders the scan already discarded.
   - **Single-item stop**: on `RESULT=stop`, `run-bounded-prelude.sh` emits stop output that
     maps to `missing_tracker_context`, naming the item, and aborts before stage dispatch
     (Protocol `91`). Note `run-epic-scope-resolver.sh:687` already hard-fails when the Type
@@ -582,7 +629,8 @@ Consistency Matrix one-for-one; where the spec says "Unchanged from today", this
 | --- | --- | --- | --- |
 | Framework | Completed; at least one open item on the board | `STATUS=ok`, `REASON=` (empty), `JSON=[…]` — every open non-terminal item, whatever its Type | Review the list as today |
 | Framework | Completed; board has no open items | `STATUS=empty`, `REASON=` (empty), `JSON=[]` | Legitimate empty answer; the flow continues and may record the review as performed against an empty board |
-| Framework | Could not be performed (tracker unreachable, board or Type field unreadable, tracker does not support the lookup) | `STATUS=unavailable`, `REASON=<non-empty text>`, `JSON=[]` | **Continue** the flow; state in its own output that the lookup was not performed and why; do **not** record the open-script-bug review or the finding de-duplication as satisfied (`release-unavailable-continues-unsatisfied`, `retro-unavailable-continues-unsatisfied`) |
+| Framework | Could not be performed — one of the six detectable causes: provider does not support the lookup, project number missing or non-numeric, owner/repo unresolvable, `gh issue list` failed, `gh project item-list` failed, or the item list could not be parsed | `STATUS=unavailable`, `REASON=<non-empty text>`, `JSON=[]` | **Continue** the flow; state in its own output that the lookup was not performed and why; do **not** record the open-script-bug review or the finding de-duplication as satisfied (`release-unavailable-continues-unsatisfied`, `retro-unavailable-continues-unsatisfied`) |
+| Framework | Classification field renamed, misconfigured, or otherwise unreadable | **Not an outcome of this gate.** The framework-mode lookup never reads Type, so the field's readability cannot affect its result: the answer is `ok` or `empty` on the board's open items exactly as if the field were fine | None — no `REASON`, no fixture, and no detection mechanism is defined for this case in framework mode |
 | Consumer | Completed | `STATUS=ok`, `REASON=` (empty), `JSON=` Workflow-filtered items | Unchanged |
 | Consumer | Could not be performed | `STATUS=ok`, `REASON=` (empty), `JSON=[]` plus today's stderr warning — unchanged; consumer mode never emits `empty` or `unavailable` | Unchanged — out of scope for this feature (spec: consumer failure behavior is not touched) |
 | Any | Wrapper usage error (bad arguments) | Non-zero exit; not a lookup outcome | Fix the call site. Lookup outcomes always exit `0` so `set -e` callers can branch on `STATUS` |
@@ -637,6 +685,13 @@ Workflow item that continues.
    exact literals, no glob) and distinguishes unavailable vs empty vs populated; exit codes
    match the contract (`0` for all three statuses). Consumer mode also emits all three keys
    (`REASON` may be empty).
+6b. **`framework-lookup-unavailable-causes`**: one fixture per detectable cause (failing
+    `gh project item-list`, failing `gh issue list`, unparseable item list, missing project
+    number) yields `STATUS=unavailable` with its own non-empty `REASON`.
+6c. **`framework-lookup-ignores-type-field`**: with the board's Type field renamed or absent,
+    the framework-mode lookup still returns the open items (`STATUS=ok`, or `empty` on an
+    empty board) — **not** `unavailable`. This is the fixture that keeps the criteria, the
+    matrix, and the implementation agreeing that framework mode never reads Type.
 7. **`release-unavailable-continues-unsatisfied`** / **`retro-unavailable-continues-unsatisfied`**:
    unavailable lookup does not stop protocol `05` / `06` and is not recorded as satisfied.
 8. Gate: Backlog + Workflow stops the single runner, and the stop text names the item; the
@@ -691,7 +746,9 @@ markdown lint on plan/spec/runbook/protocol edits.
    `list_open_workflow_type_issues` is **not** touched.
 3. Create `scripts/development-workflow/list_open_framework_items.sh` with the full
    `FRAMEWORK_ITEMS_LOOKUP_STATUS` / `FRAMEWORK_ITEMS_LOOKUP_REASON` / `FRAMEWORK_ITEMS_JSON`
-   contract — the wrapper must exist before anything emits or consumes those keys.
+   contract — the wrapper must exist before anything emits or consumes those keys. Its
+   framework-mode branch maps each of the six detectable read failures to its own `REASON`
+   and reads no Type field.
 4. Repoint protocols `05` / `06` snippets at the wrapper and give each its framework-mode
    `unavailable` handling (continue, report, do not mark satisfied).
 5. Add `framework-mode-backlog-type-gate.sh` and wire it into the two paths that hold the
@@ -720,6 +777,8 @@ markdown lint on plan/spec/runbook/protocol edits.
 | Unreadable tracker status read as clean | The status read returns empty with exit `0` for four different failure modes, so silence is indistinguishable from success. The gate passes (no fail-closed), but the block carries `MISCLASSIFIED_TYPE_CHECK=deferred` with its reason, and `scan-status-unreadable-defers` asserts both the absence of a false hold and the presence of the deferred marker |
 | Runbooks assert the pre-feature classification | `docs/testing/workflow/retrospective-protocol.smoke-test.md` and `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` are closed-list rows 13–14 with single-match grep anchors, so the guidance check fails while either still directs a framework-mode operator to Type `Workflow` |
 | Gate over-reach beyond the spec | Only framework mode + reconciled `Backlog` + Type `Workflow` stops or holds; absent/unreadable Type and unreconcilable status `pass`, matching the spec's "Unchanged from today" rows. Any new fail-closed case requires a new spec AC first |
+| Extra tracker read on every scanned folder | Accepted and budgeted, not claimed away: no item-level cache exists, so the scan's Type read is a second GraphQL request. Contained by placement — framework mode only, after the terminal-status skip, never for discarded folders. A single-read refactor of the two lib helpers is explicitly out of scope for this item |
+| Lookup claims an unavailability it cannot detect | The framework-mode `unavailable` causes are a closed list of six real read failures, each with a fixture; the classification field is not among them because framework mode never reads Type, and `framework-lookup-ignores-type-field` asserts a renamed Type field still yields `ok`/`empty` |
 
 ---
 
@@ -844,6 +903,8 @@ final edit pass):
 | Scan action name | `hold-misclassified-type`, emitted by `workflow-batch-plan.sh` (keys `MISCLASSIFIED_TYPE`, `MISCLASSIFIED_TYPE_REASON`, `MISCLASSIFIED_TYPE_CHECK`) |
 | Authoritative status source | `get_tracker_status_for_issue` — via `workflow-batch-plan.sh:542` for the scan, via the resolved scope JSON for a single-item run; never `workflow-next-action.sh`'s artifact-derived status |
 | `workflow-next-action.sh` | Not modified by this item, on any path |
+| Scan tracker-read cost | Two reads (status, then Type) = two GraphQL requests; no single-read guarantee, and `--type` saves a read only for the single-item path |
+| Framework-mode `unavailable` causes | The closed list of six read failures; the classification field is **not** one of them, because framework mode never reads Type |
 | Unreadable status or Type | `pass` plus `MISCLASSIFIED_TYPE_CHECK=deferred` (a report field only; no routing effect) |
 | Closed mirror list size | 15 paths, with an explicit out-of-list table |
 | Stop condition | `missing_tracker_context`, single-item caller only; a `scan` hold emits no stop condition |
