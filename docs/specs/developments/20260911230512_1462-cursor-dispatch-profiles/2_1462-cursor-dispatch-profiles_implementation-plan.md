@@ -1706,7 +1706,11 @@ Not applicable — no runtime data.
    sandbox (operator-provisioned repository, `[SANDBOX-1462]` issues and epic,
    sandbox `develop` base at S, whose config disables merging), after the
    pre-flight `origin`, `git diff H S` and no-merge-config checks, with each live
-   invocation selecting an explicit no-merge policy, and are
+   invocation selecting an explicit no-merge, no-delegated-review policy
+   (`--no-delegate-review --no-may-merge --max-risk low`, needed because
+   `mode: assisted` resolves delegated review on by default) and passing the
+   prelude gate (the summary prints `Delegated review: false` and `May merge:
+   false`), and are
    followed by the runbook's cleanup checklist; sign-off is blocked until the
    completion criteria are met and the real repository is verified untouched.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`

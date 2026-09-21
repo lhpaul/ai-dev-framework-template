@@ -186,17 +186,40 @@ no-merge policy explicitly, in addition to S's config:
 
 | Step | Invocation (from the sandbox clone) |
 | --- | --- |
-| 8 | `/run-item <C> --no-delegate-review --no-may-merge` |
-| 13 Part B | `/run-items <A> <B> --max-risk low` (no `--may-merge`, no `--delegate-review`) |
-| 14 Part B | `/run-epic --epic <E> --max-risk low` (no `--may-merge`, no `--delegate-review`) |
+| 8 | `/run-item <C> --no-delegate-review --no-may-merge --max-risk low` |
+| 13 Part B | `/run-items <A> <B> --no-delegate-review --no-may-merge --max-risk low` |
+| 14 Part B | `/run-epic --epic <E> --no-delegate-review --no-may-merge --max-risk low` |
 
-`/run-item` documents both negative flags; `/run-items` and `/run-epic` document
-only the positive flags, so for them the merge prohibition rests on S's
-`mode: assisted` and `may_merge_pr: false` plus omitting the positive flags.
+**Why every flag is needed** (read from `run-bounded-prelude.sh`, and confirmed
+by a read-only dry run of the script for each invocation against a config
+shaped like S): with `guardrails.mode: assisted` the prelude resolves **delegated
+review to enabled** unless `--no-delegate-review` is supplied, even though
+assisted mode never merges; merge authority resolves to false from S's
+`may_merge_pr: false`, and `--no-may-merge` makes that explicit. The script's
+usage and argument parser accept `--delegate-review|--no-delegate-review` and
+`--may-merge|--no-may-merge` for every scope (`--epic`, `--items` and the item
+targets), and the commands forward policy flags to it; `/run-items` and
+`/run-epic` document only the positive flags in their front matter, which does
+not limit the script. `--max-risk low` is explicit so the risk ceiling is the
+lowest even though no merge is possible.
+
 **Prelude gate**: before accepting the bounded prelude's policy confirmation,
-read `policyRecommendation.confirmationSummary`; the effective policy must show
-**no merge authority** (merge disallowed, delegated review off). If it shows any
-merge authority, **decline and stop**: do not run the live step.
+read `policyRecommendation.confirmationSummary`; its policy lines must be
+exactly:
+
+```text
+- May start Backlog: true (guardrails)
+- Delegated review: false (explicit)
+- May merge: false (explicit)
+- Max risk: low (explicit)
+```
+
+(the dry run printed these lines for the `/run-item` invocation; the
+`effectivePolicy` for `/run-items` and `/run-epic` is the same: `delegateReview`
+false, `mayMerge` false, `maxRisk` low, `mayStartBacklog` true). If **Delegated
+review** is `true` or **May merge** is `true`, **decline and stop**: do not run
+the live step (without `--no-delegate-review` the summary shows `Delegated
+review: true`, which fails this gate).
 
 **Expected mutations (all confined to the sandbox)**, enumerated per
 invocation given S's config:
@@ -375,7 +398,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
    (with the output of `git diff H S --stat`, which must list only
    `.ai-dev-workflow.yaml`) and the sandbox Project number **M** and the environment (Cursor Remote Control session
    identifier or a note of how it was reached).
-2. From the sandbox clone (pre-flight check passed), start `/run-item <C> --no-delegate-review --no-may-merge` on the sandbox single-item issue from Test Data, after the prelude gate (effective policy shows no merge authority).
+2. From the sandbox clone (pre-flight check passed), start `/run-item <C> --no-delegate-review --no-may-merge --max-risk low` on the sandbox single-item issue from Test Data, after the prelude gate (effective policy shows no merge authority).
 3. Confirm the declaration block names Parent orchestrated, the accountable
    role and the `absorbed` posture before the first mutating action, that
    orchestration is absorbed by the current context, and that every stage of
@@ -491,7 +514,7 @@ router's normalized list: comma-split, trimmed, deduplicated, in order, no `#`
 rewriting), before any branch or artifact is created.
 
 **Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
-session** on the implementation PR head, run `/run-items <A> <B> --max-risk low` (no `--may-merge`, no `--delegate-review`; prelude gate as in Controlled test artifacts) with a valid
+session** on the implementation PR head, run `/run-items <A> <B> --no-delegate-review --no-may-merge --max-risk low` (prelude gate as in Controlled test artifacts) with a valid
 Parent orchestrated declaration (the current context absorbs the portfolio layer
 and, per item in turn, the item layer; no Work Item Runner is dispatched; the
 items run one at a time per Protocol 90 Step 4 as amended, and only stage work
@@ -530,7 +553,7 @@ stops with `dispatch_profile_declaration_missing` (affected work item per
 `guardrails-enforcement.md` section 4).
 
 **Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
-session** on the implementation PR head, run `/run-epic --epic <E> --max-risk low` (no `--may-merge`, no `--delegate-review`; prelude gate as in Controlled test artifacts) under a
+session** on the implementation PR head, run `/run-epic --epic <E> --no-delegate-review --no-may-merge --max-risk low` (prelude gate as in Controlled test artifacts) under a
 valid Parent orchestrated declaration and do not intervene mid-run. Record the
 environment, the declaration block, and the terminal state. The terminal
 condition is, precisely: the epic resolver's `continuation` outcome, either
@@ -556,11 +579,10 @@ Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
   cleanup checklist completed and its completion criteria met and recorded
   before sign-off (leftover sandbox artifacts, or any mutation of the real
   repository, block sign-off). Every live invocation selects the no-merge
-  policy from the runbook (`--no-may-merge --no-delegate-review` for
-  `/run-item`; `--max-risk low` with no positive merge or review flags for
-  `/run-items` and `/run-epic`), on top of the sandbox config commit S that
+  policy from the runbook (`--no-delegate-review --no-may-merge --max-risk low` for
+  `/run-item`, `/run-items` and `/run-epic`), on top of the sandbox config commit S that
   sets the sandbox `project_number`, `mode: assisted` and `may_merge_pr: false`; a live run whose prelude
-  summary showed any merge authority, that merged any pull request, or that
+  summary showed delegated review or any merge authority, that merged any pull request, or that
   read or changed the real Project (`REAL_OWNER/REAL_NUM`), is a FAIL. The evidence fields are the implementation head
   **H** plus the sandbox config commit **S**, with `git diff H S --stat` proving
   S touches only `.ai-dev-workflow.yaml` and the structural key diff proving it
