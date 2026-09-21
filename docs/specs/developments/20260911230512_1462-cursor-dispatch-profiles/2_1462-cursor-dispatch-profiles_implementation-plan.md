@@ -1423,9 +1423,10 @@ fixture is removed, renamed, or added without a manifest row.
    test issues and epic, sandbox `develop` as the safe base) with a completed
    cleanup checklist; the evidence is the implementation head **H** plus a
    single sandbox-only config commit **S** whose diff against H touches only
-   `.ai-dev-workflow.yaml` (`git diff H S --stat`; it sets `github_issues`,
-   `mode: assisted` and `may_merge_pr: false` so worktrees created from sandbox
-   `develop` inherit a no-merge policy); running them against real backlog items or the real
+   `.ai-dev-workflow.yaml` (`git diff H S --stat`; it changes only five keys: the sandbox
+   `issue_tracker.project_number`, `guardrails.mode: assisted` and the three
+   `may_merge_pr: false`, so worktrees created from sandbox `develop` inherit a
+   no-merge policy and a sandbox-only tracker Project); running them against real backlog items or the real
    repository is prohibited.
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
