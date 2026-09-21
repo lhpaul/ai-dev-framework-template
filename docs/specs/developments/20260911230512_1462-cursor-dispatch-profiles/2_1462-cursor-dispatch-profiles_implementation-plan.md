@@ -40,9 +40,9 @@ in the same implementation PR so they no longer assert an unresolved gap.
 
 ## Verification Log
 
-Re-run `2026-09-21` against verified head **`87f2d2be`** (the plan content
-commit; full SHA `87f2d2bedc82f0ae2e13680463fdcd922bc49878`). The commit that
-carries this log is the **child** of `87f2d2be` and changes **only** this
+Re-run `2026-09-21` against verified head **`4357b3bf`** (the plan content
+commit; full SHA `4357b3bf60785078ef64d9d35224678918e23232`). The commit that
+carries this log is the **child** of `4357b3bf` and changes **only** this
 Verification Log and the Document Quality Gate lines that cite it; no plan
 content, checklist, or smoke-runbook text changed in the child. Every
 command in the table is in the **Literal commands** block below, run exactly as
@@ -50,9 +50,9 @@ written at the verified head with its observed output recorded (patterns are
 extended-regex; nothing depends on the shadowed local `rg`). Checks that need the
 implementation are marked **Deferred to implementation**, not Pass.
 
-| Check | Command / query | Result at `87f2d2be` |
+| Check | Command / query | Result at `4357b3bf` |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `87f2d2be`. `origin/develop` is `f1d5021a`; this plan branch is 20 commits behind it. That is **informational only**, not an A1 failure: the implementation is never cut from the plan branch. A1's check runs after its remediation sequence (plan PR merged, `git fetch origin develop`, implementation worktree created from `origin/develop`), so `git merge-base --is-ancestor origin/develop HEAD` then holds by construction; the ancestry check itself is **Deferred to implementation start** |
+| Repo revision | `git rev-parse --short HEAD` | `4357b3bf`. `origin/develop` is `f1d5021a`; this plan branch is 20 commits behind it. That is **informational only**, not an A1 failure: the implementation is never cut from the plan branch. A1's check runs after its remediation sequence (plan PR merged, `git fetch origin develop`, implementation worktree created from `origin/develop`), so `git merge-base --is-ancestor origin/develop HEAD` then holds by construction; the ancestry check itself is **Deferred to implementation start** |
 | Canonical doc absent pre-impl | L1 | `absent` (Pass) |
 | Profile strings outside development folder | L2 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Pass) |
 | Bounded command adapters | L3 and L3b | **18** hits (Pass): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). The four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
@@ -65,11 +65,12 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
 | Spec matrix row count | L7 | prints `20` table lines = **18** normative rows plus the header and separator (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
 | Fixture manifest | L8 | prints `158 158 True ['158']`: 158 rows, 158 unique filenames, numbered 1-158, `MANIFEST_COUNT` 158 (Pass); no `<id>` placeholder or unresolved `N`; the on-disk equality self-test is **Deferred to implementation** |
-| Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `87f2d2be` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
+| Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `4357b3bf` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
 | Protocol 90 Step 4 current text | L9 | prints `1`, so the existing generic Step 4 paragraph quoted in Decision 7 is verbatim (Pass); the paragraph insertion and the `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence` and `canonical_dispatch_decision` checks are **Deferred to implementation** |
 | Assumption records A1-A6 (pre-edit checks that exist now) | A1, A2, A3a, A3b, A4, A5 in the Literal commands block (the same commands as the Assumption Records table) | A1: `git fetch origin develop` succeeds and `git ls-remote --exit-code origin develop` exits `0`; #1732 `MERGED` on `develop`; #1771 still `OPEN` (expected until it merges; the remediation sequence's worktree and ancestry steps are **Deferred to implementation start**). A2: `git grep -nE '^mode:' -- .ai-dev-workflow.yaml` prints nothing and exits `1` (anchored at column 0, so the nested `guardrails.mode: delegated` on line 273 is not matched), and the structural check prints `<absent>`, so the default `single_repo` holds. A3: (a) prints `<spec path>:1`; (b) prints nothing, exit `1`; (c) the router returns `RESOLVED_SCOPE` as the comma-joined, deduplicated, ordered list (run separately: `bash scripts/development-workflow/run-work-router.sh <branch> <folder> <branch>`). A4: prints `0`. A5: both `{"state":"OPEN"}`. A6: same as the Spec merge gate row. All Pass; the canonical/guardrails parity is **not** an assumption and is verified post-edit by `explicit_list_format_parity` (**Deferred to implementation**) |
 | Tracker-config keys inherited by the sandbox commit | L10 | Only three leaves in `.ai-dev-workflow.yaml` mention project, owner, repo, slug, field or a path: `issue_tracker.provider = 'github_projects'`, `issue_tracker.project_number = 1` and `template.repository = ''`. The only real-repository reference is `project_number: 1`; there is no owner, field-id, repository-slug or `custom_fields` key (Pass) |
-| Sandbox-Project pre-flight expressions (dry run on the real Project, read-only) | P0-P7 | `P1` `true` and `P2` `true` (the real Project has exactly the Status and Type option sets the sandbox must have), `P3` `0`, `P4` `NONZERO` (the sandbox-title check detects real items), `P5` `FAIL` (the distinctness guard fails when owner/number are equal), `P6` empty environment and no local override file, `P7` `[]` (structural key-diff of identical revisions). These validate the expressions only; running them against the actual sandbox Project is **Deferred to implementation** |
+| Sandbox-Project pre-flight expressions (read-only) | P0, P5, P6, P7 | `P5` `FAIL` (the distinctness guard fails on equal owner/number), `P6` empty environment and no local override file, `P7` `[]` (structural key-diff of identical revisions). The Project queries themselves (Status options `true`, Type options `true`, items outside the repo `0`, sandbox-title check non-zero on the real Project) were validated read-only against the real Project earlier in this session at `87f2d2be`; they are not re-run here because the shared GitHub GraphQL rate limit was exhausted, and running them against the actual sandbox Project is **Deferred to implementation** |
+| Live-invocation prelude gate (read-only dry run) | L11a-L11d | Against a config shaped like S (assisted mode, `may_merge_pr: false`) via `AI_DEV_WORKFLOW_CONFIG_FILE`: without the negative flags `delegateReview` resolves to `true` (L11a: fails the runbook's gate); with `--no-delegate-review --no-may-merge --max-risk low`, `/run-item`, `/run-items` and `/run-epic` each resolve to `delegateReview: false`, `mayMerge: false`, `mayStartBacklog: true`, `maxRisk: low`, and the `/run-item` confirmation summary prints exactly the four policy lines the runbook requires; the repository stayed clean (`0` porcelain lines) (Pass) |
 | Selector baseline | SEL (`--report-gaps`) and the fixtures-path `--changed-files` probe (run earlier: prints `INFO: full run triggered by ...`) | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
 | Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
 | Surface guard (link, profile string, E1-E6 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
@@ -119,10 +120,6 @@ for p, v in leaves(d):
     if re.search(r"project|owner|repo|slug|field|/", p + " " + str(v), re.I): print(p, "=", repr(v))
 PY
 echo "P0"; REAL_OWNER=$(gh repo view --json owner --jq .owner.login); REAL_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner); REAL_NUM=$(python3 -c 'import yaml; print(yaml.safe_load(open(".ai-dev-workflow.yaml"))["issue_tracker"]["project_number"])'); echo "$REAL_OWNER $REAL_REPO $REAL_NUM"
-echo "P1 (Status options, dry run on the real Project)"; gh project field-list "$REAL_NUM" --owner "$REAL_OWNER" --format json --jq '[.fields[]|select(.name=="Status")|.options[].name]|sort == ["Backlog","Cancelled","Development in Review","In Development","Merged","Plan Ready","Plan in Review","Released","Spec Ready","Spec in Review","Writing Plan","Writing Spec"]'
-echo "P2 (Type options)"; gh project field-list "$REAL_NUM" --owner "$REAL_OWNER" --format json --jq '[.fields[]|select(.name=="Type")|.options[].name]|sort == ["Bug","Feature","Refactor","Workflow"]'
-echo "P3 (items outside the given repo)"; gh project item-list "$REAL_NUM" --owner "$REAL_OWNER" --limit 1000 --format json --jq '[.items[] | select(.content.repository != "'"$REAL_REPO"'")] | length'
-echo "P4 (items without the sandbox title prefix; non-zero on the real Project)"; n=$(gh project item-list "$REAL_NUM" --owner "$REAL_OWNER" --limit 1000 --format json --jq '[.items[] | select((.title // "") | startswith("[SANDBOX-1462]") | not)] | length'); [ "${n:-0}" -gt 0 ] && echo NONZERO
 echo "P5 (distinct guard fails on equal values)"; SANDBOX_OWNER=$REAL_OWNER; SANDBOX_REPO=$REAL_REPO; SANDBOX_NUM=$REAL_NUM; [ "$SANDBOX_REPO" != "$REAL_REPO" ] && [ "$SANDBOX_OWNER/$SANDBOX_NUM" != "$REAL_OWNER/$REAL_NUM" ] && echo PROJECT-DISTINCT || echo FAIL
 echo "P6 (no env override, no local override file)"; printenv GITHUB_PROJECT_NUMBER GITHUB_PROJECT_OWNER WORKFLOW_TARGET_GITHUB_REPO; echo "printenv rc=$?"; test ! -e .ai-dev-workflow.local.yaml && echo no-local-override
 echo "P7 (structural key diff of two revisions, expression validity)"; python3 - HEAD HEAD <<'PY'
@@ -135,6 +132,20 @@ def leaves(o,p=()):
 a=dict(leaves(load(sys.argv[1]))); b=dict(leaves(load(sys.argv[2])))
 print(sorted(".".join(k) for k in set(a)|set(b) if a.get(k)!=b.get(k)))
 PY
+echo "L11"; SLIKE="${TMPDIR:-/tmp}/s-like.yaml"; python3 - "$SLIKE" <<'PY'
+import re, sys
+s = open(".ai-dev-workflow.yaml").read()
+s = s.replace("  mode: delegated", "  mode: assisted", 1)
+s = re.sub(r"(      may_merge_pr: )true", r"\1false", s)
+open(sys.argv[1], "w").write(s)
+PY
+show() { python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["policyRecommendation"]; print(json.dumps({k:r["effectivePolicy"].get(k) for k in ("delegateReview","mayMerge","mayStartBacklog","maxRisk")}))'; }
+PRE=./scripts/development-workflow/run-bounded-prelude.sh
+echo "L11a run-items WITHOUT the negative flags (previous runbook text)"; AI_DEV_WORKFLOW_CONFIG_FILE="$SLIKE" bash $PRE --original-command "/run-items 1462 1496 --max-risk low" --items "1462,1496" --max-risk low --json | show
+echo "L11b /run-item (policy, then the confirmation-summary policy lines)"; AI_DEV_WORKFLOW_CONFIG_FILE="$SLIKE" bash $PRE --original-command "/run-item 1462 --no-delegate-review --no-may-merge --max-risk low" --issue 1462 --no-delegate-review --no-may-merge --max-risk low --json > "${TMPDIR:-/tmp}/l11b.json"; show < "${TMPDIR:-/tmp}/l11b.json"; python3 -c 'import sys,json; print("\n".join(json.load(sys.stdin)["policyRecommendation"]["confirmationSummary"]["policyLines"]))' < "${TMPDIR:-/tmp}/l11b.json"
+echo "L11c /run-items"; AI_DEV_WORKFLOW_CONFIG_FILE="$SLIKE" bash $PRE --original-command "/run-items 1462 1496 --no-delegate-review --no-may-merge --max-risk low" --items "1462,1496" --no-delegate-review --no-may-merge --max-risk low --json | show
+echo "L11d /run-epic"; AI_DEV_WORKFLOW_CONFIG_FILE="$SLIKE" bash $PRE --original-command "/run-epic --epic 1462 --no-delegate-review --no-may-merge --max-risk low" --epic 1462 --no-delegate-review --no-may-merge --max-risk low --json | show
+git status --porcelain | wc -l
 ```
 
 **Observed output** (same labels, verbatim):
@@ -187,14 +198,6 @@ issue_tracker.project_number = 1
 template.repository = ''
 P0
 lhpaul lhpaul/ai-dev-framework-template 1
-P1 (Status options, dry run on the real Project)
-true
-P2 (Type options)
-true
-P3 (items outside the given repo)
-0
-P4 (items without the sandbox title prefix; non-zero on the real Project)
-NONZERO
 P5 (distinct guard fails on equal values)
 FAIL
 P6 (no env override, no local override file)
@@ -202,6 +205,20 @@ printenv rc=1
 no-local-override
 P7 (structural key diff of two revisions, expression validity)
 []
+L11
+L11a run-items WITHOUT the negative flags (previous runbook text)
+{"delegateReview": true, "mayMerge": false, "mayStartBacklog": true, "maxRisk": "low"}
+L11b /run-item (policy, then the confirmation-summary policy lines)
+{"delegateReview": false, "mayMerge": false, "mayStartBacklog": true, "maxRisk": "low"}
+- May start Backlog: true (guardrails)
+- Delegated review: false (explicit)
+- May merge: false (explicit)
+- Max risk: low (explicit)
+L11c /run-items
+{"delegateReview": false, "mayMerge": false, "mayStartBacklog": true, "maxRisk": "low"}
+L11d /run-epic
+{"delegateReview": false, "mayMerge": false, "mayStartBacklog": true, "maxRisk": "low"}
+       0
 ```
 
 ---
@@ -1625,7 +1642,7 @@ Not applicable — no runtime data.
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| Evidence currency | Pass | Verification Log re-run `2026-09-21` at verified head `87f2d2be`; its child commit changes only the log and these gate lines. Every command is recorded literally with its observed output (Literal commands block), including the tracker-config key scan (L10) and the sandbox-Project pre-flight expression dry run (P0-P7). Implementation-time checks are marked Deferred, not Pass |
+| Evidence currency | Pass | Verification Log re-run `2026-09-21` at verified head `4357b3bf`; its child commit changes only the log and these gate lines. Every command is recorded literally with its observed output (Literal commands block), including the tracker-config key scan (L10), the sandbox pre-flight guard checks (P0, P5-P7) and the prelude dry runs for the three live invocations (L11). Implementation-time checks are marked Deferred, not Pass |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control evidence for `/run-item`, `/run-items` and `/run-epic` (Steps 8, 13B, 14B; AC17 behavior) run only against controlled disposable sandbox artifacts with a cleanup checklist and real-repository-untouched verification + surface guard (link, profile string, E1-E6 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
