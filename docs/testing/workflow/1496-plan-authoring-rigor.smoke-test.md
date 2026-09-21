@@ -115,11 +115,13 @@ names an acceptance theme, the exercise, and the expected gate class.
 | B5 | Rule 1 — short-retention source | Sampling locator only to a deletable log | Blocking — durable copy or retained artifact required |
 | B6 | Rule 1 — restricted occurrence | Sampling occurrence contains secrets/PII with raw text pasted | Blocking — must use redacted shape record |
 | B7 | Rule 1 — restricted and short-retention | Source is both deletable and access-restricted | Blocking unless both handling requirements are met |
-| B8 | Rule 1 — heterogeneous sample adequacy | Sample drawn from one producer variant only | Blocking — adequacy rationale missing |
+| B8 | Rule 1 — heterogeneous sample adequacy | Population documented as having two producer variants; sample drawn from one; record silent on the other | Blocking — known heterogeneity unaddressed |
+| B11 | Rule 1 — unpersuasive adequacy rationale | Same population, record states an adequacy rationale that is complete in form but weak | Non-blocking — recorded as a suggestion; Satisfied |
 | B9 | Rule 1 — curated examples | Occurrences are hand-picked examples | Blocking — not a sample of the population |
-| B10 | Rule 1 — closed-population enumeration | Closed set claimed as escape hatch without listing members | Blocking — enumeration record missing |
+| B10 | Rule 1 — closed-population enumeration | Enumeration command shown with no closure provenance (nothing shows the set cannot grow), or members not listed | Blocking — enumeration record incomplete |
 | E3 | Rule 4 — completeness claim | "All X verified" with no search scope | Blocking — completeness unsupported |
 | F3 | Rule 5 — search scope | Consumer enumeration omits searched scope | Blocking — scope not recorded |
+| F5 | Rule 5 — hand-recalled consumer list | Consumer list from memory with no recorded search | Blocking — search record missing |
 | F4 | Rule 5 — untouched consumer | Untouched consumer omitted, or listed without its post-change outcome | Blocking — consumer or outcome missing |
 | H4 | Outcome record — malformed | Record names a nonexistent commit | Blocking — revision does not resolve |
 | H5 | Outcome record — label reassessed | Round re-reads recorded finding, label not reassessed | Blocking — label stale |
@@ -128,8 +130,7 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H8 | Invalid outcome label | Record uses a label outside the three defined | Blocking — invalid label |
 | H9 | External-source finding not persisted | Rule 1 outcome cites an inspection with no persisted finding | Blocking — persisted finding missing |
 
-Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. Acceptance criteria not named by a row above are covered by the Group's nearest row through the rule-name/label assertions of the mirror harness; any criterion with neither must be added as a row before implementation is marked done
-that wiring alone cannot prove. Before marking implementation complete, execute
-every matrix row above (B1–B10, C1–C2, D1–D2, E1–E3, F1–F4, G1, H1–H9), as
+Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix is the required set: criteria it does not name are enforced only by the mirror harness's name/path/label assertions and the review gate, and any criterion a reviewer finds unexercised is added as a row before implementation is marked done. The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
+every matrix row above (B1–B11, C1–C2, D1–D2, E1–E3, F1–F5, G1, H1–H9), as
 the implementation plan Testing Strategy requires, including at least one
 blocking and one non-blocking outcome on real or fixture plan text.

@@ -33,10 +33,11 @@ Consistency Matrix is **copied into** that file as the normative gate section
 during implementation (do not paraphrase pass conditions). The approved spec
 remains historical product intent; after merge, engineers treat the new rules
 file as authoritative for day-to-day plan work. To keep exactly one canonical
-surface, the implementation PR also edits the retained spec's matrix
-introduction (`## Decision-Gate Consistency Matrix`, the sentence declaring the
-matrix canonical) into a pointer stating that the matrix is now canonical in
-`plan-authoring-rigor-rules.md` and that the spec copy is historical.
+surface, the implementation PR also edits the retained spec's two normative declarations — the `## Business Rules`
+introduction ("the normative statement of this feature") and the
+`## Decision-Gate Consistency Matrix` introduction ("the canonical statement") —
+into pointers stating that the rules and matrix are now canonical in
+`plan-authoring-rigor-rules.md` and that the spec copies are historical.
 
 **Estimated complexity**: L
 
@@ -317,7 +318,7 @@ Verification Log re-run) plus spec mirror table:
 | `.cursor/agents/implementation-plan-reviewer.md` | Reviewer routing |
 | `.codex/skills/workflow-plan-reviewer/SKILL.md` (also `.agents/skills/workflow-plan-reviewer/SKILL.md`, a symlink) | **No edit** — it only routes to Protocol 02 review, which is edited; harness asserts Protocol 02 review directly |
 | `.codex/skills/workflow-plan-writer/SKILL.md` (also served as `.agents/skills/workflow-plan-writer/SKILL.md`, a symlink to it — one edit covers both) | Author routing |
-| `docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | Matrix introduction only — replace the "canonical statement" sentence with a historical pointer to the rules file (Implementation Order step 1) |
+| `docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | `## Business Rules` and `## Decision-Gate Consistency Matrix` introductions only — replace each normative/canonical declaration with a historical pointer to the rules file (Implementation Order step 1) |
 | `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh` | **Create** — mirror consistency harness |
 | `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` | **Create** — parser-risk fixture snippets (parser-risk addendum + Implementation Order step 7) |
 | `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Present on this plan branch — execute scenarios during implementation QA |
@@ -370,11 +371,11 @@ The index below groups the IDs by acceptance group:
 | Spec group | Required matrix IDs |
 | --- | --- |
 | A (wiring + no-spec inheritance) | Scenarios 1–2; confirm Protocol 02 applies to Refactor/no-spec plans |
-| B | B1, B2, B3, B4, B5, B6, B7, B8, B9, B10 |
+| B | B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11 |
 | C | C1, C2 |
 | D | D1, D2 |
 | E | E1, E2, E3 |
-| F | F1, F2, F3, F4 |
+| F | F1, F2, F3, F4, F5 |
 | G | G1 |
 | H | H1, H2, H3, H4, H5, H6, H7, H8, H9 |
 
@@ -382,8 +383,8 @@ The index below groups the IDs by acceptance group:
 this feature changes only workflow docs, agent files, and a shell harness. The
 repository's only Playwright suite, `e2e/` (searched at revision `6c84855e`:
 `find . -path ./node_modules -prune -o -name 'playwright.config.*' -print`
-returns `e2e/playwright.config.ts`; `e2e/tests/` holds only
-`baseline.spec.ts`, a placeholder `expect(true).toBe(true)`), exercises no
+returns `e2e/playwright.config.ts`; `find e2e/tests -type f` returns only
+`e2e/tests/baseline.spec.ts`, a placeholder `expect(true).toBe(true)`), exercises no
 product or workflow-doc behavior, so it cannot regress from this change.
 
 ### Parser-risk addendum (mirror harness)
@@ -531,8 +532,8 @@ Not applicable.
 ## Implementation Order
 
 1. Create `plan-authoring-rigor-rules.md` with verbatim spec rules + gate matrix,
-   and in the same change turn the retained spec's matrix-canonical sentence
-   into a historical pointer to it (one canonical surface).
+   and in the same change turn the retained spec's two normative declarations
+   (Business Rules and matrix introductions) into historical pointers to it (one canonical surface).
 2. Update `implementation-plan-template.md` evidence sections.
 3. Extend Protocol 02 Step 3 guardrails and Document Quality Gate example.
 4. Extend `REVIEW.md` backstop checklist.
@@ -548,8 +549,8 @@ Not applicable.
 8. Update `AGENTS.md` (and README plan-stage pointer — section exists at line
    `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
-10. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B10, C1–C2,
-    D1–D2, E1–E3, F1–F4, G1, H1–H9) named in Testing Strategy.
+10. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B11, C1–C2,
+    D1–D2, E1–E3, F1–F5, G1, H1–H9) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
@@ -568,11 +569,11 @@ Not applicable.
 | A — Rules stated for both roles | Canonical file + mirror table + agents |
 | A — Rules apply to every plan, including no-spec / Refactor | Protocol 02 authoring obligations + tech-lead / plan-writer mirrors apply to all Protocol 02 plans; no separate no-spec bypass — Refactor plans still open via Protocol 02 and must carry the per-rule outcome record |
 | A — Exactly one canonical surface; no divergent pass conditions | Canonical file is sole normative text; mirrors point to it; Smoke Scenario 1 + mirror harness presence checks; Scenario 1 desk-check for pass-condition equivalence |
-| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B10 (all required) |
+| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B11 (all required) |
 | C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 (both required) |
 | D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 (both required) |
 | E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E3 (all required) |
-| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F4 (all required) |
+| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F5 (all required) |
 | G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (required) |
 | H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H9 (all required) |
 
