@@ -62,7 +62,7 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` — stage-role harness permission denial; out of scope here (Pass) |
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
-| Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the A1-A4 assertions themselves are **Deferred to implementation** |
+| Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
 | Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps` | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass); the selector `--print-map` / per-surface `--changed-files` planted check for the new suite is **Deferred to implementation** |
 | Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
 | Surface guard (link, profile string, E1-E5 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
@@ -557,13 +557,13 @@ layer; `workflow.mdc` states all five compactly).
       directions) are each split into two scenarios, R17 into S17a/S17b and R18
       into S18/S19, and S10b is a **subcase**, not a row: it covers the spec's
       Out-of-scope prose (harness/local-path denial) that sits beside the
-      matrix. The assertions are: **(A1)** the canonical doc's decision-gate
+      matrix. The assertions are: **(C1)** the canonical doc's decision-gate
       table has exactly 18 rows and that equals the row count read from the
       merged spec's matrix at test time, so a canonical doc that matches the spec
       always satisfies it and a row added or dropped on either side fails;
-      **(A2)** every row R1-R18 maps to at least one scenario; **(A3)** every
+      **(C2)** every row R1-R18 maps to at least one scenario; **(C3)** every
       scenario maps to exactly one row, or is flagged `subcase (non-row)`, and
-      S10b is the only allowed subcase; **(A4)** canonical row *n* carries the
+      S10b is the only allowed subcase; **(C4)** canonical row *n* carries the
       expected tokens of the scenarios mapped to R*n*. A scenario may never be
       counted as a row, and a row never requires more than its mapped scenarios. Paths: `/run-item` (item layer), `/run-items`
       explicit list (item layer, pre-branch stops use the
@@ -686,15 +686,18 @@ layer; `workflow.mdc` states all five compactly).
       16. **`simulate_bounded_paths`**: for each scenario ID S1-S19 (including
           S10b), alter that decision-gate row in the canonical doc so its
           expected outcome or stop name changes; expect non-zero naming the
-          scenario ID and each applicable path. Separately, for A1-A4: delete
-          one canonical row (A1 and A2 fail), add an unmatched extra canonical
-          row (A1 fails), remove a scenario's mapping (A3 fails), map S10b to a
-          row (A3 fails), and swap two rows' tokens (A4 fails); restore each.
+          scenario ID and each applicable path. Separately, for C1-C4: delete
+          one canonical row (C1 and C2 fail), add an unmatched extra canonical
+          row (C1 fails), remove a scenario's mapping (C3 fails), map S10b to a
+          row (C3 fails), and swap two rows' tokens (C4 fails); restore each.
 
       17. **Selector wiring / header consistency**: remove one path from the
-          `# covers:` header; expect the guard's header-consistency check to
-          fail and the selector verification (step 3 of Testing Strategy) to
-          show the suite unselected for that path; restore.
+          `# covers:` header, in turn for: one mirror, the merged spec path,
+          the fixtures-directory glob, the canonical guide, and the smoke
+          runbook; expect the guard's header-consistency check to fail and the
+          selector verification (step 3 of Testing Strategy) to show the suite
+          unselected for that path; restore. Also make the guard read one
+          undeclared path (a stray file) and expect `read_path()` to fail.
 
       **Coverage rules (every branch must have a real cycle).** Each multi-token
       clause is proved token by token: one cycle deletes only one token while
@@ -812,8 +815,14 @@ autolinks, `<pre>` and `<code>` HTML blocks, and backslash-escaped identifiers
 (R3) normalize each
 paragraph by joining soft-wrapped lines and collapsing whitespace, so phrases
 wrapped across lines still match and "same paragraph" means one blank-line-
-delimited block (list item, blockquote line and table cell each count as a
-block); (R4) identifier tokens (stop names, profile codes) match only with
+delimited block (each list item, each blockquote paragraph, and each **table
+row** counts as one block). **Table block boundary, decided once**: a table
+row is one block, with its cells joined by a single space (the header row and
+the `---` separator row are not blocks). Justification: the decision-gate
+matrix and the simulation's C4 check need a row's input, outcome, next action
+and stop name, which live in separate cells of one row, to satisfy a
+same-block assertion together. Tokens in different rows are never in the same
+block, and cells are never separate blocks; (R4) identifier tokens (stop names, profile codes) match only with
 non-identifier characters or edges on both sides; prose phrases match
 case-sensitively as fixed strings; (R5) every assertion runs on the surface's
 own content, never a concatenation of files.
@@ -861,6 +870,9 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Indented code | Indented code inside a blockquote (`>` plus 4 spaces) | `indented-code-blockquote` | fail (R2b after `>` removal) |
 | Construct sweep | Clause sentence inside a blockquote | `construct-blockquote-prose` | pass |
 | Construct sweep | Clause sentence in a table cell (one row is one block) | `construct-table-cell` | pass |
+| Construct sweep | E2b tokens split across two cells of the same table row | `table-row-spans-cells` | pass (row is one block) |
+| Construct sweep | E2b tokens in two adjacent table rows | `table-rows-split` | fail (different blocks) |
+| Construct sweep | Token only in a table header or `---` separator row | `table-header-separator` | fail (header and separator are not blocks) |
 | Construct sweep | Token only in a link-reference definition title | `construct-linkref-def` | fail (R2c) |
 | Construct sweep | Token only in a link destination or image alt text | `construct-link-destination-alt` | fail (R2c) |
 | Construct sweep | Identifier token in an inline code span | `construct-code-span-identifier` | pass (R2c, R4) |
@@ -871,11 +883,11 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
 | Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
 | Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
-| Simulation | Canonical-doc fixture that matches the spec's 18 rows exactly (no per-scenario extras) | `sim-row-count-matches-spec` | pass (A1-A4; 21 scenarios do not need 21 rows) |
-| Simulation | Canonical-doc fixture missing the R5 row (onward unconfirmed) | `sim-missing-row-r5` | fail (A1, A2) |
-| Simulation | Canonical-doc fixture with a 19th row added | `sim-extra-row` | fail (A1) |
-| Simulation | Scenario with no mapping, or S10b mapped to a row | `sim-unmapped-scenario` | fail (A3) |
-| Simulation | Two rows' tokens swapped | `sim-rows-swapped` | fail (A4) |
+| Simulation | Canonical-doc fixture that matches the spec's 18 rows exactly (no per-scenario extras) | `sim-row-count-matches-spec` | pass (C1-C4; 21 scenarios do not need 21 rows) |
+| Simulation | Canonical-doc fixture missing the R5 row (onward unconfirmed) | `sim-missing-row-r5` | fail (C1, C2) |
+| Simulation | Canonical-doc fixture with a 19th row added | `sim-extra-row` | fail (C1) |
+| Simulation | Scenario with no mapping, or S10b mapped to a row | `sim-unmapped-scenario` | fail (C3) |
+| Simulation | Two rows' tokens swapped | `sim-rows-swapped` | fail (C4) |
 | Simulation | Fixture whose S12 row says `dispatch_profile_declaration_missing` instead of `dispatch_handoff_unavailable` | `sim-wrong-stop-s12` | fail naming S12 |
 | Simulation | Fixture where S7 recovery re-declaration is described as a coarse mismatch | `sim-recovery-rejected-s7` | fail (E4c exemption) |
 | Simulation | Fixture mapping harness denial (S10b) to `missing_required_secret_or_permission` | `sim-harness-denial-mapped-s10b` | fail naming S10b |
@@ -927,10 +939,10 @@ disk and vice versa.
 | --- | --- |
 | Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` fixtures plus proof cycles 3-11 and 12-14 |
 | Serialization rules (trim, verbatim, delimiter, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, duplicates, order, one line, single/empty unreachable) | `ser-*` and `serialization-*` fixtures |
-| Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*` fixtures |
-| Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions A1-A4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus A1-A4 cycles), `sim-*` fixtures |
+| Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*`, `table-*` fixtures (table row is the single R3 block boundary) |
+| Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions C1-C4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus C1-C4 cycles), `sim-*` fixtures |
 | Surface classes | `class-*` fixtures and proof cycles 12-14 |
-| CI wiring header | proof cycle 17 |
+| CI wiring header and complete read set (including the merged spec and fixtures glob) | proof cycle 17, header-consistency check (`covers == read set + selection-only`) |
 
 
 Fixture-only self-tests are the regression net for the scanner itself; if a
@@ -1007,13 +1019,34 @@ the file, one `# covers:` line per group:
 # covers: docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/95-run-epic-protocol.md
 # covers: docs/workflow/development-workflow/guardrails-enforcement.md docs/workflow/development-workflow/agent-model-config.md
 # covers: docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md .cursor/rules/workflow.mdc
+# covers: docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md
+# covers: scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/**
 # covers: docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md
 ```
 
+**Complete read set (so the "every path the guard reads" guarantee is
+literally true).** The guard, its `--self-test`, and `simulate_bounded_paths`
+read exactly: (1) the 15 command and skill mirrors; (2) the 4 role agents and 2
+Codex workflow skills; (3) Protocols 90, 91, 95; (4) `guardrails-enforcement.md`
+and `agent-model-config.md`; (5) `.cursor/rules/workflow.mdc`; (6) the canonical
+guide `cursor-dispatch-profiles.md`; (7) the **merged spec** (C1 reads its
+Decision-Gate matrix row count at test time, so the spec path above is in the
+header); (8) the fixture directory `.../fixtures/cursor-dispatch-profile-surfaces/`
+(the header lists it as a `**` glob even though the selector also auto-covers a
+suite's own fixture directory, so the claim does not depend on that rule); and
+(9) its own script file (always covered). The smoke runbook is a
+**selection-only** path: the guard does not read it, but a change to it must
+still run the guard, so it stays in the header and is excluded from the read
+set. The guard does **not** read the plan file (the scenario table, row
+mapping and token list live inside the script). All reads go through one
+`read_path()` helper that fails on any path outside the declared read set, and
+the header-consistency check asserts `covers == read set + selection-only
+paths` in both directions.
+
 Every path the guard reads must be listed, so the header and the guard's
 surface table are kept in step by a header-consistency check inside the guard
-(each surface path in its table must appear in a `# covers:` line, and vice
-versa). Other CI-wiring assumptions checked in this plan:
+(the declared read set plus the selection-only smoke runbook must equal the
+`# covers:` paths, in both directions). Other CI-wiring assumptions checked in this plan:
 
 - **Path filters**: `workflow-tests.yml` has no `paths:` filter (selector only);
   no workflow edit is needed. `markdown-lint.yml` is path-filtered but the
@@ -1029,7 +1062,8 @@ versa). Other CI-wiring assumptions checked in this plan:
 - **Selector verification (implementation-time, planted check)**:
   1. `select-test-suites.sh --print-map` lists this suite against every path in
      the header above (assert one row per protected path).
-  2. For each protected surface, write that single path to a temp changed-files
+  2. For each protected surface and for the spec and fixtures-directory paths
+     (a path under the fixtures directory, and the merged spec file), write that single path to a temp changed-files
      list and run `select-test-suites.sh --changed-files <list>`; confirm the
      output contains `test-cursor-dispatch-profile-surfaces.sh`. This is the
      planted check: a touched mirror path must select the suite.
