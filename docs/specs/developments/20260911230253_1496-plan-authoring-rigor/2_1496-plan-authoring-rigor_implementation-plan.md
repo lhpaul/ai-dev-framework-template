@@ -186,7 +186,15 @@ Not applicable.
       4. **Plan review gate** — copy spec **Decision-Gate Consistency Matrix**
          subsections (Gate inputs, Triggers, Allowed outcomes and required next
          actions, Mirror surfaces, Examples) unchanged in substance.
-      5. Cross-link to spec dev folder for historical context only.
+      5. **Referenced material** — the Business Rules text cross-references
+         spec `Group A`, `Group H`, and `Out of Scope` (spec lines 236, 262,
+         285, 287). Copy those referenced sections verbatim into this part as an
+         appendix so every reference in the copied rules resolves inside the
+         canonical file; `verbatim` then holds without dangling targets. Any
+         further cross-reference found by
+         `grep -nE 'Group [A-H]|Out of Scope|Acceptance' <canonical file>` must
+         resolve inside the file the same way before implementation is done.
+      6. Cross-link to spec dev folder for historical context only.
 
       Maps to Groups A, B–G (normative text), H (gate).
 
@@ -302,8 +310,11 @@ Not applicable.
 
 ## Files to modify
 
-Live search at plan HEAD `b0491be3` (`grep -rl` for protocol references;
-Verification Log re-run) plus spec mirror table:
+Live search re-run at evidence revision `fbff1dd2` — the revision at which this
+final table was enumerated (`grep -rl '02-generate-implementation-plan-protocol\|03-implement-development-protocol' .claude/agents/ .cursor/agents/ .codex/skills/`
+returns exactly six paths, all in the table or in the no-edit list
+below) — plus the spec mirror table. Re-run and re-record if a
+later commit changes the table's population:
 
 | File | Change |
 | --- | --- |
