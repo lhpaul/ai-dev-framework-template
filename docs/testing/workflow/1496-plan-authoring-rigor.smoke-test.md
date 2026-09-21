@@ -120,6 +120,6 @@ names an acceptance theme, the exercise, and the expected gate class.
 
 Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. Acceptance criteria not named by a row above are covered by the Group's nearest row through the rule-name/label assertions of the mirror harness; any criterion with neither must be added as a row before implementation is marked done
 that wiring alone cannot prove. Before marking implementation complete, execute
-at least the mandatory rows named in the implementation plan Testing Strategy
-(B1, B3, C1, C2, D1, E1, F1, G1, H1, H3), including one blocking and one
-non-blocking outcome on real or fixture plan text.
+every matrix row above (B1–B10, C1–C2, D1–D2, E1–E3, F1–F4, G1, H1–H5), as
+the implementation plan Testing Strategy requires, including at least one
+blocking and one non-blocking outcome on real or fixture plan text.

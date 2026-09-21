@@ -32,7 +32,11 @@ non-blocking classifications for gate rows. The spec's full Decision-Gate
 Consistency Matrix is **copied into** that file as the normative gate section
 during implementation (do not paraphrase pass conditions). The approved spec
 remains historical product intent; after merge, engineers treat the new rules
-file as authoritative for day-to-day plan work.
+file as authoritative for day-to-day plan work. To keep exactly one canonical
+surface, the implementation PR also edits the retained spec's matrix
+introduction (`## Decision-Gate Consistency Matrix`, the sentence declaring the
+matrix canonical) into a pointer stating that the matrix is now canonical in
+`plan-authoring-rigor-rules.md` and that the spec copy is historical.
 
 **Estimated complexity**: L
 
@@ -313,6 +317,7 @@ Verification Log re-run) plus spec mirror table:
 | `.cursor/agents/implementation-plan-reviewer.md` | Reviewer routing |
 | `.codex/skills/workflow-plan-reviewer/SKILL.md` (also `.agents/skills/workflow-plan-reviewer/SKILL.md`, a symlink) | **No edit** — it only routes to Protocol 02 review, which is edited; harness asserts Protocol 02 review directly |
 | `.codex/skills/workflow-plan-writer/SKILL.md` (also served as `.agents/skills/workflow-plan-writer/SKILL.md`, a symlink to it — one edit covers both) | Author routing |
+| `docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | Matrix introduction only — replace the "canonical statement" sentence with a historical pointer to the rules file (Implementation Order step 1) |
 | `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh` | **Create** — mirror consistency harness |
 | `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` | **Create** — parser-risk fixture snippets (parser-risk addendum + Implementation Order step 7) |
 | `docs/testing/workflow/1496-plan-authoring-rigor.smoke-test.md` | Present on this plan branch — execute scenarios during implementation QA |
@@ -508,7 +513,9 @@ Not applicable.
 
 ## Implementation Order
 
-1. Create `plan-authoring-rigor-rules.md` with verbatim spec rules + gate matrix.
+1. Create `plan-authoring-rigor-rules.md` with verbatim spec rules + gate matrix,
+   and in the same change turn the retained spec's matrix-canonical sentence
+   into a historical pointer to it (one canonical surface).
 2. Update `implementation-plan-template.md` evidence sections.
 3. Extend Protocol 02 Step 3 guardrails and Document Quality Gate example.
 4. Extend `REVIEW.md` backstop checklist.
@@ -524,8 +531,8 @@ Not applicable.
 8. Update `AGENTS.md` (and README plan-stage pointer — section exists at line
    `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
-10. Execute smoke runbook Scenarios 1–7 plus the mandatory matrix rows named in
-    Testing Strategy.
+10. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B10, C1–C2,
+    D1–D2, E1–E3, F1–F4, G1, H1–H5) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
