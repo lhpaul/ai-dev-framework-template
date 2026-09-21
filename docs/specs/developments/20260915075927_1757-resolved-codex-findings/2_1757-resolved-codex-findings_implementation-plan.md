@@ -813,20 +813,48 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   | 6. Availability hard stop | Shipped unavailable outcome | `3` |
   | 7. Cleared-findings wait | `waiting_on_reviewer` | `4` / `codex-github-review-pending` |
   | 8. Clean | `clean` | `0` |
-  | (unranked) Retained environment-setup response | Unavailable (shipped handling, not a hard stop) | `2` / `codex-github-environment-missing` (`codex_return_environment_error`, Verification Log) |
+  | (outside the tie order) Retained environment-setup response | Unavailable (shipped handling, not a hard stop) | `2` / `codex-github-environment-missing` (`codex_return_environment_error`, Verification Log) |
 
   **Tie rule**: tiers 1–8 resolve strictly in the order above, so on an equal
   newest timestamp cleared-findings wait beats clean. Tier 6 appears here as
   well as in phase 1 so that a hard stop tied at the newest timestamp still
   outranks the wait and clean tiers; a hard stop at an *older* timestamp is
   handled by the hard-stop restoration rule instead, which reaches the same
-  unavailable outcome. The
-  environment-setup response **loses every tie** — spec BR-8 lets it
-  participate "only when it is itself the newest evidence" and it is
-  "superseded by any strictly newer terminal or review item", so it wins only
-  when *strictly* newest. It is **not** an availability hard stop and never
-  enters phase 1; that is the whole difference between it and a usage-limit
-  notice, which terminates immediately and is never superseded.
+  unavailable outcome.
+
+  **Environment-setup precedence — one rule, with its one exception.** A
+  retained environment-setup response is superseded **only by strictly newer**
+  terminal or review evidence (spec: "A retained environment-setup response
+  participates only when it is itself the newest evidence; a **strictly newer**
+  terminal or review item supersedes it"), so at an **equal** newest timestamp
+  it is *not* superseded by clean evidence — it wins that tie. The exception the
+  spec states in the same breath is the blocking one: blocking terminal or
+  review evidence, including `CHANGES_REQUESTED`, always wins over an
+  environment-setup response **regardless of timing**, which is the same
+  newest-wins exception recorded for availability notices above. It is not in
+  the tie order at all — the spec's tie list has no environment-setup tier —
+  which is why the table row above sits outside it.
+
+  Shipped behaviour already implements this, so preserve it rather than
+  re-deriving it: `codex_select_terminal_evidence`
+  (`codex-github-reviewer.sh:997–1014`) replaces the current selection only when
+  the candidate is strictly newer, or equal-timestamp **and** of strictly higher
+  `codex_response_priority` (`:950–972`: blocking / `CHANGES_REQUESTED` `3`,
+  unrecognized `2`, availability including environment-setup `1`, approved `0`).
+  So at an equal timestamp a clean verdict (`0`) does not displace a retained
+  environment-setup response (`1`), while a blocking one (`3`) does. The
+  retained regression `codex_main_loop_env_then_review_exit_unavailable`
+  (`tests:6239`) pins exactly that case — its fixture has the submitted review
+  at `submitted_at: 2026-01-01T00:00:01Z` and the environment-setup root comment
+  at `created_at: 2026-01-01T00:00:01Z`, the same second, and expects exit `2`
+  with `REASON=codex-github-environment-missing`. That expectation is
+  **consistent** with the rule as stated here; it was the plan's earlier
+  "loses every tie" wording that contradicted both the spec and the shipped
+  code, and this item changes no behaviour on this path.
+
+  An environment-setup response is still **not** an availability hard stop and
+  never enters phase 1; that is the whole difference between it and a
+  usage-limit notice, which terminates immediately and is never superseded.
 
   **Phase 3 — no terminal live-head evidence at all (phases 1 and 2 both
   empty).** Acknowledgement-only signals — a thumbs-up reaction, a draft review,
@@ -853,7 +881,11 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
      `evidence_unavailable_codex_thread_state` (phase-1 class 1).
   2. Compute the phase-2 winner `W`: the newest non-dismissed timestamp among
      live-head-covering terminal items, with items sharing exactly that
-     timestamp aggregated by tiers 1–8. `W` may be empty.
+     timestamp aggregated by tiers 1–8. A retained environment-setup response
+     is not one of those tiers and is resolved by the **Environment-setup
+     precedence** rule above — strictly-newer supersession, so it wins an equal
+     timestamp against clean evidence and loses to blocking evidence at any
+     timestamp. `W` may be empty.
   3. `W` is a fail-closed escalation (tiers 1–4) → that escalation.
   4. An applicable unresolved live-head conversation exists → `needs_fixes`.
   5. `W` is an actionable blocker (tier 5) → `needs_fixes`.
