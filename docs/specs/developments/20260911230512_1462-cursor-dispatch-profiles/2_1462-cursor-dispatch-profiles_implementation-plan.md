@@ -587,6 +587,11 @@ layer; `workflow.mdc` states all five compactly).
           canonical doc so a scenario's expected outcome changes; expect
           non-zero naming the path (`/run-item`, `/run-items`, or `/run-epic`).
 
+      17. **Selector wiring / header consistency**: remove one path from the
+          `# covers:` header; expect the guard's header-consistency check to
+          fail and the selector verification (step 3 of Testing Strategy) to
+          show the suite unselected for that path; restore.
+
       **Coverage rules (every branch must have a real cycle).** Each multi-token
       clause is proved token by token: one cycle deletes only one token while
       the rest of the clause remains. Each of cycles 3-11 is repeated once per
@@ -647,7 +652,7 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `.codex/skills/workflow-orchestrator/SKILL.md` | Canonical reference + portfolio-layer no-onward-handoff |
 | `.cursor/rules/workflow.mdc` | Requirement + link |
 | `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md` | Named stop affected-item alignment |
-| `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) |
+| `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) with `# covers:` header for every protected surface |
 | `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures (one per Parser-Risk case) |
 | `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Created in Plan Ready; Steps 12-14 and tightened Pass criteria added in plan review (no further edit expected) |
@@ -782,12 +787,58 @@ Smoke Step coverage remains the human-facing check for the same ACs.
 **Smoke test runbook**:
 `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md`
 
-**Regression suite**: Add
+**Regression suite and CI wiring**: Add
 `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`.
-No extra registration step: `.github/workflows/workflow-tests.yml` runs suites
-discovered by `list_suites` in `scripts/development-workflow/select-test-suites.sh`
-(`find scripts/development-workflow/tests -maxdepth 1 -name 'test-*.sh'`).
-Placing the file in that directory is the harness entrypoint.
+File discovery alone is **not** sufficient. `.github/workflows/workflow-tests.yml`
+is deliberately not path-filtered, and `select-test-suites.sh` decides which
+suites a PR runs: a suite with no `# covers:` header covers only
+`scripts/development-workflow/<name>.sh` / `.py` by naming convention (plus its
+own file and fixture directory). This suite guards docs, commands, skills,
+agents, protocols and a rule file, so it is a cross-cutting suite and **must
+declare** what it covers, within the first `COVERS_HEADER_LINES` (60) lines of
+the file, one `# covers:` line per group:
+
+```text
+# covers: .cursor/commands/run-item.md .cursor/commands/run-item-work.md .cursor/commands/run-items.md .cursor/commands/run-epic.md .cursor/commands/run-work.md
+# covers: .claude/commands/run-item.md .claude/commands/run-item-work.md .claude/commands/run-items.md .claude/commands/run-epic.md .claude/commands/run-work.md
+# covers: .agents/skills/run-item/SKILL.md .agents/skills/run-item-work/SKILL.md .agents/skills/run-items/SKILL.md .agents/skills/run-epic/SKILL.md .agents/skills/run-work/SKILL.md
+# covers: .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md
+# covers: .codex/skills/workflow-orchestrator/SKILL.md .codex/skills/workflow-item-orchestrator/SKILL.md
+# covers: docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/95-run-epic-protocol.md
+# covers: docs/workflow/development-workflow/guardrails-enforcement.md docs/workflow/development-workflow/agent-model-config.md
+# covers: docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md .cursor/rules/workflow.mdc
+# covers: docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md
+```
+
+Every path the guard reads must be listed, so the header and the guard's
+surface table are kept in step by a header-consistency check inside the guard
+(each surface path in its table must appear in a `# covers:` line, and vice
+versa). Other CI-wiring assumptions checked in this plan:
+
+- **Path filters**: `workflow-tests.yml` has no `paths:` filter (selector only);
+  no workflow edit is needed. `markdown-lint.yml` is path-filtered but the
+  plan/smoke/changelog `.md` files are already inside its globs; fixtures are
+  intentionally outside them.
+- **Registration**: none in the workflow file; the `# covers:` header is the
+  registration, verified below.
+- **Time budget**: each suite is capped by `SUITE_TIMEOUT_SECONDS` (600s) inside
+  a shard, and the guard runs `--self-test` over the whole fixture set every
+  time; the guard must complete in well under that cap (target under 60s, no
+  network, no `gh`). The manual planted-violation cycles are not part of the CI
+  suite run.
+- **Selector verification (implementation-time, planted check)**:
+  1. `select-test-suites.sh --print-map` lists this suite against every path in
+     the header above (assert one row per protected path).
+  2. For each protected surface, write that single path to a temp changed-files
+     list and run `select-test-suites.sh --changed-files <list>`; confirm the
+     output contains `test-cursor-dispatch-profile-surfaces.sh`. This is the
+     planted check: a touched mirror path must select the suite.
+  3. Remove one `# covers:` path from the header, rerun step 2 for that path,
+     confirm the suite is **not** selected (proves the check is live), restore.
+  4. `select-test-suites.sh --report-gaps` shows no gap for this suite (it is
+     selectable by a PR change set).
+  5. Run `bash scripts/development-workflow/tests/test-select-test-suites.sh`
+     to confirm the selector suite still passes with the new header.
 
 ---
 
@@ -822,6 +873,7 @@ Not applicable — no runtime data.
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass (plan-stage design; execution deferred) | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
+| CI wiring | Pass (design; execution deferred) | `# covers:` header for every protected surface, selector planted check and `--report-gaps`, per-suite time cap, no path filter change; see Testing Strategy |
 | Shell-script lint | Pass (design; execution deferred) | New `.sh` verified by `bash -n`, `shellcheck --severity=warning`, and `workflow-shell-guard-lint.py --base-ref origin/develop` per REVIEW.md; Implementation Order step 9 |
 | Parser-risk addendum | Pass | Surface guard is a structured-Markdown scanner; boundary, lookalike, multiple-occurrence and nested/overlap cases each mapped to a fixture and self-test (see Parser-Risk Addendum) |
 | Concurrent-event-source addendum | N/A | No concurrent event handlers |
@@ -870,8 +922,9 @@ Not applicable — no runtime data.
 8. **Surface guard test** — add the shell guard (link, profile-string, E1-E5
    clause, canonical-doc, and `simulate_bounded_paths` branches), the scanner
    fixtures directory with one fixture per Parser-Risk case (including the
-   fence-semantics rows), and the `--self-test` mode; no registration step is
-   needed (Testing Strategy: `list_suites` discovers it). Run locally. Commit.
+   fence-semantics rows), and the `--self-test` mode; with the `# covers:` header
+   declared (Testing Strategy: discovery alone does not wire it into PR suite
+   selection) and the selector verification run. Run locally. Commit.
 9. **Verify** — run every repo lint that applies to the files the PR adds:
    markdown lint commands from `AGENTS.md` (`npx markdownlint-cli2` over
    specs, testing runbook, and `changelog.d`; `markdown-heuristic-lint.py`;
@@ -881,7 +934,9 @@ Not applicable — no runtime data.
    `bash -n`, `shellcheck --severity=warning`, and
    `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop`
    (also run `bash scripts/lint/tests/test-workflow-shell-guard-lint.sh`
-   when the guard linter's inputs change), then run the surface guard, run
+   when the guard linter's inputs change), then run the selector verification
+   (`--print-map`, per-surface `--changed-files` planted check,
+   `--report-gaps`, `test-select-test-suites.sh`), then run the surface guard, run
    the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
    10-14 must PASS at the implementation head (Steps 12-14 via live run or
    `simulate_bounded_paths`); only live Steps 7-9 may be documented NOT RUN,
