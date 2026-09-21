@@ -45,6 +45,13 @@ again. The change is **not irreversible** but is **breaking for runner
 compliance expectations** once merged — treat as a published workflow contract
 update.
 
+**Persistent side effect on rollback**: the implementation's Protocol 91 step
+upserts a PR issue comment (marker `<!-- architecture-decision-escalation -->`).
+Reverting the repository files does not remove comments already posted on
+other PRs; those remain as historical records and are not deleted by rollback
+(they can be removed manually per PR if desired, and cannot be recovered once
+deleted).
+
 **Design assets**: None. Workflow-documentation feature only.
 
 ---
@@ -367,8 +374,19 @@ file list, the audit scope, and the files table all use one requirement.
       6. Term with different case (`conforms`) — reported (match is exact).
       7. CRLF line endings — a correct file still passes; `<line>` unchanged.
       8. Empty file and deleted file — reported, not silently skipped.
-      9. Correct file — no output (pass), asserted after each planted case is
-         restored.
+      9. Term appears twice on one line (once in-section decoy text, once as the
+         required rule) — counted once; a line with the term only in a
+         trailing decoy after an HTML comment opener is reported.
+      10. Boundary characters: term adjacent to punctuation or backticks
+          (`` `Conforms`, ``, `**Departs**`) — matches; term embedded in a
+          longer word (`Nonconformsx`) — reported.
+      11. Nested constructs: a fenced block inside a list item, and an HTML
+          comment inside a fenced block — scoping stays correct in both.
+      12. CommonMark fence flexibility: a closing fence longer than its
+          opener, a tilde fence, and an unterminated fence (runs to end of
+          file) — each treated per CommonMark; a term only inside is reported.
+      13. Correct file — no output (pass), asserted after each planted case is
+          restored.
 - [ ] Maps to *Surfaces agree* and REVIEW.md Verification Discipline.
 
 ### Database / Backend / Frontend / Infrastructure
