@@ -674,3 +674,9 @@ silently dropped.
    as they do today, in both modes.
 7. **Rejecting or defaulting an item filed with no class at all.** The absent-class
    case is a pre-existing gap that this feature neither worsens nor fixes.
+8. **Routing stops in explicit-list and epic runs.** The routing stop applies to a
+   single-item run and the portfolio scan. Runs that take an explicit list of items
+   or an epic keep today's behavior; extending the stop to them needs its own
+   decision on whether one misclassified item holds only itself or the whole run,
+   and is tracked in #1779. The "Routing stops instead of guessing" criteria read
+   accordingly: "asking a runner to advance" means the single-item runner.
