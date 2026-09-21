@@ -496,8 +496,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
   | Marker state | Window test | Outcome |
   | --- | --- | --- |
-  | Well-formed, names the live head, `created_at >= B` | Passes | Live-head evidence |
-  | Well-formed, names the live head, `created_at < B` | Fails | **Stale-head evidence, ignored** — this is the SHA-reuse case |
+  | Well-formed, names the live head, comment passes the boundary test | Passes | Live-head evidence |
+  | Well-formed, names the live head, comment fails the boundary test | Fails | **Stale-head evidence, ignored** — this is the SHA-reuse case |
   | Well-formed, names a different SHA | Not applied | Prior-revision evidence → stale path, `codex-github-review-pending` — spec line 107: "valid prior-revision evidence and follows the stale path … **never the malformed-marker path**" |
   | Syntactically unusable, **or** no `Reviewed commit` field | See the boundary rule below | Triggered head: `B` decides. Trigger-less head: escalate |
 
@@ -530,9 +530,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
          `B` to the event's `created_at`. **SHA reuse requires a force-push**:
          adding commits always yields a new SHA, so returning the head to a
          previously current SHA can only happen by force-updating the ref, and
-         that leaves this event. Treat `head_ref_deleted` and
-         `head_ref_restored` the same way when present — the guard needs only
-         `created_at`, not a SHA.
+         that leaves this event. `head_ref_deleted` and `head_ref_restored`
+         count the same way — see the deliberate inclusion note below.
 
       **Do not filter these events by `commit_id`.** In the A → B → A case the
       final force-push installs `A`, so its `commit_id` equals the live head; a
@@ -550,11 +549,23 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
       prior-head review, or a force-push that changed nothing relevant, can
       raise `B` past genuine current evidence, which yields a wait, never a
       clean. A timeline read that fails or truncates after one retry is the
-      **boundary unreadable** escalation below, not a silent skip.
+      **boundary unreadable** escalation below, not a silent skip. If such an
+      event is present but carries no usable `created_at`, treat it the same
+      way — escalate rather than ignoring the event.
+
+      **Include `head_ref_deleted` and `head_ref_restored`, deliberately.** A
+      delete-and-restore pair can also return a ref to a SHA it held earlier, so
+      the same reasoning applies. `head_ref_deleted` is verified to carry
+      `created_at` (Verification Log row `Force-push event payload`);
+      `head_ref_restored` could **not** be sampled — roughly 80 pull requests
+      across four repositories produced none — so its payload is unverified,
+      which is exactly why the missing-`created_at` case above escalates instead
+      of being silently skipped.
   - **Live head is trigger-less** — `B` = `max(created_at of the latest trigger
     naming any other SHA, PR created_at)`. A well-formed live-head marker
-    authored at or after `B` is current-occupancy evidence; one before it is
-    stale. A **non-self-identifying** comment at or after `B` cannot be placed at
+    authored at or after that trigger-derived `B` — or strictly after it, when
+    the occupancy guard raised `B` to an event timestamp — is current-occupancy
+    evidence; one before it is stale. A **non-self-identifying** comment at or after `B` cannot be placed at
     all — no boundary exists between the previous head's window and this one.
     Take head `A` triggered at `T1`, a non-self-identifying comment `C` at
     `T2 > T1`, then an untriggered push creating live head `B` at `T3 > T2`: the
@@ -567,6 +578,27 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     escalates with `evidence_unavailable_codex_thread_state` instead of
     guessing." A non-self-identifying comment **before** `B` is unambiguously
     under an earlier head and stays stale-head evidence.
+
+  **Two boundary kinds, two comparisons — this difference is load-bearing.**
+
+  - At a **trigger-derived** boundary (including the PR-creation fallback), a
+    comment qualifies when `created_at >= B`, with a shared second resolved by
+    comment ID. That tiebreak is the spec's own (line 107: "fresh only when its
+    comment ID orders after the trigger comment") and it works because both
+    objects are issue comments with comparable IDs.
+  - At an **event-derived** boundary raised by the occupancy guard — a
+    `head_ref_force_pushed`, `head_ref_deleted`, or `head_ref_restored` event —
+    a comment qualifies only when `created_at` is **strictly greater** than the
+    event's `created_at`. GitHub timestamps are second-resolution, and a
+    timeline event ID and an issue comment ID are different object types with
+    no documented ordering relationship, so a shared second genuinely cannot be
+    resolved. Accepting `>=` there would let a prior-occupancy comment that
+    shares a second with the force-push be read as current — a false clean.
+  - When both boundaries apply, a comment must satisfy **both**.
+
+  The strictly-greater rule costs at most a one-second window of genuine
+  post-force-push evidence, and that loss yields a wait — the loop requests or
+  awaits a current-head review — never a false clean.
 
   **`B` and the spec's freshness boundary are one rule, not two.** For a
   triggered live head, spec line 107's freshness boundary — a root comment is
@@ -1288,7 +1320,7 @@ and head-attribution helpers):
 | Same-second tie win | Comment id orders after trigger id | Fresh terminal |
 | Stale-head window | Malformed marker authored before the boundary `B` | Ignored for live head |
 | Boundary unreadable | The pull-request comment read fails after one retry, or a candidate boundary trigger has no readable SHA or `created_at` | Evidence unavailable |
-| Trigger-less live head, marker-pinned clean | Live head has no trigger; a well-formed marker names it, body clean, authored at or after `B` | Clean — marker gives the head, `B` gives the occupancy (AC-13) |
+| Trigger-less live head, marker-pinned clean | Live head has no trigger; a well-formed marker names it, body clean, and it passes the boundary test | Clean — marker gives the head, the boundary gives the occupancy (AC-13) |
 | SHA reuse, prior-occupancy clean | Marker names the live head but the comment predates the raised boundary `B` | Stale-head evidence — must not authorize readiness |
 | SHA reuse, force-push signal only | Intervening head left no evidence and no trigger; a `head_ref_force_pushed` event is newer than the live-head trigger | Boundary raised by the event alone — prior-occupancy comment ignored |
 | Trigger-less live head, unusable marker | Live head has no trigger; a syntactically-unusable-marker comment falls at or after the prior boundary | Evidence unavailable — no boundary exists (AC-14) |
@@ -1554,7 +1586,7 @@ esac
   table has 23 rows and its mapping table has 28 test names, of which 21 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
-  the five remaining mapping rows are the tie/precedence and correlation cases
+  the seven remaining mapping rows are the tie/precedence and correlation cases
   that have no marker input of their own.
 - Complex workflow decision-gate matrix: Checked — spec matrix is authoritative;
   implementation mirrors spec rows via `codex_classify_live_head_evidence()`.
@@ -1575,9 +1607,12 @@ esac
   marker answers *which head*: a well-formed marker naming another SHA is
   prior-revision evidence on the stale path and **bypasses the window**; a
   well-formed marker naming the live head is live-head evidence **only if it
-  also passes the boundary `B`**, because spec line 109 binds every root comment
-  to one head's evidence window and a SHA can occupy the head position twice;
-  and a comment with no well-formed marker is decided by `B` alone, escalating
+  also passes the boundary test**: `created_at >= B` at a trigger-derived
+  boundary, with the spec's comment-ID tiebreak, and **strictly** greater at an
+  event-derived one, where no cross-type tiebreak exists. Spec line 109 binds
+  every root comment to one head's evidence window and a SHA can occupy the head
+  position twice. A comment with no well-formed marker is decided by `B` alone,
+  escalating
   when the live head is trigger-less. `B` is the latest live-head trigger —
   which provably post-dates that occupancy, since the companion resolves
   `headRefOid` before posting — raised by the occupancy guard when newer
