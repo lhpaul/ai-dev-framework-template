@@ -29,6 +29,7 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `scan-status-unreadable-defers`, `gate-usage-errors`, `prelude-issue-no-folder-stops`,
 `stale-backlog-active-fix-branch-continues`, `stale-backlog-merged-fix-pr-continues`,
 `backlog-no-folder-no-branch-stops`, `branch-evidence-unavailable-defers`,
+`stale-backlog-open-fix-branch-no-pr-continues`, `scan-merged-implementation-pr-continues`,
 `prelude-issue-one-folder-uses-its-stage`, `prelude-issue-multiple-folders-passes`,
 `guidance-check-planted-violation`,
 the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
@@ -246,14 +247,25 @@ all (`workflow-next-action.sh:601`), so "no folder" alone must never justify a s
 issue whose tracker says `Backlog` with Type `Workflow` and which has **no** development
 folder, run the single-item path three ways:
 
-1. with an **open** `fix/<issue>-<slug>` branch or PR for the item;
-2. with a **merged** `fix/` or `hotfix/` PR and no live branch;
-3. with neither.
+1. with an **open** `fix/<issue>-<slug>` branch **and** an open PR for it;
+2. with a live `fix/<issue>-<slug>` branch and **no PR at all** — the normal state right after
+   a fast-track branch is cut (`stale-backlog-open-fix-branch-no-pr-continues`);
+3. with a **merged** `fix/` or `hotfix/` PR and no live branch;
+4. with none of the above.
 
-**Expected**: (1) and (2) `RESULT=pass` with `REASON=branch_or_pr_in_flight` — nothing stopped;
-(3) `RESULT=stop` (or `hold` for `--caller scan`). **Fail if** (1) or (2) stops: that is live
-fast-track work being halted because it does not use a development folder. **Fail if** (3)
-passes: that is the case the feature exists for.
+**Expected**: (1), (2) and (3) `RESULT=pass` with `REASON=branch_or_pr_in_flight` — nothing
+stopped; (4) `RESULT=stop` (or `hold` for `--caller scan`). **Fail if** (1), (2) or (3) stops:
+that is live fast-track work being halted because it does not use a development folder. Case
+(2) fails unless the caller runs the branch probe — the scope JSON lists no branches. **Fail
+if** (4) passes: that is the case the feature exists for.
+
+4c-iii-b. Scan-side merged PR (`scan-merged-implementation-pr-continues`). For a folder-bearing
+item whose only evidence is a **merged** implementation PR — no live branch, no open PR — run
+the scan.
+
+**Expected**: the item is **not** held; the gate reports `branch_or_pr_in_flight`. **Fail if**
+it is held: `open_implementation_pr_metadata` lists `--state open` only, so this case passes
+only when the scan also runs the merged-PR probe.
 
 4c-iv. Unreadable branch/PR evidence (`branch-evidence-unavailable-defers`). Repeat case (3)
 with `gh` unavailable or `gh pr list` failing.
