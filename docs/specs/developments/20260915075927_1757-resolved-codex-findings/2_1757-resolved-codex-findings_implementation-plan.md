@@ -76,11 +76,11 @@ checks in the implementation-start assumption table below.
 | Repo revision (worktree) | `git rev-parse --short HEAD`; `git merge-base HEAD origin/develop` | `39327e36` — this plan branch's revision at the last re-measurement of this table (2026-09-21). Every row below was re-run against this revision. The branch's `develop` merge base is `32605700`, which is what the Cross-Cutting Operational Assumption Check pins; the two are different surfaces. Line numbers in this table are **`pr-review-loop.sh` and `codex-github-reviewer.sh` as of `39327e36`** — re-measure at implementation start, because `pr-review-loop.sh` grows on `develop` (the cycle-cap call sites moved from `:10958` when this plan was first drafted to `:13555` here) |
 | Spec merged | `gh pr view 1758 --json state,baseRefName,mergedAt` | `MERGED` into `develop` at `2026-09-16T23:05:22Z` |
 | Phase-1 existing-findings gate | `sed -n '2167,2203p' scripts/development-workflow/pr-review-loop.sh` | Uses `check_unresolved_threads … provisional`; returns `needs_fixes` / `existing_findings` when count > 0 |
-| Companion exit-1 wrapper floor | `grep -n 'unresolved_count=1' scripts/development-workflow/pr-review-loop.sh` | Two floors: the Codex adapter at `pr-review-loop.sh:2266` (the one this item removes) and a second at `:2427` on another platform's path, which this item does **not** touch |
+| Companion exit-1 wrapper floor | `grep -n 'unresolved_count=1' scripts/development-workflow/pr-review-loop.sh` | Two floors: the Codex adapter at `pr-review-loop.sh:2266` (the one this item removes) and a second at `:2427`, inside `run_claude_code_action_review()` (defined at `:2337`), which this item does **not** touch |
 | Cleared-thread retrigger (partial) | `grep -n 'only cleared' scripts/development-workflow/codex-github-reviewer.sh` | Posts a fresh trigger at `codex-github-reviewer.sh:1536` (inline-review summary with only cleared findings) and `:1662` (existing trigger that produced only cleared findings) — neither covers the full spec matrix |
 | Unrecognized safe-fail today | `grep -n 'unrecognized response format' scripts/development-workflow/codex-github-reviewer.sh`; `grep -c 'unrecognized response format' scripts/development-workflow/tests/test-pr-review-loop.sh` | Three companion sites emit `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)` — `:1560`, `:1992`, `:2322` — and the harness mentions that string on 74 lines, so terminal unrecognized evidence exits `1` today rather than escalating; those expectations are the ones the matrix spot-check step rewrites |
 | Harness surface | `grep -c '^run_test.*codex' scripts/development-workflow/tests/test-pr-review-loop.sh` | 418 `codex`-named tests (Area 13) |
-| CodeRabbit thread API | `grep -n 'check_unresolved_threads' scripts/development-workflow/pr-review-loop.sh` | Same GraphQL `isResolved` / `isOutdated` helper is called in `provisional` mode at `pr-review-loop.sh:2173` and `strict` mode at `:2259` — the shared surface the AC-16 assessment judges |
+| CodeRabbit thread audit (AC-16 surface) | `sed -n '5556,5645p' scripts/development-workflow/pr-review-loop.sh` | The comparable integration is `coderabbit_thread_gate_clean()` at `pr-review-loop.sh:5556`, whose strict audit call is `check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login"` at `:5580` — the comment at `:5578–5579` states it "decides RESULT=clean for CodeRabbit and must never be relaxed by a reply-without-resolve". It fails closed on an incomplete audit (page cap → `unresolved_thread_check_incomplete` at `:5584–5596`; GraphQL failure after retries → `review_thread_audit_failed` at `:5599–5617`) and returns `needs_fixes` / `coderabbit_unresolved_review_threads` when the count is non-zero (`:5637–5640`). **It performs no revision correlation**: the audit filters on `isResolved` / `isOutdated` / `✅ Addressed` only, with no `commit_id == headRefOid` applicability test. The nearest head-scoped mechanism, `coderabbit_success_status_count "$repo" "$head_sha"` (`:5799`, used at `:6804` and `:6920`), counts commit statuses for the head rather than correlating conversations to a revision. The earlier revision of this row cited `:2173` / `:2259`, which are the **Codex** adapter's own calls, not CodeRabbit's |
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` | Documents pre-trigger scan and template approval; lacks new escalation/wait reason codes |
 | Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497`. Today's only definition — the plan **moves** it to `codex-github-evidence-lib.sh` under the same name and repoints `:1497`, rather than extending it in place, so both scripts share one implementation |
 | Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded "' scripts/development-workflow/pr-review-loop.sh` | Two call sites, the `#1502` dual cap: per-run at `pr-review-loop.sh:13555` and lifetime at `:13559`; the predicate is defined at `:11264` and the escalation log at `:13556` carries the reason string `max_cycles_exceeded` |
@@ -1187,11 +1187,27 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   Escalation reasons must flow to PR summary unchanged via
   `emit_prefixed_platform_output`.
 
-- [ ] **CodeRabbit assessment** (AC-16): In implementation PR description /
-  test evidence comment, record whether CodeRabbit’s existing
-  `check_unresolved_threads` pass exposes the same resolution + head correlation
-  (`shared`) or document missing capability (`not_applicable`). No CodeRabbit
-  behavior change unless assessment proves identical invariant already holds.
+- [ ] **CodeRabbit assessment** (AC-16): record the assessment in the
+  implementation pull request description / test-evidence comment, judged
+  against the real comparable path — `coderabbit_thread_gate_clean()`
+  (`pr-review-loop.sh:5556`), whose strict audit is at `:5580` (Verification
+  Log row `CodeRabbit thread audit (AC-16 surface)`).
+
+  **Expected outcome on the current code: `not_applicable`, with the missing
+  capability named as revision correlation.** The invariant this item
+  implements has two halves, and CodeRabbit has only one of them:
+  - *Resolution state — present.* CodeRabbit already calls the same GraphQL
+    helper in `strict` mode and already fails closed when the audit cannot be
+    completed, so the resolved-conversation half needs nothing.
+  - *Live-revision applicability — absent.* Its audit has no
+    `commit_id == headRefOid` test; `isOutdated` is GitHub's own staleness flag,
+    not the applicability rule the spec defines, and
+    `coderabbit_success_status_count` (`:5799`) answers a different question.
+
+  Re-confirm both halves against the code at implementation time and record
+  `shared` only if a revision-correlation test has appeared by then; otherwise
+  record `not_applicable` naming that gap. Either way, **no CodeRabbit
+  behaviour changes under this item**.
 
 ### Tests — `scripts/development-workflow/tests/test-pr-review-loop.sh`
 
@@ -1424,7 +1440,9 @@ threads.
 10. Acknowledgement-only → `codex-github-reaction-without-review` precedence (AC-10)
 11. `CHANGES_REQUESTED` with resolved threads and no blocking body assertion →
     `needs_fixes` (AC-1, 2)
-12. CodeRabbit assessment recorded `shared` or `not_applicable` (AC-16)
+12. CodeRabbit assessment recorded `shared` or `not_applicable` — expected
+    `not_applicable` on the current code, missing capability: revision
+    correlation (AC-16)
 13. Trigger-less marker-pinned clean superseded by newer live-head evidence, and
     repeated clean comments collapsing to the newest (comment-ID tie) (AC-13)
 14. Account-not-connected hard stop keeps its own exit-`3` reason code instead of
