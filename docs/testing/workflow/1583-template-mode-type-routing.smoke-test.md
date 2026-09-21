@@ -251,7 +251,7 @@ each include the misclassified item:
 
 **Expected**: output identical to the pre-feature baseline for both — no gate call, no stop,
 and no misclassification key of any kind. **Fail if** either run gains a hold, a stop, or a new
-key: explicit-list and epic scopes are deferred to `<backlog-issue-TBD>` and must not change
+key: explicit-list and epic scopes are deferred to `#1779` and must not change
 here.
 
 6. **Post-reclassification** (`reclassify-then-route`): re-class the item to Feature, then Bug,

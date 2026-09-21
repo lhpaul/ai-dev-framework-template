@@ -42,7 +42,7 @@ scope and must not be bundled into this implementation PR.
 
 | Date | Decision | Effect | Approval state |
 | --- | --- | --- | --- |
-| 2026-09-21 | **Explicit-list and epic scopes cut from this item.** Only the two routing callers the spec names are implemented: the single-item runner stop and the portfolio-scan hold | `--items` / `/run-items` and `--epic` / `/run-epic` keep today's behavior; deferred to `<backlog-issue-TBD>` | Approved by the human on 2026-09-21; recorded in Scope and Out of Scope below |
+| 2026-09-21 | **Explicit-list and epic scopes cut from this item.** Only the two routing callers the spec names are implemented: the single-item runner stop and the portfolio-scan hold | `--items` / `/run-items` and `--epic` / `/run-epic` keep today's behavior; deferred to `#1779` | Approved by the human on 2026-09-21; recorded in Scope and Out of Scope below |
 | 2026-09-21 | **Spec amended** — `1_1583-template-mode-type-routing_specs.md` reworded so a framework-mode `unavailable` lookup covers only the enumerated read failures, and states that the framework-mode lookup does not read Type, so the classification field's readability is not an input | Removes the contradiction between the spec's unavailable causes and a lookup that ignores Type; the plan already matched the amended wording | **Needs spec re-approval.** The spec change ships on this plan branch and must be re-reviewed before the implementation PR proceeds |
 | 2026-09-21 | **Issue-list response validation added** as a distinct lookup failure (`issue_list_blank_or_malformed`) | A `gh issue list` that exits `0` with blank or malformed JSON is `unavailable`, never `empty` and never `item_list_unparseable`; closed cause list grows to nine | Approved by the human on 2026-09-21 |
 
@@ -61,7 +61,7 @@ scope and must not be bundled into this implementation PR.
 **Out of scope — explicit-list and epic scopes:**
 
 - **Explicit-list (`--items`, `/run-items`) and epic (`--epic`, `/run-epic`) scopes are not
-  changed by this item; deferred to backlog issue `<backlog-issue-TBD>`.** Those runs keep
+  changed by this item; deferred to backlog issue `#1779`.** Those runs keep
   today's behavior exactly: no gate call, no hold key, no new stop. The spec's routing
   requirements name a single-item run and a portfolio scan, and giving a multi-item run a
   per-item hold would need a disposition `run-epic-scope-resolver.sh` does not have today —
@@ -102,7 +102,7 @@ scope and must not be bundled into this implementation PR.
 | Tracker Type failure modes | `get_tracker_type_for_issue` in `workflow-lib.sh:2293`–`:2325` | Empty string for non-`github_projects` providers, missing project config, or missing item; **non-zero** only when item JSON exists but Type cannot be parsed — verified 2026-09-20 |
 | Authoritative status + Type on the single-item path | `run-epic-scope-resolver.sh:678` (status) and `:687` (Type), which `run-item-scope-resolver.sh` delegates to; consumed via the scope JSON `run-bounded-prelude.sh` writes at `:460`–`:481` | Both values are already resolved and carried in the scope JSON, so the single-item gate needs no additional tracker call; `:687`–`:689` hard-fails on an unparseable Type before the gate is reached — verified 2026-09-20 |
 | Other prelude scope modes exist | `run-bounded-prelude.sh:404`–`:411` (mode selection) and `:460`–`:481` (resolver dispatch) | The prelude also resolves `items` (`--items`) and `epic` (`--epic`). This item wires **only** the `item` scope; the other two are recorded here so the boundary is deliberate rather than an oversight — verified 2026-09-20 |
-| Why multi-item disposition is deferred | `run-epic-scope-resolver.sh:730`–`:732` (`ambiguous` for missing/unrecognized status) and `:983`–`:990` (non-empty `ambiguous` → terminal `missing_tracker_context`) | A single `ambiguous` member already makes the **whole** epic/items resolution terminal, so a per-item hold there needs a new disposition the resolver does not have today. Designing it is its own item (`<backlog-issue-TBD>`), not a side effect of this one — verified 2026-09-20 |
+| Why multi-item disposition is deferred | `run-epic-scope-resolver.sh:730`–`:732` (`ambiguous` for missing/unrecognized status) and `:983`–`:990` (non-empty `ambiguous` → terminal `missing_tracker_context`) | A single `ambiguous` member already makes the **whole** epic/items resolution terminal, so a per-item hold there needs a new disposition the resolver does not have today. Designing it is its own item (`#1779`), not a side effect of this one — verified 2026-09-20 |
 | Linear deferred scope placeholder | `run-item-scope-resolver.sh:375`, `:396`–`:397` | Emits `trackerReadDeferred: true` with a literal `status: "Backlog"` and `type: ""`; the gate must key off `trackerReadDeferred`, not the placeholder — verified 2026-09-20 |
 | Cost of reading Status and Type | `workflow_github_project_item_for_issue` (`workflow-lib.sh:1781`) selects both fields, but `get_tracker_status_for_issue` (`:2250`) and `get_tracker_type_for_issue` (`:2293`) call it separately; caches exist only for the project id (`:1641`–`:1643`), field metadata (`:1644`–`:1648`), and named fields (`:1651`–`:1652`) | **No item-level cache**, so two reads of the same item are two GraphQL requests. The scan path therefore costs one extra request per scanned non-terminal folder in framework mode; no "single read" guarantee is claimed — verified 2026-09-20 |
 | Status reconciliation primitive | `workflow_status_order` in `workflow-lib.sh:1610` | `Backlog` → `0`, recognized statuses `Writing Spec`…`Released` → `> 0`, unrecognized → `-1` — verified 2026-09-20 |
@@ -879,7 +879,7 @@ markdown lint on plan/spec/runbook/protocol edits.
 | Gate over-reach beyond the spec | Only framework mode + reconciled `Backlog` + Type `Workflow` stops or holds; absent/unreadable Type and unreconcilable status `pass`, matching the spec's "Unchanged from today" rows. Any new fail-closed case requires a new spec AC first |
 | Extra tracker read on every scanned folder | Accepted and budgeted, not claimed away: no item-level cache exists, so the scan's Type read is a second GraphQL request. Contained by placement — framework mode only, after the terminal-status skip, never for discarded folders. A single-read refactor of the two lib helpers is explicitly out of scope for this item |
 | Lookup claims an unavailability it cannot detect | The framework-mode `unavailable` causes are a closed list of nine real read failures, each with its own `REASON` and its own named case; the classification field is not among them because framework mode never reads Type, and `framework-lookup-ignores-type-field` asserts a renamed Type field still yields `ok`/`empty` |
-| Multi-item scopes silently inherit the gate | `--items` and `--epic` are explicitly out of scope and must stay unwired; `consumer-prelude-workflow-unchanged` plus the Out of Scope entry keep the boundary visible, and the deferred item `<backlog-issue-TBD>` owns the multi-item disposition |
+| Multi-item scopes silently inherit the gate | `--items` and `--epic` are explicitly out of scope and must stay unwired; `consumer-prelude-workflow-unchanged` plus the Out of Scope entry keep the boundary visible, and the deferred item `#1779` owns the multi-item disposition |
 
 ---
 
@@ -1010,7 +1010,7 @@ final edit pass):
 | Framework-mode `unavailable` causes | The closed list of nine read failures, each with a `REASON` and a named case; the classification field is **not** one of them, because framework mode never reads Type |
 | Gate call sites | Exactly two: `run-bounded-prelude.sh` for the `item` scope, and `workflow-batch-plan.sh` for the portfolio scan |
 | `--caller` values | `single` (single-item run) and `scan` (portfolio scan). No other value, and no other caller |
-| Multi-item scopes | `--items` / `/run-items` and `--epic` / `/run-epic` are unchanged by this item; deferred to `<backlog-issue-TBD>` |
+| Multi-item scopes | `--items` / `/run-items` and `--epic` / `/run-epic` are unchanged by this item; deferred to `#1779` |
 | Unparseable Type | The `single` caller never reaches the gate — `run-epic-scope-resolver.sh:687` already aborts resolution (unchanged); the `scan` caller passes as `type_unreadable` with `MISCLASSIFIED_TYPE_CHECK=deferred` |
 | Unreadable status or Type | `pass` plus `MISCLASSIFIED_TYPE_CHECK=deferred` (a report field only; no routing effect) |
 | Closed mirror list size | 15 paths, with an explicit out-of-list table |
