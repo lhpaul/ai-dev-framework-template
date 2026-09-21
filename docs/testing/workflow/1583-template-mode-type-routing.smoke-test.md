@@ -21,10 +21,20 @@ bash scripts/development-workflow/tests/test-framework-mode-type-routing.sh
 ```
 
 (Use `test-workflow-lib-github-projects.sh` instead of the dedicated file if the plan collapses
-suites. Named scenarios `creation-refusal-no-bypass`, `stop-path-no-mutation`,
-`reclassify-then-route`, `consumer-prelude-workflow-unchanged`,
-`consumer-next-action-workflow-unchanged`, `release-unavailable-continues-unsatisfied`, and
+suites. Named scenarios `creation-refusal-no-bypass`,
+`framework-creation-valid-types-preserved`, `consumer-creation-all-classes-unchanged`,
+`stop-path-no-mutation`, `reclassify-then-route`, `framework-post-backlog-statuses-pass`,
+`scan-misclassified-item-held`, `scan-misclassified-not-informational`,
+`consumer-prelude-workflow-unchanged`, `consumer-next-action-workflow-unchanged`,
+`consumer-routing-all-classes-unchanged`, `release-unavailable-continues-unsatisfied`, and
 `retro-unavailable-continues-unsatisfied` must be covered by harness or the steps below.)
+
+**Exit-code convention for this runbook**: every command block below fails the smoke test when
+it exits non-zero, unless the step says otherwise. This matters most in Step 4, where the
+checks are written as `! rg …`: a surviving match makes `rg` exit `0`, `!` inverts that to a
+non-zero exit, and the non-zero exit **is** the smoke failure. Run those blocks under a shell
+with `set -e`, or check `$?` after each one; a silently ignored non-zero exit defeats the
+check.
 
 ---
 
@@ -77,6 +87,13 @@ echo "exit=$?"
 completed read with no open items, and `unavailable` with a non-empty reason when the tracker
 read fails. Exit code is `0` for `ok`, `empty`, and `unavailable`.
 
+**Exact key spellings — no glob shorthand.** The three published keys are
+`FRAMEWORK_ITEMS_LOOKUP_STATUS`, `FRAMEWORK_ITEMS_LOOKUP_REASON`, and `FRAMEWORK_ITEMS_JSON`.
+The third has **no** `LOOKUP_` segment, so grepping or matching on
+`FRAMEWORK_ITEMS_LOOKUP_*` does **not** cover it. Assert the three literals exactly; a check
+built on that glob silently skips the JSON key. (Same note appears in the plan's Enforcement
+point 2 and Reversal (2).)
+
 2. Temporarily unset `GITHUB_PROJECT_NUMBER` and remove `project_number` from config in a local
    test checkout **or** use the harness fixture for unavailable mode.
 
@@ -108,8 +125,10 @@ framework items". Exit `0`.
   --issue <number> --status Backlog --caller single
 ```
 
-**Expected**: `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, message names
-re-classification.
+**Expected**: `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, `ITEM=#<number>`, and a
+`REASON_TEXT` that **names the item** by number, states the class is not valid in a
+framework-mode repository, and names the re-classification that unblocks it. A stop that does
+not name the item fails this step.
 
 3. Assert **no mutation** on that stop path (`stop-path-no-mutation`): Type and Status on the
    tracker are unchanged; no new branch created for the item. Prefer the harness spy/mock; if
@@ -117,11 +136,35 @@ re-classification.
 
 4. Repeat with `--caller scan`.
 
-**Expected**: `RESULT=hold` (not a global stop).
+**Expected**: `RESULT=hold`, `ITEM=#<number>`, same naming `REASON_TEXT`, and **no**
+`STOP_CONDITION` key (a hold is not a stop).
 
-5. Pick an item whose tracker Status is `Spec Ready`, `Writing Plan`, or `In Development` that still shows Type `Workflow`.
+4b. Scan end state (`scan-misclassified-item-held`) — the gate result alone is not enough.
+Feed a batch-plan block for that item, plus a sibling Feature item, through
+`workflow-batch-lanes.sh`.
 
-**Expected**: `RESULT=pass`.
+**Expected**: for the misclassified item, `DISPATCH=held`, `REPORT_CATEGORY=held`,
+`REPORT_LABEL=HELD - not included in proposed batch`, and a `HOLD_REASON` naming the item; for
+the sibling, `DISPATCH=proposed` / `REPORT_CATEGORY=proposed_batch`. The script exits `0`.
+**Fail if** the misclassified item shows `DISPATCH=proposed` (the pre-change behavior for an
+unrecognized `NEXT_ACTION`, which falls through to the review lane) or `REPORT_CATEGORY`
+`informational`.
+
+5. Pick an item that still shows Type `Workflow` at **any** recognized non-Backlog status —
+   check at least two, e.g. `Spec Ready` and `Development in Review`
+   (`framework-post-backlog-statuses-pass` covers `Writing Spec` through `Released` in the
+   harness).
+
+**Expected**: `RESULT=pass` with `REASON=pipeline_already_chosen`, for every non-Backlog
+status. There is no privileged subset of statuses: only reconciled `Backlog` stops or holds.
+
+5b. Run the gate with a status string the board does not recognize, and with an item whose
+Type is empty or unreadable.
+
+**Expected**: `RESULT=pass` in both cases (`status_unreconciled` / `type_absent_or_unreadable`)
+— unchanged from pre-feature behavior. **Fail if** either case stops or holds; the spec has no
+acceptance criterion for an absent class or an unreconcilable status, and this feature must not
+add one.
 
 6. **Post-reclassification** (`reclassify-then-route`): re-class the item to Feature, then Bug,
    then Refactor; re-run through prelude / next-action. Each class routes as today. For Bug,
@@ -129,9 +172,12 @@ re-classification.
    fast-track).
 
 7. **Consumer fixtures** (`consumer-prelude-workflow-unchanged`,
-   `consumer-next-action-workflow-unchanged`): under consumer config, Backlog + Workflow through
-   `run-bounded-prelude.sh` and `workflow-next-action.sh` matches pre-feature routing (no
-   stop/hold from this gate). Harness golden/diff evidence required.
+   `consumer-next-action-workflow-unchanged`, `consumer-routing-all-classes-unchanged`): under
+   consumer config, Backlog routing through `run-bounded-prelude.sh` and
+   `workflow-next-action.sh` matches pre-feature behavior for **every** class — Feature, Bug,
+   Refactor, Workflow, and no class at all (no stop/hold from this gate). Harness golden/diff
+   evidence required; Workflow-only evidence does not discharge the "every class" acceptance
+   criterion.
 
 ---
 
@@ -158,7 +204,14 @@ Closed mirror list (must all agree; see plan):
 this repository.
 
 2. Grep check that **must fail** if old framework-mode Workflow guidance survives (run from
-   repo root; adjust wrapper if harness owns this):
+   repo root; adjust wrapper if harness owns this).
+
+   **Exit-code semantics**: each block is a negated `rg`. `rg` exits `0` when it finds a
+   match and `1` when it finds none, so `! rg …` exits **non-zero exactly when stale guidance
+   survives**. A non-zero exit from any of these four commands is a smoke failure — not a
+   warning, and not "no output, so fine". Run the block under `set -e` (or inspect `$?` after
+   each command); piping these into something that swallows the status makes the check
+   vacuous.
 
 ```bash
 # Fail if root agent files still recommend Workflow for framework/process work:
@@ -179,7 +232,8 @@ this repository.
   docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 ```
 
-**Expected**: All four commands exit 0 (no matches). Any match = smoke failure.
+**Expected**: All four commands exit `0`, which for a negated `rg` means **no matches**. Any
+match makes the command exit non-zero, and that non-zero exit is the smoke failure.
 
 ---
 
