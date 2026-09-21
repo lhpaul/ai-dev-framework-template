@@ -547,7 +547,7 @@ Not applicable.
 | Authors put evidence only in PR comments | Med | Med | Protocol 02 + template + blocking REVIEW findings |
 | Gate matrix copy introduces typos vs spec | Low | High | Verbatim copy from merged spec; spec reviewer diff in implementation PR |
 | Plan PR description record stale vs HEAD | Med | Med | Protocol 02 requires SHA match; REVIEW blocking row Group H |
-| Rule 1 external-source inspection burden | Low | Med | Document first-inspection finding field in outcome record; no re-inspect on later rounds per spec |
+| Rule 1 external-source inspection burden | Low | Med | Document first-inspection finding field in outcome record; a later round reuses the first-inspection finding only for a producer/source contract, export manifest, decommissioning notice, or protected artifact; occurrence locators are always inspected directly each round per spec |
 
 ---
 
