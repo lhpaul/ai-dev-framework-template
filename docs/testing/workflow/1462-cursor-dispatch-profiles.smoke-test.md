@@ -56,7 +56,8 @@
 1. Open `docs/workflow/development-workflow/guardrails-enforcement.md` section 4.
 2. Confirm rows exist for `dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable`.
 3. Confirm `dispatch_profile_declaration_missing` documents `explicit_list_invocation_targets=<t1>,<t2>,...` for pre-branch explicit-list `/run-items` stops, with targets verbatim (issue numbers, tracker IDs such as `ENG-123`, branch names, PR numbers) and `%`, `,`, whitespace percent-encoded.
-4. Confirm coarse-facts mismatch guidance rejects declarations that are either
+4. Confirm the human unblocking action for `dispatch_profile_declaration_missing` requires a **fresh invocation** (the stopped run is not resumed or corrected in place) supplying a valid profile (the facts-assigned one after a mismatch), a named accountable role, and a posture valid for the checkpoint; that `dispatch_handoff_unavailable` gives the move-to-confirmed-environment or accept-read-only action plus the stage-role reachability exception; and that `missing_required_secret_or_permission` gives the grant-and-rerun action plus the structural-restriction path.
+5. Confirm coarse-facts mismatch guidance rejects declarations that are either
    more permissive or less permissive than the assigned decision-gate outcome.
 
 **Expected result**: Stop names match spec matrix exactly; mismatch check is bidirectional.
@@ -75,10 +76,10 @@
 **Maps to**: AC15
 
 1. Open `docs/workflow/development-workflow/agent-model-config.md`.
-2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile **and model** assignments per layer: Desktop native handoff; Remote Control epic and item parent orchestrated, portfolio inline fallback; Cloud Agents inline fallback at every layer (initial handoff unconfirmed).
+2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile **and model** assignments per layer: Desktop native handoff; Remote Control parent orchestrated at every layer; Cloud Agents inline fallback at every layer (initial handoff unconfirmed).
 3. Confirm each row is labeled confirmed-by-observation or explicit assumption, for both the profile and the model assignment.
 
-**Expected result**: Remote Control epic and item default to Parent orchestrated; Cloud Agents defaults to Inline fallback as an explicit assumption (read-only, `dispatch_handoff_unavailable` on a mutating run) until initial handoff is confirmed by observation; no environment defaults to parent orchestrated without confirmed initial handoff.
+**Expected result**: Remote Control defaults to Parent orchestrated at every layer; Cloud Agents defaults to Inline fallback as an explicit assumption (read-only, `dispatch_handoff_unavailable` on a mutating run) until initial handoff is confirmed by observation; no environment defaults to parent orchestrated without confirmed initial handoff.
 
 ### Step 6: Read-only portfolio scan
 

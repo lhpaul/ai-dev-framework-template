@@ -194,10 +194,10 @@ does not); nothing is recorded for Cursor Cloud Agents.
 | Environment | Portfolio layer | Epic layer | Item layer | Matrix row applied | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | Cursor Desktop (local app) | Native handoff | Native handoff | Native handoff | Initial handoff available, onward available (S1) | Confirmed by observation (spec background: assumption holds on desktop) |
-| Cursor Remote Control | **Inline fallback** (read-only; a scan runs in the current context under every profile and `/run-work` never absorbs or hands off) | Parent orchestrated | Parent orchestrated | Epic and item: initial handoff available, onward unavailable (S3). Portfolio: initial handoff not directly observed at this layer (S11) | Epic and item: confirmed by observation (recorded failure mode covers `/run-item`, `/run-items`, `/run-epic`). Portfolio: **explicit assumption** |
+| Cursor Remote Control | Parent orchestrated | Parent orchestrated | Parent orchestrated | Initial handoff available, onward (Work Item Runner or stage-role) handoff unavailable (S3 for mutating runs, S4 for a read-only scan). At the portfolio layer this is Decision 7: Protocol 90 Step 4's existing one-at-a-time fallback when Work Item Runner handoff is unavailable | Confirmed by observation (recorded failure mode is environment-level: the context a command hands off to frequently cannot hand off again; it covers `/run-item`, `/run-items`, `/run-epic`, and the portfolio scan runs read-only in the current context under this profile with the `observing` posture) |
 | Cursor Cloud Agents | Inline fallback | Inline fallback | Inline fallback | **Initial handoff itself cannot be confirmed**: no handoff behavior is observed for this environment, so the matrix assigns inline fallback, read-only (S11 read-only, S12 mutating stop `dispatch_handoff_unavailable`). Parent orchestrated is valid only after initial handoff is confirmed, and evaluating onward capability before that is prohibited | **Explicit assumption** (spec: unobserved environments assume the more restrictive profile until confirmed by observation) |
 
-Consequence for Cloud Agents (and the Remote Control portfolio layer): a
+Consequence for Cloud Agents: a
 mutating bounded run stops with `dispatch_handoff_unavailable` recording that
 initial handoff is unconfirmed, rather than absorbing a role. An operator who
 observes and records in run output that initial handoff is available makes the
@@ -217,7 +217,7 @@ configured models under every profile.
 | Environment | Portfolio layer model | Epic layer model | Item layer model | Model evidence |
 | --- | --- | --- | --- | --- |
 | Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | Confirmed by observation (agent frontmatter applies on native handoff) |
-| Cursor Remote Control | No role absorbed (inline fallback, read-only): the session's own model reports the scan; no role floor applies | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Epic and item: profile confirmed by observation, **model an explicit assumption** (the remote session's model is not switched by role frontmatter). Portfolio: explicit assumption |
+| Cursor Remote Control | Absorbing current context runs at the `economy` floor; any session model at or above `economy` is acceptable, `fast` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Profile confirmed by observation at every layer; **model an explicit assumption** (the remote session's model is not switched by role frontmatter) |
 | Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | **Explicit assumption** (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row that the confirmed facts assign, including its model floor |
 
 Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
@@ -319,7 +319,10 @@ words and not by pointer alone:
    (a) the **affected work item** (including the single
    `explicit_list_invocation_targets=<t1>,<t2>,...` form for pre-branch
    explicit-list stops, targets verbatim and percent-encoded per the plan gap
-   rule) and (b) the **concrete human unblocking action**. The
+   rule) and (b) the **concrete human unblocking action**, which must cover every
+   cause the stop fires for (for `dispatch_profile_declaration_missing`: a fresh
+   invocation supplying a valid profile, a named accountable role, and a
+   posture valid for the checkpoint; not only a profile value). The
    mirror further states the **no-named-stop** treatment: a reachable stage
    role's harness tool or local file-path permission denial on a specific
    delegated action is **not** a named stop condition,
@@ -416,8 +419,8 @@ layer; `workflow.mdc` states all five compactly).
       **model assignment**, and (c) whether that assignment is confirmed by
       observation or an explicit assumption. The exact values are fixed in
       Decision 6 (Desktop: native handoff, role's own model; Remote Control epic
-      and item: parent orchestrated with a `balanced` floor, portfolio: inline
-      fallback; Cloud Agents: inline fallback at every layer, an explicit
+      and item: parent orchestrated with a `balanced` floor, portfolio: parent
+      orchestrated with an `economy` floor; Cloud Agents: inline fallback at every layer, an explicit
       assumption for both profile and model, because initial handoff cannot be
       confirmed for an unobserved environment);
       implementation copies them, it does not choose them. The model assignment is not
@@ -433,12 +436,27 @@ layer; `workflow.mdc` states all five compactly).
       add `dispatch_profile_declaration_missing` and
       `dispatch_handoff_unavailable`. Each stop message must name (a) the stop
       condition string, (b) the affected work item, and (c) the human action to
-      unblock: for `dispatch_profile_declaration_missing`, declare one of
+      unblock, covering **every cause** the stop can fire for (spec Named
+      Stop-Condition Mapping): for `dispatch_profile_declaration_missing`,
+      the stopped run is **not resumed or corrected in place**; the human
+      starts a **fresh invocation** supplying (i) a valid profile, one of
       `cursor-native-handoff`, `cursor-parent-orchestrated`, or
-      `cursor-inline-fallback` in the run preamble and re-invoke the bounded
-      command; for `dispatch_handoff_unavailable`, either switch to a profile
-      whose next layer is available or restore the handoff target, then
-      re-invoke. Extend `dispatch_profile_declaration_missing` affected-item
+      `cursor-inline-fallback`, and, when the prior run was rejected for a
+      profile/fact mismatch, the profile the known facts assign, (ii) a named
+      accountable orchestrator role, and (iii) a posture valid for the
+      checkpoint (absorbed or handed off intact for a mutating action,
+      observing for a read-only checkpoint); for `dispatch_handoff_unavailable`,
+      move the run to an environment where initial handoff is confirmed
+      available and re-run, or explicitly accept the read-only result reported
+      for that invocation, and for the parent-orchestrated stage-handoff row
+      first confirm the specific stage role the action needed is reachable in
+      the target environment; for `missing_required_secret_or_permission`,
+      grant the specific credential, GitHub permission, or access token the
+      stage role's report named and re-run the same delegated action, or, for a
+      structural restriction that will not be granted, reassign the action to a
+      context acting as that same stage role or explicitly accept and record
+      that the action does not proceed (the absorbing context never performs it
+      inline, and this path never extends to a harness or local-path denial). Extend `dispatch_profile_declaration_missing` affected-item
       text for `explicit_list_invocation_targets=<t1>,<t2>,...` (verbatim,
       percent-encoded serialization, all accepted target forms); document reuse of
       `missing_required_secret_or_permission` for reachable stage credential
@@ -492,11 +510,22 @@ layer; `workflow.mdc` states all five compactly).
            the surfaces that carry that token the serialization tokens
            `verbatim` and `percent-encoded`.
          - E3c **human unblocking action**: `human unblocking action` (or the
-           fixed synonym), and, per stop, the action token from the canonical
-           doc for each of the three stops (`declare one of` for
-           `dispatch_profile_declaration_missing`, `restore the handoff target`
-           for `dispatch_handoff_unavailable`, `supply the missing credential`
-           for `missing_required_secret_or_permission`).
+           fixed synonym), plus per-stop **cause-complete** tokens (each stop's
+           action must cover every cause that stop fires for):
+           - `dispatch_profile_declaration_missing`: `fresh invocation`,
+             `not resumed or corrected in place`, `valid profile`,
+             `named accountable role`, `posture valid for the checkpoint`, and
+             `profile the known facts assign` (the three elements are each
+             required, so missing-role, invalid-posture and profile/fact
+             mismatch causes are all unblocked, not only an invalid value).
+           - `dispatch_handoff_unavailable`: `environment where initial handoff
+             is confirmed available`, `explicitly accept the read-only result`,
+             and, for the parent-orchestrated stage row, `specific stage role`
+             with `reachable`.
+           - `missing_required_secret_or_permission`: `grant`,
+             `re-run the same delegated action`, and the structural-restriction
+             path tokens `same stage role` and `does not proceed`, plus
+             `never performs` (inline) and the harness/local-path exclusion.
          - E3d **no-named-stop denial treatment**: `is not a named stop
            condition`, `SUBAGENT_PERMISSION_DENIAL`, `observably similar`,
            and `#1746` in the same paragraph.
@@ -518,7 +547,7 @@ layer; `workflow.mdc` states all five compactly).
          | Protocols 90, 91, 95 | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
          | `.cursor/rules/workflow.mdc` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
          | `guardrails-enforcement.md` section 4 | - | - | - | Y | Y | Y | Y | Y | Y | - | - |
-         | `agent-model-config.md` | the exact Decision 6 profile, model assignment and evidence class for every environment x layer cell (Desktop native; Remote Control epic/item parent orchestrated, portfolio inline fallback; Cloud Agents inline fallback everywhere) | | | | | | | | | | |
+         | `agent-model-config.md` | the exact Decision 6 profile, model assignment and evidence class for every environment x layer cell (Desktop native; Remote Control parent orchestrated at every layer; Cloud Agents inline fallback everywhere) | | | | | | | | | | |
 
          Layer scoping is by wording, not by omission: a portfolio-layer
          surface states the clause for the portfolio layer and an item-layer
@@ -649,10 +678,18 @@ layer; `workflow.mdc` states all five compactly).
          stop names remain.
          Separately remove only the `percent-encoded` token (then only
          `verbatim`) from Protocol 90 and from `run-items` mirrors.
-      8. **E3c human unblocking action**: remove the unblocking action for
-         `dispatch_handoff_unavailable` only, from `.claude/commands/run-item.md`,
-         while its name and the other two actions remain (proves per-stop
-         checking).
+      8. **E3c human unblocking action** (per stop and per cause): from
+         `.claude/commands/run-item.md`, remove the unblocking action for
+         `dispatch_handoff_unavailable` only while its name and the other two
+         actions remain (per-stop checking); then, separately, remove each of
+         the three `dispatch_profile_declaration_missing` elements (valid
+         profile / named accountable role / posture valid for the checkpoint)
+         and the `profile the known facts assign` clause, the
+         `explicitly accept the read-only result` alternative and the
+         `specific stage role` exception for `dispatch_handoff_unavailable`,
+         and the structural-restriction path for
+         `missing_required_secret_or_permission`; each removal must fail
+         naming the stop and the cause.
       9. **E3d no-named-stop denial treatment**: remove the harness/local-path
          denial paragraph from `.cursor/agents/item-orchestrator.md`, and
          separately remove only the `#1746` token from it.
@@ -898,6 +935,13 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) | `class-guardrails-exempt-clauses` | pass (absent `-` clauses are not required) |
 | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction | `class-guardrails-missing-e4b` | fail naming E4b |
 | Surface-class table | `agent-model-config.md` fixture missing one environment row | `class-model-config-missing-row` | fail |
+| E3c cause completeness | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) | `e3c-stop1-profile-only` | fail (missing-role, invalid-posture, mismatch causes unblocked) |
+| E3c cause completeness | Stop-1 action lacking only the posture element | `e3c-stop1-no-posture` | fail naming the cause |
+| E3c cause completeness | Stop-1 action lacking only the named-accountable-role element | `e3c-stop1-no-role` | fail naming the cause |
+| E3c cause completeness | Stop-1 action lacking the `profile the known facts assign` clause | `e3c-stop1-no-facts-profile` | fail naming the cause |
+| E3c cause completeness | Stop-2 action lacking the `specific stage role` exception, or the read-only-accept alternative | `e3c-stop2-missing-cause` | fail naming the cause |
+| E3c cause completeness | Stop-3 action lacking the structural-restriction path | `e3c-stop3-no-structural-path` | fail naming the cause |
+| E3c cause completeness | All three stop actions cause-complete | `e3c-all-causes-present` | pass |
 | Serialization rule | `%` alone in a target (`50%`) encoded `50%25` | `ser-percent-alone` | pass |
 | Serialization rule | Pre-existing `%25` in a target encoded to `%2525` (no double-encode skip) | `ser-percent-preexisting` | pass |
 | Serialization rule | Target that already looks like `%2C` encoded `%252C` (comma-lookalike) | `ser-looks-like-2c` | pass |
