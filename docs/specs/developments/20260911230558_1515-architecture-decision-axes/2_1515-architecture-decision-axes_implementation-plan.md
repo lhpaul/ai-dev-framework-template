@@ -145,7 +145,7 @@ records only concrete names and surfaces deferred to the plan:
 | Citation conformance cannot be determined | Incomplete escalation | Plain statement; no declaration enum value | Canonical page + malformed-input rows | — |
 | Reviewer/human raised substance; runner cannot resolve | Incomplete escalation | Substance confirmation request; coverage verdict unchanged | guardrails-enforcement §5 + canonical page | Spec gap 1 resolution |
 | Every axis settled, every citation `Conforms` **or** `Not yet implemented`, no disputes, **and no reviewer- or human-raised question about a citation's substance left unresolved** | Not an architecture decision | Continue without `architecture_decision` stop; if such a substance question is unresolved, use the substance-undetermined row above instead | Protocol 91 stop-and-name section | Spec matrix "No escalation" rows |
-| Every axis settled but some citation declares `Departs` | Not eligible for the no-escalation path | Correct the behavior to conform where that is the obvious correction (the axis is then settled by the correction), otherwise raise the departure as its own genuinely open axis and stop | Protocol 91 stop-and-name section, canonical page | Spec: a `Departs` citation "is never presented as support for the current behavior" |
+| Every axis settled but some citation declares `Departs` | Not eligible for the no-escalation path | Correct the behavior to conform where that is the obvious correction (the axis is then settled by the correction), otherwise raise the departure as its own separate axis — **Genuinely open** with the reason **Governing line disputed**, carrying a proposed amendment for what the line should become — while the covered axis stays **Settled by specification**; then stop | Protocol 91 stop-and-name section, canonical page | Spec: a `Departs` citation "is never presented as support for the current behavior" |
 
 ---
 
@@ -208,7 +208,10 @@ records only concrete names and surfaces deferred to the plan:
       comments, locate an existing body containing the marker (reuse
       `find_marker_comment_id` from `run-epic-audit-trail.sh`), `gh api` PATCH
       that comment when found, otherwise POST a new comment — same idempotency
-      contract as checkpoint-status and security-advisory marker comments. Smoke
+      contract as checkpoint-status and security-advisory marker comments. Do
+      **not** cite Step 7a's `gh pr comment` as the model: it posts a new
+      comment on every exit, whereas this step must update the marker comment
+      in place. Smoke
       test step 3 verifies the algorithm is documented; no new script is
       required for MVP unless implementation extracts a shared helper.
 - [ ] **Scope reconciliation (spec Out of Scope item 7)**: this is not a routing
@@ -218,8 +221,10 @@ records only concrete names and surfaces deferred to the plan:
       criterion), while stating it adds no new destination for runs with no PR
       and changes no notification or answer-recording path. Protocol 91 has no
       architecture-stop PR comment today, so the plan satisfies that criterion
-      by reusing the *existing* PR-comment mechanism (`gh pr comment` /
-      marker upsert, as Step 7a summaries and checkpoint markers already do)
+      by reusing the *existing* marker-comment upsert mechanism
+      (`find_marker_comment_id` plus PATCH/POST, as checkpoint-status and
+      security-advisory markers already do; Step 7a's append-only `gh pr
+      comment` is not the pattern)
       with the same report content already attached to the run summary. The
       implementation states this reuse in the Protocol 91 text; if review
       concludes the criterion cannot be met without a new route, that is a spec
@@ -330,12 +335,15 @@ file list, the audit scope, and the files table all use one requirement.
           `architecture_decision` / escalation heading to the next heading of
           the same or higher level), outside fenced code blocks and HTML
           comments. A mention elsewhere in the file does not satisfy the check.
-        - *Every audited file* contains the literal
-          `architecture-decision-escalation.md` link.
-        - *Protocol 91, Protocol 93, developer and code-reviewer mirrors*
-          (Layers C, D, H) also contain `Conforms`, `Departs`,
+        - *Every audited file except the canonical page itself* contains the
+          literal `architecture-decision-escalation.md` link (the page is the
+          link's target and is not required to name its own filename).
+        - *Protocol 91, Protocol 93, and the developer, code-reviewer,
+          item-orchestrator and run-item mirrors* (Layers C, D, H) — the files
+          whose runners actually stop under `architecture_decision` or cite
+          specification lines — also contain `Conforms`, `Departs`,
           `Not yet implemented`.
-        - *Protocol 90 and the orchestrator / reviewer-loop / run-item(s)
+        - *Protocol 90 and the batch orchestrator / reviewer-loop / run-items
           mirrors* (Layers E, H) need only the link plus the child-report
           reference / "no lighter escalation wording" sentence; they are
           **not** required to duplicate the declaration vocabulary.

@@ -77,6 +77,11 @@ Search Protocol 91 for `architecture_decision` / canonical page link.
 - [ ] That continuation is **not** offered when a reviewer or human has raised
       a question about a citation's substance that the runner cannot resolve;
       that case stops as an incomplete `architecture_decision` escalation.
+- [ ] When every axis is settled but a citation declares `Departs` and
+      correction is not the obvious next step, the report raises a separate
+      **Genuinely open** axis with reason **Governing line disputed** and a
+      proposed amendment, keeps the covered axis **Settled by specification**,
+      and stops; it does not continue.
 
 **Expected**: Protocol points to canonical page instead of restating full rules.
 
