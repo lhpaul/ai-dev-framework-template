@@ -207,7 +207,11 @@ records only concrete names and surfaces deferred to the plan:
       to the run summary. Protocol text must name the algorithm: paginate issue
       comments, locate an existing body containing the marker (reuse
       `find_marker_comment_id` from `run-epic-audit-trail.sh`), `gh api` PATCH
-      that comment when found, otherwise POST a new comment — same idempotency
+      that comment when found; otherwise **re-run the marker lookup immediately
+      before POSTing** (as `apply_comment` in `run-epic-audit-trail.sh`
+      does, so concurrent runs cannot create duplicates) and PATCH if it now
+      exists, POST only if it still does not, or use an equivalent shared
+      helper — same idempotency
       contract as checkpoint-status and security-advisory marker comments. Do
       **not** cite Step 7a's `gh pr comment` as the model: it posts a new
       comment on every exit, whereas this step must update the marker comment
@@ -371,7 +375,7 @@ file list, the audit scope, and the files table all use one requirement.
       Markdown, so protocol `02` Step 3 parser-risk rules apply). Unit test
       file: `scripts/development-workflow/tests/test-worktree-recipe.sh`; one
       automated case per input below, each with a fixture and an asserted
-      `MISSING=` / `ANCHOR_MISSING=` (or no-output) result:
+      `MISSING=` / `ANCHOR_MISSING=` (or no-violation) result:
       1. Required term present **only outside** the escalation section (an
          out-of-section decoy) — must be reported `MISSING`.
       2. Escalation heading absent — `ANCHOR_MISSING=<file>`, line `0`.
@@ -393,7 +397,7 @@ file list, the audit scope, and the files table all use one requirement.
       12. CommonMark fence flexibility: a closing fence longer than its
           opener, a tilde fence, and an unterminated fence (runs to end of
           file) — each treated per CommonMark; a term only inside is reported.
-      13. Correct file — no output (pass), asserted after each planted case is
+      13. Correct file — no `MISSING=` / `ANCHOR_MISSING=` lines, only `COUNT=<n>` (pass), asserted after each planted case is
           restored.
 - [ ] Maps to *Surfaces agree* and REVIEW.md Verification Discipline.
 
