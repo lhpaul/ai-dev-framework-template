@@ -986,8 +986,11 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   findings all correlate to resolved applicable conversations and no other
   applicable unresolved conversation exists, return exit `4` /
   `codex-github-review-pending` (post fresh trigger when appropriate), never exit
-  `1`. `CHANGES_REQUESTED` submitted review remains exit `1` even if every
-  thread is resolved.
+  `1`. A `CHANGES_REQUESTED` submitted review remains exit `1` even if every
+  thread is resolved — unless it also carries a blocking assertion in its own
+  body, which is an uncorrelated finding and escalates
+  `codex_finding_thread_correlation_missing` under the canonical
+  CHANGES_REQUESTED step below.
 
 - [ ] **CHANGES_REQUESTED + correlation-missing** (AC-7, matrix row 287) —
   canonical wording, identical to the Finding-extraction exception above: a
@@ -1083,8 +1086,15 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   review/comment still visible (outdated or resolved-on-new-head). Expect companion
   exit `4` / `REASON=codex-github-review-pending` — not `needs_fixes` from
   historical visibility alone. Include a second sub-assertion on current head
-  `ffff…` with resolved non-outdated thread + current-head COMMENTED review body
-  listing blocking markers (cleared-findings retrigger path).
+  `ffff…` with a resolved non-outdated thread and a current-head `COMMENTED`
+  review whose **body carries no blocking marker** (cleared-findings retrigger
+  path). The body constraint is load-bearing, not incidental: under the
+  two-source finding rule a blocking body assertion is itself an uncorrelated
+  finding, so the same fixture with blocking body text escalates
+  `codex_finding_thread_correlation_missing` instead of reaching the
+  cleared-findings wait. The subject of this sub-assertion is the resolved
+  current-head thread, and it keeps its expected
+  `waiting_on_reviewer` / `codex-github-review-pending` outcome.
 
 - [ ] **AC-11 — empty vs absent `Reviewed commit` field**: two cases, since the
   two shapes diverge. A root comment carrying the field **with no value**
@@ -1211,7 +1221,11 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `codex_evidence_unavailable_escalates` (the first is the target of a
   planted-violation proof, so it must exist under that name) — plus
   cleared-findings wait vs clean tie, stale-head malformed ignored, and
-  `CHANGES_REQUESTED` with all threads resolved. Update existing Area 13 tests
+  `CHANGES_REQUESTED` with all threads resolved — that last fixture's review
+  body must carry **no** blocking marker (the Seed Data row already pairs
+  `CHANGES_REQUESTED` with a clean-template body), since a blocking body
+  assertion is itself an uncorrelated finding and escalates
+  `codex_finding_thread_correlation_missing` ahead of the structured blocker. Update existing Area 13 tests
   that expect `NEEDS_REVISION (unrecognized response format — safe-fail)` to
   expect escalate / `codex_current_verdict_unrecognized` instead, and update
   `codex_cleared_thread_top_level_blocker_*` expectations from exit `1` /
@@ -1267,7 +1281,8 @@ threads.
 8. Malformed marker on live head → escalate `codex_current_verdict_malformed_revision_marker` (AC-9, 11, 14)
 9. GraphQL thread state failure → escalate `evidence_unavailable_codex_thread_state` (AC-9)
 10. Acknowledgement-only → `codex-github-reaction-without-review` precedence (AC-10)
-11. `CHANGES_REQUESTED` with resolved threads → `needs_fixes` (AC-1, 2)
+11. `CHANGES_REQUESTED` with resolved threads and no blocking body assertion →
+    `needs_fixes` (AC-1, 2)
 12. CodeRabbit assessment recorded `shared` or `not_applicable` (AC-16)
 13. Trigger-less marker-pinned clean superseded by newer live-head evidence, and
     repeated clean comments collapsing to the newest (comment-ID tie) (AC-13)
