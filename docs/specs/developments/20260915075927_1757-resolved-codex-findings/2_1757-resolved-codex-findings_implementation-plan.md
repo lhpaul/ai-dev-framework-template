@@ -93,6 +93,7 @@ checks in the implementation-start assumption table below.
 | Head-transition source investigation | `gh api repos/{owner}/{repo}/issues/1768/timeline --paginate --jq '.[].event' \| sort \| uniq -c`; `gh api repos/{owner}/{repo}/events --paginate --jq '.[] \| select(.type=="PushEvent")'` | The pull-request timeline for a four-head pull request contains **no** push- or head-transition event of any kind: only `commented`, `committed`, `labeled`, `unlabeled`, `subscribed`, `mentioned`, `reviewed`, `cross-referenced`. `committed` events carry `sha` + `committer.date` with `created_at: null`. Ordinary (non-force) pushes surface no pull-request-scoped event, so `head_ref_force_pushed` is the only timeline transition event and this repository has none to sample. The repository `events` feed *does* carry `PushEvent` with a true push instant per branch ref — `490bde2c` at `2026-09-21T00:05:21Z` versus its `committer.date` of `00:05:14Z`, empirically confirming the 7-second commit-date-vs-push gap — but the feed is repository-wide and bounded: `--paginate` returned ~286 events reaching back only to `2026-09-16`, entries for one ref came back out of chronological order, and a fork head ref would not appear at all. **Historical — no longer consumed by any step.** Recorded because it is the evidence that a transition instant cannot be sourced at all; the **Live-head evidence window** section no longer needs one, so no substitute is required |
 | Trigger comment names the head | `sed -n '1685p;2019p' scripts/development-workflow/codex-github-reviewer.sh` | `codex-github-reviewer.sh:1685` posts `… (review triggered by workflow runner, commit: $CURRENT_SHA)` and `:2019` posts `… (sha: $CURRENT_SHA)` on retrigger, both after `headRefOid` is resolved. Every trigger therefore names its SHA, which is what lets the boundary `B` be computed by string comparison against `headRefOid` with no head enumeration |
 | Blocking-marker vocabulary (shipped) | `grep -n 'CODEX_BLOCKING_PATTERN\|codex_response_is_blocking()' scripts/development-workflow/codex-github-reviewer.sh` | `CODEX_BLOCKING_PATTERN` is defined at `codex-github-reviewer.sh:532` (`changes requested`, `blocking issues:`, `blocking finding`, `blocking:`, `must fix`, `action required`, `required:`, `❌`) and extended at `:578` with `CODEX_MERGE_REFUSAL_PATTERN` (`:577`); `codex_response_is_blocking()` at `:698` is the classifier. Body findings reuse this surface, so the plan adds no marker vocabulary — which is what the spec requires |
+| Reply-after-push relaxation (shipped) | `sed -n '340p' scripts/development-workflow/codex-github-reviewer.sh`; `sed -n '7336,7341p;7354,7355p;7377,7379p' scripts/development-workflow/pr-review-loop.sh` | The companion folds the relaxation into its `cleared` predicate at `codex-github-reviewer.sh:340` (`isResolved` **or** `✅ Addressed` **or** last comment non-bot with `createdAt` later than `headRef.target.committedDate`), with no mode switch. The loop's `check_unresolved_threads` has the switch: `provisional` → `strict` fallback at `:7354-7355`, provisional-only field fetch at `:7377-7379`, and the contract at `:7336-7341` — provisional "exists ONLY to unblock phase-1 gates that decide whether to re-trigger a review; it must never be used by a gate that decides RESULT=clean" |
 | Codex marker token width | `gh api repos/{owner}/{repo}/pulls/1768/reviews --paginate --jq '.[] \| select(.user.login\|test("codex")) \| .body'` | The two Codex reviews on this pull request carry `**Reviewed commit:** \`37d5bd35da\`` and `\`76dc7213b8\`` — **10 hex characters**. Abbreviated markers are the production norm, so a rule that fails abbreviations closed would make the clean path unreachable |
 | Repository object count | `git count-objects -v` | 40,637 loose + 24,279 packed ≈ 6.5×10⁴ objects; used for the R2 collision arithmetic |
 | Cycle-cap defaults | `grep -n 'reviewer_loop_resolve_max_cycles()\|reviewer_loop_resolve_max_total_cycles()' scripts/development-workflow/pr-review-loop.sh` then read each body | `reviewer_loop_resolve_max_cycles` is defined at `:11201` and defaults to **10** (`:11211` unset path, `:11216` invalid-value path with its WARN); `reviewer_loop_resolve_max_total_cycles` is defined at `:11232` and defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` says `expensive_gate_resolve_max_deferrals` “mirrors `reviewer_loop_resolve_max_cycles`: default 3”, which no longer matches that resolver — do not encode `3` |
@@ -253,9 +254,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   one retry, and to classify each non-outdated Codex thread as
   `applicable_unresolved`, `applicable_resolved`, `cleared`, `outdated`, or
   `dismissed_review_attached` using head SHA + review `commit_id` equality (not
-  merely `isOutdated`). Provisional “reply after head push” relaxation remains
-  **only** for re-trigger eligibility, never for declaring clean (preserve #1508
-  contract).
+  merely `isOutdated`). The “reply after head push” relaxation remains **only**
+  for re-trigger eligibility, never for declaring clean (preserve the #1508
+  contract) — which is what the explicit `mode` parameter below enforces, rather
+  than leaving it to each caller's discipline.
 
   **Executable interface (required — the two callers do not share a variable
   namespace).** Today the function reads five companion globals and nothing
@@ -270,11 +272,61 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
   ```text
   codex_review_thread_evidence_counts <owner> <repo_name> <pr_number> \
-      <graphql_bot_login> [max_pages]
-    stdout : "<applicable_unresolved_count>\t<cleared_count>" (tab-separated,
-             unchanged from today's `printf '%s\t%s\n'` contract)
+      <graphql_bot_login> <mode> [max_pages]
+    mode   : strict | provisional; any other value falls back to strict,
+             matching check_unresolved_threads (`pr-review-loop.sh:7354-7355`)
+    stdout : "<strict_unresolved>\t<cleared>\t<provisional_relaxed>"
+             (tab-separated; three fields, see the mode contract below)
     return : 0 success | 3 scan/pagination failure (unchanged codes)
   ```
+
+  **Mode contract — why two counts are not enough.** The shipped function bakes
+  the reply-after-push relaxation into its `cleared` predicate
+  (`codex-github-reviewer.sh:340`):
+  `cleared: ((.isResolved // false) or ($first_body | test("✅ Addressed")) or
+  (($head_date != "") and ($last_author != $bot) and ($last_created >
+  $head_date)))`, where `$head_date` is `headRef.target.committedDate`. Its
+  `count` is therefore *unresolved after relaxation*. The loop's strict phase-1
+  gate must not inherit that: a thread whose last comment is a human reply after
+  the push would be counted as cleared and could contribute to a false clean.
+  The loop's own `check_unresolved_threads` already draws this line and states
+  the contract at `pr-review-loop.sh:7336-7341` — provisional "exists ONLY to
+  unblock phase-1 gates that decide whether to re-trigger a review; it must
+  never be used by a gate that decides RESULT=clean" — so the shared helper
+  adopts the same vocabulary rather than inventing one.
+
+  Field definitions, over non-outdated threads whose first comment is
+  Codex-authored:
+
+  | Field | Meaning |
+  | --- | --- |
+  | `strict_unresolved` | Not `isResolved` and no `✅ Addressed` marker. **No relaxation applied.** |
+  | `cleared` | `isResolved` or `✅ Addressed` — the strict notion of cleared |
+  | `provisional_relaxed` | Of the `strict_unresolved` threads, those whose last comment is non-bot with `createdAt` later than the head commit's `committedDate`. **Always `0` in strict mode**, where the query does not fetch `lastComment` or the head date (mirroring `pr-review-loop.sh:7377-7379`, which fetches `lastComment` and the head `committedDate` only in provisional mode) |
+
+  Caller mapping, both preserving today's behaviour exactly:
+
+  - **Companion re-trigger eligibility** (`codex-github-reviewer.sh:1497`, in
+    `codex_classify_existing_current_head_evidence`): call with
+    `mode=provisional` and use `strict_unresolved - provisional_relaxed` as the
+    unresolved count and `cleared + provisional_relaxed` as the cleared count —
+    algebraically identical to today's two numbers, so the #1508 relaxation is
+    preserved on the path that depends on it. **Update the call site's
+    `IFS=$'\t' read -r unresolved_thread_count cleared_thread_count` to read
+    three fields**; a two-variable `read` would swallow the third into the
+    second.
+  - **Loop phase 1** (`run_codex_github_review()` in `pr-review-loop.sh`): call
+    with `mode=strict` and use `strict_unresolved` alone. Never read
+    `provisional_relaxed` there — it is `0` in strict mode anyway, so a caller
+    that forgets the mode fails toward *more* blockers, never fewer.
+
+  Tests, one per caller plus the mode guard:
+  `codex_evidence_lib_provisional_preserves_relaxation` (a thread with a
+  post-push non-bot reply: provisional mode yields today's counts and the
+  companion still treats it as eligible for re-trigger),
+  `codex_evidence_lib_strict_counts_replied_thread_as_unresolved` (the same
+  fixture in strict mode: the thread counts as unresolved, so loop phase 1
+  cannot clear it), and `codex_evidence_lib_unknown_mode_falls_back_to_strict`.
 
   - Parameter 4 is the **GraphQL** login form (no `[bot]` suffix), matching
     today's `BOT_LOGIN_PLAIN`; the REST form is not needed by this function.
@@ -292,10 +344,11 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     callers.
   - Tests: one Area 13 case per caller —
     `codex_evidence_lib_companion_caller_contract` (companion globals →
-    parameters, same tab-separated output as today) and
+    parameters, same effective counts as today) and
     `codex_evidence_lib_loop_caller_contract` (loop slug split → same output),
     plus `codex_evidence_lib_no_unset_globals` running the library under
-    `set -u` with none of the companion globals defined.
+    `set -u` with none of the companion globals defined, and the three
+    mode-contract cases named above.
 
 - [ ] **Terminal evidence collector** (AC-3–4, 10–13): Normalize submitted
   reviews and root PR comments into a sorted list of evidence items for the
@@ -430,26 +483,30 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   > "Every Codex root comment belongs to exactly one head's evidence window,
   > because such a comment **is not inherently revision-bound**."
 
-  **Marker identity first; the window decides only what cannot self-identify.**
-  A comment whose `Reviewed commit` marker is well-formed *is* revision-bound,
-  and the spec attributes it by that marker rather than by any timestamp. So
-  classify the marker first (per the **Abbreviated-token resolution contract**
-  above) and route on the result:
+  **Two questions, both necessary: the marker says *which head*, the window says
+  *which occupancy*.** A well-formed marker is revision-bound, so it identifies
+  the head a comment reviewed — but a SHA can occupy the head position more than
+  once (a revert, or a force-push back), and spec line 109's opening is
+  universal: *every* root comment belongs to exactly one head's evidence window.
+  Marker identity alone would therefore let a clean comment authored during the
+  **first** occupancy of SHA `A` authorize readiness during a **second**
+  occupancy of `A`, with no review in between. The window test is applied to
+  well-formed live-head markers as an **additional necessary condition**:
 
-  | Marker state | Attribution | Consults the window? |
+  | Marker state | Window test | Outcome |
   | --- | --- | --- |
-  | Well-formed, unambiguous prefix of the live head | Live-head evidence, by marker identity | No |
-  | Well-formed, names an older revision | Prior-revision evidence → stale path, `codex-github-review-pending` — spec line 107: "valid prior-revision evidence and follows the stale path … **never the malformed-marker path**" | No |
-  | Syntactically unusable, **or** no `Reviewed commit` field at all | Does not self-identify | **Yes — this is the window's only input** |
+  | Well-formed, names the live head, `created_at >= B` | Passes | Live-head evidence |
+  | Well-formed, names the live head, `created_at < B` | Fails | **Stale-head evidence, ignored** — this is the SHA-reuse case |
+  | Well-formed, names a different SHA | Not applied | Prior-revision evidence → stale path, `codex-github-review-pending` — spec line 107: "valid prior-revision evidence and follows the stale path … **never the malformed-marker path**" |
+  | Syntactically unusable, **or** no `Reviewed commit` field | See the boundary rule below | Triggered head: `B` decides. Trigger-less head: escalate |
 
-  Only the third row reaches the window. Spec line 109 confirms the same scope
-  from the other direction: "A syntactically-unusable-marker root comment
-  therefore escalates the current head only when it falls inside that head's
-  window."
+  The marker still does real work — it is what routes row 3 away from the window
+  entirely, and row 4 into the trigger-less escalation — but it is never
+  sufficient on its own for live-head evidence.
 
-  **Window rule for non-self-identifying comments.** Read the pull request
-  object for `created_at` and `GET repos/{owner}/{repo}/issues/{pr}/comments`
-  (paginated) for the review trigger comments. Every trigger names its SHA —
+  **Computing the boundary `B`.** Read the pull request object for `created_at`
+  and `GET repos/{owner}/{repo}/issues/{pr}/comments` (paginated) for the review
+  trigger comments. Every trigger names its SHA —
   `… (review triggered by workflow runner, commit: $CURRENT_SHA)` at
   `codex-github-reviewer.sh:1685` and `… (sha: $CURRENT_SHA)` on retrigger at
   `:2019` (Verification Log row `Trigger comment names the head`) — so a trigger
@@ -457,32 +514,52 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   with no head enumeration.
 
   - **Live head has at least one trigger** — the real-world path, because the
-    loop posts a trigger for every head it reviews. The boundary `B` is the
-    `created_at` of the **latest** trigger naming the live head. This is sound
-    without any transition instant: the companion resolves `headRefOid` and
-    *then* posts the trigger, so `B` provably post-dates the moment the live
-    head became current. A non-self-identifying comment at or after `B` is
-    live-head evidence; one before `B` is stale-head evidence, which spec line
-    109 strips of all effect — "it never escalates, never authorizes readiness
-    for, and never waits on a later head". Same-second ordering uses the spec's
-    own tiebreak (line 107: "fresh only when its comment ID orders after the
-    trigger comment"), and comment IDs are monotonic, so a same-second boundary
-    always decides.
-  - **Live head is trigger-less** — no boundary exists between the previous
-    head's window and this one. Take head `A` triggered at `T1`, a
-    non-self-identifying comment `C` at `T2 > T1`, then an untriggered push
-    creating live head `B` at `T3 > T2`: the spec's two windows are `[T1, T3)`
-    for `A` and `[T1, ∞)` for `B`, and only the transition instant `T3`
-    separates them. No source supplies `T3` (Verification Log row
-    `Head-transition source investigation`). Therefore a non-self-identifying
-    comment at or after the previous head's last trigger — or, when the pull
-    request has no trigger at all, at or after its `created_at` — **escalates
-    `evidence_unavailable_codex_thread_state`**. Do not guess. This is AC-14's
-    own instruction (spec line 157): "an attribution that cannot be established
-    from the available head-and-trigger chronology escalates with
-    `evidence_unavailable_codex_thread_state` instead of guessing." A
-    non-self-identifying comment **before** that trigger is unambiguously under
-    an earlier head and stays stale-head evidence.
+    loop posts a trigger for every head it reviews. `B` is the `created_at` of
+    the **latest** trigger naming the live head. This is sound without any
+    transition instant: the companion resolves `headRefOid` and *then* posts the
+    trigger, so `B` provably post-dates the moment that occupancy began.
+    - **Occupancy guard**: if any terminal evidence naming a **different** SHA
+      is newer than that trigger, the head demonstrably moved away after it, so
+      raise `B` to that evidence's timestamp. This closes the SHA-reuse case
+      whenever the intervening head left any Codex trace, using only evidence
+      the classifier already reads. It is conservative in the safe direction: a
+      late-arriving prior-head review can raise `B` past genuine current
+      evidence, which yields a wait, never a clean.
+  - **Live head is trigger-less** — `B` = `max(created_at of the latest trigger
+    naming any other SHA, PR created_at)`. A well-formed live-head marker
+    authored at or after `B` is current-occupancy evidence; one before it is
+    stale. A **non-self-identifying** comment at or after `B` cannot be placed at
+    all — no boundary exists between the previous head's window and this one.
+    Take head `A` triggered at `T1`, a non-self-identifying comment `C` at
+    `T2 > T1`, then an untriggered push creating live head `B` at `T3 > T2`: the
+    spec's two windows are `[T1, T3)` for `A` and `[T1, ∞)` for `B`, and only
+    the transition instant `T3` separates them. No source supplies `T3`
+    (Verification Log row `Head-transition source investigation`). Therefore
+    such a comment **escalates `evidence_unavailable_codex_thread_state`**. Do
+    not guess. This is AC-14's own instruction (spec line 157): "an attribution
+    that cannot be established from the available head-and-trigger chronology
+    escalates with `evidence_unavailable_codex_thread_state` instead of
+    guessing." A non-self-identifying comment **before** `B` is unambiguously
+    under an earlier head and stays stale-head evidence.
+
+  **`B` and the spec's freshness boundary are one rule, not two.** For a
+  triggered live head, spec line 107's freshness boundary — a root comment is
+  fresh only when authored after the latest live-head trigger, with the
+  comment-ID tiebreak on a shared second — *is* `B`. They coincide by
+  construction, so a clean marker-pinned comment satisfies one test, evaluated
+  once, using the spec's own tiebreak ("fresh only when its comment ID orders
+  after the trigger comment"). For a trigger-less live head, line 107 states no
+  freshness boundary at all, and `B` supplies the occupancy test that AC-13's
+  supersession and newest-collapse rules then operate on.
+
+  **K1 non-regression check — adding the window test costs nothing for K1.**
+  Verified against K1's own scenario before writing: head `A` triggered at `T1`,
+  comment `C` authored at `T2` naming `A`, untriggered push to live head `B` at
+  `T3`. `C`'s marker names `A`, which is **not** the live head, so `C` takes row
+  3 of the table — prior-revision evidence on the stale path — and never reaches
+  the window at all. The window test added here applies only to markers naming
+  the **live** head, so it cannot reintroduce the defect K1 identified, which
+  was about placing a comment whose head is *not* the live one.
 
   **Scope check — this escalation is rare, not the default.** It requires all
   three of: a trigger-less live head, *and* a root comment that carries no
@@ -490,23 +567,28 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   boundary. A trigger-less head whose comments all carry well-formed markers
   never consults the window and never escalates here.
 
-  **AC-13 is satisfied, and it is satisfied by marker identity, not by the
-  window** — verified against the spec before this design was written:
+  **AC-13 still passes with the window test in place** — verified against the
+  spec:
 
   - AC-13 (spec line 156) is about "a trigger-less live head that has a
     **marker-pinned clean** root comment". Marker-pinned means well-formed and
-    naming the head, so such a comment takes row 1 of the table above and is
-    attributed by its marker.
-  - Spec line 107 states the trigger-less clean rule in exactly those terms:
-    "When no live-head review trigger exists yet, the newest marker-pinned clean
-    root comment **for that head** is the terminal clean evidence for that head
-    only when no newer non-dismissed terminal evidence for the same head
-    exists; repeated clean comments for the head collapse to that single newest
-    one". The phrase is "for that head" — an identity the marker supplies — and
-    no window term appears in the rule.
-  - Therefore the trigger-less escalation above can never block AC-13's clean
-    path: a marker-pinned clean comment does not enter the window, so the
-    supersession and newest-collapse rules decide it exactly as AC-13 requires.
+    naming the head, so such a comment takes row 1 of the table above: its
+    marker supplies the head identity and the window supplies the occupancy.
+  - For a trigger-less live head, `B` = `max(latest trigger naming another SHA,
+    PR created_at)`. A genuine review of the current occupancy is authored after
+    that instant, so it passes the window test; only a comment predating it —
+    which is precisely a prior-occupancy or prior-head comment — fails.
+  - Spec line 107 states the trigger-less clean rule in these terms: "When no
+    live-head review trigger exists yet, the newest marker-pinned clean root
+    comment **for that head** is the terminal clean evidence for that head only
+    when no newer non-dismissed terminal evidence for the same head exists;
+    repeated clean comments for the head collapse to that single newest one".
+    The window decides *which* comments are for that head's current occupancy;
+    the supersession and newest-collapse rules then decide among them exactly as
+    AC-13 requires.
+  - The trigger-less **escalation** still cannot block AC-13, because it applies
+    only to comments with no well-formed marker, and AC-13's evidence is
+    marker-pinned by definition.
 
   **AC-14 is satisfied for the same reason it fails closed.** A
   syntactically-unusable marker is, by definition, a comment that cannot
@@ -522,20 +604,25 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   1. **Boundary unreadable** — the pull-request comment read fails or is
      truncated after one retry, or a candidate boundary trigger is present but
      its SHA or `created_at` cannot be read from the payload;
-  2. **Boundary nonexistent** — the live head is trigger-less and the comment
-     falls at or after the prior boundary, the case worked through above.
+  2. **Boundary nonexistent** — the live head is trigger-less and a
+     **non-self-identifying** comment falls at or after `B`, the case worked
+     through above. A well-formed marker never reaches this condition: it either
+     names the live head (and the window test decides it) or names another SHA
+     (and takes the stale path).
 
   Nothing else escalates here, and no branch depends on a push instant or a
   commit date.
 
-  **Accepted residual** (R1, see **Accepted residuals**): on a *triggered* live
-  head, a **non-self-identifying** comment authored after the head was pushed
-  but before its trigger was posted falls before `B` and is excluded as
-  stale-head evidence. Marker-pinned comments are unaffected, since they never
-  consult `B`. The exclusion fails safe in one direction only — it can produce
-  a pending/wait outcome, never a false clean — because the clean path
-  independently requires evidence *after* the trigger under the spec's freshness
-  boundary (line 107).
+  **Accepted residuals** (see **Accepted residuals**): **R1** — on a *triggered*
+  live head, a comment authored after the head was pushed but before its trigger
+  was posted falls before `B` and is excluded as stale-head evidence; the
+  exclusion fails safe in one direction only, since the clean path independently
+  requires evidence *after* the trigger under the spec's freshness boundary
+  (line 107). **R4** — one SHA-reuse shape remains undetectable: an intervening
+  head that was pushed, produced **no** Codex evidence and **no** trigger, and
+  was then reverted to a previously reviewed SHA whose own trigger is the latest
+  one naming it. Nothing in the available evidence distinguishes that from an
+  uninterrupted occupancy.
 
   No repository-scoped signal is needed or used: the boundary comes from
   triggers and the pull request's `created_at` alone, so check runs, commit
@@ -854,10 +941,12 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
 - [ ] **`run_codex_github_review()` phase 1** (AC-1–2): Stop using raw
   `check_unresolved_threads` provisional count as the sole `existing_findings`
-  gate. Instead call `codex_review_thread_evidence_counts()` — the shared
-  classifier moved into `codex-github-evidence-lib.sh` by the Bounded evidence
-  query step above, not a new function — which counts only **applicable
-  unresolved** Codex conversations for the live head (head SHA / review `commit_id`
+  gate. Instead call `codex_review_thread_evidence_counts()` **with
+  `mode=strict`** — the shared classifier moved into
+  `codex-github-evidence-lib.sh` by the Bounded evidence query step above, not a
+  new function — and read its `strict_unresolved` field only, so the #1508
+  reply-after-push relaxation can never reach a gate that declares clean. It
+  counts only **applicable unresolved** Codex conversations for the live head (head SHA / review `commit_id`
   correlation, not merely `isOutdated`). Resolved, outdated, and
   dismissed-attached threads must not increment blocker counts.
 
@@ -1035,6 +1124,17 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   presence in the run is the non-regression evidence that the retained reasons
   and the reason-less timeout paths survived.
 
+- [ ] **SHA reuse across occupancies** (L1, spec line 109's "exactly one head's
+  evidence window"): `codex_marker_sha_reuse_prior_occupancy_not_clean` — head
+  `A` triggered and reviewed clean, head `B` pushed and reviewed, then the head
+  force-pushed back to `A` with no new trigger. The old clean comment naming `A`
+  is authored before `B` = the occupancy guard's raised boundary (`B`'s newer
+  evidence), so it must **not** authorize readiness; expect
+  `waiting_on_reviewer` / `codex-github-review-pending`, not `clean`. Pair it
+  with `codex_marker_sha_reuse_new_trigger_clean` (the same shape where a fresh
+  trigger for the second occupancy exists and a new clean comment follows it —
+  expect `clean`), so the boundary is proved in both directions.
+
 - [ ] **Matrix spot checks** (AC-7–10 and AC-14 — AC-11, AC-12, and AC-13 have
   their own rows above; this bullet covers the remainder of the range, not all
   of it): Add focused mock-`gh` cases — one per escalation reason, named
@@ -1152,10 +1252,11 @@ and head-attribution helpers):
 | Same-second tie win | Comment id orders after trigger id | Fresh terminal |
 | Stale-head window | Malformed marker authored before the boundary `B` | Ignored for live head |
 | Boundary unreadable | The pull-request comment read fails after one retry, or a candidate boundary trigger has no readable SHA or `created_at` | Evidence unavailable |
-| Trigger-less live head, marker-pinned clean | Live head has no trigger; a well-formed marker names it and the body is clean | Clean by marker identity — the window is never consulted (AC-13) |
+| Trigger-less live head, marker-pinned clean | Live head has no trigger; a well-formed marker names it, body clean, authored at or after `B` | Clean — marker gives the head, `B` gives the occupancy (AC-13) |
+| SHA reuse, prior-occupancy clean | Marker names the live head but the comment predates the raised boundary `B` | Stale-head evidence — must not authorize readiness |
 | Trigger-less live head, unusable marker | Live head has no trigger; a syntactically-unusable-marker comment falls at or after the prior boundary | Evidence unavailable — no boundary exists (AC-14) |
 | Untriggered head after a prior trigger | Head `A` triggered, comment `C` authored, untriggered push to live head `B`; `C` carries no well-formed marker | Evidence unavailable — `C` cannot be placed in `A`'s or `B`'s window |
-| Pre-trigger comment | Non-self-identifying comment authored after the live head was pushed but before its trigger | Stale-head evidence — excluded (residual R1) |
+| Pre-trigger comment | Comment authored after the live head was pushed but before its trigger, marker-pinned or not | Stale-head evidence — excluded (residual R1) |
 | Proven remote zero-match | Abbreviated marker token, no local match after fetch and retry, REST `422` | Malformed — resolves to zero commits (spec line 286) |
 | Unprovable abbreviation | Abbreviated marker token, no local match after fetch and retry, REST `200` | Evidence unavailable — exists, uniqueness unprovable |
 | Superseded malformed | Live-head malformed comment older than live-head clean evidence | Ignored — newer clean wins |
@@ -1180,6 +1281,7 @@ Area 13 — one `run_test` per row):
 | `codex_marker_stale_head_window` | Stale-head window |
 | `codex_marker_boundary_unreadable` | Boundary unreadable |
 | `codex_marker_triggerless_clean_attributed_by_marker` | Trigger-less live head, marker-pinned clean |
+| `codex_marker_sha_reuse_prior_occupancy_not_clean` | SHA reuse, prior-occupancy clean |
 | `codex_marker_triggerless_unusable_marker_escalates` | Trigger-less live head, unusable marker |
 | `codex_marker_untriggered_head_after_prior_trigger_escalates` | Untriggered head after a prior trigger |
 | `codex_marker_pre_trigger_comment_excluded` | Pre-trigger comment |
@@ -1218,14 +1320,14 @@ would settle them. They are decided here rather than re-litigated per reviewer
 cycle. Each records what is **not** proven, why the spec tolerates it, and which
 direction it fails.
 
-### R1 — A non-self-identifying comment posted between the head's push and its trigger is excluded
+### R1 — A comment posted between the head's push and its trigger is excluded
 
 - **Not proven**: that a root comment authored after the live head was pushed
-  but before the live-head trigger was posted belongs to the live head. It falls
-  before the boundary `B` and is classified as stale-head evidence. The residual
-  is narrower than it looks: it applies only to comments that do **not**
-  self-identify — no well-formed `Reviewed commit` marker — because a
-  marker-pinned comment is attributed by its marker and never consults `B`.
+  but before the live-head trigger was posted belongs to the live head's current
+  occupancy. It falls before the boundary `B` and is classified as stale-head
+  evidence. This applies to marker-pinned comments too, since the window test is
+  a necessary condition for live-head evidence — the marker establishes *which*
+  head, `B` establishes *which occupancy*.
 - **Why the spec tolerates it**: spec line 109 defines the window from triggers
   and the pull request's creation, not from push instants, and it gives
   stale-head evidence no effect on a later head. Nothing in the criteria asks
@@ -1286,6 +1388,26 @@ direction it fails.
   defect this residual replaces, and it failed toward `needs_fixes` on
   incomplete evidence.
 
+### R4 — One SHA-reuse shape stays undetectable
+
+- **Not proven**: that the live head's occupancy is the same one its latest
+  trigger belongs to, when an intervening head left no trace at all. Concretely:
+  head `A` is triggered and reviewed clean, head `B` is pushed **without** a
+  trigger and produces **no** Codex evidence, then the head is force-pushed back
+  to `A` without a new trigger. Every timestamp available — `A`'s trigger, `A`'s
+  clean comment — is consistent with an uninterrupted occupancy of `A`.
+- **Why the spec tolerates it**: separating the two occupancies requires the
+  transition instant the spec never asks for and no GitHub surface supplies
+  (Verification Log row `Head-transition source investigation`). The occupancy
+  guard closes every variant where the intervening head left evidence or a
+  trigger, which is every variant the loop itself can produce — it posts a
+  trigger for each head it reviews.
+- **Fails**: toward **clean**, and it is the only residual in this plan that
+  does. The exposure is bounded to a head that was pushed, never reviewed, never
+  triggered, and then reverted — and the readiness gates downstream of this
+  classifier still apply. Detecting it would require inventing a source, which
+  the previous cycles established does not exist.
+
 ---
 
 ## Risks & Mitigations
@@ -1299,7 +1421,9 @@ direction it fails.
 | Marker token unresolvable locally (shallow or unfetched clone) | Med | Med | One `git fetch` of the head ref then retry; then REST settles existence only — `422` is a proven zero-match (malformed tier), `200` leaves uniqueness unprovable (evidence-unavailable), and REST or `git` failures escalate evidence-unavailable |
 | Retained exit-`2` reasons regress while adding the new codes | Med | High | Retained-contract table names every retained reason and its pinned test; scoped harness assertion plus a non-regression assertion for the three retained reasons |
 | Published exit / `REASON=` contract is hard to unwind | Low | Med | Revert is code-only (Implementation Order steps 3–4 + Area 13 expectations + docs); residues documented in the Outcome-mapping reversal note |
-| A non-self-identifying comment posted between the head's push and its trigger is excluded as stale-head evidence | Med | Low | Accepted residual R1: exclusion can only withhold a clean result, never create one, because the clean path independently requires post-trigger evidence (spec line 107), and marker-pinned comments never consult the boundary. `codex_marker_pre_trigger_comment_excluded` and `codex_marker_triggerless_clean_attributed_by_marker` pin the excluded and marker-attributed cases |
+| A comment posted between the head's push and its trigger is excluded as stale-head evidence | Med | Low | Accepted residual R1: exclusion can only withhold a clean result, never create one, because the clean path independently requires post-trigger evidence (spec line 107). `codex_marker_pre_trigger_comment_excluded` and `codex_marker_triggerless_clean_attributed_by_marker` pin the excluded and marker-attributed cases |
+| A reused head SHA lets a prior-occupancy clean comment authorize readiness | Low | High | The window test is a necessary condition for live-head marker evidence, and the occupancy guard raises `B` past any newer evidence naming another SHA; `codex_marker_sha_reuse_prior_occupancy_not_clean` pins it. The undetectable remainder is recorded as residual R4 |
+| Shared helper loses the #1508 relaxation, or leaks it into the strict gate | Med | High | Explicit `mode` parameter with strict fallback plus a third output field; both call sites mapped, and three named mode tests pin provisional, strict, and the fallback |
 | A trigger-less head that also carries a non-self-identifying comment escalates | Low | Med | Genuine: no source supplies the transition instant that would separate the two windows (Verification Log). Escalation is AC-14's own instruction, it requires all three conditions in the scope check, and `codex_marker_untriggered_head_after_prior_trigger_escalates` pins it |
 
 ---
@@ -1382,7 +1506,7 @@ esac
   + REST `id` for threads and `pull_request_review_id` +
   `pullRequestReview.databaseId` for review scoping.
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
-  table has 21 rows and its mapping table has 26 test names, of which 19 carry
+  table has 22 rows and its mapping table has 27 test names, of which 20 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
   the five remaining mapping rows are the tie/precedence and correlation cases
@@ -1413,13 +1537,21 @@ esac
   and escalates per AC-14 (spec line 157) rather than guessing. AC-13 (spec line
   156) is unaffected because its clean path is marker-identified — spec line
   107's trigger-less rule says "the newest marker-pinned clean root comment
-  **for that head**" and never mentions a window. No head enumeration, no head
+  **for that head**", and a genuine current-occupancy review is authored after
+  `B`. The window is applied to well-formed live-head markers as an additional
+  necessary condition, so a reused head SHA cannot let a prior-occupancy clean
+  comment authorize readiness (spec line 109: "Every Codex root comment belongs
+  to exactly one head's evidence window"). No head enumeration, no head
   ordering, no transition instant, and no commit date appears anywhere in the
   algorithm; check runs, commit statuses, and `PushEvent` are not consumed by
   any step.
 - Executable interfaces: Checked — the shared helper declares parameters,
-  stdout shape, and return codes, both call sites are mapped from their actual
-  variable names, and a `set -u` no-global-reads test is named.
+  stdout shape, and return codes; both call sites are mapped from their actual
+  variable names; a `set -u` no-global-reads test is named; and the helper
+  carries an explicit `strict|provisional` mode with a third output field, so
+  the #1508 reply-after-push relaxation is preserved for re-trigger eligibility
+  and cannot leak into the loop's strict blocker count. Unknown modes fall back
+  to strict, matching the shipped `check_unresolved_threads`.
 - Resolution mechanisms named: Checked — the prefix half of the readiness test
   is a string comparison against `headRefOid` and touches no object database;
   only the ambiguity half does. Commit tokens resolve through
@@ -1449,9 +1581,10 @@ esac
   matrix row 287 instead of returning `needs_fixes` for the correlated finding
   alone. Body detection reuses the shipped `codex_response_is_blocking()` /
   `CODEX_BLOCKING_PATTERN` surface, so no marker vocabulary is introduced.
-- Accepted residuals recorded: Checked — a dedicated section states three open
+- Accepted residuals recorded: Checked — a dedicated section states four open
   questions (R1 pre-trigger comment exclusion, R2 abbreviation uniqueness scope,
-  R3 body markers that only restate inline findings)
+  R3 body markers that only restate inline findings, R4 the undetectable
+  SHA-reuse shape — the only one that fails toward clean, with its bound stated)
   with what is unproven, why the spec tolerates it, and the direction each
   fails; R2 carries the collision arithmetic at this repository's object count.
 - Reversal risk: Checked — the outcome-mapping step states the revert path
