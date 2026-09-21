@@ -39,6 +39,24 @@ condition relative to the canonical file.
 Expected result: each routes plan authors to the canonical rules doc and requires
 evidence in the plan document (not pull request comments).
 
+## Test setup for Scenarios 3–7 (stacked test branch)
+
+Scenarios 3–7 need a draft plan PR that contains the **unmerged** Protocol 02
+and `REVIEW.md` changes under test. Protocol 02 normally branches plans from the
+resolved artifact base (`develop`), which lacks those changes, so this runbook
+uses an explicit, temporary stacked base:
+
+1. From the implementation PR's branch, create `test/1496-smoke-plan` and add a
+   scratch plan under `docs/specs/developments/smoke-1496-scratch/` (use a
+   fixture from `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/`
+   as the plan body).
+2. Open the draft plan PR with **base = the implementation branch** (never
+   `develop`), and run Protocol 02 with that base supplied as the artifact base.
+3. Run Scenarios 3–7 against that PR.
+4. Cleanup (required, recorded in the implementation PR): close the test PR
+   unmerged, delete `test/1496-smoke-plan` locally and on the remote, and confirm
+   the implementation PR's diff is unchanged.
+
 ## Scenario 3: Per-rule outcome record on a plan PR
 
 1. Run Protocol 02 for the test issue and open a draft plan PR.
@@ -102,13 +120,19 @@ names an acceptance theme, the exercise, and the expected gate class.
 | B4 | Rule 1 — tolerant open set | No contract; plan states stable part + unseen behavior | Check passed when record complete |
 | C1 | Rule 2 — disagreeing duplicate | Same count stated differently in two sections | Blocking — contradiction |
 | C2 | Rule 2 — agreeing duplicate | Same fact twice, identical wording | Non-blocking consolidation; Satisfied |
+| C3 | Rule 2 — size is not a criterion | Very long plan, no other defect | No finding — size never fails a rule |
+| C4 | Rule 2 — correction round | Correction adds a second statement instead of editing the first | Blocking — fact asserted twice |
 | D1 | Rule 3 — bad partition | Count by subtracting unrelated totals | Blocking — partition not shown |
 | D2 | Rule 3 — scope by count | Step uses number without enumeration | Blocking — missing enumeration |
+| D3 | Rule 3 — non-homogeneous population | Correct arithmetic over a population whose members do not share the reasoned-about property | Blocking — population not homogeneous |
 | E1 | Rule 4 — delegated support | "Test exists" from investigation summary only | Blocking — no recorded search |
 | E2 | Rule 4 — narrow non-existence | "Helper absent" after searching one directory | Blocking — implausible scope |
 | F1 | Rule 5 — unit-only expectation | Delete shared guard; expect new return at unit | Blocking — missing consumer site |
 | F2 | Rule 5 — branch removal | Remove branch without reroute statement | Blocking — absorbed inputs |
 | G1 | Rule 6 — scopeless conditional | "Required then" with no governed edges | Blocking — missing scope/discharge |
+| G2 | Rule 6 — scope by stand-in word | Conditional scoped only by a word such as "those" or "all relevant" | Blocking — scope not named |
+| G3 | Rule 6 — unbounded explanation | Statement explains why an obligation cannot always be met without naming governed occurrences | Blocking — governed occurrences not named |
+| G4 | Rule 6 — role of review | A surface describes plan review as where this defect is expected to be found | Blocking — surface must call review a backstop |
 | H1 | Missing outcome record | Plan PR with no per-rule table | Blocking — treated Unsatisfied |
 | H2 | Stale record SHA | Record names earlier commit than PR head | Blocking — revision mismatch |
 | H3 | Wrong N/A rationale | Rule 3 recorded `Not applicable` while the plan states artifact counts | Blocking — rationale contradicts claim |
@@ -117,11 +141,13 @@ names an acceptance theme, the exercise, and the expected gate class.
 | B7 | Rule 1 — restricted and short-retention | Source is both deletable and access-restricted | Blocking unless both handling requirements are met |
 | B8 | Rule 1 — heterogeneous sample adequacy | Population documented as having two producer variants; sample drawn from one; record silent on the other | Blocking — known heterogeneity unaddressed |
 | B11 | Rule 1 — unpersuasive adequacy rationale | Same population, record states an adequacy rationale that is complete in form but weak | Non-blocking — recorded as a suggestion; Satisfied |
+| B12 | Rule 1 — fixed literal set, no contract | Design binds to a fixed set of literals; large sample; no contract fixing the set | Blocking — contract required |
 | B9 | Rule 1 — curated examples | Occurrences are hand-picked examples | Blocking — not a sample of the population |
 | B10 | Rule 1 — closed-population enumeration | Enumeration command shown with no closure provenance (nothing shows the set cannot grow), or members not listed | Blocking — enumeration record incomplete |
 | E3 | Rule 4 — completeness claim | "All X verified" with no search scope | Blocking — completeness unsupported |
 | F3 | Rule 5 — search scope | Consumer enumeration omits searched scope | Blocking — scope not recorded |
 | F5 | Rule 5 — hand-recalled consumer list | Consumer list from memory with no recorded search | Blocking — search record missing |
+| F6 | Rule 5 — expected behavior at the changed unit only | Expectation names only the changed unit, no observation point in the enumeration | Blocking — observation point missing |
 | F4 | Rule 5 — untouched consumer | Untouched consumer omitted, or listed without its post-change outcome | Blocking — consumer or outcome missing |
 | H4 | Outcome record — malformed | Record names a nonexistent commit | Blocking — revision does not resolve |
 | H5 | Outcome record — label reassessed | Round re-reads recorded finding, label not reassessed | Blocking — label stale |
@@ -133,8 +159,70 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H11 | Non-reproducing or population-changed evidence | Recorded command does not reproduce at its recorded revision, or later plan text changes the population the evidence describes | Blocking — evidence does not support the claim |
 | H12 | Repository-only drift | Repository changed after gathering but no claim the plan makes is affected | Non-outcome — no finding; record unchanged |
 | H13 | Evidence only in PR comments | Evidence lives in a PR comment, not in the plan or PR description record | Blocking — evidence not in the durable record |
+| H14 | Not applicable, no rationale | Rule recorded `Not applicable` with an empty rationale | Blocking — treated as Unsatisfied |
+| H15 | Single rule with no recorded outcome | Table present but one rule has no row | Blocking — that rule treated as Unsatisfied |
+| H16 | Blocking outcomes enumerated with clearing action | Read the canonical gate section for every outcome that holds a plan back | Each outcome states whether it blocks and the action that clears it |
 
-Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix is the minimum required set, not a claim that it names every acceptance criterion. The implementation PR must also include a table mapping **every** checkbox of spec Groups A–H to the matrix row, scenario, or mirror-harness assertion that exercises it; any criterion with no exercise gets a new row before implementation is marked done. The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
-every matrix row above (B1–B11, C1–C2, D1–D2, E1–E3, F1–F5, G1, H1–H13), as
+Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix below plus the Scenarios, the mirror harness, and the mapping table in the next section together exercise every acceptance criterion. Every matrix row is **required** (executed and recorded in the implementation PR). The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
+every matrix row above (B1–B12, C1–C4, D1–D3, E1–E3, F1–F6, G1–G4, H1–H16), as
 the implementation plan Testing Strategy requires, including at least one
 blocking and one non-blocking outcome on real or fixture plan text.
+
+## Criterion-to-exercise mapping (spec Groups A–H)
+
+Every acceptance criterion of the spec, by its line in
+`1_1496-plan-authoring-rigor_specs.md`, mapped to the exercise that fails if it
+is unmet. **H** = mirror-harness assertion; **S** = smoke scenario.
+
+| Spec lines | Group and criterion | Exercise |
+| --- | --- | --- |
+| 463 | A — trigger, evidence, pass condition per rule | S1 (each rule states all three) + H (rule headings) |
+| 464 | A — author/reviewer share name and pass condition | S1 pass-condition equivalence + S2 + H (mirror references) |
+| 465 | A — exactly one canonical surface | S1 + H (canonical path referenced from every mirror) |
+| 466 | A — checks need only plan, repo, record, search | S4 (reviewer applies backstop with those inputs only) |
+| 467 | A — no language/framework/path in rule text | S1 (read rule text for stack or path names) |
+| 468 | A — applies to no-spec and Refactor plans | S2 (Refactor/no-spec plan carries the record) |
+| 472 | B — no record fails | B1, B12 |
+| 473 | B — record completeness | B2 + H10 |
+| 474 | B — short-retention locator | B5 |
+| 475 | B — access-restricted occurrence | B6 |
+| 476 | B — both short-retention and restricted | B7 |
+| 477 | B — fixed set needs a contract | B3, B12 |
+| 478 | B — open set: stable part and unseen behavior | B4 |
+| 479 | B — adequacy rationale | B8, B11 |
+| 480 | B — curated / two-or-fewer occurrences | B2, B9 |
+| 481 | B — enumeration with closure provenance | B10 |
+| 485 | C — single assertion, others point to it | C1, C2 |
+| 486 | C — disagreeing vs agreeing pair | C1, C2 |
+| 487 | C — size is never a criterion | C3 |
+| 488 | C — correction edits, not adds | C4 |
+| 492 | D — command, revision, population | D1 + H10 |
+| 493 | D — arithmetic over disjoint exhaustive sets | D1 |
+| 494 | D — homogeneous population | D3 |
+| 495 | D — enumeration behind a scoping number | D2 |
+| 499 | E — existence claim needs recorded search | E1 |
+| 500 | E — delegated support fails | E1 |
+| 501 | E — completeness needs per-item evidence | E3 |
+| 502 | E — non-existence names plausible places | E2 |
+| 506 | F — every consumer enumerated with outcome | F1, F4 |
+| 507 | F — recorded reproducible search | F5 |
+| 508 | F — search scope where consumers live | F3 |
+| 509 | F — unmodified consumers on the path | F4 |
+| 510 | F — observation point in the enumeration | F6 |
+| 511 | F — branch removal names the receiving branch | F2 |
+| 515 | G — scope and discharge named | G1 |
+| 516 | G — stand-in word is not scope | G2 |
+| 517 | G — explanation without governed occurrences | G3 |
+| 518 | G — author obligation, review a backstop | G4 |
+| 522 | H — three labels spelled identically | H8 + H (label assertions) |
+| 523 | H — no recorded outcome is Unsatisfied | H1, H15 |
+| 524 | H — Not applicable needs a non-contradicted rationale | H3, H14 |
+| 525 | H — outcome from evidence, not label | H6 |
+| 526 | H — absent trigger recorded Satisfied/Unsatisfied | H7 |
+| 527 | H — invalid label is Unsatisfied | H8 |
+| 528 | H — gate log lists rules, revision, rationale | S3 + H2, H4 |
+| 529 | H — first-inspection finding carried | H9 |
+| 530 | H — outcomes re-determined every round | H5, H11, H12 |
+| 531 | H — blocking outcomes enumerated with clearing action | H16 |
+| 532 | H — evidence in the plan document | H13 |
+| 533 | H — findings name the rule and what failed | S4 (every Blocking row's finding names its rule and defect) |

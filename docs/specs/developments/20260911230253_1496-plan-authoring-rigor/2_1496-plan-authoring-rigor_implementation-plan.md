@@ -382,13 +382,13 @@ The index below groups the IDs by acceptance group:
 | Spec group | Required matrix IDs |
 | --- | --- |
 | A (wiring + no-spec inheritance) | Scenarios 1–2; confirm Protocol 02 applies to Refactor/no-spec plans |
-| B | B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11 |
-| C | C1, C2 |
-| D | D1, D2 |
+| B | B1–B12 |
+| C | C1–C4 |
+| D | D1–D3 |
 | E | E1, E2, E3 |
-| F | F1, F2, F3, F4, F5 |
-| G | G1 |
-| H | H1, H2, H3, H4, H5, H6, H7, H8, H9, H10, H11, H12, H13 |
+| F | F1–F6 |
+| G | G1–G4 |
+| H | H1–H16 |
 
 **Regression suite**: Not applicable as a deliberate testing-scope decision —
 this feature changes only workflow docs, agent files, and a shell harness. The
@@ -560,10 +560,10 @@ Not applicable.
 8. Update `AGENTS.md` (and README plan-stage pointer — section exists at line
    `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
-10. Add the criterion-to-exercise table (every Group A–H checkbox mapped to a
-    matrix row, scenario, or harness assertion) to the implementation PR.
-11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B11, C1–C2,
-    D1–D2, E1–E3, F1–F5, G1, H1–H13) named in Testing Strategy.
+10. Execute the runbook's stacked test-branch setup (see the smoke runbook), then
+    record its cleanup.
+11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B12, C1–C4,
+    D1–D3, E1–E3, F1–F6, G1–G4, H1–H16) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
@@ -582,20 +582,20 @@ Not applicable.
 | A — Rules stated for both roles | Canonical file + mirror table + agents |
 | A — Rules apply to every plan, including no-spec / Refactor | Protocol 02 authoring obligations + tech-lead / plan-writer mirrors apply to all Protocol 02 plans; no separate no-spec bypass — Refactor plans still open via Protocol 02 and must carry the per-rule outcome record |
 | A — Exactly one canonical surface; no divergent pass conditions | Canonical file is sole normative text; mirrors point to it; Smoke Scenario 1 + mirror harness presence checks; Scenario 1 desk-check for pass-condition equivalence |
-| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B11 (all required) |
-| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C2 (both required) |
-| D — Rule 3 | Template + Verification Log guidance + smoke D1–D2 (both required) |
+| B — Rule 1 | Canonical Rule 1 text + gate rows + smoke matrix rows B1–B12 (all required) |
+| C — Rule 2 | Canonical Rule 2 + REVIEW duplicate findings + smoke C1–C4 (all required) |
+| D — Rule 3 | Template + Verification Log guidance + smoke D1–D3 (all required) |
 | E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E3 (all required) |
-| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F5 (all required) |
+| F — Rule 5 | Template consumer enumeration guidance + smoke F1–F6 (all required) |
 | G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (required) |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H13 (all required) |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H16 (all required) |
 
 **Addition vs spec**: Mirror harness + fixtures + planted-violation proof are
 plan additions for mirror-surface consistency only (Group A agreement), not
 automated detection of Rules 1–6 violations in plan prose (spec Out of Scope).
 
-Detailed smoke traceability lives in the smoke runbook **Acceptance traceability
-matrix** section (present on this plan branch).
+Detailed smoke traceability — the matrix and the criterion-to-exercise mapping
+of every Group A–H checkbox — lives in the smoke runbook (present on this plan branch).
 
 Brief Coverage Matrix objectives: all covered; no Out of Scope deferrals beyond
 spec's deliberate rejections (automation of rule scoring, size ceiling, etc.).
