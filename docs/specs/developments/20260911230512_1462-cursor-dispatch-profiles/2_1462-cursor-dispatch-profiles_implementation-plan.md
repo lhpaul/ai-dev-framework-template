@@ -548,10 +548,23 @@ layer; `workflow.mdc` states all five compactly).
       that input carries the expected profile outcome, next action and stop
       name in one block (scanner rules R2-R5), and (b) checking
       `guardrails-enforcement.md` section 4 maps each stop to its affected work
-      item and human unblocking action. A **completeness assertion** counts the
-      decision-gate rows in the canonical doc and fails if that count differs
-      from the number of scenario rows, so a matrix row cannot be added or
-      dropped without a scenario. Paths: `/run-item` (item layer), `/run-items`
+      item and human unblocking action. The **completeness assertions** compare
+      against the spec's **normative rows**, not against the scenario count. The
+      spec's Decision-Gate Consistency Matrix has **18 normative rows**
+      (R1-R18, listed below in spec order); the plan defines **21 scenarios**
+      because R17 (two posture-mismatch directions) and R18 (two permissiveness
+      directions) are each split into two scenarios, R17 into S17a/S17b and R18
+      into S18/S19, and S10b is a **subcase**, not a row: it covers the spec's
+      Out-of-scope prose (harness/local-path denial) that sits beside the
+      matrix. The assertions are: **(A1)** the canonical doc's decision-gate
+      table has exactly 18 rows and that equals the row count read from the
+      merged spec's matrix at test time, so a canonical doc that matches the spec
+      always satisfies it and a row added or dropped on either side fails;
+      **(A2)** every row R1-R18 maps to at least one scenario; **(A3)** every
+      scenario maps to exactly one row, or is flagged `subcase (non-row)`, and
+      S10b is the only allowed subcase; **(A4)** canonical row *n* carries the
+      expected tokens of the scenarios mapped to R*n*. A scenario may never be
+      counted as a row, and a row never requires more than its mapped scenarios. Paths: `/run-item` (item layer), `/run-items`
       explicit list (item layer, pre-branch stops use the
       `explicit_list_invocation_targets=<t1>,<t2>,...` form over a mixed-form
       target list), `/run-epic` (epic layer, invoked as `--epic <N>`; `--items` is internal-only per
@@ -561,29 +574,42 @@ layer; `workflow.mdc` states all five compactly).
       returns `MODE=ambiguous` for unresolvable tokens before any declaration
       gate, so smoke Step 13 uses real, resolvable targets.
 
-      | ID | Spec matrix input | Expected outcome and next action | run-item | run-items | run-epic | run-work |
-      | --- | --- | --- | --- | --- | --- | --- |
-      | S1 | Handoff available, onward available, not a scan | Native handoff; declare, handed off intact, follow protocol | Y | Y | Y | N/A |
-      | S2 | Same, read-only scan | Native handoff; observing, scan in current context | N/A | N/A | N/A | Y |
-      | S3 | Handoff available, onward unavailable, not a scan | Parent orchestrated; declare absorbed layers, absorb full contract, delegate every stage | Y | Y | Y | N/A |
-      | S4 | Same, read-only scan | Parent orchestrated; observing, scan in current context | N/A | N/A | N/A | Y |
-      | S5 | Initial confirmed, onward **unconfirmed**, not a scan | Parent orchestrated (conservative default); record unconfirmed, absorb, delegate only | Y | Y | Y | N/A |
-      | S6 | Same, read-only scan | Parent orchestrated; record unconfirmed, observing | N/A | N/A | N/A | Y |
-      | S7 | Mid-run: native, role unreliable, initial handoff still available | Re-declare parent orchestrated with reason; earlier mutations preserved | Y | Y | Y | N/A |
-      | S8 | Mid-run: native, role unreliable, initial handoff lost or unconfirmed | Re-declare inline fallback; stop next mutation with `dispatch_handoff_unavailable` | Y | Y | Y | N/A |
-      | S9 | Mid-run: parent orchestrated, stage handoff for one action lost | Re-declare inline fallback; stop that action with `dispatch_handoff_unavailable` | Y | Y | Y | N/A |
-      | S10 | Parent orchestrated, reachable stage role, credential/permission/token denial | Unchanged profile; stop that action with `missing_required_secret_or_permission`, naming denied target | Y | Y | Y | N/A |
-      | S10b | Reachable stage role, harness tool or local-path denial (Out of Scope, #1746) | **No named stop and no outcome defined**; must not map to `missing_required_secret_or_permission` or `dispatch_handoff_unavailable`; #1746 callout present | Y | Y | Y | N/A |
-      | S11 | No handoff, or **initial handoff unconfirmed**, read-only checkpoint | Inline fallback; observing, complete read-only work, report; record unconfirmed | Y | Y | Y | Y |
-      | S12 | No handoff, or **initial handoff unconfirmed**, would mutate | Inline fallback; observing, report; stop `dispatch_handoff_unavailable`; record unconfirmed | Y | Y | Y | N/A |
-      | S13 | Declaration missing at first mutating action | Stop `dispatch_profile_declaration_missing` before mutating | Y | Y | Y | N/A |
-      | S14 | Profile value outside the three | Same stop; report invalid value and the three valid values | Y | Y | Y | Y |
-      | S15 | No accountable role (incl. empty) | Same stop; report missing role | Y | Y | Y | Y |
-      | S16 | Missing/invalid declaration at a read-only checkpoint | Same stop before reporting or the next action | Y | Y | Y | Y |
-      | S17a | Posture `observing` at a mutating action | Same stop; report invalid posture | Y | Y | Y | N/A |
-      | S17b | Posture absorbed/handed off at a read-only checkpoint | Same stop; report invalid posture | Y | Y | Y | Y |
-      | S18 | Declared **more permissive** than facts assign (native while onward unavailable/unconfirmed or initial unavailable; parent while initial unavailable) | Same stop; report fact and required outcome | Y | Y | Y | Y |
-      | S19 | Declared **less permissive** than facts assign (parent or inline while facts assign native; inline while facts assign parent) | Same stop; report fact and required outcome | Y | Y | Y | Y |
+      | ID | Spec matrix input | Expected outcome and next action | run-item | run-items | run-epic | run-work | Spec row |
+      | --- | --- | --- | --- | --- | --- | --- | --- |
+      | S1 | Handoff available, onward available, not a scan | Native handoff; declare, handed off intact, follow protocol | Y | Y | Y | N/A | R1 |
+      | S2 | Same, read-only scan | Native handoff; observing, scan in current context | N/A | N/A | N/A | Y | R2 |
+      | S3 | Handoff available, onward unavailable, not a scan | Parent orchestrated; declare absorbed layers, absorb full contract, delegate every stage | Y | Y | Y | N/A | R3 |
+      | S4 | Same, read-only scan | Parent orchestrated; observing, scan in current context | N/A | N/A | N/A | Y | R4 |
+      | S5 | Initial confirmed, onward **unconfirmed**, not a scan | Parent orchestrated (conservative default); record unconfirmed, absorb, delegate only | Y | Y | Y | N/A | R5 |
+      | S6 | Same, read-only scan | Parent orchestrated; record unconfirmed, observing | N/A | N/A | N/A | Y | R6 |
+      | S7 | Mid-run: native, role unreliable, initial handoff still available | Re-declare parent orchestrated with reason; earlier mutations preserved | Y | Y | Y | N/A | R7 |
+      | S8 | Mid-run: native, role unreliable, initial handoff lost or unconfirmed | Re-declare inline fallback; stop next mutation with `dispatch_handoff_unavailable` | Y | Y | Y | N/A | R8 |
+      | S9 | Mid-run: parent orchestrated, stage handoff for one action lost | Re-declare inline fallback; stop that action with `dispatch_handoff_unavailable` | Y | Y | Y | N/A | R9 |
+      | S10 | Parent orchestrated, reachable stage role, credential/permission/token denial | Unchanged profile; stop that action with `missing_required_secret_or_permission`, naming denied target | Y | Y | Y | N/A | R10 |
+      | S10b | Reachable stage role, harness tool or local-path denial (Out of Scope, #1746) | **No named stop and no outcome defined**; must not map to `missing_required_secret_or_permission` or `dispatch_handoff_unavailable`; #1746 callout present | Y | Y | Y | N/A | subcase (non-row) |
+      | S11 | No handoff, or **initial handoff unconfirmed**, read-only checkpoint | Inline fallback; observing, complete read-only work, report; record unconfirmed | Y | Y | Y | Y | R11 |
+      | S12 | No handoff, or **initial handoff unconfirmed**, would mutate | Inline fallback; observing, report; stop `dispatch_handoff_unavailable`; record unconfirmed | Y | Y | Y | N/A | R12 |
+      | S13 | Declaration missing at first mutating action | Stop `dispatch_profile_declaration_missing` before mutating | Y | Y | Y | N/A | R13 |
+      | S14 | Profile value outside the three | Same stop; report invalid value and the three valid values | Y | Y | Y | Y | R14 |
+      | S15 | No accountable role (incl. empty) | Same stop; report missing role | Y | Y | Y | Y | R15 |
+      | S16 | Missing/invalid declaration at a read-only checkpoint | Same stop before reporting or the next action | Y | Y | Y | Y | R16 |
+      | S17a | Posture `observing` at a mutating action | Same stop; report invalid posture | Y | Y | Y | N/A | R17 (observing at a mutating action) |
+      | S17b | Posture absorbed/handed off at a read-only checkpoint | Same stop; report invalid posture | Y | Y | Y | Y | R17 (absorbed/handed off at a read-only checkpoint) |
+      | S18 | Declared **more permissive** than facts assign (native while onward unavailable/unconfirmed or initial unavailable; parent while initial unavailable) | Same stop; report fact and required outcome | Y | Y | Y | Y | R18 (more permissive) |
+      | S19 | Declared **less permissive** than facts assign (parent or inline while facts assign native; inline while facts assign parent) | Same stop; report fact and required outcome | Y | Y | Y | Y | R18 (less permissive) |
+
+      **Row identities (spec order)**: R1 native handoff, mutating; R2 native
+      handoff, read-only scan; R3 parent orchestrated, mutating; R4 parent
+      orchestrated, scan; R5 onward unconfirmed, mutating; R6 onward
+      unconfirmed, scan; R7 mid-run native to parent orchestrated; R8 mid-run
+      native to inline fallback; R9 mid-run parent orchestrated to inline
+      fallback; R10 reachable stage credential/permission/token denial; R11 no
+      or unconfirmed initial handoff, read-only; R12 no or unconfirmed initial
+      handoff, would mutate; R13 declaration missing at first mutating action;
+      R14 profile value outside the three; R15 no accountable role; R16 missing
+      or invalid declaration at a read-only checkpoint; R17 posture mismatch
+      (both directions in one row); R18 profile/fact mismatch (both directions
+      in one row).
 
       Each expected outcome names its terminal state (proceed, re-declare, or
       stop with the exact stop string) and, for stops, the affected work item and
@@ -659,9 +685,10 @@ layer; `workflow.mdc` states all five compactly).
       16. **`simulate_bounded_paths`**: for each scenario ID S1-S19 (including
           S10b), alter that decision-gate row in the canonical doc so its
           expected outcome or stop name changes; expect non-zero naming the
-          scenario ID and each applicable path. Separately delete one row
-          (completeness assertion must fail) and add an unmatched extra row
-          (must fail); restore each.
+          scenario ID and each applicable path. Separately, for A1-A4: delete
+          one canonical row (A1 and A2 fail), add an unmatched extra canonical
+          row (A1 fails), remove a scenario's mapping (A3 fails), map S10b to a
+          row (A3 fails), and swap two rows' tokens (A4 fails); restore each.
 
       17. **Selector wiring / header consistency**: remove one path from the
           `# covers:` header; expect the guard's header-consistency check to
@@ -843,7 +870,11 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
 | Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
 | Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
-| Simulation | Canonical-doc fixture missing the S5 row (onward unconfirmed) | `sim-missing-row-s5` | fail (completeness count) |
+| Simulation | Canonical-doc fixture that matches the spec's 18 rows exactly (no per-scenario extras) | `sim-row-count-matches-spec` | pass (A1-A4; 21 scenarios do not need 21 rows) |
+| Simulation | Canonical-doc fixture missing the R5 row (onward unconfirmed) | `sim-missing-row-r5` | fail (A1, A2) |
+| Simulation | Canonical-doc fixture with a 19th row added | `sim-extra-row` | fail (A1) |
+| Simulation | Scenario with no mapping, or S10b mapped to a row | `sim-unmapped-scenario` | fail (A3) |
+| Simulation | Two rows' tokens swapped | `sim-rows-swapped` | fail (A4) |
 | Simulation | Fixture whose S12 row says `dispatch_profile_declaration_missing` instead of `dispatch_handoff_unavailable` | `sim-wrong-stop-s12` | fail naming S12 |
 | Simulation | Fixture where S7 recovery re-declaration is described as a coarse mismatch | `sim-recovery-rejected-s7` | fail (E4c exemption) |
 | Simulation | Fixture mapping harness denial (S10b) to `missing_required_secret_or_permission` | `sim-harness-denial-mapped-s10b` | fail naming S10b |
@@ -896,7 +927,7 @@ disk and vice versa.
 | Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` fixtures plus proof cycles 3-11 and 12-14 |
 | Serialization rules (trim, verbatim, delimiter, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, duplicates, order, one line, single/empty unreachable) | `ser-*` and `serialization-*` fixtures |
 | Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*` fixtures |
-| Scenarios S1-S19, S10b | proof cycle 16 (one mutation per scenario), `sim-*` fixtures |
+| Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions A1-A4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus A1-A4 cycles), `sim-*` fixtures |
 | Surface classes | `class-*` fixtures and proof cycles 12-14 |
 | CI wiring header | proof cycle 17 |
 
