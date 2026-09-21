@@ -43,8 +43,9 @@ finding yields `waiting_on_reviewer` / `codex-github-review-pending`, not
 review-head SHA correlation, submitted-review GitHub state, root-comment marker
 grammar, freshness boundaries, evidence-window attribution, tie precedence,
 cycle-limit interaction, and four new escalation reason codes. The companion
-script is already ~2.5k lines, and Area 13 of `test-pr-review-loop.sh` carries
-418 `codex`-named `run_test` cases (see Verification Log); this item extends the
+script is 2,508 lines and `pr-review-loop.sh` is 13,708, while Area 13 of
+`test-pr-review-loop.sh` carries 418 `codex`-named `run_test` cases (all three
+measured at `39327e36`; see Verification Log); this item extends the
 classifier and loop adapter without changing rate limits or polling budgets.
 CodeRabbit reuse is assessment-only (AC-16).
 
@@ -72,27 +73,27 @@ checks in the implementation-start assumption table below.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision (worktree) | `git rev-parse --short HEAD` | `1d9cd0e0` — this plan branch's own revision while authoring (not on `develop`); refresh at implementation start. Distinct from the `develop` ancestor `32605700` cited in the Cross-Cutting Operational Assumption Check, which pins the base-branch assumption, not this worktree |
+| Repo revision (worktree) | `git rev-parse --short HEAD`; `git merge-base HEAD origin/develop` | `39327e36` — this plan branch's revision at the last re-measurement of this table (2026-09-21). Every row below was re-run against this revision. The branch's `develop` merge base is `32605700`, which is what the Cross-Cutting Operational Assumption Check pins; the two are different surfaces. Line numbers in this table are **`pr-review-loop.sh` and `codex-github-reviewer.sh` as of `39327e36`** — re-measure at implementation start, because `pr-review-loop.sh` grows on `develop` (the cycle-cap call sites moved from `:10958` when this plan was first drafted to `:13555` here) |
 | Spec merged | `gh pr view 1758 --json state,baseRefName,mergedAt` | `MERGED` into `develop` at `2026-09-16T23:05:22Z` |
 | Phase-1 existing-findings gate | `sed -n '2167,2203p' scripts/development-workflow/pr-review-loop.sh` | Uses `check_unresolved_threads … provisional`; returns `needs_fixes` / `existing_findings` when count > 0 |
-| Companion exit-1 wrapper floor | `sed -n '2252,2290p' scripts/development-workflow/pr-review-loop.sh` | On script exit `1`, sets `unresolved_count=1` when strict recount is `0` |
-| Cleared-thread retrigger (partial) | `sed -n '1532,1541p' scripts/development-workflow/codex-github-reviewer.sh` | Posts fresh trigger when review has only cleared inline threads and body is non-blocking — does not cover full spec matrix |
-| Unrecognized safe-fail today | Header + tests grep `unrecognized response format — safe-fail` in `codex-github-reviewer.sh` / Area 13 | Terminal unrecognized evidence exits `NEEDS_REVISION` (1), not escalate |
+| Companion exit-1 wrapper floor | `grep -n 'unresolved_count=1' scripts/development-workflow/pr-review-loop.sh` | Two floors: the Codex adapter at `pr-review-loop.sh:2266` (the one this item removes) and a second at `:2427` on another platform's path, which this item does **not** touch |
+| Cleared-thread retrigger (partial) | `grep -n 'only cleared' scripts/development-workflow/codex-github-reviewer.sh` | Posts a fresh trigger at `codex-github-reviewer.sh:1536` (inline-review summary with only cleared findings) and `:1662` (existing trigger that produced only cleared findings) — neither covers the full spec matrix |
+| Unrecognized safe-fail today | `grep -n 'unrecognized response format' scripts/development-workflow/codex-github-reviewer.sh`; `grep -c 'unrecognized response format' scripts/development-workflow/tests/test-pr-review-loop.sh` | Three companion sites emit `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)` — `:1560`, `:1992`, `:2322` — and the harness mentions that string on 74 lines, so terminal unrecognized evidence exits `1` today rather than escalating; those expectations are the ones the matrix spot-check step rewrites |
 | Harness surface | `grep -c '^run_test.*codex' scripts/development-workflow/tests/test-pr-review-loop.sh` | 418 `codex`-named tests (Area 13) |
-| CodeRabbit thread API | `grep -n 'check_unresolved_threads' scripts/development-workflow/pr-review-loop.sh \| head` | CodeRabbit pass uses same GraphQL `isResolved` / `isOutdated` model — candidate for `shared` assessment |
+| CodeRabbit thread API | `grep -n 'check_unresolved_threads' scripts/development-workflow/pr-review-loop.sh` | Same GraphQL `isResolved` / `isOutdated` helper is called in `provisional` mode at `pr-review-loop.sh:2173` and `strict` mode at `:2259` — the shared surface the AC-16 assessment judges |
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` | Documents pre-trigger scan and template approval; lacks new escalation/wait reason codes |
 | Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497`. Today's only definition — the plan **moves** it to `codex-github-evidence-lib.sh` under the same name and repoints `:1497`, rather than extending it in place, so both scripts share one implementation |
-| Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded\\|max_cycles enforcement' scripts/development-workflow/pr-review-loop.sh` | Enforcement block at `pr-review-loop.sh:10958` (`#1502` dual-cap); escalation predicate is `reviewer_loop_cap_exceeded`, reason string `max_cycles_exceeded` |
-| Timeline event fields | `gh api repos/{owner}/{repo}/issues/1768/timeline -H 'Accept: application/vnd.github+json'` | `committed` events carry `sha` and `committer.date`; their own `created_at` is `null`. No `head_ref_force_pushed` events exist in this repo to sample (force-push on shared branches is prohibited), so the force-push event→head join is **unverified** — see source (a) above |
+| Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded "' scripts/development-workflow/pr-review-loop.sh` | Two call sites, the `#1502` dual cap: per-run at `pr-review-loop.sh:13555` and lifetime at `:13559`; the predicate is defined at `:11264` and the escalation log at `:13556` carries the reason string `max_cycles_exceeded` |
+| Timeline event fields | `gh api repos/{owner}/{repo}/issues/1768/timeline -H 'Accept: application/vnd.github+json'` | `committed` events carry `sha` and `committer.date`; their own `created_at` is `null`. No `head_ref_force_pushed` events exist in this repo to sample (force-push on shared branches is prohibited), so the force-push event→head join is **unverified** — see source (a) under **Head evidence window attribution**, and the fuller `Head-transition source investigation` row below |
 | Environment-setup outcome | `sed -n '1372,1382p' scripts/development-workflow/codex-github-reviewer.sh` | `codex_return_environment_error` emits `REASON=codex-github-environment-missing` and `exit 2`; retained unchanged by this item (see the exit-`2` retained-contract table) |
-| Exit-2 reason inventory | `grep -n 'exit 2' scripts/development-workflow/codex-github-reviewer.sh` plus the nearest preceding `REASON=` per hit, and `grep -n 'run_test "codex_[a-z0-9_]*" "2"' scripts/development-workflow/tests/test-pr-review-loop.sh` | 52 `exit 2` sites. Only five sites emit a reason, covering four distinct reasons: `codex-github-environment-missing` (`:1381`), `codex-github-reaction-without-review` (`:1402`), `codex-github-head-changed` (`:1411`), and `codex-github-head-unavailable` (`:1420`, `:1428`). Of the remaining 47, 18 are usage/argument-validation/`gh auth`/HEAD-resolution exits (`:94`–`:214`) and 29 are reason-less `VERDICT: TIMED_OUT …` fetch/poll/trigger failures. 17 harness cases assert a codex exit code of `2`; `codex_pre_trigger_head_changed_*` (`tests:5348`, `:5351`) and `codex_head_changed_*` (`tests:10335`, `:10336`) pin `codex-github-head-changed`, and `codex_reaction_only_exit_unavailable` (`tests:5435`) pins exit `2` for the acknowledgement wait. Exit `4` exists on exactly one shipped path (`:2508`, `REASON=codex-github-review-pending`) |
+| Exit-2 reason inventory | `grep -cE '\bexit 2\b' scripts/development-workflow/codex-github-reviewer.sh` → **53**; `grep -nE '\bexit 2\b' … \| grep -v '^[0-9]*: *#' \| wc -l` → **52**; plus the nearest preceding `REASON=` per hit and `grep -n 'run_test "codex_[a-z0-9_]*" "2"' scripts/development-workflow/tests/test-pr-review-loop.sh` | The raw count is **53** and the executable count is **52**: line `:1681` is a comment (`# Guard with 'if !' to emit TIMED_OUT (exit 2) on failure …`), not an exit. Every count below is of the 52 executable sites. Only five sites emit a reason, covering four distinct reasons: `codex-github-environment-missing` (`:1381`), `codex-github-reaction-without-review` (`:1402`), `codex-github-head-changed` (`:1411`), and `codex-github-head-unavailable` (`:1420`, `:1428`). Of the remaining 47, 18 are usage/argument-validation/`gh auth`/HEAD-resolution exits (`:94`–`:214`) and 29 are reason-less `VERDICT: TIMED_OUT …` fetch/poll/trigger failures. 17 harness cases assert a codex exit code of `2`; `codex_pre_trigger_head_changed_*` (`tests:5348`, `:5351`) and `codex_head_changed_*` (`tests:10335`, `:10336`) pin `codex-github-head-changed`, and `codex_reaction_only_exit_unavailable` (`tests:5435`) pins exit `2` for the acknowledgement wait. Exit `4` exists on exactly one shipped path (`:2508`, `REASON=codex-github-review-pending`) |
 | Exit-2 reason default | `sed -n '2320,2333p' scripts/development-workflow/pr-review-loop.sh` | `codex_reason="$(kv_value_default REASON "$script_output" timeout)"` at `:2322`; `print_kv RESULT escalate` (`:2323`) and `return 2` (`:2332`) are unconditional — an out-of-set `REASON` loses the reason string, not the escalation |
 | Inline-comment review join | `gh api repos/{owner}/{repo}/pulls/1768/comments?per_page=1 --jq '.[0] \| {id, pull_request_review_id, commit_id}'` and the matching GraphQL `reviewThreads → comments(first:1) → pullRequestReview.databaseId` | REST returns `id=4056981858`, `pull_request_review_id=5260609621`, `commit_id=37d5bd35…` for a `chatgpt-codex-connector[bot]` comment; GraphQL returns `databaseId=4056981858` with `pullRequestReview.databaseId=5260609621` for the same thread. Both review-scoping joins exist and agree |
 | Exit-`3` reason hardcode | `sed -n '2292,2302p' scripts/development-workflow/pr-review-loop.sh` | `print_kv REASON codex-github-usage-limit` is unconditional at `:2294`, discarding the companion's `REASON=`; the companion's `codex_return_account_not_connected` emits `REASON=codex-github-account-not-connected` then `exit 3` (`codex-github-reviewer.sh:1384–1393`), so that outcome is reported today as a usage limit |
 | Commit-token resolution semantics | `git rev-parse --disambiguate=<prefix>`; `git rev-parse --verify "<token>^{commit}"`; `gh api repos/{owner}/{repo}/commits/<token>` | Unique token `490bde2` → exit `0`, full SHA. Ambiguous prefix `0003` (found via `git rev-list --all --objects \| cut -c1-4 \| sort \| uniq -d`) → exit `128`, `error: short object ID 0003 is ambiguous`. Unknown `deadbee` → exit `128`, `fatal: Needed a single revision`. `--disambiguate=490b` → one line (the full SHA); a 2-character prefix returns zero lines with no error. GitHub REST: `commits/490bde2` and `commits/490b` both return HTTP `200` with a full `.sha` — no ambiguity signal — while `commits/dead` returns HTTP `422` `No commit found for SHA: dead` |
 | Head-transition source investigation | `gh api repos/{owner}/{repo}/issues/1768/timeline --paginate --jq '.[].event' \| sort \| uniq -c`; `gh api repos/{owner}/{repo}/events --paginate --jq '.[] \| select(.type=="PushEvent")'` | The pull-request timeline for a four-head pull request contains **no** push- or head-transition event of any kind: only `commented`, `committed`, `labeled`, `unlabeled`, `subscribed`, `mentioned`, `reviewed`, `cross-referenced`. `committed` events carry `sha` + `committer.date` with `created_at: null`. Ordinary (non-force) pushes surface no pull-request-scoped event, so `head_ref_force_pushed` is the only timeline transition event and this repository has none to sample. The repository `events` feed *does* carry `PushEvent` with a true push instant per branch ref — `490bde2c` at `2026-09-21T00:05:21Z` versus its `committer.date` of `00:05:14Z`, empirically confirming the 7-second commit-date-vs-push gap — but the feed is repository-wide and bounded: `--paginate` returned ~286 events reaching back only to `2026-09-16`, entries for one ref came back out of chronological order, and a fork head ref would not appear at all. Rejected as an authoritative source; see the rejected-anchor list |
 | Trigger comment names the head | `sed -n '1683,1685p;2017,2019p' scripts/development-workflow/codex-github-reviewer.sh` | The trigger body is `… (review triggered by workflow runner, commit: $CURRENT_SHA)` and the retrigger body is `… (sha: $CURRENT_SHA)`, both posted after `headRefOid` is resolved — so a trigger comment naming `H` cannot predate `H` becoming this pull request's head. This is the one verified pull-request-scoped transition anchor |
-| Cycle-cap defaults | `sed -n '11201,11250p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_resolve_max_cycles` defaults to **10** (`:11211`, `:11216`); `reviewer_loop_resolve_max_total_cycles` defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` still says “default 3” and is stale — do not encode it |
+| Cycle-cap defaults | `grep -n 'reviewer_loop_resolve_max_cycles()\|reviewer_loop_resolve_max_total_cycles()' scripts/development-workflow/pr-review-loop.sh` then read each body | `reviewer_loop_resolve_max_cycles` is defined at `:11201` and defaults to **10** (`:11211` unset path, `:11216` invalid-value path with its WARN); `reviewer_loop_resolve_max_total_cycles` is defined at `:11232` and defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` says `expensive_gate_resolve_max_deferrals` “mirrors `reviewer_loop_resolve_max_cycles`: default 3”, which no longer matches that resolver — do not encode `3` |
 
 ---
 
@@ -102,7 +103,7 @@ checks in the implementation-start assumption table below.
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| Approved base branch | `develop` | Parent handoff + `gh pr view 1758` | 2026-09-17, `develop` ancestor SHA `32605700` (not the plan worktree revision `1d9cd0e0` in the Verification Log — different surfaces, both intentional) | Item #1757 only | `Verified` |
+| Approved base branch | `develop` | Parent handoff + `gh pr view 1758` | 2026-09-17, `develop` ancestor SHA `32605700` (not the plan branch revision — `39327e36` at the last Verification Log re-measurement — which pins a different surface) | Item #1757 only | `Verified` |
 | Same-surface concurrent PRs | none | Parent batch dispatch (`1757,1462,1496,1515,1561,1583,1529`) | 2026-09-17 | Same-surface open PRs at dispatch: none | `Verified` |
 | Codex companion exit-code contract | `0/1/2/3/4` documented in companion header | `codex-github-reviewer.sh` lines 29–34 | 2026-09-17 | No batch peer targets `codex-github-reviewer.sh` classification | `Verified` |
 
@@ -130,7 +131,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 | Dismissed review | REST reviews | `state: DISMISSED` excluded from terminal evidence selection |
 | Root comment terminal evidence | REST issue comments | `Reviewed commit` marker, `created_at`, comment `id` ordering vs trigger comment |
 | Availability (unchanged) | Root comment body | Usage-limit, account-not-connected, environment-setup patterns already recognized |
-| Head evidence window bounds | REST PR object + issue timeline | PR `created_at`; `GET repos/{owner}/{repo}/issues/{pr}/timeline` (paginated) `head_ref_force_pushed.created_at` and `committed` events' `sha` + `committer.date`; check-run `started_at` / commit-status `created_at` for the head SHA as the push-proving anchor `P(H)` — see **Head evidence window attribution** for the derivation and its mandatory escalation cases |
+| Head evidence window bounds | REST PR object + issue timeline + PR issue comments | PR `created_at`; `GET repos/{owner}/{repo}/issues/{pr}/timeline` (paginated) `head_ref_force_pushed.created_at` and `committed` events' `sha` + `committer.date`; and, as the transition-proving anchor `P(H)`, the `created_at` of the earliest **pull-request review trigger comment naming the head**. No repository-scoped signal is used: check runs, commit statuses, and `PushEvent` are rejected anchors — see **Head evidence window attribution** for the derivation, the rejected-anchor evidence, and the mandatory escalation cases |
 
 **Finding–thread correlation contract** (AC-7, spec Business Rules 4–6):
 
@@ -193,7 +194,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
    or no identifiable matching conversation, the correlation-missing escalation
    takes precedence").
 
-- [ ] **Bounded evidence query** (AC-1–4, 7–9, 14–16): **Move**
+- [ ] **Bounded evidence query** (AC-1–4, 7–9; also the surface the AC-16
+  assessment judges): **Move**
   `codex_review_thread_evidence_counts()` out of the companion
   (`codex-github-reviewer.sh:273`, confirmed in the Verification Log) **into**
   `codex-github-evidence-lib.sh`, keeping the name so the move is traceable.
@@ -203,6 +205,15 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   (`codex-github-reviewer.sh:1497`) to call the sourced function, and have
   `run_codex_github_review()` phase 1 in `pr-review-loop.sh` call **this same
   function**; no second function is introduced.
+
+  **Behavioural extension.** Extend the moved function to return structured
+  status on GraphQL failure (`evidence_unavailable_codex_thread_state`) after
+  one retry, and to classify each non-outdated Codex thread as
+  `applicable_unresolved`, `applicable_resolved`, `cleared`, `outdated`, or
+  `dismissed_review_attached` using head SHA + review `commit_id` equality (not
+  merely `isOutdated`). Provisional “reply after head push” relaxation remains
+  **only** for re-trigger eligibility, never for declaring clean (preserve #1508
+  contract).
 
   **Executable interface (required — the two callers do not share a variable
   namespace).** Today the function reads five companion globals and nothing
@@ -242,14 +253,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     parameters, same tab-separated output as today) and
     `codex_evidence_lib_loop_caller_contract` (loop slug split → same output),
     plus `codex_evidence_lib_no_unset_globals` running the library under
-    `set -u` with none of the companion globals defined. Extend it to return structured
-  status on GraphQL failure (`evidence_unavailable_codex_thread_state`) after
-  one retry, and to classify each non-outdated Codex thread as
-  `applicable_unresolved`, `applicable_resolved`, `cleared`, `outdated`, or
-  `dismissed_review_attached` using head SHA + review `commit_id` equality (not
-  merely `isOutdated`). Provisional “reply after head push” relaxation remains
-  **only** for re-trigger eligibility, never for declaring clean (preserve #1508
-  contract).
+    `set -u` with none of the companion globals defined.
 
 - [ ] **Terminal evidence collector** (AC-3–4, 10–13): Normalize submitted
   reviews and root PR comments into a sorted list of evidence items for the
@@ -294,14 +298,17 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
 - [ ] **Head evidence window attribution** (AC-14): For trigger-less root
   comments, assign each comment to the head that was current when authored,
-  using the **head-transition timeline** below as the chronology source; if
+  using the **head-transition chronology** below as the source; if
   the window boundary cannot be established deterministically from it, escalate
   `evidence_unavailable_codex_thread_state` rather than attributing to live head.
 
-  **Head-transition timeline (deterministic source).** Build the window
-  boundaries from `GET repos/{owner}/{repo}/issues/{pr}/timeline` (paginated,
-  `Accept: application/vnd.github+json`) joined with the PR object's
-  `created_at`:
+  **Head-transition chronology (deterministic sources).** Build the window
+  boundaries from three pull-request-scoped reads: the PR object's `created_at`,
+  `GET repos/{owner}/{repo}/issues/{pr}/timeline` (paginated,
+  `Accept: application/vnd.github+json`) for `committed` and
+  `head_ref_force_pushed` events, and
+  `GET repos/{owner}/{repo}/issues/{pr}/comments` (paginated) for the review
+  trigger comments that supply the transition-proving anchor of item 3:
 
   The two boundaries draw on different sources and must not be substituted for
   one another: `L(H)` combines a *trigger-derived* bound with `H`'s own
@@ -315,7 +322,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
        `created_at` (the latest such trigger for `H`).
      - `H` is trigger-less → `L(H) = max(previous head's last review trigger,
        PR created_at)`. When `H` is the first head, the PR `created_at` alone
-       applies.
+       applies. Note that this branch yields an attribution only when item 3
+       still supplies a `P(H)` — which, for a trigger-less head, means a
+       joinable `head_ref_force_pushed` event; otherwise the item-3 escalation
+       fires first and no comment is attributed to `H`.
      **`L(H)` is additionally floored by `T(H)`, the instant `H` itself became
      current**: `L(H) = max(trigger-derived bound, T(H))`. The spec's governing
      clause is "the live head that was **current when the comment was
@@ -341,10 +351,12 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
        repository to sample (its safety rules forbid force-pushing shared
        branches), and the event's `commit_id` is reported to be commonly
        `null`, which would make the event→SHA join impossible. **Implement
-       source (b) plus the escalation cases below as the complete path.** Adopt
-       (a) only after confirming on real data that the payload identifies the
-       head it introduced; until then a force-push is simply a case where (b)
-       governs or the escalation cases fire.
+       source (b), the item-3 anchor, and the escalation cases below as the
+       complete path** — source (b) alone never suffices, because it does not
+       prove transition. Adopt (a) only after confirming on real data that the
+       payload identifies the head it introduced; until then a force-push is
+       simply a case where (b) plus item 3 govern, or the escalation cases
+       fire.
   3. **Transition-proving anchor `P(H)`** — an instant that can only exist
      *after* `H` became **this pull request's** head. Source (b) cannot supply
      it: a commit-authoring timestamp is a lower bound on the push, so a comment
@@ -652,7 +664,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     | `codex_return_environment_error` (`:1372–1382`) | `codex-github-environment-missing` | **Retained unchanged** — availability handling, not a fail-closed escalation, and never converted into one | Keeps exit `2`: `codex_environment_missing_exit_unavailable` (`tests:10634`), `codex_async_reaction_environment_exit_unavailable` (`:6092`), `codex_ack_repoll_env_then_reaction_exit_unavailable` (`:6155`), `codex_main_loop_env_then_review_exit_unavailable` (`:6239`), `codex_same_poll_newer_env_error_wins_exit_unavailable` (`:6462`), `codex_env_error_survives_later_ack_exit_unavailable` (`:6511`), `codex_terminal_comment_vs_newer_env_error_exit_unavailable` (`:6559`), `codex_environment_then_clean_comment_exit_unavailable` (`:10417`), `codex_same_second_root_comment_exit_unavailable` (`:10675`) |
     | `codex_return_head_changed` (`:1405–1412`) | `codex-github-head-changed` | **Retained unchanged** — outside this item's evidence model (the head moved, so there is no live-head verdict to classify) | Unchanged: `codex_head_changed_exit_unavailable` / `codex_head_changed_reason` (`tests:10335–10336`), `codex_pre_trigger_head_changed_exit_unavailable` / `codex_pre_trigger_head_changed_reason` (`tests:5348–5351`) |
     | `codex_require_current_head` (`:1414–1434`; exits at `:1420` and `:1428`) | `codex-github-head-unavailable` | **Retained unchanged** | No test pins this reason today — add `codex_head_unavailable_reason_retained` so the retained contract is covered before the classifier work lands |
-    | `codex_return_reaction_without_review` (`:1396–1403`) | `codex-github-reaction-without-review` | **Remapped to exit `4`** — the only intentional change on this surface. AC-9 requires `waiting_on_reviewer` for acknowledgement-only evidence, and the loop's exit-`2` arm returns `RESULT=escalate`, so the shipped pairing turns that wait into an escalation. The reason string keeps its shipped name, per the spec's "the two waiting codes are the shipped reason codes and keep their existing names and tests" | `codex_reaction_only_exit_unavailable` (`tests:5435`) expectation `2` → `4`, renamed `codex_reaction_only_exit_waiting`; `codex_reaction_only_reason` (`tests:5436`) unchanged |
+    | `codex_return_reaction_without_review` (`:1396–1403`) | `codex-github-reaction-without-review` | **Remapped to exit `4`** — the only intentional change on this surface. AC-10 requires `waiting_on_reviewer` for acknowledgement-only evidence, and the loop's exit-`2` arm returns `RESULT=escalate`, so the shipped pairing turns that wait into an escalation. The reason string keeps its shipped name, per the spec's "the two waiting codes are the shipped reason codes and keep their existing names and tests" | `codex_reaction_only_exit_unavailable` (`tests:5435`) expectation `2` → `4`, renamed `codex_reaction_only_exit_waiting`; `codex_reaction_only_reason` (`tests:5436`) unchanged |
     | 29 reason-less `VERDICT: TIMED_OUT …` fetch / poll / trigger failures (`:1500`, `:1522`, `:1628`, `:1633`, `:1688`–`:1698`, `:1773`, `:1821`, `:1865`, `:1877`, `:2022`–`:2138`, `:2206`–`:2412`) | *(none)* | **Retained reason-less** — the loop's `kv_value_default … timeout` supplies `timeout` | Unchanged: `codex_existing_fetch_failure_exit_unavailable` (`tests:4903`), `codex_async_root_fetch_failure_exit_unavailable` (`:5906`), `codex_review_query_failure_exit_unavailable` (`:10156`), `codex_thread_check_failure_exit_code` (`:13158`) |
     | 18 usage, argument-validation, `gh auth`, and HEAD-resolution exits (`:94`–`:214`) | *(none)* | **Retained reason-less** — they fire before any review classification and are not review outcomes | None |
     | New classifier fail-closed escalations | *(new)* | Exit `2` with one of `evidence_unavailable_codex_thread_state`, `codex_current_verdict_malformed_revision_marker`, `codex_finding_thread_correlation_missing`, `codex_current_verdict_unrecognized` | One new Area 13 case per code (matrix spot checks) |
@@ -676,7 +688,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     indistinguishable from a poll-budget timeout and from each other. That
     directly defeats this item's own acceptance criterion that every fail-closed
     escalation "is recorded as a terminal human-review escalation".
-  - **Adapter safety net for the remapped wait** (AC-9): the loop's exit-`2` arm
+  - **Adapter safety net for the remapped wait** (AC-10, with AC-9's complete
+    escalation set): the loop's exit-`2` arm
     must map a stray `REASON=codex-github-reaction-without-review` to
     `RESULT=waiting_on_reviewer` rather than `escalate`, so a missed companion
     path can never convert that wait into an escalation — the spec lists the
@@ -761,21 +774,29 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `codex-github-account-not-connected`, and this item adds no exit-`3` path.
 
 - [ ] **Cycle-limit interaction** (AC-5–6): In the reviewer-loop cap check
-  (`reviewer_loop_cap_exceeded`, the enforcement block confirmed in the
-  Verification Log), evaluate current
+  (`reviewer_loop_cap_exceeded`, called per-run at `pr-review-loop.sh:13555`
+  and lifetime at `:13559` — Verification Log), evaluate current
   head evidence **before** escalating for exhausted allowance: canonical terminal
   clean evidence in the final permitted cycle proceeds to readiness; exhausted
   allowance with cleared-findings retrigger or remaining actionable findings
   escalates (cleared wait must not bypass cap — spec precedence).
 
 - [ ] **Independent allowance resolution** (AC-6): No change to
-  `reviewer_loop_resolve_max_cycles` / `reviewer_loop_resolve_max_total_cycles`
-  semantics — add harness coverage in `test-pr-review-loop.sh` that omits
-  `review.max_cycles` (defaults per-run to 10, lifetime stays configured/25),
-  sets only invalid `review.max_cycles` (warn + default 10 while lifetime keeps
-  explicit value), and sets only invalid `review.max_total_cycles` (warn + default
-  25 while per-run keeps explicit value). Assert WARN lines and resolved caps via
-  existing resolver helpers.
+  `reviewer_loop_resolve_max_cycles` (`pr-review-loop.sh:11201`) /
+  `reviewer_loop_resolve_max_total_cycles` (`:11232`) semantics — add harness
+  coverage in `test-pr-review-loop.sh` for all **four** independent cases the
+  criterion names, two per allowance, so omission and invalidity are each
+  proved in both directions:
+
+  | Case | Configuration | Expected |
+  | --- | --- | --- |
+  | `codex_cap_omit_per_run_keeps_lifetime` | `review.max_cycles` omitted, `review.max_total_cycles` set explicitly | Per-run falls back to **10**; lifetime keeps its configured value; no WARN |
+  | `codex_cap_omit_lifetime_keeps_per_run` | `review.max_total_cycles` omitted, `review.max_cycles` set explicitly | Lifetime falls back to **25**; per-run keeps its configured value; no WARN |
+  | `codex_cap_invalid_per_run_keeps_lifetime` | `review.max_cycles` invalid, lifetime set explicitly | WARN logged; per-run defaults to **10**; lifetime keeps its configured value |
+  | `codex_cap_invalid_lifetime_keeps_per_run` | `review.max_total_cycles` invalid, per-run set explicitly | WARN logged; lifetime defaults to **25**; per-run keeps its configured value |
+
+  Assert the WARN lines only for the two invalid cases (the omitted-value path
+  logs none) and read the resolved caps through the existing resolver helpers.
 
 - [ ] **Telemetry** (Operational Visibility): Ensure `print_kv` lines include
   `REVIEWED_HEAD`, `REASON`, and when waiting, existing `PENDING_REVIEW_*` keys.
@@ -839,7 +860,8 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `max_cycles_exceeded`, never `needs_fixes` and never clean). The third case is
   AC-5's "an exhausted allowance with any remaining actionable finding still
   escalates" clause and has no other named coverage. Run each against both the
-  per-run and the lifetime cap (`reviewer_loop_cap_exceeded`, Verification Log).
+  per-run and the lifetime cap (`reviewer_loop_cap_exceeded` at
+  `pr-review-loop.sh:13555` / `:13559`, Verification Log).
 
 - [ ] **Exit-`3` reason propagation**, two named cases:
   `codex_exit3_usage_limit_reason_preserved` (companion emits
@@ -933,11 +955,11 @@ threads.
 4. Prior-revision clean review after push → stale / pending (AC-4)
 5. Cycle cap with canonical clean in final cycle → readiness; cap with cleared
    wait → escalate; cap with a remaining actionable finding → escalate (AC-5–6)
-6. Unrecognized terminal body → escalate `codex_current_verdict_unrecognized` (AC-7, 14)
-7. Finding without thread id → escalate `codex_finding_thread_correlation_missing` (AC-7, 14)
-8. Malformed marker on live head → escalate `codex_current_verdict_malformed_revision_marker` (AC-10, 13)
-9. GraphQL thread state failure → escalate `evidence_unavailable_codex_thread_state` (AC-14)
-10. Acknowledgement-only → `codex-github-reaction-without-review` precedence (AC-9)
+6. Unrecognized terminal body → escalate `codex_current_verdict_unrecognized` (AC-7, 9)
+7. Finding without thread id → escalate `codex_finding_thread_correlation_missing` (AC-7, 9)
+8. Malformed marker on live head → escalate `codex_current_verdict_malformed_revision_marker` (AC-9, 11, 14)
+9. GraphQL thread state failure → escalate `evidence_unavailable_codex_thread_state` (AC-9)
+10. Acknowledgement-only → `codex-github-reaction-without-review` precedence (AC-10)
 11. `CHANGES_REQUESTED` with resolved threads → `needs_fixes` (AC-1, 2)
 12. CodeRabbit assessment recorded `shared` or `not_applicable` (AC-16)
 13. Trigger-less marker-pinned clean superseded by newer live-head evidence, and
@@ -1114,11 +1136,20 @@ esac
 - Spec/brief coverage: Checked — plan maps spec acceptance criteria 1–16 and the
   decision-gate matrix to layer tasks, tests, and docs; CodeRabbit assessment is
   explicit (AC-16).
-- Implementation-order consistency: Checked — shared evidence lib extraction
-  precedes classifier, adapter, caps, tests, docs; step numbers updated after
-  AC-6 harness addition.
-- Verification support: Checked — Verification Log commands are reproducible from
-  repo root; thread-correlation join cites GraphQL `databaseId` + REST `id`.
+- Implementation-order consistency: Checked — 11 steps: shared evidence lib
+  extraction precedes classifier, adapter, caps, the AC-6 resolver harness,
+  Area 13 cases, and docs; the suite run and the three planted-violation proofs
+  are step 9, the changelog fragment step 10, and the smoke runbook step 11.
+  Every cross-reference to a step (“Implementation Order steps 3–4”, “step 7”,
+  “step 8”) names the list it indexes, so it cannot be read as the classifier's
+  evaluation-order steps.
+- Verification support: Checked — every Verification Log row was re-run at plan
+  revision `39327e36`, and each row states the exact command so its number is
+  reproducible rather than asserted (for example the exit-`2` inventory records
+  both the raw `grep -c` result, 53, and the executable-site count, 52, with the
+  command that produces each). The correlation joins cite GraphQL `databaseId`
+  + REST `id` for threads and `pull_request_review_id` +
+  `pullRequestReview.databaseId` for review scoping.
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
   table has 15 rows and its mapping table has 20 test names, of which 14 carry
   the `codex_marker_` prefix; the superseded-malformed row maps to a precedence
@@ -1158,7 +1189,7 @@ esac
   enumerated from source (Verification Log row `Exit-2 reason inventory`) and
   classified as retained, remapped, or added, with the pinned harness cases
   named for each; the only behavioural remap is the acknowledgement wait moving
-  from exit `2` to exit `4`, which AC-9 requires.
+  from exit `2` to exit `4`, which AC-10 requires.
 - Correlation scoping: Checked — finding extraction, the cleared-findings rule,
   and the `CHANGES_REQUESTED` exception all consume the same per-review finding
   set keyed on `pull_request_review_id`; no section correlates against the
@@ -1215,7 +1246,7 @@ Protocol 93, `codex-github.md`, PR summary.
   blocker and above every wait or clean outcome; a superseded competitor
   restores the hard stop (see the Decision-function Evaluation order above).
 - Acknowledgement-only wait → exit `4`,
-  `REASON=codex-github-reaction-without-review` (key scenario 10, AC-9), which
+  `REASON=codex-github-reaction-without-review` (key scenario 10, AC-10), which
   takes precedence over `codex-github-review-pending`.
 - Environment-setup supersession (BR-8): retained through the poll window,
   superseded by any strictly newer terminal or review evidence.
@@ -1232,6 +1263,7 @@ implementation plan’s classifier step implements that table verbatim.
 | Base branch `develop` | Verified 2026-09-17 | Re-verify `origin/develop` before PR |
 | Spec #1758 present in base | Merged at `7a97d571` (2026-09-16) | `git merge-base --is-ancestor 7a97d571 HEAD` **and** spec file present; stop and report if either fails |
 | No concurrent Codex classifier PRs in batch | Verified at dispatch | `Still valid` unless a same-surface PR merged mid-batch |
-| Companion exit codes unchanged for availability | Verified | `Still valid` — preserve exits `2`/`3` for timeout/unavailable |
+| Companion exit codes unchanged for availability | Verified | `Still valid` — preserve exits `2`/`3` for timeout and the two hard-unavailable outcomes. The single intentional exit-code change in this item is the acknowledgement wait moving from exit `2` to exit `4`, which is not an availability outcome (see the exit-`2` retained-contract table) |
+| Script line numbers in the Verification Log | Measured at plan revision `39327e36` | Re-measure before editing: `pr-review-loop.sh` grows on `develop`, so cited lines such as `:13555` / `:13559` and `:2294` / `:2322` must be re-confirmed by `grep`, not trusted |
 
 Implementer must mark `Still valid` or stop with evidence if stale.
