@@ -54,7 +54,7 @@
 
 1. Open `docs/workflow/development-workflow/guardrails-enforcement.md` section 4.
 2. Confirm rows exist for `dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable`.
-3. Confirm `dispatch_profile_declaration_missing` documents `explicit_list_invocation_targets=#N1,#N2,...` for pre-branch explicit-list `/run-items` stops.
+3. Confirm `dispatch_profile_declaration_missing` documents `explicit_list_invocation_targets=<t1>,<t2>,...` for pre-branch explicit-list `/run-items` stops, with targets verbatim (issue numbers, tracker IDs such as `ENG-123`, branch names, PR numbers) and `%`, `,`, whitespace percent-encoded.
 4. Confirm coarse-facts mismatch guidance rejects declarations that are either
    more permissive or less permissive than the assigned decision-gate outcome.
 
@@ -174,11 +174,11 @@
 **Maps to**: AC9, AC10, AC14, AC17
 
 1. Record the current head SHA.
-2. Run `/run-items #A #B` with no declaration in a throwaway clone, or run the
+2. Run `/run-items #A ENG-123 feature/b,c` with no declaration in a throwaway clone, or run the
    `simulate_bounded_paths` branch for the `/run-items` scenarios.
 3. Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
    reported for the whole invocation with affected item
-   `explicit_list_invocation_targets=#A,#B`, before any branch or artifact is
+   `explicit_list_invocation_targets=#A,ENG-123,feature/b%2Cc` (verbatim, no `#` rewriting, comma encoded), before any branch or artifact is
    created.
 
 **Expected result**: Single invocation-level stop with the ordered target string; no per-target stops; no mutation.

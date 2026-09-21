@@ -91,9 +91,23 @@ exists yet.
 
 - For a declaration stop on an explicit-list `/run-items` invocation **before
   any item-scoped artifact exists**, the affected work item is a **single**
-  string: `explicit_list_invocation_targets=#N1,#N2,...` using the invocation's
-  ordered tracker identifiers (bare numbers with `#` prefix, comma-separated, no
-  spaces).
+  string: `explicit_list_invocation_targets=<t1>,<t2>,...`, one `<ti>` per
+  target **in invocation order**. Protocol 90 explicit lists accept issue
+  numbers, tracker identifiers (for example `ENG-123`), branch names, and PR
+  numbers, so the serialization preserves every accepted form:
+  - Each `<ti>` is the target **verbatim as supplied** on the invocation, with
+    only leading and trailing ASCII whitespace trimmed. **No rewriting**: a `#`
+    is never added or removed, case is preserved, and a `/` in a branch name is
+    kept.
+  - The delimiter is a single comma with no surrounding spaces.
+  - Escaping (percent-encoding, applied per target, `%` first so it is not
+    double-encoded): `%` becomes `%25`, `,` becomes `%2C`, and any ASCII
+    whitespace or control character inside a target becomes `%XX` (uppercase
+    hex of the UTF-8 byte). All other bytes are emitted unchanged.
+  - Duplicates are preserved; the value is always one line; at least two
+    targets are present (the `/run-items` minimum).
+  - Example: invoked as `/run-items #1462 ENG-123 feature/x,y 1771` yields
+    `explicit_list_invocation_targets=#1462,ENG-123,feature/x%2Cy,1771`.
 - Report **once** for the whole invocation; do not emit one stop per target.
 - Mirror this rule in:
   - `integrations/cursor-dispatch-profiles.md` (Named stop reporting subsection),
@@ -225,7 +239,7 @@ matrix is the merged spec** — do not maintain a shortened copy in this plan.
 | Declaration invalid at read-only checkpoint (scan / inline-fallback) | § Declaration contract | Same stop |
 | Posture mismatch (`observing` at mutation or absorbed/handoff at read-only checkpoint) | § Accountability postures | Same stop |
 | Profile/fact mismatch (more or less permissive than assigned outcome) | § Declaration contract + § Evaluation order | Same stop; excludes mid-run recovery rows per spec |
-| Pre-branch explicit-list `/run-items` declaration stop | § Named stop reporting | Plan gap `explicit_list_invocation_targets=#N1,#N2,...` |
+| Pre-branch explicit-list `/run-items` declaration stop | § Named stop reporting | Plan gap `explicit_list_invocation_targets=<t1>,<t2>,...` (verbatim, percent-encoded) |
 
 **Examples (required in canonical doc)**: one worked example per profile for the
 item layer; at minimum Native handoff `/run-item`, Parent orchestrated
@@ -276,8 +290,9 @@ words and not by pointer alone:
    reporting a specific delegated action refused for a missing credential,
    GitHub permission, or access token. For **every** stop the mirror also states
    (a) the **affected work item** (including the single
-   `explicit_list_invocation_targets=#N1,#N2,...` form for pre-branch
-   explicit-list stops) and (b) the **concrete human unblocking action**. The
+   `explicit_list_invocation_targets=<t1>,<t2>,...` form for pre-branch
+   explicit-list stops, targets verbatim and percent-encoded per the plan gap
+   rule) and (b) the **concrete human unblocking action**. The
    mirror further states the **no-named-stop** treatment: a reachable stage
    role's harness tool or local file-path permission denial on a specific
    delegated action is **not** a named stop condition,
@@ -394,7 +409,8 @@ layer; `workflow.mdc` states all five compactly).
       command; for `dispatch_handoff_unavailable`, either switch to a profile
       whose next layer is available or restore the handoff target, then
       re-invoke. Extend `dispatch_profile_declaration_missing` affected-item
-      text for `explicit_list_invocation_targets=...`; document reuse of
+      text for `explicit_list_invocation_targets=<t1>,<t2>,...` (verbatim,
+      percent-encoded serialization, all accepted target forms); document reuse of
       `missing_required_secret_or_permission` for reachable stage credential
       denial. Maps to AC10–AC11, AC19.
 - [ ] `docs/workflow/development-workflow/README.md` — add integration doc to
@@ -442,7 +458,9 @@ layer; `workflow.mdc` states all five compactly).
            `dispatch_handoff_unavailable`, and
            `missing_required_secret_or_permission`.
          - E3b **affected work item**: `affected work item`, and on the
-           surfaces the table assigns it to, `explicit_list_invocation_targets=`.
+           surfaces the table assigns it to, `explicit_list_invocation_targets=`, and on
+           the surfaces that carry that token the serialization tokens
+           `verbatim` and `percent-encoded`.
          - E3c **human unblocking action**: `human unblocking action` (or the
            fixed synonym), and, per stop, the action token from the canonical
            doc for each of the three stops (`declare one of` for
@@ -480,6 +498,15 @@ layer; `workflow.mdc` states all five compactly).
          `affected work item` token is required everywhere E3b is `Y`.
          Exact phrases live in one shared token list at the top of the script so
          canonical wording changes touch one place.
+      **Script conventions (REVIEW.md shell checks, ShellCheck-clean)**: validate
+      option values before `shift`; emit structured errors consistent with the
+      script's output contract (failing clause ID, surface path, expectation);
+      validate any path argument against the known surface list before reading;
+      no `|| true` masking of `grep`/`git` failures the caller needs; file mode
+      executable like sibling `test-*.sh`. Fixtures are `.md` only (never `.sh`)
+      so the ShellCheck find over `scripts/development-workflow` does not pick
+      them up, and they sit outside the markdownlint globs by design because
+      fail fixtures intentionally violate content rules.
       Rationale: AC18 mirror parity is easy to break across 15+ surfaces and a
       link alone does not satisfy AC10/AC11/AC20; a cheap shell guard catches
       drift without requiring live Cursor Remote Control. Maps to AC10, AC11,
@@ -494,7 +521,9 @@ layer; `workflow.mdc` states all five compactly).
       outcome (declared-and-proceed, `dispatch_handoff_unavailable`,
       `dispatch_profile_declaration_missing`, or absorbed re-declaration) and,
       for the pre-branch explicit-list case, the single
-      `explicit_list_invocation_targets=#N1,#N2,...` affected-item string. This
+      `explicit_list_invocation_targets=<t1>,<t2>,...` affected-item string, over
+      a mixed-form target list (issue number with and without `#`, tracker ID,
+      branch name containing `,`, PR number). This
       is the executable equivalent when live Remote Control is unavailable.
 - [ ] **Planted-violation proofs — one per guard branch** (same implementation
       PR). Each branch can go inert while the others keep the suite green, so
@@ -522,6 +551,8 @@ layer; `workflow.mdc` states all five compactly).
       7. **E3b affected work item**: remove `explicit_list_invocation_targets=`
          from Protocol 90 (and `guardrails-enforcement.md` row text) while the
          stop names remain.
+         Separately remove only the `percent-encoded` token (then only
+         `verbatim`) from Protocol 90 and from `run-items` mirrors.
       8. **E3c human unblocking action**: remove the unblocking action for
          `dispatch_handoff_unavailable` only, from `.claude/commands/run-item.md`,
          while its name and the other two actions remain (proves per-stop
@@ -689,6 +720,9 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
 | Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
 | Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
+| Serialization | Mixed-form target list (`#1462`, `ENG-123`, `feature/x`, `1771`) shown verbatim | `serialization-mixed-forms` | pass |
+| Serialization | Example rewrites targets (adds `#` to `ENG-123` or strips `#`) | `serialization-hash-rewritten` | fail (contradicts `verbatim`) |
+| Serialization | Target containing `,` shown unescaped | `serialization-comma-unescaped` | fail (`percent-encoded` rule) |
 | Surface-class table | Protocol fixture lacking only E3d (all other clauses present) | `class-protocol-missing-e3d` | fail naming E3d |
 | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) | `class-guardrails-exempt-clauses` | pass (absent `-` clauses are not required) |
 | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction | `class-guardrails-missing-e4b` | fail naming E4b |
@@ -787,6 +821,7 @@ Not applicable — no runtime data.
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass (plan-stage design; execution deferred) | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
+| Shell-script lint | Pass (design; execution deferred) | New `.sh` verified by `bash -n`, `shellcheck --severity=warning`, and `workflow-shell-guard-lint.py --base-ref origin/develop` per REVIEW.md; Implementation Order step 9 |
 | Parser-risk addendum | Pass | Surface guard is a structured-Markdown scanner; boundary, lookalike, multiple-occurrence and nested/overlap cases each mapped to a fixture and self-test (see Parser-Risk Addendum) |
 | Concurrent-event-source addendum | N/A | No concurrent event handlers |
 | Cross-cutting checklist addendum | N/A | No new REVIEW.md checklist category |
@@ -836,8 +871,17 @@ Not applicable — no runtime data.
    fixtures directory with one fixture per Parser-Risk case (including the
    fence-semantics rows), and the `--self-test` mode; no registration step is
    needed (Testing Strategy: `list_suites` discovers it). Run locally. Commit.
-9. **Verify** — run markdown lint commands from `AGENTS.md`, surface guard, and
-   run the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
+9. **Verify** — run every repo lint that applies to the files the PR adds:
+   markdown lint commands from `AGENTS.md` (`npx markdownlint-cli2` over
+   specs, testing runbook, and `changelog.d`; `markdown-heuristic-lint.py`;
+   `check-changelog-duplicate-headers.sh` only if `CHANGELOG.md` changed),
+   `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`
+   (protocol/mirror `.md` edits), and for the new shell script
+   `bash -n`, `shellcheck --severity=warning`, and
+   `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop`
+   (also run `bash scripts/lint/tests/test-workflow-shell-guard-lint.sh`
+   when the guard linter's inputs change), then run the surface guard, run
+   the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
    10-14 must PASS at the implementation head (Steps 12-14 via live run or
    `simulate_bounded_paths`); only live Steps 7-9 may be documented NOT RUN,
    per the runbook's Pass criteria.
