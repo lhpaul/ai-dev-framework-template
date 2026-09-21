@@ -74,6 +74,9 @@ Search Protocol 91 for `architecture_decision` / canonical page link.
       `run-epic-audit-trail.sh`.
 - [ ] Continuation when all axes are settled is documented as "trigger not
       met", not as overriding a genuine stop.
+- [ ] That continuation is **not** offered when a reviewer or human has raised
+      a question about a citation's substance that the runner cannot resolve;
+      that case stops as an incomplete `architecture_decision` escalation.
 
 **Expected**: Protocol points to canonical page instead of restating full rules.
 
@@ -115,6 +118,12 @@ to the canonical page:
 
 **Expected**: No mirror describes a well-formed `architecture_decision`
 escalation without axis/coverage analysis.
+
+### Step 5b: Protocol 90 batch stop reporting
+
+- [ ] Protocol 90 links the canonical page and requires the batch summary to
+      reference the child's canonical escalation report for an
+      `architecture_decision` stop.
 
 ### Step 6: README index
 

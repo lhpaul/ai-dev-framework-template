@@ -137,7 +137,7 @@ records only concrete names and surfaces deferred to the plan:
 | Determinable citation offered as support (report or review thread) | Declaration attached | State `Conforms` / `Departs` / `Not yet implemented` before treating citation as support | Protocol 93, developer **and code-reviewer** agents/skills, canonical page | Departs citation not offered as support |
 | Citation conformance cannot be determined | Incomplete escalation | Plain statement; no declaration enum value | Canonical page + malformed-input rows | — |
 | Reviewer/human raised substance; runner cannot resolve | Incomplete escalation | Substance confirmation request; coverage verdict unchanged | guardrails-enforcement §5 + canonical page | Spec gap 1 resolution |
-| Every axis settled, every citation `Conforms` **or** `Not yet implemented`, no disputes | Not an architecture decision | Continue without `architecture_decision` stop | Protocol 91 stop-and-name section | Spec matrix "No escalation" rows |
+| Every axis settled, every citation `Conforms` **or** `Not yet implemented`, no disputes, **and no reviewer- or human-raised question about a citation's substance left unresolved** | Not an architecture decision | Continue without `architecture_decision` stop; if such a substance question is unresolved, use the substance-undetermined row above instead | Protocol 91 stop-and-name section | Spec matrix "No escalation" rows |
 | Every axis settled but some citation declares `Departs` | Not eligible for the no-escalation path | Correct the behavior to conform where that is the obvious correction (the axis is then settled by the correction), otherwise raise the departure as its own genuinely open axis and stop | Protocol 91 stop-and-name section, canonical page | Spec: a `Departs` citation "is never presented as support for the current behavior" |
 
 ---
@@ -292,8 +292,8 @@ pointer — verify during implementation; add if missing.
       escalation page nor detect a weakened mirror; it is left unchanged.
       - **Discovery scope**: the explicit thirteen-file mirror list from the
         Lockstep mirror files row of the plan's Verification table (the same
-        list as section H), plus Protocol 91, Protocol 93, and the canonical
-        page. Discovery is by that list, not by grep, so a deleted mirror is
+        list as section H), plus Protocol 90, Protocol 91, Protocol 93, and the
+        canonical page. Discovery is by that list, not by grep, so a deleted mirror is
         reported rather than silently skipped.
       - **Invariants** (per file): a mirror and each protocol contain the
         literal `architecture-decision-escalation.md` link **and** the three
@@ -304,8 +304,8 @@ pointer — verify during implementation; add if missing.
         `Conforms`, `Departs`, `Not yet implemented`.
       - **Output contract**: prints `COUNT=<n>` and one
         `MISSING=<file>:<term>` per violation, like `audit_stop_surfaces`.
-      - **Non-vacuous guard**: assert `COUNT` equals 16 (thirteen mirrors +
-        two protocols + canonical page) so an empty discovery cannot pass.
+      - **Non-vacuous guard**: assert `COUNT` equals 17 (thirteen mirrors +
+        three protocols + canonical page) so an empty discovery cannot pass.
       - **Planted-violation evidence**: copy the mirror tree to a temp root,
         delete the canonical link from `.claude/agents/code-reviewer.md`, and
         assert the audit prints exactly
