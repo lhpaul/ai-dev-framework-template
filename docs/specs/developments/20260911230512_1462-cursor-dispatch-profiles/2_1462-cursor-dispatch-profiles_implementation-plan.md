@@ -40,18 +40,18 @@ in the same implementation PR so they no longer assert an unresolved gap.
 
 ## Verification Log
 
-Re-run `2026-09-20` against verified head **`abf4e794`** (the plan content
-commit; full SHA `abf4e794d76c135f567abeeafda5bba40a60759e`). The commit that
-carries this log is the **child** of `abf4e794` and changes **only** this
+Re-run `2026-09-20` against verified head **`4095718b`** (the plan content
+commit; full SHA `4095718b22718710709c2e5c61bfb9c9b4587537`). The commit that
+carries this log is the **child** of `4095718b` and changes **only** this
 Verification Log and the Document Quality Gate lines that cite it; no plan
 content, checklist, or smoke-runbook text changed in the child. Patterns are
 extended-regex alternation (`grep -E 'a|b'`); results were produced with
 `grep -rlE` because the local `rg` is shadowed. Checks that need the
 implementation are marked **Deferred to implementation**, not Pass.
 
-| Check | Command / query | Result at `abf4e794` |
+| Check | Command / query | Result at `4095718b` |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `abf4e794`. `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` returns **not ancestor**: **Fail now, deferred to implementation start** (rebase or merge `develop` first) |
+| Repo revision | `git rev-parse --short HEAD` | `4095718b`. `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` returns **not ancestor**: **Fail now, deferred to implementation start** (rebase or merge `develop` first) |
 | Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` (Pass) |
 | Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Pass) |
 | Bounded command adapters | `grep -rl 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits (Pass): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). The four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
@@ -62,6 +62,7 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` — stage-role harness permission denial; out of scope here (Pass) |
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
+| Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
 | Surface guard (link, profile string, E1-E5 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
 | Scanner fixtures + `--self-test` (Parser-Risk cases, fence semantics) | `... --self-test` | **Deferred to implementation** |
 | Planted-violation proofs (cycles 1-16 plus per-class repeats) | see Layer-by-Layer Changes → Workflow tooling | **Deferred to implementation** |
@@ -816,7 +817,7 @@ Not applicable — no runtime data.
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| Evidence currency | Pass | Verification Log re-run `2026-09-20` at verified head `abf4e794`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass; the `develop` ancestry check is recorded as failing now and deferred to implementation start |
+| Evidence currency | Pass | Verification Log re-run `2026-09-20` at verified head `4095718b`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass; the `develop` ancestry check is recorded as failing now and deferred to implementation start |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass (plan-stage design; execution deferred) | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
