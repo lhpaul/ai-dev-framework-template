@@ -21,7 +21,7 @@
 | --- | --- |
 | Canonical doc | `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md` |
 | Sample item (single) | An open, non-epic, router-resolvable issue number `<N>` the operator picks (a doc-only item is safest); confirm with `./scripts/development-workflow/run-work-router.sh <N>` returning `MODE=redirect_item` |
-| Explicit-list batch | Two real, open, non-epic issue numbers `<N1> <N2>`; confirm `./scripts/development-workflow/run-work-router.sh <N1> <N2>` returns `MODE=redirect_items`. Tracker-ID, branch-name and comma-containing target forms are covered by the simulation fixtures only, because unresolvable tokens yield `MODE=ambiguous` before any declaration gate |
+| Explicit-list batch | Two real, open, non-epic issue numbers `<N1> <N2>`; confirm `./scripts/development-workflow/run-work-router.sh <N1> <N2>` returns `MODE=redirect_items`. The router accepts only positive-integer issue/PR numbers (optionally `#`-prefixed), existing workflow-prefixed branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`, `plan/`) and existing `docs/specs/developments/` folders, splits every argument on commas and removes duplicates. Tracker IDs and comma-containing targets yield `MODE=ambiguous` before any declaration gate, so they are covered as documented-unreachable cases in the fixtures only |
 | Epic | A real open epic number `<E>` with native sub-issues; confirm `./scripts/development-workflow/run-work-router.sh --epic <E>` returns `MODE=redirect_epic` |
 
 ---
@@ -55,7 +55,7 @@
 
 1. Open `docs/workflow/development-workflow/guardrails-enforcement.md` section 4.
 2. Confirm rows exist for `dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable`.
-3. Confirm `dispatch_profile_declaration_missing` documents `explicit_list_invocation_targets=<t1>,<t2>,...` for pre-branch explicit-list `/run-items` stops, with targets verbatim (issue numbers, tracker IDs such as `ENG-123`, branch names, PR numbers) and `%`, `,`, whitespace percent-encoded.
+3. Confirm `dispatch_profile_declaration_missing` documents `explicit_list_invocation_targets=<t1>,<t2>,...` for pre-branch explicit-list `/run-items` stops, with targets exactly as the router's normalized list holds them (issue or PR numbers with or without `#`, workflow-prefixed branch names, development-folder paths; the router does not accept tracker IDs such as `ENG-123`, and a comma cannot occur inside a target because the router splits on commas), `%`, whitespace and control characters percent-encoded, and duplicates already removed by the router.
 4. Confirm the human unblocking action for `dispatch_profile_declaration_missing` requires a **fresh invocation** (the stopped run is not resumed or corrected in place) supplying a valid profile (the facts-assigned one after a mismatch), a named accountable role, and a posture valid for the checkpoint; that `dispatch_handoff_unavailable` gives the move-to-confirmed-environment or accept-read-only action plus the stage-role reachability exception; and that `missing_required_secret_or_permission` gives the grant-and-rerun action plus the structural-restriction path.
 5. Confirm coarse-facts mismatch guidance rejects declarations that are either
    more permissive or less permissive than the assigned decision-gate outcome.
@@ -216,15 +216,18 @@ Control session**, not a simulated one, on the **implementation PR head**.
 3. **Mandatory**: run the `simulate_bounded_paths` branch for **every**
    `/run-items` scenario marked Y in the plan's scenario table (same set as
    `/run-item`, with pre-branch stops asserting the single invocation-level
-   affected-item string, including the mixed-form target list, which is
-   simulation-only).
+   affected-item string over router-accepted target forms (numbers with and
+   without `#`, a workflow-prefixed branch, a development-folder path); tracker
+   IDs and comma-containing targets are documented-unreachable cases, not
+   accepted forms).
 4. **Optional, supplementary**: run `/run-items <N1> <N2>` live in a throwaway
    clone with the dispatch profile declaration deliberately withheld. A live run
    never replaces step 3.
 5. In the simulation (and in the live run if performed) confirm exactly **one** `dispatch_profile_declaration_missing` stop is
    reported for the whole invocation with affected item
-   `explicit_list_invocation_targets=<N1>,<N2>` (targets exactly as typed, in
-   order, no `#` rewriting), before any branch or artifact is created.
+   `explicit_list_invocation_targets=<N1>,<N2>` (targets as they appear in the
+   router's normalized list: comma-split, trimmed, deduplicated, in order, no
+   `#` rewriting), before any branch or artifact is created.
 
 **Expected result**: The simulation passes every scenario for this path; the single invocation-level stop carries the ordered target string; no per-target stops; no mutation.
 

@@ -63,7 +63,7 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
 | Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
-| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames | 135 rows, numbered 1-135, 135 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
+| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames | 140 rows, numbered 1-140, 140 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
 | Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps`; a fixtures-path `--changed-files` probe | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
 | Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
 | Surface guard (link, profile string, E1-E5 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
@@ -96,31 +96,59 @@ exists yet.
 - For a declaration stop on an explicit-list `/run-items` invocation **before
   any item-scoped artifact exists**, the affected work item is a **single**
   string: `explicit_list_invocation_targets=<t1>,<t2>,...`, one `<ti>` per
-  target **in invocation order**. Protocol 90 explicit lists accept issue
-  numbers, tracker identifiers (for example `ENG-123`), branch names, and PR
-  numbers, so the serialization preserves every accepted form:
-  - Each `<ti>` is the target **verbatim as supplied** on the invocation, with
-    only leading and trailing ASCII whitespace trimmed. **No rewriting**: a `#`
-    is never added or removed, case is preserved, and a `/` in a branch name is
-    kept.
-  - The delimiter is a single comma with no surrounding spaces.
+  target of the router's **normalized target list**, in that order. The
+  serialization is defined over what `run-work-router.sh` actually accepts, read
+  from `resolve_token` and the token normalization step (the router, not the
+  Protocol 90 detection prose, is authoritative at this gate):
+  - **Router grammar.** Arguments are split on commas, edge whitespace is
+    trimmed, empty pieces are dropped, and duplicates are removed keeping the
+    first occurrence (`normalized_tokens`, `deduped_tokens`). Each remaining
+    token must resolve as one of: a positive integer, optionally `#`-prefixed,
+    that `gh` confirms as a PR or an issue; an existing directory under
+    `docs/specs/developments/` (a leading `./` is stripped only for the
+    existence test); or a branch that starts with a workflow prefix
+    (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`,
+    `implementation-plan/`, `plan/`) and exists locally or on `origin`. Anything
+    else, including a **tracker identifier such as `ENG-123`** (named in
+    Protocol 90's detection prose but not resolved by the router), stops at
+    `MODE=ambiguous` before the declaration gate, so the serialization is not
+    defined for it and the canonical doc says so.
+  - Each `<ti>` is the token **exactly as it appears in the router's
+    normalized list** (the router keeps the token as typed after comma
+    splitting and trimming). **No rewriting**: a `#` is never added or removed,
+    case is preserved, a `/` in a branch name is kept, and a leading `./` on a
+    development-folder path is kept.
+  - The delimiter is a single comma with no surrounding spaces. Because the
+    router splits every argument on commas, a comma **cannot occur inside an
+    accepted target** (an input like `feature/x,y` becomes the two tokens
+    `feature/x` and `y` before resolution). The `,` to `%2C` rule below is
+    therefore a **defensive, unreachable-at-the-gate** rule kept only so the
+    output stays unambiguously decodable; no worked example, live step, or
+    accepted-target fixture contains a comma inside a target.
   - Escaping (percent-encoding, applied per target, `%` first so it is not
     double-encoded): `%` becomes `%25`, `,` becomes `%2C`, and any ASCII
     whitespace or control character inside a target becomes `%XX` (uppercase
-    hex of the UTF-8 byte). All other bytes are emitted unchanged.
-  - Duplicates are preserved and order is preserved; the value is always one
-    line (an interior newline or CR is encoded, never emitted); at least two
-    targets are present (the `/run-items` minimum).
+    hex of the UTF-8 byte). All other bytes are emitted unchanged. In practice
+    `%` can occur in a branch name (git allows it), whitespace or control
+    characters can occur only in a development-folder path (git refs and
+    numbers cannot contain them), and comma cannot occur at all.
+  - **Duplicates never reach the gate**: the router removes them before
+    resolution (first occurrence kept), so the serialization renders the
+    deduplicated list, never a repeated target. Order is the router's
+    normalized order; the value is always one line (an interior newline or CR is
+    encoded, never emitted); at least two targets are present (the `/run-items`
+    minimum).
   - Encoding is **not idempotent by design**: a target that already contains
-    `%25` or `%2C` text is encoded again (`%` becomes `%25`), so decoding once
-    always returns the original bytes; the `%`-first ordering is what
-    guarantees this.
+    `%25` text is encoded again (`%` becomes `%25`), so decoding once always
+    returns the original bytes; the `%`-first ordering is what guarantees this.
   - A single target and an empty target are **unreachable** at this gate (the
     router stops at `MODE=redirect_item` or `MODE=ambiguous` before any
     declaration gate), so the serialization is undefined for them; the
     canonical doc says so and never renders a one-target or empty form.
-  - Example: invoked as `/run-items #1462 ENG-123 feature/x,y 1771` yields
-    `explicit_list_invocation_targets=#1462,ENG-123,feature/x%2Cy,1771`.
+  - Example: invoked as `/run-items #1462 feature/cursor-dispatch,1771 #1462`
+    (the comma-separated argument is split and the repeated `#1462` removed by
+    the router) yields
+    `explicit_list_invocation_targets=#1462,feature/cursor-dispatch,1771`.
 - Report **once** for the whole invocation; do not emit one stop per target.
 - Mirror this rule in:
   - `integrations/cursor-dispatch-profiles.md` (Named stop reporting subsection),
@@ -459,7 +487,7 @@ layer; `workflow.mdc` states all five compactly).
       that the action does not proceed (the absorbing context never performs it
       inline, and this path never extends to a harness or local-path denial). Extend `dispatch_profile_declaration_missing` affected-item
       text for `explicit_list_invocation_targets=<t1>,<t2>,...` (verbatim,
-      percent-encoded serialization, all accepted target forms); document reuse of
+      percent-encoded serialization over the router-accepted target forms); document reuse of
       `missing_required_secret_or_permission` for reachable stage credential
       denial. Maps to AC10–AC11, AC19.
 - [ ] `docs/workflow/development-workflow/README.md` — add integration doc to
@@ -597,13 +625,18 @@ layer; `workflow.mdc` states all five compactly).
       expected tokens of the scenarios mapped to R*n*. A scenario may never be
       counted as a row, and a row never requires more than its mapped scenarios. Paths: `/run-item` (item layer), `/run-items`
       explicit list (item layer, pre-branch stops use the
-      `explicit_list_invocation_targets=<t1>,<t2>,...` form over a mixed-form
-      target list), `/run-epic` (epic layer, invoked as `--epic <N>`; `--items` is internal-only per
+      `explicit_list_invocation_targets=<t1>,<t2>,...` form over a target list of
+      router-accepted forms: issue or PR numbers with and without `#`, a
+      workflow-prefixed branch name, a development-folder path), `/run-epic` (epic layer, invoked as `--epic <N>`; `--items` is internal-only per
       Protocol 95), and `/run-work` (portfolio layer, read-only scan rows only).
-      The mixed-form serialization (tracker IDs, branch names with `,`) is
-      exercised **only** in this simulation and its fixtures: the live router
-      returns `MODE=ambiguous` for unresolvable tokens before any declaration
-      gate, so smoke Step 13 uses real, resolvable targets.
+      Tracker IDs (`ENG-123`) and comma-containing targets are **not
+      router-accepted targets** (the router resolves only numbers, workflow-prefixed
+      branches and development folders, and splits every argument on commas), so
+      they stop at `MODE=ambiguous` before any declaration gate and appear only as
+      documented-unreachable cases in the serialization fixtures; the
+      `%`/whitespace/control encodings are exercised in the fixtures with
+      router-accepted carriers (a branch containing `%`, a development-folder
+      path containing whitespace). Smoke Step 13 uses real, resolvable targets.
 
       | ID | Spec matrix input | Expected outcome and next action | run-item | run-items | run-epic | run-work | Spec row |
       | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -890,7 +923,7 @@ also invoked by the default run). Each fail fixture must exit non-zero with a
 message naming its clause ID; each pass fixture must exit 0. These are separate
 from, and in addition to, the planted-deletion proofs on real surfaces.
 
-**Fixture manifest (`MANIFEST_COUNT = 135`).** This is the literal, complete
+**Fixture manifest (`MANIFEST_COUNT = 140`).** This is the literal, complete
 list of scanner fixtures: one row per file, exact filename, expected result,
 and the rule or clause covered. It is derived by counting the rows below and
 is stated here **once**; every other mention refers to "the manifest count".
@@ -975,73 +1008,78 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 66 | `sim-wrong-stop-s12.fixture.md` | fail: S12 | Simulation C1-C4 | Fixture whose S12 row says `dispatch_profile_declaration_missing` instead of `dispatch_handoff_unavailable` |
 | 67 | `sim-recovery-rejected-s7.fixture.md` | fail: E4c | Simulation C1-C4 | Fixture where S7 recovery re-declaration is described as a coarse mismatch |
 | 68 | `sim-harness-denial-mapped-s10b.fixture.md` | fail: S10b | Simulation C1-C4 | Fixture mapping harness denial (S10b) to `missing_required_secret_or_permission` |
-| 69 | `serialization-mixed-forms.fixture.md` | pass | Serialization | Mixed-form target list (`#1462`, `ENG-123`, `feature/x`, `1771`) shown verbatim |
-| 70 | `serialization-hash-added.fixture.md` | fail: verbatim | Serialization | Example adds `#` to `ENG-123` |
+| 69 | `serialization-mixed-forms.fixture.md` | pass | Serialization | Router-accepted forms shown as typed (`#1462`, `feature/x`, `1771`, and a development-folder path) |
+| 70 | `serialization-hash-added.fixture.md` | fail: verbatim | Serialization | Example adds `#` to `1771` |
 | 71 | `serialization-hash-stripped.fixture.md` | fail: verbatim | Serialization | Example strips `#` from `#1462` |
-| 72 | `serialization-comma-unescaped.fixture.md` | fail: percent-encoded | Serialization | Target containing `,` shown unescaped |
-| 73 | `class-protocol-missing-e3d.fixture.md` | fail: E3d | Surface-class table | Protocol fixture lacking only E3d (all other clauses present) |
-| 74 | `class-guardrails-exempt-clauses.fixture.md` | pass | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) |
-| 75 | `class-guardrails-missing-e4b.fixture.md` | fail: E4b | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction |
-| 76 | `class-model-config-missing-row.fixture.md` | fail: model-config rows | Surface-class table | `agent-model-config.md` fixture missing one environment row |
-| 77 | `e3c-stop1-profile-only.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) |
-| 78 | `e3c-stop1-no-posture.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the posture element |
-| 79 | `e3c-stop1-no-role.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the named-accountable-role element |
-| 80 | `e3c-stop1-no-facts-profile.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking the `profile the known facts assign` clause |
-| 81 | `e3c-stop2-no-stage-role-exception.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the `specific stage role` exception |
-| 82 | `e3c-stop2-no-accept-read-only.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the accept-read-only alternative |
-| 83 | `e3c-stop3-no-structural-path.fixture.md` | fail: E3c stop 3 | E3c | Stop-3 action lacking the structural-restriction path |
-| 84 | `e3c-all-causes-present.fixture.md` | pass | E3c | All three stop actions cause-complete |
-| 85 | `ser-percent-alone.fixture.md` | pass | Serialization | `%` alone in a target (`50%`) encoded `50%25` |
-| 86 | `ser-percent-preexisting.fixture.md` | pass | Serialization | Pre-existing `%25` in a target encoded to `%2525` (no double-encode skip) |
-| 87 | `ser-looks-like-2c.fixture.md` | pass | Serialization | Target that already looks like `%2C` encoded `%252C` (comma-lookalike) |
-| 88 | `ser-order-comma-double-encoded.fixture.md` | fail: percent-first | Serialization | Encoding order wrong (`,` then `%`, yielding `%252C` for a comma) |
-| 89 | `ser-interior-tab.fixture.md` | pass | Serialization | Interior tab encoded `%09` |
-| 90 | `ser-interior-space.fixture.md` | pass | Serialization | Interior space encoded `%20` |
-| 91 | `ser-interior-newline.fixture.md` | pass | Serialization | Interior newline encoded `%0A`, output one line |
-| 92 | `ser-interior-cr.fixture.md` | pass | Serialization | Interior CR encoded `%0D`, output one line |
-| 93 | `ser-control-0x1f.fixture.md` | pass | Serialization | Control character 0x1F encoded `%1F` |
-| 94 | `ser-control-0x7f.fixture.md` | pass | Serialization | Control character 0x7F encoded `%7F` |
-| 95 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`) in the example |
-| 96 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
-| 97 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
-| 98 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
-| 99 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
-| 100 | `ser-duplicates-preserved.fixture.md` | pass | Serialization | Duplicate targets preserved (`1462,1462`) |
-| 101 | `ser-duplicates-collapsed.fixture.md` | fail: duplicates-preserved | Serialization | Duplicates collapsed |
-| 102 | `ser-order-preserved.fixture.md` | pass | Serialization | Invocation order preserved (`b,a`) |
-| 103 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted |
-| 104 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
-| 105 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
-| 106 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
-| 107 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
-| 108 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `ENG-123` rewritten as `eng-123` |
-| 109 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
-| 110 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
-| 111 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
-| 112 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
-| 113 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
-| 114 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
-| 115 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
-| 116 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
-| 117 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
-| 118 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
-| 119 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
-| 120 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
-| 121 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
-| 122 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
-| 123 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
-| 124 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
-| 125 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
-| 126 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
-| 127 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
-| 128 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
-| 129 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
-| 130 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
-| 131 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
-| 132 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
-| 133 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
-| 134 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
-| 135 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
+| 72 | `class-protocol-missing-e3d.fixture.md` | fail: E3d | Surface-class table | Protocol fixture lacking only E3d (all other clauses present) |
+| 73 | `class-guardrails-exempt-clauses.fixture.md` | pass | Surface-class table | Guardrails fixture carrying only its `Y` clauses (no E1, E2, E4c, E5) |
+| 74 | `class-guardrails-missing-e4b.fixture.md` | fail: E4b | Surface-class table | Guardrails fixture lacking E4b `less permissive` direction |
+| 75 | `class-model-config-missing-row.fixture.md` | fail: model-config rows | Surface-class table | `agent-model-config.md` fixture missing one environment row |
+| 76 | `e3c-stop1-profile-only.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action mentions only "declare one of the three profiles" (no role, posture, or facts-assigned profile) |
+| 77 | `e3c-stop1-no-posture.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the posture element |
+| 78 | `e3c-stop1-no-role.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking only the named-accountable-role element |
+| 79 | `e3c-stop1-no-facts-profile.fixture.md` | fail: E3c stop 1 | E3c | Stop-1 action lacking the `profile the known facts assign` clause |
+| 80 | `e3c-stop2-no-stage-role-exception.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the `specific stage role` exception |
+| 81 | `e3c-stop2-no-accept-read-only.fixture.md` | fail: E3c stop 2 | E3c | Stop-2 action lacks the accept-read-only alternative |
+| 82 | `e3c-stop3-no-structural-path.fixture.md` | fail: E3c stop 3 | E3c | Stop-3 action lacking the structural-restriction path |
+| 83 | `e3c-all-causes-present.fixture.md` | pass | E3c | All three stop actions cause-complete |
+| 84 | `ser-percent-alone.fixture.md` | pass | Serialization | Branch `feature/100%-done` encoded `feature/100%25-done` |
+| 85 | `ser-percent-preexisting.fixture.md` | pass | Serialization | Branch `feature/a%25b` encoded `feature/a%2525b` (no double-encode skip) |
+| 86 | `ser-interior-tab.fixture.md` | pass | Serialization | Interior tab in a development-folder path encoded `%09` (the only reachable carrier) |
+| 87 | `ser-interior-space.fixture.md` | pass | Serialization | Interior space in a development-folder path encoded `%20` |
+| 88 | `ser-interior-newline.fixture.md` | pass | Serialization | Interior newline in a development-folder path encoded `%0A`, output one line |
+| 89 | `ser-interior-cr.fixture.md` | pass | Serialization | Interior CR in a development-folder path encoded `%0D`, output one line |
+| 90 | `ser-control-0x1f.fixture.md` | pass | Serialization | Control character 0x1F in a development-folder path encoded `%1F` |
+| 91 | `ser-control-0x7f.fixture.md` | pass | Serialization | Control character 0x7F in a development-folder path encoded `%7F` |
+| 92 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`, `%0a`) in the example |
+| 93 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
+| 94 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
+| 95 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
+| 96 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
+| 97 | `ser-order-preserved.fixture.md` | pass | Serialization | Router-normalized order preserved (`feature/b,1771,#1462` for that input order) |
+| 98 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted instead of kept in router order |
+| 99 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
+| 100 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
+| 101 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
+| 102 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
+| 103 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `feature/Cursor-Dispatch` rewritten in lowercase |
+| 104 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
+| 105 | `ser-comma-not-in-target.fixture.md` | pass | Serialization | Doc states a comma cannot occur inside an accepted target (router splits on commas) and the `%2C` rule is defensive only |
+| 106 | `ser-comma-target-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example shows a comma inside an accepted target (`feature/x%2Cy`) |
+| 107 | `ser-percent-not-reencoded.fixture.md` | fail: percent-encoding | Serialization | Doc shows `feature/a%25b` emitted unchanged |
+| 108 | `ser-duplicates-deduped-first-kept.fixture.md` | pass | Serialization | Doc example: repeated `#1462` in the input rendered once, first occurrence kept |
+| 109 | `ser-duplicates-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example renders a repeated target (`#1462,...,#1462`) |
+| 110 | `ser-tracker-id-accepted.fixture.md` | fail: router-grammar | Serialization | Doc shows a tracker ID such as `ENG-123` as an accepted target |
+| 111 | `ser-tracker-id-unreachable-stated.fixture.md` | pass | Serialization | Doc states a tracker ID stops at `MODE=ambiguous` before the gate and has no serialization |
+| 112 | `ser-router-grammar-stated.fixture.md` | pass | Serialization | Doc states the router grammar: comma split, trim, drop empties, first-occurrence dedup, and the accepted forms |
+| 113 | `ser-dot-slash-kept.fixture.md` | pass | Serialization | Development-folder path typed `./docs/specs/developments/x` kept with its leading `./` |
+| 114 | `ser-dot-slash-stripped.fixture.md` | fail: verbatim | Serialization | Leading `./` stripped from a development-folder path |
+| 115 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
+| 116 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
+| 117 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
+| 118 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
+| 119 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
+| 120 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
+| 121 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
+| 122 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
+| 123 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
+| 124 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
+| 125 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
+| 126 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
+| 127 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
+| 128 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
+| 129 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
+| 130 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
+| 131 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
+| 132 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
+| 133 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
+| 134 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
+| 135 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
+| 136 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
+| 137 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
+| 138 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
+| 139 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
+| 140 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
 
 **Coverage completeness map.** Every enumerated contract list has a fixture or
 proof. The self-test asserts that the on-disk fixture set **equals the
@@ -1058,7 +1096,7 @@ manifest row matches at least one prefix family.
 | Enumerated list | Covered by |
 | --- | --- |
 | Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` and `e3c-*` fixtures plus proof cycles 3-11 and 12-14 |
-| Serialization rules (trim, verbatim, delimiter, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, duplicates, order, one line, single/empty unreachable) | `ser-*` and `serialization-*` fixtures |
+| Serialization rules (router grammar and normalization, verbatim tokens, delimiter, comma unreachable, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, router dedup, order, one line, single/empty unreachable, tracker ID not accepted) | `ser-*` and `serialization-*` fixtures |
 | Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*`, `table-*`, `comment-*` fixtures (table row is the single R3 block boundary) |
 | Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions C1-C4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus C1-C4 cycles), `sim-*` fixtures |
 | Surface classes | `class-*` fixtures and proof cycles 12-14 |
