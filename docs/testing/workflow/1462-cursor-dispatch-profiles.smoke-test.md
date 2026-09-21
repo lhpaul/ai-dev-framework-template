@@ -43,11 +43,17 @@ records each action; an agent must not create or delete repositories.
    branch (the **safe base branch**; the real repository's `develop` and `main`
    are never targeted). Item worktrees are created from `origin/develop`, so a
    local uncommitted edit would not reach them. Therefore make **one dedicated
-   commit S on the sandbox's `develop`**, pushed **only to the sandbox**, whose
-   sole change is `issue_tracker.provider: github_issues` in
-   `.ai-dev-workflow.yaml` (issues without a project board). Every worktree and
-   PR base created afterwards inherits this config. S is never pushed, merged
-   or cherry-picked anywhere else.
+   commit S on the sandbox's `develop`**, pushed **only to the sandbox**, that
+   changes **only** `.ai-dev-workflow.yaml`: (a) `issue_tracker.provider:
+   github_issues` (issues without a project board); (b) `guardrails.mode:
+   assisted` (the mode whose baseline is that agents never merge, so no
+   invocation override can grant merge authority: an override may never grant
+   what the mode forbids); (c) `guardrails.stages.spec.may_merge_pr`,
+   `.plan.may_merge_pr` and `.implementation.may_merge_pr` all `false`. The
+   repository's `backlog_start.allow_without_confirmation: true` is kept so the
+   sandbox Backlog items can start after the prelude confirmation. Every
+   worktree and PR base created afterwards inherits this config. S is never
+   pushed, merged or cherry-picked anywhere else.
 2. Create the label `sandbox-test` (`gh label create sandbox-test`).
 3. Create the test issues with the repo's tracker tooling (`/add-backlog-item`,
    or `gh issue create --label sandbox-test`), each titled with the prefix
@@ -67,30 +73,72 @@ records each action; an agent must not create or delete repositories.
      `git diff --name-only H S` prints exactly that one path, so the
      implementation-head evidence is preserved (the code under test is
      byte-identical to H except for the tracker config);
-   - `git show S:.ai-dev-workflow.yaml` shows `provider: github_issues`.
+   - `git show S:.ai-dev-workflow.yaml` shows `provider: github_issues`,
+     `mode: assisted`, and `may_merge_pr: false` for all three stages (the
+     repository default `true` is gone), so delegated merge is impossible in
+     the sandbox.
 5. Confirm the three router checks in the table above return the stated MODEs.
 
-**Expected mutations (all confined to the sandbox)**: worktrees and branches per
-item (`feature/...`, `spec/...`, `implementation-plan/...`), commits and pushes,
-pull requests targeting the sandbox `develop` (whose tip is S), PR labels and
-review-loop comments, issue status and comment updates, and changelog
-fragments. The only sandbox-only commit that exists before the runs is S. No merge
-is requested (the sign-off runs pass no `--may-merge`), so runs stop at
-`ready-for-human-review`, a blocked state, an escalation, or a named stop.
+**Live invocations and the no-merge policy.** Every live invocation selects a
+no-merge policy explicitly, in addition to S's config:
+
+| Step | Invocation (from the sandbox clone) |
+| --- | --- |
+| 8 | `/run-item <C> --no-delegate-review --no-may-merge` |
+| 13 Part B | `/run-items <A> <B> --max-risk low` (no `--may-merge`, no `--delegate-review`) |
+| 14 Part B | `/run-epic --epic <E> --max-risk low` (no `--may-merge`, no `--delegate-review`) |
+
+`/run-item` documents both negative flags; `/run-items` and `/run-epic` document
+only the positive flags, so for them the merge prohibition rests on S's
+`mode: assisted` and `may_merge_pr: false` plus omitting the positive flags.
+**Prelude gate**: before accepting the bounded prelude's policy confirmation,
+read `policyRecommendation.confirmationSummary`; the effective policy must show
+**no merge authority** (merge disallowed, delegated review off). If it shows any
+merge authority, **decline and stop**: do not run the live step.
+
+**Expected mutations (all confined to the sandbox)**, enumerated per
+invocation given S's config:
+
+- **All three commands**: bounded-prelude run-state and policy-binding records
+  in the sandbox clone; local worktrees and branches per item
+  (`feature/...`, `spec/...`, `implementation-plan/...`); commits and pushes of
+  those branches to the sandbox; pull requests targeting the sandbox `develop`
+  (whose tip is S); PR labels the scripts create or apply (for example
+  `ready-for-human-review`, `ready-for-regression`, `needs-fixes`) and any labels
+  they create in the sandbox repository; reviewer-loop and audit comments and
+  resolved review threads on those PRs; issue comments and status or label
+  changes on the sandbox items (no board, since `github_issues`); changelog
+  fragments; and GitHub Actions workflow runs triggered in the sandbox by the
+  pushes and PRs (no external review apps are installed there, so a
+  reviewer-unavailable or `failing_ci` stop is an acceptable named stop).
+- **`/run-items`** additionally: batch-level tracker updates before dispatch,
+  the batch summary comment, and held-back item comments.
+- **`/run-epic`** additionally: epic ledger and per-PR disposition audit
+  comments on **E** and its children. No `integration-branch:<slug>` label is
+  set on E, so no `develop-<slug>` branch is created; if one appears, cleanup
+  deletes it.
+- **Not performed** (prevented by S and the flags): merging any PR, closing an
+  issue as merged, branch deletion by post-merge cleanup, and any change to the
+  real repository. The only sandbox-only commit that exists before the runs is
+  S. Runs stop at `ready-for-human-review`, a blocked state, an escalation, or a
+  named stop.
 
 **Cleanup / rollback checklist (run after Steps 8, 13 and 14, before recording
 sign-off)**
 
 1. Close every sandbox pull request and delete its branch
    (`gh pr close <n> --delete-branch`); delete any remaining remote branch other
-   than `develop` and `main`.
+   than `develop` and `main` (including any `develop-<slug>` branch).
 2. Close every issue labelled `sandbox-test` (children, batch items, epic).
 3. In the sandbox clone remove worktrees and local branches
    (`git worktree remove <path>`, `git branch -D <branch>`), then
    `git worktree prune`.
-4. Remove any project-board items and delete the `sandbox-test` label if the
-   sandbox is kept; otherwise delete the whole sandbox repository (requires the
-   operator's own `delete_repo` authorization).
+4. If the sandbox is kept: delete the `sandbox-test` label and every label the
+   scripts created (`gh label list` in the sandbox), delete the workflow runs
+   (`gh run list` / `gh run delete`), and remove local run-state and policy
+   records in the sandbox clone; otherwise delete the whole sandbox repository,
+   which removes all of these (requires the operator's own `delete_repo`
+   authorization).
 5. Verify the **real repository is untouched**: no new branch, pull request,
    issue or comment referencing `SANDBOX-1462`
    (`gh pr list --search "SANDBOX-1462" --state all` and
@@ -101,8 +149,8 @@ sign-off)**
    prints nothing).
 
 **Cleanup is complete when**: the sandbox has no open issue, no open pull
-request, no branch other than `develop`/`main`, no worktree, or the sandbox
-repository is deleted; and the real-repository check in item 5 is empty.
+request, no branch other than `develop`/`main`, no worktree, no leftover
+script-created label or workflow run, or the sandbox repository is deleted; and the real-repository check in item 5 is empty.
 Record the command outputs as evidence. If the run is interrupted, perform the
 checklist before any retry; leftover sandbox artifacts block sign-off.
 
@@ -132,7 +180,7 @@ repository is likewise prohibited.
 **Maps to**: AC18
 
 1. Open each bounded command adapter (`.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`, plus Claude and `.agents/skills` parity paths).
-2. Confirm each references `integrations/cursor-dispatch-profiles.md` and names the declaration requirement.
+2. Confirm each references `integrations/cursor-dispatch-profiles.md` and names the declaration requirement, and states that the requirement applies only in a Cursor environment (other runners unchanged).
 3. Run `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` (exists once the implementation PR is checked out; required).
 
 **Expected result**: Test exits 0; manual spot-check matches.
@@ -204,7 +252,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
    (with the output of `git diff H S --stat`, which must list only
    `.ai-dev-workflow.yaml`) and the environment (Cursor Remote Control session
    identifier or a note of how it was reached).
-2. From the sandbox clone (pre-flight check passed), start `/run-item <C>` on the sandbox single-item issue from Test Data.
+2. From the sandbox clone (pre-flight check passed), start `/run-item <C> --no-delegate-review --no-may-merge` on the sandbox single-item issue from Test Data, after the prelude gate (effective policy shows no merge authority).
 3. Confirm the declaration block names Parent orchestrated, the accountable
    role and the `absorbed` posture before the first mutating action, that
    orchestration is absorbed by the current context, and that every stage of
@@ -320,7 +368,7 @@ router's normalized list: comma-split, trimmed, deduplicated, in order, no `#`
 rewriting), before any branch or artifact is created.
 
 **Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
-session** on the implementation PR head, run `/run-items <A> <B>` with a valid
+session** on the implementation PR head, run `/run-items <A> <B> --max-risk low` (no `--may-merge`, no `--delegate-review`; prelude gate as in Controlled test artifacts) with a valid
 Parent orchestrated declaration (the current context absorbs the portfolio layer
 and, per item in turn, the item layer; no Work Item Runner is dispatched; the
 items run one at a time per Protocol 90 Step 4 as amended, and only stage work
@@ -359,7 +407,7 @@ stops with `dispatch_profile_declaration_missing` (affected work item per
 `guardrails-enforcement.md` section 4).
 
 **Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
-session** on the implementation PR head, run `/run-epic --epic <E>` under a
+session** on the implementation PR head, run `/run-epic --epic <E> --max-risk low` (no `--may-merge`, no `--delegate-review`; prelude gate as in Controlled test artifacts) under a
 valid Parent orchestrated declaration and do not intervene mid-run. Record the
 environment, the declaration block, and the terminal state. The terminal
 condition is, precisely: the epic resolver's `continuation` outcome, either
@@ -384,7 +432,13 @@ Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
   sandbox artifacts (never real backlog items or the real repository), with the
   cleanup checklist completed and its completion criteria met and recorded
   before sign-off (leftover sandbox artifacts, or any mutation of the real
-  repository, block sign-off). The evidence fields are the implementation head
+  repository, block sign-off). Every live invocation selects the no-merge
+  policy from the runbook (`--no-may-merge --no-delegate-review` for
+  `/run-item`; `--max-risk low` with no positive merge or review flags for
+  `/run-items` and `/run-epic`), on top of the sandbox config commit S that
+  sets `mode: assisted` and `may_merge_pr: false`; a live run whose prelude
+  summary showed any merge authority, or that merged any pull request, is a
+  FAIL. The evidence fields are the implementation head
   **H** plus the sandbox config commit **S**, with `git diff H S --stat` proving
   S touches only `.ai-dev-workflow.yaml`; evidence without H, S and that diff
   is invalid, and evidence against a sandbox `develop` other than S is stale, each on the implementation PR head in a

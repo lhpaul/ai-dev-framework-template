@@ -63,13 +63,13 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
 | Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
-| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 153 rows, numbered 1-153, 153 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
+| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 158 rows, numbered 1-158, 158 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
 | Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `8c055558` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
 | Protocol 90 Step 4 current text | `grep -cF` for the exact current Step 4 sentence quoted in Decision 7 in `protocols/90-batch-orchestrate-work-protocol.md` | 1 match, so the "current text" in the exact edit is verbatim (Pass); the edit itself and the `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence` and `canonical_dispatch_decision` checks are **Deferred to implementation** |
 | Assumption records A1-A6 (pre-edit checks that exist now) | Ran each check from the Assumption Records table at `8c055558` | A1: `git fetch origin develop` and `git ls-remote --exit-code origin develop` succeed; #1732 `MERGED` on `develop`; #1771 still `OPEN` (expected until it merges, then the remediation sequence's worktree and ancestry steps are **Deferred to implementation start**). A2: `git grep -nE '^\s*mode:'` on `.ai-dev-workflow.yaml` prints nothing, so the default `single_repo` holds. A3: spec gap sentence count `1`; no other file defines `explicit_list_invocation_targets` (0 hits outside this development folder and the smoke runbook); the router returns a comma-joined, deduplicated `RESOLVED_SCOPE`. A4: 0 open PRs touch the mirror, protocol, guardrails, model-config or workflow-rule surfaces. A5: #1745 and #1746 both `OPEN`. A6: #1732 `MERGED`, base `develop`. All Pass; the canonical/guardrails parity is **not** an assumption and is verified post-edit by `explicit_list_format_parity` (**Deferred to implementation**) |
 | Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps`; a fixtures-path `--changed-files` probe | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
 | Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
-| Surface guard (link, profile string, E1-E5 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
+| Surface guard (link, profile string, E1-E6 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
 | Scanner fixtures + `--self-test` (Parser-Risk cases, fence semantics) | `... --self-test` | **Deferred to implementation** |
 | Planted-violation proofs (cycles 1-16 plus per-class repeats) | see Layer-by-Layer Changes → Workflow tooling | **Deferred to implementation** |
 | `simulate_bounded_paths`; smoke Steps 7-14 (live Remote Control Steps 8, 13 Part B and 14 Part B are required at sign-off) | smoke runbook | **Deferred to implementation** (needs the implementation head and a real Remote Control session) |
@@ -289,7 +289,7 @@ no observation about which model a role runs on.
 | Cursor Desktop | Portfolio | Native handoff | Initial and onward handoff available (S1) | `confirmed by observation` | Spec citation (1): the two-hop handoff holds on desktop, and the citation names the portfolio orchestrator |
 | Cursor Desktop | Epic | Native handoff | S1 | `confirmed by observation` | Spec citation (1), which names the epic runner |
 | Cursor Desktop | Item | Native handoff | S1 | `confirmed by observation` | Spec citation (1), which names the work item runner |
-| Cursor Remote Control | Portfolio | Parent orchestrated | Onward-handoff capability unconfirmed, initial handoff available (S5 mutating, S6 scan): the conservative default | `explicit assumption` | The spec cites the onward failure only environment-wide ("frequently") and records no portfolio-layer case, so onward capability at this layer cannot be confirmed; the matrix assigns parent orchestrated as the conservative default. At this layer it means Decision 7: the current context absorbs the portfolio and item layers and runs items one at a time (requires the Protocol 90 Step 4 condition change) |
+| Cursor Remote Control | Portfolio | Parent orchestrated | Onward-handoff capability unconfirmed, initial handoff available (S5 mutating, S6 scan): the conservative default | `explicit assumption` | The spec cites the onward failure only environment-wide ("frequently") and records no portfolio-layer case, so onward capability at this layer cannot be confirmed; the matrix assigns parent orchestrated as the conservative default. At this layer it means Decision 7: the current context absorbs the portfolio and item layers and runs items one at a time (requires the Protocol 90 Step 4 Cursor-scoped paragraph) |
 | Cursor Remote Control | Epic | Parent orchestrated | S5 (the conservative default) | `explicit assumption` | Same: no epic-layer case is recorded; onward capability is unconfirmed, so the conservative default applies (BO-6 requires the command to be operable) |
 | Cursor Remote Control | Item | Parent orchestrated | Initial handoff available, onward unavailable (S3) | `confirmed by observation` | Spec citation (3): the recorded case is an item-layer incident, together with citation (2) |
 | Cursor Cloud Agents | Portfolio | Inline fallback | Initial handoff cannot be confirmed (S11 read-only, S12 mutating stop `dispatch_handoff_unavailable`) | `explicit assumption` | Citation (5): nothing observed, so initial handoff is unconfirmed and the matrix assigns inline fallback; parent orchestrated is valid only after initial handoff is confirmed |
@@ -350,21 +350,29 @@ dispatching it risks the recorded environment-level failure (onward handoff freq
 therefore performed by the absorbing context, and only stage work is handed
 off.
 
-**Protocol 90 Step 4 condition change (exact edit, required so the protocol
-matches).** File:
+**Protocol 90 Step 4 change (exact edit, required so the protocol matches).**
+File:
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`,
-section `## Step 4: Dispatch Work Item Runners`. Current text:
+section `## Step 4: Dispatch Work Item Runners`. The existing generic fallback
+paragraph is **preserved separately and unchanged**; it says nothing about
+stage-role handoff and its behavior for non-Cursor runners is out of scope:
 
 ```text
 If the runner does **not** support Work Item Runner handoff natively, continue in the current session by following `91-orchestrate-work-protocol.md` for each item one at a time.
 ```
 
-New text (replaces that one paragraph; the preceding "true concurrent
-subagents" paragraph is unchanged):
+The change is a **new paragraph inserted immediately after it** (before the
+`---` that ends Step 4), which applies **only** when a Cursor dispatch profile
+is declared:
 
 ```text
-If the runner does **not** support Work Item Runner handoff natively, **or** the declared dispatch profile is `cursor-parent-orchestrated` (a Work Item Runner can be reached but cannot hand stage work onward; see `integrations/cursor-dispatch-profiles.md`), do not dispatch Work Item Runners: the current context, having absorbed the portfolio layer, continues in the current session by following `91-orchestrate-work-protocol.md` for each item one at a time, absorbs the item layer for each item in turn, and hands every stage of product work to its stage role with the full handoff metadata (never inline). Under `cursor-native-handoff`, dispatch as above. Under `cursor-inline-fallback`, stop per the dispatch-profile decision gate.
+When the declared dispatch profile is `cursor-parent-orchestrated` (see `integrations/cursor-dispatch-profiles.md`: a Work Item Runner can be reached but cannot hand stage work onward), do not dispatch Work Item Runners: the current context, having absorbed the portfolio layer, follows `91-orchestrate-work-protocol.md` for each item one at a time, absorbs the item layer for each item in turn, and hands every stage of product work to its stage role with the full handoff metadata (never inline). Under `cursor-native-handoff`, dispatch as above. Under `cursor-inline-fallback`, stop per the dispatch-profile decision gate. This paragraph applies only when a Cursor dispatch profile is declared; it does not alter the paragraph above.
 ```
+
+The stage-only-delegation rule therefore attaches **only** to
+`cursor-parent-orchestrated`. A runner that merely lacks native Work Item Runner
+handoff keeps the generic behavior above with no added claim that it can hand
+stage work to stage roles.
 
 Equivalent execution-arrangement edit in Protocol 95: add an **"Execution
 arrangement"** paragraph at the end of `## Step 6: Handoff` (before
@@ -373,13 +381,15 @@ establish the execution arrangement per `integrations/cursor-dispatch-profiles.m
 Under `cursor-parent-orchestrated`, the current context absorbs the epic layer
 and, for each item in turn, the item layer (Protocol 91), dispatches no Work
 Item Runner, and delegates every stage to its stage role; under
-`cursor-native-handoff`, hand each item to a Work Item Runner." Protocol 91 gains
+`cursor-native-handoff`, hand each item to a Work Item Runner. This paragraph
+applies only when a Cursor dispatch profile is declared." Protocol 91 gains
 one sentence at its execution-arrangement point stating that when the item
 layer is absorbed by the invoking context this protocol is followed by that
-context, unchanged, with stage delegation as the only handoff.
+context, unchanged, with stage delegation as the only handoff, and only when a
+Cursor dispatch profile is declared.
 
 This feature adds no concurrent-scheduling behavior: parent-orchestrated batch
-and epic runs are sequential by construction (AC17). The Step 4 condition edit
+and epic runs are sequential by construction (AC17). The Step 4 paragraph insertion
 is a protocol change, so it is in Files to modify, the surface guard's
 protocol-condition check, its planted proofs and fixtures.
 
@@ -501,7 +511,16 @@ words and not by pointer alone:
    absorbed or handed off at a read-only checkpoint) and a declaration naming no
    role under any posture are missing declarations.
 
-A mirror that carries the link and omits any of the five does not satisfy the
+6. **Cursor scoping (spec Out of Scope 6)**: the requirement and every rule
+   above apply **only when the run is in a Cursor environment**; behavior of
+   other runners (Claude Code, Codex) is unchanged, and a non-Cursor mirror
+   states the requirement as Cursor-conditional rather than requiring a Cursor
+   dispatch profile from a runner that has not been shown to have the
+   limitation. The parent-orchestrated stage-delegation rule likewise attaches
+   only to a declared `cursor-parent-orchestrated` profile, never to a runner
+   that merely lacks native Work Item Runner handoff.
+
+A mirror that carries the link and omits any of the six does not satisfy the
 acceptance criteria, and the surface guard below must fail it.
 
 The same contract applies, scoped to the layer each surface covers, to the
@@ -511,7 +530,7 @@ workflow skills), Protocols 90/91/95, `agent-model-config.md`, and
 mirror content contract and carry the elements relevant to its layer (a
 protocol states evaluation order and stop names at its declaration checkpoint;
 a role document states the postures and unconfirmed-handoff outcome for its
-layer; `workflow.mdc` states all five compactly).
+layer; `workflow.mdc` states all six compactly).
 
 - [ ] `.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`
       — full mirror content contract above; `/run-work` additionally states
@@ -528,12 +547,12 @@ layer; `workflow.mdc` states all five compactly).
 - [ ] `.cursor/agents/orchestrator.md` and `.claude/agents/orchestrator.md` —
       no-onward-handoff behavior: return to invoking context; no inline product
       work; profile declaration when absorbing portfolio layer; portfolio-layer
-      mirror content (contract elements 1-5, in particular the three postures
+      mirror content (contract elements 1-6, in particular the three postures
       and the unconfirmed-handoff outcome). Maps to AC10, AC11, AC13, AC20.
 - [ ] `.cursor/agents/item-orchestrator.md` and
       `.claude/agents/item-orchestrator.md` — same for item layer; clarify
       parent-orchestrated stage delegation vs `SUBAGENT_PERMISSION_DENIAL`
-      (Work Item Runner only); item-layer mirror content (contract elements 1-5). Maps to
+      (Work Item Runner only); item-layer mirror content (contract elements 1-6). Maps to
       AC10, AC11, AC13, AC19, AC20.
 - [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md` — canonical-doc
       reference for the Codex item-orchestrator alias, plus the item-layer
@@ -550,9 +569,9 @@ layer; `workflow.mdc` states all five compactly).
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
       — reference canonical doc when establishing execution arrangement;
       explicit-list declaration checkpoint; pre-branch affected-item string;
-      the **Step 4 condition change** specified in Decision 7 (current text to
-      new text, exact); mirror content contract
-      elements 1-5 at the declaration checkpoint (evaluation order, unconfirmed
+      the **Step 4 paragraph insertion** specified in Decision 7 (existing
+      generic paragraph unchanged, new Cursor-scoped paragraph added, exact text); mirror content contract
+      elements 1-6 at the declaration checkpoint (evaluation order, unconfirmed
       outcomes, exact stop names, invalid cases, postures). Maps to AC5, AC10,
       AC11, AC14, AC17, AC20, plan gap resolution.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
@@ -561,12 +580,12 @@ layer; `workflow.mdc` states all five compactly).
       transitions, absorbed layers, stage handoffs); one sentence at the
       execution-arrangement point stating that an absorbing invoking context
       follows this protocol unchanged with stage delegation as the only
-      handoff (Decision 7); mirror content contract elements 1-5 at the declaration
+      handoff (Decision 7); mirror content contract elements 1-6 at the declaration
       checkpoint. Maps to AC5, AC9, AC10, AC11, AC14, AC20.
 - [ ] `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
       — the **Execution arrangement** paragraph at the end of Step 6 (Decision
       7: epic layer plus per-item item layer absorbed, no Work Item Runner
-      dispatch, sequential), with mirror content contract elements 1-5. Maps to AC5, AC10, AC11, AC14, AC20.
+      dispatch, sequential), with mirror content contract elements 1-6. Maps to AC5, AC10, AC11, AC14, AC20.
 - [ ] `docs/workflow/development-workflow/agent-model-config.md` — Cursor
       environment × orchestration-layer table carrying **three** values per
       combination, per AC15: (a) the applicable profile, (b) the applicable
@@ -589,7 +608,7 @@ layer; `workflow.mdc` states all five compactly).
       no role, so under Cloud Agents no role floor applies) — every
       combination must be answered explicitly. Maps to AC15.
 - [ ] `.cursor/rules/workflow.mdc` — profile declaration requirement + canonical
-      link + compact mirror content contract (elements 1-5). Maps to AC10, AC11,
+      link + compact mirror content contract (elements 1-6). Maps to AC10, AC11,
       AC16, AC20.
 - [ ] `docs/workflow/development-workflow/guardrails-enforcement.md` section 4 —
       add `dispatch_profile_declaration_missing` and
@@ -696,16 +715,18 @@ layer; `workflow.mdc` states all five compactly).
          - E5 postures: `personally accountable`, `handed off intact`,
            `observing`, `only at a read-only checkpoint`, and `current
            checkpoint`.
+         - E6 **Cursor scoping**: `only in a Cursor environment` and
+           `other runners are unchanged` in the same paragraph.
          Which clauses a surface class must carry is a table inside the
          script (rows are surface classes, columns are clauses), fixed as:
 
-         | Surface class | E1 | E2a | E2b | E3a | E3b | E3c | E3d | E4a | E4b | E4c | E5 |
-         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-         | Command / skill mirrors (15) | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-         | Role agents (4) and Codex workflow skills (2) | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-         | Protocols 90, 91, 95 | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-         | `.cursor/rules/workflow.mdc` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-         | `guardrails-enforcement.md` section 4 | - | - | - | Y | Y | Y | Y | Y | Y | - | - |
+         | Surface class | E1 | E2a | E2b | E3a | E3b | E3c | E3d | E4a | E4b | E4c | E5 | E6 |
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+         | Command / skill mirrors (15) | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | Role agents (4) and Codex workflow skills (2) | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | Protocols 90, 91, 95 | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | `.cursor/rules/workflow.mdc` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+         | `guardrails-enforcement.md` section 4 | - | - | - | Y | Y | Y | Y | Y | Y | - | - | Y |
          | `agent-model-config.md` | the exact Decision 6 profile, model assignment and evidence marker for every environment x layer cell (Desktop native; Remote Control parent orchestrated at every layer; Cloud Agents inline fallback everywhere; markers `confirmed by observation` for Desktop at every layer and Remote Control item only, `explicit assumption` for every other profile cell and every model cell) | | | | | | | | | | |
 
          Layer scoping is by wording, not by omission: a portfolio-layer
@@ -921,9 +942,13 @@ layer; `workflow.mdc` states all five compactly).
           unselected check), and restores. Also make the guard read one
           undeclared path (a stray file) and expect `read_path()` to fail.
 
-      18. **Dispatch decision (Decision 7)**: in Protocol 90 Step 4 restore the
-          old single-condition text (`does not support Work Item Runner handoff
-          natively` only) and expect `protocol90_step4_condition` to fail; delete
+      18. **Dispatch decision (Decision 7)**: in Protocol 90 Step 4 delete the
+          new Cursor-scoped paragraph, then (separately) merge its
+          parent-orchestrated and stage-delegation clause into the generic
+          paragraph, then (separately) alter the generic paragraph, then
+          (separately) drop only the `only when a Cursor dispatch profile is
+          declared` scoping sentence; expect `protocol90_step4_condition` to
+          fail each time; delete
           the Protocol 95 Step 6 Execution arrangement paragraph and expect
           `protocol95_execution_arrangement` to fail; delete the Protocol 91
           absorbed-layer sentence and expect `protocol91_absorbed_layer_sentence`
@@ -934,6 +959,13 @@ layer; `workflow.mdc` states all five compactly).
           each of the four files in turn (canonical guide, guardrails row,
           Protocol 90, merged spec row) and expect `explicit_list_format_parity`
           to fail naming the file; restore each.
+
+      20. **Cursor scoping (E6)**: delete the `only in a Cursor environment` /
+          `other runners are unchanged` sentence from `.claude/commands/run-item.md`,
+          then (separately) from `.agents/skills/run-items/SKILL.md`, then from
+          Protocol 91; expect non-zero naming E6 each time; also make a
+          non-Cursor mirror state the profile as mandatory for every runner and
+          expect non-zero.
 
       **Coverage rules (every branch must have a real cycle).** Each multi-token
       clause is proved token by token: one cycle deletes only one token while
@@ -995,7 +1027,7 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `.codex/skills/workflow-orchestrator/SKILL.md` | Canonical reference + portfolio-layer no-onward-handoff |
 | `.cursor/rules/workflow.mdc` | Requirement + link |
 | `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md` | Named stop affected-item alignment |
-| `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) with `# covers:` header for every protected surface |
+| `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E6, canonical-doc checks, path simulation, `--self-test`) with `# covers:` header for every protected surface |
 | `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures: exactly the fixture manifest, one `*.fixture.md` file per manifest row (`MANIFEST_COUNT`) |
 | `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Created in Plan Ready; Steps 12-14, real-command invocations (router-resolvable targets, `--epic <N>`) and tightened Pass criteria added in plan review (no further edit expected) |
@@ -1042,7 +1074,7 @@ code inside a quote is stripped by the same rules;
 blockquote text, table cells (a row is one block for R3), list items, headings,
 link text, and inline HTML tag *text* (tags removed). **Counts for identifier
 tokens only** (R4): inline code spans, because stop names and profile codes are
-conventionally written as code; a prose phrase (E1-E5 sentences, `treated as
+conventionally written as code; a prose phrase (E1-E6 sentences, `treated as
 unavailable`, and similar) that appears only inside an inline code span does
 **not** count. **Never counts**: link-reference definitions (`[label]: url
 "title"`, whole line), link and image destinations and titles, image alt text,
@@ -1070,7 +1102,7 @@ also invoked by the default run). Each fail fixture must exit non-zero with a
 message naming its clause ID; each pass fixture must exit 0. These are separate
 from, and in addition to, the planted-deletion proofs on real surfaces.
 
-**Fixture manifest (`MANIFEST_COUNT = 153`).** This is the literal, complete
+**Fixture manifest (`MANIFEST_COUNT = 158`).** This is the literal, complete
 list of scanner fixtures: one row per file, exact filename, expected result,
 and the rule or clause covered. It is derived by counting the rows below and
 is stated here **once**; every other mention refers to "the manifest count".
@@ -1093,8 +1125,8 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 3 | `boundary-wrapped-phrase.fixture.md` | pass | R1, R3, R4 | Required phrase soft-wrapped across two lines |
 | 4 | `boundary-token-punctuation.fixture.md` | pass | R4 | Identifier token followed by a comma or period |
 | 5 | `boundary-token-backtick.fixture.md` | pass | R4, R2c | Identifier token wrapped in backticks |
-| 6 | `boundary-empty-file.fixture.md` | fail: E1-E5 each named | E1-E5 | Empty file |
-| 7 | `boundary-link-only.fixture.md` | fail: E1-E5 each named | E1-E5 | File containing only the canonical link |
+| 6 | `boundary-empty-file.fixture.md` | fail: E1-E6 each named | E1-E6 | Empty file |
+| 7 | `boundary-link-only.fixture.md` | fail: E1-E6 each named | E1-E6 | File containing only the canonical link |
 | 8 | `lookalike-longer-stop-name.fixture.md` | fail: R4 | R4 | `dispatch_handoff_unavailable_x` in place of the stop name |
 | 9 | `lookalike-longer-profile-code.fixture.md` | fail: R4 | R4 | `cursor-native-handoffs` in place of the profile code |
 | 10 | `lookalike-case-posture.fixture.md` | fail: E5 | R4, E5 | `Observing` in place of the posture label |
@@ -1208,7 +1240,7 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 118 | `ser-router-grammar-stated.fixture.md` | pass | Serialization | Doc states the router grammar: comma split, trim, drop empties, first-occurrence dedup, and the accepted forms |
 | 119 | `ser-dot-slash-kept.fixture.md` | pass | Serialization | Development-folder path typed `./docs/specs/developments/x` kept with its leading `./` |
 | 120 | `ser-dot-slash-stripped.fixture.md` | fail: verbatim | Serialization | Leading `./` stripped from a development-folder path |
-| 121 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
+| 121 | `clause-all-present.fixture.md` | pass | E1-E6 | All E1-E6 clauses present on a command mirror |
 | 122 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
 | 123 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
 | 124 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
@@ -1220,27 +1252,32 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 130 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
 | 131 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
 | 132 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
-| 133 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
-| 134 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
-| 135 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
-| 136 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
-| 137 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
-| 138 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
-| 139 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
-| 140 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
-| 141 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
-| 142 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
-| 143 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
-| 144 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
-| 145 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
-| 146 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
-| 147 | `proto90-step4-condition-present.fixture.md` | pass | Protocol Step 4 | Protocol 90 Step 4 block carries the new parent-orchestrated condition (all tokens in one block) |
-| 148 | `proto90-step4-native-only.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | Protocol 90 Step 4 block with only the old `does not support Work Item Runner handoff natively` condition |
-| 149 | `proto95-arrangement-missing.fixture.md` | fail: protocol95_execution_arrangement | Protocol Step 4 | Protocol 95 Step 6 without the Execution arrangement paragraph |
-| 150 | `proto91-absorbed-sentence-missing.fixture.md` | fail: protocol91_absorbed_layer_sentence | Protocol Step 4 | Protocol 91 without the absorbed-layer sentence |
-| 151 | `canonical-dispatch-table-missing.fixture.md` | fail: canonical_dispatch_decision | Protocol Step 4 | Canonical doc without the per-command dispatch table row for `/run-items` |
-| 152 | `parity-explicit-list-format-match.fixture.md` | pass | Explicit-list parity | Canonical guide, guardrails row, Protocol 90 and spec row all carry the identical format string |
-| 153 | `parity-guardrails-mismatch.fixture.md` | fail: explicit_list_format_parity | Explicit-list parity | Guardrails row carries a different format string than the canonical guide |
+| 133 | `clause-missing-e6.fixture.md` | fail: E6 | Clause completeness | Exactly clause E6 removed from an otherwise complete mirror |
+| 134 | `scope-non-cursor-behavior-changed.fixture.md` | fail: E6 | Clause completeness | A Claude Code or Codex mirror that requires a Cursor dispatch profile from non-Cursor runs (no Cursor scoping) |
+| 135 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
+| 136 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
+| 137 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
+| 138 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
+| 139 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
+| 140 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
+| 141 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
+| 142 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
+| 143 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
+| 144 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
+| 145 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
+| 146 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
+| 147 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
+| 148 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
+| 149 | `proto90-step4-condition-present.fixture.md` | pass | Protocol Step 4 | Protocol 90 Step 4 keeps the generic paragraph unchanged and carries the new Cursor-scoped paragraph (all tokens in one block) |
+| 150 | `proto90-step4-native-only.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | Protocol 90 Step 4 block with only the generic `does not support Work Item Runner handoff natively` paragraph (new Cursor-scoped paragraph absent) |
+| 151 | `proto90-step4-generic-merged.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | Generic paragraph merged with the parent-orchestrated and stage-delegation clause (one combined condition) |
+| 152 | `proto90-step4-generic-altered.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | Generic paragraph altered or removed |
+| 153 | `proto90-step4-unscoped-stage-rule.fixture.md` | fail: protocol90_step4_condition | Protocol Step 4 | New paragraph lacks the `only when a Cursor dispatch profile is declared` scoping |
+| 154 | `proto95-arrangement-missing.fixture.md` | fail: protocol95_execution_arrangement | Protocol Step 4 | Protocol 95 Step 6 without the Execution arrangement paragraph |
+| 155 | `proto91-absorbed-sentence-missing.fixture.md` | fail: protocol91_absorbed_layer_sentence | Protocol Step 4 | Protocol 91 without the absorbed-layer sentence |
+| 156 | `canonical-dispatch-table-missing.fixture.md` | fail: canonical_dispatch_decision | Protocol Step 4 | Canonical doc without the per-command dispatch table row for `/run-items` |
+| 157 | `parity-explicit-list-format-match.fixture.md` | pass | Explicit-list parity | Canonical guide, guardrails row, Protocol 90 and spec row all carry the identical format string |
+| 158 | `parity-guardrails-mismatch.fixture.md` | fail: explicit_list_format_parity | Explicit-list parity | Guardrails row carries a different format string than the canonical guide |
 
 **Coverage completeness map.** Every enumerated contract list has a fixture or
 proof. The self-test asserts that the on-disk fixture set **equals the
@@ -1256,7 +1293,7 @@ manifest row matches at least one prefix family.
 
 | Enumerated list | Covered by |
 | --- | --- |
-| Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` and `e3c-*` fixtures plus proof cycles 3-11 and 12-14 |
+| Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5, E6 | `clause-*` and `e3c-*` fixtures plus proof cycles 3-11, 12-14 and 20 |
 | Serialization rules (router grammar and normalization, verbatim tokens, delimiter, comma unreachable, percent-first, defensive whitespace and control encoding, line feed unreachable, uppercase hex, non-ASCII, router dedup, order, one line, single/empty unreachable, tracker ID not accepted) | `ser-*` and `serialization-*` fixtures |
 | Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*`, `table-*`, `comment-*` fixtures (table row is the single R3 block boundary) |
 | Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions C1-C4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus C1-C4 cycles), `sim-*` fixtures |
@@ -1280,7 +1317,7 @@ fixture is removed, renamed, or added without a manifest row.
 
 1. Every mirror surface links to `cursor-dispatch-profiles.md`, names the three
    profile code values consistently (AC18), and carries each required
-   mirror-content element E1-E5 (AC10, AC11, AC20); each element has a
+   mirror-content element E1-E6 (AC10, AC11, AC20); each element has a
    planted-violation proof.
 2. Guardrails section 4 lists both new stop conditions with definitions matching
    the spec matrix (AC10–AC12), including coarse-facts mismatch rejection in both
@@ -1308,8 +1345,9 @@ fixture is removed, renamed, or added without a manifest row.
    test issues and epic, sandbox `develop` as the safe base) with a completed
    cleanup checklist; the evidence is the implementation head **H** plus a
    single sandbox-only config commit **S** whose diff against H touches only
-   `.ai-dev-workflow.yaml` (`git diff H S --stat`, so worktrees created from
-   sandbox `develop` inherit the `github_issues` tracker config); running them against real backlog items or the real
+   `.ai-dev-workflow.yaml` (`git diff H S --stat`; it sets `github_issues`,
+   `mode: assisted` and `may_merge_pr: false` so worktrees created from sandbox
+   `develop` inherit a no-merge policy); running them against real backlog items or the real
    repository is prohibited.
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
@@ -1330,7 +1368,7 @@ confirm non-zero exit naming the check, restore):
 | AC3 | `canonical_matrix` | the perform / hand off / prohibit matrix with one row per layer, each row linking a role contract or protocol |
 | AC5 | `canonical_declared_not_detected` | the decision-indicator list and the sentence that the decision is declared rather than automatically detected |
 | AC7 | `canonical_handoff_metadata` | one assertion per handoff field, failing if any is absent (each field gets a planted-violation cycle, including worktree path): `BATCH_CONTEXT`, isolation classification (`isolation`), **expected worktree path** (spec AC7 and Protocol 91 isolation handoff), expected branch, approved base, artifact repository root, mutation class |
-| Decision 7 | `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence`, `canonical_dispatch_decision` | Canonical doc lacks the per-command dispatch table (Decision 7; tokens `absorbs the portfolio layer`, `dispatches no Work Item Runner`, one row per `/run-item`, `/run-items`, `/run-epic`, `/run-work`); Protocol 90 Step 4 lacks the new condition (tokens in one block: `cursor-parent-orchestrated`, `do not dispatch Work Item Runners`, `one at a time`, `absorbed the portfolio layer`, `stage role`); Protocol 95 Step 6 lacks the Execution arrangement paragraph (`absorbs the epic layer`, `dispatches no Work Item Runner`); Protocol 91 lacks the absorbed-layer sentence (these three checks read Protocols 90, 91 and 95, already in the read set) |
+| Decision 7 | `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence`, `canonical_dispatch_decision` | Canonical doc lacks the per-command dispatch table (Decision 7; tokens `absorbs the portfolio layer`, `dispatches no Work Item Runner`, one row per `/run-item`, `/run-items`, `/run-epic`, `/run-work`); Protocol 90 Step 4 fails `protocol90_step4_condition` when any of: the existing generic paragraph (`If the runner does **not** support Work Item Runner handoff natively, ...`) is absent or altered, or contains `stage role`, `cursor-parent-orchestrated` or `Cursor` (it must stay separate and unchanged); the new paragraph is absent; the new paragraph lacks any of `cursor-parent-orchestrated`, `do not dispatch Work Item Runners`, `one at a time`, `absorbed the portfolio layer`, `stage role`, `only when a Cursor dispatch profile is declared` in one block; Protocol 95 Step 6 lacks the Execution arrangement paragraph (`absorbs the epic layer`, `dispatches no Work Item Runner`); Protocol 91 lacks the absorbed-layer sentence (these three checks read Protocols 90, 91 and 95, already in the read set) |
 | Plan gap | `explicit_list_format_parity` | Any of the canonical guide, guardrails section 4, Protocol 90 declaration checkpoint or the merged spec's Named Stop-Condition Mapping row lacks the identical `explicit_list_invocation_targets=<t1>,<t2>,...` format string |
 | AC8 | `canonical_workflow_hub` | the workflow_hub artifact-ownership, tracker, and post-merge cleanup notes |
 
@@ -1459,7 +1497,7 @@ Not applicable — no runtime data.
 | Evidence currency | Pass | Verification Log re-run `2026-09-21` at verified head `8c055558`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass. The plan branch being behind `develop` is informational; A1 is checked after its remediation sequence at implementation start, and A1-A6 pre-edit checks were run now against artifacts that exist |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
-| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control evidence for `/run-item`, `/run-items` and `/run-epic` (Steps 8, 13B, 14B; AC17 behavior) run only against controlled disposable sandbox artifacts with a cleanup checklist and real-repository-untouched verification + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
+| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control evidence for `/run-item`, `/run-items` and `/run-epic` (Steps 8, 13B, 14B; AC17 behavior) run only against controlled disposable sandbox artifacts with a cleanup checklist and real-repository-untouched verification + surface guard (link, profile string, E1-E6 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
 | CI wiring | Pass (design; execution deferred) | `# covers:` header for every protected surface, selector planted check (unselected-when-removed for non-fixtures paths; a fixtures change is a full-run trigger, checked positively only) and `--report-gaps`, per-suite time cap, no path filter change; see Testing Strategy |
 | Shell-script lint | Pass (design; execution deferred) | New `.sh` verified by `bash -n`, `shellcheck --severity=warning`, and `workflow-shell-guard-lint.py --base-ref origin/develop` per REVIEW.md; Implementation Order step 9 |
@@ -1507,7 +1545,7 @@ Not applicable — no runtime data.
    land in the same commit as guardrails if both use the identical
    `explicit_list_invocation_targets=...` string; otherwise keep this after
    step 2.
-8. **Surface guard test** — add the shell guard (link, profile-string, E1-E5
+8. **Surface guard test** — add the shell guard (link, profile-string, E1-E6
    clause, canonical-doc, and `simulate_bounded_paths` branches), the scanner
    fixtures directory containing exactly the fixture manifest (`MANIFEST_COUNT`
    rows, including the fence-semantics rows), and the `--self-test` mode; with the `# covers:` header
@@ -1535,14 +1573,15 @@ Not applicable — no runtime data.
    Steps 7 and 9 and Step 13 Part C may be documented NOT RUN, per the
    runbook's Pass criteria. The live steps run **only** in the disposable
    sandbox (operator-provisioned repository, `[SANDBOX-1462]` issues and epic,
-   sandbox `develop` base at S), after the pre-flight `origin` and `git diff H S`
-   checks, and are
+   sandbox `develop` base at S, whose config disables merging), after the
+   pre-flight `origin`, `git diff H S` and no-merge-config checks, with each live
+   invocation selecting an explicit no-merge policy, and are
    followed by the runbook's cleanup checklist; sign-off is blocked until the
    completion criteria are met and the real repository is verified untouched.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
 11. **Planted-violation proofs** — run every fail/pass cycle (link, profile
-      string, E1-E5 clauses, and canonical-doc checks) plus the scanner self-tests documented in
+      string, E1-E6 clauses, and canonical-doc checks) plus the scanner self-tests documented in
       **Layer-by-Layer Changes → Workflow tooling** and **Testing Strategy**.
 
 ---
