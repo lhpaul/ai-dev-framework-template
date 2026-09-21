@@ -39,31 +39,33 @@ condition relative to the canonical file.
 Expected result: each routes plan authors to the canonical rules doc and requires
 evidence in the plan document (not pull request comments).
 
-## Test setup for Scenarios 3–7 (stacked test branch)
+## Test setup for Scenarios 3–7 (temporary integration branch)
 
 Scenarios 3–7 need a draft plan PR that contains the **unmerged** Protocol 02
-and `REVIEW.md` changes under test. Protocol 02 normally branches plans from the
-resolved artifact base (`develop`), which lacks those changes, so this runbook
-uses an explicit, temporary stacked base:
+and `REVIEW.md` changes under test. Protocol 02 normally branches plans from
+`develop`, which lacks those changes, so this runbook uses the workflow's
+supported temporary **integration branch** (`develop-<slug>`), which Protocol 02
+and the CI base filters (`develop`, `develop-**`, `main`) already accept:
 
-1. Push the implementation PR's branch so its remote head carries the unmerged
-   changes.
+1. Create and push `develop-smoke-1496` at the implementation PR branch's head,
+   so it carries the unmerged changes.
 2. Run Protocol 02 for a scratch **Refactor work item with no spec** (mandatory
-   — this is the only exercise of the no-spec path, spec line 468), then repeat
-   once for a scratch item that has a spec if the spec path is also to be
-   shown. Supply the pushed implementation
-   branch as the **artifact base** (never `develop`). Protocol 02 itself checks
-   out that base at its remote head and creates its own `implementation-plan/*`
-   branch and draft PR — do not create a branch by hand. Author the scratch plan by hand while following Protocol 02: a short
-   plan (one page) for a hypothetical refactor of a single small script, written
-   to Protocol 02's template, with its per-rule outcome record. No fixture file
-   or Protocol 02 input step is involved. Scenario 4 then deliberately edits
-   that plan (see there).
+   — this is the only exercise of the no-spec path, spec line 468) with
+   `develop-smoke-1496` as the approved integration base (the run's
+   `--base develop-smoke-1496`, as `/run-item` passes it to Protocol 02's
+   artifact-base resolution); optionally repeat for a scratch item that has a spec.
+   Protocol 02 itself checks out that base at its remote head and creates its
+   own `implementation-plan/*` branch and draft PR targeting it — do not create
+   a branch by hand. Author the scratch plan by hand while following
+   Protocol 02: a short plan (one page) for a hypothetical refactor of a single
+   small script, written to Protocol 02's template, with its per-rule outcome
+   record. No fixture file or Protocol 02 input step is involved. Scenario 4
+   then deliberately edits that plan (see there).
 3. Run Scenarios 3–7 against that PR.
 4. Cleanup (required, recorded in the implementation PR): close the scratch PR
-   unmerged, delete the `implementation-plan/*` branch Protocol 02 created,
-   locally and on the remote, and confirm the implementation PR's diff is
-   unchanged.
+   unmerged, delete the `implementation-plan/*` branch Protocol 02 created and
+   `develop-smoke-1496`, locally and on the remote, and confirm the
+   implementation PR's diff is unchanged.
 
 ## Scenario 3: Per-rule outcome record on a plan PR
 

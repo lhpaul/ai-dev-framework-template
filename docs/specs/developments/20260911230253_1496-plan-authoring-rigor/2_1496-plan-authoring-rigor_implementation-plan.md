@@ -570,7 +570,7 @@ Not applicable.
 8. Update `AGENTS.md` (and README plan-stage pointer — section exists at line
    `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
-10. Execute the runbook's stacked test-branch setup (see the smoke runbook), then
+10. Execute the runbook's temporary integration-branch setup (see the smoke runbook), then
     record its cleanup.
 11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B12, C1–C4,
     D1–D3, E1–E3, F1–F6, G1–G4, H1–H17) named in Testing Strategy.
