@@ -575,7 +575,7 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) |
 | `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures (one per Parser-Risk case) |
 | `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
-| `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Already created in Plan Ready |
+| `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Created in Plan Ready; Steps 12-14 and tightened Pass criteria added in plan review (no further edit expected) |
 
 **Explicitly not in scope**: `REVIEW.md` checklist categories (no new review
 gate category); `--dispatch-profile` CLI flag (BO-9); automated environment
@@ -667,10 +667,13 @@ fixture is removed the self-test count assertion (expected N fixtures) fails.
    directions (more and less permissive than assigned outcome).
 3. Orchestration role agents instruct return-to-invoker when onward handoff is
    unavailable (AC13).
-4. Agent-model-config states confirmed vs assumption for each Cursor environment
-   (AC15).
+4. Agent-model-config states, for each Cursor environment and layer, the
+   profile, the model assignment (Decision 6 values), and confirmed vs
+   assumption (AC15).
 5. Smoke runbook walks Native handoff desktop, Parent orchestrated Remote
-   Control, Inline fallback, and read-only scan paths (AC6, AC17).
+   Control, Inline fallback, and read-only scan paths (AC6, AC17), and Steps
+   12-14 require current-head evidence (live run or `simulate_bounded_paths`)
+   for `/run-item`, `/run-items`, and `/run-epic` (AC9, AC10, AC14, AC17).
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
    `SUBAGENT_PERMISSION_DENIAL` is worded as observably similar only (Work Item
@@ -787,8 +790,10 @@ Not applicable — no runtime data.
    fence-semantics rows), and the `--self-test` mode; no registration step is
    needed (Testing Strategy: `list_suites` discovers it). Run locally. Commit.
 9. **Verify** — run markdown lint commands from `AGENTS.md`, surface guard, and
-   execute smoke runbook steps that do not require live Remote Control (document
-   manual Remote Control steps as PASS/NOT RUN).
+   run the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
+   10-14 must PASS at the implementation head (Steps 12-14 via live run or
+   `simulate_bounded_paths`); only live Steps 7-9 may be documented NOT RUN,
+   per the runbook's Pass criteria.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
 11. **Planted-violation proofs** — run every fail/pass cycle (link, profile

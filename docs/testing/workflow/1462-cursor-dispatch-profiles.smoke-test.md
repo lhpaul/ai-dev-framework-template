@@ -74,8 +74,8 @@
 **Maps to**: AC15
 
 1. Open `docs/workflow/development-workflow/agent-model-config.md`.
-2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile assignments per layer.
-3. Confirm each row is labeled confirmed-by-observation or explicit assumption.
+2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile **and model** assignments per layer.
+3. Confirm each row is labeled confirmed-by-observation or explicit assumption, for both the profile and the model assignment.
 
 **Expected result**: Remote Control defaults to Parent orchestrated; Cloud Agents conservative assumption documented.
 
