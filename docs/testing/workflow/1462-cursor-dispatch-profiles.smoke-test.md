@@ -73,9 +73,9 @@ records each action; an agent must not create or delete repositories.
      `git diff --name-only H S` prints exactly that one path, so the
      implementation-head evidence is preserved (the code under test is
      byte-identical to H except for the tracker config);
-   - `git show S:.ai-dev-workflow.yaml` shows `provider: github_issues`,
-     `mode: assisted`, and `may_merge_pr: false` for all three stages (the
-     repository default `true` is gone), so delegated merge is impossible in
+   - `git show S:.ai-dev-workflow.yaml | python3 -c 'import sys,yaml; d=yaml.safe_load(sys.stdin); print(d["issue_tracker"]["provider"], d["guardrails"]["mode"], [d["guardrails"]["stages"][k]["may_merge_pr"] for k in ("spec","plan","implementation")])'`
+     prints exactly `github_issues assisted [False, False, False]` (the
+     repository default `True` is gone), so delegated merge is impossible in
      the sandbox.
 5. Confirm the three router checks in the table above return the stated MODEs.
 
@@ -144,9 +144,11 @@ sign-off)**
    (`gh pr list --search "SANDBOX-1462" --state all` and
    `gh issue list --search "SANDBOX-1462" --state all` in the real repository
    return nothing), `git status` is clean in the real checkout, and the
-   sandbox config commit S is absent from the real repository
-   (`git fetch origin && git branch -r --contains S` in the real checkout
-   prints nothing).
+   sandbox config commit S is unknown to the real repository: in the real
+   checkout `git fetch origin`, then `git cat-file -e S^{commit}` must **fail**
+   (`Not a valid object name`, exit `128`) and
+   `git branch -r --contains S` must **error** (`no such commit`, exit `129`);
+   if either resolves S or lists a branch, S leaked and sign-off is blocked.
 
 **Cleanup is complete when**: the sandbox has no open issue, no open pull
 request, no branch other than `develop`/`main`, no worktree, no leftover
