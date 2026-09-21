@@ -590,7 +590,18 @@ The surface guard is a structured-Markdown scanner: it reads Markdown files,
 extracts scoped content, and decides pass/fail by fixed-string and same-paragraph
 matches. Scanner rules: (R1) read UTF-8 text; (R2) strip fenced code blocks and
 HTML comments before matching (the Decision 3 declaration block and worked
-examples are illustrative and must not satisfy a clause); (R3) normalize each
+examples are illustrative and must not satisfy a clause). Fence semantics
+follow CommonMark: an opening fence is a run of **3 or more** backticks or of
+**3 or more** tildes, preceded by **at most 3 spaces** of indentation (4+
+spaces is an indented code block or list continuation, not a fence; a fence
+inside a list item may be indented relative to that item's content); a
+backtick fence's info string may not contain a backtick. The closing fence
+must use the **same character** as the opener, be a run **at least as long**
+as the opener (longer closers are valid), be indented at most 3 spaces, and
+carry no info string. A fence of the other character, or a shorter run, is
+content, not a closer. An **unclosed** fence runs to **end of file** and
+everything after the opener is stripped. HTML comments run from `<!--` to
+`-->`, or to end of file if unclosed; (R3) normalize each
 paragraph by joining soft-wrapped lines and collapsing whitespace, so phrases
 wrapped across lines still match and "same paragraph" means one blank-line-
 delimited block (list item, blockquote line and table cell each count as a
@@ -623,6 +634,16 @@ from, and in addition to, the planted-deletion proofs on real surfaces.
 | Multiple occurrence | Duplicate canonical link lines | `multi-duplicate-link` | pass |
 | Nested / overlap | Clause inside list item, blockquote, and table cell | `nested-block-kinds` | pass |
 | Nested / overlap | Required phrase inside a fenced block nested in a list item | `nested-fenced-in-list` | fail (R2) |
+| Fence semantics | Required token only inside a tilde (`~~~`) fence | `fence-tilde` | fail (R2) |
+| Fence semantics | Tilde fence closed by a longer tilde run; token after the closer | `fence-tilde-longer-closer` | pass (token after closer counts) |
+| Fence semantics | Backtick fence (3) closed by a longer backtick run (5); token after closer | `fence-backtick-longer-closer` | pass |
+| Fence semantics | 4-backtick opener; inner 3-backtick line does not close; token after inner line still inside | `fence-shorter-closer-inside` | fail (token stripped, R2) |
+| Fence semantics | Backtick fence closed by a tilde run (mismatched character); token after it still inside | `fence-mismatched-char-closer` | fail (R2) |
+| Fence semantics | Unclosed fence at EOF with required token after opener | `fence-unclosed-eof` | fail (stripped to EOF) |
+| Fence semantics | Unclosed fence at EOF, required token **before** the opener | `fence-unclosed-token-before` | pass |
+| Fence semantics | Fence opener indented 3 spaces (is a fence) vs 4 spaces (is not) with token inside | `fence-indent-3` / `fence-indent-4` | fail / pass (4 spaces is not a fence, so the token counts) |
+| Fence semantics | Closer indented 4 spaces does not close; token after it still inside | `fence-closer-indent-4` | fail (R2) |
+| Fence semantics | Unclosed HTML comment at EOF with token after `<!--` | `comment-unclosed-eof` | fail (R2) |
 | Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
 | Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
 
@@ -744,8 +765,11 @@ Not applicable — no runtime data.
    arrangement; add declaration checkpoints and summary fields. Commit.
 4. **Command + skill mirrors** — Cursor, Claude, Codex `.agents/skills` adapters.
    Commit.
-5. **Role agents** — orchestrator + item-orchestrator (Cursor + Claude) + Codex
-   workflow-item-orchestrator skill. Commit.
+5. **Role agents** — orchestrator + item-orchestrator (Cursor + Claude), plus
+   both Codex workflow skills: `.codex/skills/workflow-orchestrator/SKILL.md`
+   (portfolio entrypoint) and `.codex/skills/workflow-item-orchestrator/SKILL.md`
+   (item entrypoint), each carrying its layer's mirror content contract
+   (AC10, AC11, AC13, AC18, AC20). Commit.
 6. **agent-model-config + workflow rule + README + optional bounded-prelude** —
    Commit.
 7. **Spec alignment** — update merged spec Named Stop-Condition Mapping row for
@@ -757,7 +781,11 @@ Not applicable — no runtime data.
    land in the same commit as guardrails if both use the identical
    `explicit_list_invocation_targets=...` string; otherwise keep this after
    step 2.
-8. **Surface guard test** — add and register shell test; run locally. Commit.
+8. **Surface guard test** — add the shell guard (link, profile-string, E1-E5
+   clause, canonical-doc, and `simulate_bounded_paths` branches), the scanner
+   fixtures directory with one fixture per Parser-Risk case (including the
+   fence-semantics rows), and the `--self-test` mode; no registration step is
+   needed (Testing Strategy: `list_suites` discovers it). Run locally. Commit.
 9. **Verify** — run markdown lint commands from `AGENTS.md`, surface guard, and
    execute smoke runbook steps that do not require live Remote Control (document
    manual Remote Control steps as PASS/NOT RUN).
