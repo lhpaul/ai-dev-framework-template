@@ -63,14 +63,14 @@ implementation are marked **Deferred to implementation**, not Pass.
 | Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
 | Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
-| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 140 rows, numbered 1-140, 140 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
+| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 141 rows, numbered 1-141, 141 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
 | Router grammar | Read `scripts/development-workflow/run-work-router.sh` (`resolve_token` and the token normalization step) against the serialization contract | Router splits every argument on commas, trims, drops empties and dedups; accepts positive-integer numbers (optional `#`), existing `docs/specs/developments/` folders and existing workflow-prefixed branches; tracker IDs are not accepted; the contract and examples match (Pass) |
 | Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps`; a fixtures-path `--changed-files` probe | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
 | Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
 | Surface guard (link, profile string, E1-E5 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
 | Scanner fixtures + `--self-test` (Parser-Risk cases, fence semantics) | `... --self-test` | **Deferred to implementation** |
 | Planted-violation proofs (cycles 1-16 plus per-class repeats) | see Layer-by-Layer Changes → Workflow tooling | **Deferred to implementation** |
-| `simulate_bounded_paths`; smoke Steps 7-14 (Step 8, live Remote Control, is required at sign-off) | smoke runbook | **Deferred to implementation** (needs the implementation head and a real Remote Control session) |
+| `simulate_bounded_paths`; smoke Steps 7-14 (live Remote Control Steps 8, 13 Part B and 14 Part B are required at sign-off) | smoke runbook | **Deferred to implementation** (needs the implementation head and a real Remote Control session) |
 
 ---
 
@@ -129,16 +129,33 @@ exists yet.
   - Escaping (percent-encoding, applied per target, `%` first so it is not
     double-encoded): `%` becomes `%25`, `,` becomes `%2C`, and any ASCII
     whitespace or control character inside a target becomes `%XX` (uppercase
-    hex of the UTF-8 byte). All other bytes are emitted unchanged. In practice
-    `%` can occur in a branch name (git allows it), whitespace or control
-    characters can occur only in a development-folder path (git refs and
-    numbers cannot contain them), and comma cannot occur at all.
+    hex of the UTF-8 byte). All other bytes are emitted unchanged. Which bytes
+    the router can actually deliver (observed by running it, see the table
+    below): `%` and non-ASCII characters can occur in a branch name (git
+    allows both); space, tab, CR and other control characters survive router
+    normalization inside a token but git refs and numbers cannot contain them,
+    so they are deliverable only by an unconventional development-folder name
+    (the workflow names folders `<timestamp>_<slug>`), which makes those
+    encodings **defensive**; a **line feed can never appear inside a target**
+    (see the newline bullet); a comma cannot occur at all.
   - **Duplicates never reach the gate**: the router removes them before
     resolution (first occurrence kept), so the serialization renders the
-    deduplicated list, never a repeated target. Order is the router's
-    normalized order; the value is always one line (an interior newline or CR is
-    encoded, never emitted); at least two targets are present (the `/run-items`
+    deduplicated list, never a repeated target. Deduplication is by exact
+    string, so `1462` and `#1462` are **distinct** tokens (observed:
+    `RESOLVED_SCOPE=1462,#1462`) and both are rendered as typed; the
+    serialization never merges them. Order is the router's
+    normalized order; at least two targets are present (the `/run-items`
     minimum).
+  - **Newlines are unreachable, so output is always one line**: the router
+    normalizes each argument with `IFS=',' read -ra parts <<< "$t"`, which reads
+    only through the first newline. Anything after the first line of an argument
+    is silently dropped before resolution (observed: an argument
+    `feature/a<LF>feature/b` yields the single token `feature/a`). A line feed
+    therefore cannot appear inside a target and is never percent-encoded; the
+    canonical doc states this instead of showing a `%0A` case. A carriage return
+    is not a line separator for `read`, so it stays inside the token and, on the
+    defensive path above, would be encoded as `%0D`. The value is one line
+    because LF cannot occur and CR and other control characters are encoded.
   - Encoding is **not idempotent by design**: a target that already contains
     `%25` text is encoded again (`%` becomes `%25`), so decoding once always
     returns the original bytes; the `%`-first ordering is what guarantees this.
@@ -150,6 +167,33 @@ exists yet.
     (the comma-separated argument is split and the repeated `#1462` removed by
     the router) yields
     `explicit_list_invocation_targets=#1462,feature/cursor-dispatch,1771`.
+  - **Observed router behavior** (read-only runs of
+    `run-work-router.sh` in this worktree at head `a2113081`, no mutation; each
+    row is one invocation, the first target an existing branch or development
+    folder so only the row's variable target decides the result):
+
+    | Input | Observed |
+    | --- | --- |
+    | one argument `<branch>,<folder>` | split into two tokens; `MODE=redirect_items`; `RESOLVED_SCOPE=<branch>,<folder>` |
+    | `<branch> <branch> <folder>` | duplicate removed, first kept; `RESOLVED_SCOPE=<branch>,<folder>` |
+    | `./<folder> <branch>` | `RESOLVED_SCOPE` keeps the leading `./` (`./<folder>,<branch>`) |
+    | `" <branch> " "<folder> "` | edge whitespace trimmed; `RESOLVED_SCOPE=<branch>,<folder>` |
+    | `<branch>,,<folder>,` | empty pieces dropped; `RESOLVED_SCOPE=<branch>,<folder>` |
+    | `<branch> #1462` | `#` kept (`RESOLVED_SCOPE=<branch>,#1462`) |
+    | `1462 #1462` | not deduplicated (exact-string dedup): `RESOLVED_SCOPE=1462,#1462` |
+    | interior tab in a token (`feat<TAB>x`) | token kept with the tab; unresolved, `MODE=ambiguous` |
+    | interior CR in a token (`feature/a<CR>b`) | token kept with the CR; unresolved (no such branch) |
+    | interior space (`feature/a b`) | token kept; unresolved |
+    | non-ASCII (`feature/ñandú`) | token kept byte-for-byte; unresolved only because the branch is absent |
+    | `feature/100%-done` | token kept; unresolved only because the branch is absent; `git check-ref-format` accepts it |
+    | interior LF (`feature/a<LF>feature/b`) | only `feature/a` survives; the second line is dropped |
+    | a valid first line then LF then junk | junk silently dropped; the valid first line resolves |
+    | `ENG-123` | `MODE=ambiguous`, "could not be resolved" |
+    | `feature/a,b` | split into `feature/a` and `b` (git accepts the ref, the router never delivers it whole) |
+    | `--epic 1462` | `MODE=redirect_epic`, `RESOLVED_SCOPE=1462` |
+
+    `git check-ref-format --branch` rejects space, tab, CR, LF, `0x1F` and
+    `0x7F` in a branch name and accepts `%`, `%25`, non-ASCII and `,`.
 - Report **once** for the whole invocation; do not emit one stop per target.
 - Mirror this rule in:
   - `integrations/cursor-dispatch-profiles.md` (Named stop reporting subsection),
@@ -924,7 +968,7 @@ also invoked by the default run). Each fail fixture must exit non-zero with a
 message naming its clause ID; each pass fixture must exit 0. These are separate
 from, and in addition to, the planted-deletion proofs on real surfaces.
 
-**Fixture manifest (`MANIFEST_COUNT = 140`).** This is the literal, complete
+**Fixture manifest (`MANIFEST_COUNT = 143`).** This is the literal, complete
 list of scanner fixtures: one row per file, exact filename, expected result,
 and the rule or clause covered. It is derived by counting the rows below and
 is stated here **once**; every other mention refers to "the manifest count".
@@ -1026,61 +1070,64 @@ Independent alternatives are separate rows (no row combines alternatives).
 | 83 | `e3c-all-causes-present.fixture.md` | pass | E3c | All three stop actions cause-complete |
 | 84 | `ser-percent-alone.fixture.md` | pass | Serialization | Branch `feature/100%-done` encoded `feature/100%25-done` |
 | 85 | `ser-percent-preexisting.fixture.md` | pass | Serialization | Branch `feature/a%25b` encoded `feature/a%2525b` (no double-encode skip) |
-| 86 | `ser-interior-tab.fixture.md` | pass | Serialization | Interior tab in a development-folder path encoded `%09` (the only reachable carrier) |
-| 87 | `ser-interior-space.fixture.md` | pass | Serialization | Interior space in a development-folder path encoded `%20` |
-| 88 | `ser-interior-newline.fixture.md` | pass | Serialization | Interior newline in a development-folder path encoded `%0A`, output one line |
-| 89 | `ser-interior-cr.fixture.md` | pass | Serialization | Interior CR in a development-folder path encoded `%0D`, output one line |
-| 90 | `ser-control-0x1f.fixture.md` | pass | Serialization | Control character 0x1F in a development-folder path encoded `%1F` |
-| 91 | `ser-control-0x7f.fixture.md` | pass | Serialization | Control character 0x7F in a development-folder path encoded `%7F` |
-| 92 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`, `%0a`) in the example |
-| 93 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
-| 94 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
-| 95 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
-| 96 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
-| 97 | `ser-order-preserved.fixture.md` | pass | Serialization | Router-normalized order preserved (`feature/b,1771,#1462` for that input order) |
-| 98 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted instead of kept in router order |
-| 99 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
-| 100 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
-| 101 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
-| 102 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
-| 103 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `feature/Cursor-Dispatch` rewritten in lowercase |
-| 104 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
-| 105 | `ser-comma-not-in-target.fixture.md` | pass | Serialization | Doc states a comma cannot occur inside an accepted target (router splits on commas) and the `%2C` rule is defensive only |
-| 106 | `ser-comma-target-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example shows a comma inside an accepted target (`feature/x%2Cy`) |
-| 107 | `ser-percent-not-reencoded.fixture.md` | fail: percent-encoding | Serialization | Doc shows `feature/a%25b` emitted unchanged |
-| 108 | `ser-duplicates-deduped-first-kept.fixture.md` | pass | Serialization | Doc example: repeated `#1462` in the input rendered once, first occurrence kept |
-| 109 | `ser-duplicates-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example renders a repeated target (`#1462,...,#1462`) |
-| 110 | `ser-tracker-id-accepted.fixture.md` | fail: router-grammar | Serialization | Doc shows a tracker ID such as `ENG-123` as an accepted target |
-| 111 | `ser-tracker-id-unreachable-stated.fixture.md` | pass | Serialization | Doc states a tracker ID stops at `MODE=ambiguous` before the gate and has no serialization |
-| 112 | `ser-router-grammar-stated.fixture.md` | pass | Serialization | Doc states the router grammar: comma split, trim, drop empties, first-occurrence dedup, and the accepted forms |
-| 113 | `ser-dot-slash-kept.fixture.md` | pass | Serialization | Development-folder path typed `./docs/specs/developments/x` kept with its leading `./` |
-| 114 | `ser-dot-slash-stripped.fixture.md` | fail: verbatim | Serialization | Leading `./` stripped from a development-folder path |
-| 115 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
-| 116 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
-| 117 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
-| 118 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
-| 119 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
-| 120 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
-| 121 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
-| 122 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
-| 123 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
-| 124 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
-| 125 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
-| 126 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
-| 127 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
-| 128 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
-| 129 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
-| 130 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
-| 131 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
-| 132 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
-| 133 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
-| 134 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
-| 135 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
-| 136 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
-| 137 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
-| 138 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
-| 139 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
-| 140 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
+| 86 | `ser-interior-tab.fixture.md` | pass | Serialization | Defensive: interior tab in a development-folder path encoded `%09` |
+| 87 | `ser-interior-space.fixture.md` | pass | Serialization | Defensive: interior space in a development-folder path encoded `%20` |
+| 88 | `ser-newline-unreachable-stated.fixture.md` | pass | Serialization | Doc states a line feed cannot appear inside a target (the router keeps only the first line of an argument) and is never encoded |
+| 89 | `ser-newline-encoded-shown.fixture.md` | fail: router-grammar | Serialization | Doc shows an interior newline encoded `%0A` as a reachable case |
+| 90 | `ser-interior-cr.fixture.md` | pass | Serialization | Defensive: interior CR in a development-folder path encoded `%0D` (the router keeps CR inside the token) |
+| 91 | `ser-control-0x1f.fixture.md` | pass | Serialization | Defensive: control character 0x1F in a development-folder path encoded `%1F` |
+| 92 | `ser-control-0x7f.fixture.md` | pass | Serialization | Defensive: control character 0x7F in a development-folder path encoded `%7F` |
+| 93 | `ser-lowercase-hex.fixture.md` | fail: uppercase-hex | Serialization | Lowercase hex (`%2c`, `%0a`) in the example |
+| 94 | `ser-non-ascii-unchanged.fixture.md` | pass | Serialization | Non-ASCII UTF-8 byte sequence emitted unchanged |
+| 95 | `ser-edge-trim-only.fixture.md` | pass | Serialization | Leading and trailing whitespace trimmed, interior kept and encoded |
+| 96 | `ser-interior-trimmed.fixture.md` | fail: edge-trim-only | Serialization | Interior whitespace trimmed away (over-trim) |
+| 97 | `ser-edge-encoded.fixture.md` | fail: edge-trim-only | Serialization | Edge whitespace encoded instead of trimmed |
+| 98 | `ser-order-preserved.fixture.md` | pass | Serialization | Router-normalized order preserved (`feature/b,1771,#1462` for that input order) |
+| 99 | `ser-order-sorted.fixture.md` | fail: order-preserved | Serialization | Targets sorted instead of kept in router order |
+| 100 | `ser-delimiter-space.fixture.md` | fail: delimiter | Serialization | Delimiter with a space (`a, b`) |
+| 101 | `ser-single-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Single-target form rendered in the doc |
+| 102 | `ser-empty-target-rendered.fixture.md` | fail: unreachable-forms | Serialization | Empty target rendered (`a,,b`) |
+| 103 | `ser-unreachable-stated.fixture.md` | pass | Serialization | Doc states single and empty targets are unreachable |
+| 104 | `ser-case-rewritten.fixture.md` | fail: verbatim | Serialization | `feature/Cursor-Dispatch` rewritten in lowercase |
+| 105 | `ser-slash-rewritten.fixture.md` | fail: verbatim | Serialization | `/` in a branch name rewritten |
+| 106 | `ser-comma-not-in-target.fixture.md` | pass | Serialization | Doc states a comma cannot occur inside an accepted target (router splits on commas) and the `%2C` rule is defensive only |
+| 107 | `ser-comma-target-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example shows a comma inside an accepted target (`feature/x%2Cy`) |
+| 108 | `ser-percent-not-reencoded.fixture.md` | fail: percent-encoding | Serialization | Doc shows `feature/a%25b` emitted unchanged |
+| 109 | `ser-duplicates-deduped-first-kept.fixture.md` | pass | Serialization | Doc example: repeated `#1462` in the input rendered once, first occurrence kept |
+| 110 | `ser-duplicates-rendered.fixture.md` | fail: router-grammar | Serialization | Doc example renders a repeated target (`#1462,...,#1462`) |
+| 111 | `ser-hash-and-bare-distinct.fixture.md` | pass | Serialization | Doc example renders `1462` and `#1462` as two distinct targets, as typed |
+| 112 | `ser-hash-and-bare-deduped.fixture.md` | fail: router-grammar | Serialization | Doc example merges `1462` and `#1462` into one target |
+| 113 | `ser-tracker-id-accepted.fixture.md` | fail: router-grammar | Serialization | Doc shows a tracker ID such as `ENG-123` as an accepted target |
+| 114 | `ser-tracker-id-unreachable-stated.fixture.md` | pass | Serialization | Doc states a tracker ID stops at `MODE=ambiguous` before the gate and has no serialization |
+| 115 | `ser-router-grammar-stated.fixture.md` | pass | Serialization | Doc states the router grammar: comma split, trim, drop empties, first-occurrence dedup, and the accepted forms |
+| 116 | `ser-dot-slash-kept.fixture.md` | pass | Serialization | Development-folder path typed `./docs/specs/developments/x` kept with its leading `./` |
+| 117 | `ser-dot-slash-stripped.fixture.md` | fail: verbatim | Serialization | Leading `./` stripped from a development-folder path |
+| 118 | `clause-all-present.fixture.md` | pass | E1-E5 | All E1-E5 clauses present on a command mirror |
+| 119 | `clause-missing-e1.fixture.md` | fail: E1 | Clause completeness | Exactly clause E1 removed from an otherwise complete mirror |
+| 120 | `clause-missing-e2a.fixture.md` | fail: E2a | Clause completeness | Exactly clause E2a removed from an otherwise complete mirror |
+| 121 | `clause-missing-e2b.fixture.md` | fail: E2b | Clause completeness | Exactly clause E2b removed from an otherwise complete mirror |
+| 122 | `clause-missing-e3a.fixture.md` | fail: E3a | Clause completeness | Exactly clause E3a removed from an otherwise complete mirror |
+| 123 | `clause-missing-e3b.fixture.md` | fail: E3b | Clause completeness | Exactly clause E3b removed from an otherwise complete mirror |
+| 124 | `clause-missing-e3c.fixture.md` | fail: E3c | Clause completeness | Exactly clause E3c removed from an otherwise complete mirror |
+| 125 | `clause-missing-e3d.fixture.md` | fail: E3d | Clause completeness | Exactly clause E3D removed from an otherwise complete mirror |
+| 126 | `clause-missing-e4a.fixture.md` | fail: E4a | Clause completeness | Exactly clause E4a removed from an otherwise complete mirror |
+| 127 | `clause-missing-e4b.fixture.md` | fail: E4b | Clause completeness | Exactly clause E4b removed from an otherwise complete mirror |
+| 128 | `clause-missing-e4c.fixture.md` | fail: E4c | Clause completeness | Exactly clause E4c removed from an otherwise complete mirror |
+| 129 | `clause-missing-e5.fixture.md` | fail: E5 | Clause completeness | Exactly clause E5 removed from an otherwise complete mirror |
+| 130 | `r1-utf8-bom.fixture.md` | pass | R1 | UTF-8 file with a BOM before the token |
+| 131 | `r1-utf8-multibyte.fixture.md` | pass | R1 | Multibyte characters around the token |
+| 132 | `r1-invalid-utf8.fixture.md` | fail: R1 | R1 | File that is not valid UTF-8 |
+| 133 | `r3-whitespace-collapse.fixture.md` | pass | R3 | Tabs and repeated spaces inside a required phrase |
+| 134 | `r4-prefix-identifier.fixture.md` | fail: R4 | R4 | Identifier preceded by an identifier character (`xdispatch_handoff_unavailable`) |
+| 135 | `construct-list-item.fixture.md` | pass | R2c | Clause in a list item |
+| 136 | `construct-heading.fixture.md` | pass | R2c | Clause in a heading |
+| 137 | `construct-link-text.fixture.md` | pass | R2c | Clause in link text |
+| 138 | `construct-inline-html-text.fixture.md` | pass | R2c | Token in inline HTML tag text (`<em>...</em>`) |
+| 139 | `construct-autolink.fixture.md` | fail: R2c | R2c | Token only in an autolink |
+| 140 | `construct-code-html-block.fixture.md` | fail: R2c | R2c | Token only in a `<code>` HTML block |
+| 141 | `construct-entity-not-decoded.fixture.md` | fail: R2c, R4 | R2c | HTML entity for an underscore in a stop name (entities not decoded) |
+| 142 | `sim-path-applicability-not-asserted.fixture.md` | pass | Simulation | N/A scenario/path pair is not asserted |
+| 143 | `sim-path-applicability-asserted-na.fixture.md` | fail: applicability | Simulation | N/A scenario/path pair is asserted |
 
 **Coverage completeness map.** Every enumerated contract list has a fixture or
 proof. The self-test asserts that the on-disk fixture set **equals the
@@ -1097,7 +1144,7 @@ manifest row matches at least one prefix family.
 | Enumerated list | Covered by |
 | --- | --- |
 | Mirror contract E1, E2a, E2b, E3a-E3d, E4a-E4c, E5 | `clause-*` and `e3c-*` fixtures plus proof cycles 3-11 and 12-14 |
-| Serialization rules (router grammar and normalization, verbatim tokens, delimiter, comma unreachable, percent-first, whitespace and control encoding, uppercase hex, non-ASCII, router dedup, order, one line, single/empty unreachable, tracker ID not accepted) | `ser-*` and `serialization-*` fixtures |
+| Serialization rules (router grammar and normalization, verbatim tokens, delimiter, comma unreachable, percent-first, defensive whitespace and control encoding, line feed unreachable, uppercase hex, non-ASCII, router dedup, order, one line, single/empty unreachable, tracker ID not accepted) | `ser-*` and `serialization-*` fixtures |
 | Scanner rules R1, R2, R2b, R2c, R3, R4, R5 | `r1-*`, `fence-*`, `indented-code-*`, `construct-*`, `boundary-*`, `lookalike-*`, `multi-*`, `nested-*`, `overlap-*`, `r3-*`, `r4-*`, `table-*`, `comment-*` fixtures (table row is the single R3 block boundary) |
 | Spec matrix rows R1-R18 and scenarios S1-S19 (21 scenarios incl. S10b subcase) | assertions C1-C4 (row count against the spec, row-to-scenario mapping), proof cycle 16 (one mutation per scenario plus C1-C4 cycles), `sim-*` fixtures |
 | Surface classes | `class-*` fixtures and proof cycles 12-14 |
@@ -1131,11 +1178,17 @@ fixture is removed, renamed, or added without a manifest row.
 5. Smoke runbook walks Native handoff desktop, Parent orchestrated Remote
    Control, Inline fallback, and read-only scan paths (AC6, AC17); Step 8 (a
    real Remote Control `/run-item` to a terminal state) is **required live
-   evidence** for the AC17 behavioral guarantee (NOT RUN blocks sign-off), while
-   Steps 12-14 require current-head evidence that the `simulate_bounded_paths`
-   result validates the **decision matrix** for `/run-item`, `/run-items`, and
-   `/run-epic` (AC9, AC10, AC14, AC17); the simulation is mandatory but never
-   substitutes for Step 8, and further live runs are optional and supplementary.
+   evidence** for `/run-item`, and Step 13 Part B (`/run-items`, terminal
+   condition = the completed one-at-a-time run or a named stop) and Step 14 Part
+   B (`/run-epic --epic <E>`, terminal condition = a `continuation` outcome of
+   `complete` or `needs_resolution` with its named stop, or a named stop) are
+   required live Remote Control evidence for the other two bounded commands
+   (AC17 behavioral guarantee; NOT RUN blocks sign-off). Steps 12, 13 Part A and
+   14 Part A additionally require current-head evidence that the
+   `simulate_bounded_paths` result validates the **decision matrix** for
+   `/run-item`, `/run-items`, and `/run-epic` (AC9, AC10, AC14, AC17); the
+   simulation is mandatory but never substitutes for the live parts, and the
+   live parts never substitute for it.
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
    `SUBAGENT_PERMISSION_DENIAL` is worded as observably similar only (Work Item
@@ -1281,7 +1334,7 @@ Not applicable — no runtime data.
 | Evidence currency | Pass | Verification Log re-run `2026-09-20` at verified head `b6d84dbd`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass; the `develop` ancestry check is recorded as failing now and deferred to implementation start |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
-| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control Step 8 (AC17 behavior) + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
+| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control evidence for `/run-item`, `/run-items` and `/run-epic` (Steps 8, 13B, 14B; AC17 behavior) + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
 | CI wiring | Pass (design; execution deferred) | `# covers:` header for every protected surface, selector planted check (unselected-when-removed for non-fixtures paths; a fixtures change is a full-run trigger, checked positively only) and `--report-gaps`, per-suite time cap, no path filter change; see Testing Strategy |
 | Shell-script lint | Pass (design; execution deferred) | New `.sh` verified by `bash -n`, `shellcheck --severity=warning`, and `workflow-shell-guard-lint.py --base-ref origin/develop` per REVIEW.md; Implementation Order step 9 |
@@ -1348,12 +1401,14 @@ Not applicable — no runtime data.
    (`--print-map`, per-surface `--changed-files` planted check,
    `--report-gaps`, `test-select-test-suites.sh`), then run the surface guard, run
    the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
-   10-14 must PASS at the implementation head, and **Step 8 (real Remote
-   Control `/run-item` to a terminal state) must PASS live** with current-head
-   evidence (NOT RUN blocks sign-off); Steps 12-14 require the mandatory
-   `simulate_bounded_paths` result (it validates the decision matrix, not the
-   live behavior); only optional live Steps 7 and 9 may be documented NOT RUN,
-   per the runbook's Pass criteria.
+   10-14 must PASS at the implementation head, with **live Remote Control
+   evidence for all three bounded commands** (Step 8 `/run-item`, Step 13 Part B
+   `/run-items`, Step 14 Part B `/run-epic`, each to a terminal condition or
+   named stop with no human rescue; NOT RUN blocks sign-off); Steps 12, 13 Part
+   A and 14 Part A require the mandatory `simulate_bounded_paths` result (it
+   validates the decision matrix, not the live behavior); only optional live
+   Steps 7 and 9 and Step 13 Part C may be documented NOT RUN, per the
+   runbook's Pass criteria.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
 11. **Planted-violation proofs** — run every fail/pass cycle (link, profile

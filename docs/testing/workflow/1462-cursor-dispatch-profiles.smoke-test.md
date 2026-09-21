@@ -101,14 +101,15 @@
 
 **Expected result**: Declaration visible; orchestration handed off when subagents work.
 
-### Step 8: Parent orchestrated Remote Control path (live, REQUIRED at sign-off)
+### Step 8: Parent orchestrated Remote Control `/run-item` (live, REQUIRED at sign-off)
 
 **Maps to**: AC6, AC17, Use Case 3
 
-This is the **one live step that is required**: it exercises the behavioral
-guarantee of AC17 (an operator in a constrained environment runs a bounded
-command to a terminal condition without human rescue) that the decision-matrix
-simulation in Steps 12-14 cannot exercise. It must run in a **real Cursor Remote
+This is the **required live step for `/run-item`** (Step 13 Part B and Step 14
+Part B are the required live steps for `/run-items` and `/run-epic`): it
+exercises the behavioral guarantee of AC17 (an operator in a constrained
+environment runs a bounded command to a terminal condition without human
+rescue) that the decision-matrix simulation in Steps 12-14 cannot exercise. It must run in a **real Cursor Remote
 Control session**, not a simulated one, on the **implementation PR head**.
 
 1. Record the head SHA under test (`git rev-parse HEAD`) and the environment
@@ -174,15 +175,20 @@ Control session**, not a simulated one, on the **implementation PR head**.
 
 ---
 
-> **Steps 12-14 rule**: the executable `simulate_bounded_paths` result is
-> **mandatory** for each bounded path; a live run is optional and
-> supplementary and never substitutes for it (a live run cannot exercise the
-> recovery, mismatch, or unconfirmed-handoff rows).
+> **Steps 12-14 rule**: two independent kinds of evidence are **both mandatory**
+> for the three bounded commands at implementation sign-off.
 >
-> The simulation validates the **decision matrix**; Step 8 (live, required)
-> validates the **behavioral guarantee** that a constrained-environment run
-> reaches a terminal state without human rescue. Neither substitutes for the
-> other.
+> - **Simulation** (`simulate_bounded_paths`, Steps 12, 13 Part A, 14 Part A):
+>   validates the **decision matrix** (every row, both mismatch directions,
+>   recovery, unconfirmed handoff). It does not execute the command flows.
+> - **Live Cursor Remote Control execution** (Step 8 for `/run-item`, Step 13
+>   Part B for `/run-items`, Step 14 Part B for `/run-epic`): validates the
+>   **behavioral guarantee** (AC17) that an operator in a constrained
+>   environment runs each bounded command to a terminal condition without human
+>   rescue. It cannot exercise the recovery, mismatch, or unconfirmed-handoff
+>   rows.
+>
+> Neither substitutes for the other, and NOT RUN blocks sign-off for either.
 
 ### Step 12: `/run-item` terminal behavior at current head
 
@@ -196,60 +202,86 @@ Control session**, not a simulated one, on the **implementation PR head**.
    S11-S19), including unconfirmed initial/onward handoff, profile/fact
    mismatch in both directions, mid-run recovery, and reachable-stage
    credential denial.
-3. **Optional, supplementary**: run `/run-item <N>` live in a constrained (or
-   simulated no-handoff) environment on the sample doc-only item and record the
-   declaration block emitted and the terminal outcome (proceeds,
-   `dispatch_handoff_unavailable`, or `dispatch_profile_declaration_missing`).
-   A live run never replaces step 2.
+3. The live `/run-item` evidence is Step 8 (required, real Remote Control).
+   Step 12 covers the simulation only; it never replaces Step 8.
 
-**Expected result**: The simulation passes every scenario for this path; any live run's terminal outcome matches the canonical decision-gate row for the declared profile; evidence names the head SHA.
+**Expected result**: The simulation passes every `/run-item` scenario; evidence names the head SHA.
 
 ### Step 13: `/run-items` explicit-list terminal behavior at current head
 
 **Maps to**: AC9, AC10, AC14, AC17
 
 1. Record the current head SHA.
-2. Pick two real, open, non-epic issue numbers `<N1> <N2>` (Test Data) and run
+2. Pick two real, open, non-epic issue numbers `<N1> <N2>` (Test Data; doc-only
+   items are safest) and run
    `./scripts/development-workflow/run-work-router.sh <N1> <N2>`; proceed only
    on `MODE=redirect_items`. (Any other MODE, including `ambiguous`, stops
    before the declaration gate; pick different targets.)
-3. **Mandatory**: run the `simulate_bounded_paths` branch for **every**
-   `/run-items` scenario marked Y in the plan's scenario table (same set as
-   `/run-item`, with pre-branch stops asserting the single invocation-level
-   affected-item string over router-accepted target forms (numbers with and
-   without `#`, a workflow-prefixed branch, a development-folder path); tracker
-   IDs and comma-containing targets are documented-unreachable cases, not
-   accepted forms).
-4. **Optional, supplementary**: run `/run-items <N1> <N2>` live in a throwaway
-   clone with the dispatch profile declaration deliberately withheld. A live run
-   never replaces step 3.
-5. In the simulation (and in the live run if performed) confirm exactly **one** `dispatch_profile_declaration_missing` stop is
-   reported for the whole invocation with affected item
-   `explicit_list_invocation_targets=<N1>,<N2>` (targets as they appear in the
-   router's normalized list: comma-split, trimmed, deduplicated, in order, no
-   `#` rewriting), before any branch or artifact is created.
 
-**Expected result**: The simulation passes every scenario for this path; the single invocation-level stop carries the ordered target string; no per-target stops; no mutation.
+**Part A (mandatory, simulation)**: run the `simulate_bounded_paths` branch for
+**every** `/run-items` scenario marked Y in the plan's scenario table (same set
+as `/run-item`, with pre-branch stops asserting the single invocation-level
+affected-item string over router-accepted target forms: numbers with and
+without `#`, a workflow-prefixed branch, a development-folder path; tracker IDs
+and comma-containing targets are documented-unreachable cases, not accepted
+forms). Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
+reported for the whole invocation with affected item
+`explicit_list_invocation_targets=<N1>,<N2>` (targets as they appear in the
+router's normalized list: comma-split, trimmed, deduplicated, in order, no `#`
+rewriting), before any branch or artifact is created.
+
+**Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
+session** on the implementation PR head, run `/run-items <N1> <N2>` with a valid
+Parent orchestrated declaration (the portfolio layer is absorbed and Protocol 90
+Step 4's one-at-a-time fallback applies), and do not intervene mid-run
+(answering the bounded prelude's policy confirmation up front is allowed).
+Record the environment, the declaration block, and the terminal state. The
+terminal condition is, precisely: **either** the completed one-at-a-time run,
+meaning every listed item has reached a real terminal condition (waiting on
+human review or merge, blocked dependency, or escalation) in sequence, **or** a
+named stop from the decision matrix reported with the affected work item. A run
+that needed a human rescue mid-orchestration is a FAIL.
+
+**Part C (optional)**: run `/run-items <N1> <N2>` in a throwaway clone with the
+declaration deliberately withheld and confirm the single invocation-level
+`dispatch_profile_declaration_missing` stop.
+
+**Expected result**: The simulation passes every scenario for this path (Part
+A), and the live Remote Control run reaches the completed one-at-a-time run or a
+named stop with no human rescue (Part B); evidence names the head SHA and the
+Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
 
 ### Step 14: `/run-epic` terminal behavior at current head
 
 **Maps to**: AC9, AC10, AC17
 
 1. Record the current head SHA.
-2. With a real open epic `<E>` (Test Data) and
-   `./scripts/development-workflow/run-work-router.sh --epic <E>` returning
-   `MODE=redirect_epic`, **mandatory**: run the `simulate_bounded_paths` branch
-   for **every** `/run-epic` scenario marked Y in the plan's scenario table
-   (S1, S3, S5, S7-S10, S10b, S11-S19). **Optional, supplementary**: also run
-   `/run-epic --epic <E>` live under a Parent orchestrated declaration
-   (`--items` is internal-only and is not a user-facing option per Protocol
-   95). A live run never replaces the simulation.
-3. Confirm the epic layer is declared absorbed, stage work is delegated with
-   handoff metadata, and an invalid or missing declaration stops with
-   `dispatch_profile_declaration_missing` (affected work item per
-   `guardrails-enforcement.md` section 4).
+2. With a real open epic `<E>` (Test Data; one whose sub-issues are doc-only is
+   safest) confirm `./scripts/development-workflow/run-work-router.sh --epic <E>`
+   returns `MODE=redirect_epic`. (`--items` is internal-only and is not a
+   user-facing option per Protocol 95.)
 
-**Expected result**: The simulation passes every scenario for this path; any live run's terminal condition or named stop matches the canonical doc; evidence names the head SHA.
+**Part A (mandatory, simulation)**: run the `simulate_bounded_paths` branch for
+**every** `/run-epic` scenario marked Y in the plan's scenario table (S1, S3, S5,
+S7-S10, S10b, S11-S19), confirming the epic layer is declared absorbed, stage
+work is delegated with handoff metadata, and an invalid or missing declaration
+stops with `dispatch_profile_declaration_missing` (affected work item per
+`guardrails-enforcement.md` section 4).
+
+**Part B (mandatory, live Cursor Remote Control)**: in a **real Remote Control
+session** on the implementation PR head, run `/run-epic --epic <E>` under a
+valid Parent orchestrated declaration and do not intervene mid-run. Record the
+environment, the declaration block, and the terminal state. The terminal
+condition is, precisely: the epic resolver's `continuation` outcome, either
+`complete`, or `needs_resolution` with its named `stopCondition` and
+`humanAction`, **or** a named stop from the decision matrix reported with the
+affected work item; a run that stalled or needed a human rescue
+mid-orchestration is a FAIL.
+
+**Expected result**: The simulation passes every scenario for this path (Part
+A), and the live Remote Control run reaches a `continuation` terminal outcome or
+a named stop with no human rescue (Part B); evidence names the head SHA and the
+Remote Control environment. NOT RUN is not acceptable for Part A or Part B.
 
 ---
 
@@ -257,27 +289,26 @@ Control session**, not a simulated one, on the **implementation PR head**.
 
 - Steps 1-6 and 10-11 must **PASS** (documentation and automated assertions; no
   live Cursor environment required).
-- Steps 12, 13, and 14 must each **PASS** with recorded evidence naming the head
-  SHA under test. The executable `simulate_bounded_paths` result covering
-  **every** scenario the plan's table marks Y for that path (`/run-item`,
-  `/run-items`, `/run-epic`) is **mandatory** for each step. A live
-  constrained-environment run is **optional and supplementary**: it cannot
-  exercise the recovery, mismatch, and unconfirmed-handoff rows, so it never
-  substitutes for the simulation. **NOT RUN is not acceptable** for these three
-  steps, and a step with only a live run and no simulation result is a FAIL.
-- **Step 8 (live Remote Control `/run-item` to a terminal state) must PASS**
-  with current-head evidence at implementation sign-off. It is the required
-  behavioral check for AC17, and **NOT RUN is not acceptable for it**: if a real
-  Remote Control session is unavailable, sign-off is blocked rather than waived.
-  The simulation never substitutes for it, and Steps 12-14 never substitute for
-  it.
-- Steps 12-14 (`simulate_bounded_paths`) validate the **decision matrix** (every
-  row, both mismatch directions, recovery, unconfirmed handoff) for each bounded
-  path. They do not execute the command flows, so a passing simulation alone
-  leaves the AC17 behavioral guarantee unproved. Live `/run-items` and
-  `/run-epic` executions remain optional and supplementary.
-- Manual live Steps 7 (Desktop) and 9 (inline fallback / Cloud Agents) are
-  optional and may be documented **NOT RUN** with a reason, provided Step 8 and
-  Steps 12-14 passed at the same head SHA.
+- **Live Cursor Remote Control evidence is required for all three bounded
+  commands** at implementation sign-off, each on the implementation PR head in a
+  **real** Remote Control session with no human rescue mid-orchestration:
+  Step 8 (`/run-item`), Step 13 Part B (`/run-items`, terminal condition = the
+  completed one-at-a-time run or a named stop), and Step 14 Part B
+  (`/run-epic --epic <E>`, terminal condition = a `continuation` outcome of
+  `complete`, or `needs_resolution` with its named `stopCondition` and
+  `humanAction`, or a named stop). **NOT RUN is not acceptable** for any of the
+  three: if a real Remote Control session is unavailable, sign-off is blocked
+  rather than waived. A live run that needed a human rescue is a FAIL.
+- **The simulation is also mandatory**: Step 12, Step 13 Part A and Step 14 Part
+  A (`simulate_bounded_paths`, every scenario the plan's table marks Y for the
+  path) validate the **decision matrix** (every row, both mismatch directions,
+  recovery, unconfirmed handoff). They do not execute the command flows, so a
+  passing simulation alone leaves the AC17 behavioral guarantee unproved, and
+  live runs alone cannot exercise the recovery, mismatch, and
+  unconfirmed-handoff rows. Neither substitutes for the other.
+- Manual live Steps 7 (Desktop) and 9 (inline fallback / Cloud Agents) and
+  Step 13 Part C are optional and may be documented **NOT RUN** with a reason,
+  provided the required live evidence above and all simulation parts passed at
+  the same head SHA.
 - Evidence recorded against an older head than the one being merged is stale and
   must be re-run.
