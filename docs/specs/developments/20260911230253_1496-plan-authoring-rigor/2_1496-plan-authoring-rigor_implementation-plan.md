@@ -36,7 +36,7 @@ file as authoritative for day-to-day plan work.
 
 **Estimated complexity**: L
 
-**Rationale**: Six rules with a large gate matrix, five mirror surfaces, and
+**Rationale**: Six rules with a large gate matrix, seven mirror surfaces, and
 cross-cutting updates to protocols, `REVIEW.md`, four agent files, one Codex
 skill, a template, and a mirror-consistency test harness. No runtime code, but
 documentation must stay internally consistent or downstream adopters inherit
@@ -58,7 +58,7 @@ silently ships drift.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `6c84855e` — every row below re-run at this plan-branch revision (base `origin/develop` tip: `f1d5021a`), including the `# covers:` / harness-assertion paths, which name `docs/workflow/development-workflow/templates/implementation-plan-template.md`. **Currency obligation (Group H):** this SHA and the PR body's Document Quality Gate record must both name the PR head before `ready-for-human-review`. The head commit that follows `6c84855e` only adds the Codex-alias row and label assertions and changes no verified claim; later commits that touch only this record or plan prose leave every verified claim unchanged; re-verify and refresh the record if any later commit touches a verified claim |
+| Repo revision | `git rev-parse --short HEAD` | `6c84855e` — the revision at which every row below was gathered (base `origin/develop` tip: `f1d5021a`); the later plan-branch commits only add rows or edit plan prose and change no gathered result. This is the **evidence-gathered** revision (spec Rule 3/4: evidence names the revision it was gathered at). The plan revision that must equal the PR head is recorded in the PR body's per-rule outcome record, which is not part of the branch and so can name the head without changing it; that record is re-determined against the head before `ready-for-human-review`. Re-gather any row whose claim a later commit changes |
 | Template path | `test -f docs/workflow/development-workflow/templates/implementation-plan-template.md`; `test ! -f docs/workflow/development-workflow/implementation-plan-template.md` | exit `0` for both — the `templates/` path is the only real path; every plan reference uses it |
 | Codex skill alias | `test -L .agents/skills/workflow-plan-writer && readlink .agents/skills/workflow-plan-writer` | `../../.codex/skills/workflow-plan-writer` — symlink; the `.codex` edit is the only source edit |
 | Spec merged | `test -f docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | present on branch |
