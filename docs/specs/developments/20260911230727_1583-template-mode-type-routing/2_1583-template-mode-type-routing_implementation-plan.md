@@ -87,8 +87,11 @@ scope and must not be bundled into this implementation PR.
 ### Enforcement point 1 — backlog creation refusal
 
 - [ ] In `scripts/development-workflow/add-backlog-item.sh`, after argument parsing and
-  **before** `gh issue create`, when `--type Workflow` (case-normalize like tracker updates)
-  and `workflow_template_is_template` is `true`: print a single actionable stderr message
+  **before** `gh issue create`, when `--type` is exactly `Workflow` (**exact, case-sensitive
+  comparison** — no new normalization: `update_tracker_type_best_effort` looks the option up
+  exactly, so a variant such as `workflow` is not refused here and keeps today's behavior;
+  a named test `framework-creation-type-exact-match` asserts `Workflow` is refused and
+  `workflow` is not newly rejected) and `workflow_template_is_template` is `true`: print a single actionable stderr message
   naming Workflow as invalid and Feature/Bug/Refactor as valid; exit `1`; create nothing
   (AC: Creating an item in framework mode).
 - [ ] Mirror the same rule in the Linear `create` handoff path: when type would be Workflow
