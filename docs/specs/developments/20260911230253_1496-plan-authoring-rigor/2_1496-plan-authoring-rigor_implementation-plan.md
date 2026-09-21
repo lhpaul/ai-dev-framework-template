@@ -61,6 +61,7 @@ silently ships drift.
 | Repo revision | `git rev-parse --short HEAD` | `6c84855e` — the revision at which every row below was gathered (base `origin/develop` tip: `f1d5021a`); the later plan-branch commits only add rows or edit plan prose and change no gathered result. This is the **evidence-gathered** revision (spec Rule 3/4: evidence names the revision it was gathered at). The plan revision that must equal the PR head is recorded in the PR body's per-rule outcome record, which is not part of the branch and so can name the head without changing it; that record is re-determined against the head before `ready-for-human-review`. Re-gather any row whose claim a later commit changes |
 | Template path | `test -f docs/workflow/development-workflow/templates/implementation-plan-template.md`; `test ! -f docs/workflow/development-workflow/implementation-plan-template.md` | exit `0` for both — the `templates/` path is the only real path; every plan reference uses it |
 | Codex skill alias | `test -L .agents/skills/workflow-plan-writer && readlink .agents/skills/workflow-plan-writer` | `../../.codex/skills/workflow-plan-writer` — symlink; the `.codex` edit is the only source edit |
+| Codex reviewer skill | `test -f .codex/skills/workflow-plan-reviewer/SKILL.md && test -L .agents/skills/workflow-plan-reviewer && grep -n '02-review-implementation-plan-protocol' .codex/skills/workflow-plan-reviewer/SKILL.md` | present; symlink; line `11` reads the Protocol 02 review file — no-edit disposition |
 | Spec merged | `test -f docs/specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md` | present on branch |
 | Protocol 02 review target | `test -f docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md` | Present — verified 2026-09-20. Named in Layer-by-Layer, Files to modify, and Implementation Order step 5 |
 | Protocol 02 authoring target | `test -f docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Present — verified 2026-09-20 |
@@ -310,6 +311,7 @@ Verification Log re-run) plus spec mirror table:
 | `.cursor/agents/tech-lead.md` | Author routing |
 | `.claude/agents/implementation-plan-reviewer.md` | Reviewer routing |
 | `.cursor/agents/implementation-plan-reviewer.md` | Reviewer routing |
+| `.codex/skills/workflow-plan-reviewer/SKILL.md` (also `.agents/skills/workflow-plan-reviewer/SKILL.md`, a symlink) | **No edit** — it only routes to Protocol 02 review, which is edited; harness asserts Protocol 02 review directly |
 | `.codex/skills/workflow-plan-writer/SKILL.md` (also served as `.agents/skills/workflow-plan-writer/SKILL.md`, a symlink to it — one edit covers both) | Author routing |
 | `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh` | **Create** — mirror consistency harness |
 | `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/` | **Create** — parser-risk fixture snippets (parser-risk addendum + Implementation Order step 7) |
@@ -355,20 +357,21 @@ runbook.
 3. Negative: remove one rule from outcome record table in a test PR — reviewer
    checklist treats as blocking (Group H).
 
-**Mandatory smoke-matrix rows per acceptance group** (desk-check before
-implementation complete — at least these; prefer all matrix rows when time
-allows):
+**Required smoke-matrix rows** — every row of the smoke runbook's acceptance
+traceability matrix is required and must be executed and recorded before
+implementation is complete (one completion requirement, matching the runbook).
+The index below groups the IDs by acceptance group:
 
-| Spec group | Mandatory matrix IDs |
+| Spec group | Required matrix IDs |
 | --- | --- |
 | A (wiring + no-spec inheritance) | Scenarios 1–2; confirm Protocol 02 applies to Refactor/no-spec plans |
-| B | B1 and B3 |
-| C | C1 and C2 |
-| D | D1 |
-| E | E1 |
-| F | F1 |
+| B | B1, B2, B3, B4, B5, B6, B7, B8, B9, B10 |
+| C | C1, C2 |
+| D | D1, D2 |
+| E | E1, E2, E3 |
+| F | F1, F2, F3, F4 |
 | G | G1 |
-| H | H1 and H3 |
+| H | H1, H2, H3, H4, H5 |
 
 **Regression suite**: Not applicable as a deliberate testing-scope decision —
 this feature changes only workflow docs, agent files, and a shell harness. The

@@ -111,10 +111,10 @@ names an acceptance theme, the exercise, and the expected gate class.
 | B7 | Rule 1 — restricted and short-retention | Source is both deletable and access-restricted | Blocking unless both handling requirements are met |
 | B8 | Rule 1 — heterogeneous sample adequacy | Sample drawn from one producer variant only | Blocking — adequacy rationale missing |
 | B9 | Rule 1 — curated examples | Occurrences are hand-picked examples | Blocking — not a sample of the population |
-| D3 | Rule 3 — closed-population enumeration | Closed set counted without listing members | Blocking — enumeration missing |
+| B10 | Rule 1 — closed-population enumeration | Closed set claimed as escape hatch without listing members | Blocking — enumeration record missing |
 | E3 | Rule 4 — completeness claim | "All X verified" with no search scope | Blocking — completeness unsupported |
 | F3 | Rule 5 — search scope | Consumer enumeration omits searched scope | Blocking — scope not recorded |
-| F4 | Rule 5 — untouched consumer | Consumer left unchanged with no reason | Blocking — untouched consumer unexplained |
+| F4 | Rule 5 — untouched consumer | Untouched consumer omitted, or listed without its post-change outcome | Blocking — consumer or outcome missing |
 | H4 | Outcome record — malformed | Record names a nonexistent commit | Blocking — revision does not resolve |
 | H5 | Outcome record — label reassessed | Round re-reads recorded finding, label not reassessed | Blocking — label stale |
 
