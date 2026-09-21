@@ -40,24 +40,32 @@ in the same implementation PR so they no longer assert an unresolved gap.
 
 ## Verification Log
 
-Re-run `2026-09-20` against pre-log head **`07de1a18`**. A log committed inside
-the same commit cannot name its own SHA, so the evidence cites the parent
-(pre-log) head that the checks actually ran against; the commit carrying this
-log is its child and changes only plan and smoke-runbook prose. Patterns are
-extended-regex alternation (`grep -E 'a|b'`); the recorded results were
-produced with `grep -rlE` because the local `rg` is shadowed.
+Re-run `2026-09-20` against verified head **`3eab19a0`** (the plan content
+commit; full SHA `3eab19a012de1eaeaaf50b3884157814a4353f6c`). The commit that
+carries this log is the **child** of `3eab19a0` and changes **only** this
+Verification Log and the Document Quality Gate lines that cite it; no plan
+content, checklist, or smoke-runbook text changed in the child. Patterns are
+extended-regex alternation (`grep -E 'a|b'`); results were produced with
+`grep -rlE` because the local `rg` is shadowed. Checks that need the
+implementation are marked **Deferred to implementation**, not Pass.
 
-| Check | Command / query | Result |
+| Check | Command / query | Result at `3eab19a0` |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `07de1a18` (pre-log head; earlier runs recorded `bb80c6ff`, `6be6ad46`, `32605700`). `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` is **not** satisfied now and remains an implementation-start check (rebase or merge `develop` before implementing) |
-| Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` (re-run `2026-09-20`) |
-| Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (unchanged at `07de1a18`) |
-| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits, re-run 2026-09-20 at `07de1a18` (`grep -rl`): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). Literal extras vs the **15** Files-to-modify mirrors: the four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
-| Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present (re-run `2026-09-20`) |
-| Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` (re-run `2026-09-20`) |
-| Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` (re-run `2026-09-20`) — batch-context marker enforcement; out of scope here |
-| Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` (re-run `2026-09-20`) — stage-role harness permission denial; out of scope here |
-| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches at `07de1a18` (expected until implementation; `grep -E` count `0`) |
+| Repo revision | `git rev-parse --short HEAD` | `3eab19a0`. `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` returns **not ancestor**: **Fail now, deferred to implementation start** (rebase or merge `develop` first) |
+| Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` (Pass) |
+| Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Pass) |
+| Bounded command adapters | `grep -rl 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits (Pass): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). The four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
+| Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present (Pass) |
+| Files-to-modify paths | Each `Path` cell in Files to modify checked with `[ -e path ]` | 31 existing paths present; the 4 **Create** entries (canonical doc, surface guard, fixtures directory, changelog fragment) are absent as expected (Pass) |
+| Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` (Pass) |
+| Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` — batch-context marker enforcement; out of scope here (Pass) |
+| Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` — stage-role harness permission denial; out of scope here (Pass) |
+| Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
+| Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
+| Surface guard (link, profile string, E1-E5 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
+| Scanner fixtures + `--self-test` (Parser-Risk cases, fence semantics) | `... --self-test` | **Deferred to implementation** |
+| Planted-violation proofs (all cycles) | see Layer-by-Layer Changes → Workflow tooling | **Deferred to implementation** |
+| `simulate_bounded_paths`; smoke Steps 7-14 | smoke runbook | **Deferred to implementation** (needs the implementation head) |
 
 ---
 
@@ -735,10 +743,10 @@ Not applicable — no runtime data.
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| Evidence currency | Pass | Verification Log re-run `2026-09-20` against pre-log head `07de1a18`; the log commit is its child; only plan prose changed; the one non-passing check (`develop` ancestry) is recorded, not hidden |
+| Evidence currency | Pass | Verification Log re-run `2026-09-20` at verified head `3eab19a0`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass; the `develop` ancestry check is recorded as failing now and deferred to implementation start |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
-| Verification support | Pass | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
+| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
 | Parser-risk addendum | Pass | Surface guard is a structured-Markdown scanner; boundary, lookalike, multiple-occurrence and nested/overlap cases each mapped to a fixture and self-test (see Parser-Risk Addendum) |
 | Concurrent-event-source addendum | N/A | No concurrent event handlers |
