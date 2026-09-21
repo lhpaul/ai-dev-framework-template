@@ -204,6 +204,19 @@ records only concrete names and surfaces deferred to the plan:
       contract as checkpoint-status and security-advisory marker comments. Smoke
       test step 3 verifies the algorithm is documented; no new script is
       required for MVP unless implementation extracts a shared helper.
+- [ ] **Scope reconciliation (spec Out of Scope item 7)**: this is not a routing
+      change. The approved spec requires, as an acceptance criterion, that the
+      report be "readable on that pull request after the run ends" where a PR
+      exists (Escalation report definition and the durability acceptance
+      criterion), while stating it adds no new destination for runs with no PR
+      and changes no notification or answer-recording path. Protocol 91 has no
+      architecture-stop PR comment today, so the plan satisfies that criterion
+      by reusing the *existing* PR-comment mechanism (`gh pr comment` /
+      marker upsert, as Step 7a summaries and checkpoint markers already do)
+      with the same report content already attached to the run summary. The
+      implementation states this reuse in the Protocol 91 text; if review
+      concludes the criterion cannot be met without a new route, that is a spec
+      question for the human, not something the implementation decides.
 - [ ] Document the "analysis shows no genuinely open axis" continuation path:
   does **not** stop under `architecture_decision` when the spec matrix says the
   trigger was not met — without weakening baseline stops.
