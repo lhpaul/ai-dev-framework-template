@@ -78,6 +78,10 @@ records each action; an agent must not create or delete repositories.
      repository default `True` is gone), so delegated merge is impossible in
      the sandbox.
 5. Confirm the three router checks in the table above return the stated MODEs.
+6. **Real-repository baseline** (in the real checkout, before any live step):
+   record `T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)` and
+   `git ls-remote --heads origin | sort > real-heads-before.txt` (outside the
+   repository tree, for example in a temp directory).
 
 **Live invocations and the no-merge policy.** Every live invocation selects a
 no-merge policy explicitly, in addition to S's config:
@@ -139,11 +143,19 @@ sign-off)**
    records in the sandbox clone; otherwise delete the whole sandbox repository,
    which removes all of these (requires the operator's own `delete_repo`
    authorization).
-5. Verify the **real repository is untouched**: no new branch, pull request,
-   issue or comment referencing `SANDBOX-1462`
-   (`gh pr list --search "SANDBOX-1462" --state all` and
-   `gh issue list --search "SANDBOX-1462" --state all` in the real repository
-   return nothing), `git status` is clean in the real checkout, and the
+5. Verify the **real repository is untouched**, using the baseline from
+   provisioning step 6 (a `SANDBOX-1462` text search is **not** used: the
+   feature's own plan pull request legitimately contains that text):
+   `git ls-remote --heads origin | sort | diff - real-heads-before.txt` prints
+   nothing (no branch added or removed); in the real repository
+   `gh pr list --state all --author "@me" --search "created:>=$T0"` and
+   `gh issue list --state all --author "@me" --search "created:>=$T0"` print no
+   rows (the operator's account created nothing in the real repository during
+   the sign-off window; unrelated rows by others are ignored, and any row by
+   the operator must be explained in the evidence);
+   `gh pr list --state all --search "SANDBOX-1462 in:title"` and
+   `gh issue list --state all --search "SANDBOX-1462 in:title"` print nothing
+   (no sandbox-titled item leaked); `git status` is clean in the real checkout; and the
    sandbox config commit S is unknown to the real repository: in the real
    checkout `git fetch origin`, then `git cat-file -e S^{commit}` must **fail**
    (`Not a valid object name`, exit `128`) and
