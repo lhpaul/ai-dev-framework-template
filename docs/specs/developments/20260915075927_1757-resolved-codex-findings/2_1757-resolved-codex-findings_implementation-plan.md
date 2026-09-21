@@ -133,7 +133,7 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 | Dismissed review | REST reviews | `state: DISMISSED` excluded from terminal evidence selection |
 | Root comment terminal evidence | REST issue comments | `Reviewed commit` marker, `created_at`, comment `id` ordering vs trigger comment |
 | Availability (unchanged) | Root comment body | Usage-limit, account-not-connected, environment-setup patterns already recognized |
-| Live-head evidence window bound | REST PR object + PR issue comments | Exactly two reads: PR `created_at`, and `GET repos/{owner}/{repo}/issues/{pr}/comments` (paginated) for review trigger `created_at`, body SHA, and comment `id`. No timeline read and no repository-scoped signal — see **Live-head evidence window** for the single boundary `B` and its one escalation |
+| Live-head evidence window bound | REST PR object + PR issue comments | Exactly two reads, and only for comments that do not self-identify by marker: PR `created_at`, and `GET repos/{owner}/{repo}/issues/{pr}/comments` (paginated) for review trigger `created_at`, body SHA, and comment `id`. No timeline read and no repository-scoped signal — see **Live-head evidence window** for the marker-first routing, the boundary `B`, and the one escalation rule |
 
 **Finding–thread correlation contract** (AC-7, spec Business Rules 4–6):
 
@@ -422,83 +422,127 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   over the fetched object set. Recorded as an accepted residual below with its
   collision arithmetic.
 
-- [ ] **Live-head evidence window** (AC-13, AC-14): decide, for each Codex root
-  comment, whether it belongs to the **live head's** evidence window. The spec
-  bullet at line 109 defines that window and nothing more:
+- [ ] **Live-head evidence window** (AC-13, AC-14): decide which Codex root
+  comments count as evidence for the **live head**. The decisive point is
+  *which comments the window is for*, and spec line 109 says it in its own
+  opening clause:
 
-  > "A comment's window is the live head that was current when the comment was
-  > authored: after any review trigger for that head, or — for a trigger-less
-  > head — after the previous head's last review trigger or the pull request's
-  > creation, whichever is later, and before any later head becomes current."
+  > "Every Codex root comment belongs to exactly one head's evidence window,
+  > because such a comment **is not inherently revision-bound**."
 
-  **Only one boundary is ever needed — the live head's lower bound.** The same
-  spec bullet disposes of everything earlier in one sentence: "A root comment
-  authored while an earlier head was current is stale-head evidence: it never
-  escalates, never authorizes readiness for, and never waits on a later head."
-  Since no outcome depends on *which* earlier head a stale comment belonged to,
-  the implementation **never enumerates heads, never orders them, never derives
-  a transition instant, and never attributes old comments to old heads**. It
-  computes a single instant `B` and partitions the comments around it. The live
-  head has no upper bound because no later head exists.
+  **Marker identity first; the window decides only what cannot self-identify.**
+  A comment whose `Reviewed commit` marker is well-formed *is* revision-bound,
+  and the spec attributes it by that marker rather than by any timestamp. So
+  classify the marker first (per the **Abbreviated-token resolution contract**
+  above) and route on the result:
 
-  **Computing `B`.** Read the pull request object for `created_at` and
-  `GET repos/{owner}/{repo}/issues/{pr}/comments` (paginated) for the review
-  trigger comments. Every trigger names its SHA in the body —
+  | Marker state | Attribution | Consults the window? |
+  | --- | --- | --- |
+  | Well-formed, unambiguous prefix of the live head | Live-head evidence, by marker identity | No |
+  | Well-formed, names an older revision | Prior-revision evidence → stale path, `codex-github-review-pending` — spec line 107: "valid prior-revision evidence and follows the stale path … **never the malformed-marker path**" | No |
+  | Syntactically unusable, **or** no `Reviewed commit` field at all | Does not self-identify | **Yes — this is the window's only input** |
+
+  Only the third row reaches the window. Spec line 109 confirms the same scope
+  from the other direction: "A syntactically-unusable-marker root comment
+  therefore escalates the current head only when it falls inside that head's
+  window."
+
+  **Window rule for non-self-identifying comments.** Read the pull request
+  object for `created_at` and `GET repos/{owner}/{repo}/issues/{pr}/comments`
+  (paginated) for the review trigger comments. Every trigger names its SHA —
   `… (review triggered by workflow runner, commit: $CURRENT_SHA)` at
-  `codex-github-reviewer.sh:1685` and, on retrigger,
-  `… (sha: $CURRENT_SHA)` at `:2019` (Verification Log row
-  `Trigger comment names the head`) — so a trigger is classified as
-  live-head or not by string comparison against `headRefOid`, with no head
-  enumeration:
+  `codex-github-reviewer.sh:1685` and `… (sha: $CURRENT_SHA)` on retrigger at
+  `:2019` (Verification Log row `Trigger comment names the head`) — so a trigger
+  is classified as live-head or not by string comparison against `headRefOid`,
+  with no head enumeration.
 
-  - **Live head has at least one trigger** (the real-world path: the loop posts
-    one for every head it reviews) → `B` = the `created_at` of the **latest**
-    trigger naming the live head.
-  - **Live head is trigger-less** → `B` = `max(created_at of the latest trigger
-    naming any other SHA, PR created_at)`. When no earlier trigger exists at
-    all, the PR `created_at` alone applies.
+  - **Live head has at least one trigger** — the real-world path, because the
+    loop posts a trigger for every head it reviews. The boundary `B` is the
+    `created_at` of the **latest** trigger naming the live head. This is sound
+    without any transition instant: the companion resolves `headRefOid` and
+    *then* posts the trigger, so `B` provably post-dates the moment the live
+    head became current. A non-self-identifying comment at or after `B` is
+    live-head evidence; one before `B` is stale-head evidence, which spec line
+    109 strips of all effect — "it never escalates, never authorizes readiness
+    for, and never waits on a later head". Same-second ordering uses the spec's
+    own tiebreak (line 107: "fresh only when its comment ID orders after the
+    trigger comment"), and comment IDs are monotonic, so a same-second boundary
+    always decides.
+  - **Live head is trigger-less** — no boundary exists between the previous
+    head's window and this one. Take head `A` triggered at `T1`, a
+    non-self-identifying comment `C` at `T2 > T1`, then an untriggered push
+    creating live head `B` at `T3 > T2`: the spec's two windows are `[T1, T3)`
+    for `A` and `[T1, ∞)` for `B`, and only the transition instant `T3`
+    separates them. No source supplies `T3` (Verification Log row
+    `Head-transition source investigation`). Therefore a non-self-identifying
+    comment at or after the previous head's last trigger — or, when the pull
+    request has no trigger at all, at or after its `created_at` — **escalates
+    `evidence_unavailable_codex_thread_state`**. Do not guess. This is AC-14's
+    own instruction (spec line 157): "an attribution that cannot be established
+    from the available head-and-trigger chronology escalates with
+    `evidence_unavailable_codex_thread_state` instead of guessing." A
+    non-self-identifying comment **before** that trigger is unambiguously under
+    an earlier head and stays stale-head evidence.
 
-  **Partition rule.** A root comment is live-head-window evidence when its
-  `created_at` is at or after `B`, using the spec's own same-second tiebreak —
-  spec line 107: "A root comment with the same timestamp second as that trigger
-  is fresh only when its comment ID orders after the trigger comment." A comment
-  before `B` is stale-head evidence: ignored for the live head, never escalated
-  against it, never a wait for it, never readiness for it. Comment IDs are
-  monotonic, so the tiebreak always decides; a same-second boundary is never
-  indeterminate.
+  **Scope check — this escalation is rare, not the default.** It requires all
+  three of: a trigger-less live head, *and* a root comment that carries no
+  well-formed marker, *and* that comment falling at or after the prior
+  boundary. A trigger-less head whose comments all carry well-formed markers
+  never consults the window and never escalates here.
 
-  **This satisfies AC-13 and AC-14 together.** The trigger-less branch is
-  exactly AC-13's scenario (spec line 156, "A trigger-less live head that has a
-  marker-pinned clean root comment …") and it **resolves** — its inputs are a
-  prior trigger and the pull request's `created_at`, both of which the comment
-  read supplies — so trigger-less clean evidence is attributed and can reach
-  `clean`. AC-14 (spec line 157) is satisfied by the same computation: a
-  syntactically-unusable-marker comment escalates the live head only when it
-  falls at or after `B`, and one authored earlier is stale-head evidence that is
-  ignored.
+  **AC-13 is satisfied, and it is satisfied by marker identity, not by the
+  window** — verified against the spec before this design was written:
 
-  **The one escalation that remains.** `evidence_unavailable_codex_thread_state`
-  fires in exactly the case AC-14 names — a trigger-less live head whose
-  prior-trigger boundary cannot be identified: the pull-request comment read
-  fails or is truncated after one retry, or a candidate boundary trigger is
-  present but its SHA or `created_at` cannot be read from the payload. Nothing
-  else escalates here. Every branch that existed to cover unprovable push
-  ordering is gone, because `B` depends on no push instant.
+  - AC-13 (spec line 156) is about "a trigger-less live head that has a
+    **marker-pinned clean** root comment". Marker-pinned means well-formed and
+    naming the head, so such a comment takes row 1 of the table above and is
+    attributed by its marker.
+  - Spec line 107 states the trigger-less clean rule in exactly those terms:
+    "When no live-head review trigger exists yet, the newest marker-pinned clean
+    root comment **for that head** is the terminal clean evidence for that head
+    only when no newer non-dismissed terminal evidence for the same head
+    exists; repeated clean comments for the head collapse to that single newest
+    one". The phrase is "for that head" — an identity the marker supplies — and
+    no window term appears in the rule.
+  - Therefore the trigger-less escalation above can never block AC-13's clean
+    path: a marker-pinned clean comment does not enter the window, so the
+    supersession and newest-collapse rules decide it exactly as AC-13 requires.
 
-  **Accepted residual** (see **Accepted residuals** below): a root comment
-  authored after the live head was pushed but **before** its trigger was posted
-  falls before `B` and is excluded as stale-head evidence. This fails safe in
-  one direction only — exclusion can produce a pending/wait outcome, never a
-  false clean — because the clean path independently requires evidence *after*
-  the trigger under the spec's freshness boundary (line 107), so an excluded
-  comment could never have authorized readiness anyway.
+  **AC-14 is satisfied for the same reason it fails closed.** A
+  syntactically-unusable marker is, by definition, a comment that cannot
+  self-identify, so it is precisely the input spec line 109 routes through the
+  window: it escalates the live head when it falls inside the live head's
+  window (triggered head), and it escalates as unattributable when no boundary
+  exists (trigger-less head). Both outcomes are fail-closed and neither guesses.
 
-  No repository-scoped signal is needed or used: `B` comes from triggers and the
-  pull request's `created_at` alone, so check runs, commit statuses, and
-  `PushEvent` play no part (Verification Log row
-  `Head-transition source investigation` records why they were unusable when a
-  transition instant was still being sought, before this section was reduced to
-  the single trigger-derived boundary).
+  **The one escalation rule, with two entry conditions.**
+  `evidence_unavailable_codex_thread_state` fires when, and only when, the
+  attribution of a non-self-identifying comment cannot be established:
+
+  1. **Boundary unreadable** — the pull-request comment read fails or is
+     truncated after one retry, or a candidate boundary trigger is present but
+     its SHA or `created_at` cannot be read from the payload;
+  2. **Boundary nonexistent** — the live head is trigger-less and the comment
+     falls at or after the prior boundary, the case worked through above.
+
+  Nothing else escalates here, and no branch depends on a push instant or a
+  commit date.
+
+  **Accepted residual** (R1, see **Accepted residuals**): on a *triggered* live
+  head, a **non-self-identifying** comment authored after the head was pushed
+  but before its trigger was posted falls before `B` and is excluded as
+  stale-head evidence. Marker-pinned comments are unaffected, since they never
+  consult `B`. The exclusion fails safe in one direction only — it can produce
+  a pending/wait outcome, never a false clean — because the clean path
+  independently requires evidence *after* the trigger under the spec's freshness
+  boundary (line 107).
+
+  No repository-scoped signal is needed or used: the boundary comes from
+  triggers and the pull request's `created_at` alone, so check runs, commit
+  statuses, and `PushEvent` play no part (Verification Log row
+  `Head-transition source investigation` records why no transition instant can
+  be sourced at all, which is why the trigger-less case escalates rather than
+  approximating).
 
 - [ ] **Decision function** (spec matrix): Implement
   `codex_classify_live_head_evidence()` returning one of:
@@ -762,8 +806,20 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     surface is consumed by `run_codex_github_review()`, the Automated Reviewer
     Loop Summary, and `reviewer_loop_history.v1`; all three live in this
     repository, so a reversal is an ordinary `git revert` of the companion and
-    adapter commits (Implementation Order steps 3–4) together with the Area 13
-    expectation updates (step 7) and the doc updates (step 8). No schema
+    adapter commits (Implementation Order steps 3–4), the cycle-limit change
+    (step 5), the AC-6 resolver harness cases (step 6), the Area 13 expectation
+    updates (step 7), and the doc updates (step 8). **Step 5 specifically**: it
+    changes when `reviewer_loop_cap_exceeded`
+    (`pr-review-loop.sh:13555` / `:13559`) escalates, by evaluating current-head
+    evidence before the cap fires, so reverting it restores the shipped
+    order in which an exhausted allowance escalates unconditionally. That revert
+    is self-contained — the cap block reads the classifier's outcome but the
+    classifier does not read the cap — so step 5 may be reverted on its own
+    without touching steps 3–4, and its only residue is the same append-only
+    history text as the rest: runs already recorded as
+    `max_cycles_exceeded` under the new order keep that record, and the next run
+    re-evaluates under the restored one, because the Statuses table decides each
+    outcome per evaluation with no valid transitions. No schema
     migration, external publication, or consumer outside this repo is involved,
     and downstream template consumers pick the revert up through
     `/sync-template` like any other change. Two residues do **not** revert and
@@ -898,7 +954,13 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   root comment for a trigger-less live head, followed by strictly newer
   non-dismissed live-head evidence — run the case once per superseding class:
   finding, malformed-marker, unrecognized, incomplete-correlation — expects that
-  newer class's outcome, never clean);
+  newer class's outcome, never clean. **Fixture constraint from the marker-first
+  routing**: where the superseding item is itself a *root comment*, it must
+  carry a well-formed live-head marker so that it self-identifies; a superseding
+  root comment with an unusable marker on a trigger-less head does not reach the
+  malformed tier at all but escalates `evidence_unavailable_codex_thread_state`,
+  which `codex_marker_triggerless_unusable_marker_escalates` covers. A
+  superseding *submitted review* is never subject to the window);
   `codex_triggerless_repeated_clean_collapses_to_newest` (three clean comments
   for the same head at distinct timestamps collapse to the newest one, which
   alone decides `clean`); and
@@ -1089,9 +1151,11 @@ and head-attribution helpers):
 | Same-second tie | Trigger and comment share `created_at` second; lower comment id | Stale pending |
 | Same-second tie win | Comment id orders after trigger id | Fresh terminal |
 | Stale-head window | Malformed marker authored before the boundary `B` | Ignored for live head |
-| Boundary unidentifiable | Trigger-less live head; the comment read fails after one retry, or a candidate boundary trigger has no readable SHA or `created_at` | Evidence unavailable |
-| Trigger-less live head, boundary derivable | Clean marker comment after the previous head's last trigger, live head has no trigger | Attributed to the live head — **not** an escalation (AC-13) |
-| Pre-trigger comment | Comment authored after the live head was pushed but before its trigger | Stale-head evidence — excluded (residual R1) |
+| Boundary unreadable | The pull-request comment read fails after one retry, or a candidate boundary trigger has no readable SHA or `created_at` | Evidence unavailable |
+| Trigger-less live head, marker-pinned clean | Live head has no trigger; a well-formed marker names it and the body is clean | Clean by marker identity — the window is never consulted (AC-13) |
+| Trigger-less live head, unusable marker | Live head has no trigger; a syntactically-unusable-marker comment falls at or after the prior boundary | Evidence unavailable — no boundary exists (AC-14) |
+| Untriggered head after a prior trigger | Head `A` triggered, comment `C` authored, untriggered push to live head `B`; `C` carries no well-formed marker | Evidence unavailable — `C` cannot be placed in `A`'s or `B`'s window |
+| Pre-trigger comment | Non-self-identifying comment authored after the live head was pushed but before its trigger | Stale-head evidence — excluded (residual R1) |
 | Proven remote zero-match | Abbreviated marker token, no local match after fetch and retry, REST `422` | Malformed — resolves to zero commits (spec line 286) |
 | Unprovable abbreviation | Abbreviated marker token, no local match after fetch and retry, REST `200` | Evidence unavailable — exists, uniqueness unprovable |
 | Superseded malformed | Live-head malformed comment older than live-head clean evidence | Ignored — newer clean wins |
@@ -1114,8 +1178,10 @@ Area 13 — one `run_test` per row):
 | `codex_marker_same_second_stale` | Same-second tie |
 | `codex_marker_same_second_fresh` | Same-second tie win |
 | `codex_marker_stale_head_window` | Stale-head window |
-| `codex_marker_boundary_unidentifiable` | Boundary unidentifiable |
-| `codex_marker_triggerless_head_attributed` | Trigger-less live head, boundary derivable |
+| `codex_marker_boundary_unreadable` | Boundary unreadable |
+| `codex_marker_triggerless_clean_attributed_by_marker` | Trigger-less live head, marker-pinned clean |
+| `codex_marker_triggerless_unusable_marker_escalates` | Trigger-less live head, unusable marker |
+| `codex_marker_untriggered_head_after_prior_trigger_escalates` | Untriggered head after a prior trigger |
 | `codex_marker_pre_trigger_comment_excluded` | Pre-trigger comment |
 | `codex_marker_remote_zero_match_malformed` | Proven remote zero-match |
 | `codex_marker_unprovable_abbreviation` | Unprovable abbreviation |
@@ -1152,11 +1218,14 @@ would settle them. They are decided here rather than re-litigated per reviewer
 cycle. Each records what is **not** proven, why the spec tolerates it, and which
 direction it fails.
 
-### R1 — A comment posted between the head's push and its trigger is excluded
+### R1 — A non-self-identifying comment posted between the head's push and its trigger is excluded
 
 - **Not proven**: that a root comment authored after the live head was pushed
   but before the live-head trigger was posted belongs to the live head. It falls
-  before the boundary `B` and is classified as stale-head evidence.
+  before the boundary `B` and is classified as stale-head evidence. The residual
+  is narrower than it looks: it applies only to comments that do **not**
+  self-identify — no well-formed `Reviewed commit` marker — because a
+  marker-pinned comment is attributed by its marker and never consults `B`.
 - **Why the spec tolerates it**: spec line 109 defines the window from triggers
   and the pull request's creation, not from push instants, and it gives
   stale-head evidence no effect on a later head. Nothing in the criteria asks
@@ -1167,7 +1236,10 @@ direction it fails.
   comment excluded by `B` could not have authorized readiness in the first
   place; the loop requests or awaits a current-head review instead.
 - **Replaces**: the earlier `committer.date` residual, which is gone with the
-  transition-instant machinery.
+  transition-instant machinery. The companion case — a trigger-**less** live
+  head carrying a non-self-identifying comment — is not a residual at all: it
+  escalates `evidence_unavailable_codex_thread_state`, because there the two
+  windows genuinely overlap and no source separates them.
 
 ### R2 — Abbreviated-token uniqueness is scoped to the fetched object set
 
@@ -1227,7 +1299,8 @@ direction it fails.
 | Marker token unresolvable locally (shallow or unfetched clone) | Med | Med | One `git fetch` of the head ref then retry; then REST settles existence only — `422` is a proven zero-match (malformed tier), `200` leaves uniqueness unprovable (evidence-unavailable), and REST or `git` failures escalate evidence-unavailable |
 | Retained exit-`2` reasons regress while adding the new codes | Med | High | Retained-contract table names every retained reason and its pinned test; scoped harness assertion plus a non-regression assertion for the three retained reasons |
 | Published exit / `REASON=` contract is hard to unwind | Low | Med | Revert is code-only (Implementation Order steps 3–4 + Area 13 expectations + docs); residues documented in the Outcome-mapping reversal note |
-| A comment posted between the head's push and its trigger is excluded as stale-head evidence | Med | Low | Accepted residual R1: exclusion can only withhold a clean result, never create one, because the clean path independently requires post-trigger evidence (spec line 107). `codex_marker_pre_trigger_comment_excluded` and `codex_marker_triggerless_head_attributed` pin the excluded and attributed cases |
+| A non-self-identifying comment posted between the head's push and its trigger is excluded as stale-head evidence | Med | Low | Accepted residual R1: exclusion can only withhold a clean result, never create one, because the clean path independently requires post-trigger evidence (spec line 107), and marker-pinned comments never consult the boundary. `codex_marker_pre_trigger_comment_excluded` and `codex_marker_triggerless_clean_attributed_by_marker` pin the excluded and marker-attributed cases |
+| A trigger-less head that also carries a non-self-identifying comment escalates | Low | Med | Genuine: no source supplies the transition instant that would separate the two windows (Verification Log). Escalation is AC-14's own instruction, it requires all three conditions in the scope check, and `codex_marker_untriggered_head_after_prior_trigger_escalates` pins it |
 
 ---
 
@@ -1254,8 +1327,8 @@ esac
 1. Create `scripts/development-workflow/codex-github-evidence-lib.sh` with
    unit-testable Codex thread + evidence helpers (no top-level side effects);
    source it from `codex-github-reviewer.sh` and `pr-review-loop.sh`; commit.
-2. Implement terminal evidence collector + marker parser + the live-head
-   window boundary `B`; commit.
+2. Implement terminal evidence collector + marker parser + marker-first
+   routing and the live-head window boundary `B`; commit.
 3. Implement `codex_classify_live_head_evidence()` decision matrix and wire all
    companion exit paths; commit.
 4. Update `run_codex_github_review()` adapter (phase 1 + exit mapping + remove
@@ -1309,7 +1382,7 @@ esac
   + REST `id` for threads and `pull_request_review_id` +
   `pullRequestReview.databaseId` for review scoping.
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
-  table has 19 rows and its mapping table has 24 test names, of which 17 carry
+  table has 21 rows and its mapping table has 26 test names, of which 19 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
   the five remaining mapping rows are the tie/precedence and correlation cases
@@ -1328,16 +1401,22 @@ esac
   list is the single tie-breaker between the phase narrative and the
   pre-selection guard, and its worked examples agree with the guard for every
   listed batch. No contradictory next actions across plan layers.
-- Live-head evidence window: Checked against the spec, not invented — the
-  section computes exactly one boundary `B` from the inputs spec line 109 names
-  (the live head's trigger, or the previous head's last trigger and the pull
-  request's `created_at`), because everything before `B` is stale-head evidence
-  that the same bullet strips of all effect. No head enumeration, no head
+- Live-head evidence window: Checked against the spec, not invented — scope
+  first: the window exists only for comments that, in spec line 109's words,
+  are "not inherently revision-bound", so a well-formed marker attributes its
+  comment by identity (live-head prefix → live-head evidence; older revision →
+  stale path, "never the malformed-marker path") and only a
+  syntactically-unusable or absent marker reaches the window. For those, a
+  triggered live head uses the latest live-head trigger as the boundary, which
+  provably post-dates the transition because the companion resolves
+  `headRefOid` before posting; a trigger-less live head has no boundary at all
+  and escalates per AC-14 (spec line 157) rather than guessing. AC-13 (spec line
+  156) is unaffected because its clean path is marker-identified — spec line
+  107's trigger-less rule says "the newest marker-pinned clean root comment
+  **for that head**" and never mentions a window. No head enumeration, no head
   ordering, no transition instant, and no commit date appears anywhere in the
-  algorithm. AC-13 (spec line 156) resolves through the trigger-less branch and
-  AC-14 (spec line 157) through the same boundary, so both hold at once, and the
-  one remaining escalation is AC-14's own unidentifiable-boundary case. Check
-  runs, commit statuses, and `PushEvent` are not consumed by any step.
+  algorithm; check runs, commit statuses, and `PushEvent` are not consumed by
+  any step.
 - Executable interfaces: Checked — the shared helper declares parameters,
   stdout shape, and return codes, both call sites are mapped from their actual
   variable names, and a `set -u` no-global-reads test is named.
