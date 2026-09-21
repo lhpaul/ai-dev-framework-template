@@ -92,6 +92,7 @@ checks in the implementation-start assumption table below.
 | Commit-token resolution semantics | `git rev-parse --disambiguate=<prefix>`; `git rev-parse --verify "<token>^{commit}"`; `gh api repos/{owner}/{repo}/commits/<token>` | Unique token `490bde2` → exit `0`, full SHA. Ambiguous prefix `0003` (found via `git rev-list --all --objects \| cut -c1-4 \| sort \| uniq -d`) → exit `128`, `error: short object ID 0003 is ambiguous`. Unknown `deadbee` → exit `128`, `fatal: Needed a single revision`. `--disambiguate=490b` → one line (the full SHA); a 2-character prefix returns zero lines with no error. GitHub REST: `commits/490bde2` and `commits/490b` both return HTTP `200` with a full `.sha` — no ambiguity signal — while `commits/dead` returns HTTP `422` `No commit found for SHA: dead` |
 | Head-transition source investigation | `gh api repos/{owner}/{repo}/issues/1768/timeline --paginate --jq '.[].event' \| sort \| uniq -c`; `gh api repos/{owner}/{repo}/events --paginate --jq '.[] \| select(.type=="PushEvent")'` | The pull-request timeline for a four-head pull request contains **no** push- or head-transition event of any kind: only `commented`, `committed`, `labeled`, `unlabeled`, `subscribed`, `mentioned`, `reviewed`, `cross-referenced`. `committed` events carry `sha` + `committer.date` with `created_at: null`. Ordinary (non-force) pushes surface no pull-request-scoped event, so `head_ref_force_pushed` is the only timeline transition event and this repository has none to sample. The repository `events` feed *does* carry `PushEvent` with a true push instant per branch ref — `490bde2c` at `2026-09-21T00:05:21Z` versus its `committer.date` of `00:05:14Z`, empirically confirming the 7-second commit-date-vs-push gap — but the feed is repository-wide and bounded: `--paginate` returned ~286 events reaching back only to `2026-09-16`, entries for one ref came back out of chronological order, and a fork head ref would not appear at all. **Historical — no longer consumed by any step.** Recorded because it is the evidence that a transition instant cannot be sourced at all; the **Live-head evidence window** section no longer needs one, so no substitute is required |
 | Trigger comment names the head | `sed -n '1685p;2019p' scripts/development-workflow/codex-github-reviewer.sh` | `codex-github-reviewer.sh:1685` posts `… (review triggered by workflow runner, commit: $CURRENT_SHA)` and `:2019` posts `… (sha: $CURRENT_SHA)` on retrigger, both after `headRefOid` is resolved. Every trigger therefore names its SHA, which is what lets the boundary `B` be computed by string comparison against `headRefOid` with no head enumeration |
+| Blocking-marker vocabulary (shipped) | `grep -n 'CODEX_BLOCKING_PATTERN\|codex_response_is_blocking()' scripts/development-workflow/codex-github-reviewer.sh` | `CODEX_BLOCKING_PATTERN` is defined at `codex-github-reviewer.sh:532` (`changes requested`, `blocking issues:`, `blocking finding`, `blocking:`, `must fix`, `action required`, `required:`, `❌`) and extended at `:578` with `CODEX_MERGE_REFUSAL_PATTERN` (`:577`); `codex_response_is_blocking()` at `:698` is the classifier. Body findings reuse this surface, so the plan adds no marker vocabulary — which is what the spec requires |
 | Codex marker token width | `gh api repos/{owner}/{repo}/pulls/1768/reviews --paginate --jq '.[] \| select(.user.login\|test("codex")) \| .body'` | The two Codex reviews on this pull request carry `**Reviewed commit:** \`37d5bd35da\`` and `\`76dc7213b8\`` — **10 hex characters**. Abbreviated markers are the production norm, so a rule that fails abbreviations closed would make the clean path unreachable |
 | Repository object count | `git count-objects -v` | 40,637 loose + 24,279 packed ≈ 6.5×10⁴ objects; used for the R2 collision arithmetic |
 | Cycle-cap defaults | `grep -n 'reviewer_loop_resolve_max_cycles()\|reviewer_loop_resolve_max_total_cycles()' scripts/development-workflow/pr-review-loop.sh` then read each body | `reviewer_loop_resolve_max_cycles` is defined at `:11201` and defaults to **10** (`:11211` unset path, `:11216` invalid-value path with its WARN); `reviewer_loop_resolve_max_total_cycles` is defined at `:11232` and defaults to **25** (`:11242`, `:11247`). Note: the comment at `:1091` says `expensive_gate_resolve_max_deferrals` “mirrors `reviewer_loop_resolve_max_cycles`: default 3”, which no longer matches that resolver — do not encode `3` |
@@ -159,37 +160,77 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
      REST review `id` that reported it, and equals GraphQL
      `comments(first:1).nodes[0].pullRequestReview.databaseId` for the same
      thread. Use it to attribute each inline comment to exactly one review.
-4. **Finding extraction — scoped to the owning review**: a finding belongs to
-   the terminal verdict that reported it, so extraction is per review, never per
-   head. For terminal blocking review `R` (REST review `id`), the findings of
-   `R` are exactly the step-2 rows whose `pull_request_review_id == R.id`
-   **and** `commit_id == headRefOid`; each such row is one finding with stable
-   thread id = comment `id`. An inline comment on the live head belonging to a
-   *different* review — an earlier Codex review, or another bot — is not a
-   finding of `R` and **must never supply correlation for `R`**; correlating
-   against the head-wide comment index would turn a review-body-only finding
-   into a false `needs_fixes` or a false cleared-findings wait instead of the
-   spec-required escalation. Review-body-only blocking sections of `R` with
-   **no** inline comment of `R` to match are **correlation-missing** findings
-   (escalate `codex_finding_thread_correlation_missing`), including
-   top-level-only blocking text like `codex_cleared_thread_top_level_blocker`.
-   A terminal verdict delivered as a **root pull-request comment** owns no
-   review at all, so any blocking finding it carries has no review-thread
-   identifier and is correlation-missing by the same rule (spec: "A review-level
-   finding or comment without a review-thread identifier is incomplete
-   evidence, not an actionable blocker"). The cleared-findings rule consumes
-   this same per-review finding set: "every matching conversation is resolved"
-   is evaluated over `R`'s own findings, never over unrelated live-head
-   threads. **Exception (orthogonal)
-   — canonical wording, restated verbatim in the "CHANGES_REQUESTED +
-   correlation-missing" step below:** GitHub `state == CHANGES_REQUESTED` on a
-   current-head submitted review is an actionable blocker by structured state
-   when the review carries **no finding requiring correlation at all** — the
-   structured state alone is the blocker, and the absence of inline findings is
-   not correlation-missing. If the review carries **any** finding that lacks a
-   stable thread identifier or has no identifiable matching conversation,
+4. **Finding extraction — two independent sources inside review `R`.** A
+   finding belongs to the terminal verdict that reported it, so extraction is
+   per review, never per head. Review `R` (REST review `id`) can report findings
+   in **two** places, and both are always evaluated — neither suppresses the
+   other:
+
+   - **(a) Inline findings of `R`**: the step-2 rows whose
+     `pull_request_review_id == R.id` **and** `commit_id == headRefOid`. Each
+     such row is one finding with stable thread id = comment `id`. An inline
+     comment on the live head belonging to a *different* review — an earlier
+     Codex review, or another bot — is not a finding of `R` and **must never
+     supply correlation for `R`**; correlating against the head-wide comment
+     index would turn a review-body-only finding into a false `needs_fixes` or a
+     false cleared-findings wait.
+   - **(b) Body findings of `R`**: blocking assertions in `R`'s **own body**,
+     detected with the shipped classifier `codex_response_is_blocking()`
+     (`codex-github-reviewer.sh:698`) over `CODEX_BLOCKING_PATTERN`
+     (`:532`, extended at `:578` with `CODEX_MERGE_REFUSAL_PATTERN` from
+     `:577`) — applied to the body exactly as shipped, with no added
+     preprocessing. This is the vocabulary the spec itself points at ("the
+     blocking pattern maintained by the Codex reviewer helper and described in
+     its comments"); this plan introduces **no** marker vocabulary of its own.
+
+   **Source (b) is evaluated whether or not source (a) is empty.** This is the
+   load-bearing correction: scoping findings to inline rows alone would make a
+   review's body invisible as soon as that review had one inline comment, so a
+   verdict carrying one correlated inline finding *plus* an unthreaded body
+   finding would read as fully correlated and return `needs_fixes`.
+
+   **Precedence — any body finding makes `R` correlation-missing.** A body
+   finding carries no review-thread identity by construction, so it can never be
+   matched to a conversation. Spec Business Rule 5 (spec line 105) is explicit:
+   "If a current terminal verdict contains both a finding correlated to an
+   applicable unresolved conversation and a finding that is uncorrelated or has
+   no identifiable matching thread, the incomplete finding evidence takes
+   precedence. The loop must escalate rather than selectively return
+   `needs_fixes` for the correlated finding." Spec matrix row 287 gives this
+   exact shape as its example — "A submitted verdict has one unresolved-thread
+   finding and one review-level finding with no thread identity" — and requires
+   `escalate` with `codex_finding_thread_correlation_missing`, adding "do not
+   claim clean or return `needs_fixes` for only other correlated findings".
+   Therefore: if `codex_response_is_blocking()` is true for `R`'s body, `R`
+   escalates `codex_finding_thread_correlation_missing` **regardless of how many
+   of its inline findings correlate**, including the body-only case
+   (`codex_cleared_thread_top_level_blocker`) and the mixed case. Only when
+   `R`'s body carries no blocking assertion are `R`'s findings exactly its
+   inline findings, and only then can correlated findings yield `needs_fixes`.
+
+   **Root-comment verdicts are unchanged**: a terminal verdict delivered as a
+   root pull-request comment owns no review at all, so any blocking finding it
+   carries has no review-thread identifier and is correlation-missing by the
+   same rule (spec: "A review-level finding or comment without a review-thread
+   identifier is incomplete evidence, not an actionable blocker").
+
+   **Cleared-findings interaction**: the cleared-findings rule consumes this
+   same per-review finding set — "every matching conversation is resolved" is
+   evaluated over `R`'s own inline findings, never over unrelated live-head
+   threads — and it is reachable only when `R` has no body finding, because a
+   body finding has no matching conversation to resolve and escalates first.
+
+   **Exception (orthogonal) — canonical wording, restated verbatim in the
+   "CHANGES_REQUESTED + correlation-missing" step below:** GitHub
+   `state == CHANGES_REQUESTED` on a current-head submitted review is an
+   actionable blocker by structured state when the review carries **no finding
+   requiring correlation at all** — neither an inline finding of its own nor a
+   blocking assertion in its body. The structured state alone is the blocker,
+   and that absence is not correlation-missing. If the review carries **any**
+   finding that lacks a stable thread identifier or has no identifiable matching
+   conversation — including a body finding —
    `codex_finding_thread_correlation_missing` escalation takes precedence over
-   the structured blocker — including when *every* such finding lacks thread
+   the structured blocker, including when *every* such finding lacks thread
    identity, not only when one lacks it alongside a correlated one (spec: "when
    such a review also carries a finding with no stable review-thread identifier
    or no identifiable matching conversation, the correlation-missing escalation
@@ -742,12 +783,14 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `1`. `CHANGES_REQUESTED` submitted review remains exit `1` even if every
   thread is resolved.
 
-- [ ] **CHANGES_REQUESTED + correlation-missing** (AC-7, matrix row) —
+- [ ] **CHANGES_REQUESTED + correlation-missing** (AC-7, matrix row 287) —
   canonical wording, identical to the Finding-extraction exception above: a
   `CHANGES_REQUESTED` current-head review carrying **no finding requiring
-  correlation at all** is an actionable blocker by structured state alone. If it
-  carries **any** finding lacking a stable thread identifier or an identifiable
-  matching conversation — including when *every* finding lacks one — escalate
+  correlation at all** — neither an inline finding of its own nor a blocking
+  assertion in its body — is an actionable blocker by structured state alone. If
+  it carries **any** finding lacking a stable thread identifier or an
+  identifiable matching conversation — including a body finding, and including
+  when *every* finding lacks one — escalate
   `codex_finding_thread_correlation_missing` (precedence over the structured
   blocker).
 
@@ -895,14 +938,29 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   and not the superseded competitor's outcome. This is the case the
   presence-based pre-selection guard alone would get wrong.
 
-- [ ] **Owning-review correlation scoping** (AC-7, spec Business Rule 4):
-  `codex_body_finding_unrelated_review_comment_not_correlated` — a terminal
-  `R` whose blocking text appears only in the review body, while an unrelated
+- [ ] **Owning-review correlation scoping** (AC-7, spec Business Rule 4),
+  two directional cases:
+  `codex_body_finding_unrelated_review_comment_not_correlated` — a terminal `R`
+  whose blocking text appears only in the review body, while an unrelated
   earlier review has an inline comment on the same live head. Expect
   `codex_finding_thread_correlation_missing`, proving the join runs on
-  `pull_request_review_id`, not on the head-wide comment index. Pair it with
-  `codex_body_finding_own_review_comment_correlates` (the same shape where the
-  inline comment does belong to `R`) so the join is proved in both directions.
+  `pull_request_review_id`, not on the head-wide comment index. And
+  `codex_body_finding_own_review_comment_correlates` — the same shape where the
+  inline comment **does** belong to `R` **and `R`'s body carries no blocking
+  assertion**, so `R`'s findings are its inline findings alone. Expect
+  `needs_fixes`. The body-marker condition is part of this fixture, not an
+  incidental detail: with a blocking body the mixed-finding rule below would
+  escalate instead.
+
+- [ ] **Mixed correlated and uncorrelated findings** (AC-7, spec Business Rule 5
+  at spec line 105, matrix row 287): `codex_mixed_inline_and_body_finding_escalates`
+  — one submitted current-head review carrying **both** an inline finding whose
+  conversation is applicable and unresolved **and** a blocking assertion in its
+  own body with no inline comment behind it. Expect `escalate` /
+  `codex_finding_thread_correlation_missing`, **not** `needs_fixes` for the
+  correlated finding alone and not a cleared-findings wait. Run the same fixture
+  once with review state `COMMENTED` and once with `CHANGES_REQUESTED` to prove
+  the escalation outranks the structured blocker in both.
 
 - [ ] **Exit-`2` retained contract and the one remap** (see the retained-contract
   table): update `codex_reaction_only_exit_unavailable` (`tests:5435`) from `2`
@@ -927,8 +985,10 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   that expect `NEEDS_REVISION (unrecognized response format — safe-fail)` to
   expect escalate / `codex_current_verdict_unrecognized` instead, and update
   `codex_cleared_thread_top_level_blocker_*` expectations from exit `1` /
-  `NEEDS_REVISION` to the correlation-missing escalation path when the body has
-  unthreaded blocking text with no matching inline comment id.
+  `NEEDS_REVISION` to the correlation-missing escalation path whenever the
+  review's body carries a blocking assertion — by the two-source rule that now
+  holds whether or not the review also has inline comments, not only in the
+  body-only shape.
 
 - [ ] **`run_codex_github_review` integration**: One HARNESS_MODE case mocking
   companion output + GraphQL threads proving phase 1 no longer emits
@@ -970,7 +1030,10 @@ threads.
 5. Cycle cap with canonical clean in final cycle → readiness; cap with cleared
    wait → escalate; cap with a remaining actionable finding → escalate (AC-5–6)
 6. Unrecognized terminal body → escalate `codex_current_verdict_unrecognized` (AC-7, 9)
-7. Finding without thread id → escalate `codex_finding_thread_correlation_missing` (AC-7, 9)
+7. Finding without thread id, and the mixed case — one correlated inline
+   finding plus an unthreaded body finding in the same review → escalate
+   `codex_finding_thread_correlation_missing` (AC-7, 9; spec line 105, matrix
+   row 287)
 8. Malformed marker on live head → escalate `codex_current_verdict_malformed_revision_marker` (AC-9, 11, 14)
 9. GraphQL thread state failure → escalate `evidence_unavailable_codex_thread_state` (AC-9)
 10. Acknowledgement-only → `codex-github-reaction-without-review` precedence (AC-10)
@@ -1032,6 +1095,7 @@ and head-attribution helpers):
 | Proven remote zero-match | Abbreviated marker token, no local match after fetch and retry, REST `422` | Malformed — resolves to zero commits (spec line 286) |
 | Unprovable abbreviation | Abbreviated marker token, no local match after fetch and retry, REST `200` | Evidence unavailable — exists, uniqueness unprovable |
 | Superseded malformed | Live-head malformed comment older than live-head clean evidence | Ignored — newer clean wins |
+| Mixed inline + body finding | One review with a correlated inline finding and a blocking assertion in its body | Correlation-missing escalation (spec line 105, matrix row 287) |
 
 **Unit test mapping** (all in `scripts/development-workflow/tests/test-pr-review-loop.sh`
 Area 13 — one `run_test` per row):
@@ -1060,7 +1124,8 @@ Area 13 — one `run_test` per row):
 | `codex_older_malformed_superseded_by_newer_clean` | Superseded malformed — older live-head malformed-marker comment with strictly newer live-head clean evidence; expect `clean` (newest-evidence selection precedes tier aggregation), **not** the malformed escalation |
 | `codex_hard_stop_restored_when_competitor_superseded` | Availability hard stop with a *superseded* blocker or malformed item and a newer clean verdict — expect the unavailable outcome (exit `3`), never clean |
 | `codex_body_finding_unrelated_review_comment_not_correlated` | Review-body-only finding with an unrelated review's inline comment on the same head — expect correlation-missing |
-| `codex_body_finding_own_review_comment_correlates` | Same shape, inline comment owned by the terminal review — expect correlation (no escalation) |
+| `codex_body_finding_own_review_comment_correlates` | Same shape, inline comment owned by the terminal review and no blocking body assertion — expect correlation (no escalation) |
+| `codex_mixed_inline_and_body_finding_escalates` | Mixed inline + body finding |
 
 **Suppression semantics**: Not applicable — no inline suppressions for marker parsing.
 
@@ -1127,6 +1192,27 @@ direction it fails.
   The alternative — treating every abbreviation as unprovable — was rejected
   because Codex emits 10-character tokens in production, so it would make the
   clean path unreachable rather than safer.
+
+### R3 — A blocking body assertion that only restates inline findings still escalates
+
+- **Not proven**: that a blocking marker in a review's body introduces a finding
+  *beyond* the review's inline comments. Detection is by the shipped
+  `codex_response_is_blocking()` vocabulary, which reports presence, not
+  provenance, so a body that merely summarises its own inline findings
+  ("Changes requested — see comments") is treated as a review-level finding
+  with no thread identity.
+- **Why the spec tolerates it**: spec Business Rule 4 classifies "a review-level
+  finding or comment without a review-thread identifier" as incomplete evidence
+  rather than an actionable blocker, and Business Rule 5 (spec line 105) makes
+  the mixed case escalate outright. The spec offers no way to attribute body
+  text to a specific inline finding, and explicitly declines to define a new
+  marker vocabulary that could carry one.
+- **Fails**: toward **human review**. The outcome is
+  `codex_finding_thread_correlation_missing`, which stops the run; it can never
+  produce a false clean or silently drop an actionable finding. The opposite
+  choice — ignoring body markers whenever an inline finding exists — is the
+  defect this residual replaces, and it failed toward `needs_fixes` on
+  incomplete evidence.
 
 ---
 
@@ -1223,7 +1309,7 @@ esac
   + REST `id` for threads and `pull_request_review_id` +
   `pullRequestReview.databaseId` for review scoping.
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
-  table has 18 rows and its mapping table has 23 test names, of which 17 carry
+  table has 19 rows and its mapping table has 24 test names, of which 17 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
   the five remaining mapping rows are the tie/precedence and correlation cases
@@ -1277,10 +1363,16 @@ esac
   from exit `2` to exit `4`, which AC-10 requires.
 - Correlation scoping: Checked — finding extraction, the cleared-findings rule,
   and the `CHANGES_REQUESTED` exception all consume the same per-review finding
-  set keyed on `pull_request_review_id`; no section correlates against the
-  head-wide inline-comment index.
-- Accepted residuals recorded: Checked — a dedicated section states both open
-  questions (R1 pre-trigger comment exclusion, R2 abbreviation uniqueness scope)
+  set keyed on `pull_request_review_id`, and no section correlates against the
+  head-wide inline-comment index. Within a review the two finding sources are
+  independent: inline rows and body blocking assertions are both always
+  evaluated, so the mixed case escalates per spec Business Rule 5 (line 105) and
+  matrix row 287 instead of returning `needs_fixes` for the correlated finding
+  alone. Body detection reuses the shipped `codex_response_is_blocking()` /
+  `CODEX_BLOCKING_PATTERN` surface, so no marker vocabulary is introduced.
+- Accepted residuals recorded: Checked — a dedicated section states three open
+  questions (R1 pre-trigger comment exclusion, R2 abbreviation uniqueness scope,
+  R3 body markers that only restate inline findings)
   with what is unproven, why the spec tolerates it, and the direction each
   fails; R2 carries the collision arithmetic at this repository's object count.
 - Reversal risk: Checked — the outcome-mapping step states the revert path
