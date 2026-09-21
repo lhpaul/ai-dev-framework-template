@@ -198,11 +198,20 @@ lookup could not be performed.
   open items. The requirement is that emptiness reflects the board, not the
   classification rule.
 - A lookup that could not be completed is a third answer, distinct from both of
-  those, and it must not be dressed up as the second. The tracker may be
-  unreachable, the board or its classification field may be unreadable, the
-  configured tracker may not support this lookup at all. In each of those cases
-  the flow says the lookup was not performed, and why, instead of reporting that
-  there are no open framework items.
+  those, and it must not be dressed up as the second. What makes it that answer
+  is a read the lookup actually attempts and cannot complete: the tracker may be
+  unreachable, the board may be unreadable, the request may come back empty or
+  malformed, the configured tracker may not support this lookup at all. In each
+  of those cases the flow says the lookup was not performed, and why, instead of
+  reporting that there are no open framework items.
+- The classification field is **not** one of those reads. In framework mode the
+  lookup returns every open item whatever its class, so it never consults the
+  classification field and that field's readability is not an input to the
+  answer. A renamed or unreadable class field leaves the framework-mode lookup
+  answering exactly as it would otherwise — with the board's open items, or with
+  an empty board — and never makes it unavailable. (In a consumer repository the
+  class filter is real, but that mode's failure behavior is unchanged by this
+  feature.)
 - Being unable to perform the lookup does not stop the release or the
   retrospective. The lookup is a review aid, not a gate, and the established
   convention for a tracker read that cannot be performed is to warn, say so, and
@@ -311,7 +320,12 @@ The agent was never instructed toward a class the same repository refuses.
   itself.
 - In framework mode, the lookup has three distinguishable answers: the items it
   found, an empty result because the board holds no open items, and unavailable
-  because the lookup could not be performed. An unavailable lookup is reported as
+  because the lookup could not be performed. "Could not be performed" means one
+  of the reads the lookup actually attempts failed, returned nothing usable, or
+  is unsupported by the configured tracker; a response that arrives blank or
+  malformed is such a failure, not an empty board. The classification field is
+  not one of those reads in framework mode, so its readability never makes the
+  lookup unavailable. An unavailable lookup is reported as
   unavailable, with the reason, and is never reported as an empty result. An
   unavailable lookup does not block the release or retrospective flow, but the
   flow must state that the lookup was not performed rather than record the
@@ -444,7 +458,7 @@ Framework-item lookup outcomes:
 | Framework | Lookup completed; at least one open item on the board | Every open board item, whatever its class | Unchanged — the flow reviews the list as today |
 | Framework | Lookup completed; no open items on the board | Empty, and empty only because the board is empty — reported as an empty board, distinguishably from an unavailable lookup | Unchanged — an empty board is a legitimate answer |
 | Consumer | Lookup completed | Only items classified Workflow, as today | Unchanged |
-| Framework | Lookup could not be performed — the tracker was unreachable, the board or its classification field could not be read, or the configured tracker does not support this lookup | Unavailable. Reported as unavailable, with the reason, in place of a list. Never reported as an empty result, and never silently treated as one | Do not block the flow: the release run and the retrospective both continue. State in the flow's own output that the lookup was not performed and why. Do not record the review or de-duplication it feeds as satisfied — a release must not claim it checked for open framework bugs, and a retrospective must not record a finding as having no related item, on the strength of an unavailable lookup |
+| Framework | Lookup could not be performed — one of the reads it actually attempts failed: the configured tracker does not support this lookup, the board could not be identified or read, or a request returned blank or malformed data. The classification field is **not** among those reads, so its readability never produces this outcome in framework mode | Unavailable. Reported as unavailable, with the reason, in place of a list. Never reported as an empty result, and never silently treated as one | Do not block the flow: the release run and the retrospective both continue. State in the flow's own output that the lookup was not performed and why. Do not record the review or de-duplication it feeds as satisfied — a release must not claim it checked for open framework bugs, and a retrospective must not record a finding as having no related item, on the strength of an unavailable lookup |
 | Consumer | Lookup could not be performed | Unchanged from today — this feature does not alter how a consumer-repository lookup failure is handled, including today's return of an empty list on failure | Unchanged — out of scope for this feature |
 
 ### Mirror surfaces

@@ -26,9 +26,7 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `stop-path-no-mutation`, `reclassify-then-route`, `framework-post-backlog-statuses-pass`,
 `scan-misclassified-item-held`, `scan-misclassified-not-informational`,
 `scan-uses-tracker-status-not-artifacts`, `scan-status-unreadable-defers`,
-the eight `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
-`prelude-item-scope-stops`, `prelude-items-scope-holds-one-continues`,
-`prelude-epic-scope-holds-one-continues`, `prelude-consumer-scopes-unchanged`,
+the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
 `consumer-prelude-workflow-unchanged`, `consumer-next-action-workflow-unchanged`,
 `consumer-batch-plan-workflow-unchanged`, `consumer-routing-all-classes-unchanged`,
 `release-unavailable-continues-unsatisfied`, and `retro-unavailable-continues-unsatisfied`
@@ -104,7 +102,7 @@ point 2 and Reversal (2).)
 
 **Expected (framework mode)**: `STATUS=unavailable`, non-empty `REASON` — not silent "no
 framework items". Exit `0`. This manual step exercises cause 2 only; the full closed list is
-eight causes, each with its own `REASON` and its own named automated case:
+nine causes, each with its own `REASON` and its own named automated case:
 
 | # | Cause | `REASON` | Named case |
 | --- | --- | --- | --- |
@@ -113,12 +111,22 @@ eight causes, each with its own `REASON` and its own named automated case:
 | 3 | Project number non-numeric | `project_number_invalid` | `lookup-unavailable-project-number-invalid` |
 | 4 | Project owner unresolvable | `project_owner_unresolvable` | `lookup-unavailable-project-owner-unresolvable` |
 | 5 | Repository owner/name unresolvable | `repo_unresolvable` | `lookup-unavailable-repo-unresolvable` |
-| 6 | `gh issue list` failed | `issue_list_failed` | `lookup-unavailable-issue-list-failed` |
-| 7 | `gh project item-list` failed | `item_list_failed` | `lookup-unavailable-item-list-failed` |
-| 8 | Item-list JSON unparseable | `item_list_unparseable` | `lookup-unavailable-item-list-unparseable` |
+| 6 | `gh issue list` failed (non-zero exit) | `issue_list_failed` | `lookup-unavailable-issue-list-failed` |
+| 7 | `gh issue list` succeeded but returned blank or malformed JSON | `issue_list_blank_or_malformed` | `lookup-unavailable-issue-list-blank-or-malformed` |
+| 8 | `gh project item-list` failed | `item_list_failed` | `lookup-unavailable-item-list-failed` |
+| 9 | Item-list JSON unparseable | `item_list_unparseable` | `lookup-unavailable-item-list-unparseable` |
 
-**Fail if** any of the eight named cases is missing from the harness, or two causes share a
+**Fail if** any of the nine named cases is missing from the harness, or two causes share a
 `REASON`: a declared cause without a passing case is an unimplemented claim.
+
+2a. Issue-list response validation (cause 7). Force `gh issue list` to exit `0` with blank
+output, then with malformed JSON, and run the wrapper each time.
+
+**Expected**: `STATUS=unavailable` with `REASON=issue_list_blank_or_malformed`, `JSON=[]`,
+exit `0`, both times. **Fail if** either run reports `STATUS=empty` — today the primitive
+returns `[]` for a blank response (`workflow-lib.sh:3316`), which reads as "no open items" —
+or `REASON=item_list_unparseable`, which blames the project item-list request for an
+issue-list problem.
 
 2b. Type field independence (`framework-lookup-ignores-type-field`). Point the lookup at a
 board whose Type field is renamed, misconfigured, or absent — or use the harness fixture.
@@ -148,11 +156,10 @@ keeps today's behavior, including its existing "Type field unreadable" stderr wa
 1. Identify a Backlog issue classified `Workflow` (or create one in a consumer test repo — not
    in this template repo after Step 1).
 
-2. Run the backlog type gate for a single-item caller. `--caller` names arity and disposition,
-   not a command: `single` = this run advances exactly one named item (stop); `scan` = this run
-   evaluates many items (hold one, continue). Prelude scope `item` passes `single`; prelude
-   scopes `items` (`/run-items`) and `epic` (`/run-epic`) pass `scan`, as does the portfolio
-   scan.
+2. Run the backlog type gate for a single-item caller. The gate has exactly two callers: the
+   bounded prelude's `item` scope (`single`) and the portfolio scan (`scan`). Explicit-list
+   (`--items` / `/run-items`) and epic (`--epic` / `/run-epic`) runs are unchanged by this
+   item and call no gate — see the plan's Out of Scope.
 
 ```bash
 ./scripts/development-workflow/framework-mode-backlog-type-gate.sh \
@@ -229,32 +236,23 @@ whose project JSON is present but whose Type cannot be parsed
 
 - **Scan caller**: `RESULT=pass` with `REASON=type_unreadable`, and the scan block carries
   `MISCLASSIFIED_TYPE_CHECK=deferred`. The gate must not inherit the helper's non-zero exit.
-- **Prelude scopes (`item`, `items`, `epic`)**: the gate is never reached —
+- **Single caller (prelude `item` scope)**: the gate is never reached —
   `run-epic-scope-resolver.sh:687`–`:689` already aborts scope resolution with "failed to read
   tracker type for issue #N". That is today's behavior; **fail this step if the
   implementation softened or removed that abort**, which is out of scope for this item.
 
-5d. Prelude scope dispositions (`prelude-item-scope-stops`,
-`prelude-items-scope-holds-one-continues`, `prelude-epic-scope-holds-one-continues`). With one
-misclassified Backlog + Workflow item, run `run-bounded-prelude.sh` in each scope mode:
+5d. Multi-item scopes are untouched. Run the prelude for an explicit list and for an epic that
+each include the misclassified item:
 
 ```bash
-./scripts/development-workflow/run-bounded-prelude.sh --issue <misclassified> --json
 ./scripts/development-workflow/run-bounded-prelude.sh --items "<misclassified>,<valid>,<valid>" --json
 ./scripts/development-workflow/run-bounded-prelude.sh --epic <epic-with-that-child> --json
 ```
 
-**Expected**: `--issue` (scope `item`) exits non-zero with `missing_tracker_context` naming the
-item, and nothing dispatches. `--items` and `--epic` exit `0`, emit
-`MISCLASSIFIED_HELD_ITEMS=#<misclassified>` with its reason, and still carry the other items
-through to the policy/confirmation output. **Fail if** a multi-item scope halts the whole run
-(one mis-typed member must not cancel its siblings' work) **or** if a multi-item scope silently
-proceeds with the misclassified item included.
-
-5e. Consumer scopes (`prelude-consumer-scopes-unchanged`): repeat 5d under consumer config.
-
-**Expected**: all three scope modes produce output byte-identical to the pre-feature baseline,
-with no `MISCLASSIFIED_HELD_ITEMS` key and no stop.
+**Expected**: output identical to the pre-feature baseline for both — no gate call, no stop,
+and no misclassification key of any kind. **Fail if** either run gains a hold, a stop, or a new
+key: explicit-list and epic scopes are deferred to `<backlog-issue-TBD>` and must not change
+here.
 
 6. **Post-reclassification** (`reclassify-then-route`): re-class the item to Feature, then Bug,
    then Refactor; re-run through prelude / next-action. Each class routes as today. For Bug,
