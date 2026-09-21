@@ -296,33 +296,56 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
      commit**, and that token functions as a standalone commit reference" — so
      an unproven abbreviation must not authorize readiness.
 
-  **Abbreviated token with no local match → fail closed.** Uniqueness for an
-  abbreviation can only be proven against a complete local object store, so:
-  run one `git fetch --no-tags --quiet origin` for the pull request's head ref
-  and retry step 1; if the commit count is still `0`, **escalate
-  `evidence_unavailable_codex_thread_state`** and stop. Do not fall back to
-  REST, do not treat the marker as clean or as prior-revision evidence, and do
-  not guess from a length threshold — there is no abbreviation length that
-  guarantees uniqueness, and a shallow or partial checkout is exactly the case
-  where a colliding object is missing locally.
+  **Abbreviated token with no local match — two different outcomes, never one.**
+  A local miss has two possible causes and the spec classifies them
+  differently, so they must be separated rather than collapsed. Run one
+  `git fetch --no-tags --quiet origin` for the pull request's head ref and
+  retry step 1; if the local commit count is still `0`, ask the remote the one
+  question it *can* answer authoritatively — existence:
 
-  Failure semantics, by class:
+  - **`gh api repos/{owner}/{repo}/commits/{token}` → HTTP `422`
+    (`No commit found for SHA: …`)**: a **proven zero-match**. GitHub's object
+    store is complete for the repository, so a `422` establishes that no commit
+    in it starts with that token. Spec line 286 (decision-gate matrix) lists
+    "resolves to zero commits" among the syntactically unusable markers that
+    `escalate` with `codex_current_verdict_malformed_revision_marker`, and its
+    example row names "one valid-looking 40-character token that resolves to no
+    commit at all". Classify **malformed-marker**, not evidence-unavailable.
+  - **HTTP `200`**: the token *does* match at least one commit, but GitHub
+    returns a single `.sha` with no ambiguity signal (`490b` → `200`, observed;
+    Verification Log). Existence is settled, **uniqueness is not**, and nothing
+    available can settle it once the local store lacks the objects. Classify
+    **`evidence_unavailable_codex_thread_state`**.
+  - **REST unreachable, rate-limited, or `5xx` after one retry**: neither
+    existence nor uniqueness is established →
+    **`evidence_unavailable_codex_thread_state`**.
+
+  Do not guess from a length threshold — no abbreviation length guarantees
+  uniqueness — and never let an unproven token reach clean, wait, or
+  prior-revision evidence.
+
+  Resolution outcomes, by observation:
 
   | Observation | Class | Outcome |
   | --- | --- | --- |
   | Local `--disambiguate` → exactly 1 commit | Unique | Resolved; continue marker checks |
   | Local `--disambiguate` → ≥2 commits | Ambiguous (proven defect) | `codex_current_verdict_malformed_revision_marker` |
-  | Full 40-hex token, local miss, REST `422` | No such commit (proven defect) | `codex_current_verdict_malformed_revision_marker` |
+  | Full 40-hex token, local miss, REST `422` | Zero-match (proven defect) | `codex_current_verdict_malformed_revision_marker` |
   | Full 40-hex token, local miss, REST `200` | Unique by construction | Resolved; continue marker checks |
-  | Abbreviated token, local miss after one fetch + retry | Uniqueness **unprovable** | `evidence_unavailable_codex_thread_state` |
+  | Abbreviated token, local miss after fetch + retry, REST `422` | Zero-match (proven defect) | `codex_current_verdict_malformed_revision_marker` |
+  | Abbreviated token, local miss after fetch + retry, REST `200` | Exists, uniqueness **unprovable** | `evidence_unavailable_codex_thread_state` |
+  | REST unreachable / rate-limited / `5xx` after one retry | Nothing established | `evidence_unavailable_codex_thread_state` |
   | `git` fails for any other reason (not exit `128` with one of the two messages above) | Evidence failure | `evidence_unavailable_codex_thread_state` after one retry |
 
-  The distinction is deliberate: the malformed tier is for **proven** marker
-  defects, which is what spec line 107 enumerates ("Empty, non-hex,
-  multiple-token, ambiguous, interior-substring, or superstring markers"), while
-  an unprovable token is indeterminate evidence and takes the evidence-unavailable
-  escalation. Both are fail-closed; neither can reach clean, wait, or
-  `needs_fixes`.
+  The split is the spec's, not a preference: the malformed tier holds **proven**
+  marker defects — spec line 286 enumerates them as "empty, non-hex, contains
+  multiple commit tokens, ambiguous between candidates, **resolves to zero
+  commits**, or matches the live head only at an interior substring or as a
+  superstring" — while a token whose uniqueness cannot be established is
+  indeterminate evidence and takes the evidence-unavailable escalation. Both are
+  fail-closed; neither can reach clean, wait, or `needs_fixes`. Tests:
+  `codex_marker_remote_zero_match_malformed` and
+  `codex_marker_unprovable_abbreviation`, one per branch.
 
 - [ ] **Head evidence window attribution** (AC-14): For trigger-less root
   comments, assign each comment to the head that was current when authored,
@@ -1040,7 +1063,8 @@ and head-attribution helpers):
 | Indeterminate window | Cannot place trigger-less comment relative to prior head | Evidence unavailable |
 | No transition instant for head | No `committed` or `head_ref_force_pushed` event introduces `H`, so `L(H)` has no floor | Evidence unavailable |
 | Trigger-less head, boundaries derivable | Clean marker comment after the previous head's last trigger and after `T(H)` | Attributed to `H` — **not** an escalation (AC-13) |
-| Unprovable abbreviation | 7-character marker token with no local commit match after one fetch and retry | Evidence unavailable — uniqueness cannot be proven |
+| Proven remote zero-match | Abbreviated marker token, no local match after fetch and retry, REST `422` | Malformed — resolves to zero commits (spec line 286) |
+| Unprovable abbreviation | Abbreviated marker token, no local match after fetch and retry, REST `200` | Evidence unavailable — exists, uniqueness unprovable |
 | Superseded malformed | Live-head malformed comment older than live-head clean evidence | Ignored — newer clean wins |
 
 **Unit test mapping** (all in `scripts/development-workflow/tests/test-pr-review-loop.sh`
@@ -1063,6 +1087,7 @@ Area 13 — one `run_test` per row):
 | `codex_marker_indeterminate_window` | Indeterminate window |
 | `codex_marker_no_transition_event_window` | No transition instant for head |
 | `codex_marker_triggerless_head_attributed` | Trigger-less head, boundaries derivable |
+| `codex_marker_remote_zero_match_malformed` | Proven remote zero-match |
 | `codex_marker_unprovable_abbreviation` | Unprovable abbreviation |
 | `codex_tied_usage_limit_then_unrecognized` | Availability notice tied with fail-closed evidence — **existing test, update to expect escalation** (not the unavailable outcome) |
 | `codex_tied_usage_limit_then_blocker` | Availability notice tied with an actionable blocker — expect `needs_fixes` |
@@ -1096,7 +1121,7 @@ uses any PR where Codex left resolved inline threads on the current head.
 | Classifier divergence between companion and loop phase 1 | Med | High | Single shared `codex-github-evidence-lib.sh` sourced by both; never source the companion executable |
 | False clean from provisional reply relaxation | Low | High | Keep provisional mode only on re-trigger path; strict on clean declaration |
 | Escalation reasons not surfaced in PR summary | Low | Med | Assert `REASON=` in harness + Step 7a alignment check |
-| Marker token unresolvable locally (shallow or unfetched clone) | Med | Med | One `git fetch` of the head ref then retry; a full 40-hex token may still resolve through REST, an abbreviation that stays unproven escalates evidence-unavailable, and non-`128` git failures escalate the same way |
+| Marker token unresolvable locally (shallow or unfetched clone) | Med | Med | One `git fetch` of the head ref then retry; then REST settles existence only — `422` is a proven zero-match (malformed tier), `200` leaves uniqueness unprovable (evidence-unavailable), and REST or `git` failures escalate evidence-unavailable |
 | Retained exit-`2` reasons regress while adding the new codes | Med | High | Retained-contract table names every retained reason and its pinned test; scoped harness assertion plus a non-regression assertion for the three retained reasons |
 | Published exit / `REASON=` contract is hard to unwind | Low | Med | Revert is code-only (Implementation Order steps 3–4 + Area 13 expectations + docs); residues documented in the Outcome-mapping reversal note |
 | `committer.date` is a lower bound on the push, so a comment authored in the gap is attributed to the newer head | Med | Low | Accepted and documented: the spec defines the window from the head-and-trigger chronology, not from push instants (spec line 109). A trigger for the head closes the gap, and the loop posts one for every head it reviews; `codex_marker_triggerless_head_attributed` and `codex_marker_no_transition_event_window` pin the attributed and escalating cases |
@@ -1180,7 +1205,7 @@ esac
   + REST `id` for threads and `pull_request_review_id` +
   `pullRequestReview.databaseId` for review scoping.
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
-  table has 17 rows and its mapping table has 22 test names, of which 16 carry
+  table has 18 rows and its mapping table has 23 test names, of which 17 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
   the five remaining mapping rows are the tie/precedence and correlation cases
@@ -1214,10 +1239,11 @@ esac
 - Resolution mechanisms named: Checked — commit tokens resolve through
   `git rev-parse --disambiguate` (the only ambiguity test) and `--verify` (value
   lookup), with the GitHub REST endpoint admissible only for a full 40-character
-  token, where ambiguity is impossible. An abbreviation that no local object
-  proves unique fails closed with `evidence_unavailable_codex_thread_state`; a
-  per-observation outcome table separates proven marker defects (malformed tier)
-  from unprovable ones (evidence-unavailable tier).
+  token, where ambiguity is impossible, and for the existence question alone on
+  an abbreviated token. A per-observation outcome table keeps the spec's two
+  outcomes distinct: a proven zero-match (REST `422`) is malformed-marker per
+  spec line 286, while existence-without-provable-uniqueness (REST `200`) and
+  every read failure are `evidence_unavailable_codex_thread_state`.
 - Planted-violation evidence: Checked — three plants at concrete targets, each
   with its failing test, its restoration, and the masking check REVIEW.md
   requires.
