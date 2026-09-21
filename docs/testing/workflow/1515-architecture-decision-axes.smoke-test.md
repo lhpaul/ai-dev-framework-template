@@ -102,6 +102,7 @@ to the canonical page:
 - [ ] `.claude/agents/item-orchestrator.md`
 - [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md`
 - [ ] `.agents/skills/run-item/SKILL.md`
+- [ ] `.agents/skills/run-items/SKILL.md`
 - [ ] `.cursor/agents/automated-reviewer-loop.md`
 - [ ] `.claude/agents/automated-reviewer-loop.md`
 - [ ] `.codex/skills/workflow-reviewer-loop/SKILL.md`

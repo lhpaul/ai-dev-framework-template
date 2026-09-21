@@ -22,7 +22,7 @@ the runner-facing agent/skill mirrors — without changing when
 **Rationale**: No application code or scripts change runtime behavior; the work
 is a broad documentation-and-protocol alignment across the canonical page,
 three orchestration protocols, stop-message contract text, README indexing,
-`REVIEW.md`, and thirteen agent/skill surfaces (plus three conditional
+`REVIEW.md`, and fourteen agent/skill surfaces (plus three conditional
 orchestrator files). The spec's Decision-Gate
 Consistency Matrix is already authoritative for behavior; this plan adds the
 concrete file names, PR durability marker, report outline, and the two
@@ -57,7 +57,7 @@ update.
 | Spec merged | `gh pr view 1735 --json state,mergedAt,baseRefName` | Merged to `develop` (handoff: spec PR #1735 merged) |
 | No existing canonical escalation page | `ls docs/workflow/development-workflow/architecture-decision-escalation.md 2>/dev/null \|\| echo absent` | Absent — net-new canonical surface |
 | Current `architecture_decision` mentions | `grep -rl architecture_decision docs/workflow .ai-dev-workflow.yaml` | `guardrails.md`, `guardrails-enforcement.md`, `README.md`, `.ai-dev-workflow.yaml`, plus this spec only |
-| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md .codex/skills/workflow-implementer/SKILL.md .cursor/agents/code-reviewer.md .claude/agents/code-reviewer.md .codex/skills/workflow-code-reviewer/SKILL.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All thirteen `OK:` — verified 2026-09-20, every path exists (orchestrator batch agents verified separately in Layer H) |
+| Lockstep mirror files (explicit list) | `for f in .cursor/agents/item-orchestrator.md .claude/agents/item-orchestrator.md .codex/skills/workflow-item-orchestrator/SKILL.md .agents/skills/run-item/SKILL.md .agents/skills/run-items/SKILL.md .cursor/agents/automated-reviewer-loop.md .claude/agents/automated-reviewer-loop.md .codex/skills/workflow-reviewer-loop/SKILL.md .cursor/agents/developer.md .claude/agents/developer.md .codex/skills/workflow-implementer/SKILL.md .cursor/agents/code-reviewer.md .claude/agents/code-reviewer.md .codex/skills/workflow-code-reviewer/SKILL.md; do test -f "$f" && echo OK:$f \|\| echo MISSING:$f; done` | All fourteen `OK:` — verified 2026-09-20, every path exists (orchestrator batch agents verified separately in Layer H) |
 | PR marker upsert precedent | `grep -n find_marker_comment_id scripts/development-workflow/run-epic-audit-trail.sh \| head` | Existing find-by-marker-then-PATCH-or-POST helper used for durable PR comments |
 | Stop-surface audit helper | `grep -n audit_stop_surfaces scripts/development-workflow/tests/test-worktree-recipe.sh` | Existing audit covers `guardrails-enforcement.md` stop contract — extend to reference the new canonical page |
 
@@ -268,6 +268,9 @@ Each file gets a short, direct requirement plus a link to the canonical page
 - [ ] `.claude/agents/item-orchestrator.md`
 - [ ] `.codex/skills/workflow-item-orchestrator/SKILL.md`
 - [ ] `.agents/skills/run-item/SKILL.md`
+- [ ] `.agents/skills/run-items/SKILL.md` (Codex batch alias carrying Protocol 90
+      supervision and terminal-reporting guidance, so it needs the batch
+      `architecture_decision` summary parity)
 - [ ] `.cursor/agents/automated-reviewer-loop.md`
 - [ ] `.claude/agents/automated-reviewer-loop.md`
 - [ ] `.codex/skills/workflow-reviewer-loop/SKILL.md`
@@ -303,26 +306,38 @@ pointer — verify during implementation; add if missing.
       helper only discovers `stop_conditions:` surfaces and greps for
       `push_verification_failed`, so it can neither validate the canonical
       escalation page nor detect a weakened mirror; it is left unchanged.
-      - **Discovery scope**: the explicit thirteen-file mirror list from the
+      - **Discovery scope**: the explicit fourteen-file mirror list from the
         Lockstep mirror files row of the plan's Verification table (the same
         list as section H), plus Protocol 90, Protocol 91, Protocol 93, and the
         canonical page. Discovery is by that list, not by grep, so a deleted mirror is
         reported rather than silently skipped.
-      - **Invariants** (per file): a mirror and each protocol contain the
-        literal `architecture-decision-escalation.md` link **and** the three
-        declaration terms `Conforms`, `Departs`, `Not yet implemented` (agents
-        that only escalate carry the link plus the "no lighter escalation
-        wording" sentence instead — the helper takes the per-file required
-        terms as data). The canonical page contains the terms `Recommendation`,
-        `Conforms`, `Departs`, `Not yet implemented`.
+      - **Invariants** (per file, matching each layer's responsibility; the
+        helper takes the required terms per file as data):
+        - *Every audited file* contains the literal
+          `architecture-decision-escalation.md` link.
+        - *Protocol 91, Protocol 93, developer and code-reviewer mirrors*
+          (Layers C, D, H) also contain `Conforms`, `Departs`,
+          `Not yet implemented`.
+        - *Protocol 90 and the orchestrator / reviewer-loop / run-item(s)
+          mirrors* (Layers E, H) need only the link plus the child-report
+          reference / "no lighter escalation wording" sentence; they are
+          **not** required to duplicate the declaration vocabulary.
+        - *Canonical page* contains `Recommendation`, `Conforms`, `Departs`,
+          `Not yet implemented`.
       - **Output contract**: prints `COUNT=<n>` and one
-        `MISSING=<file>:<term>` per violation, like `audit_stop_surfaces`.
-      - **Non-vacuous guard**: assert `COUNT` equals 17 (thirteen mirrors +
+        `MISSING=<file>:<line>:<term>` per violation, where `<line>` is the
+        line of the file's `architecture_decision` / escalation section
+        heading found with `grep -n` (the concrete location the term belongs
+        under), or `0` with `ANCHOR_MISSING=<file>` when that heading is
+        absent.
+      - **Non-vacuous guard**: assert `COUNT` equals 18 (fourteen mirrors +
         three protocols + canonical page) so an empty discovery cannot pass.
       - **Planted-violation evidence**: copy the mirror tree to a temp root,
         delete the canonical link from `.claude/agents/code-reviewer.md`, and
         assert the audit prints exactly
-        `MISSING=.claude/agents/code-reviewer.md:architecture-decision-escalation.md`
+        `MISSING=.claude/agents/code-reviewer.md:<heading-line>:architecture-decision-escalation.md`
+        (with `<heading-line>` asserted equal to the fixture's known heading
+        line)
         (failure at a concrete mirror location); restore the file and assert
         the audit prints no `MISSING=` line (passing run after restoration).
         Repeat once for a weakened declaration term in a
@@ -395,7 +410,7 @@ Changes; no additional `docs/project/` files expected.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all thirteen mandatory paths (plus the three conditional orchestrator files) |
+| Mirror surface omitted from lockstep list | Med | Med | Verification Log grep + smoke test step enumerating all fourteen mandatory paths (plus the three conditional orchestrator files) |
 | Protocol 91 PR comment step conflicts with existing comment templates | Low | Med | Reuse upsert marker pattern from other workflow comments; idempotent section heading |
 | Runners treat "all settled" continuation as suppressing stops | Med | High | Canonical page + Protocol 91 repeat spec's "trigger not met" wording prominently |
 | Over-long duplication of spec matrix in protocols | Med | Low | Canonical page + pointer; protocols state requirement and durability only |
@@ -470,6 +485,7 @@ bash scripts/development-workflow/tests/test-worktree-recipe.sh
 | `.claude/agents/item-orchestrator.md` | Edit |
 | `.codex/skills/workflow-item-orchestrator/SKILL.md` | Edit |
 | `.agents/skills/run-item/SKILL.md` | Edit |
+| `.agents/skills/run-items/SKILL.md` | Edit |
 | `.cursor/agents/automated-reviewer-loop.md` | Edit |
 | `.claude/agents/automated-reviewer-loop.md` | Edit |
 | `.codex/skills/workflow-reviewer-loop/SKILL.md` | Edit |
