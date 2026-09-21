@@ -377,7 +377,7 @@ The index below groups the IDs by acceptance group:
 | E | E1, E2, E3 |
 | F | F1, F2, F3, F4, F5 |
 | G | G1 |
-| H | H1, H2, H3, H4, H5, H6, H7, H8, H9 |
+| H | H1, H2, H3, H4, H5, H6, H7, H8, H9, H10, H11, H12, H13 |
 
 **Regression suite**: Not applicable as a deliberate testing-scope decision —
 this feature changes only workflow docs, agent files, and a shell harness. The
@@ -549,8 +549,10 @@ Not applicable.
 8. Update `AGENTS.md` (and README plan-stage pointer — section exists at line
    `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
-10. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B11, C1–C2,
-    D1–D2, E1–E3, F1–F5, G1, H1–H9) named in Testing Strategy.
+10. Add the criterion-to-exercise table (every Group A–H checkbox mapped to a
+    matrix row, scenario, or harness assertion) to the implementation PR.
+11. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B11, C1–C2,
+    D1–D2, E1–E3, F1–F5, G1, H1–H13) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
@@ -575,7 +577,7 @@ Not applicable.
 | E — Rule 4 | Template + REVIEW delegated-claim blocking + smoke E1–E3 (all required) |
 | F — Rule 5 | Template consumer enumeration guidance + smoke F1–F5 (all required) |
 | G — Rule 6 | Canonical Rule 6 author obligation + REVIEW backstop + smoke G1 (required) |
-| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H9 (all required) |
+| H — Outcomes and gate | Outcome record schema + REVIEW + copied gate matrix + smoke H1–H13 (all required) |
 
 **Addition vs spec**: Mirror harness + fixtures + planted-violation proof are
 plan additions for mirror-surface consistency only (Group A agreement), not

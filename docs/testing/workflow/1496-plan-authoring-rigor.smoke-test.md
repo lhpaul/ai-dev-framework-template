@@ -129,8 +129,12 @@ names an acceptance theme, the exercise, and the expected gate class.
 | H7 | Absent trigger recorded Satisfied | Rule's trigger absent, record says `Satisfied` | Blocking — must be `Not applicable` with rationale |
 | H8 | Invalid outcome label | Record uses a label outside the three defined | Blocking — invalid label |
 | H9 | External-source finding not persisted | Rule 1 outcome cites an inspection with no persisted finding | Blocking — persisted finding missing |
+| H10 | Incomplete evidence record | Rule 3/4/5 evidence record missing its revision, command, or result | Blocking — record incomplete |
+| H11 | Non-reproducing or population-stale evidence | Recorded command no longer reproduces, or the population changed since gathering | Blocking — evidence not current |
+| H12 | Repository-only drift | Repository changed after gathering but no claim the plan makes is affected | Non-outcome — no finding; record unchanged |
+| H13 | Evidence only in PR comments | Evidence lives in a PR comment, not in the plan or PR description record | Blocking — evidence not in the durable record |
 
-Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix is the required set: criteria it does not name are enforced only by the mirror harness's name/path/label assertions and the review gate, and any criterion a reviewer finds unexercised is added as a row before implementation is marked done. The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
-every matrix row above (B1–B11, C1–C2, D1–D2, E1–E3, F1–F5, G1, H1–H9), as
+Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. The matrix is the minimum required set, not a claim that it names every acceptance criterion. The implementation PR must also include a table mapping **every** checkbox of spec Groups A–H to the matrix row, scenario, or mirror-harness assertion that exercises it; any criterion with no exercise gets a new row before implementation is marked done. The rows exercise behavior that wiring alone cannot prove. Before marking implementation complete, execute
+every matrix row above (B1–B11, C1–C2, D1–D2, E1–E3, F1–F5, G1, H1–H13), as
 the implementation plan Testing Strategy requires, including at least one
 blocking and one non-blocking outcome on real or fixture plan text.
