@@ -91,6 +91,7 @@ checks in the implementation-start assumption table below.
 | Exit-`3` reason hardcode | `sed -n '2292,2302p' scripts/development-workflow/pr-review-loop.sh` | `print_kv REASON codex-github-usage-limit` is unconditional at `:2294`, discarding the companion's `REASON=`; the companion's `codex_return_account_not_connected` emits `REASON=codex-github-account-not-connected` then `exit 3` (`codex-github-reviewer.sh:1384–1393`), so that outcome is reported today as a usage limit |
 | Commit-token resolution semantics | `git rev-parse --disambiguate=<prefix>`; `git rev-parse --verify "<token>^{commit}"`; `gh api repos/{owner}/{repo}/commits/<token>` | Unique token `490bde2` → exit `0`, full SHA. Ambiguous prefix `0003` (found via `git rev-list --all --objects \| cut -c1-4 \| sort \| uniq -d`) → exit `128`, `error: short object ID 0003 is ambiguous`. Unknown `deadbee` → exit `128`, `fatal: Needed a single revision`. `--disambiguate=490b` → one line (the full SHA); a 2-character prefix returns zero lines with no error. GitHub REST: `commits/490bde2` and `commits/490b` both return HTTP `200` with a full `.sha` — no ambiguity signal — while `commits/dead` returns HTTP `422` `No commit found for SHA: dead` |
 | Head-transition source investigation | `gh api repos/{owner}/{repo}/issues/1768/timeline --paginate --jq '.[].event' \| sort \| uniq -c`; `gh api repos/{owner}/{repo}/events --paginate --jq '.[] \| select(.type=="PushEvent")'` | The pull-request timeline for a four-head pull request contains **no** push- or head-transition event of any kind: only `commented`, `committed`, `labeled`, `unlabeled`, `subscribed`, `mentioned`, `reviewed`, `cross-referenced`. `committed` events carry `sha` + `committer.date` with `created_at: null`. Ordinary (non-force) pushes surface no pull-request-scoped event, so `head_ref_force_pushed` is the only timeline transition event and this repository has none to sample. The repository `events` feed *does* carry `PushEvent` with a true push instant per branch ref — `490bde2c` at `2026-09-21T00:05:21Z` versus its `committer.date` of `00:05:14Z`, empirically confirming the 7-second commit-date-vs-push gap — but the feed is repository-wide and bounded: `--paginate` returned ~286 events reaching back only to `2026-09-16`, entries for one ref came back out of chronological order, and a fork head ref would not appear at all. **Historical — no longer consumed by any step.** Recorded because it is the evidence that a transition instant cannot be sourced at all; the **Live-head evidence window** section no longer needs one, so no substitute is required |
+| Sync-manifest scope for a new shared library | `sed -n '105,132p' sync-manifest.yaml`; `grep -n 'product_repo' scripts/development-workflow/tests/test-sync-template-mode-scopes.sh` | `scripts/development-workflow/` is declared `glob: "**/*"`, `mode_scope: hub_only` (`sync-manifest.yaml:105–108`), and each product-repo runtime file overrides it with its **own explicit entry**: `workflow-config-resolver.py` (`:109`), `resolve-reviewer-availability.sh` (`:112`), `validate-workflow-config.sh` (`:115`), `workflow-lib.sh` (`:118–120`, note "shared shell helpers required by product-repo runtime scripts"), `pr-review-loop.sh` (`:121–123`), `pr-ci-loop.sh` (`:124`), `changelog-fragments.sh` (`:127`), `post-merge-cleanup.sh` (`:130`). So a **new** sibling file is `hub_only` by default even though its caller is injected. `workflow-lib.sh` is the precedent to mirror. Selection is testable through `select-sync-manifest-entries.py`, and `test-sync-template-mode-scopes.sh` already asserts against the **real** manifest (`:309–338`) as well as fixtures (`:180`) |
 | Trigger comment names the head | `sed -n '1685p;2019p' scripts/development-workflow/codex-github-reviewer.sh` | `codex-github-reviewer.sh:1685` posts `… (review triggered by workflow runner, commit: $CURRENT_SHA)` and `:2019` posts `… (sha: $CURRENT_SHA)` on retrigger, both after `headRefOid` is resolved. Every trigger therefore names its SHA, which is what lets the boundary `B` be computed by string comparison against `headRefOid` with no head enumeration |
 | Blocking-marker vocabulary (shipped) | `grep -n 'CODEX_BLOCKING_PATTERN\|codex_response_is_blocking()' scripts/development-workflow/codex-github-reviewer.sh` | `CODEX_BLOCKING_PATTERN` is defined at `codex-github-reviewer.sh:532` (`changes requested`, `blocking issues:`, `blocking finding`, `blocking:`, `must fix`, `action required`, `required:`, `❌`) and extended at `:578` with `CODEX_MERGE_REFUSAL_PATTERN` (`:577`); `codex_response_is_blocking()` at `:698` is the classifier. Body findings reuse this surface, so the plan adds no marker vocabulary — which is what the spec requires |
 | Force-push event payload | `gh api repos/kubernetes/kubernetes/issues/142190/timeline --jq '.[] \| select(.event=="head_ref_force_pushed")'` (this repository has no force-pushes to sample; kubernetes/kubernetes used as a live source) | `head_ref_force_pushed` carries `created_at` — a true push instant — and a populated `commit_id` naming the **new** head: on PR 142190 the newest event (`2026-09-17T18:35:21Z`, `commit_id=1a39d080…`) matches that PR's current head, and its commit's own `committer.date` is `18:35:18Z`, three seconds earlier. Populated in 8 of 8 sampled events across 5 pull requests. `head_ref_deleted` also carries `created_at` (with `commit_id: null`); `head_ref_restored` was not sampled. The occupancy guard needs only existence and `created_at`, so it does not depend on `commit_id` being present |
@@ -1052,10 +1053,12 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
       `codex_review_thread_evidence_counts()` into it and add the evidence
       collector, marker parser, and window boundary): revert by restoring the
       function to `codex-github-reviewer.sh` at its original call site and
-      deleting the library file. The revert order is the reverse of the
-      creation order — steps 3–4 must be reverted first, since they source the
-      library; reverting 1–2 while 3–4 stand would leave both callers sourcing
-      a file that no longer exists. Nothing outside this repository consumes
+      deleting the library file **and its `sync-manifest.yaml` entry**, which
+      must go with it — a manifest entry for a deleted path would offer
+      downstream repos a file that no longer exists. The revert order is the
+      reverse of the creation order — steps 3–4 must be reverted first, since
+      they source the library; reverting 1–2 while 3–4 stand would leave both
+      callers sourcing a file that no longer exists. Nothing outside this repository consumes
       the library, and it holds no state.
     - **Step 9** (run the suite, produce the three planted-violation proofs and
       paste them into the pull request): **cannot and should not be undone.**
@@ -1370,6 +1373,18 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   timestamp selector is consulted, and the direction a selector-only reading
   would get wrong.
 
+- [ ] **Sync-manifest mode scope** (U1) — in the **existing** harness
+  `scripts/development-workflow/tests/test-sync-template-mode-scopes.sh`, not a
+  new file, added to its real-manifest block (`:309–338`) rather than to a
+  fixture so it guards the shipped manifest:
+  `product_selects_codex_evidence_lib` asserting
+  `SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/codex-github-evidence-lib.sh glob=`
+  in the `--role product_repo` selector output, mirroring the existing
+  `product_selects_product_ci_runtime` assertion at `:180`. Pair it with
+  `product_selects_pr_review_loop_with_evidence_lib`, asserting both the caller
+  and the library appear in the same output, so the dependency cannot be
+  half-injected again.
+
 - [ ] **Matrix spot checks** (AC-7–10 and AC-14 — AC-11, AC-12, and AC-13 have
   their own rows above; this bullet covers the remainder of the range, not all
   of it): Add focused mock-`gh` cases — one per escalation reason, named
@@ -1472,7 +1487,10 @@ plant whose answer is supplied by an earlier tier is not a proof.
 **Smoke test runbook**: `docs/testing/workflow/1757-resolved-codex-findings.smoke-test.md`
 
 **Regression suite**: Extend `scripts/development-workflow/tests/test-pr-review-loop.sh`
-only (existing workflow regression surface for Codex).
+for the Codex behaviour, plus
+`scripts/development-workflow/tests/test-sync-template-mode-scopes.sh` for the
+packaging assertion above. Both are existing harnesses; this item adds no new
+test file.
 
 ### Parser-risk addendum (`Reviewed commit` marker + blocking-body scan)
 
@@ -1772,7 +1790,21 @@ esac
 
 1. Create `scripts/development-workflow/codex-github-evidence-lib.sh` with
    unit-testable Codex thread + evidence helpers (no top-level side effects);
-   source it from `codex-github-reviewer.sh` and `pr-review-loop.sh`; commit.
+   source it from `codex-github-reviewer.sh` and `pr-review-loop.sh`. **In the
+   same commit, declare it in `sync-manifest.yaml`**, mirroring the
+   `workflow-lib.sh` precedent at `:118–120` and placed with the other
+   product-repo runtime entries:
+
+   ```yaml
+   - path: scripts/development-workflow/codex-github-evidence-lib.sh
+     mode_scope: product_repo_injection
+     note: shared Codex evidence helpers required by pr-review-loop.sh
+   ```
+
+   Without it the recursive `hub_only` rule at `:105–108` excludes the file
+   while `pr-review-loop.sh` (`:121–123`) is still injected, so a synced
+   product repo would receive a loop that **fails at load time** — the library
+   is sourced unconditionally, not lazily. Commit.
 2. Implement terminal evidence collector + marker parser + marker-first
    routing and the live-head window boundary `B`; commit.
 3. Implement `codex_classify_live_head_evidence()` decision matrix and wire all
@@ -1877,6 +1909,14 @@ esac
   authored after it. AC-14 (spec line 157) supplies the escalation. No head
   enumeration, no head ordering, no transition instant, and no commit date
   appears anywhere in the algorithm.
+- Packaging scope: Checked — the new shared library carries its own
+  `sync-manifest.yaml` entry with `mode_scope: product_repo_injection`,
+  mirroring the `workflow-lib.sh` precedent, because the recursive `hub_only`
+  rule on `scripts/development-workflow/` would otherwise exclude it while its
+  caller `pr-review-loop.sh` is injected. Declared in Implementation Order step
+  1, removed with the library in the reversal path, and guarded by two named
+  assertions in the existing `test-sync-template-mode-scopes.sh` real-manifest
+  block.
 - Executable interfaces: Checked — the shared helper declares parameters,
   stdout shape, and return codes; both call sites are mapped from their actual
   variable names; a `set -u` no-global-reads test is named; and the helper
