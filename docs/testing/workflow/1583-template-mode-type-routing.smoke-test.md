@@ -29,7 +29,8 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `scan-status-unreadable-defers`, `gate-usage-errors`, `prelude-issue-no-folder-stops`,
 `stale-backlog-active-fix-branch-continues`, `stale-backlog-merged-fix-pr-continues`,
 `backlog-no-folder-no-branch-stops`, `branch-evidence-unavailable-defers`,
-`stale-backlog-open-fix-branch-no-pr-continues`, `scan-merged-implementation-pr-continues`,
+`stale-backlog-open-fix-branch-no-pr-continues`,
+`stale-backlog-pushed-fix-branch-no-pr-continues`, `scan-merged-implementation-pr-continues`,
 `prelude-issue-one-folder-uses-its-stage`, `prelude-issue-multiple-folders-passes`,
 `guidance-check-planted-violation`,
 the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
@@ -248,16 +249,21 @@ issue whose tracker says `Backlog` with Type `Workflow` and which has **no** dev
 folder, run the single-item path three ways:
 
 1. with an **open** `fix/<issue>-<slug>` branch **and** an open PR for it;
-2. with a live `fix/<issue>-<slug>` branch and **no PR at all** — the normal state right after
-   a fast-track branch is cut (`stale-backlog-open-fix-branch-no-pr-continues`);
+2. with a live `fix/<issue>-<slug>` branch that exists **only locally** (`refs/heads/…`, not
+   pushed) and **no PR at all** — the normal state right after a fast-track branch is cut
+   (`stale-backlog-open-fix-branch-no-pr-continues`);
+2b. with that branch present **only** as `refs/remotes/origin/fix/<issue>-<slug>` and no local
+   ref, still with no PR (`stale-backlog-pushed-fix-branch-no-pr-continues`);
 3. with a **merged** `fix/` or `hotfix/` PR and no live branch;
 4. with none of the above.
 
-**Expected**: (1), (2) and (3) `RESULT=pass` with `REASON=branch_or_pr_in_flight` — nothing
-stopped; (4) `RESULT=stop` (or `hold` for `--caller scan`). **Fail if** (1), (2) or (3) stops:
-that is live fast-track work being halted because it does not use a development folder. Case
-(2) fails unless the caller runs the branch probe — the scope JSON lists no branches. **Fail
-if** (4) passes: that is the case the feature exists for.
+**Expected**: (1), (2), (2b) and (3) `RESULT=pass` with `REASON=branch_or_pr_in_flight` —
+nothing stopped; (4) `RESULT=stop` (or `hold` for `--caller scan`). **Fail if** any of (1),
+(2), (2b) or (3) stops: that is live fast-track work being halted because it does not use a
+development folder. Case (2) fails unless the branch probe reads `refs/heads/` — an
+origin-only probe cannot see an unpushed branch — and case (2b) fails unless it also reads
+`refs/remotes/origin/`; the scope JSON lists no branches at all, so neither case passes
+without the probe. **Fail if** (4) passes: that is the case the feature exists for.
 
 4c-iii-b. Scan-side merged PR (`scan-merged-implementation-pr-continues`). For a folder-bearing
 item whose only evidence is a **merged** implementation PR — no live branch, no open PR — run
