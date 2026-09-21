@@ -26,7 +26,9 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `stop-path-no-mutation`, `reclassify-then-route`, `framework-post-backlog-statuses-pass`,
 `scan-misclassified-item-held`, `scan-misclassified-not-informational`,
 `scan-backlog-no-artifacts-held`, `scan-stale-backlog-with-artifacts-continues`,
-`scan-status-unreadable-defers`,
+`scan-status-unreadable-defers`, `gate-usage-errors`, `prelude-issue-no-folder-stops`,
+`prelude-issue-one-folder-uses-its-stage`, `prelude-issue-multiple-folders-passes`,
+`guidance-check-planted-violation`,
 the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
 `consumer-prelude-workflow-unchanged`, `consumer-next-action-workflow-unchanged`,
 `consumer-batch-plan-workflow-unchanged`, `consumer-routing-all-classes-unchanged`,
@@ -34,11 +36,10 @@ the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
 must be covered by harness or the steps below.)
 
 **Exit-code convention for this runbook**: every command block below fails the smoke test when
-it exits non-zero, unless the step says otherwise. This matters most in Step 4, where the
-checks are written as `! rg …`: a surviving match makes `rg` exit `0`, `!` inverts that to a
-non-zero exit, and the non-zero exit **is** the smoke failure. Run those blocks under a shell
-with `set -e`, or check `$?` after each one; a silently ignored non-zero exit defeats the
-check.
+it exits non-zero, unless the step says otherwise. Step 4's guidance check is deliberately
+**not** written as `! rg …` — a command negated by `!` is exempt from `set -e` in bash and
+zsh, so that form would keep going past a real violation. It uses an explicit status
+assertion that exits on its own; see Step 4 for the helper and its planted-violation proof.
 
 ---
 
@@ -164,8 +165,13 @@ keeps today's behavior, including its existing "Type field unreadable" stderr wa
 
 ```bash
 ./scripts/development-workflow/framework-mode-backlog-type-gate.sh \
-  --issue <number> --status Backlog --caller single
+  --issue <number> --status Backlog --artifact-stage '' --caller single
 ```
+
+All four flags — `--issue`, `--status`, `--artifact-stage`, `--caller` — are **required**, and
+`--status` / `--artifact-stage` accept the empty string as a value. Pass `--artifact-stage ''`
+when the item has no spec, plan, or branch; omitting the flag is a usage error (exit `64`, no
+`RESULT=` line), not a shorthand for "no artifacts".
 
 **Expected**: `RESULT=stop`, `STOP_CONDITION=missing_tracker_context`, `ITEM=#<number>`, and a
 `REASON_TEXT` that **names the item** by number, states the class is not valid in a
@@ -176,10 +182,20 @@ not name the item fails this step.
    tracker are unchanged; no new branch created for the item. Prefer the harness spy/mock; if
    checking live, record Type/Status/branch before and after the stop and confirm equality.
 
-4. Repeat with `--caller scan`.
+4. Repeat with `--caller scan` (same four required flags).
 
 **Expected**: `RESULT=hold`, `ITEM=#<number>`, same naming `REASON_TEXT`, and **no**
 `STOP_CONDITION` key (a hold is not a stop).
+
+4a. Argument validation (`gate-usage-errors`). Run the gate with each of: a missing `--issue`,
+a missing `--status`, a missing `--artifact-stage`, a missing `--caller`, `--caller bogus`,
+`--artifact-stage Frobnicated`, `--issue abc`, a flag given with no value, and an unknown flag.
+
+**Expected**: each run exits `64` with a usage message on stderr and prints **no** `RESULT=`
+line. Then confirm the empty-string forms are accepted values rather than errors: `--status ''`
+and `--artifact-stage ''` produce a normal routing outcome and exit `0`. **Fail if** a
+malformed invocation produces a `RESULT=` line of any kind — a usage error must never be
+readable as a routing decision.
 
 4b. Scan end state (`scan-misclassified-item-held`) — the gate result alone is not enough.
 Feed a batch-plan block for that item, plus a sibling Feature item, through
@@ -319,44 +335,76 @@ this repository.
 2. Grep check that **must fail** if old framework-mode Workflow guidance survives (run from
    repo root; adjust wrapper if harness owns this).
 
-   **Exit-code semantics**: each block is a negated `rg`. `rg` exits `0` when it finds a
-   match and `1` when it finds none, so `! rg …` exits **non-zero exactly when stale guidance
-   survives**. A non-zero exit from any of these six commands is a smoke failure — not a
-   warning, and not "no output, so fine". Run the block under `set -e` (or inspect `$?` after
-   each command); piping these into something that swallows the status makes the check
-   vacuous.
+   **Why this is not written as `! rg …`**: under `set -e`, a command whose status is inverted
+   by `!` is exempt from errexit in both bash and zsh, so a `! rg` that finds stale guidance
+   returns non-zero and the script **keeps going** — the check reports nothing and passes. The
+   assertion below therefore inspects `rg`'s status explicitly and exits itself. It also
+   distinguishes `rg`'s three exits: `0` = match found (stale guidance survives → fail),
+   `1` = no match (the only passing case), `2` or higher = `rg` itself errored, e.g. a bad
+   pattern or an unreadable path (→ fail, because a check that did not run must not report
+   clean).
 
 ```bash
-# Fail if root agent files still recommend Workflow for framework/process work:
-! rg -n 'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
+set -uo pipefail   # deliberately not -e: assert_absent does its own exiting
+
+assert_absent() {
+  local label="$1"; shift
+  local status=0
+  rg -n "$@" || status=$?
+  case "$status" in
+    0) printf 'FAIL: stale guidance still present (%s)\n' "$label" >&2; exit 1 ;;
+    1) printf 'ok: %s\n' "$label" ;;
+    *) printf 'FAIL: rg exited %s while checking %s — check did not run\n' \
+         "$status" "$label" >&2; exit 1 ;;
+  esac
+}
+
+# Root agent files must not still recommend Workflow for framework/process work:
+assert_absent 'agent-guidance Workflow recommendation' \
+  'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
   .cursor/agents/orchestrator.md .claude/agents/orchestrator.md
 
-# Fail if retrospective create paths still assign Type Workflow (pre-change string only;
+# Retrospective create paths must not still assign Type Workflow (pre-change string only;
 # refusal wording that mentions Type Workflow must not match):
-! rg -n 'update_tracker_type_best_effort "\$ISSUE_NUMBER" "Workflow"' \
+assert_absent 'retrospective create assigns Workflow' \
+  'update_tracker_type_best_effort "\$ISSUE_NUMBER" "Workflow"' \
   docs/workflow/development-workflow/protocols/06-retrospective-protocol.md \
   docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md
 
-# Fail if protocols 90/91 still route Backlog+Workflow by the brief (pre-change phrases only;
-# "do not infer" must not match):
-! rg -n 'route by brief: full pipeline' \
+# Protocols 90/91 must not still route Backlog+Workflow by the brief (pre-change phrases
+# only; "do not infer" must not match):
+assert_absent 'protocol 90 route-by-brief row' \
+  'route by brief: full pipeline' \
   docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
-! rg -n "Route by the brief's concrete path" \
+assert_absent 'protocol 91 route-by-brief row' \
+  "Route by the brief's concrete path" \
   docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 
-# Fail if the retrospective runbook still expects the created issue to carry Type Workflow
+# The retrospective runbook must not still expect the created issue to carry Type Workflow
 # without the framework-mode branch (single-match anchor, verified on the pre-change tree):
-! rg -n 'with Type `Workflow`' \
+assert_absent 'retrospective runbook Workflow expectation' \
+  'with Type `Workflow`' \
   docs/testing/workflow/retrospective-protocol.smoke-test.md
 
-# Fail if the tracker-Type runbook still tells an operator to create a Workflow-typed issue
+# The tracker-Type runbook must not still tell an operator to create a Workflow-typed issue
 # here without scoping that step to consumer mode (single-match anchor):
-! rg -n 'project Type will be set to `Workflow`' \
+assert_absent 'tracker-Type runbook Workflow creation step' \
+  'project Type will be set to `Workflow`' \
   docs/testing/workflow/tracker-type-field-classification.smoke-test.md
 ```
 
-**Expected**: All six commands exit `0`, which for a negated `rg` means **no matches**. Any
-match makes the command exit non-zero, and that non-zero exit is the smoke failure.
+**Expected**: six `ok:` lines and exit `0`. Any stale match, or any `rg` error, prints `FAIL:`
+and exits `1`.
+
+2b. **Planted-violation proof (required).** A check that has never failed is not known to
+work. Before accepting the result above, re-introduce one pre-change string — for example
+append ``Use `Workflow` for framework work`` to a scratch copy of `AGENTS.md`, or re-add the
+`with Type `Workflow`` sentence to the retrospective runbook — and re-run the block.
+
+**Expected**: the run prints `FAIL: stale guidance still present (…)` naming that check and
+exits `1`. Revert the planted string and confirm the block returns to six `ok:` lines.
+**Fail this step if the planted violation does not produce a non-zero exit** — that means the
+guard is decorative, which is exactly the failure mode the `! rg` form had.
 
 3. Instructing-surface sweep (residual completeness evidence for the closed list):
 

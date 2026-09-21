@@ -323,12 +323,40 @@ scope and must not be bundled into this implementation PR.
 
 - [ ] Add `scripts/development-workflow/framework-mode-backlog-type-gate.sh` (**pinned name** —
   smoke and tests call this path; do not rename)
-  that accepts `--issue`, `--status`, `--caller {single|scan}`, `--artifact-stage`, optional
-  `--repo-root`, and optional `--type`; reads Type via `get_tracker_type_for_issue` when
-  `--type` is not supplied; and prints stable key=value output. `--type` is an accepted value,
-  not a saving mechanism: it avoids a tracker read only for a caller that already holds the
-  Type (the single-item path, which takes it from the scope JSON), and the scan path does not —
-  see "Tracker-read cost".
+  and prints stable key=value output.
+
+  **CLI contract — arguments are validated before any routing decision.**
+
+  | Flag | Required | Accepted values | Notes |
+  | --- | --- | --- | --- |
+  | `--issue` | yes | positive integer, with or without a leading `#` | Used in `ITEM=` and the reason text |
+  | `--status` | yes | any string, **including the empty string** | Empty means the tracker status could not be read; it is a value, not a missing argument |
+  | `--artifact-stage` | yes | empty string, or one of `Spec Ready`, `Plan Ready`, `In Development`, `Done`, `Unknown` | Empty means no artifacts. Required **and** empty-able: the caller must state the stage it observed, so a forgotten flag can never be read as "no artifacts" |
+  | `--caller` | yes | `single` or `scan` | Any other value is a usage error |
+  | `--type` | no | any string | When omitted, the gate reads Type itself; see "Tracker-read cost" |
+  | `--repo-root` | no | existing directory | Defaults to `workflow_repo_root` |
+
+  - **Usage errors are not routing outcomes.** A missing required flag, a flag without a
+    value, an unknown flag, a non-numeric `--issue`, or an unrecognized `--caller` /
+    `--artifact-stage` value → print the usage message to **stderr**, exit **`64`** (matching
+    `run-item-scope-resolver.sh:47` and `workflow-next-action.sh:40`), and print **no**
+    `RESULT=` line at all. A caller must never be able to mistake a malformed invocation for a
+    `pass`. Routing outcomes — `pass`, `hold`, `stop` — always exit `0`, so a caller under
+    `set -e` branches on `RESULT` rather than on the exit status.
+  - **Every documented invocation passes all four required flags**, including
+    `--artifact-stage ''` when there are no artifacts. The smoke runbook's invocations use
+    that exact form.
+  - Named test **`gate-usage-errors`**: for each of missing `--issue`, missing `--status`,
+    missing `--artifact-stage`, missing `--caller`, `--caller bogus`,
+    `--artifact-stage Frobnicated`, `--issue abc`, a flag with no value, and an unknown flag,
+    assert exit `64`, a usage message on stderr, and **no** `RESULT=` in stdout. A companion
+    assertion checks that `--status ''` and `--artifact-stage ''` are accepted values that
+    produce a normal routing outcome with exit `0`.
+
+  `--type` is an accepted value, not a saving mechanism: it avoids a tracker read only for a
+  caller that already holds the Type (the single-item path, which takes it from the scope
+  JSON), and the scan path does not — see "Tracker-read cost". When `--type` is omitted the
+  gate reads Type via `get_tracker_type_for_issue`.
 
   **Effective stage, not raw status (one rule, stated once, used everywhere).** The spec's gate
   input is the item's board status *"reconciled against work already completed for it, exactly
@@ -485,13 +513,38 @@ scope and must not be bundled into this implementation PR.
     runner path — `RESULT=stop` makes `run-bounded-prelude.sh` emit stop output that maps to
     `missing_tracker_context`, names the item, and aborts before stage dispatch (Protocol
     `91`). The status and Type come from the scope JSON the resolver already produced, so the
-    stop costs no extra tracker call. The artifact stage comes from
-    `workflow-next-action.sh --development <folder>` for the item's development folder, which
-    is a local read; when the item has no development folder there are no artifacts by
-    definition and `--artifact-stage` is empty. A stale-Backlog item whose folder already holds
-    a spec or plan therefore continues here exactly as it continues in the scan. This is the
-    only routing behavior this item adds to the prelude; the `items` and `epic` scope modes are
-    untouched (see Out of Scope).
+    stop costs no extra tracker call. This is the only routing behavior this item adds to the
+    prelude; the `items` and `epic` scope modes are untouched (see Out of Scope).
+  - **Resolving the item's development folder (single-item path).** The scope JSON carries no
+    development path for the `--issue`, `--branch`, and `--pr` selectors — only the
+    `--development` selector names a folder outright (`run-item-scope-resolver.sh:145`–`:148`
+    recognizes a `docs/specs/developments/*` token, and `run-work-router.sh:502` does the
+    same). Neither resolver maps an issue number **to** a folder. The mapping that does exist
+    is the reverse one, and this item reuses it rather than adding a second convention:
+    1. **Relocate, do not rewrite.** Move `extract_github_issue_number` from
+       `workflow-batch-plan.sh:318`–`:356` into `workflow-lib.sh` **verbatim**. Batch-plan
+       already sources the lib at its `:7`, so its existing call at `:516` is unchanged and
+       the function's behavior — `**Issue**: #NNN` in the folder's markdown first, then the
+       leading digits of the slug (`:346`–`:352`) — is the single definition of the mapping.
+    2. **Enumerate folders the way the scan already does**: `find docs/specs/developments
+       -mindepth 1 -maxdepth 1 -type d | sort` (`workflow-batch-plan.sh:478`–`:481`). A folder
+       matches when `extract_github_issue_number "$folder"` equals the target issue.
+    3. **Zero matches** → the item has no development folder, therefore no artifacts:
+       `--artifact-stage ''`. Combined with a tracker `Backlog` and Type `Workflow`, this is
+       the stop case, which is correct — a Backlog item that has never been started has no
+       folder (`prelude-issue-no-folder-stops`).
+    4. **Exactly one match** → run `workflow-next-action.sh --development <folder>` and pass
+       its `STATUS` as `--artifact-stage`; a non-zero exit means no artifacts, so pass the
+       empty string (`prelude-issue-one-folder-uses-its-stage`).
+    5. **Two or more matches** → `RESULT=pass` with `REASON=artifact_stage_ambiguous`, and
+       name every matching folder in the message. Deterministic and non-destructive: duplicate
+       folders for one issue mean work exists somewhere, and holding on an ambiguity the spec
+       never asks about would stop work for a bookkeeping problem. The message reports the
+       newest folder first — the last entry of the `sort` above, which is chronological
+       because folders are `<14-digit-timestamp>_<slug>` — so the operator can find it
+       (`prelude-issue-multiple-folders-passes`).
+    A stale-Backlog item whose folder already holds a spec or plan therefore continues here
+    exactly as it continues in the scan.
 - [ ] **Lane wiring — `NEXT_ACTION=hold-misclassified-type` alone does not hold anything.**
   Verified against the tree at plan time: `workflow-batch-lanes.sh:32` maps any unrecognized
   action to the `review` lane via the `*)` fallback, `:374` initializes `dispatch="proposed"`,
@@ -661,8 +714,13 @@ third command yields the single `add-backlog-item.sh:41` hit that is row 15.
     `docs/testing/workflow/tracker-type-field-classification.smoke-test.md` — both are
     single-match anchors verified on today's tree, so the check is red before the runbooks are
     updated and green after
-  Command sketch (implementation may wrap in a small script): fail if `rg` still matches those
-  pre-change strings on the closed list after updates.
+  **Form of the check — fail-closed, not `! rg`.** Implement it as the `assert_absent` helper
+  in the smoke runbook: run `rg`, capture its status, and exit the script from inside the
+  assertion. `rg` status `0` (a match survives) and status `2` or higher (`rg` itself errored)
+  are both failures; only status `1` passes. Do **not** write `! rg …`: under `set -e` a
+  negated command is exempt from errexit in bash and zsh, so that form silently continues past
+  a real violation and the guard can never fail. Land the planted-violation proof
+  (`guidance-check-planted-violation`) with the check.
 - [ ] **Row 13 — `docs/testing/workflow/retrospective-protocol.smoke-test.md`** (unconditional;
   this runbook contradicts framework mode today):
   - Step 5 (`:88`) and its Expected result (`:93`): state that in framework mode the
@@ -863,6 +921,15 @@ Workflow item that continues.
     it proceeds down today's path with `MISCLASSIFIED_TYPE_CHECK=deferred` and its reason, and
     `DISPATCH` matches the pre-feature baseline for that folder. Asserts both halves: no false
     hold, and no silent claim that the check ran.
+9d. **`gate-usage-errors`**: every malformed invocation (missing required flag, flag without a
+    value, unknown flag, non-numeric `--issue`, bad `--caller` / `--artifact-stage` value)
+    exits `64` with a usage message and **no** `RESULT=` line; `--status ''` and
+    `--artifact-stage ''` are accepted values that yield a routing outcome with exit `0`.
+9e. **`prelude-issue-no-folder-stops`** / **`prelude-issue-one-folder-uses-its-stage`** /
+    **`prelude-issue-multiple-folders-passes`**: single-item folder resolution — zero matching
+    development folders means no artifacts (stop on a Backlog + Workflow item), exactly one
+    match supplies its next-action stage, and two or more matches pass with
+    `REASON=artifact_stage_ambiguous` while naming every match.
 10. **`framework-post-backlog-statuses-pass`**: Type Workflow passes at every recognized
     non-Backlog status (`Writing Spec` through `Released`), not only `Spec Ready`; an
     unrecognized status also passes as `status_unreconciled`.
@@ -876,11 +943,17 @@ Workflow item that continues.
     Workflow. `workflow-next-action.sh` is not modified by this item, so its scenario doubles
     as a regression guard that the gate was not wired into it.
 14. **Guidance mirror grep**: closed mirror list updated — including the two smoke runbooks and
-    the `add-backlog-item.sh` help text — and the grep check fails on surviving framework-mode
-    Workflow instructions. Each grep command is a `! rg …` shell command whose **non-zero exit
-    is the failure signal** — a surviving match makes `rg` exit `0`, the `!` inverts it to
-    non-zero, and the step fails. Under `set -e` in a harness wrapper, that non-zero exit
-    aborts the suite, which is the intended behavior.
+    the `add-backlog-item.sh` help text — and the check fails on surviving framework-mode
+    Workflow instructions. Each check is an explicit status assertion, **not** `! rg …`: under
+    `set -e` a command negated by `!` is exempt from errexit in bash and zsh, so a `! rg` that
+    finds stale guidance returns non-zero and execution continues, leaving a guard that can
+    never fail. The assertion captures `rg`'s status and exits itself, treating `0` (match) as
+    a failure, `1` (no match) as the only pass, and `2` or higher (`rg` errored) as a failure
+    too, because a check that did not run must not report clean. See the smoke runbook for the
+    exact `assert_absent` helper.
+14b. **`guidance-check-planted-violation`**: re-introduce one pre-change string and assert the
+    check exits non-zero and names that check; revert and assert it passes again. Required
+    evidence — a guard that has never failed is not known to work.
 
 **Quality checks**: ShellCheck on touched scripts; `workflow-shell-guard-lint.py`;
 markdown lint on plan/spec/runbook/protocol edits.
@@ -1003,10 +1076,13 @@ for an existing input:
   begin consulting it: `run-bounded-prelude.sh` (**`item` scope only**, fed from the resolved
   scope JSON — the single-item stop under `missing_tracker_context`; the `items` and `epic`
   scope modes are not wired), `workflow-batch-plan.sh` (scan
-  hold — it now uses the tracker status it already reads at `:542` for a routing decision, and
-  emits `NEXT_ACTION=hold-misclassified-type` plus `MISCLASSIFIED_TYPE` /
-  `MISCLASSIFIED_TYPE_REASON` / `MISCLASSIFIED_TYPE_CHECK` and the tracker `STATUS` instead of
-  calling next-action for that folder), and `workflow-batch-lanes.sh` (dispatch/report handling
+  hold — it now uses the tracker status it already reads at `:542`, together with the artifact
+  stage from the `workflow-next-action.sh` call it already makes at `:569`–`:582`, for a
+  routing decision. Next-action still runs first, exactly as today; when the gate holds,
+  batch-plan **replaces the `STATUS` / `NEXT_ACTION` pair it would have emitted** with the
+  tracker `STATUS` and `NEXT_ACTION=hold-misclassified-type`, plus `MISCLASSIFIED_TYPE` /
+  `MISCLASSIFIED_TYPE_REASON` / `MISCLASSIFIED_TYPE_CHECK`), and `workflow-batch-lanes.sh`
+  (dispatch/report handling
   that turns that action into `DISPATCH=held`). `workflow-next-action.sh` is deliberately
   untouched. A framework-mode Backlog + Workflow run that previously started a pipeline now
   stops.
