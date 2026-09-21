@@ -174,13 +174,27 @@ mutation class). No inline product work (AC4, AC19).
 
 Add a **Cursor dispatch profiles** subsection listing, per environment ×
 orchestration layer, the profile, the **model assignment**, and the evidence
-class (AC15). Profile and evidence:
+class (AC15). Every profile below is justified by a row of the spec's
+Decision-Gate Consistency Matrix applied to the facts the spec supports; no
+evidence is invented. The spec's evidence: on the Cursor desktop application
+the two-hop handoff holds; under Remote Control the context a command hands
+off to frequently cannot hand off again (initial handoff works, onward handoff
+does not); nothing is recorded for Cursor Cloud Agents.
 
-| Environment | Portfolio layer | Epic layer | Item layer | Evidence |
-| --- | --- | --- | --- | --- |
-| Cursor Desktop (local app) | Native handoff | Native handoff | Native handoff | Confirmed by observation (template default) |
-| Cursor Remote Control | Parent orchestrated | Parent orchestrated | Parent orchestrated | Confirmed by observation (recorded failure mode) |
-| Cursor Cloud Agents | Parent orchestrated | Parent orchestrated | Parent orchestrated | Explicit assumption (conservative default per spec) |
+| Environment | Portfolio layer | Epic layer | Item layer | Matrix row applied | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Cursor Desktop (local app) | Native handoff | Native handoff | Native handoff | Initial handoff available, onward available (S1) | Confirmed by observation (spec background: assumption holds on desktop) |
+| Cursor Remote Control | **Inline fallback** (read-only; a scan runs in the current context under every profile and `/run-work` never absorbs or hands off) | Parent orchestrated | Parent orchestrated | Epic and item: initial handoff available, onward unavailable (S3). Portfolio: initial handoff not directly observed at this layer (S11) | Epic and item: confirmed by observation (recorded failure mode covers `/run-item`, `/run-items`, `/run-epic`). Portfolio: **explicit assumption** |
+| Cursor Cloud Agents | Inline fallback | Inline fallback | Inline fallback | **Initial handoff itself cannot be confirmed**: no handoff behavior is observed for this environment, so the matrix assigns inline fallback, read-only (S11 read-only, S12 mutating stop `dispatch_handoff_unavailable`). Parent orchestrated is valid only after initial handoff is confirmed, and evaluating onward capability before that is prohibited | **Explicit assumption** (spec: unobserved environments assume the more restrictive profile until confirmed by observation) |
+
+Consequence for Cloud Agents (and the Remote Control portfolio layer): a
+mutating bounded run stops with `dispatch_handoff_unavailable` recording that
+initial handoff is unconfirmed, rather than absorbing a role. An operator who
+observes and records in run output that initial handoff is available makes the
+**next** run declare afresh against the confirmed facts (parent orchestrated if
+onward handoff is unavailable or unconfirmed, native handoff if both are
+available); a run never upgrades in place. The agent-model-config table
+records these as assumptions, not observations.
 
 **Model assignments** (explicit, so implementation does not invent them). The
 tiers come from the existing role table in `agent-model-config.md`: Portfolio
@@ -193,15 +207,16 @@ configured models under every profile.
 | Environment | Portfolio layer model | Epic layer model | Item layer model | Model evidence |
 | --- | --- | --- | --- | --- |
 | Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | Confirmed by observation (agent frontmatter applies on native handoff) |
-| Cursor Remote Control | Absorbing current context runs at the `economy` floor; any session model at or above `economy` is acceptable, `fast` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Confirmed by observation for the profile; **explicit assumption** for the model (the remote session's model is not switched by role frontmatter) |
-| Cursor Cloud Agents | Same as Remote Control portfolio: `economy` floor, `fast` where selectable | Same as Remote Control epic: `balanced` floor, `auto` where selectable | Same as Remote Control item: `balanced` floor, `auto` where selectable | **Explicit assumption** (profile and model both conservative defaults) |
+| Cursor Remote Control | No role absorbed (inline fallback, read-only): the session's own model reports the scan; no role floor applies | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Epic and item: profile confirmed by observation, **model an explicit assumption** (the remote session's model is not switched by role frontmatter). Portfolio: explicit assumption |
+| Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | **Explicit assumption** (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row that the confirmed facts assign, including its model floor |
 
 Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
 as a substitute for the floor: if the session model is below the absorbed
 role's tier, the declaration records the shortfall and the operator switches
-the session model before the first mutating action. Unobserved environments use
-the more restrictive applicable profile and the higher of the applicable model
-floors until an operator confirms otherwise in run output.
+the session model before the first mutating action. Under
+`cursor-inline-fallback` no orchestration role is absorbed, so no role floor
+applies. Unobserved environments use the more restrictive applicable profile
+until an operator confirms otherwise in run output.
 
 ### Decision 7: Portfolio batch scheduling unchanged
 
@@ -390,14 +405,17 @@ layer; `workflow.mdc` states all five compactly).
       combination, per AC15: (a) the applicable profile, (b) the applicable
       **model assignment**, and (c) whether that assignment is confirmed by
       observation or an explicit assumption. The exact values are fixed in
-      Decision 6 (Desktop: role's own model; Remote Control and Cloud Agents:
-      `economy` floor for portfolio, `balanced` floor for epic and item, with
-      Cloud Agents an explicit assumption for both profile and model);
+      Decision 6 (Desktop: native handoff, role's own model; Remote Control epic
+      and item: parent orchestrated with a `balanced` floor, portfolio: inline
+      fallback; Cloud Agents: inline fallback at every layer, an explicit
+      assumption for both profile and model, because initial handoff cannot be
+      confirmed for an unobserved environment);
       implementation copies them, it does not choose them. The model assignment is not
       optional and is not covered by the existing role-level model table, which
       does not say which assignment an **absorbing current context** uses under
-      parent-orchestrated Remote Control or under Cloud Agents — both
-      combinations must be answered explicitly. Maps to AC15.
+      parent-orchestrated Remote Control (and states that inline fallback absorbs
+      no role, so under Cloud Agents no role floor applies) — every
+      combination must be answered explicitly. Maps to AC15.
 - [ ] `.cursor/rules/workflow.mdc` — profile declaration requirement + canonical
       link + compact mirror content contract (elements 1-5). Maps to AC10, AC11,
       AC16, AC20.
@@ -490,7 +508,7 @@ layer; `workflow.mdc` states all five compactly).
          | Protocols 90, 91, 95 | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
          | `.cursor/rules/workflow.mdc` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
          | `guardrails-enforcement.md` section 4 | - | - | - | Y | Y | Y | Y | Y | Y | - | - |
-         | `agent-model-config.md` | profile and model-assignment rows for all three environments only | | | | | | | | | | |
+         | `agent-model-config.md` | the exact Decision 6 profile, model assignment and evidence class for every environment x layer cell (Desktop native; Remote Control epic/item parent orchestrated, portfolio inline fallback; Cloud Agents inline fallback everywhere) | | | | | | | | | | |
 
          Layer scoping is by wording, not by omission: a portfolio-layer
          surface states the clause for the portfolio layer and an item-layer
@@ -619,6 +637,11 @@ layer; `workflow.mdc` states all five compactly).
           stop names, E3b and E3c.
       14. **`agent-model-config.md` rows**: remove one environment row (and,
           separately, the model-assignment cell of one row); expect non-zero.
+          Also flip one profile cell to a value Decision 6 does not assign
+          (Cloud Agents item layer to `cursor-parent-orchestrated`; Remote
+          Control portfolio to `cursor-native-handoff`); expect non-zero, since
+          the guard asserts the exact Decision 6 profile per environment and
+          layer.
       15. **Canonical-doc checks**: one cycle per check name in Testing Strategy
           (`canonical_layers`, `canonical_matrix`,
           `canonical_declared_not_detected`, one per

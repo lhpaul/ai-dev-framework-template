@@ -75,10 +75,10 @@
 **Maps to**: AC15
 
 1. Open `docs/workflow/development-workflow/agent-model-config.md`.
-2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile **and model** assignments per layer.
+2. Confirm Cursor Desktop vs Remote Control vs Cloud Agents profile **and model** assignments per layer: Desktop native handoff; Remote Control epic and item parent orchestrated, portfolio inline fallback; Cloud Agents inline fallback at every layer (initial handoff unconfirmed).
 3. Confirm each row is labeled confirmed-by-observation or explicit assumption, for both the profile and the model assignment.
 
-**Expected result**: Remote Control defaults to Parent orchestrated; Cloud Agents conservative assumption documented.
+**Expected result**: Remote Control epic and item default to Parent orchestrated; Cloud Agents defaults to Inline fallback as an explicit assumption (read-only, `dispatch_handoff_unavailable` on a mutating run) until initial handoff is confirmed by observation; no environment defaults to parent orchestrated without confirmed initial handoff.
 
 ### Step 6: Read-only portfolio scan
 
@@ -113,7 +113,7 @@
 
 **Maps to**: Use Case 4
 
-1. In an environment with no subagent handoff, invoke `/run-item <N>` (a mutating bounded command).
+1. In an environment with no subagent handoff, or one whose initial handoff cannot be confirmed (the Cloud Agents default), invoke `/run-item <N>` (a mutating bounded command).
 2. Confirm the run declares **Inline fallback** (`cursor-inline-fallback`) with a
    valid accountable role and **observing** posture at the read-only checkpoint,
    then reaches the first mutating action.
