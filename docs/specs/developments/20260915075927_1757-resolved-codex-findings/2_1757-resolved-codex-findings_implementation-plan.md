@@ -952,11 +952,21 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     codes — so exit `4` lists both wait reasons after the acknowledgement remap,
     and so the “unrecognized → NEEDS_REVISION safe-fail” wording is removed
     (AC-7).
+  - **Loop-side ordering change (same surface).** Besides the companion's exit
+    and `REASON=` values, this item changes *when* the loop decides
+    `needs_fixes`: `run_codex_github_review()` phase 1 currently short-circuits
+    on the unresolved count at `pr-review-loop.sh:2190`, before the classifier
+    runs at `:2235`, and must instead yield to a current fail-closed escalation
+    (see the phase-1 step). Operators see the same `RESULT=` vocabulary; what
+    changes is which value a pull request with both an unresolved conversation
+    and a malformed or unrecognized current verdict receives.
   - **Reversal path for this published contract.** The exit-code / `REASON=`
     surface is consumed by `run_codex_github_review()`, the Automated Reviewer
     Loop Summary, and `reviewer_loop_history.v1`; all three live in this
     repository, so a reversal is an ordinary `git revert` of the companion and
-    adapter commits (Implementation Order steps 3–4), the cycle-limit change
+    adapter commits (Implementation Order steps 3–4, step 4 including the
+    phase-1 ordering change that stops the `:2190` short-circuit), the
+    cycle-limit change
     (step 5), the AC-6 resolver harness cases (step 6), the Area 13 expectation
     updates (step 7), and the doc updates (step 8). **Step 5 specifically**: it
     changes when `reviewer_loop_cap_exceeded`
@@ -1005,16 +1015,41 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 
 ### Script layer — `pr-review-loop.sh`
 
-- [ ] **`run_codex_github_review()` phase 1** (AC-1–2): Stop using raw
-  `check_unresolved_threads` provisional count as the sole `existing_findings`
-  gate. Instead call `codex_review_thread_evidence_counts()` **with
-  `mode=strict`** — the shared classifier moved into
-  `codex-github-evidence-lib.sh` by the Bounded evidence query step above, not a
-  new function — and read its `strict_unresolved` field only, so the #1508
-  reply-after-push relaxation can never reach a gate that declares clean. It
-  counts only **applicable unresolved** Codex conversations for the live head (head SHA / review `commit_id`
-  correlation, not merely `isOutdated`). Resolved, outdated, and
-  dismissed-attached threads must not increment blocker counts.
+- [ ] **`run_codex_github_review()` phase 1** (AC-1–2, AC-7, AC-9): two changes,
+  a **counting** change and an **ordering** change.
+
+  **Counting.** Stop using the raw `check_unresolved_threads` provisional count
+  as the `existing_findings` input. Instead call
+  `codex_review_thread_evidence_counts()` **with `mode=strict`** — the shared
+  classifier moved into `codex-github-evidence-lib.sh` by the Bounded evidence
+  query step above, not a new function — and read its `strict_unresolved` field
+  only, so the #1508 reply-after-push relaxation can never reach a gate that
+  declares clean. It counts only **applicable unresolved** Codex conversations
+  for the live head (head SHA / review `commit_id` correlation, not merely
+  `isOutdated`). Resolved, outdated, and dismissed-attached threads must not
+  increment blocker counts.
+
+  **Ordering — the count is necessary but not sufficient.** Today the gate
+  short-circuits: `pr-review-loop.sh:2190` returns `RESULT=needs_fixes` /
+  `REASON=existing_findings` with `return 1` as soon as the count exceeds zero,
+  and the companion classifier is not invoked until `:2235`. That inverts this
+  plan's own precedence contract and the spec's: "Unrecognized evidence
+  escalates with `codex_current_verdict_unrecognized`, takes precedence over
+  otherwise applicable unresolved conversations", and the Evaluation-order list
+  in the Decision-function step resolves a fail-closed winner at step 3, before
+  the conversation blocker at step 4. **Phase 1 must therefore classify current
+  terminal evidence before choosing an outcome**: with a non-zero count it
+  returns `needs_fixes` only when none of the four fail-closed escalations —
+  `codex_current_verdict_malformed_revision_marker`,
+  `codex_current_verdict_unrecognized`,
+  `codex_finding_thread_correlation_missing`, or
+  `evidence_unavailable_codex_thread_state` — applies to the live head;
+  otherwise it returns that escalation. A zero count still proceeds to the
+  trigger-and-wait path exactly as today.
+
+  **This is a behaviour change to a shipped ordering**, not a wording fix, so it
+  is recorded in the Outcome-mapping step's reversal note with the rest.
+  Regression: `codex_unresolved_thread_with_unrecognized_verdict_escalates`.
 
 - [ ] **Companion exit adapter** (AC-1–2, 7–9): On companion exit `1`, remove
   the `unresolved_count=1` floor when strict applicable-unresolved count is
@@ -1212,6 +1247,19 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   the same wait outcome. And `codex_marker_sha_reuse_new_trigger_clean` — a
   fresh trigger for the second occupancy with a new clean comment after it;
   expect `clean`, so the boundary is proved in both directions.
+
+- [ ] **Fail-closed escalation outranks an unresolved conversation in phase 1**
+  (P1; AC-7, AC-9; spec: unrecognized evidence "takes precedence over otherwise
+  applicable unresolved conversations"):
+  `codex_unresolved_thread_with_unrecognized_verdict_escalates` — an applicable
+  unresolved current-head conversation **and** a current-head unrecognized
+  terminal verdict in the same fixture. Expect `RESULT=escalate` /
+  `codex_current_verdict_unrecognized`, **not** `needs_fixes` /
+  `existing_findings` from the count alone. Run the same fixture a second time
+  with a malformed-marker verdict in place of the unrecognized one, expecting
+  `codex_current_verdict_malformed_revision_marker`, so the ordering is proved
+  for more than one tier. This is the case today's `pr-review-loop.sh:2190`
+  short-circuit gets wrong.
 
 - [ ] **Matrix spot checks** (AC-7–10 and AC-14 — AC-11, AC-12, and AC-13 have
   their own rows above; this bullet covers the remainder of the range, not all
@@ -1547,8 +1595,8 @@ esac
    routing and the live-head window boundary `B`; commit.
 3. Implement `codex_classify_live_head_evidence()` decision matrix and wire all
    companion exit paths; commit.
-4. Update `run_codex_github_review()` adapter (phase 1 + exit mapping + remove
-   count floor); commit.
+4. Update `run_codex_github_review()` adapter (phase 1 counting **and**
+   ordering, exit mapping, remove count floor); commit.
 5. Adjust cycle-limit block to evaluate canonical clean before cap escalation; commit.
 6. Add independent `review.max_cycles` / `review.max_total_cycles` resolver harness
    cases (AC-6); commit.
