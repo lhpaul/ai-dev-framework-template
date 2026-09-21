@@ -40,39 +40,117 @@ in the same implementation PR so they no longer assert an unresolved gap.
 
 ## Verification Log
 
-Re-run `2026-09-21` against verified head **`b4be22af`** (the plan content
-commit; full SHA `b4be22affa154f57c2dd89be5bbd3876def3175a`). The commit that
-carries this log is the **child** of `b4be22af` and changes **only** this
+Re-run `2026-09-21` against verified head **`2d2a3ec1`** (the plan content
+commit; full SHA `2d2a3ec14e5b3a2d7b4e06d6c4f5d1ad3b3a3764`). The commit that
+carries this log is the **child** of `2d2a3ec1` and changes **only** this
 Verification Log and the Document Quality Gate lines that cite it; no plan
-content, checklist, or smoke-runbook text changed in the child. Patterns are
-extended-regex alternation (`grep -E 'a|b'`); results were produced with
-`grep -rlE` because the local `rg` is shadowed. Checks that need the
+content, checklist, or smoke-runbook text changed in the child. Every
+command in the table is in the **Literal commands** block below, run exactly as
+written at the verified head with its observed output recorded (patterns are
+extended-regex; nothing depends on the shadowed local `rg`). Checks that need the
 implementation are marked **Deferred to implementation**, not Pass.
 
-| Check | Command / query | Result at `b4be22af` |
+| Check | Command / query | Result at `2d2a3ec1` |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `b4be22af`. `origin/develop` is `f1d5021a`; this plan branch is 20 commits behind it. That is **informational only**, not an A1 failure: the implementation is never cut from the plan branch. A1's check runs after its remediation sequence (plan PR merged, `git fetch origin develop`, implementation worktree created from `origin/develop`), so `git merge-base --is-ancestor origin/develop HEAD` then holds by construction; the ancestry check itself is **Deferred to implementation start** |
-| Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` (Pass) |
-| Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Pass) |
-| Bounded command adapters | `grep -rl 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits (Pass): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). The four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
-| Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present (Pass) |
-| Files-to-modify paths | Each `Path` cell in Files to modify checked with `[ -e path ]` | 31 existing paths present; the 4 **Create** entries (canonical doc, surface guard, fixtures directory, changelog fragment) are absent as expected (Pass) |
-| Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` (Pass) |
-| Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` — batch-context marker enforcement; out of scope here (Pass) |
-| Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` — stage-role harness permission denial; out of scope here (Pass) |
-| Stop conditions pre-impl | `grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | `0` (expected until implementation) (Pass) |
+| Repo revision | `git rev-parse --short HEAD` | `2d2a3ec1`. `origin/develop` is `f1d5021a`; this plan branch is 20 commits behind it. That is **informational only**, not an A1 failure: the implementation is never cut from the plan branch. A1's check runs after its remediation sequence (plan PR merged, `git fetch origin develop`, implementation worktree created from `origin/develop`), so `git merge-base --is-ancestor origin/develop HEAD` then holds by construction; the ancestry check itself is **Deferred to implementation start** |
+| Canonical doc absent pre-impl | L1 | `absent` (Pass) |
+| Profile strings outside development folder | L2 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (Pass) |
+| Bounded command adapters | L3 and L3b | **18** hits (Pass): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). The four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
+| Orchestration role agents | L4 | `4` (all four present) (Pass) |
+| Files-to-modify paths | L5 | `31 E` / `4 M`: 31 existing paths present; the 4 **Create** entries (canonical doc, surface guard, fixtures directory, changelog fragment) are absent as expected (Pass) |
+| Spec merge gate | A1 (`gh pr view 1732 --json state,baseRefName`) | `{"baseRefName":"develop","state":"MERGED"}` (Pass) |
+| Related gap #1745 | A5 (`gh issue view 1745 --json state`) | `{"state":"OPEN"}` — batch-context marker enforcement; out of scope here (Pass) |
+| Related gap #1746 | A5 (`gh issue view 1746 --json state`) | `{"state":"OPEN"}` — stage-role harness permission denial; out of scope here (Pass) |
+| Stop conditions pre-impl | L6 | prints `0` and exits `1` (grep exits 1 when the count is 0), expected until implementation (Pass) |
 | Markdown lint (plan + smoke runbook) | `npx markdownlint-cli2` and `python3 scripts/lint/markdown-heuristic-lint.py` on both files | 0 issues on both files (Pass) |
-| Spec matrix row count | `awk` over the spec's Decision-Gate Consistency Matrix table, minus header and separator | 18 normative rows (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
-| Fixture manifest | Count rows of the Parser-Risk fixture manifest table (`^\| \d+ \| \`...fixture.md\``), check numbering 1..n and unique filenames; check every fixture ID referenced elsewhere in the plan is in the manifest | 158 rows, numbered 1-158, 158 unique filenames, no `<id>` placeholder or unresolved `N` (Pass); the on-disk equality self-test is **Deferred to implementation** |
-| Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `b4be22af` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
-| Protocol 90 Step 4 current text | `grep -cF` for the exact current Step 4 sentence quoted in Decision 7 in `protocols/90-batch-orchestrate-work-protocol.md` | 1 match, so the "current text" in the exact edit is verbatim (Pass); the edit itself and the `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence` and `canonical_dispatch_decision` checks are **Deferred to implementation** |
-| Assumption records A1-A6 (pre-edit checks that exist now) | Ran each check from the Assumption Records table at `b4be22af` | A1: `git fetch origin develop` and `git ls-remote --exit-code origin develop` succeed; #1732 `MERGED` on `develop`; #1771 still `OPEN` (expected until it merges, then the remediation sequence's worktree and ancestry steps are **Deferred to implementation start**). A2: `git grep -nE '^\s*mode:'` on `.ai-dev-workflow.yaml` prints nothing, so the default `single_repo` holds. A3: spec gap sentence count `1`; no other file defines `explicit_list_invocation_targets` (0 hits outside this development folder and the smoke runbook); the router returns a comma-joined, deduplicated `RESOLVED_SCOPE`. A4: 0 open PRs touch the mirror, protocol, guardrails, model-config or workflow-rule surfaces. A5: #1745 and #1746 both `OPEN`. A6: #1732 `MERGED`, base `develop`. All Pass; the canonical/guardrails parity is **not** an assumption and is verified post-edit by `explicit_list_format_parity` (**Deferred to implementation**) |
-| Selector baseline | `bash scripts/development-workflow/select-test-suites.sh --report-gaps`; a fixtures-path `--changed-files` probe | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
+| Spec matrix row count | L7 | prints `20` table lines = **18** normative rows plus the header and separator (Pass); the plan's 21 scenarios map to them via the row-to-scenario table; the C1-C4 assertions themselves are **Deferred to implementation** |
+| Fixture manifest | L8 | prints `158 158 True ['158']`: 158 rows, 158 unique filenames, numbered 1-158, `MANIFEST_COUNT` 158 (Pass); no `<id>` placeholder or unresolved `N`; the on-disk equality self-test is **Deferred to implementation** |
+| Router grammar | Ran `scripts/development-workflow/run-work-router.sh` read-only at `2d2a3ec1` with representative inputs (comma-joined arguments, duplicates, `./` prefix, edge whitespace, empty pieces, `#` and bare numbers, tab, CR, space, non-ASCII, `%`, an interior line feed, tracker ID, `--epic`) and compared with the serialization contract | Observed results match the contract's observation table: comma split, trim, empty drop, first-occurrence exact-string dedup (`1462` and `#1462` distinct), `./` kept, tab/CR/space/non-ASCII/`%` kept inside a token, an interior line feed drops everything after the first line, tracker IDs ambiguous (Pass) |
+| Protocol 90 Step 4 current text | L9 | prints `1`, so the existing generic Step 4 paragraph quoted in Decision 7 is verbatim (Pass); the paragraph insertion and the `protocol90_step4_condition`, `protocol95_execution_arrangement`, `protocol91_absorbed_layer_sentence` and `canonical_dispatch_decision` checks are **Deferred to implementation** |
+| Assumption records A1-A6 (pre-edit checks that exist now) | A1, A2, A3a, A3b, A4, A5 in the Literal commands block (the same commands as the Assumption Records table) | A1: `git fetch origin develop` succeeds and `git ls-remote --exit-code origin develop` exits `0`; #1732 `MERGED` on `develop`; #1771 still `OPEN` (expected until it merges; the remediation sequence's worktree and ancestry steps are **Deferred to implementation start**). A2: `git grep -nE '^mode:' -- .ai-dev-workflow.yaml` prints nothing and exits `1` (anchored at column 0, so the nested `guardrails.mode: delegated` on line 273 is not matched), and the structural check prints `<absent>`, so the default `single_repo` holds. A3: (a) prints `<spec path>:1`; (b) prints nothing, exit `1`; (c) the router returns `RESOLVED_SCOPE` as the comma-joined, deduplicated, ordered list (run separately: `bash scripts/development-workflow/run-work-router.sh <branch> <folder> <branch>`). A4: prints `0`. A5: both `{"state":"OPEN"}`. A6: same as the Spec merge gate row. All Pass; the canonical/guardrails parity is **not** an assumption and is verified post-edit by `explicit_list_format_parity` (**Deferred to implementation**) |
+| Selector baseline | SEL (`--report-gaps`) and the fixtures-path `--changed-files` probe (run earlier: prints `INFO: full run triggered by ...`) | `UNREACHABLE_SUITE_COUNT=0` before this suite exists (Pass). Observed: a changed path under `scripts/development-workflow/tests/fixtures/` prints `INFO: full run triggered by <path> (matches scripts/development-workflow/tests/fixtures/**)` and emits every suite (Pass), so the fixtures directory is a full-run trigger and gets a positive check only. The `--print-map` and per-surface `--changed-files` planted checks (with the unselected-when-removed step for non-fixtures paths) for the new suite are **Deferred to implementation** |
 | Shell-script lint (new `.sh`) | `bash -n`; `shellcheck --severity=warning`; `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` | **Deferred to implementation** (script not yet created; `shellcheck` and the guard linter are available locally) |
 | Surface guard (link, profile string, E1-E6 clauses, canonical-doc checks) | `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Deferred to implementation** (script not yet created) |
 | Scanner fixtures + `--self-test` (Parser-Risk cases, fence semantics) | `... --self-test` | **Deferred to implementation** |
 | Planted-violation proofs (cycles 1-16 plus per-class repeats) | see Layer-by-Layer Changes → Workflow tooling | **Deferred to implementation** |
 | `simulate_bounded_paths`; smoke Steps 7-14 (live Remote Control Steps 8, 13 Part B and 14 Part B are required at sign-off) | smoke runbook | **Deferred to implementation** (needs the implementation head and a real Remote Control session) |
+
+
+**Literal commands** (run exactly as written from the repository root at the
+verified head; `L#` and `A#` are the labels used in the table):
+
+```bash
+PLAN=docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/2_1462-cursor-dispatch-profiles_implementation-plan.md
+SPEC=docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md
+echo "L1"; test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent
+echo "L2"; grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules | grep -v 20260911230512_1462
+echo "L3"; grep -rl 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work | wc -l
+echo "L3b"; grep -rl 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work | grep -c 'openai.yaml'
+echo "L4"; ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md | wc -l
+echo "L5"; grep -o '^| `[^`]*` |' "$PLAN" | sed 's/^| `//; s/` |$//' | grep -E '^(docs|\.cursor|\.claude|\.agents|\.codex|scripts|changelog)' | sort -u | while read -r f; do [ -e "$f" ] && echo E || echo M; done | sort | uniq -c
+echo "L6"; grep -cE 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md; echo "rc=$?"
+echo "L7"; awk '/^## Decision-Gate Consistency Matrix/{f=1} /^\*\*Mirror surfaces\*\*/{f=0} f && /^\| /' "$SPEC" | wc -l
+echo "L9"; grep -cF 'If the runner does **not** support Work Item Runner handoff natively, continue in the current session by following `91-orchestrate-work-protocol.md` for each item one at a time.' docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
+echo "A1"; git fetch origin develop 2>&1 | tail -1; git ls-remote --exit-code origin develop >/dev/null; echo "ls-remote rc=$?"; gh pr view 1732 --json state,baseRefName; gh pr view 1771 --json state
+echo "A2"; git grep -nE '^mode:' -- .ai-dev-workflow.yaml; echo "rc=$?"; python3 -c 'import yaml; d=yaml.safe_load(open(".ai-dev-workflow.yaml")); print(d.get("mode","<absent>"))'
+echo "A3a"; git grep -c "does not define what it names for a pre-branch" -- "$SPEC"
+echo "A3b"; git grep -l explicit_list_invocation_targets | grep -v -e 20260911230512_1462 -e docs/testing/workflow/1462; echo "rc=$?"
+echo "A4"; gh pr list --state open --limit 100 --json number,files --jq '[.[] | select([.files[].path] | any(test("protocols/(90|91|95)-|guardrails-enforcement|agent-model-config|integrations/cursor-dispatch|\\.cursor/commands/run-|\\.claude/commands/run-|\\.agents/skills/run-|\\.cursor/agents/|\\.claude/agents/|\\.codex/skills/workflow-(item-)?orchestrator|\\.cursor/rules/workflow"))) | .number] | length'
+echo "A5"; gh issue view 1745 --json state; gh issue view 1746 --json state
+echo "SEL"; bash scripts/development-workflow/select-test-suites.sh --report-gaps 2>&1 | grep '^UNREACHABLE_SUITE_COUNT='
+echo "L8"; python3 - "$PLAN" <<'PY'
+import re,sys
+s=open(sys.argv[1]).read()
+r=re.findall(r"^\| (\d+) \| `([^`]+\.fixture\.md)` \|",s,re.M)
+print(len(r),len(set(x[1] for x in r)),[int(x[0]) for x in r]==list(range(1,len(r)+1)),re.findall(r"MANIFEST_COUNT = (\d+)",s))
+PY
+```
+
+**Observed output** (same labels, verbatim):
+
+```text
+L1
+absent
+L2
+./docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md
+L3
+      18
+L3b
+4
+L4
+       4
+L5
+  31 E
+   4 M
+L6
+0
+rc=1
+L7
+      20
+L9
+1
+A1
+ * branch              develop    -> FETCH_HEAD
+ls-remote rc=0
+{"baseRefName":"develop","state":"MERGED"}
+{"state":"OPEN"}
+A2
+rc=1
+<absent>
+A3a
+docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md:1
+A3b
+rc=1
+A4
+0
+A5
+{"state":"OPEN"}
+{"state":"OPEN"}
+SEL
+UNREACHABLE_SUITE_COUNT=0
+L8
+158 158 True ['158']
+```
 
 ---
 
@@ -1494,7 +1572,7 @@ Not applicable — no runtime data.
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| Evidence currency | Pass | Verification Log re-run `2026-09-21` at verified head `b4be22af`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass. The plan branch being behind `develop` is informational; A1 is checked after its remediation sequence at implementation start, and A1-A6 pre-edit checks were run now against artifacts that exist |
+| Evidence currency | Pass | Verification Log re-run `2026-09-21` at verified head `2d2a3ec1`; its child commit changes only the log and these gate lines. Every command in the log is recorded literally with its observed output (Literal commands block), including the A2 check anchored to the top-level `mode` key. Implementation-time checks are marked Deferred, not Pass. The plan branch being behind `develop` is informational; A1 is checked after its remediation sequence at implementation start |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
 | Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control evidence for `/run-item`, `/run-items` and `/run-epic` (Steps 8, 13B, 14B; AC17 behavior) run only against controlled disposable sandbox artifacts with a cleanup checklist and real-repository-untouched verification + surface guard (link, profile string, E1-E6 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
