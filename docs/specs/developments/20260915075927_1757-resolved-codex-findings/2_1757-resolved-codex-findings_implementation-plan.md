@@ -822,35 +822,58 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   handled by the hard-stop restoration rule instead, which reaches the same
   unavailable outcome.
 
-  **Environment-setup precedence — one rule, with its one exception.** A
-  retained environment-setup response is superseded **only by strictly newer**
-  terminal or review evidence (spec: "A retained environment-setup response
-  participates only when it is itself the newest evidence; a **strictly newer**
-  terminal or review item supersedes it"), so at an **equal** newest timestamp
-  it is *not* superseded by clean evidence — it wins that tie. The exception the
-  spec states in the same breath is the blocking one: blocking terminal or
-  review evidence, including `CHANGES_REQUESTED`, always wins over an
-  environment-setup response **regardless of timing**, which is the same
-  newest-wins exception recorded for availability notices above. It is not in
-  the tie order at all — the spec's tie list has no environment-setup tier —
-  which is why the table row above sits outside it.
+  **Environment-setup precedence — one rule, read top to bottom.** Apply these
+  three clauses in order; the timing qualifier is part of each, so they cannot
+  be read as competing:
 
-  Shipped behaviour already implements this, so preserve it rather than
-  re-deriving it: `codex_select_terminal_evidence`
-  (`codex-github-reviewer.sh:997–1014`) replaces the current selection only when
-  the candidate is strictly newer, or equal-timestamp **and** of strictly higher
-  `codex_response_priority` (`:950–972`: blocking / `CHANGES_REQUESTED` `3`,
-  unrecognized `2`, availability including environment-setup `1`, approved `0`).
-  So at an equal timestamp a clean verdict (`0`) does not displace a retained
-  environment-setup response (`1`), while a blocking one (`3`) does. The
-  retained regression `codex_main_loop_env_then_review_exit_unavailable`
-  (`tests:6239`) pins exactly that case — its fixture has the submitted review
-  at `submitted_at: 2026-01-01T00:00:01Z` and the environment-setup root comment
-  at `created_at: 2026-01-01T00:00:01Z`, the same second, and expects exit `2`
-  with `REASON=codex-github-environment-missing`. That expectation is
-  **consistent** with the rule as stated here; it was the plan's earlier
-  "loses every tie" wording that contradicted both the spec and the shipped
-  code, and this item changes no behaviour on this path.
+  1. **Blocking wins at any timing.** Blocking terminal or review evidence,
+     including `CHANGES_REQUESTED`, always defeats a retained environment-setup
+     response — whether the blocker is older, newer, or tied. Spec: "Blocking or
+     `CHANGES_REQUESTED` evidence always wins over any availability notice", and
+     "A blocking terminal or review finding is the one exception to
+     newest-wins: it always wins outright over an environment-setup error
+     **regardless of timing**."
+  2. **Otherwise, strictly newer supersedes.** Among non-blocking competitors, a
+     retained environment-setup response is superseded only by **strictly
+     newer** terminal or review evidence (spec: "participates only when it is
+     itself the newest evidence; a **strictly newer** terminal or review item
+     supersedes it").
+  3. **Therefore it wins an equal-timestamp tie against clean.** A clean verdict
+     sharing the environment response's second is not strictly newer, so it does
+     not displace it.
+
+  The environment-setup response is not in the tie order at all — the spec's tie
+  list has no environment-setup tier — which is why the table row above sits
+  outside it.
+
+  **The enforcing mechanism is the caller's guard, not the selector.** Clause 1
+  is enforced *before* any timestamp comparison happens:
+  `codex-github-reviewer.sh:1340` tests whether the already-selected evidence is
+  `CHANGES_REQUESTED` or `codex_response_is_blocking`, and if so takes the
+  no-op branch at `:1349`, so the environment response never replaces it — the
+  comment at `:1341–1348` states the contract verbatim ("never discarded by an
+  environment-setup error, regardless of timing"). Only when that guard does
+  **not** fire does the `elif` at `:1350` consult
+  `codex_select_terminal_evidence` (`:997–1014`), which replaces the selection
+  when the candidate is strictly newer, or equal-timestamp **and** of strictly
+  higher `codex_response_priority` (`:950–972`: blocking / `CHANGES_REQUESTED`
+  `3`, unrecognized `2`, availability including environment-setup `1`, approved
+  `0`). That is why "priority only breaks ties" is true *within* clause 2 and
+  yet clause 1 still holds for an older blocker: the blocking case never reaches
+  the selector. The same guard shape protects the usage-limit and
+  account-not-connected branches above it. Preserve this structure rather than
+  folding clause 1 into the selector.
+
+  Both clauses are pinned by tests. The retained regression
+  `codex_main_loop_env_then_review_exit_unavailable` (`tests:6239`) covers
+  clause 3 — its fixture has the submitted review at
+  `submitted_at: 2026-01-01T00:00:01Z` and the environment-setup root comment at
+  `created_at: 2026-01-01T00:00:01Z`, the same second, expecting exit `2` with
+  `REASON=codex-github-environment-missing`, which is **consistent** with the
+  rule as stated here. Clause 1's older-blocker direction is pinned by the new
+  `codex_older_blocker_beats_newer_env_setup` case below. Neither clause changes
+  shipped behaviour — the plan's earlier description was incomplete, citing the
+  selector as though it were the whole rule; the code already enforces both.
 
   An environment-setup response is still **not** an availability hard stop and
   never enters phase 1; that is the whole difference between it and a
@@ -1023,6 +1046,32 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     evaluation with no valid transitions. Partial reversal of the four
     fail-closed codes alone is **not** supported: the classifier emits them from
     one decision function, so reverting must take steps 3–4 together.
+
+    **The remaining steps, for completeness — all 11 are accounted for.**
+    - **Steps 1–2** (create `codex-github-evidence-lib.sh`; move
+      `codex_review_thread_evidence_counts()` into it and add the evidence
+      collector, marker parser, and window boundary): revert by restoring the
+      function to `codex-github-reviewer.sh` at its original call site and
+      deleting the library file. The revert order is the reverse of the
+      creation order — steps 3–4 must be reverted first, since they source the
+      library; reverting 1–2 while 3–4 stand would leave both callers sourcing
+      a file that no longer exists. Nothing outside this repository consumes
+      the library, and it holds no state.
+    - **Step 9** (run the suite, produce the three planted-violation proofs and
+      paste them into the pull request): **cannot and should not be undone.**
+      The evidence is append-only pull-request text, the same class as the
+      history records above; a revert stops new proofs being produced and
+      leaves the existing ones as an accurate record of what the code did at
+      that commit. Deleting them would destroy audit trail, not restore state.
+    - **Step 10** (the `changelog.d/1757.fix.…` fragment): revert by deleting
+      the fragment file, but only while it is still unreleased. Once
+      `/prepare-release` has assembled it into `CHANGELOG.md` under a version
+      heading, the released entry stays — the changelog is a historical record
+      — and the revert is instead described in the next release's notes.
+    - **Step 11** (verify the smoke runbook on a test pull request): nothing to
+      undo; it produces no artefact in this repository beyond the runbook
+      already committed on this branch, and re-running it against restored
+      behaviour is the correct follow-up rather than a revert.
 
 - [ ] **Cleared-findings retrigger** (AC-8): When terminal finding verdict’s
   findings all correlate to resolved applicable conversations and no other
@@ -1293,6 +1342,18 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   for more than one tier. This is the case today's `pr-review-loop.sh:2190`
   short-circuit gets wrong.
 
+- [ ] **Blocking beats environment-setup at any timing** (R1; spec: a blocking
+  finding "always wins outright over an environment-setup error regardless of
+  timing"): `codex_older_blocker_beats_newer_env_setup` — a current-head
+  blocking review at `T1` and an environment-setup root comment at
+  `T2 > T1`. Expect the blocking outcome (exit `1`), **not** the newer
+  environment response. Run the same fixture a second time with the blocker
+  carried by review state `CHANGES_REQUESTED` and a non-blocking body, so the
+  structured-state half of clause 1 is proved too. This is the direction the
+  caller's guard at `codex-github-reviewer.sh:1340` enforces before the
+  timestamp selector is consulted, and the direction a selector-only reading
+  would get wrong.
+
 - [ ] **Matrix spot checks** (AC-7–10 and AC-14 — AC-11, AC-12, and AC-13 have
   their own rows above; this bullet covers the remainder of the range, not all
   of it): Add focused mock-`gh` cases — one per escalation reason, named
@@ -1425,6 +1486,7 @@ and head-attribution helpers):
 | Unprovable abbreviation | Abbreviated marker token, no local match after fetch and retry, REST `200` | Evidence unavailable — exists, uniqueness unprovable |
 | Superseded malformed | Live-head malformed comment older than live-head clean evidence | Ignored — newer clean wins |
 | Mixed inline + body finding | One review with a correlated inline finding and a blocking assertion in its body | Correlation-missing escalation (spec line 105, matrix row 287) |
+| Older blocker vs newer environment-setup | Blocking review at `T1`, environment-setup comment at `T2 > T1` | Blocker wins — clause 1 applies regardless of timing |
 
 **Unit test mapping** (all in `scripts/development-workflow/tests/test-pr-review-loop.sh`
 Area 13 — one `run_test` per row):
@@ -1459,6 +1521,7 @@ Area 13 — one `run_test` per row):
 | `codex_body_finding_unrelated_review_comment_not_correlated` | Review-body-only finding with an unrelated review's inline comment on the same head — expect correlation-missing |
 | `codex_body_finding_own_review_comment_correlates` | Same shape, inline comment owned by the terminal review and no blocking body assertion — expect correlation (no escalation) |
 | `codex_mixed_inline_and_body_finding_escalates` | Mixed inline + body finding |
+| `codex_older_blocker_beats_newer_env_setup` | Older blocker vs newer environment-setup |
 
 **Suppression semantics**: Not applicable — no inline suppressions for marker parsing.
 
@@ -1678,10 +1741,10 @@ esac
   + REST `id` for threads and `pull_request_review_id` +
   `pullRequestReview.databaseId` for review scoping.
 - Parser-risk completeness: Checked by extraction — the addendum's edge-case
-  table has 23 rows and its mapping table has 28 test names, of which 21 carry
+  table has 24 rows and its mapping table has 29 test names, of which 21 carry
   the `codex_marker_` prefix; every edge-case label appears verbatim in the
   mapping table, the superseded-malformed row maps to a precedence name, and
-  the seven remaining mapping rows are the tie/precedence and correlation cases
+  the eight remaining mapping rows are the tie/precedence and correlation cases
   that have no marker input of their own.
 - Complex workflow decision-gate matrix: Checked — spec matrix is authoritative;
   implementation mirrors spec rows via `codex_classify_live_head_evidence()`.
@@ -1764,12 +1827,14 @@ esac
   withdrawn because the occupancy guard's force-push input closes the SHA-reuse
   case. R2 is the only knowingly accepted false-clean path, and it is a human
   decision rather than a plan self-acceptance.
-- Reversal risk: Checked — the outcome-mapping step states the revert path as
-  **Implementation Order steps 3–8** (classifier and adapter, the cycle-limit
-  change, the AC-6 resolver harness cases, the Area 13 expectation updates, and
-  the docs), notes that step 5 is self-contained and may be reverted alone,
-  records the two residues that do not revert, and states that partial reversal
-  of individual reason codes is unsupported.
+- Reversal risk: Checked — the outcome-mapping step states the revert path for
+  **all 11 Implementation Order steps**: steps 3–8 are the code and docs revert
+  (with step 5 self-contained and revertible alone, and steps 3–4 inseparable);
+  steps 1–2 revert by restoring the moved function and deleting the library,
+  after 3–4 and not before; step 9's planted-violation evidence and step 10's
+  already-released changelog entry **cannot and should not be undone**, being
+  append-only records; and step 11 leaves nothing to undo. Partial reversal of
+  individual reason codes is unsupported.
 - Additional (non-spec) requirements declared: Checked — the only step that
   traces to no acceptance criterion is the `changelog.d/` fragment
   (Implementation Order step 10), declared there as a `CLAUDE.md` repository
