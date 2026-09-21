@@ -40,7 +40,7 @@ in the same implementation PR so they no longer assert an unresolved gap.
 
 ## Verification Log
 
-Re-run `2026-09-20` against pre-log head **`bb80c6ff`**. A log committed inside
+Re-run `2026-09-20` against pre-log head **`07de1a18`**. A log committed inside
 the same commit cannot name its own SHA, so the evidence cites the parent
 (pre-log) head that the checks actually ran against; the commit carrying this
 log is its child and changes only plan and smoke-runbook prose. Patterns are
@@ -49,15 +49,15 @@ produced with `grep -rlE` because the local `rg` is shadowed.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `bb80c6ff` (pre-log head; earlier runs recorded `6be6ad46`, `32605700`). `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` is **not** satisfied now and remains an implementation-start check (rebase or merge `develop` before implementing) |
+| Repo revision | `git rev-parse --short HEAD` | `07de1a18` (pre-log head; earlier runs recorded `bb80c6ff`, `6be6ad46`, `32605700`). `origin/develop` is `f1d5021a`; the branch is 20 commits behind it, so A1's `git merge-base --is-ancestor origin/develop HEAD` is **not** satisfied now and remains an implementation-start check (rebase or merge `develop` before implementing) |
 | Canonical doc absent pre-impl | `test ! -f docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md && echo absent` | `absent` (re-run `2026-09-20`) |
-| Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (unchanged at `bb80c6ff`) |
-| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits, re-run 2026-09-20 at `bb80c6ff` (`grep -rl`): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). Literal extras vs the **15** Files-to-modify mirrors: the four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
+| Profile strings outside development folder | `grep -rlE 'cursor-native-handoff|cursor-parent-orchestrated|cursor-inline-fallback' . --exclude-dir=.git --exclude-dir=node_modules` filtered to drop `20260911230512_1462` paths | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` only (unchanged at `07de1a18`) |
+| Bounded command adapters | `rg -l 'run-item' .cursor/commands .claude/commands .agents/skills/run-item .agents/skills/run-item-work .agents/skills/run-items .agents/skills/run-epic .agents/skills/run-work` | **18** hits, re-run 2026-09-20 at `07de1a18` (`grep -rl`): **14** command/`SKILL.md` (`5` `.cursor/commands` + `4` `.claude/commands` + `5` `SKILL.md`) + **4** `agents/openai.yaml` (`14+4=18`). Literal extras vs the **15** Files-to-modify mirrors: the four yaml files are not edited; `.claude/commands/run-epic.md` is in Files to modify but **not** in the 18 (no `run-item` substring). |
 | Orchestration role agents | `ls .cursor/agents/orchestrator.md .cursor/agents/item-orchestrator.md .claude/agents/orchestrator.md .claude/agents/item-orchestrator.md` | All four present (re-run `2026-09-20`) |
 | Spec merge gate | `gh pr view 1732 --json state,baseRefName` | `MERGED`, base `develop` (re-run `2026-09-20`) |
 | Related gap #1745 | `gh issue view 1745 --json state,title` | `OPEN` (re-run `2026-09-20`) — batch-context marker enforcement; out of scope here |
 | Related gap #1746 | `gh issue view 1746 --json state,title` | `OPEN` (re-run `2026-09-20`) — stage-role harness permission denial; out of scope here |
-| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches at `bb80c6ff` (expected until implementation; `grep -E` count `0`) |
+| Stop conditions pre-impl | `rg 'dispatch_profile_declaration_missing|dispatch_handoff_unavailable' docs/workflow/development-workflow/guardrails-enforcement.md` | No matches at `07de1a18` (expected until implementation; `grep -E` count `0`) |
 
 ---
 
@@ -249,22 +249,55 @@ themselves, because a constrained Cursor run may have only the mirror in
 context. Every mirror in the three bullets that follow must state, in its own
 words and not by pointer alone:
 
-1. **Evaluation order (AC10)**: initial handoff is evaluated first; onward-handoff
-   capability is evaluated **only once** initial handoff is confirmed available.
-2. **Unconfirmed-handoff outcomes (AC10)**: onward-handoff capability that cannot
-   be confirmed, once initial handoff is available, is treated as **unavailable**
-   and declared **parent-orchestrated** as the conservative default.
+1. **Evaluation order (AC10)**: initial handoff is evaluated first;
+   onward-handoff capability is evaluated **only once** initial handoff is
+   confirmed available; a profile decision never evaluates onward-handoff
+   capability before initial handoff is confirmed.
+2. **Unconfirmed-handoff outcomes (AC10)** — **both** cases, stated separately:
+   (a) onward-handoff capability that cannot be confirmed, once initial handoff
+   is confirmed available, is treated as **unavailable** and declared
+   **parent-orchestrated** as the conservative default until confirmed;
+   (b) **initial handoff availability that itself cannot be confirmed** is
+   treated the same as no handoff of any kind, declared
+   **cursor-inline-fallback**, and the run stays **read-only** for the
+   remainder of that run. A later confirmation never upgrades a run in place;
+   the next run declares afresh.
 3. **Exact named stop conditions (AC11)**, spelled verbatim:
    `dispatch_profile_declaration_missing`, `dispatch_handoff_unavailable`, and
    the reused `missing_required_secret_or_permission` for a reachable stage role
    reporting a specific delegated action refused for a missing credential,
-   GitHub permission, or access token.
-4. **Invalid-profile, invalid-accountable-role, and invalid-posture cases
-   (AC11, AC20)**, and the coarse-fact mismatch boundary — what is a mismatch
-   and what is not.
+   GitHub permission, or access token. For **every** stop the mirror also states
+   (a) the **affected work item** (including the single
+   `explicit_list_invocation_targets=#N1,#N2,...` form for pre-branch
+   explicit-list stops) and (b) the **concrete human unblocking action**. The
+   mirror further states the **no-named-stop** treatment: a reachable stage
+   role's harness tool or local file-path permission denial on a specific
+   delegated action is **not** a named stop condition,
+   `missing_required_secret_or_permission` does not apply to it, it is only
+   observably similar to `SUBAGENT_PERMISSION_DENIAL` (which governs solely a
+   Work Item Runner reporting to the Portfolio Orchestrator), and it is Out of
+   Scope, tracked as #1746.
+4. **Invalid-declaration boundaries (AC10, AC11, AC20)**: a profile value
+   outside the three defined profiles, a declaration naming no accountable
+   orchestrator role (including an empty value), a posture mismatched to the
+   checkpoint, and a **coarse-fact mismatch in both directions** (more
+   permissive and less permissive than the assigned outcome) each equal a
+   missing declaration and stop with `dispatch_profile_declaration_missing`,
+   reporting which part was invalid. The mirror also states the boundary: the
+   coarse check governs the initial declaration and re-declarations of the
+   coarse facts only, and does **not** govern the mid-run recovery transitions
+   (delegation-failure unreachable-stage-role branch, parent-orchestrated to
+   inline-fallback on stage-handoff loss, native-handoff mid-run-failure
+   transitions), each of which stays a valid re-declaration.
 5. **The three accountability postures (AC20)**: personally accountable
-   (absorbed), handed off intact, and observing (not absorbed, not handed off) —
-   with `observing` valid **only** at a read-only checkpoint.
+   (absorbed), handed off intact, and observing (not absorbed, not handed off).
+   `observing` is valid **only** at a read-only checkpoint (a portfolio scan under
+   any profile, or any command under inline-fallback before it stops or
+   completes); a mutating action always declares absorbed or handed off. The
+   required posture follows the run's **current** checkpoint, never its earlier
+   mutation history. Both mismatches (`observing` at a mutating action;
+   absorbed or handed off at a read-only checkpoint) and a declaration naming no
+   role under any posture are missing declarations.
 
 A mirror that carries the link and omits any of the five does not satisfy the
 acceptance criteria, and the surface guard below must fail it.
@@ -382,33 +415,53 @@ layer; `workflow.mdc` states all five compactly).
       2. **Profile-string branch**: the surface names the profile code values
          it is required to carry (`cursor-native-handoff`,
          `cursor-parent-orchestrated`, `cursor-inline-fallback`).
-      3. **Mirror-content branch (one assertion per contract element)**: every
-         mirror-contract element in **Mirror content contract** must be present,
-         each checked by its own fixed-string assertion so a failure names the
-         missing element. Per-element required tokens:
-         - E1 evaluation order: the phrase `initial handoff` and the phrase
-           `only once initial handoff is confirmed`.
-         - E2 unconfirmed-handoff outcome: the phrase `treated as unavailable`
-           and the token `cursor-parent-orchestrated` in the same sentence
-           (checked by a single-line `grep` on the sentence anchor
-           `conservative default`).
-         - E3 named stops: all three strings `dispatch_profile_declaration_missing`,
+      3. **Mirror-content branch (one assertion per contract clause)**: every
+         clause in **Mirror content contract** must be present, each checked
+         by its own assertion so a failure names the missing clause ID.
+         Per-clause required tokens (all fixed strings, matched by the scanner
+         rules in **Parser-risk addendum**):
+         - E1 evaluation order: `initial handoff`,
+           `only once initial handoff is confirmed`, and
+           `never evaluates onward-handoff capability before initial handoff`.
+         - E2a onward unconfirmed: `treated as unavailable` and
+           `cursor-parent-orchestrated` in the same paragraph as
+           `conservative default`.
+         - E2b **initial handoff unconfirmed**: `initial handoff availability
+           that itself cannot be confirmed` (or the fixed synonym recorded in
+           the token list), `cursor-inline-fallback`, and `read-only` in the
+           same paragraph, plus `never upgrades a run in place`.
+         - E3a stop names: `dispatch_profile_declaration_missing`,
            `dispatch_handoff_unavailable`, and
            `missing_required_secret_or_permission`.
-         - E4 invalid cases and mismatch boundary: the phrases
-           `invalid profile`, `invalid accountable role`, `invalid posture`, and
-           `coarse-fact mismatch`.
-         - E5 postures: the three posture labels `personally accountable`,
-           `handed off intact`, and `observing`, plus the phrase
-           `only at a read-only checkpoint`.
-         Which elements a given surface class must carry is a table inside the
-         script (command/skill mirrors and `workflow.mdc`: E1-E5; role agents
-         and Codex skills: E2, E3, E5 plus E1/E4 for the layer they cover;
-         protocols 90/91/95: E1, E3, E4, E5; `agent-model-config.md`: profile
-         and model-assignment table rows for all three environments, no E1-E5).
-         Exact phrases are pinned by the canonical doc wording and recorded in
-         one shared token list at the top of the script so canonical wording
-         changes touch one place.
+         - E3b **affected work item**: `affected work item`, and on the
+           surfaces the table assigns it to, `explicit_list_invocation_targets=`.
+         - E3c **human unblocking action**: `human unblocking action` (or the
+           fixed synonym), and, per stop, the action token from the canonical
+           doc for each of the three stops (`declare one of` for
+           `dispatch_profile_declaration_missing`, `restore the handoff target`
+           for `dispatch_handoff_unavailable`, `supply the missing credential`
+           for `missing_required_secret_or_permission`).
+         - E3d **no-named-stop denial treatment**: `is not a named stop
+           condition`, `SUBAGENT_PERMISSION_DENIAL`, `observably similar`,
+           and `#1746` in the same paragraph.
+         - E4a invalid values: `invalid profile`, `invalid accountable role`,
+           `invalid posture`.
+         - E4b coarse-fact mismatch both directions: `coarse-fact mismatch`,
+           `more permissive`, and `less permissive`.
+         - E4c boundary exemption: `mid-run recovery` and `does not govern`.
+         - E5 postures: `personally accountable`, `handed off intact`,
+           `observing`, `only at a read-only checkpoint`, and `current
+           checkpoint`.
+         Which clauses a surface class must carry is a table inside the
+         script: command/skill mirrors and `workflow.mdc`: all clauses;
+         role agents and Codex skills: E2a, E2b, E3a-E3d, E5, plus E1 and
+         E4a-E4c for the layer they cover; protocols 90/91/95: E1, E2a, E2b,
+         E3a-E3c, E4a-E4c, E5 (E3b's `explicit_list_invocation_targets=` on
+         Protocol 90 only); `guardrails-enforcement.md`: E3a-E3d;
+         `agent-model-config.md`: profile and model-assignment rows for all
+         three environments, no E1-E5. Exact phrases live in one shared token
+         list at the top of the script so canonical wording changes touch one
+         place.
       Rationale: AC18 mirror parity is easy to break across 15+ surfaces and a
       link alone does not satisfy AC10/AC11/AC20; a cheap shell guard catches
       drift without requiring live Cursor Remote Control. Maps to AC10, AC11,
@@ -438,17 +491,35 @@ layer; `workflow.mdc` states all five compactly).
          whose link is intact.
       3. **E1 evaluation order**: delete the `only once initial handoff is
          confirmed` sentence from `.claude/commands/run-items.md`.
-      4. **E2 unconfirmed outcome**: delete the `conservative default` sentence
+      4. **E2a onward unconfirmed**: delete the `conservative default` sentence
          from `.agents/skills/run-epic/SKILL.md`.
-      5. **E3 named stops**: remove `missing_required_secret_or_permission`
+      5. **E2b initial handoff unconfirmed**: delete the sentence stating that
+         unconfirmed initial handoff selects read-only `cursor-inline-fallback`
+         from `.cursor/commands/run-item.md` while leaving E2a intact (proves
+         E2b is checked independently of E2a); repeat on
+         `.cursor/rules/workflow.mdc`.
+      6. **E3a stop names**: remove `missing_required_secret_or_permission`
          from `.cursor/commands/run-work.md`; repeat removing
-         `dispatch_handoff_unavailable` from a protocol (91) to prove the
-         protocol row of the table is live.
-      6. **E4 invalid cases / mismatch boundary**: delete the `coarse-fact
-         mismatch` sentence from `.cursor/rules/workflow.mdc`.
-      7. **E5 postures**: delete the `observing` posture line (and, separately,
-         the `only at a read-only checkpoint` qualifier) from
-         `.cursor/commands/run-item.md`.
+         `dispatch_handoff_unavailable` from Protocol 91.
+      7. **E3b affected work item**: remove `explicit_list_invocation_targets=`
+         from Protocol 90 (and `guardrails-enforcement.md` row text) while the
+         stop names remain.
+      8. **E3c human unblocking action**: remove the unblocking action for
+         `dispatch_handoff_unavailable` only, from `.claude/commands/run-item.md`,
+         while its name and the other two actions remain (proves per-stop
+         checking).
+      9. **E3d no-named-stop denial treatment**: remove the harness/local-path
+         denial paragraph from `.cursor/agents/item-orchestrator.md`, and
+         separately remove only the `#1746` token from it.
+      10. **E4a/E4b/E4c invalid boundaries**: delete the `coarse-fact mismatch`
+          sentence from `.cursor/rules/workflow.mdc`; delete only the
+          `less permissive` direction from `.claude/commands/run-epic.md`;
+          delete the mid-run-recovery exemption from
+          `.agents/skills/run-item/SKILL.md`.
+      11. **E5 postures**: delete the `observing` posture line (and,
+          separately, the `only at a read-only checkpoint` qualifier, and
+          separately the `current checkpoint` sentence) from
+          `.cursor/commands/run-item.md`.
       Record the before/after command output for **every** cycle in the PR test
       plan. Where a cycle cannot be automated, the implementation PR states so
       explicitly and substitutes an exhaustive `rg -c` count per contract
@@ -501,7 +572,8 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `.codex/skills/workflow-orchestrator/SKILL.md` | Canonical reference + portfolio-layer no-onward-handoff |
 | `.cursor/rules/workflow.mdc` | Requirement + link |
 | `docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md` | Named stop affected-item alignment |
-| `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard |
+| `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) |
+| `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures (one per Parser-Risk case) |
 | `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
 | `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Already created in Plan Ready |
 
@@ -509,6 +581,53 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 gate category); `--dispatch-profile` CLI flag (BO-9); automated environment
 detection; stage-role permission denial recovery (#1746); enforcing
 `BATCH_CONTEXT` marker absence as a stage stop (#1745).
+
+---
+
+## Parser-Risk Addendum (surface-guard scanner)
+
+The surface guard is a structured-Markdown scanner: it reads Markdown files,
+extracts scoped content, and decides pass/fail by fixed-string and same-paragraph
+matches. Scanner rules: (R1) read UTF-8 text; (R2) strip fenced code blocks and
+HTML comments before matching (the Decision 3 declaration block and worked
+examples are illustrative and must not satisfy a clause); (R3) normalize each
+paragraph by joining soft-wrapped lines and collapsing whitespace, so phrases
+wrapped across lines still match and "same paragraph" means one blank-line-
+delimited block (list item, blockquote line and table cell each count as a
+block); (R4) identifier tokens (stop names, profile codes) match only with
+non-identifier characters or edges on both sides; prose phrases match
+case-sensitively as fixed strings; (R5) every assertion runs on the surface's
+own content, never a concatenation of files.
+
+Each case below maps to a fixture under
+`scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/`
+and to a self-test (`test-cursor-dispatch-profile-surfaces.sh --self-test`,
+also invoked by the default run). Each fail fixture must exit non-zero with a
+message naming its clause ID; each pass fixture must exit 0. These are separate
+from, and in addition to, the planted-deletion proofs on real surfaces.
+
+| Class | Case | Fixture ID | Expected |
+| --- | --- | --- | --- |
+| Boundary | Token at first byte / last byte of file, no trailing newline | `boundary-edge-token` | pass |
+| Boundary | Required phrase soft-wrapped across two lines | `boundary-wrapped-phrase` | pass (R3) |
+| Boundary | Token followed by punctuation or backtick (`` `dispatch_handoff_unavailable`, ``) | `boundary-punct-token` | pass |
+| Boundary | Empty file / file with only the link | `boundary-empty-surface` | fail, all clauses named |
+| Negative / lookalike | Longer identifier (`dispatch_handoff_unavailable_x`, `cursor-native-handoffs`) | `lookalike-longer-identifier` | fail (R4) |
+| Negative / lookalike | Wrong case (`Observing`, `DISPATCH_HANDOFF_UNAVAILABLE`) | `lookalike-case` | fail |
+| Negative / lookalike | Required token only inside a fenced code block or HTML comment | `lookalike-fenced-or-comment` | fail (R2) |
+| Negative / lookalike | `observing` only as an unrelated word (`observing the output`) without posture phrase | `lookalike-observing-word` | fail (E5 phrase tokens missing) |
+| Negative / lookalike | E2b tokens present but in different paragraphs (read-only in one, inline-fallback in another) | `lookalike-split-paragraph` | fail (R3 same-paragraph) |
+| Multiple occurrence | Token appears many times; only one clause satisfied | `multi-token-many` | pass for that clause, fail for the unmet one |
+| Multiple occurrence | Token satisfied in surface A, absent from surface B | `multi-cross-surface` | fail for B (R5) |
+| Multiple occurrence | Two of three stop actions present, one missing | `multi-partial-actions` | fail (E3c per stop) |
+| Multiple occurrence | Duplicate canonical link lines | `multi-duplicate-link` | pass |
+| Nested / overlap | Clause inside list item, blockquote, and table cell | `nested-block-kinds` | pass |
+| Nested / overlap | Required phrase inside a fenced block nested in a list item | `nested-fenced-in-list` | fail (R2) |
+| Nested / overlap | Overlapping phrases (`initial handoff` inside `only once initial handoff is confirmed`) with only the shorter present | `overlap-substring` | fail for the longer clause |
+| Nested / overlap | E2a and E2b sentences sharing `cursor-parent-orchestrated` / `cursor-inline-fallback` tokens; one deleted | `overlap-e2a-e2b` | fail for the deleted clause only |
+
+Fixture-only self-tests are the regression net for the scanner itself; if a
+fixture is removed the self-test count assertion (expected N fixtures) fails.
 
 ---
 
@@ -592,12 +711,12 @@ Not applicable — no runtime data.
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| Evidence currency | Pass | Verification Log re-run `2026-09-20` against pre-log head `bb80c6ff` (log's own commit is its child; only prose changed); the one non-passing check (`develop` ancestry) is recorded, not hidden |
+| Evidence currency | Pass | Verification Log re-run `2026-09-20` against pre-log head `07de1a18`; the log commit is its child; only plan prose changed; the one non-passing check (`develop` ancestry) is recorded, not hidden |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
-| Verification support | Pass | Verification Log + surface guard (link, profile string, E1-E5, canonical-doc checks) + per-branch planted-violation proofs + smoke runbook |
+| Verification support | Pass | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
-| Parser-risk addendum | N/A | No new structured-text parser |
+| Parser-risk addendum | Pass | Surface guard is a structured-Markdown scanner; boundary, lookalike, multiple-occurrence and nested/overlap cases each mapped to a fixture and self-test (see Parser-Risk Addendum) |
 | Concurrent-event-source addendum | N/A | No concurrent event handlers |
 | Cross-cutting checklist addendum | N/A | No new REVIEW.md checklist category |
 
@@ -645,7 +764,7 @@ Not applicable — no runtime data.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).
 11. **Planted-violation proofs** — run every fail/pass cycle (link, profile
-      string, E1-E5, and canonical-doc checks) documented in
+      string, E1-E5 clauses, and canonical-doc checks) plus the scanner self-tests documented in
       **Layer-by-Layer Changes → Workflow tooling** and **Testing Strategy**.
 
 ---
