@@ -1072,10 +1072,13 @@ fixture is removed, renamed, or added without a manifest row.
    profile, the model assignment (Decision 6 values), and confirmed vs
    assumption (AC15).
 5. Smoke runbook walks Native handoff desktop, Parent orchestrated Remote
-   Control, Inline fallback, and read-only scan paths (AC6, AC17), and Steps
-   12-14 require current-head evidence: the `simulate_bounded_paths` result is
-   **mandatory** for `/run-item`, `/run-items`, and `/run-epic` (AC9, AC10,
-   AC14, AC17), and a live run is optional and supplementary only.
+   Control, Inline fallback, and read-only scan paths (AC6, AC17); Step 8 (a
+   real Remote Control `/run-item` to a terminal state) is **required live
+   evidence** for the AC17 behavioral guarantee (NOT RUN blocks sign-off), while
+   Steps 12-14 require current-head evidence that the `simulate_bounded_paths`
+   result validates the **decision matrix** for `/run-item`, `/run-items`, and
+   `/run-epic` (AC9, AC10, AC14, AC17); the simulation is mandatory but never
+   substitutes for Step 8, and further live runs are optional and supplementary.
 6. Smoke Step 10 (AC19): parent-orchestrated inline-product-work prohibition is
    not relaxed by any other document; #1746 remains Out of Scope;
    `SUBAGENT_PERMISSION_DENIAL` is worded as observably similar only (Work Item
@@ -1208,7 +1211,7 @@ Not applicable — no runtime data.
 | Evidence currency | Pass | Verification Log re-run `2026-09-20` at verified head `63c40db6`; its child commit changes only the log and these gate lines. Implementation-time checks are marked Deferred, not Pass; the `develop` ancestry check is recorded as failing now and deferred to implementation start |
 | Spec coverage | Pass | Plan maps to AC1–AC20 via layer checklist; BO-9/BO-10 deferred per spec |
 | Implementation-order consistency | Pass | Canonical doc before mirrors; guardrails before surface guard |
-| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
+| Verification support | Pass (plan-stage design; execution deferred) | Verification Log + required live Remote Control Step 8 (AC17 behavior) + surface guard (link, profile string, E1-E5 clauses, canonical-doc checks, fixtures) + per-branch planted-violation proofs + smoke runbook |
 | Decision-gate applicability | Pass | Complex gate — authoritative spec matrix + implementation mapping table |
 | CI wiring | Pass (design; execution deferred) | `# covers:` header for every protected surface, selector planted check and `--report-gaps`, per-suite time cap, no path filter change; see Testing Strategy |
 | Shell-script lint | Pass (design; execution deferred) | New `.sh` verified by `bash -n`, `shellcheck --severity=warning`, and `workflow-shell-guard-lint.py --base-ref origin/develop` per REVIEW.md; Implementation Order step 9 |
@@ -1275,9 +1278,11 @@ Not applicable — no runtime data.
    (`--print-map`, per-surface `--changed-files` planted check,
    `--report-gaps`, `test-select-test-suites.sh`), then run the surface guard, run
    the scanner `--self-test`, and execute the smoke runbook: Steps 1-6 and
-   10-14 must PASS at the implementation head (Steps 12-14 require the
-   mandatory `simulate_bounded_paths` result; a live run is optional and
-   supplementary); only live Steps 7-9 may be documented NOT RUN,
+   10-14 must PASS at the implementation head, and **Step 8 (real Remote
+   Control `/run-item` to a terminal state) must PASS live** with current-head
+   evidence (NOT RUN blocks sign-off); Steps 12-14 require the mandatory
+   `simulate_bounded_paths` result (it validates the decision matrix, not the
+   live behavior); only optional live Steps 7 and 9 may be documented NOT RUN,
    per the runbook's Pass criteria.
 10. **Changelog fragment** — create `changelog.d/1462.added.cursor-dispatch-profiles.md`
       with the literal bullet from **Documentation Updates** (implementation PR only).

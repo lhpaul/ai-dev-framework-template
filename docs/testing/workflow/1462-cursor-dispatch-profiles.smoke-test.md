@@ -92,7 +92,7 @@
 
 **Expected result**: Acting on scan output requires a new bounded run with its own declaration.
 
-### Step 7: Native handoff desktop path (manual)
+### Step 7: Native handoff desktop path (manual, optional)
 
 **Maps to**: AC6, Use Case 2
 
@@ -101,16 +101,34 @@
 
 **Expected result**: Declaration visible; orchestration handed off when subagents work.
 
-### Step 8: Parent orchestrated Remote Control path (manual)
+### Step 8: Parent orchestrated Remote Control path (live, REQUIRED at sign-off)
 
-**Maps to**: AC6, Use Case 3
+**Maps to**: AC6, AC17, Use Case 3
 
-1. In Cursor Remote Control (or simulated constrained environment), start `/run-item <N>` on one plan/spec item.
-2. Confirm profile is Parent orchestrated, orchestration absorbed, stage work delegated (not authored inline by orchestrating context).
+This is the **one live step that is required**: it exercises the behavioral
+guarantee of AC17 (an operator in a constrained environment runs a bounded
+command to a terminal condition without human rescue) that the decision-matrix
+simulation in Steps 12-14 cannot exercise. It must run in a **real Cursor Remote
+Control session**, not a simulated one, on the **implementation PR head**.
 
-**Expected result**: Run reaches terminal condition or a named stop without human rescue mid-orchestration.
+1. Record the head SHA under test (`git rev-parse HEAD`) and the environment
+   (Cursor Remote Control session identifier or a note of how it was reached).
+2. Start `/run-item <N>` on the sample doc-only item from Test Data.
+3. Confirm the declaration block names Parent orchestrated, the accountable
+   role and the `absorbed` posture before the first mutating action, that
+   orchestration is absorbed by the current context, and that every stage of
+   product work is delegated to its stage role with handoff metadata (not
+   authored inline by the orchestrating context).
+4. Let the run continue **without any human intervention mid-orchestration**
+   (answering the bounded prelude's policy confirmation before the run starts is
+   allowed; rescuing the run afterwards is not).
+5. Record the terminal state reached: a real terminal condition (waiting on
+   human review or merge, blocked dependency, or escalation) or a named stop
+   from the decision matrix, plus the transcript excerpt or PR link.
 
-### Step 9: Inline fallback (manual)
+**Expected result**: The run reaches a terminal condition or a named stop with no human rescue mid-orchestration; evidence names the head SHA and the Remote Control environment. **NOT RUN is not acceptable for this step at implementation sign-off**, and a run that needed a human rescue is a FAIL.
+
+### Step 9: Inline fallback (manual, optional)
 
 **Maps to**: Use Case 4
 
@@ -160,6 +178,11 @@
 > **mandatory** for each bounded path; a live run is optional and
 > supplementary and never substitutes for it (a live run cannot exercise the
 > recovery, mismatch, or unconfirmed-handoff rows).
+>
+> The simulation validates the **decision matrix**; Step 8 (live, required)
+> validates the **behavioral guarantee** that a constrained-environment run
+> reaches a terminal state without human rescue. Neither substitutes for the
+> other.
 
 ### Step 12: `/run-item` terminal behavior at current head
 
@@ -239,8 +262,19 @@
   exercise the recovery, mismatch, and unconfirmed-handoff rows, so it never
   substitutes for the simulation. **NOT RUN is not acceptable** for these three
   steps, and a step with only a live run and no simulation result is a FAIL.
-- Manual live steps 7-9 (Desktop, Remote Control, inline fallback) may be
-  documented **NOT RUN** with a reason, provided Steps 12-14 passed via the
-  mandatory simulation at the same head SHA.
+- **Step 8 (live Remote Control `/run-item` to a terminal state) must PASS**
+  with current-head evidence at implementation sign-off. It is the required
+  behavioral check for AC17, and **NOT RUN is not acceptable for it**: if a real
+  Remote Control session is unavailable, sign-off is blocked rather than waived.
+  The simulation never substitutes for it, and Steps 12-14 never substitute for
+  it.
+- Steps 12-14 (`simulate_bounded_paths`) validate the **decision matrix** (every
+  row, both mismatch directions, recovery, unconfirmed handoff) for each bounded
+  path. They do not execute the command flows, so a passing simulation alone
+  leaves the AC17 behavioral guarantee unproved. Live `/run-items` and
+  `/run-epic` executions remain optional and supplementary.
+- Manual live Steps 7 (Desktop) and 9 (inline fallback / Cloud Agents) are
+  optional and may be documented **NOT RUN** with a reason, provided Step 8 and
+  Steps 12-14 passed at the same head SHA.
 - Evidence recorded against an older head than the one being merged is stale and
   must be re-run.
