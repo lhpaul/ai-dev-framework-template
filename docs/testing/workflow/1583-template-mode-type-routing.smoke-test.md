@@ -25,7 +25,8 @@ suites. Named scenarios `creation-refusal-no-bypass`,
 `framework-creation-valid-types-preserved`, `consumer-creation-all-classes-unchanged`,
 `stop-path-no-mutation`, `reclassify-then-route`, `framework-post-backlog-statuses-pass`,
 `scan-misclassified-item-held`, `scan-misclassified-not-informational`,
-`scan-uses-tracker-status-not-artifacts`, `scan-status-unreadable-defers`,
+`scan-backlog-no-artifacts-held`, `scan-stale-backlog-with-artifacts-continues`,
+`scan-status-unreadable-defers`,
 the nine `lookup-unavailable-*` cases, `framework-lookup-ignores-type-field`,
 `consumer-prelude-workflow-unchanged`, `consumer-next-action-workflow-unchanged`,
 `consumer-batch-plan-workflow-unchanged`, `consumer-routing-all-classes-unchanged`,
@@ -191,10 +192,10 @@ the sibling, `DISPATCH=proposed` / `REPORT_CATEGORY=proposed_batch`. The script 
 unrecognized `NEXT_ACTION`, which falls through to the review lane) or `REPORT_CATEGORY`
 `informational`.
 
-4c. Status source (`scan-uses-tracker-status-not-artifacts`) — the scan must gate on the
-**tracker** status, not the artifact-derived one. Use a development folder whose merged spec
-and missing plan would make `workflow-next-action.sh` report `Spec Ready`, while the tracker
-says Status `Backlog` and Type `Workflow`, then run the scan:
+4c. Effective stage, part 1 — Backlog with no work (`scan-backlog-no-artifacts-held`). The gate
+takes **two** inputs: the tracker status and the artifact stage from
+`workflow-next-action.sh`. Use a development folder that holds neither a spec nor a plan (so
+next-action exits `66`), while the tracker says Status `Backlog` and Type `Workflow`:
 
 ```bash
 ./scripts/development-workflow/workflow-batch-plan.sh --scan <development-path>
@@ -203,8 +204,17 @@ says Status `Backlog` and Type `Workflow`, then run the scan:
 **Expected**: the emitted block carries `STATUS=Backlog` (the tracker value),
 `NEXT_ACTION=hold-misclassified-type`, `MISCLASSIFIED_TYPE=Workflow`, a
 `MISCLASSIFIED_TYPE_REASON` naming the item, and `MISCLASSIFIED_TYPE_CHECK=applied`.
-**Fail if** the block shows `STATUS=Spec Ready` or any next action other than the hold — that
-is the bypass this step exists to catch.
+**Fail if** the item is dispatched: this is the case the feature exists for.
+
+4c-ii. Effective stage, part 2 — stale Backlog with work already done
+(`scan-stale-backlog-with-artifacts-continues`). Repeat with a folder whose merged spec makes
+next-action report `Spec Ready`, while the tracker still says `Backlog` and Type `Workflow`.
+
+**Expected**: the item is **not** held. Its `NEXT_ACTION` and `DISPATCH` match the pre-feature
+baseline, and the gate reports `REASON=stale_backlog_reconciled`. **Fail if** the item is
+held — a stale tracker status must not re-decide a pipeline that has already started, and the
+spec does not re-evaluate an item already on one. Repeat with `Plan Ready` and
+`In Development` folders.
 
 4d. Unreadable status (`scan-status-unreadable-defers`). Repeat 4c with the tracker status read
 returning empty (Linear provider, no `project_number` / `GITHUB_PROJECT_NUMBER`, or an issue
