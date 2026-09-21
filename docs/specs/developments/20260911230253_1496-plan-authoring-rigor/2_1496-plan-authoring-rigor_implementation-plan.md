@@ -370,8 +370,13 @@ allows):
 | G | G1 |
 | H | H1 and H3 |
 
-**Regression suite**: Not applicable — no browser/product regression suite for
-workflow docs.
+**Regression suite**: Not applicable as a deliberate testing-scope decision —
+this feature changes only workflow docs, agent files, and a shell harness. The
+repository's only Playwright suite, `e2e/` (searched at revision `6c84855e`:
+`find . -path ./node_modules -prune -o -name 'playwright.config.*' -print`
+returns `e2e/playwright.config.ts`; `e2e/tests/` holds only
+`baseline.spec.ts`, a placeholder `expect(true).toBe(true)`), exercises no
+product or workflow-doc behavior, so it cannot regress from this change.
 
 ### Parser-risk addendum (mirror harness)
 
