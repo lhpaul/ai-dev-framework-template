@@ -70,7 +70,8 @@ surfaces (see Cross-Cutting Operational Assumption Check).
 | Evidence-counts symbol | `grep -n 'codex_review_thread_evidence_counts' scripts/development-workflow/codex-github-reviewer.sh` | Defined at `codex-github-reviewer.sh:273`; sole caller at `:1497`. Today's only definition — the plan **moves** it to `codex-github-evidence-lib.sh` under the same name and repoints `:1497`, rather than extending it in place, so both scripts share one implementation |
 | Cycle-cap enforcement block | `grep -n 'reviewer_loop_cap_exceeded\\|max_cycles enforcement' scripts/development-workflow/pr-review-loop.sh` | Enforcement block at `pr-review-loop.sh:10958` (`#1502` dual-cap); escalation predicate is `reviewer_loop_cap_exceeded`, reason string `max_cycles_exceeded` |
 | Timeline event fields | `gh api repos/{owner}/{repo}/issues/1768/timeline -H 'Accept: application/vnd.github+json'` | `committed` events carry `sha` and `committer.date`; their own `created_at` is `null`. No `head_ref_force_pushed` events exist in this repo to sample (force-push on shared branches is prohibited), so the force-push event→head join is **unverified** — see source (a) above |
-| Environment-setup outcome | `sed -n '1372,1382p' scripts/development-workflow/codex-github-reviewer.sh` | `codex_return_environment_error` emits `REASON=codex-github-environment-missing` and `exit 2` — a sixth legal exit-`2` reason beyond timeout and the four fail-closed codes |
+| Environment-setup outcome | `sed -n '1372,1382p' scripts/development-workflow/codex-github-reviewer.sh` | `codex_return_environment_error` emits `REASON=codex-github-environment-missing` and `exit 2`; retained unchanged by this item (see the exit-`2` retained-contract table) |
+| Exit-2 reason inventory | `grep -n 'exit 2' scripts/development-workflow/codex-github-reviewer.sh` plus the nearest preceding `REASON=` per hit, and `grep -n 'run_test "codex_[a-z0-9_]*" "2"' scripts/development-workflow/tests/test-pr-review-loop.sh` | 52 `exit 2` sites. Only five sites emit a reason, covering four distinct reasons: `codex-github-environment-missing` (`:1381`), `codex-github-reaction-without-review` (`:1402`), `codex-github-head-changed` (`:1411`), and `codex-github-head-unavailable` (`:1420`, `:1428`). Of the remaining 47, 18 are usage/argument-validation/`gh auth`/HEAD-resolution exits (`:94`–`:214`) and 29 are reason-less `VERDICT: TIMED_OUT …` fetch/poll/trigger failures. 17 harness cases assert a codex exit code of `2`; `codex_pre_trigger_head_changed_*` (`tests:5348`, `:5351`) and `codex_head_changed_*` (`tests:10335`, `:10336`) pin `codex-github-head-changed`, and `codex_reaction_only_exit_unavailable` (`tests:5435`) pins exit `2` for the acknowledgement wait. Exit `4` exists on exactly one shipped path (`:2508`, `REASON=codex-github-review-pending`) |
 | Exit-2 reason default | `sed -n '2320,2333p' scripts/development-workflow/pr-review-loop.sh` | `codex_reason="$(kv_value_default REASON "$script_output" timeout)"` at `:2322`; `print_kv RESULT escalate` (`:2323`) and `return 2` (`:2332`) are unconditional — an out-of-set `REASON` loses the reason string, not the escalation |
 | Inline-comment review join | `gh api repos/{owner}/{repo}/pulls/1768/comments?per_page=1 --jq '.[0] \| {id, pull_request_review_id, commit_id}'` and the matching GraphQL `reviewThreads → comments(first:1) → pullRequestReview.databaseId` | REST returns `id=4056981858`, `pull_request_review_id=5260609621`, `commit_id=37d5bd35…` for a `chatgpt-codex-connector[bot]` comment; GraphQL returns `databaseId=4056981858` with `pullRequestReview.databaseId=5260609621` for the same thread. Both review-scoping joins exist and agree |
 | Exit-`3` reason hardcode | `sed -n '2292,2302p' scripts/development-workflow/pr-review-loop.sh` | `print_kv REASON codex-github-usage-limit` is unconditional at `:2294`, discarding the companion's `REASON=`; the companion's `codex_return_account_not_connected` emits `REASON=codex-github-account-not-connected` then `exit 3` (`codex-github-reviewer.sh:1384–1393`), so that outcome is reported today as a usage limit |
@@ -502,10 +503,17 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
 - [ ] **Outcome mapping** (Statuses table): Emit companion stdout keys:
   - `VERDICT: APPROVED` → exit `0`
   - Actionable blocker → exit `1` with blocking summary (unchanged shape)
-  - Timed out → exit `2` with **exactly** `REASON=timeout`;
-    hard unavailable → exit `3` (unchanged)
-  - `waiting_on_reviewer` → exit `4` with `REASON=codex-github-review-pending` or
-    `REASON=codex-github-reaction-without-review`
+  - Timed out → exit `2`. The shipped timeout paths emit **no** `REASON=` at
+    all and the loop supplies `timeout` through
+    `kv_value_default REASON "$script_output" timeout`; keep that behaviour and
+    do **not** add a `REASON=timeout` line to the 29 reason-less
+    `VERDICT: TIMED_OUT …` paths (Verification Log row `Exit-2 reason
+    inventory`). Hard unavailable → exit `3` (unchanged, but see the Exit-`3`
+    reason propagation step)
+  - `waiting_on_reviewer` → exit `4` with `REASON=codex-github-review-pending`
+    (already shipped at `codex-github-reviewer.sh:2508`) or
+    `REASON=codex-github-reaction-without-review` (**remapped from exit `2` by
+    this item** — see the retained-contract table below)
   - Fail-closed escalations → exit `2` with `REASON=` one of
     `evidence_unavailable_codex_thread_state`,
     `codex_current_verdict_malformed_revision_marker`,
@@ -514,30 +522,57 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
     (reuse exit `2` with distinct `REASON=`; the loop adapter already maps
     non-`0/1/3/4` exits via `kv_value_default REASON … timeout` to
     `RESULT=escalate` — preserve that contract)
-  - **Exit `2` `REASON=` is a closed set of exactly six values**: `timeout`,
-    the four fail-closed codes — `evidence_unavailable_codex_thread_state`,
-    `codex_current_verdict_malformed_revision_marker`,
-    `codex_finding_thread_correlation_missing`,
-    `codex_current_verdict_unrecognized` — and
-    `codex-github-environment-missing`, which the shipped
-    `codex_return_environment_error` already emits on exit `2` (Verification
-    Log). The environment-setup reason is **not** a fail-closed escalation; it
-    keeps its shipped availability handling and must not be converted into one. The companion must emit one of these
-    verbatim on every exit-`2` path. This is load-bearing, not stylistic:
+  - **Exit-`2` contract — retained, remapped, and added.** Exit `2` is *not* a
+    closed six-value reason set: the shipped companion already emits four other
+    reasons there — three retained by this item, one remapped — and leaves 47 of
+    its 52 exit-`2` sites reason-less, so a blanket "every exit-`2` path emits
+    one of the new codes" rule would break established behaviour and pinned
+    tests. The complete contract after this item (source
+    line numbers from the Verification Log row `Exit-2 reason inventory`):
+
+    | Exit-`2` path | `REASON=` today | After this item | Test impact |
+    | --- | --- | --- | --- |
+    | `codex_return_environment_error` (`:1372–1382`) | `codex-github-environment-missing` | **Retained unchanged** — availability handling, not a fail-closed escalation, and never converted into one | Keeps exit `2`: `codex_environment_missing_exit_unavailable` (`tests:10634`), `codex_async_reaction_environment_exit_unavailable` (`:6092`), `codex_ack_repoll_env_then_reaction_exit_unavailable` (`:6155`), `codex_main_loop_env_then_review_exit_unavailable` (`:6239`), `codex_same_poll_newer_env_error_wins_exit_unavailable` (`:6462`), `codex_env_error_survives_later_ack_exit_unavailable` (`:6511`), `codex_terminal_comment_vs_newer_env_error_exit_unavailable` (`:6559`), `codex_environment_then_clean_comment_exit_unavailable` (`:10417`), `codex_same_second_root_comment_exit_unavailable` (`:10675`) |
+    | `codex_return_head_changed` (`:1405–1412`) | `codex-github-head-changed` | **Retained unchanged** — outside this item's evidence model (the head moved, so there is no live-head verdict to classify) | Unchanged: `codex_head_changed_exit_unavailable` / `codex_head_changed_reason` (`tests:10335–10336`), `codex_pre_trigger_head_changed_exit_unavailable` / `codex_pre_trigger_head_changed_reason` (`tests:5348–5351`) |
+    | `codex_require_current_head` (`:1414–1434`; exits at `:1420` and `:1428`) | `codex-github-head-unavailable` | **Retained unchanged** | No test pins this reason today — add `codex_head_unavailable_reason_retained` so the retained contract is covered before the classifier work lands |
+    | `codex_return_reaction_without_review` (`:1396–1403`) | `codex-github-reaction-without-review` | **Remapped to exit `4`** — the only intentional change on this surface. AC-9 requires `waiting_on_reviewer` for acknowledgement-only evidence, and the loop's exit-`2` arm returns `RESULT=escalate`, so the shipped pairing turns that wait into an escalation. The reason string keeps its shipped name, per the spec's "the two waiting codes are the shipped reason codes and keep their existing names and tests" | `codex_reaction_only_exit_unavailable` (`tests:5435`) expectation `2` → `4`, renamed `codex_reaction_only_exit_waiting`; `codex_reaction_only_reason` (`tests:5436`) unchanged |
+    | 29 reason-less `VERDICT: TIMED_OUT …` fetch / poll / trigger failures (`:1500`, `:1522`, `:1628`, `:1633`, `:1688`–`:1698`, `:1773`, `:1821`, `:1865`, `:1877`, `:2022`–`:2138`, `:2206`–`:2412`) | *(none)* | **Retained reason-less** — the loop's `kv_value_default … timeout` supplies `timeout` | Unchanged: `codex_existing_fetch_failure_exit_unavailable` (`tests:4903`), `codex_async_root_fetch_failure_exit_unavailable` (`:5906`), `codex_review_query_failure_exit_unavailable` (`:10156`), `codex_thread_check_failure_exit_code` (`:13158`) |
+    | 18 usage, argument-validation, `gh auth`, and HEAD-resolution exits (`:94`–`:214`) | *(none)* | **Retained reason-less** — they fire before any review classification and are not review outcomes | None |
+    | New classifier fail-closed escalations | *(new)* | Exit `2` with one of `evidence_unavailable_codex_thread_state`, `codex_current_verdict_malformed_revision_marker`, `codex_finding_thread_correlation_missing`, `codex_current_verdict_unrecognized` | One new Area 13 case per code (matrix spot checks) |
+
+  - **Scoped harness assertion.** The "emits a member of the set" assertion is
+    scoped to the **new classifier exit-`2` paths**: every exit `2` returned by
+    `codex_classify_live_head_evidence()` must carry one of the four new codes
+    verbatim. Do not assert it file-wide — that is exactly the rule that would
+    break the retained reason-less paths. Add the complementary non-regression
+    assertion that `codex-github-environment-missing`,
+    `codex-github-head-changed`, and `codex-github-head-unavailable` still
+    appear on their own paths with exit `2`.
+  - **Why the reason string matters (for the four new codes).**
     `pr-review-loop.sh:2322` (Verification Log) reads the reason via
     `kv_value_default REASON "$script_output" timeout`. `RESULT=escalate` and
-    the `return 2` are unconditional at that site, so an out-of-set `REASON`
-    does **not** change the control flow or cause a retry — the run still stops
-    for human review. What is lost is the *reason string*: the escalation is
-    reported as `timeout` in `REASON=`, the Automated Reviewer Loop Summary, and
+    the `return 2` are unconditional at that site, so a missing `REASON` does
+    **not** change control flow or cause a retry — the run still stops for human
+    review. What is lost is the *reason string*: the escalation is reported as
+    `timeout` in `REASON=`, the Automated Reviewer Loop Summary, and
     `reviewer_loop_history.v1`, making the four fail-closed escalations
     indistinguishable from a poll-budget timeout and from each other. That
     directly defeats this item's own acceptance criterion that every fail-closed
-    escalation "is recorded as a terminal human-review escalation". Add a
-    harness assertion that every exit-`2` path emits a member of this set.
-  - Update the companion header exit-code comment block so exit `2` documents
-    both timeout and fail-closed escalation (discriminated by `REASON=`), and
-    remove the “unrecognized → NEEDS_REVISION safe-fail” wording (AC-7).
+    escalation "is recorded as a terminal human-review escalation".
+  - **Adapter safety net for the remapped wait** (AC-9): the loop's exit-`2` arm
+    must map a stray `REASON=codex-github-reaction-without-review` to
+    `RESULT=waiting_on_reviewer` rather than `escalate`, so a missed companion
+    path can never convert that wait into an escalation — the spec lists the
+    fail-closed escalations as a complete set that excludes the two wait codes.
+    Test: `codex_adapter_exit2_reaction_reason_maps_to_waiting`.
+  - Update the companion header exit-code comment block
+    (`codex-github-reviewer.sh:29–34`) so exit `2` documents all of its
+    discriminated `REASON=` outcomes — reason-less timeout, the retained
+    `codex-github-environment-missing`, `codex-github-head-changed`, and
+    `codex-github-head-unavailable`, and the four new fail-closed escalation
+    codes — so exit `4` lists both wait reasons after the acknowledgement remap,
+    and so the “unrecognized → NEEDS_REVISION safe-fail” wording is removed
+    (AC-7).
   - **Reversal path for this published contract.** The exit-code / `REASON=`
     surface is consumed by `run_codex_github_review()`, the Automated Reviewer
     Loop Summary, and `reviewer_loop_history.v1`; all three live in this
@@ -602,9 +637,11 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   hard-unavailable outcomes keep their shipped reason codes in `REASON=`, the
   Automated Reviewer Loop Summary, and `reviewer_loop_history.v1`.
   `RESULT=escalate` and `return 2` stay unchanged; this is a reason-string fix,
-  not a control-flow change. Exit `3` therefore carries a closed set of exactly
-  two reasons: `codex-github-usage-limit` and
-  `codex-github-account-not-connected`.
+  not a control-flow change. Exit `3` has exactly two sites in the shipped
+  companion — `codex_return_usage_limit` (`:1369`) and
+  `codex_return_account_not_connected` (`:1393`), confirmed in the Verification
+  Log — so its reason set is closed at `codex-github-usage-limit` and
+  `codex-github-account-not-connected`, and this item adds no exit-`3` path.
 
 - [ ] **Cycle-limit interaction** (AC-5–6): In the reviewer-loop cap check
   (`reviewer_loop_cap_exceeded`, the enforcement block confirmed in the
@@ -713,6 +750,17 @@ Record the **provider fields** the plan relies on (spec Business Rule 1):
   `pull_request_review_id`, not on the head-wide comment index. Pair it with
   `codex_body_finding_own_review_comment_correlates` (the same shape where the
   inline comment does belong to `R`) so the join is proved in both directions.
+
+- [ ] **Exit-`2` retained contract and the one remap** (see the retained-contract
+  table): update `codex_reaction_only_exit_unavailable` (`tests:5435`) from `2`
+  to `4` and rename it `codex_reaction_only_exit_waiting`, leaving
+  `codex_reaction_only_reason` (`tests:5436`) untouched; add
+  `codex_head_unavailable_reason_retained` for the otherwise untested
+  `codex-github-head-unavailable` path; add
+  `codex_adapter_exit2_reaction_reason_maps_to_waiting` for the adapter safety
+  net; and leave every other exit-`2` expectation in the table unchanged — their
+  presence in the run is the non-regression evidence that the retained reasons
+  and the reason-less timeout paths survived.
 
 - [ ] **Matrix spot checks** (AC-7–10 and AC-14 — AC-11, AC-12, and AC-13 have
   their own rows above; this bullet covers the remainder of the range, not all
@@ -856,6 +904,7 @@ uses any PR where Codex left resolved inline threads on the current head.
 | Classifier divergence between companion and loop phase 1 | Med | High | Single shared `codex-github-evidence-lib.sh` sourced by both; never source the companion executable |
 | False clean from provisional reply relaxation | Low | High | Keep provisional mode only on re-trigger path; strict on clean declaration |
 | Escalation reasons not surfaced in PR summary | Low | Med | Assert `REASON=` in harness + Step 7a alignment check |
+| Retained exit-`2` reasons regress while adding the new codes | Med | High | Retained-contract table names every retained reason and its pinned test; scoped harness assertion plus a non-regression assertion for the three retained reasons |
 | Published exit / `REASON=` contract is hard to unwind | Low | Med | Revert is code-only (Implementation Order steps 3–4 + Area 13 expectations + docs); residues documented in the Outcome-mapping reversal note |
 | No push-proving anchor on trigger-less heads makes window attribution escalate often | Med | Med | Anchor sources are ordered cheapest-first (trigger, check run, status); escalation is the spec-mandated fail-closed outcome, and harness case `codex_marker_push_unproven_window` pins it |
 
@@ -943,6 +992,11 @@ esac
   list is the single tie-breaker between the phase narrative and the
   pre-selection guard, and its worked examples agree with the guard for every
   listed batch. No contradictory next actions across plan layers.
+- Shipped-contract inventory: Checked — every companion `exit 2` site was
+  enumerated from source (Verification Log row `Exit-2 reason inventory`) and
+  classified as retained, remapped, or added, with the pinned harness cases
+  named for each; the only behavioural remap is the acknowledgement wait moving
+  from exit `2` to exit `4`, which AC-9 requires.
 - Correlation scoping: Checked — finding extraction, the cleared-findings rule,
   and the `CHANGES_REQUESTED` exception all consume the same per-review finding
   set keyed on `pull_request_review_id`; no section correlates against the
@@ -965,7 +1019,8 @@ esac
   marker/window cases in the parser-risk mapping table use the `codex_marker_`
   prefix while the precedence cases use `codex_tied_` / `codex_triggerless_` /
   `codex_cap_` / `codex_exit3_` / `codex_older_` / `codex_hard_stop_` /
-  `codex_body_finding_`. Phase names (`Phase 1`
+  `codex_body_finding_` / `codex_head_unavailable_` / `codex_reaction_only_` /
+  `codex_adapter_`. Phase names (`Phase 1`
   absolute exceptions, `Phase 2` newest-evidence selection, `Phase 3`
   acknowledgement) are used consistently in the decision-function step, the
   pre-selection-guard paragraph, and the decision-gate mirror; the unrelated
