@@ -52,7 +52,13 @@ outcome, and obeys the stale-revision rules from Group H of the spec.
 
 1. Apply `REVIEW.md` Plan Review Checklist to the draft plan PR from Scenario 3.
 2. Deliberately omit evidence for one firing rule in the plan while recording
-   `Satisfied` in the outcome record.
+   `Satisfied` in the outcome record. Commit and push that mutation, then
+   refresh the outcome record's plan revision to the new PR head **keeping the
+   intentionally incorrect `Satisfied` label**, so the stale-revision gate does
+   not confound the finding.
+3. After the finding is observed, restore the omitted evidence, push, and
+   refresh the record's revision and label to the new head, so Scenario 7 can
+   continue the same PR.
 
 Expected result: the backstop checklist yields a blocking finding naming the
 rule and the defect; the finding class matches the spec gate matrix row for that
@@ -117,9 +123,13 @@ names an acceptance theme, the exercise, and the expected gate class.
 | F4 | Rule 5 — untouched consumer | Untouched consumer omitted, or listed without its post-change outcome | Blocking — consumer or outcome missing |
 | H4 | Outcome record — malformed | Record names a nonexistent commit | Blocking — revision does not resolve |
 | H5 | Outcome record — label reassessed | Round re-reads recorded finding, label not reassessed | Blocking — label stale |
+| H6 | Complete evidence, recorded Unsatisfied | Every rule's evidence is complete but the record says `Unsatisfied` | Blocking — outcome contradicts evidence |
+| H7 | Absent trigger recorded Satisfied | Rule's trigger absent, record says `Satisfied` | Blocking — must be `Not applicable` with rationale |
+| H8 | Invalid outcome label | Record uses a label outside the three defined | Blocking — invalid label |
+| H9 | External-source finding not persisted | Rule 1 outcome cites an inspection with no persisted finding | Blocking — persisted finding missing |
 
 Scenarios 1–6 above cover wiring; this matrix covers criterion-level outcomes. Every row is a **required** case in implementation verification (executed and recorded in the implementation PR), not optional desk-checking. Acceptance criteria not named by a row above are covered by the Group's nearest row through the rule-name/label assertions of the mirror harness; any criterion with neither must be added as a row before implementation is marked done
 that wiring alone cannot prove. Before marking implementation complete, execute
-every matrix row above (B1–B10, C1–C2, D1–D2, E1–E3, F1–F4, G1, H1–H5), as
+every matrix row above (B1–B10, C1–C2, D1–D2, E1–E3, F1–F4, G1, H1–H9), as
 the implementation plan Testing Strategy requires, including at least one
 blocking and one non-blocking outcome on real or fixture plan text.

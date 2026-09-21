@@ -376,7 +376,7 @@ The index below groups the IDs by acceptance group:
 | E | E1, E2, E3 |
 | F | F1, F2, F3, F4 |
 | G | G1 |
-| H | H1, H2, H3, H4, H5 |
+| H | H1, H2, H3, H4, H5, H6, H7, H8, H9 |
 
 **Regression suite**: Not applicable as a deliberate testing-scope decision —
 this feature changes only workflow docs, agent files, and a shell harness. The
@@ -419,6 +419,18 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
   and confirm the assertion fails.
 - Assert tech-lead and implementation-plan-reviewer agents (Claude + Cursor)
   reference the canonical file.
+- **Fixture-root injection (makes planted violations executable):** every
+  assertion resolves its input paths under `${PLAN_RIGOR_ROOT:-<repo root>}`,
+  never an absolute or cwd-relative repo path. A planted-violation run copies
+  the asserted files into a temp tree that mirrors the repo layout, mutates one
+  file there, and runs the harness with `PLAN_RIGOR_ROOT=<temp tree>`; the
+  default run uses the live repository. Fixture snippets for parser edge cases
+  are placed into that temp tree at the path the assertion reads.
+- **Out of harness scope:** the live plan-PR `Document Quality Gate`
+  outcome-record row of the Mirror-surfaces table is a PR-body input, not a
+  repository file. The harness does not assert it; it is verified by smoke
+  Scenario 3 and the review gate (H1/H2/H4 matrix rows). This is the explicit
+  out-of-scope rationale required below for that row.
 - Exit non-zero on first failure; follow pattern of
   `test-protocol-02-portable-parser-guidance.sh` (verified present — see
   Verification Log).
@@ -452,7 +464,8 @@ Create `scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`:
 
 **Planted-violation proof (implementation PR evidence)** — required before the
 mirror test is considered done. Run it **once per distinct assertion** in the
-harness, not once overall. Distinct assertions: canonical file present; each of
+harness, not once overall, each with `PLAN_RIGOR_ROOT` pointing at the mutated
+temp tree. Distinct assertions: canonical file present; each of
 `Rule 1`–`Rule 6` headings; `REVIEW.md` canonical-path reference; `REVIEW.md`
 rule names; `REVIEW.md` three outcome labels; Protocol 02 canonical-path
 reference; Protocol 02 outcome-record heading; Protocol 02 three outcome labels;
@@ -463,8 +476,8 @@ review); and each parser edge case row above.
 For each assertion:
 
 1. Plant exactly one defect that assertion must catch (delete the heading, drop
-   the label, break the reference) in a fixture copy under
-   `scripts/development-workflow/tests/fixtures/plan-authoring-rigor/`.
+   the label, break the reference) in the temp-tree copy (see fixture-root
+   injection above).
 2. Run `bash scripts/development-workflow/tests/test-plan-authoring-rigor-mirror.sh`
    and confirm non-zero exit with a message naming that defect.
 3. Revert; re-run and confirm exit `0`.
@@ -532,7 +545,7 @@ Not applicable.
    `73`).
 9. Run markdown lint on all touched paths; run mirror test at exit `0`.
 10. Execute smoke runbook Scenarios 1–7 plus every matrix row (B1–B10, C1–C2,
-    D1–D2, E1–E3, F1–F4, G1, H1–H5) named in Testing Strategy.
+    D1–D2, E1–E3, F1–F4, G1, H1–H9) named in Testing Strategy.
 
 **Changelog fragment** (for later feature PR — not on this plan branch):
 
