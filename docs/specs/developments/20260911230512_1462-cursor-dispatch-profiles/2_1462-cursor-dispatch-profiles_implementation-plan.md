@@ -527,8 +527,12 @@ layer; `workflow.mdc` states all five compactly).
       dropped without a scenario. Paths: `/run-item` (item layer), `/run-items`
       explicit list (item layer, pre-branch stops use the
       `explicit_list_invocation_targets=<t1>,<t2>,...` form over a mixed-form
-      target list), `/run-epic` (epic layer), and `/run-work` (portfolio layer,
-      read-only scan rows only).
+      target list), `/run-epic` (epic layer, invoked as `--epic <N>`; `--items` is internal-only per
+      Protocol 95), and `/run-work` (portfolio layer, read-only scan rows only).
+      The mixed-form serialization (tracker IDs, branch names with `,`) is
+      exercised **only** in this simulation and its fixtures: the live router
+      returns `MODE=ambiguous` for unresolvable tokens before any declaration
+      gate, so smoke Step 13 uses real, resolvable targets.
 
       | ID | Spec matrix input | Expected outcome and next action | run-item | run-items | run-epic | run-work |
       | --- | --- | --- | --- | --- | --- | --- |
@@ -695,7 +699,7 @@ returns **18** hits = **14** of those mirrors (it misses `.claude/commands/run-e
 | `scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` | **Create** surface guard (link, profile string, clauses E1-E5, canonical-doc checks, path simulation, `--self-test`) with `# covers:` header for every protected surface |
 | `scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/` | **Create** scanner self-test fixtures (one per Parser-Risk case) |
 | `changelog.d/1462.added.cursor-dispatch-profiles.md` | **Create** release-note fragment (implementation PR only) |
-| `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Created in Plan Ready; Steps 12-14 and tightened Pass criteria added in plan review (no further edit expected) |
+| `docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md` | Created in Plan Ready; Steps 12-14, real-command invocations (router-resolvable targets, `--epic <N>`) and tightened Pass criteria added in plan review (no further edit expected) |
 
 **Explicitly not in scope**: `REVIEW.md` checklist categories (no new review
 gate category); `--dispatch-profile` CLI flag (BO-9); automated environment

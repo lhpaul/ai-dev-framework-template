@@ -20,8 +20,9 @@
 | Item | Value |
 | --- | --- |
 | Canonical doc | `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md` |
-| Sample item (single) | Any merged-spec workflow item, e.g. `#1462` plan stage on `develop` |
-| Explicit-list batch | Two or more issue numbers in `/run-items` explicit_list mode (documentation check only for pre-branch stop) |
+| Sample item (single) | An open, non-epic, router-resolvable issue number `<N>` the operator picks (a doc-only item is safest); confirm with `./scripts/development-workflow/run-work-router.sh <N>` returning `MODE=redirect_item` |
+| Explicit-list batch | Two real, open, non-epic issue numbers `<N1> <N2>`; confirm `./scripts/development-workflow/run-work-router.sh <N1> <N2>` returns `MODE=redirect_items`. Tracker-ID, branch-name and comma-containing target forms are covered by the simulation fixtures only, because unresolvable tokens yield `MODE=ambiguous` before any declaration gate |
+| Epic | A real open epic number `<E>` with native sub-issues; confirm `./scripts/development-workflow/run-work-router.sh --epic <E>` returns `MODE=redirect_epic` |
 
 ---
 
@@ -44,7 +45,7 @@
 
 1. Open each bounded command adapter (`.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`, plus Claude and `.agents/skills` parity paths).
 2. Confirm each references `integrations/cursor-dispatch-profiles.md` and names the declaration requirement.
-3. Run `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` if present.
+3. Run `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` (exists once the implementation PR is checked out; required).
 
 **Expected result**: Test exits 0; manual spot-check matches.
 
@@ -83,7 +84,7 @@
 
 **Maps to**: AC11, AC12, Use Case 5
 
-1. Read `/run-work` command doc and protocol 90 scan-mode guidance.
+1. Read `/run-work` command doc and protocol 90 scan-mode guidance, and run `./scripts/development-workflow/run-work-router.sh` with no target: expect `MODE=no_target_scan`.
 2. Confirm scan declares **observing** posture and never escalates into execution.
 3. Confirm the command surface states that acting on scan results requires a
    **new bounded run with its own declaration**.
@@ -94,8 +95,8 @@
 
 **Maps to**: AC6, Use Case 2
 
-1. In Cursor Desktop, invoke `/run-item` on a read-only target (e.g. portfolio scan is `/run-work`) or a trivial doc-only item in a test branch.
-2. Confirm run output includes dispatch profile declaration before mutation.
+1. In Cursor Desktop, invoke `/run-item <N>` (the sample item from Test Data, or a trivial doc-only item on a throwaway branch). The bounded prelude prints read-only scope and policy first.
+2. Confirm run output includes the dispatch profile declaration immediately before the first mutating action.
 
 **Expected result**: Declaration visible; orchestration handed off when subagents work.
 
@@ -103,7 +104,7 @@
 
 **Maps to**: AC6, Use Case 3
 
-1. In Cursor Remote Control (or simulated constrained environment), start `/run-item` on one plan/spec item.
+1. In Cursor Remote Control (or simulated constrained environment), start `/run-item <N>` on one plan/spec item.
 2. Confirm profile is Parent orchestrated, orchestration absorbed, stage work delegated (not authored inline by orchestrating context).
 
 **Expected result**: Run reaches terminal condition or a named stop without human rescue mid-orchestration.
@@ -112,7 +113,7 @@
 
 **Maps to**: Use Case 4
 
-1. In an environment with no subagent handoff, invoke a mutating bounded command.
+1. In an environment with no subagent handoff, invoke `/run-item <N>` (a mutating bounded command).
 2. Confirm the run declares **Inline fallback** (`cursor-inline-fallback`) with a
    valid accountable role and **observing** posture at the read-only checkpoint,
    then reaches the first mutating action.
@@ -159,8 +160,8 @@
 **Maps to**: AC6, AC9, AC10, AC17, AC20
 
 1. Record the current head SHA (`git rev-parse HEAD`).
-2. Either run `/run-item` in a constrained (or simulated no-handoff) environment
-   on a doc-only target, or run
+2. Either run `/run-item <N>` in a constrained (or simulated no-handoff) environment
+   on the sample doc-only item, or run
    `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
    and confirm its `simulate_bounded_paths` branch passes **every** `/run-item`
    scenario marked Y in the plan's scenario table (S1, S3, S5, S7-S10, S10b,
@@ -177,14 +178,20 @@
 **Maps to**: AC9, AC10, AC14, AC17
 
 1. Record the current head SHA.
-2. Run `/run-items #A ENG-123 feature/b,c` with no declaration in a throwaway clone, or run the
+2. Pick two real, open, non-epic issue numbers `<N1> <N2>` (Test Data) and run
+   `./scripts/development-workflow/run-work-router.sh <N1> <N2>`; proceed only
+   on `MODE=redirect_items`. (Any other MODE, including `ambiguous`, stops
+   before the declaration gate; pick different targets.)
+3. Either run `/run-items <N1> <N2>` in a throwaway clone with the dispatch
+   profile declaration deliberately withheld, or run the
    `simulate_bounded_paths` branch for **every** `/run-items` scenario marked Y
    in the plan's scenario table (same set as `/run-item`, with pre-branch stops
-   asserting the single invocation-level affected-item string).
-3. Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
+   asserting the single invocation-level affected-item string, including the
+   mixed-form target list, which is simulation-only).
+4. Confirm exactly **one** `dispatch_profile_declaration_missing` stop is
    reported for the whole invocation with affected item
-   `explicit_list_invocation_targets=#A,ENG-123,feature/b%2Cc` (verbatim, no `#` rewriting, comma encoded), before any branch or artifact is
-   created.
+   `explicit_list_invocation_targets=<N1>,<N2>` (targets exactly as typed, in
+   order, no `#` rewriting), before any branch or artifact is created.
 
 **Expected result**: Single invocation-level stop with the ordered target string; no per-target stops; no mutation.
 
@@ -193,12 +200,17 @@
 **Maps to**: AC9, AC10, AC17
 
 1. Record the current head SHA.
-2. Run `/run-epic --items #A,#B` under a Parent orchestrated declaration (or the
-   `simulate_bounded_paths` branch for **every** `/run-epic` scenario marked Y
-   in the plan's scenario table, S1, S3, S5, S7-S10, S10b, S11-S19).
+2. With a real open epic `<E>` (Test Data) and
+   `./scripts/development-workflow/run-work-router.sh --epic <E>` returning
+   `MODE=redirect_epic`, run `/run-epic --epic <E>` under a Parent orchestrated
+   declaration (`--items` is internal-only and is not a user-facing option per
+   Protocol 95), or run the `simulate_bounded_paths` branch for **every**
+   `/run-epic` scenario marked Y in the plan's scenario table (S1, S3, S5,
+   S7-S10, S10b, S11-S19).
 3. Confirm the epic layer is declared absorbed, stage work is delegated with
    handoff metadata, and an invalid or missing declaration stops with
-   `dispatch_profile_declaration_missing`.
+   `dispatch_profile_declaration_missing` (affected work item per
+   `guardrails-enforcement.md` section 4).
 
 **Expected result**: Terminal condition or named stop matches the canonical doc; evidence names the head SHA.
 
