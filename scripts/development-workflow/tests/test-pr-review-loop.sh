@@ -3181,6 +3181,55 @@ run_test "cycles_max_cycles_and_max_total_cycles_independent" "10 25" "$(
   echo "$_m1 $_m2"
 )"
 
+# #1757 (AC-6): the two allowances must resolve fully independently even
+# when BOTH resolvers are invoked in the same evaluation with one axis
+# omitted/invalid and the other explicitly configured — not just when each
+# is tested in isolation as above.
+run_test "codex_cap_omit_per_run_keeps_lifetime" "10 40" "$(
+  unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
+  _m1="$(reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+  _m2="$(reviewer_loop_resolve_max_total_cycles "40" 2>/dev/null)"
+  echo "$_m1 $_m2"
+)"
+run_test "codex_cap_omit_lifetime_keeps_per_run" "7 25" "$(
+  unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
+  _m1="$(reviewer_loop_resolve_max_cycles "7" 2>/dev/null)"
+  _m2="$(reviewer_loop_resolve_max_total_cycles "" 2>/dev/null)"
+  echo "$_m1 $_m2"
+)"
+run_test "codex_cap_invalid_per_run_keeps_lifetime" "10 40" "$(
+  unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
+  _m1="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>/dev/null)"
+  _m2="$(reviewer_loop_resolve_max_total_cycles "40" 2>/dev/null)"
+  echo "$_m1 $_m2"
+)"
+run_test "codex_cap_invalid_per_run_keeps_lifetime_warns" "yes" "$(
+  unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
+  _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
+  reviewer_loop_resolve_max_total_cycles "40" >/dev/null 2>/dev/null
+  if printf '%s\n' "$_mc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
+    echo yes
+  else
+    echo no
+  fi
+)"
+run_test "codex_cap_invalid_lifetime_keeps_per_run" "7 25" "$(
+  unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
+  _m1="$(reviewer_loop_resolve_max_cycles "7" 2>/dev/null)"
+  _m2="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>/dev/null)"
+  echo "$_m1 $_m2"
+)"
+run_test "codex_cap_invalid_lifetime_keeps_per_run_warns" "yes" "$(
+  unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
+  reviewer_loop_resolve_max_cycles "7" >/dev/null 2>/dev/null
+  _mtc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
+  if printf '%s\n' "$_mtc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
+    echo yes
+  else
+    echo no
+  fi
+)"
+
 # --- reviewer_loop_cap_exceeded (generic; reused for both axes) ---
 # AC: "reaching the cap escalates" / "staying under it does not".
 
@@ -5432,7 +5481,9 @@ PATH="$_codex_reaction_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_reaction_mock_dir/output.txt" 2>&1 || _codex_reaction_exit=$?
 _codex_reaction_output="$(cat "$_codex_reaction_mock_dir/output.txt")"
-run_test "codex_reaction_only_exit_unavailable" "2" "$_codex_reaction_exit"
+# #1757 (AC-10): acknowledgement-only evidence is waiting_on_reviewer (exit
+# 4), not an escalation (exit 2) — remapped from the shipped exit 2.
+run_test "codex_reaction_only_exit_waiting" "4" "$_codex_reaction_exit"
 run_test "codex_reaction_only_reason" "REASON=codex-github-reaction-without-review" \
   "$(printf '%s\n' "$_codex_reaction_output" | grep "^REASON=")"
 rm -rf "$_codex_reaction_mock_dir"
@@ -13140,7 +13191,7 @@ _codex_overrides='
   cd_workflow_repo_root() { :; }
   repo_slug() { printf "owner/repo\n"; }
   require_gh() { :; }
-  check_unresolved_threads() { return 3; }
+  codex_review_thread_evidence_counts() { return 3; }
 '
 actual_output=""
 actual_exit=0
@@ -13175,7 +13226,7 @@ _codex_overrides='
   repo_slug() { printf "owner/repo\n"; }
   require_gh() { :; }
   workflow_repo_root() { printf "%s\n" "$_codex_usage_loop_tmp"; }
-  check_unresolved_threads() { printf "0\n"; return 0; }
+  codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
 '
 actual_output=""
 actual_exit=0
@@ -13220,7 +13271,7 @@ _codex_overrides='
   repo_slug() { printf "owner/repo\n"; }
   require_gh() { :; }
   workflow_repo_root() { printf "%s\n" "$_codex_pending_loop_tmp"; }
-  check_unresolved_threads() { printf "0\n"; return 0; }
+  codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
 '
 actual_output=""
 actual_exit=0
@@ -13240,6 +13291,180 @@ run_test "codex_pending_loop_trigger_id" "PENDING_REVIEW_TRIGGER_COMMENT_ID=901"
 run_test "codex_pending_loop_exit_code" "4" "$actual_exit"
 rm -rf "$_codex_pending_loop_tmp"
 unset _codex_pending_loop_tmp _codex_overrides actual_output actual_exit
+
+# #1757 (Operational Visibility): the loop must read the companion's own
+# REASON= for a hard-unavailable (exit 3) outcome instead of hardcoding the
+# usage-limit code, so codex_return_account_not_connected's distinct reason
+# is not mislabelled.
+_codex_exit3_usage_tmp="$(mktemp -d)"
+mkdir -p "$_codex_exit3_usage_tmp/scripts/development-workflow"
+cat > "$_codex_exit3_usage_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_EXIT3_USAGE_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached\n'
+printf 'REASON=codex-github-usage-limit\n'
+exit 3
+CODEX_EXIT3_USAGE_REVIEWER
+chmod +x "$_codex_exit3_usage_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_exit3_usage_tmp"; }
+  codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
+'
+actual_output="$(
+  eval "$_codex_overrides"
+  run_codex_github_review "42" "fix/42-test" "1" "5" || true
+)"
+run_test "codex_exit3_usage_limit_reason_preserved" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+rm -rf "$_codex_exit3_usage_tmp"
+unset _codex_exit3_usage_tmp _codex_overrides actual_output
+
+_codex_exit3_notconnected_tmp="$(mktemp -d)"
+mkdir -p "$_codex_exit3_notconnected_tmp/scripts/development-workflow"
+cat > "$_codex_exit3_notconnected_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_EXIT3_NOTCONNECTED_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: UNAVAILABLE — Codex GitHub account is not connected for the triggering identity\n'
+printf 'REASON=codex-github-account-not-connected\n'
+exit 3
+CODEX_EXIT3_NOTCONNECTED_REVIEWER
+chmod +x "$_codex_exit3_notconnected_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_exit3_notconnected_tmp"; }
+  codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
+'
+actual_output="$(
+  eval "$_codex_overrides"
+  run_codex_github_review "42" "fix/42-test" "1" "5" || true
+)"
+run_test "codex_exit3_account_not_connected_reason_preserved" "REASON=codex-github-account-not-connected" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+rm -rf "$_codex_exit3_notconnected_tmp"
+unset _codex_exit3_notconnected_tmp _codex_overrides actual_output
+
+# #1757 (AC-1, AC-2, AC-8, AC-15) — primary regression: a resolved Codex
+# finding must not count as a current blocker. The companion returns
+# NEEDS_REVISION (exit 1, e.g. because its own pre-trigger classification
+# still saw a visible-but-now-resolved comment), but a strict,
+# applicability-aware recount confirms zero live-head Codex conversations
+# remain unresolved. Before this fix, the shipped `unresolved_count=1` floor
+# forced RESULT=needs_fixes/COMMENT_COUNT=1 regardless of the recount; the
+# fix must request a fresh current-head review (waiting_on_reviewer /
+# codex-github-review-pending) instead.
+_codex_resolved_visible_tmp="$(mktemp -d)"
+mkdir -p "$_codex_resolved_visible_tmp/scripts/development-workflow"
+cat > "$_codex_resolved_visible_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_RESOLVED_VISIBLE_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: NEEDS_REVISION\n'
+printf 'REVIEWED_HEAD=ffffffffffffffffffffffffffffffffffffffff\n'
+exit 1
+CODEX_RESOLVED_VISIBLE_REVIEWER
+chmod +x "$_codex_resolved_visible_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_resolved_visible_tmp"; }
+  reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() { :; }
+  reviewer_loop_print_blocking_from_unresolved_bot_threads() { :; }
+  codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_resolved_visible_finding_waits_after_revision_push_result" "RESULT=waiting_on_reviewer" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_resolved_visible_finding_waits_after_revision_push_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_resolved_visible_finding_waits_after_revision_push_exit" "4" "$actual_exit"
+rm -rf "$_codex_resolved_visible_tmp"
+unset _codex_resolved_visible_tmp _codex_overrides actual_output actual_exit
+
+# Negative counterpart: a genuinely unresolved live-head recount must still
+# produce needs_fixes with the true count — the fix must not silently clear
+# every exit-1 outcome.
+_codex_still_unresolved_tmp="$(mktemp -d)"
+mkdir -p "$_codex_still_unresolved_tmp/scripts/development-workflow"
+cat > "$_codex_still_unresolved_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_STILL_UNRESOLVED_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: NEEDS_REVISION\n'
+exit 1
+CODEX_STILL_UNRESOLVED_REVIEWER
+chmod +x "$_codex_still_unresolved_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_still_unresolved_tmp"; }
+  reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() { :; }
+  reviewer_loop_print_blocking_from_unresolved_bot_threads() { :; }
+  codex_review_thread_evidence_counts() { printf "2\t0\t0\n"; return 0; }
+'
+actual_output="$(
+  eval "$_codex_overrides"
+  run_codex_github_review "42" "fix/42-test" "1" "5" || true
+)"
+run_test "codex_still_unresolved_after_revision_push_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_still_unresolved_after_revision_push_comment_count" "COMMENT_COUNT=2" \
+  "$(printf '%s\n' "$actual_output" | grep "^COMMENT_COUNT=")"
+rm -rf "$_codex_still_unresolved_tmp"
+unset _codex_still_unresolved_tmp _codex_overrides actual_output
+
+# Fail-closed counterpart: when the exit-1 recount itself cannot be
+# completed, the loop must still report needs_fixes (COMMENT_COUNT=1) rather
+# than silently clearing the pull request from indeterminate thread state.
+_codex_recount_failure_tmp="$(mktemp -d)"
+mkdir -p "$_codex_recount_failure_tmp/scripts/development-workflow"
+cat > "$_codex_recount_failure_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_RECOUNT_FAILURE_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: NEEDS_REVISION\n'
+exit 1
+CODEX_RECOUNT_FAILURE_REVIEWER
+chmod +x "$_codex_recount_failure_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+# Each invocation of codex_review_thread_evidence_counts runs inside its own
+# command-substitution subshell (run_codex_github_review captures its stdout
+# via `$(...)`), so a plain shell-variable counter cannot survive across the
+# phase-1 call and the exit-1 recount call — it would reset every time. Use a
+# file-based counter instead.
+_codex_recount_call_file="$_codex_recount_failure_tmp/call-count"
+printf '0\n' > "$_codex_recount_call_file"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_recount_failure_tmp"; }
+  reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() { :; }
+  reviewer_loop_print_blocking_from_unresolved_bot_threads() { :; }
+  codex_review_thread_evidence_counts() {
+    local n
+    n="$(cat "$_codex_recount_call_file")"
+    n=$((n + 1))
+    printf "%s\n" "$n" > "$_codex_recount_call_file"
+    if [ "$n" -eq 1 ]; then printf "0\t0\t0\n"; return 0; fi
+    return 3
+  }
+'
+actual_output="$(
+  eval "$_codex_overrides"
+  run_codex_github_review "42" "fix/42-test" "1" "5" || true
+)"
+run_test "codex_recount_failure_fails_closed_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_recount_failure_fails_closed_comment_count" "COMMENT_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^COMMENT_COUNT=")"
+rm -rf "$_codex_recount_failure_tmp"
+unset _codex_recount_failure_tmp _codex_overrides actual_output
 
 _post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"

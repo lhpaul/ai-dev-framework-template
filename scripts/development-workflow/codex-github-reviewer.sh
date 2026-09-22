@@ -31,7 +31,11 @@
 #   1 — NEEDS_REVISION (bot responded with blocking findings)
 #   2 — TIMED_OUT  (review failure after dispatch)
 #   3 — UNAVAILABLE (review failure after dispatch)
-#   4 — WAITING_ON_REVIEWER (current-head trigger exists, no bot review yet)
+#   4 — WAITING_ON_REVIEWER — either the current-head trigger exists with no
+#       bot review yet (REASON=codex-github-review-pending), or the only
+#       live-head evidence is acknowledgement-only (a thumbs-up reaction with
+#       no submitted review) (REASON=codex-github-reaction-without-review,
+#       #1757 AC-10)
 #
 # Verdict parsing (three-path, blocking markers checked first per safe-fail):
 #   1. Blocking markers present → NEEDS_REVISION (exit 1)
@@ -80,6 +84,13 @@
 #   polling proceeds from the existing trigger timestamp.
 
 set -euo pipefail
+
+# Use BASH_SOURCE[0] rather than $0 so this resolves correctly even if the
+# script is ever sourced (e.g. by a future harness), matching the pattern
+# already used by pr-review-loop.sh.
+CODEX_REVIEWER_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/development-workflow/codex-github-evidence-lib.sh
+source "$CODEX_REVIEWER_SCRIPT_DIR/codex-github-evidence-lib.sh"
 
 # #1651: emit the commit this companion filtered reviews against.
 emit_reviewed_head_if_known() {
@@ -270,102 +281,11 @@ codex_inline_review_comment_count_since() {
   rm -f "$review_comment_tmpfile"
 }
 
-codex_review_thread_evidence_counts() {
-  local thread_tmpfile thread_stderr cursor page max_pages count cleared_count page_count page_cleared_count has_next end_cursor
-  local -a gh_graphql_args
-  thread_tmpfile=$(mktemp)
-  thread_stderr=$(mktemp)
-  cursor=""
-  page=0
-  max_pages=20
-  count=0
-  cleared_count=0
-  while :; do
-    page=$((page + 1))
-    if [ "$page" -gt "$max_pages" ]; then
-      rm -f "$thread_tmpfile" "$thread_stderr"
-      echo "ERROR: existing Codex review thread scan exceeded $max_pages pages" >&2
-      return 3
-    fi
-    : > "$thread_stderr"
-    gh_graphql_args=(api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER")
-    if [ -n "$cursor" ]; then
-      gh_graphql_args+=(-f cursor="$cursor")
-    fi
-    if ! gh "${gh_graphql_args[@]}" \
-      -f query='query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {
-        repository(owner:$owner, name:$repo) {
-          pullRequest(number:$number) {
-            headRef {
-              target {
-                ... on Commit { committedDate }
-              }
-            }
-            reviewThreads(first:100, after:$cursor) {
-              pageInfo { hasNextPage endCursor }
-              nodes {
-                isResolved
-                isOutdated
-	                firstComment: comments(first:1) {
-	                  nodes {
-	                    author { login }
-	                    body
-	                  }
-	                }
-                lastComment: comments(last:1) {
-                  nodes {
-                    author { login }
-                    createdAt
-                  }
-                }
-              }
-            }
-          }
-        }
-      }' 2>"$thread_stderr" \
-      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" '
-          .data.repository.pullRequest as $pr
-          | ($pr.headRef.target.committedDate // "") as $head_date
-          | ($pr.reviewThreads.pageInfo.hasNextPage // false) as $has_next
-          | ($pr.reviewThreads.pageInfo.endCursor // "") as $end_cursor
-          | [
-              $pr.reviewThreads.nodes[]?
-	              | (.firstComment.nodes[0].author.login // "") as $first_author
-	              | (.firstComment.nodes[0].body // "") as $first_body
-	              | (.lastComment.nodes[0].author.login // "") as $last_author
-	              | (.lastComment.nodes[0].createdAt // "") as $last_created
-	              | select((.isOutdated // false) == false)
-	              | select($first_author == $bot or $first_author == $bot_plain)
-	              | {
-	                  cleared: ((.isResolved // false) or ($first_body | test("✅ Addressed")) or (($head_date != "") and ($last_author != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)))
-	                }
-            ] as $candidate_threads
-          | ($candidate_threads | map(select(.cleared | not)) | length) as $count
-          | ($candidate_threads | map(select(.cleared)) | length) as $cleared_count
-          | [$count, $cleared_count, $has_next, $end_cursor] | @tsv' \
-      > "$thread_tmpfile"; then
-      local thread_err
-      thread_err=$(cat "$thread_stderr")
-      rm -f "$thread_tmpfile" "$thread_stderr"
-      echo "ERROR: failed to fetch or parse existing Codex review threads: $thread_err" >&2
-      return 3
-    fi
-    IFS=$'\t' read -r page_count page_cleared_count has_next end_cursor < "$thread_tmpfile"
-    count=$((count + page_count))
-    cleared_count=$((cleared_count + page_cleared_count))
-    if [ "$has_next" != "true" ]; then
-      break
-    fi
-    if [ -z "$end_cursor" ]; then
-      rm -f "$thread_tmpfile" "$thread_stderr"
-      echo "ERROR: existing Codex review thread scan had hasNextPage=true without endCursor" >&2
-      return 3
-    fi
-    cursor="$end_cursor"
-  done
-  printf '%s\t%s\n' "$count" "$cleared_count"
-  rm -f "$thread_tmpfile" "$thread_stderr"
-}
+# codex_review_thread_evidence_counts() moved to codex-github-evidence-lib.sh
+# (#1757) so pr-review-loop.sh's run_codex_github_review() can share the same
+# applicability-aware counting logic instead of maintaining a second
+# implementation. See the sole caller below and codex-github-evidence-lib.sh
+# for the function contract.
 
 # All classification helpers below match against the response via a
 # here-string (`<<<`), not a piped `printf`. A here-string is written to a
@@ -1394,12 +1314,20 @@ codex_return_account_not_connected() {
 }
 
 codex_return_reaction_without_review() {
-  echo "VERDICT: TIMED_OUT — Codex thumbs-up reaction is not SHA-pinned review evidence (treated as unavailable)"
+  # #1757 (AC-10): acknowledgement-only evidence (a thumbs-up reaction, a
+  # draft review, or a clean-looking comment with no reviewed-revision field)
+  # is not terminal evidence. It must not be escalated for human review as if
+  # it were an unrecoverable failure — the loop should simply keep waiting for
+  # (or request) a real terminal Codex verdict for the unchanged head. Exit 4
+  # (WAITING_ON_REVIEWER) rather than exit 2 (TIMED_OUT/escalate) so
+  # pr-review-loop.sh's run_codex_github_review() maps this to
+  # RESULT=waiting_on_reviewer instead of RESULT=escalate.
+  echo "VERDICT: WAITING_ON_REVIEWER — Codex thumbs-up reaction is not SHA-pinned review evidence; awaiting a submitted verdict"
   echo "REASON=codex-github-reaction-without-review"
   echo "COMMENT_COUNT=0"
   echo "BLOCKING_COUNT=0"
   echo "SUGGESTION_COUNT=0"
-  exit 2
+  exit 4
 }
 
 codex_return_head_changed() {
@@ -1494,16 +1422,28 @@ codex_fetch_existing_current_head_evidence() {
 
 codex_classify_existing_current_head_evidence() {
   local thread_counts unresolved_thread_count cleared_thread_count response_display fetch_status
-  if ! thread_counts=$(codex_review_thread_evidence_counts); then
+  local lib_strict_unresolved lib_cleared lib_provisional_relaxed
+  # mode=provisional (#1508): a thread whose last comment is a non-bot reply
+  # posted after the current head commit does not block re-triggering the
+  # review here — see codex-github-evidence-lib.sh's mode contract for why
+  # this relaxation is safe only for this "should I trigger" decision, never
+  # for a gate that decides clean.
+  if ! thread_counts=$(codex_review_thread_evidence_counts "$OWNER" "$REPO" "$PR_NUMBER" "$BOT_LOGIN_PLAIN" provisional); then
     echo "WARNING: failed to fetch existing Codex review threads before trigger" >&2
     echo "VERDICT: TIMED_OUT — could not fetch existing Codex thread state before trigger (treated as unavailable)"
     exit 2
   fi
-  IFS=$'\t' read -r unresolved_thread_count cleared_thread_count <<EOF
+  IFS=$'\t' read -r lib_strict_unresolved lib_cleared lib_provisional_relaxed <<EOF
 $thread_counts
 EOF
-  unresolved_thread_count="${unresolved_thread_count:-0}"
-  cleared_thread_count="${cleared_thread_count:-0}"
+  lib_strict_unresolved="${lib_strict_unresolved:-0}"
+  lib_cleared="${lib_cleared:-0}"
+  lib_provisional_relaxed="${lib_provisional_relaxed:-0}"
+  # Algebraically identical to this function's pre-#1757 two-field counts:
+  # provisional_relaxed threads were already folded into "cleared" and out of
+  # "unresolved" by the old inline predicate.
+  unresolved_thread_count=$((lib_strict_unresolved - lib_provisional_relaxed))
+  cleared_thread_count=$((lib_cleared + lib_provisional_relaxed))
   if [ "$unresolved_thread_count" -gt 0 ]; then
     codex_require_current_head
     echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"

@@ -118,6 +118,9 @@ categories:
     - path: scripts/development-workflow/workflow-lib.sh
       mode_scope: product_repo_injection
       note: shared shell helpers required by product-repo runtime scripts
+    - path: scripts/development-workflow/codex-github-evidence-lib.sh
+      mode_scope: product_repo_injection
+      note: shared Codex evidence helpers required by pr-review-loop.sh
     - path: scripts/development-workflow/pr-review-loop.sh
       mode_scope: product_repo_injection
       note: product-repo runtime reviewer loop for product-owned PRs
