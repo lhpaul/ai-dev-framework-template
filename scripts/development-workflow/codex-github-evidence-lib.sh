@@ -376,7 +376,7 @@ codex_marker_classify() {
     # checkout already has the PR's commits locally, which is the normal
     # case since the calling workflow has already fetched the PR branch.
     if [ "${CODEX_GITHUB_MARKER_FETCH:-0}" = "1" ]; then
-      git -C "$repo_root" fetch --no-tags --quiet origin >/dev/null 2>&1 || true
+      git -C "$repo_root" fetch --no-tags --quiet origin >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - opt-in best-effort fetch; local-candidate recount below is the real signal and tolerates a failed/stale fetch
       commit_shas=$(_codex_marker_local_commit_candidates "$repo_root" "$token_lc")
       local_count=0
       [ -n "$commit_shas" ] && local_count=$(printf '%s\n' "$commit_shas" | grep -c '^[0-9a-f]\{40\}$' || true)
@@ -415,11 +415,11 @@ codex_marker_classify() {
 _codex_marker_local_commit_candidates() {
   local repo_root="$1" token="$2"
   local disambiguate_out
-  disambiguate_out=$(git -C "$repo_root" rev-parse --disambiguate="$token" 2>/dev/null || true)
+  disambiguate_out=$(git -C "$repo_root" rev-parse --disambiguate="$token" 2>/dev/null || true)  # workflow-shell-guard: allow SH001 - a no-match/ambiguous-nothing result is expected and must leave disambiguate_out empty, not abort the caller
   [ -z "$disambiguate_out" ] && return 0
   printf '%s\n' "$disambiguate_out" \
     | git -C "$repo_root" cat-file --batch-check='%(objectname) %(objecttype)' 2>/dev/null \
-    | awk '$2 == "commit" { print $1 }' || true
+    | awk '$2 == "commit" { print $1 }' || true  # workflow-shell-guard: allow SH001 - see function comment: pipeline-first-stage failure must not abort the caller under set -euo pipefail; empty stdout is the intended fail-open-to-inconclusive signal
 }
 
 # _codex_marker_remote_commit_status <owner> <repo_name> <token>
@@ -437,7 +437,7 @@ _codex_marker_local_commit_candidates() {
 _codex_marker_remote_commit_status() {
   local owner="$1" repo_name="$2" token="$3"
   local raw status
-  raw=$(gh api "repos/$owner/$repo_name/commits/$token" -i 2>/dev/null) || true
+  raw=$(gh api "repos/$owner/$repo_name/commits/$token" -i 2>/dev/null) || true  # workflow-shell-guard: allow SH001 - a 404/network failure is expected and must leave raw empty for the caller's fail-open-to-inconclusive contract, not abort the script
   [ -z "$raw" ] && return 0
   status=$(printf '%s\n' "$raw" | head -n1 | grep -oE '[0-9]{3}' | head -n1) || true
   printf '%s' "$status"
@@ -560,9 +560,9 @@ codex_review_finding_correlation() {
       return 0
     fi
     local page_rows has_next end_cursor
-    page_rows=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[]? | [((.comments.nodes[0].databaseId // "") | tostring), (.isResolved // false)] | @tsv' "$thread_tmpfile")
-    has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' "$thread_tmpfile")
-    end_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' "$thread_tmpfile")
+    page_rows=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[]? | [((.comments.nodes[0].databaseId // "") | tostring), (.isResolved // false)] | @tsv' "$thread_tmpfile")  # workflow-shell-guard: allow SH003 - thread_tmpfile was already validated with `jq -e .` above; all fields use // defaults so this cannot produce a control-flow-relevant failure
+    has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' "$thread_tmpfile")  # workflow-shell-guard: allow SH003 - same pre-validated file; `-e` is unusable here since a legitimate `false` result must not be treated as failure
+    end_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' "$thread_tmpfile")  # workflow-shell-guard: allow SH003 - same pre-validated file; `// ""` default makes this call unfailable
     while IFS=$'\t' read -r db_id is_resolved; do
       [ -z "$db_id" ] && continue
       corr_thread_ids+=("$db_id")
