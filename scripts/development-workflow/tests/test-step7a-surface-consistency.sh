@@ -48,6 +48,15 @@ def runner_lists(s):
             result.append(entries)
     return result
 
+def documented_shipped_runner_list(s):
+    # README documents the shipped `on_draft.runner` policy in prose (D-9
+    # source of truth); parse it instead of hardcoding the list in this test
+    # so an intentional, documented reviewer-policy change does not require
+    # editing this test.
+    m=re.search(r'The shipped list is `\[([^\]]*)\]`',s)
+    if not m: return None
+    return [x.strip() for x in m.group(1).split(',') if x.strip()]
+
 def checks(base):
     def read(path): return (base/path).read_text()
     p=read(protocol); gate=section(p,'### Determining which reviewers to run','### Step 7a loop parameters')
@@ -80,7 +89,8 @@ def checks(base):
     out['D-6']=out['D-6'] and contains(gate,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.')
     out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
     out['D-8']=contains(runtime,'is read-only: do not review, post a comment, alter the PR, install software, or substitute a reviewer','Do not provision services or write tracked files.')
-    out['D-9']=lists[0]==[['claude','cursor','codex']] and not re.search(r'expected behavio[u]?r.*hard.fail',read(shared),re.I)
+    declared_runner_list=documented_shipped_runner_list(read(readme))
+    out['D-9']=declared_runner_list is not None and lists[0]==[declared_runner_list] and not re.search(r'expected behavio[u]?r.*hard.fail',read(shared),re.I)
     c=read(cr)
     out['D-10']=contains(section(c,'### Draft conversion','### Invocation'),'reviews.auto_review.enabled: true','after availability and policy') and 'coderabbitai[bot]' in c and contains(hard,'CodeRabbit draft-eligibility precondition','before its dispatch') and 'Switch to Claude' not in c
     def dispatch_block(s):
@@ -154,7 +164,7 @@ if sys.argv[2]=='--prove-plants':
             ('D-6',protocol,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.','Cross-runner CLI reviewers apply fixes directly.'),
             ('D-7',readme,"driving runner's own stage reviewer",'fixed Claude reviewer'),
             ('D-8',protocol,'install software, or\nsubstitute a reviewer','install software, or\nreplace a reviewer'),
-            ('D-9',shared,'      - claude\n      - cursor\n      - codex','      - codex'),
+            ('D-9',readme,'The shipped list is `[claude]`','The shipped list is `[claude, cursor]`'),
             ('D-10',cr,'`reviews.auto_review.enabled: true` must be set','`reviews.auto_review.enabled: false` must be set'),
             ('D-11',agents[1],'Exit `0` approves','Exit `0` accepts'),
             ('D-12',protocol,"`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer\nexactly once.","`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer\nzero times."),
