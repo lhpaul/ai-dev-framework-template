@@ -323,6 +323,8 @@ case "$*" in
   # Tests set MOCK_GH_COMMENTS_OUTPUT to control the returned JSON; defaults to an
   # empty JSON array (no comments — loop has never run). Tests set
   # MOCK_GH_COMMENTS_EXIT to simulate an API failure independently of MOCK_GH_EXIT.
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '%s\n' "${MOCK_GH_COMMENTS_OUTPUT:-[]}"
     exit "${MOCK_GH_COMMENTS_EXIT:-${MOCK_GH_EXIT:-0}}"
@@ -4540,6 +4542,8 @@ case "$*" in
   *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":901,"created_at":"2026-01-01T00:00:00Z","user":{"login":"alice"},"body":"@codex review (review triggered by workflow runner, commit: abc123pending0000000000000000000000000000)"}]\n'
     exit 0 ;;
@@ -4577,6 +4581,8 @@ case "$*" in
   *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":201,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors)."}]\n'
     exit 0 ;;
@@ -4616,6 +4622,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"id":401,"submitted_at":"2026-01-01T00:00:02Z","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REVIEW_BODY:-No blocking issues found. Reviewed commit: \`abcmixed1234567890\`}"
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":201,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REFUSAL_OVERRIDE:-To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors).}"
     exit 0 ;;
@@ -4670,6 +4678,8 @@ case "$*" in
   *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":200,"created_at":"2026-01-01T00:00:00Z","user":{"login":"runner"},"body":"Review triggered by workflow runner for abcretrig1234567890"},{"id":201,"created_at":"2026-01-01T00:00:05Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
     exit 0 ;;
@@ -4707,6 +4717,8 @@ case "$*" in
   *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":200,"created_at":"2026-01-01T00:00:00Z","user":{"login":"runner"},"body":"Review triggered by workflow runner for abcenvretrig123456"},{"id":201,"created_at":"2026-01-01T00:00:05Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -4747,6 +4759,8 @@ case "$*" in
   *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     n=0
     [ -f "$log" ] && n=$(cat "$log")
@@ -4796,6 +4810,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":201,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
@@ -4847,6 +4863,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreview1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -4896,6 +4914,8 @@ case "$*" in
     printf '{"id":102,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -4943,6 +4963,8 @@ case "$*" in
   *"--method POST"*)
     printf 'POST\n' >> "$log"
     printf '{"id":105,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf 'api unavailable\n' >&2
     exit 1 ;;
@@ -4996,6 +5018,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"abcoldhead1234567890",state:"APPROVED",user:{login:"chatgpt-codex-connector[bot]"},body:"Codex Review: Did not cover the current head."}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:204,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcoldhead1234567890`"}]'
     exit 0 ;;
@@ -5038,6 +5062,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -5079,6 +5105,8 @@ case "$*" in
     printf 'POST\n' >> "$log"
     printf '{"id":107,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -5161,6 +5189,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -5204,6 +5234,8 @@ case "$*" in
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -5249,6 +5281,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:212,created_at:"2026-01-01T00:00:00Z",user:{login:"lhpaul"},body:"@codex review (review triggered by workflow runner, commit: 999999999999)"}]'
     exit 0 ;;
@@ -5292,6 +5326,8 @@ case "$*" in
     printf '{"id":113,"created_at":"2026-01-01T00:00:10Z"}\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -5334,6 +5370,8 @@ case "$*" in
     printf 'POST\n' >> "$log"
     printf '{"id":114,"created_at":"2026-01-01T00:00:10Z"}\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -5389,6 +5427,8 @@ case "$*" in
     printf 'POST\n' >> "$log"
     printf '{"id":110,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -5480,6 +5520,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -5521,6 +5563,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:218,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcdefab12` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -5561,6 +5605,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:226,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcabcabcabc1234567890` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -5600,6 +5646,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":219,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `def456bb12`"}]\n'
@@ -5646,6 +5694,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feed12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":223,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: newer root finding.\\n\\n**Reviewed commit:** `feed1234`"}]\n'
     exit 0 ;;
@@ -5687,6 +5737,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"cafe12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":227,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: tied root finding.\\n\\n**Reviewed commit:** `cafe1234`"}]\n'
     exit 0 ;;
@@ -5732,6 +5784,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"beefcafe1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: tied review finding."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":229,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `beefcafe1234`"}]\n'
     exit 0 ;;
@@ -5780,6 +5834,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadfeed1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Some ambiguous status update with no recognized marker."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":231,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadfeed1234`"}]\n'
     exit 0 ;;
@@ -5827,6 +5883,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"dead12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":231,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: root finding before ack.\\n\\n**Reviewed commit:** `dead12341234`"},{"id":232,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
     exit 0 ;;
@@ -5878,6 +5936,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
     calls="$(cat "$calls_file")"
@@ -5944,6 +6004,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
     calls="$(cat "$calls_file")"
@@ -6000,6 +6062,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:00Z",commit_id:"abcreviewok1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `aaaaaaaaaa` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":206,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
     exit 0 ;;
@@ -6050,6 +6114,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -6099,6 +6165,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -6137,6 +6205,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":224,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
@@ -6186,6 +6256,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
@@ -6277,6 +6349,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
     calls="$(cat "$calls_file")"
@@ -6344,6 +6418,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
     calls="$(cat "$calls_file")"
@@ -6402,6 +6478,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadb00d12345678","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. Must fix the typo on line 4."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":234,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadb00d1234`"}]\n'
     exit 0 ;;
@@ -6460,6 +6538,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"longbody1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found. " + ("x" * 200000))}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -6508,6 +6588,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"samepoll1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":242,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -6557,6 +6639,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":243,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."},{"id":244,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"If Codex has suggestions, it will comment; otherwise it will react with \xf0\x9f\x91\x8d on this comment."}]\n'
     exit 0 ;;
@@ -6604,6 +6688,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":250,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadf00d1234`"},{"id":251,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
@@ -6662,6 +6748,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:260,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'"'"'t find any major issues.\n\n" + ("x" * 200000) + "\n\n**Reviewed commit:** `deadf00d1234`")}]'
     exit 0 ;;
@@ -6711,6 +6799,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":270,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check.\\n\\n**Reviewed commit:** `beadf00d1234`"},{"id":271,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -6757,6 +6847,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":280,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs must not claim: To use Codex here, create an environment for this repo.\\n\\n**Reviewed commit:** `cafebabe1234`"}]\n'
@@ -6808,6 +6900,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadbeef1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the leak."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadbeef1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -6856,6 +6950,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facefeed1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":290,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
     exit 0 ;;
@@ -6905,6 +7001,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":300,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the leak.\\n\\n**Reviewed commit:** `aceface1234`"},{"id":301,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `aceface1234`"}]\n'
     exit 0 ;;
@@ -6953,6 +7051,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"baadf00d1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs incorrectly describe the Codex usage limit for code reviews."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -7006,6 +7106,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":""}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":310,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `c0ffee001234`"}]\n'
     exit 0 ;;
@@ -7058,6 +7160,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":""}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":310,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `c0ffee001234`"}]\n'
     exit 0 ;;
@@ -7108,6 +7212,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -7159,6 +7265,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":320,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `facade001234`"}]\n'
     exit 0 ;;
@@ -7203,6 +7311,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":330,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `ba5eba111234`"},{"id":331,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check.\\n\\n**Reviewed commit:** `ba5eba111234`"}]\n'
@@ -7267,6 +7377,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"feedc0de1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `2222222222` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")},{submitted_at:"2026-01-01T00:00:01Z",commit_id:"feedc0de1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:"No blocking issues could be evaluated because you have reached your Codex usage limits."}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -7319,6 +7431,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"a1a1a1a1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues could be evaluated because you have reached your Codex usage limits."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"a1a1a1a1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Something ambiguous happened here."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -7367,6 +7481,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:340,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found.\n\n" + ("x" * 15000) + "\n\nBlocking issues: must fix the leak past the cutoff.\n\n**Reviewed commit:** `deadface1234`")}]'
@@ -7419,6 +7535,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"facade001234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found.\n\n" + ("x" * 5200) + "\n\nBlocking issues: must fix the leak past the query-level cutoff.")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -7463,6 +7581,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":253,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is not approved. Needs more work before it can ship.\\n\\n**Reviewed commit:** `facade003a`"}]\n'
@@ -7511,6 +7631,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":257,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change remains unapproved pending further work.\\n\\n**Reviewed commit:** `facade005c`"}]\n'
@@ -7562,6 +7684,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":259,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is **not** approved. Needs more work.\\n\\n**Reviewed commit:** `facade006d`"}]\n'
     exit 0 ;;
@@ -7608,6 +7732,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":261,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is not yet approved. Needs more work.\\n\\n**Reviewed commit:** `facade007e`"}]\n'
@@ -7682,6 +7808,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade008f1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The Codex usage limit handling looks correct."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:263,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `facade008f` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -7729,6 +7857,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":265,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"I cannot confirm there are no blocking issues. Needs deeper review.\\n\\n**Reviewed commit:** `facade0091`"}]\n'
@@ -7785,6 +7915,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":267,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs correctly explain Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `facade00aa`"}]\n'
     exit 0 ;;
@@ -7831,6 +7963,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":269,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"I cannot confidently confirm that there are no blocking issues.\\n\\n**Reviewed commit:** `facade00bb`"}]\n'
@@ -7884,6 +8018,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":271,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The variable name is not great. No blocking issues found.\\n\\n**Reviewed commit:** `facade00cc`"}]\n'
     exit 0 ;;
@@ -7931,6 +8067,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":273,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I cannot approve this change.\\n\\n**Reviewed commit:** `facade00dd`"}]\n'
@@ -7991,6 +8129,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":275,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs accurately quote: To use Codex here, create an environment for this repo.\\n\\n**Reviewed commit:** `facade00ee`"}]\n'
     exit 0 ;;
@@ -8047,6 +8187,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":277,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall; tests were not run.\\n\\n**Reviewed commit:** `facade00ff`"}]\n'
     exit 0 ;;
@@ -8097,6 +8239,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"facade01001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":279,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
     exit 0 ;;
@@ -8147,6 +8291,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":281,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."},{"id":282,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -8194,6 +8340,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:284,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented bot response \"No blocking issues found\" is inaccurate and should be corrected.\n\n**Reviewed commit:** `facade01221`")}]'
@@ -8248,6 +8396,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":286,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Tests are not required for this documentation-only change; looks good.\\n\\n**Reviewed commit:** `facade01331`"}]\n'
     exit 0 ;;
@@ -8294,6 +8444,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":288,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The documented response `No blocking issues found` is inaccurate and should be corrected.\\n\\n**Reviewed commit:** `facade01441`"}]\n'
@@ -8352,6 +8504,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:290,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found. The tests cover \"This change is not approved\".\n\n**Reviewed commit:** `facade01551`")}]'
     exit 0 ;;
@@ -8402,6 +8556,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":292,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Tests are not required, but looks good.\\n\\n**Reviewed commit:** `facade01661`"}]\n'
@@ -8463,6 +8619,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":294,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs accurately quote: `You have reached your Codex usage limits.`\\n\\n**Reviewed commit:** `facade01771`"}]\n'
     exit 0 ;;
@@ -8520,6 +8678,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":296,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Not only does this look good, it is approved.\\n\\n**Reviewed commit:** `facade01881`"}]\n'
     exit 0 ;;
@@ -8572,6 +8732,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":298,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"NOT ONLY does this look good, it is approved.\\n\\n**Reviewed commit:** `facade01991`"}]\n'
     exit 0 ;;
@@ -8616,6 +8778,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":300,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I am unable to approve this change.\\n\\n**Reviewed commit:** `facade02001`"}]\n'
@@ -8663,6 +8827,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:302,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documentation claims:\n> No blocking issues found\nThat claim is inaccurate.\n\n**Reviewed commit:** `facade02111`")}]'
@@ -8724,6 +8890,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The tests correctly cover the `must fix` marker."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -8777,6 +8945,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This must fix the validation error before merge.\\n\\nExample:\\n```\\nfoo();\\n```"}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -8830,6 +9000,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see the note below."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -8882,6 +9054,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see inline comments."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -8930,6 +9104,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"DISMISSED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -8990,6 +9166,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"beef00001234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see inline comments."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found.\\n\\n**Reviewed commit:** `beef0000`"}]\n'
     exit 0 ;;
@@ -9046,6 +9224,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:307,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response \"\nNo blocking issues found\n\" is inaccurate and should be corrected.\n\n**Reviewed commit:** `beef0000`")}]'
     exit 0 ;;
@@ -9097,6 +9277,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:309,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response is:\n'"'"'No blocking issues found'"'"'\nThat claim is inaccurate.\n\n**Reviewed commit:** `dead0000`")}]'
@@ -9150,6 +9332,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:311,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response `\nNo blocking issues found\n` is inaccurate and should be corrected.\n\n**Reviewed commit:** `beef1112`")}]'
     exit 0 ;;
@@ -9198,6 +9382,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:313,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("This looks good at first glance, but I don'"'"'t approve this change.\n\n**Reviewed commit:** `face0000`")}]'
@@ -9253,6 +9439,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:315,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response ``No blocking issues found`` is inaccurate and should be corrected.\n\n**Reviewed commit:** `face1112`")}]'
     exit 0 ;;
@@ -9306,6 +9494,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":317,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this should not be merged until tests pass.\\n\\n**Reviewed commit:** `face2222`"}]\n'
     exit 0 ;;
@@ -9354,6 +9544,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":319,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but do not merge until tests pass.\\n\\n**Reviewed commit:** `face3333`"}]\n'
@@ -9406,6 +9598,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":321,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this cannot be merged until tests pass.\\n\\n**Reviewed commit:** `face4444`"}]\n'
@@ -9466,6 +9660,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":323,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This is not a blocker; looks good, please merge.\\n\\n**Reviewed commit:** `face5555`"}]\n'
     exit 0 ;;
@@ -9516,6 +9712,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":325,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this shouldn'"'"'t be merged until tests pass.\\n\\n**Reviewed commit:** `face6666`"}]\n'
@@ -9582,6 +9780,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":327,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This is not only safe to merge but looks good.\\n\\n**Reviewed commit:** `face7777`"}]\n'
     exit 0 ;;
@@ -9627,6 +9827,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":329,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I wouldn'"'"'t approve this change.\\n\\n**Reviewed commit:** `face8888`"}]\n'
@@ -9692,6 +9894,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":331,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex didn'"'"'t find any major issues and looks good.\\n\\n**Reviewed commit:** `face9999`"}]\n'
     exit 0 ;;
@@ -9737,6 +9941,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf "[{\"id\":305,\"created_at\":\"2026-01-01T00:00:01Z\",\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"The documented response 'No blocking issues found' is inaccurate and should be corrected.\\\\n\\\\n**Reviewed commit:** \`facade02331\`\"}]\n"
@@ -9792,6 +9998,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":307,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"It'\''s fine, doesn'\''t need changes. No blocking issues found.\\n\\n**Reviewed commit:** `facade02441`"}]\n'
     exit 0 ;;
@@ -9844,6 +10052,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:309,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented output is:\n```text\nNo blocking issues found\n```\nThat output is inaccurate.\n\n**Reviewed commit:** `facade02551`")}]'
     exit 0 ;;
@@ -9894,6 +10104,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:311,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n````\nHere is an example:\n```\nNo blocking issues found\n```\nThat quoted output is inaccurate.\n````\nAfter the fence.\n\n**Reviewed commit:** `facade02661`")}]'
     exit 0 ;;
@@ -9942,6 +10154,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:313,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n```text\nsome intro\n```not-a-close\nNo blocking issues found\n```\nThat quoted output is inaccurate.\n\n**Reviewed commit:** `facade02771`")}]'
@@ -9994,6 +10208,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:315,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n~~~text\nNo blocking issues found\n~~~\nThat quoted output is inaccurate.\n\n**Reviewed commit:** `facade02881`")}]'
@@ -10053,6 +10269,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":317,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The fix looks good. See `foo.py:42` for a minor nit.\\n\\n**Reviewed commit:** `facade02991`"}]\n'
     exit 0 ;;
@@ -10108,6 +10326,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:319,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found\n~~~\nYou have reached your Codex usage limits.\n~~~\n\n**Reviewed commit:** `facade03001`")}]'
     exit 0 ;;
@@ -10160,6 +10380,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade004b1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Reviewed the changes, nothing further to add at this time."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":255,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -10203,6 +10425,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf 'reviews unavailable\n' >&2
     exit 1 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10244,6 +10468,8 @@ case "$*" in
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: old finding."}]\n'
     jq -nc '[{submitted_at:"2026-01-01T00:00:02Z",commit_id:"abclatestre1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `eeeeeeeeee` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10284,6 +10510,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"oldstale1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10327,6 +10555,8 @@ case "$*" in
     printf '[{"created_at":"2026-01-01T00:00:01Z","commit_id":"oldinline1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issue on old head."}]\n'
     exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -10382,6 +10612,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcheadold1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10422,6 +10654,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:02Z",commit_id:"abcenvok1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `ffffffffff` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":207,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -10461,6 +10695,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":208,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
@@ -10508,6 +10744,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abccloudfinding1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: the Codex cloud environment is missing required secrets."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10548,6 +10786,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcenvphrase1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Must fix docs that tell users to create an environment for this repo."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10588,6 +10828,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcenvquote1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs must not claim: To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10627,6 +10869,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
@@ -10680,6 +10924,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":205,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
     exit 0 ;;
@@ -10719,6 +10965,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":119,"created_at":"2026-01-01T00:00:00Z","user":{"login":"chatgpt-codex-connector"},"body":"Older same-second setup response."}]\n'
@@ -10771,6 +11019,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:401,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish!
@@ -10860,6 +11110,8 @@ Codex can also answer questions or update the PR. Try commenting \"@codex addres
             
 </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10904,6 +11156,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:403,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `e3e3e3e3e3` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -10953,6 +11207,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e5e5e5e5e5e5",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcdef` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -10997,6 +11253,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e6e6e6e6e6e6",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -11039,6 +11297,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:406,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abababababababababababababababababababab` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -11084,6 +11344,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e8e8e8e8e8e8",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `not-a-sha!` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -11126,6 +11388,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:408,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("FYI: Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e9e9e9e9e9` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -11172,6 +11436,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:409,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e1010101010` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details> Rename the unsafe function.")}]'
     exit 0 ;;
@@ -11216,6 +11482,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:410,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("```
@@ -11264,6 +11532,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:411,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("  Codex Review:   Didn'\''t find any major issues.	 Swish!
@@ -11331,6 +11601,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e13e13e13e1",user:{login:"chatgpt-codex-connector[bot]"},body:("codex review: didn'\''t find any major issues. swish! **reviewed commit:** `e13e13e13e` <details> <summary>ℹ️ about codex in github</summary> <br/> [your team has set up codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). reviews are triggered when you - open a pull request for review - mark a draft as ready - comment \"@codex review\". if codex has suggestions, it will comment; otherwise it will react with 👍. codex can also answer questions or update the pr. try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -11373,6 +11645,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:413,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("This remains un_approved.
@@ -11420,6 +11694,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:414,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. Remove the authentication check.
 
@@ -11466,6 +11742,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:415,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Approved. Revert.
 
@@ -11511,6 +11789,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:416,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. Commit this.
@@ -11561,6 +11841,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:417,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. <details><summary>Notes</summary>Rename the unsafe function.</details>
 
@@ -11609,6 +11891,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:418,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. <details-not-footer><summary-note>About Codex in GitHub</summary-note>Rename the unsafe function.</details-not-footer>
 
@@ -11655,6 +11939,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:419,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good, or is it?
@@ -11710,6 +11996,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:420,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e22e22e22e` <details> <summary>ℹ️ About Codex in GitHub</summary> This must not be merged. <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -11757,6 +12045,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:421,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e23e23e23e` <details> <summary>ℹ️ About Codex in GitHub</summary> Rename the unsafe function.")}]'
     exit 0 ;;
@@ -11802,6 +12092,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:422,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e24a24a24a` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in thXs repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -11846,6 +12138,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:423,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e24b24b24b` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\"! </details>")}]'
     exit 0 ;;
@@ -11889,6 +12183,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:424,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e24c24c24c` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/genera1). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -11937,6 +12233,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
@@ -12009,6 +12307,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
     calls="$(cat "$calls_file")"
@@ -12080,6 +12380,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     calls_file="$(dirname "$0")/comment_calls"
@@ -12163,6 +12465,8 @@ case "$*" in
       printf '[]\n'
     fi
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -12226,6 +12530,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:751,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice work! **Reviewed commit:** `fa0000001` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12266,6 +12572,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:752,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Chef'\''s kiss. **Reviewed commit:** `fa0000002` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12308,6 +12616,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:753,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. You'\''re on a roll. **Reviewed commit:** `fa0000003` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12348,6 +12658,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:754,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :tada: **Reviewed commit:** `fa0000004` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12390,6 +12702,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:755,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Another round soon, please! **Reviewed commit:** `fa0000005` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12430,6 +12744,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:756,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :+1: **Reviewed commit:** `fa0000006` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12472,6 +12788,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:757,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Bravo. **Reviewed commit:** `fa0000007` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12512,6 +12830,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:758,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Keep it up! **Reviewed commit:** `fa0000008` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12554,6 +12874,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:759,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Delightful! **Reviewed commit:** `fa0000009` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12594,6 +12916,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:760,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Keep them coming! **Reviewed commit:** `fa000000a` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12636,6 +12960,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:761,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Can'\''t wait for the next one! **Reviewed commit:** `fa000000b` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12676,6 +13002,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:762,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. More of your lovely PRs please. **Reviewed commit:** `fa000000c` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12720,6 +13048,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:798,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :rocket:
@@ -12785,6 +13115,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:763,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Fantastic job! **Reviewed commit:** `fa000000d` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12829,6 +13161,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:764,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000e` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12870,6 +13204,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:765,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000f` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -12915,6 +13251,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:766,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Great **job** **Reviewed commit:** `fa0000010` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -12957,6 +13295,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:767,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice `work` **Reviewed commit:** `fa0000011` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
@@ -13004,6 +13344,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:768,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues.
@@ -13600,6 +13942,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":601,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `` <details></details>"}]\n'
     exit 0 ;;
@@ -13638,6 +13982,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":602,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Working on it, will report back shortly."}]\n'
@@ -13687,6 +14033,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":603,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `11bb22cc33` <details></details>"}]\n'
     exit 0 ;;
@@ -13735,6 +14083,8 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":604,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `ff11ff22ff` <details></details>"}]\n'
@@ -13920,6 +14270,8 @@ case "$*" in
   *"api graphql"*"databaseId"*)
     printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"comments":{"nodes":[{"databaseId":701}]}}]}}}}}\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -13970,6 +14322,8 @@ case "$*" in
   *"api graphql"*"databaseId"*)
     printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":true,"comments":{"nodes":[{"databaseId":702}]}}]}}}}}\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -14028,6 +14382,8 @@ case "$*" in
   *"api graphql"*"headRefOid"*)
     printf '{"data":{"repository":{"pullRequest":{"headRefOid":"ee11ee22ee33ee44ee55","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -14072,6 +14428,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"id":804,"submitted_at":"2026-01-01T00:00:01Z","commit_id":"bb11bb22bb33bb44bb55","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See inline comment."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -14121,6 +14479,8 @@ case "\$*" in
   *"api graphql"*"databaseId"*)
     printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"comments":{"nodes":[{"databaseId":705}]}}]}}}}}\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -14165,6 +14525,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"fa11fa22fa33fa44fa55","user":{"login":"chatgpt-codex-connector[bot]"},"body":"An ambiguous status update with no recognized marker."}]\n'
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
@@ -14201,6 +14563,8 @@ case "$*" in
     printf 'ca11ca22ca33ca44ca55\n'; exit 0 ;;
   *"pr view"*createdAt*)
     printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     jq -nc '[{id:611,created_at:"2026-01-01T00:00:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `ca11ca22ca33ca44ca55` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
@@ -14228,6 +14592,229 @@ run_test "codex_triggerless_marker_pinned_clean_verdict" "VERDICT: APPROVED" \
   "$(printf '%s\n' "$_codex_triggerless_clean_output" | grep "^VERDICT:")"
 rm -rf "$_codex_triggerless_clean_mock_dir"
 unset _codex_triggerless_clean_mock_dir _codex_triggerless_clean_output _codex_triggerless_clean_exit
+
+# ---------------------------------------------------------------------------
+# #1757 (AC-13, AC-14, spec Business Rule 9): live-head evidence-window
+# OCCUPANCY GUARD regression coverage. A SHA can occupy the pull request's
+# head position more than once (a revert, or a force-push back), and the
+# spec requires every Codex root comment to belong to exactly one head's
+# evidence window: a comment authored during a FIRST occupancy of SHA `A`
+# must never authorize readiness during a SECOND occupancy of `A` with no
+# review in between. Four fixtures below prove: (1) the comment-based
+# occupancy-raising input alone, (2) the head_ref_force_pushed timeline
+# event alone, (3) that a genuine fresh review for the new occupancy still
+# passes ("the boundary proved in both directions"), and (4) the fail-
+# closed escalation when the timeline itself cannot be read.
+# ---------------------------------------------------------------------------
+
+# codex_marker_sha_reuse_prior_occupancy_not_clean: head A triggered and
+# reviewed clean (occupancy 1), then a comment naming a DIFFERENT SHA B
+# (occupancy 1's own valid stale/prior-revision evidence) is authored after
+# it, then the head is force-pushed back to A with no new trigger. The old
+# clean comment naming A predates the boundary the occupancy guard raises
+# from B's newer comment evidence alone (input 1 — no timeline event is
+# even present in this fixture), so it must NOT authorize a second-
+# occupancy clean: expect waiting_on_reviewer / codex-github-review-pending.
+_codex_sha_reuse_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_sha_reuse_comment_mock_dir/gh" <<'CODEX_SHA_REUSE_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR=duplicate-trigger-post\n' >&2
+    exit 64 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[
+      {id:7001,created_at:"2026-01-01T00:00:00Z",user:{login:"alice"},body:"@codex review (review triggered by workflow runner, commit: aaaa1111aaaa)"},
+      {id:8001,created_at:"2026-01-01T00:05:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `aaaa1111aaaa1111aaaa` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")},
+      {id:8002,created_at:"2026-01-01T00:10:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice! **Reviewed commit:** `bbbb2222bbbb2222bbbb` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}
+    ]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHA_REUSE_COMMENT_GH
+chmod +x "$_codex_sha_reuse_comment_mock_dir/gh"
+_codex_sha_reuse_comment_exit=0
+PATH="$_codex_sha_reuse_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_sha_reuse_comment_mock_dir/output.txt" 2>&1 || _codex_sha_reuse_comment_exit=$?
+_codex_sha_reuse_comment_output="$(cat "$_codex_sha_reuse_comment_mock_dir/output.txt")"
+run_test "codex_marker_sha_reuse_prior_occupancy_not_clean_exit" "4" "$_codex_sha_reuse_comment_exit"
+run_test "codex_marker_sha_reuse_prior_occupancy_not_clean_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_sha_reuse_comment_output" | grep "^REASON=")"
+run_test "codex_marker_sha_reuse_prior_occupancy_not_clean_no_duplicate_post" "0" \
+  "$(grep_count_or_zero 'duplicate-trigger-post' "$_codex_sha_reuse_comment_mock_dir/output.txt")"
+rm -rf "$_codex_sha_reuse_comment_mock_dir"
+unset _codex_sha_reuse_comment_mock_dir _codex_sha_reuse_comment_output _codex_sha_reuse_comment_exit
+
+# codex_marker_sha_reuse_force_push_only_not_clean: the intervening head
+# produced NO Codex evidence and NO trigger of its own — the only signal
+# that the head moved is a head_ref_force_pushed timeline event newer than
+# A's trigger (input 2). The event's own commit_id is deliberately set to
+# the LIVE head (A) to prove the guard does not filter events by
+# commit_id — see the implementation plan's "Do not filter these events by
+# commit_id" note (an A -> B -> A force-push sequence's FINAL event always
+# names the live head). Expect the same wait outcome as above.
+_codex_sha_reuse_event_mock_dir="$(mktemp -d)"
+cat > "$_codex_sha_reuse_event_mock_dir/gh" <<'CODEX_SHA_REUSE_EVENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR=duplicate-trigger-post\n' >&2
+    exit 64 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    jq -nc '[{event:"head_ref_force_pushed",created_at:"2026-01-01T00:15:00Z",commit_id:"aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[
+      {id:7101,created_at:"2026-01-01T00:00:00Z",user:{login:"alice"},body:"@codex review (review triggered by workflow runner, commit: aaaa1111aaaa)"},
+      {id:8101,created_at:"2026-01-01T00:05:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `aaaa1111aaaa1111aaaa` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}
+    ]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHA_REUSE_EVENT_GH
+chmod +x "$_codex_sha_reuse_event_mock_dir/gh"
+_codex_sha_reuse_event_exit=0
+PATH="$_codex_sha_reuse_event_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_sha_reuse_event_mock_dir/output.txt" 2>&1 || _codex_sha_reuse_event_exit=$?
+_codex_sha_reuse_event_output="$(cat "$_codex_sha_reuse_event_mock_dir/output.txt")"
+run_test "codex_marker_sha_reuse_force_push_only_not_clean_exit" "4" "$_codex_sha_reuse_event_exit"
+run_test "codex_marker_sha_reuse_force_push_only_not_clean_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_sha_reuse_event_output" | grep "^REASON=")"
+rm -rf "$_codex_sha_reuse_event_mock_dir"
+unset _codex_sha_reuse_event_mock_dir _codex_sha_reuse_event_output _codex_sha_reuse_event_exit
+
+# codex_marker_sha_reuse_new_trigger_clean: "the boundary proved in both
+# directions" — a genuinely fresh trigger for the second occupancy, with a
+# NEW clean comment authored after both that trigger AND a
+# head_ref_force_pushed event that lands between them, must still reach
+# clean readiness. No non-bot trigger comment exists yet in this fixture
+# (only the stale first-occupancy clean comment, itself already excluded
+# by the ordinary post-trigger freshness filter), so the idempotency check
+# finds nothing and posts a genuinely fresh trigger.
+_codex_sha_reuse_new_trigger_mock_dir="$(mktemp -d)"
+cat > "$_codex_sha_reuse_new_trigger_mock_dir/gh" <<'CODEX_SHA_REUSE_NEW_TRIGGER_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":9201,"created_at":"2026-01-01T00:15:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    jq -nc '[{event:"head_ref_force_pushed",created_at:"2026-01-01T00:16:00Z",commit_id:"aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[
+      {id:8201,created_at:"2026-01-01T00:05:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `aaaa1111aaaa1111aaaa` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")},
+      {id:9202,created_at:"2026-01-01T00:20:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice! **Reviewed commit:** `aaaa1111aaaa1111aaaa` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}
+    ]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHA_REUSE_NEW_TRIGGER_GH
+chmod +x "$_codex_sha_reuse_new_trigger_mock_dir/gh"
+_codex_sha_reuse_new_trigger_exit=0
+PATH="$_codex_sha_reuse_new_trigger_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_sha_reuse_new_trigger_mock_dir/output.txt" 2>&1 || _codex_sha_reuse_new_trigger_exit=$?
+_codex_sha_reuse_new_trigger_output="$(cat "$_codex_sha_reuse_new_trigger_mock_dir/output.txt")"
+run_test "codex_marker_sha_reuse_new_trigger_clean_exit" "0" "$_codex_sha_reuse_new_trigger_exit"
+run_test "codex_marker_sha_reuse_new_trigger_clean_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_sha_reuse_new_trigger_output" | grep "^VERDICT:")"
+rm -rf "$_codex_sha_reuse_new_trigger_mock_dir"
+unset _codex_sha_reuse_new_trigger_mock_dir _codex_sha_reuse_new_trigger_output _codex_sha_reuse_new_trigger_exit
+
+# codex_marker_boundary_unreadable: the occupancy guard's own timeline read
+# fails (and fails again on its one retry) — this is the fail-closed
+# "boundary unreadable" escalation (implementation plan: "A timeline read
+# that fails or truncates after one retry is the boundary unreadable
+# escalation... not a silent skip"), never a silent skip that would leave
+# the window test unapplied. Expect the same fail-closed escalation code
+# as every other #1757 evidence-unavailable case.
+_codex_occupancy_boundary_unreadable_mock_dir="$(mktemp -d)"
+cat > "$_codex_occupancy_boundary_unreadable_mock_dir/gh" <<'CODEX_OCCUPANCY_BOUNDARY_UNREADABLE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR=duplicate-trigger-post\n' >&2
+    exit 64 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf 'ERROR=timeline-unavailable\n' >&2
+    exit 64 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:7301,created_at:"2026-01-01T00:00:00Z",user:{login:"alice"},body:"@codex review (review triggered by workflow runner, commit: aaaa1111aaaa)"}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_OCCUPANCY_BOUNDARY_UNREADABLE_GH
+chmod +x "$_codex_occupancy_boundary_unreadable_mock_dir/gh"
+_codex_occupancy_boundary_unreadable_exit=0
+PATH="$_codex_occupancy_boundary_unreadable_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_occupancy_boundary_unreadable_mock_dir/output.txt" 2>&1 || _codex_occupancy_boundary_unreadable_exit=$?
+_codex_occupancy_boundary_unreadable_output="$(cat "$_codex_occupancy_boundary_unreadable_mock_dir/output.txt")"
+run_test "codex_marker_boundary_unreadable_exit" "2" "$_codex_occupancy_boundary_unreadable_exit"
+run_test "codex_marker_boundary_unreadable_reason" "REASON=evidence_unavailable_codex_thread_state" \
+  "$(printf '%s\n' "$_codex_occupancy_boundary_unreadable_output" | grep "^REASON=")"
+rm -rf "$_codex_occupancy_boundary_unreadable_mock_dir"
+unset _codex_occupancy_boundary_unreadable_mock_dir _codex_occupancy_boundary_unreadable_output _codex_occupancy_boundary_unreadable_exit
 
 # ---------------------------------------------------------------------------
 # Area 14: _check_release_pr_guard — release PR early-exit guard (#960)
@@ -15059,6 +15646,8 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
     exit 0 ;;
@@ -15498,6 +16087,8 @@ case "$*" in
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"--method POST"*)
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:01Z","body":"Bugbot could not run - usage limit reached. The organization hit a usage or spend limit."}]\n'
     exit 0 ;;
@@ -15547,6 +16138,8 @@ case "$*" in
     printf 'abc1692old\n'; exit 0 ;;
   *"--method POST"*)
     exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Bugbot could not run - usage limit reached."}]\n'
     exit 0 ;;
@@ -15604,6 +16197,8 @@ case "$*" in
     printf 'abc1611sha\n'; exit 0 ;;
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Bugbot is disabled for this repository."}]\n'
     exit 0 ;;
@@ -15646,6 +16241,8 @@ case "$*" in
     printf 'abc1612sha\n'; exit 0 ;;
   *"--jq .commit.committer.date"*)
     printf '2020-01-02T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:00Z","body":"Bugbot is disabled for this repository."}]\n'
     exit 0 ;;

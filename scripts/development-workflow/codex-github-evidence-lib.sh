@@ -608,3 +608,112 @@ codex_review_finding_correlation() {
     CODEX_FINDING_CORRELATION="cleared"
   fi
 }
+
+# codex_compute_occupancy_boundary <owner> <repo_name> <pr_number> <trigger_time>
+#
+# #1757 (AC-13, AC-14, spec Business Rule 9): the live-head evidence-window
+# occupancy guard. A SHA can occupy a pull request's head position more than
+# once (a revert, or a force-push back), and every such occupancy is its own
+# evidence window (spec line 109: "every Codex root comment belongs to
+# exactly one head's evidence window, because such a comment is not
+# inherently revision-bound"). Returning the head to a previously current
+# SHA can only happen via a force-update of the ref, which always emits a
+# `head_ref_force_pushed` (or, for a delete/restore pair,
+# `head_ref_deleted`/`head_ref_restored`) pull-request timeline event
+# (Verification Log row "Force-push event payload"), so this function's one
+# job is: does the timeline show the head moved after <trigger_time>, and if
+# so, when.
+#
+# <trigger_time> is the created_at of the latest trigger naming the live
+# head, computed by the caller (companion script). This function is a no-op
+# when <trigger_time> is empty — the occupancy guard applies only to a
+# TRIGGERED live head (implementation plan: "Live head has at least one
+# trigger"); the trigger-less path's own boundary/escalation logic is
+# unchanged by this item and must not be affected by this function.
+#
+# Sets:
+#   CODEX_OCCUPANCY_BOUNDARY_TIME       — the newest created_at, among
+#     head_ref_force_pushed / head_ref_deleted / head_ref_restored timeline
+#     events strictly newer than <trigger_time>, or empty when none exists
+#     (or the guard is a no-op because <trigger_time> is empty). Deliberately
+#     NOT filtered by the event's commit_id: in an A -> B -> A force-push
+#     sequence, the FINAL force-push's commit_id equals the live head, and a
+#     guard that skipped events naming the live head would miss exactly the
+#     case it exists to catch (implementation plan: "Do not filter these
+#     events by commit_id").
+#   CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE — 1 when the timeline could not be
+#     read after one retry, or a matching event's own created_at could not
+#     be read from the payload; 0 otherwise. The caller must treat 1 as the
+#     fail-closed "boundary unreadable" escalation
+#     (evidence_unavailable_codex_thread_state) — never as "no event found".
+#     A timeline read that fails or truncates after its retry is exactly
+#     this case, per the implementation plan: "A timeline read that fails or
+#     truncates after one retry is the boundary unreadable escalation
+#     below, not a silent skip. If such an event is present but carries no
+#     usable created_at, treat it the same way — escalate rather than
+#     ignoring the event."
+#
+# Return: always 0. Failure is signaled via CODEX_OCCUPANCY_BOUNDARY_
+# UNAVAILABLE, not the function's own exit status, so a caller under
+# `set -euo pipefail` never needs an `if !` guard merely to read the flag.
+codex_compute_occupancy_boundary() {
+  local owner="$1" repo_name="$2" pr_number="$3" trigger_time="$4"
+  CODEX_OCCUPANCY_BOUNDARY_TIME=""
+  CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=0
+
+  if [ -z "$trigger_time" ]; then
+    return 0
+  fi
+
+  local timeline_tmpfile timeline_stderr attempt fetched
+  fetched=0
+  for attempt in 1 2; do
+    timeline_tmpfile=$(mktemp)
+    timeline_stderr=$(mktemp)
+    if gh api "repos/$owner/$repo_name/issues/$pr_number/timeline" --paginate \
+      2>"$timeline_stderr" \
+      | jq -sc '(add // []) | [.[] | select(.event == "head_ref_force_pushed" or .event == "head_ref_deleted" or .event == "head_ref_restored")] | map({created_at: (.created_at // null)})' \
+      > "$timeline_tmpfile"; then
+      fetched=1
+      rm -f "$timeline_stderr"
+      break
+    fi
+    local timeline_err
+    timeline_err=$(cat "$timeline_stderr")
+    rm -f "$timeline_stderr" "$timeline_tmpfile"
+    echo "WARNING: gh api failed fetching PR #$pr_number timeline for the occupancy guard (attempt $attempt/2): $timeline_err" >&2
+  done
+  if [ "$fetched" -ne 1 ]; then
+    CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1
+    return 0
+  fi
+
+  # A matching event present with no readable created_at is escalated, not
+  # ignored: `head_ref_restored` was never sampled with a payload
+  # (Verification Log row "Force-push event payload"), so its shape is
+  # unverified, and a guard that silently skipped an unreadable event could
+  # miss the exact SHA-reuse boundary it exists to raise.
+  local unusable_count
+  if ! unusable_count=$(jq -r '[.[] | select(.created_at == null or .created_at == "")] | length' "$timeline_tmpfile" 2>/dev/null); then
+    rm -f "$timeline_tmpfile"
+    CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1
+    return 0
+  fi
+  if [ -z "$unusable_count" ] || [ "$unusable_count" -gt 0 ]; then
+    rm -f "$timeline_tmpfile"
+    CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1
+    return 0
+  fi
+
+  # shellcheck disable=SC2034  # consumed by codex-github-reviewer.sh callers
+  if ! CODEX_OCCUPANCY_BOUNDARY_TIME=$(jq -r --arg trigger "$trigger_time" \
+    '[.[] | select(.created_at > $trigger) | .created_at] | if length == 0 then "" else max end' \
+    "$timeline_tmpfile" 2>/dev/null); then
+    rm -f "$timeline_tmpfile"
+    # shellcheck disable=SC2034  # consumed by codex-github-reviewer.sh callers
+    CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1
+    return 0
+  fi
+  rm -f "$timeline_tmpfile"
+  return 0
+}

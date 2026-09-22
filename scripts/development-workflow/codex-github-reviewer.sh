@@ -1007,6 +1007,48 @@ codex_select_terminal_evidence() {
 # already filtered to "created after the trigger", which every post-trigger
 # poll site below already does server-side).
 #
+# apply_occupancy_guard/occupancy_boundary_time (optional 4th/5th args,
+# #1757 AC-13/AC-14, spec Business Rule 9's "exactly one head's evidence
+# window") extend the same window test with the occupancy guard: a SHA can
+# occupy the live head position more than once (a revert, or a force-push
+# back), so a marker naming the live head is revision-bound but NOT
+# occupancy-bound — passing boundary_time/boundary_id alone would let a
+# clean comment authored during a FIRST occupancy of SHA A authorize
+# readiness during a SECOND occupancy of A, with no review in between. Pass
+# apply_occupancy_guard=1 only from a TRIGGERED live-head call site (the
+# implementation plan scopes the occupancy guard to "Live head has at least
+# one trigger"; the trigger-less path's own boundary is unchanged by this
+# guard). occupancy_boundary_time is the caller's precomputed
+# CODEX_OCCUPANCY_BOUNDARY_TIME (codex_compute_occupancy_boundary) — the
+# newest head_ref_force_pushed/head_ref_deleted/head_ref_restored timeline
+# event newer than the trigger, or empty when none exists. Inside this
+# function that boundary is raised further, via a dedicated PRE-PASS over
+# the whole comments_file (before the main classification pass below), by
+# any "prior_revision"-classified comment (a well-formed marker naming a
+# DIFFERENT, existing SHA) found at or after boundary_time: such a comment
+# is itself proof the head moved away after the trigger (implementation
+# plan: "Terminal evidence naming a different SHA that is newer than the
+# trigger... raise B to that evidence's timestamp. Uses only evidence the
+# classifier already reads"). This MUST be a separate pass, not folded into
+# the single forward classification pass: the comment that raises the
+# boundary can be chronologically NEWER than the stale first-occupancy
+# comment it needs to exclude (head A triggered and reviewed clean, THEN
+# head B pushed and reviewed, THEN force-pushed back to A — A's own stale
+# clean comment predates B's raising comment in sort order), so a single
+# forward pass would already have classified the earlier comment as
+# terminal before ever reaching the evidence that should have excluded it.
+# Once raised (by either input), a comment qualifies as current-
+# occupancy evidence only when its created_at is STRICTLY greater than the
+# occupancy boundary — no comment-ID tiebreak, because a timeline event ID
+# and an issue-comment ID are different object types with no documented
+# ordering relationship, so a shared second cannot be resolved and must
+# fail closed toward "stale" (implementation plan: "Two boundary kinds, two
+# comparisons — this difference is load-bearing"). This occupancy check
+# applies uniformly to every marker class the trigger-derived boundary
+# already gates (prefix, malformed, unavailable) — never to prior_revision
+# itself, which stays outside window gating exactly as before, and is
+# precisely the raising input described above.
+#
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
 # COMMENT_LATEST_TIME, COMMENT_LATEST_IS_TERMINAL, COMMENT_MALFORMED_BODY,
 # COMMENT_MALFORMED_TIME, COMMENT_EVIDENCE_UNAVAILABLE.
@@ -1014,6 +1056,9 @@ codex_scan_comment_evidence() {
   local comments_file="$1"
   local boundary_time="${2:-}"
   local boundary_id="${3:-}"
+  local apply_occupancy_guard="${4:-0}"
+  local occupancy_boundary="${5:-}"
+  [ "$apply_occupancy_guard" = "1" ] || occupancy_boundary=""
   COMMENT_TERMINAL_BODY=""
   COMMENT_TERMINAL_TIME=""
   COMMENT_LATEST_BODY=""
@@ -1045,7 +1090,38 @@ codex_scan_comment_evidence() {
   # finding 3790092216, a followup to 3790062091/3789928786/3789992794).
   local comment_latest_is_usage_limit=0
   local line created_at comment_id body is_actionable is_terminal is_usage_limit should_update
-  local within_window marker_class
+  local within_window marker_class occupancy_ok
+  # #1757 occupancy guard, pre-pass: raise occupancy_boundary from any
+  # "prior_revision"-classified comment (a well-formed marker naming a
+  # DIFFERENT, existing SHA) at or after boundary_time — exactly "terminal
+  # evidence naming a different SHA that is newer than the trigger". This
+  # MUST be a separate pass over the whole file, not folded into the single
+  # classification pass below: the comment that raises the boundary can be
+  # chronologically NEWER than the stale first-occupancy comment it must
+  # exclude (head A triggered and reviewed clean, THEN head B pushed and
+  # reviewed, THEN force-pushed back to A — A's own stale clean comment
+  # predates B's raising comment in the sort order), so a single forward
+  # pass would already have classified the earlier comment as terminal
+  # before ever reaching the evidence that should have excluded it.
+  if [ "$apply_occupancy_guard" = "1" ]; then
+    local pre_line pre_created_at pre_body
+    while IFS= read -r pre_line; do
+      [ -z "$pre_line" ] && continue
+      pre_created_at=$(printf '%s' "$pre_line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - pre_line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
+      pre_body=$(printf '%s' "$pre_line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated pre_line as above; empty body is not a failure
+      if [ -n "$boundary_time" ] && [ "$pre_created_at" \< "$boundary_time" ]; then
+        continue
+      fi
+      codex_extract_reviewed_commit_field "$pre_body"
+      [ "$MARKER_FIELD_STATE" = "token" ] || continue
+      codex_marker_classify "$MARKER_FIELD_TOKEN" "$CURRENT_SHA_FULL" "$OWNER" "$REPO" "$CODEX_MARKER_REPO_ROOT"
+      if [ "$MARKER_CLASS" = "prior_revision" ]; then
+        if [ -z "$occupancy_boundary" ] || [ "$pre_created_at" \> "$occupancy_boundary" ]; then
+          occupancy_boundary="$pre_created_at"
+        fi
+      fi
+    done < "$comments_file"
+  fi
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
@@ -1070,21 +1146,37 @@ codex_scan_comment_evidence() {
           codex_marker_classify "$MARKER_FIELD_TOKEN" "$CURRENT_SHA_FULL" "$OWNER" "$REPO" "$CODEX_MARKER_REPO_ROOT"
           marker_class="$MARKER_CLASS"
         fi
+        # #1757 occupancy guard (AC-13, AC-14): a marker class the trigger-
+        # derived window already accepted is ADDITIONALLY gated by the
+        # occupancy boundary (see the docstring above) — strictly-greater,
+        # never a tie. This never applies to prior_revision (the `*)`
+        # branch below), which is exactly the input that can RAISE the
+        # occupancy boundary for later comments in this same forward pass.
+        occupancy_ok=1
+        if [ -n "$occupancy_boundary" ] && ! [ "$created_at" \> "$occupancy_boundary" ]; then
+          occupancy_ok=0
+        fi
         case "$marker_class" in
           prefix)
-            is_terminal=1
+            [ "$occupancy_ok" -eq 1 ] && is_terminal=1
             ;;
           malformed)
-            if [ -z "$COMMENT_MALFORMED_TIME" ] || ! [ "$created_at" \< "$COMMENT_MALFORMED_TIME" ]; then
-              COMMENT_MALFORMED_BODY="$body"
-              COMMENT_MALFORMED_TIME="$created_at"
+            if [ "$occupancy_ok" -eq 1 ]; then
+              if [ -z "$COMMENT_MALFORMED_TIME" ] || ! [ "$created_at" \< "$COMMENT_MALFORMED_TIME" ]; then
+                COMMENT_MALFORMED_BODY="$body"
+                COMMENT_MALFORMED_TIME="$created_at"
+              fi
             fi
             ;;
           unavailable)
-            COMMENT_EVIDENCE_UNAVAILABLE=1
+            [ "$occupancy_ok" -eq 1 ] && COMMENT_EVIDENCE_UNAVAILABLE=1
             ;;
           *)
-            : # prior_revision — valid stale evidence, not terminal for the live head
+            : # prior_revision — valid stale evidence, not terminal for the
+              # live head. #1757 occupancy guard: already accounted for by
+              # the pre-pass above, which raises occupancy_boundary from
+              # every such comment regardless of its position relative to
+              # the comment(s) it must gate.
             ;;
         esac
       fi
@@ -1647,6 +1739,26 @@ codex_require_current_head() {
   fi
 }
 
+# #1757 (AC-13, AC-14): computes the live-head evidence-window occupancy
+# guard's timeline-derived boundary fresh, immediately before every
+# triggered-live-head call to codex_scan_comment_evidence — never once
+# up-front — so a force-push/head_ref_deleted/head_ref_restored event that
+# lands mid-poll (after an earlier fetch already ran) is still caught by
+# the NEXT scan, the same way this script already re-fetches comments and
+# reviews fresh on every poll iteration rather than caching them. Sets
+# OCCUPANCY_BOUNDARY_TIME for the caller to pass through to
+# codex_scan_comment_evidence as its occupancy_boundary_time argument.
+# Escalates immediately (exit 2, evidence_unavailable_codex_thread_state)
+# when the timeline could not be read after its retry — the "boundary
+# unreadable" case is never a silent skip.
+codex_refresh_occupancy_boundary_or_escalate() {
+  codex_compute_occupancy_boundary "$OWNER" "$REPO" "$PR_NUMBER" "$TRIGGER_TIME"
+  if [ "$CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE" -eq 1 ]; then
+    codex_return_evidence_unavailable
+  fi
+  OCCUPANCY_BOUNDARY_TIME="$CODEX_OCCUPANCY_BOUNDARY_TIME"
+}
+
 codex_fetch_existing_current_head_evidence() {
   local existing_comments_stderr existing_comments_tmpfile
   existing_comments_stderr=$(mktemp)
@@ -1987,7 +2099,8 @@ while true; do
     # Scan ALL matching root comments (not just the latest) so a SHA-pinned
     # terminal comment (Reviewed commit marker) is not discarded in favor of
     # a later ancillary comment (e.g. an acknowledgement).
-    codex_scan_comment_evidence "$POLL_TMPFILE"
+    codex_refresh_occupancy_boundary_or_escalate
+    codex_scan_comment_evidence "$POLL_TMPFILE" "$TRIGGER_TIME" "$TRIGGER_COMMENT_ID" 1 "$OCCUPANCY_BOUNDARY_TIME"
     rm -f "$POLL_STDERR" "$POLL_TMPFILE"
     CONSECUTIVE_API_FAILURES=0
   else
@@ -2336,7 +2449,8 @@ if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
       '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
   > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
-  codex_scan_comment_evidence "$ASYNC_POLL_TMPFILE"
+  codex_refresh_occupancy_boundary_or_escalate
+  codex_scan_comment_evidence "$ASYNC_POLL_TMPFILE" "$TRIGGER_TIME" "$TRIGGER_COMMENT_ID" 1 "$OCCUPANCY_BOUNDARY_TIME"
   rm -f "$ASYNC_POLL_TMPFILE"
 else
   rm -f "$ASYNC_POLL_TMPFILE"
@@ -2455,7 +2569,8 @@ emit_reviewed_head_if_known
       | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
           '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
       > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
-      codex_scan_comment_evidence "$ASYNC_FINAL_POLL_TMPFILE"
+      codex_refresh_occupancy_boundary_or_escalate
+      codex_scan_comment_evidence "$ASYNC_FINAL_POLL_TMPFILE" "$TRIGGER_TIME" "$TRIGGER_COMMENT_ID" 1 "$OCCUPANCY_BOUNDARY_TIME"
       rm -f "$ASYNC_FINAL_POLL_TMPFILE"
     else
       rm -f "$ASYNC_FINAL_POLL_TMPFILE"
@@ -2611,7 +2726,8 @@ emit_reviewed_head_if_known
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
         '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
     > "$ASYNC_REACTION_FINAL_POLL_TMPFILE" 2>/dev/null; then
-    codex_scan_comment_evidence "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
+    codex_refresh_occupancy_boundary_or_escalate
+    codex_scan_comment_evidence "$ASYNC_REACTION_FINAL_POLL_TMPFILE" "$TRIGGER_TIME" "$TRIGGER_COMMENT_ID" 1 "$OCCUPANCY_BOUNDARY_TIME"
     rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
   else
     rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
