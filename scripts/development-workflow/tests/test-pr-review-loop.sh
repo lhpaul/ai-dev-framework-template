@@ -13763,6 +13763,138 @@ run_test "codex_marker_freshness_fails_not_malformed" "no" \
 rm -rf "$_codex_marker_freshness_fails_mock_dir"
 unset _codex_marker_freshness_fails_mock_dir _codex_marker_freshness_fails_output _codex_marker_freshness_fails_exit
 
+# Business Rule 1 / AC-1, AC-2: direct coverage of
+# codex_review_thread_evidence_counts()'s applicability filter (dismissed
+# review exclusion, live-head commit-oid correlation). No pre-existing
+# Area-13 fixture's mocked GraphQL response includes the
+# `pullRequestReview` field at all, so every other test in this file drives
+# this function with `$applicable` defaulted to always-true (the field
+# missing) and never actually exercises the DISMISSED/stale-commit
+# exclusion this item introduces — this is the literal fix for the bug
+# this PR's title describes, and it was otherwise untested. Calls the real
+# (non-stubbed) function directly, sourced into this process via the
+# `HARNESS_MODE=1 source pr-review-loop.sh` at the top of this file, which
+# itself sources codex-github-evidence-lib.sh.
+_codex_evidence_applic_mock_dir="$(mktemp -d)"
+cat > "$_codex_evidence_applic_mock_dir/gh" <<'CODEX_EVIDENCE_APPLIC_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"api graphql"*)
+    printf '%s\n' '{"data":{"repository":{"pullRequest":{"headRefOid":"1111111111111111111111111111111111111a","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Dismissed-review finding","pullRequestReview":{"state":"DISMISSED","commit":{"oid":"1111111111111111111111111111111111111a"}}}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:00Z"}]}},{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Stale-head finding","pullRequestReview":{"state":"COMMENTED","commit":{"oid":"2222222222222222222222222222222222222b"}}}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:00Z"}]}},{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Live-head finding","pullRequestReview":{"state":"COMMENTED","commit":{"oid":"1111111111111111111111111111111111111a"}}}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:00Z"}]}},{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Unreadable-commit finding","pullRequestReview":{"state":"COMMENTED"}}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:00Z"}]}}]}}}}}'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_EVIDENCE_APPLIC_GH
+chmod +x "$_codex_evidence_applic_mock_dir/gh"
+_codex_evidence_applic_output=""
+_codex_evidence_applic_output="$(PATH="$_codex_evidence_applic_mock_dir:$PATH" codex_review_thread_evidence_counts "owner" "repo" "42" "chatgpt-codex-connector" "strict")"
+# 4 threads: DISMISSED (excluded regardless of matching oid), stale-head
+# commit mismatch (excluded), live-head commit match (counted), and a
+# thread whose owning review carries no readable commit oid at all (fails
+# closed toward still counting it, per the function's own contract).
+run_test "codex_evidence_applicability_dismissed_and_stale_head_excluded_count" "2" \
+  "$(printf '%s' "$_codex_evidence_applic_output" | cut -f1)"
+run_test "codex_evidence_applicability_dismissed_and_stale_head_excluded_cleared" "0" \
+  "$(printf '%s' "$_codex_evidence_applic_output" | cut -f2)"
+rm -rf "$_codex_evidence_applic_mock_dir"
+unset _codex_evidence_applic_mock_dir _codex_evidence_applic_output
+
+# Mode contract (strict vs provisional vs unknown-mode-falls-back-to-strict):
+# one applicable, unresolved thread whose LAST comment is a non-bot reply
+# after the head commit's committedDate (the #1508 relaxation). Every other
+# fixture that reaches this scenario stubs codex_review_thread_evidence_counts
+# entirely, so the real mode-dispatch branch in the shared library (the
+# `$mode == "provisional"` jq guard) was never itself proven to gate the
+# relaxation.
+_codex_evidence_mode_mock_dir="$(mktemp -d)"
+cat > "$_codex_evidence_mode_mock_dir/gh" <<'CODEX_EVIDENCE_MODE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"api graphql"*)
+    printf '%s\n' '{"data":{"repository":{"pullRequest":{"headRefOid":"3333333333333333333333333333333333333c","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue","pullRequestReview":{"state":"COMMENTED","commit":{"oid":"3333333333333333333333333333333333333c"}}}]},"lastComment":{"nodes":[{"author":{"login":"humanreview"},"createdAt":"2026-01-01T00:00:01Z"}]}}]}}}}}'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_EVIDENCE_MODE_GH
+chmod +x "$_codex_evidence_mode_mock_dir/gh"
+_codex_evidence_strict_output="$(PATH="$_codex_evidence_mode_mock_dir:$PATH" codex_review_thread_evidence_counts "owner" "repo" "42" "chatgpt-codex-connector" "strict")"
+_codex_evidence_provisional_output="$(PATH="$_codex_evidence_mode_mock_dir:$PATH" codex_review_thread_evidence_counts "owner" "repo" "42" "chatgpt-codex-connector" "provisional")"
+_codex_evidence_unknown_output="$(PATH="$_codex_evidence_mode_mock_dir:$PATH" codex_review_thread_evidence_counts "owner" "repo" "42" "chatgpt-codex-connector" "bogus-mode")"
+run_test "codex_evidence_lib_strict_counts_replied_thread_as_unresolved" "1	0	0" "$_codex_evidence_strict_output"
+run_test "codex_evidence_lib_provisional_preserves_relaxation" "1	0	1" "$_codex_evidence_provisional_output"
+run_test "codex_evidence_lib_unknown_mode_falls_back_to_strict" "1	0	0" "$_codex_evidence_unknown_output"
+rm -rf "$_codex_evidence_mode_mock_dir"
+unset _codex_evidence_mode_mock_dir _codex_evidence_strict_output _codex_evidence_provisional_output _codex_evidence_unknown_output
+
+# AC-3/AC-4 abbreviated-token resolution contract: the two branches the
+# implementation plan names explicitly ("Tests:
+# codex_marker_remote_zero_match_malformed and
+# codex_marker_unprovable_abbreviation, one per branch") but that no
+# fixture in this file exercised — every existing codex_marker_* test
+# above drives only the pure string-shape checks (empty/interior-substring)
+# that need no git or gh call at all. Both call codex_marker_classify()
+# directly against a disposable, otherwise-empty git repository so neither
+# token can resolve locally.
+_codex_marker_resolve_repo_dir="$(mktemp -d)"
+# This harness's own PATH carries a global mock `git` (see MOCK_BIN above)
+# that fails fast on anything but `rev-parse --git-common-dir`, so a real
+# `git init`/`rev-parse --disambiguate` needs the pre-mock
+# TEST_PR_REVIEW_LOOP_REAL_PATH, exactly like the Area-18 (#1562) tests that
+# re-invoke this suite as a real subprocess.
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_codex_marker_resolve_repo_dir" init -q
+_codex_marker_resolve_head="1234567890123456789012345678901234567890"
+
+# Full 40-hex token, no local match, GitHub REST proves non-existence (422)
+# -> proven zero-match -> malformed, never evidence-unavailable.
+_codex_marker_zero_match_mock_dir="$(mktemp -d)"
+cat > "$_codex_marker_zero_match_mock_dir/gh" <<'CODEX_MARKER_ZERO_MATCH_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"commits/"*)
+    printf 'HTTP/2.0 422 Unprocessable Entity\r\n\r\n{"message":"No commit found for SHA: ..."}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKER_ZERO_MATCH_GH
+chmod +x "$_codex_marker_zero_match_mock_dir/gh"
+(
+  PATH="$_codex_marker_zero_match_mock_dir:$TEST_PR_REVIEW_LOOP_REAL_PATH"
+  codex_marker_classify "abababababababababababababababababababab" "$_codex_marker_resolve_head" "owner" "repo" "$_codex_marker_resolve_repo_dir"
+  printf 'MARKER_CLASS=%s\n' "$MARKER_CLASS"
+) > "$_codex_marker_zero_match_mock_dir/out.txt" 2>&1 || true
+run_test "codex_marker_remote_zero_match_malformed" "MARKER_CLASS=malformed" \
+  "$(grep '^MARKER_CLASS=' "$_codex_marker_zero_match_mock_dir/out.txt")"
+rm -rf "$_codex_marker_zero_match_mock_dir"
+unset _codex_marker_zero_match_mock_dir
+
+# Abbreviated token, no local match, CODEX_GITHUB_MARKER_FETCH unset
+# (default: the disclosed scope note's documented default-off behavior) ->
+# neither source can prove or disprove it -> trusted at its already-
+# computed string classification ("prefix", since it is an offset-zero
+# prefix of the live head) rather than escalated to
+# evidence_unavailable_codex_thread_state. This is the exact behavior the
+# PR's disclosed scope note describes; without this test that description
+# was unverified.
+(
+  unset CODEX_GITHUB_MARKER_FETCH
+  PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH"
+  codex_marker_classify "1234567890" "$_codex_marker_resolve_head" "owner" "repo" "$_codex_marker_resolve_repo_dir"
+  printf 'MARKER_CLASS=%s\n' "$MARKER_CLASS"
+) > "$_codex_marker_resolve_repo_dir/unprovable_out.txt" 2>&1 || true
+run_test "codex_marker_unprovable_abbreviation" "MARKER_CLASS=prefix" \
+  "$(grep '^MARKER_CLASS=' "$_codex_marker_resolve_repo_dir/unprovable_out.txt")"
+rm -rf "$_codex_marker_resolve_repo_dir"
+unset _codex_marker_resolve_repo_dir _codex_marker_resolve_head
+
 # AC-7, AC-9: a submitted review's inline finding IS correlated (matches
 # the review's own pull_request_review_id and a live-head GraphQL thread)
 # and that thread is unresolved — needs_fixes, proving the correlation
