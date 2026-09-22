@@ -2151,8 +2151,9 @@ run_codex_github_review() {
   # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
   # bot logins WITH the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]").
   # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
-  # (e.g. "chatgpt-codex-connector"). Strip it here so check_unresolved_threads,
-  # which queries GraphQL, compares against the correct login form.
+  # (e.g. "chatgpt-codex-connector"). Strip it here so
+  # codex_review_thread_evidence_counts, which queries GraphQL, compares
+  # against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
