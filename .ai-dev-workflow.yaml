@@ -58,8 +58,6 @@ review:
     #   codex-github  — hosted-service reviewer.
     runner:
       - claude
-      - cursor
-      - codex
 
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
     # PRs. These run before the PR is converted to ready.
@@ -67,14 +65,13 @@ review:
     # coderabbit-cli, local-ai-reviewer, pr-agent, codex-github,
     # claude-code-action, haystack, copilot, bugbot.
     github:
-      - local-ai-reviewer
       - pr-agent
 
   on_ready:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - codex-github
+      - bugbot
 
   # Optional: TWO independent reviewer-loop cycle caps enforced by
   # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
