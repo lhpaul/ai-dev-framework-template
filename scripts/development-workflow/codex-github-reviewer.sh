@@ -224,6 +224,25 @@ if [ -z "$CURRENT_SHA_FULL" ]; then
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
 fi
+# #1757 (AC-13, AC-14): the pull request's own creation time is the
+# fallback evidence-window boundary for a trigger-less live head (spec:
+# "after the previous head's last review trigger or the pull request's
+# creation, whichever is later"). This item does not implement the
+# "previous head's last review trigger" refinement for the trigger-less
+# case (accepted residual — see the implementation notes); PR created_at
+# alone is used as the trigger-less boundary. Best-effort: a separate call
+# from the headRefOid resolution above, kept isolated with 'if !' so its
+# failure (or an unmocked test double) degrades to an empty boundary — i.e.
+# no window filtering — rather than aborting the run.
+CODEX_PR_CREATED_AT=""
+if CODEX_PR_CREATED_AT_RAW=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json createdAt --jq '.createdAt' 2>/dev/null); then
+  CODEX_PR_CREATED_AT=$(printf '%s' "$CODEX_PR_CREATED_AT_RAW" | tr -d '\n')
+fi
+# #1757: repo root used for local `git` ambiguity resolution of a
+# `Reviewed commit` marker token (codex_marker_classify). Overridable so
+# test harnesses can point it at a throwaway scratch repository instead of
+# the real workflow checkout.
+CODEX_MARKER_REPO_ROOT="${CODEX_GITHUB_MARKER_REPO_ROOT:-$(pwd)}"
 
 echo "INFO: PR #$PR_NUMBER HEAD commit: $CURRENT_SHA"
 echo "INFO: Bot login: $BOT_LOGIN"
@@ -410,12 +429,12 @@ codex_response_is_account_not_connected() {
   grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+(\[)?create[[:space:]]+a[[:space:]]+codex[[:space:]]+account[[:space:]]+and[[:space:]]+connect" <<< "$response"
 }
 
-codex_response_reviews_current_head() {
-  local response="$1"
-  local reviewed_sha
-  reviewed_sha=$(sed -n 's/.*Reviewed commit:[^`]*`\([0-9a-fA-F]\{7,40\}\)`.*/\1/p' <<< "$response" | tail -n 1)
-  [ -n "$reviewed_sha" ] && { grep -qi "^$reviewed_sha" <<< "$CURRENT_SHA" || grep -qi "^$CURRENT_SHA" <<< "$reviewed_sha"; }
-}
+# codex_response_reviews_current_head is superseded by #1757's marker
+# well-formedness/ambiguity classifier (codex_extract_reviewed_commit_field
+# + codex_marker_classify in codex-github-evidence-lib.sh, wired into
+# codex_scan_comment_evidence below) and has been removed. The old crude
+# prefix regex had no ambiguity resolution and no interior-substring/
+# superstring rejection.
 
 # Blocking/approval marker patterns, centralized so every classification site
 # (main poll, async grace, async-final, async-reaction-final) uses the exact
@@ -963,10 +982,38 @@ codex_select_terminal_evidence() {
 # earlier blocking one submitted in the same second (fresh evidence from
 # PR #1490 finding 3788078189).
 #
+# #1757 (AC-11-AC-14): a `Reviewed commit` marker field is now classified
+# via codex_extract_reviewed_commit_field + codex_marker_classify rather
+# than the old crude prefix regex. A comment whose marker is well-formed
+# and names the live head (class "prefix") is terminal exactly as before.
+# A comment whose marker is well-formed but names a different, existing
+# commit (class "prior_revision") is valid stale evidence — excluded from
+# terminal tracking entirely, per spec ("never the malformed-marker
+# path"). A comment whose marker is syntactically unusable (class
+# "malformed", or field state "empty" — a present field with no value) is
+# tracked separately via COMMENT_MALFORMED_BODY/TIME so the caller can
+# escalate codex_current_verdict_malformed_revision_marker when it is the
+# newest live-head evidence. A comment whose marker's ambiguity/existence
+# could not be established (class "unavailable") sets the sticky
+# COMMENT_EVIDENCE_UNAVAILABLE flag — a timestamp-independent, absolute
+# escalation per the spec's phase-1 evidence-unavailable class.
+#
+# boundary_time/boundary_id (optional 2nd/3rd args) gate marker
+# classification by the live head's evidence window (AC-13, AC-14): a
+# comment whose created_at falls before boundary_time (or ties it with a
+# comment id that does not order after boundary_id) is stale-head evidence
+# and is never classified as terminal or malformed for the live head. Pass
+# empty to skip window filtering (e.g. when the caller's own comment query
+# already filtered to "created after the trigger", which every post-trigger
+# poll site below already does server-side).
+#
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
-# COMMENT_LATEST_TIME, COMMENT_LATEST_IS_TERMINAL.
+# COMMENT_LATEST_TIME, COMMENT_LATEST_IS_TERMINAL, COMMENT_MALFORMED_BODY,
+# COMMENT_MALFORMED_TIME, COMMENT_EVIDENCE_UNAVAILABLE.
 codex_scan_comment_evidence() {
   local comments_file="$1"
+  local boundary_time="${2:-}"
+  local boundary_id="${3:-}"
   COMMENT_TERMINAL_BODY=""
   COMMENT_TERMINAL_TIME=""
   COMMENT_LATEST_BODY=""
@@ -982,6 +1029,9 @@ codex_scan_comment_evidence() {
   # protection, since that protection only covers the terminal-vs-review
   # combine path, not this separate ancillary-override check).
   COMMENT_LATEST_IS_TERMINAL=0
+  COMMENT_MALFORMED_BODY=""
+  COMMENT_MALFORMED_TIME=""
+  COMMENT_EVIDENCE_UNAVAILABLE=0
   local comment_latest_is_actionable=0
   # Tracks whether the CURRENTLY tracked ancillary comment is specifically
   # a usage-limit notice (as opposed to a merely-actionable environment-
@@ -994,13 +1044,51 @@ codex_scan_comment_evidence() {
   # protection never gets a chance to apply (fresh evidence from PR #1490
   # finding 3790092216, a followup to 3790062091/3789928786/3789992794).
   local comment_latest_is_usage_limit=0
-  local line created_at body is_actionable is_terminal is_usage_limit should_update
+  local line created_at comment_id body is_actionable is_terminal is_usage_limit should_update
+  local within_window marker_class
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
+    comment_id=$(printf '%s' "$line" | jq -r '.id // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty id is not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
     is_terminal=0
-    codex_response_reviews_current_head "$body" && is_terminal=1
+    codex_extract_reviewed_commit_field "$body"
+    if [ "$MARKER_FIELD_STATE" != "absent" ]; then
+      within_window=1
+      if [ -n "$boundary_time" ]; then
+        if [ "$created_at" \< "$boundary_time" ]; then
+          within_window=0
+        elif [ "$created_at" = "$boundary_time" ] && [ -n "$boundary_id" ] && [ -n "$comment_id" ] \
+          && ! [ "$comment_id" -gt "$boundary_id" ] 2>/dev/null; then
+          within_window=0
+        fi
+      fi
+      if [ "$within_window" -eq 1 ]; then
+        if [ "$MARKER_FIELD_STATE" = "empty" ]; then
+          marker_class="malformed"
+        else
+          codex_marker_classify "$MARKER_FIELD_TOKEN" "$CURRENT_SHA_FULL" "$OWNER" "$REPO" "$CODEX_MARKER_REPO_ROOT"
+          marker_class="$MARKER_CLASS"
+        fi
+        case "$marker_class" in
+          prefix)
+            is_terminal=1
+            ;;
+          malformed)
+            if [ -z "$COMMENT_MALFORMED_TIME" ] || ! [ "$created_at" \< "$COMMENT_MALFORMED_TIME" ]; then
+              COMMENT_MALFORMED_BODY="$body"
+              COMMENT_MALFORMED_TIME="$created_at"
+            fi
+            ;;
+          unavailable)
+            COMMENT_EVIDENCE_UNAVAILABLE=1
+            ;;
+          *)
+            : # prior_revision — valid stale evidence, not terminal for the live head
+            ;;
+        esac
+      fi
+    fi
     is_actionable=0
     is_usage_limit=0
     if [ "$is_terminal" -eq 0 ]; then
@@ -1064,6 +1152,13 @@ codex_select_review_evidence() {
   SELECTED_REVIEW_BODY=""
   SELECTED_REVIEW_TIME=""
   SELECTED_REVIEW_STATE=""
+  # #1757 (AC-7, AC-9): the REST review `id` — needed downstream by
+  # codex_review_finding_correlation to join this review's own inline
+  # findings (pull_request_review_id) against the GraphQL thread index. Empty
+  # when the reviews-endpoint jq query behind $reviews_file predates this
+  # field (legacy tmpfile format), matching SELECTED_REVIEW_STATE's own
+  # degrade-to-empty precedent.
+  SELECTED_REVIEW_ID=""
   # Presence is tracked via an explicit found-flag, not by checking
   # whether the selected body string is non-empty — a winning review's
   # body can legitimately be empty (see
@@ -1072,17 +1167,19 @@ codex_select_review_evidence() {
   # reintroduce that exact bug here.
   local have_selection=0
   local best_priority=-1
-  local line created_at body state priority
+  local line created_at body state review_id priority
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
     state=$(printf '%s' "$line" | jq -r '.state // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty state is not a failure
+    review_id=$(printf '%s' "$line" | jq -r '.id // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty id is not a failure (legacy tmpfile format)
     priority=$(codex_response_priority "$body" "$state")
     if [ "$have_selection" -eq 0 ] || [ "$priority" -gt "$best_priority" ]; then
       SELECTED_REVIEW_BODY="$body"
       SELECTED_REVIEW_TIME="$created_at"
       SELECTED_REVIEW_STATE="$state"
+      SELECTED_REVIEW_ID="$review_id"
       best_priority="$priority"
       have_selection=1
     fi
@@ -1140,11 +1237,19 @@ codex_combine_terminal_evidence() {
   local review_body="$6" review_time="$7"
   local comment_latest_is_terminal="$8"
   local review_state="$9"
+  # #1757 (AC-7, AC-9): 10th arg, optional. The REST review `id` of
+  # review_body/review_time above — empty for a SHA-pinned terminal root
+  # comment (comments have no review object of their own) and for any
+  # caller not yet passing it. Propagated to COMBINED_REVIEW_ID only when
+  # the winning evidence is the actual submitted review, matching
+  # COMBINED_REVIEW_STATE's own scoping.
+  local review_id="${10:-}"
 
   COMBINED_BODY=""
   COMBINED_TIME=""
   COMBINED_SOURCE=""
   COMBINED_REVIEW_STATE=""
+  COMBINED_REVIEW_ID=""
 
   if [ -n "$comment_terminal_body" ]; then
     COMBINED_BODY="$comment_terminal_body"
@@ -1172,6 +1277,7 @@ codex_combine_terminal_evidence() {
         COMBINED_TIME="$review_time"
         COMBINED_SOURCE="review"
         COMBINED_REVIEW_STATE="$review_state"
+        COMBINED_REVIEW_ID="$review_id"
         echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
       fi
     else
@@ -1179,6 +1285,7 @@ codex_combine_terminal_evidence() {
       COMBINED_TIME="$review_time"
       COMBINED_SOURCE="review"
       COMBINED_REVIEW_STATE="$review_state"
+      COMBINED_REVIEW_ID="$review_id"
       echo "INFO: $label detected via PR reviews endpoint"
     fi
   fi
@@ -1339,6 +1446,185 @@ codex_return_head_changed() {
   exit 2
 }
 
+# #1757 (AC-4, AC-13, AC-14): a root comment's `Reviewed commit` marker is
+# syntactically unusable for the live head (empty, non-hex, multiple
+# tokens, ambiguous, resolves to zero commits, or an interior-substring/
+# superstring of the live head), and it is the newest non-dismissed
+# terminal evidence within the live head's evidence window. This is one of
+# the spec's four fail-closed escalations — terminal for the current run,
+# never converted into needs_fixes, waiting_on_reviewer, or clean readiness.
+codex_return_malformed_marker() {
+  echo "VERDICT: ESCALATE — Codex 'Reviewed commit' marker is syntactically unusable for the live head (empty, non-hex, multiple tokens, ambiguous, or an interior-substring/superstring of the live head)"
+  echo "REASON=codex_current_verdict_malformed_revision_marker"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  echo "---BEGIN BOT RESPONSE---"
+  echo "$1"
+  echo "---END BOT RESPONSE---"
+  emit_reviewed_head_if_known
+  exit 2
+}
+
+# #1757 (AC-7, AC-9): the current terminal verdict carries a finding with
+# no stable review-thread identifier (a blocking assertion in a review's
+# own body, or in a root-comment verdict, which owns no review at all) or
+# no identifiable matching conversation. Fail-closed escalation — never
+# selectively returns needs_fixes for only the other, correlated findings.
+codex_return_correlation_missing() {
+  echo "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation"
+  echo "REASON=codex_finding_thread_correlation_missing"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  echo "---BEGIN BOT RESPONSE---"
+  echo "$1"
+  echo "---END BOT RESPONSE---"
+  emit_reviewed_head_if_known
+  exit 2
+}
+
+# #1757 (AC-7, AC-9): the current terminal verdict reproduces neither an
+# approved clean template nor the documented blocking markers, and is not
+# a response the shipped adapter recognizes as an availability outcome.
+# Fail-closed escalation — replaces the pre-#1757 "safe-fail to
+# NEEDS_REVISION" behaviour for this case (AC-7).
+codex_return_unrecognized_verdict() {
+  echo "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers"
+  echo "REASON=codex_current_verdict_unrecognized"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  echo "---BEGIN BOT RESPONSE---"
+  echo "$1"
+  echo "---END BOT RESPONSE---"
+  emit_reviewed_head_if_known
+  exit 2
+}
+
+# #1757 (AC-9, AC-13, AC-14): the bounded review-thread/finding-correlation
+# evidence query failed, or a live-head evidence-window boundary could not
+# be established, after its retry. Fail-closed escalation.
+codex_return_evidence_unavailable() {
+  echo "VERDICT: ESCALATE — Codex review-thread or evidence-window state could not be established after retry"
+  echo "REASON=evidence_unavailable_codex_thread_state"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  exit 2
+}
+
+# codex_finalize_verdict <source> <body_full> <body_display> <review_state> \
+#     <review_id> <malformed_body> <malformed_time> <evidence_unavailable> \
+#     <combined_time>
+#
+# #1757: the fail-closed classification layered on top of the already-
+# selected newest/tier-priority winning evidence (codex_combine_terminal_
+# evidence). Called once per verdict-decision site, before that site's own
+# usage-limit/environment-error/approved classification chain.
+#
+#   - A pending evidence-unavailable condition (AC-14) or a malformed-
+#     marker comment that is the newest live-head evidence (AC-4, AC-13)
+#     escalate immediately (exit 2) and never return.
+#   - Every "review"-sourced verdict (an actual submitted review, or a
+#     SHA-pinned terminal root comment with no review of its own) runs the
+#     finding-thread correlation contract (AC-7, AC-9) unconditionally —
+#     not only when it already looks blocking — because a review can carry
+#     a genuine inline finding under an unremarkable summary body (spec:
+#     finding extraction is per review, never gated on the body text
+#     alone). A root comment (no review_id) degrades inside
+#     codex_review_finding_correlation to correlation-missing when it
+#     carries a blocking body assertion, and to "none" otherwise — a
+#     comment owns no review-thread identifier by construction.
+#   - Non-actionable evidence (no findings, not structurally CHANGES_
+#     REQUESTED) returns 0 so the caller proceeds to its own usage-limit/
+#     environment-error/approved/unrecognized chain unchanged.
+codex_finalize_verdict() {
+  local source="$1" body_full="$2" body_display="$3" review_state="$4" review_id="$5"
+  local malformed_body="$6" malformed_time="$7" evidence_unavailable="$8" combined_time="$9"
+
+  if [ "$evidence_unavailable" -eq 1 ]; then
+    codex_return_evidence_unavailable
+  fi
+
+  if [ -n "$malformed_time" ]; then
+    if [ -z "$combined_time" ] || ! [ "$combined_time" \> "$malformed_time" ]; then
+      codex_return_malformed_marker "$malformed_body"
+    fi
+  fi
+
+  [ "$source" = "review" ] || return 0
+
+  local is_changes_requested=0
+  [ "$review_state" = "CHANGES_REQUESTED" ] && is_changes_requested=1
+
+  # Always run the correlation check, whether or not review_id is present:
+  # an actual submitted review with a usable id is correlated against its
+  # own inline findings and body; a root-comment-sourced "review" (no
+  # review_id, e.g. a SHA-pinned terminal comment) or a review whose id
+  # could not be read degrades gracefully inside
+  # codex_review_finding_correlation to "correlation_missing" when it
+  # carries a body finding, and to "none" otherwise (spec: "Root-comment
+  # verdicts are unchanged" — a comment owns no review-thread identifier by
+  # construction).
+  codex_review_finding_correlation "$OWNER" "$REPO" "$PR_NUMBER" "$BOT_LOGIN_PLAIN" "$review_id" "$body_full" "$CURRENT_SHA_FULL"
+  case "$CODEX_FINDING_CORRELATION" in
+    correlation_missing)
+      codex_return_correlation_missing "$body_display"
+      ;;
+    unavailable)
+      codex_return_evidence_unavailable
+      ;;
+    unresolved)
+      return 1
+      ;;
+    cleared)
+      # #1757 (AC-8, spec Business Rule 6): a CHANGES_REQUESTED submitted
+      # review is NEVER treated as cleared this way — GitHub's structured
+      # request-for-changes stays an actionable blocker even when every
+      # one of R's own inline findings resolves.
+      if [ "$is_changes_requested" -eq 1 ]; then
+        return 1
+      fi
+      local cleared_counts cleared_strict
+      if ! cleared_counts=$(codex_review_thread_evidence_counts "$OWNER" "$REPO" "$PR_NUMBER" "$BOT_LOGIN_PLAIN" strict); then
+        codex_return_evidence_unavailable
+      fi
+      IFS=$'\t' read -r cleared_strict _ _ <<EOF
+$cleared_counts
+EOF
+      if [ "${cleared_strict:-0}" -eq 0 ]; then
+        # #1757 (AC-8): every finding of this review is cleared (its
+        # matching conversations are all resolved) and no other applicable
+        # current-head Codex conversation remains unresolved — request a
+        # fresh current-head review instead of dispatching a fixer or
+        # claiming clean.
+        echo "INFO: current-head Codex findings are all cleared and no other applicable conversation is unresolved — awaiting a fresh current-head review"
+        echo "VERDICT: WAITING_ON_REVIEWER — current-head Codex review findings are cleared; awaiting a fresh submitted verdict"
+        echo "REASON=codex-github-review-pending"
+        echo "COMMENT_COUNT=0"
+        echo "BLOCKING_COUNT=0"
+        echo "SUGGESTION_COUNT=0"
+        emit_reviewed_head_if_known
+        exit 4
+      fi
+      return 1
+      ;;
+    none)
+      # R carries no finding requiring correlation at all (no inline
+      # comments of its own, no blocking body assertion). GitHub's
+      # structured CHANGES_REQUESTED state alone is still an actionable
+      # blocker (spec: "an actionable blocker attributed to the review
+      # state alone"); otherwise this evidence is not actionable and the
+      # caller's own usage-limit/approved/unrecognized chain decides it.
+      if [ "$is_changes_requested" -eq 1 ]; then
+        return 1
+      fi
+      return 0
+      ;;
+  esac
+}
+
 codex_require_current_head() {
   local latest_sha latest_sha_full
   if ! latest_sha_full=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
@@ -1373,9 +1659,11 @@ codex_fetch_existing_current_head_evidence() {
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$existing_comments_stderr" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain)] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain)] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
     > "$existing_comments_tmpfile"; then
-    codex_scan_comment_evidence "$existing_comments_tmpfile"
+    # #1757 (AC-13, AC-14): trigger-less live head — the window boundary is
+    # the pull request's own creation time (see CODEX_PR_CREATED_AT above).
+    codex_scan_comment_evidence "$existing_comments_tmpfile" "$CODEX_PR_CREATED_AT" ""
   else
     local existing_comments_err
     existing_comments_err=$(cat "$existing_comments_stderr")
@@ -1391,15 +1679,17 @@ codex_fetch_existing_current_head_evidence() {
   EXISTING_REVIEW_BODY=""
   EXISTING_REVIEW_TIME=""
   EXISTING_REVIEW_STATE=""
+  EXISTING_REVIEW_ID=""
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$existing_reviews_stderr" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA_FULL" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
     > "$existing_reviews_tmpfile"; then
     codex_select_review_evidence "$existing_reviews_tmpfile"
     EXISTING_REVIEW_BODY="$SELECTED_REVIEW_BODY"
     EXISTING_REVIEW_TIME="$SELECTED_REVIEW_TIME"
     EXISTING_REVIEW_STATE="$SELECTED_REVIEW_STATE"
+    EXISTING_REVIEW_ID="$SELECTED_REVIEW_ID"
   else
     local existing_reviews_err
     existing_reviews_err=$(cat "$existing_reviews_stderr")
@@ -1412,11 +1702,12 @@ codex_fetch_existing_current_head_evidence() {
   codex_combine_terminal_evidence "existing current-head Codex evidence" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "" "" \
-    "$EXISTING_REVIEW_BODY" "$EXISTING_REVIEW_TIME" 0 "$EXISTING_REVIEW_STATE"
+    "$EXISTING_REVIEW_BODY" "$EXISTING_REVIEW_TIME" 0 "$EXISTING_REVIEW_STATE" "$EXISTING_REVIEW_ID"
   EXISTING_BOT_RESPONSE="$COMBINED_BODY"
   EXISTING_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   EXISTING_BOT_RESPONSE_TIME="$COMBINED_TIME"
   EXISTING_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
+  EXISTING_BOT_RESPONSE_REVIEW_ID="$COMBINED_REVIEW_ID"
   return 0
 }
 
@@ -1478,7 +1769,9 @@ emit_reviewed_head_if_known
     return 1
   fi
   echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
-  if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; }; then
+  if ! codex_finalize_verdict "$EXISTING_BOT_RESPONSE_SOURCE" "$EXISTING_BOT_RESPONSE" "$response_display" \
+    "$EXISTING_BOT_RESPONSE_REVIEW_STATE" "$EXISTING_BOT_RESPONSE_REVIEW_ID" \
+    "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$EXISTING_BOT_RESPONSE_TIME"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
     echo "$response_display"
@@ -1497,12 +1790,7 @@ emit_reviewed_head_if_known
 emit_reviewed_head_if_known
     exit 0
   else
-    echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
-    echo "---BEGIN BOT RESPONSE---"
-    echo "$response_display"
-    echo "---END BOT RESPONSE---"
-emit_reviewed_head_if_known
-    exit 1
+    codex_return_unrecognized_verdict "$response_display"
   fi
 }
 
@@ -1694,7 +1982,7 @@ while true; do
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
     > "$POLL_TMPFILE"; then
     # Scan ALL matching root comments (not just the latest) so a SHA-pinned
     # terminal comment (Reviewed commit marker) is not discarded in favor of
@@ -1736,7 +2024,7 @@ while true; do
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     # Selects every review tied at the latest submitted_at timestamp (not
     # just one via sort_by | last) and picks the one requiring attention if
@@ -1753,6 +2041,7 @@ while true; do
     REVIEW_BODY="$SELECTED_REVIEW_BODY"
     REVIEW_TIME="$SELECTED_REVIEW_TIME"
     REVIEW_STATE="$SELECTED_REVIEW_STATE"
+    REVIEW_ID="$SELECTED_REVIEW_ID"
   else
     REVIEW_ERR=$(cat "$REVIEW_STDERR")
     rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
@@ -1765,7 +2054,7 @@ while true; do
   codex_combine_terminal_evidence "bot response" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-    "$REVIEW_BODY" "$REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$REVIEW_STATE"
+    "$REVIEW_BODY" "$REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$REVIEW_STATE" "$REVIEW_ID"
   BOT_RESPONSE="$COMBINED_BODY"
   BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Captured immediately after combine, before any intervening call could
@@ -1780,6 +2069,10 @@ while true; do
   # an actual submitted review (not a SHA-pinned terminal comment, which
   # has no review state).
   BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
+  # #1757 (AC-7, AC-9): the winning review's REST id, threaded to the
+  # finding-thread correlation check below — empty for a SHA-pinned
+  # terminal comment, matching BOT_RESPONSE_REVIEW_STATE's own scoping.
+  BOT_RESPONSE_REVIEW_ID="$COMBINED_REVIEW_ID"
   # BOT_RESPONSE_FULL (untruncated) is what every classifier below matches
   # against — a truncated copy could cut off a blocking marker that
   # appears after the cutoff in a long root comment, letting the response
@@ -1860,7 +2153,9 @@ emit_reviewed_head_if_known
     # "no blocking issues". This avoids false positives without line-level filtering
     # (which would risk missing a genuine marker on the same line as a negation).
 
-    if [ "$BOT_RESPONSE_SOURCE" = "review" ] && { [ "$BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$BOT_RESPONSE_FULL"; }; then
+    if ! codex_finalize_verdict "$BOT_RESPONSE_SOURCE" "$BOT_RESPONSE_FULL" "$BOT_RESPONSE" \
+      "$BOT_RESPONSE_REVIEW_STATE" "$BOT_RESPONSE_REVIEW_ID" \
+      "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$BOT_RESPONSE_TIME"; then
       # Blocking is checked first, ahead of usage-limit: a terminal/review
       # finding whose text happens to mention "usage limit" as part of an
       # actionable finding (e.g. flagging stale docs that describe it) must
@@ -1929,12 +2224,7 @@ emit_reviewed_head_if_known
       echo "INFO: Codex root comment is not SHA-pinned terminal evidence; waiting for current-head review or inline comments"
       continue
     else
-      echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
-      echo "---BEGIN BOT RESPONSE---"
-      echo "$BOT_RESPONSE"
-      echo "---END BOT RESPONSE---"
-emit_reviewed_head_if_known
-      exit 1
+      codex_return_unrecognized_verdict "$BOT_RESPONSE"
     fi
   fi
 
@@ -2044,7 +2334,7 @@ ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>/dev/null \
   | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
   > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
   codex_scan_comment_evidence "$ASYNC_POLL_TMPFILE"
   rm -f "$ASYNC_POLL_TMPFILE"
@@ -2061,7 +2351,7 @@ ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
   | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   # Selects every review tied at the latest timestamp and picks the one
   # requiring attention, if any (see rationale above the main-loop
@@ -2072,6 +2362,7 @@ if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   ASYNC_REVIEW_BODY="$SELECTED_REVIEW_BODY"
   ASYNC_REVIEW_TIME="$SELECTED_REVIEW_TIME"
   ASYNC_REVIEW_STATE="$SELECTED_REVIEW_STATE"
+  ASYNC_REVIEW_ID="$SELECTED_REVIEW_ID"
 else
   rm -f "$ASYNC_REVIEW_TMPFILE"
   echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews during async grace period (treated as unavailable)"
@@ -2082,7 +2373,7 @@ rm -f "$ASYNC_REVIEW_TMPFILE"
 codex_combine_terminal_evidence "async-arrival bot response" \
   "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
   "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_REVIEW_STATE"
+  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_REVIEW_STATE" "$ASYNC_REVIEW_ID"
 ASYNC_BOT_RESPONSE="$COMBINED_BODY"
 ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
 # Captured before any intervening call could touch COMBINED_TIME (see
@@ -2090,6 +2381,8 @@ ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
 ASYNC_BOT_RESPONSE_TIME="$COMBINED_TIME"
 # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_STATE).
 ASYNC_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
+# See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_ID).
+ASYNC_BOT_RESPONSE_REVIEW_ID="$COMBINED_REVIEW_ID"
 # Untruncated copy used for classification below (see rationale above the
 # main-loop equivalent — a truncated copy could cut off a blocking marker
 # in a long root comment).
@@ -2106,7 +2399,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
   # Apply the same three-path verdict parsing as the main poll loop.
   # Blocking is checked first, ahead of usage-limit (see rationale above
   # the main-loop equivalent).
-  if [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$ASYNC_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$ASYNC_BOT_RESPONSE_FULL"; }; then
+  if ! codex_finalize_verdict "$ASYNC_BOT_RESPONSE_SOURCE" "$ASYNC_BOT_RESPONSE_FULL" "$ASYNC_BOT_RESPONSE" \
+    "$ASYNC_BOT_RESPONSE_REVIEW_STATE" "$ASYNC_BOT_RESPONSE_REVIEW_ID" \
+    "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$ASYNC_BOT_RESPONSE_TIME"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
@@ -2158,7 +2453,7 @@ emit_reviewed_head_if_known
     if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
       2>/dev/null \
       | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
       > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
       codex_scan_comment_evidence "$ASYNC_FINAL_POLL_TMPFILE"
       rm -f "$ASYNC_FINAL_POLL_TMPFILE"
@@ -2174,7 +2469,7 @@ emit_reviewed_head_if_known
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       # Selects every review tied at the latest timestamp and picks the one
       # requiring attention, if any (see rationale above the main-loop
@@ -2185,6 +2480,7 @@ emit_reviewed_head_if_known
       ASYNC_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
       ASYNC_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
       ASYNC_FINAL_REVIEW_STATE="$SELECTED_REVIEW_STATE"
+      ASYNC_FINAL_REVIEW_ID="$SELECTED_REVIEW_ID"
     else
       rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
       echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async acknowledgement (treated as unavailable)"
@@ -2195,7 +2491,7 @@ emit_reviewed_head_if_known
     codex_combine_terminal_evidence "final async bot response" \
       "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
       "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_FINAL_REVIEW_STATE"
+      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_FINAL_REVIEW_STATE" "$ASYNC_FINAL_REVIEW_ID"
     ASYNC_FINAL_BOT_RESPONSE="$COMBINED_BODY"
     ASYNC_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
     # Captured before any intervening call could touch COMBINED_TIME (see
@@ -2203,6 +2499,8 @@ emit_reviewed_head_if_known
     ASYNC_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
     # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_STATE).
     ASYNC_FINAL_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
+    # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_ID).
+    ASYNC_FINAL_BOT_RESPONSE_REVIEW_ID="$COMBINED_REVIEW_ID"
     # Untruncated copy used for classification below (see rationale above
     # the main-loop equivalent).
     ASYNC_FINAL_BOT_RESPONSE_FULL="$ASYNC_FINAL_BOT_RESPONSE"
@@ -2216,7 +2514,9 @@ emit_reviewed_head_if_known
       codex_require_current_head
       # Blocking is checked first, ahead of usage-limit (see rationale
       # above the main-loop equivalent).
-      if [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$ASYNC_FINAL_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE_FULL"; }; then
+      if ! codex_finalize_verdict "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" "$ASYNC_FINAL_BOT_RESPONSE_FULL" "$ASYNC_FINAL_BOT_RESPONSE" \
+        "$ASYNC_FINAL_BOT_RESPONSE_REVIEW_STATE" "$ASYNC_FINAL_BOT_RESPONSE_REVIEW_ID" \
+        "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$ASYNC_FINAL_BOT_RESPONSE_TIME"; then
         echo "VERDICT: NEEDS_REVISION"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
@@ -2259,12 +2559,7 @@ emit_reviewed_head_if_known
         # exactly matching CODEX_APPROVED_TEMPLATES would silently fall
         # through to "wait" (no branch taken) instead of the documented
         # NEEDS_REVISION safe-fail, eventually timing out.
-        echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
-        echo "---BEGIN BOT RESPONSE---"
-        echo "$ASYNC_FINAL_BOT_RESPONSE"
-        echo "---END BOT RESPONSE---"
-emit_reviewed_head_if_known
-        exit 1
+        codex_return_unrecognized_verdict "$ASYNC_FINAL_BOT_RESPONSE"
       fi
     fi
     if ! ASYNC_APPROVAL_REACTION_COUNT=$(codex_trigger_approval_reaction_count "$TRIGGER_COMMENT_ID"); then
@@ -2288,12 +2583,7 @@ emit_reviewed_head_if_known
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ]; then
     echo "INFO: async-arrival Codex root comment is not SHA-pinned terminal evidence"
   else
-    echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
-    echo "---BEGIN BOT RESPONSE---"
-    echo "$ASYNC_BOT_RESPONSE"
-    echo "---END BOT RESPONSE---"
-emit_reviewed_head_if_known
-    exit 1
+    codex_return_unrecognized_verdict "$ASYNC_BOT_RESPONSE"
   fi
 fi
 
@@ -2319,7 +2609,7 @@ emit_reviewed_head_if_known
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>/dev/null \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // ""), id:(.id // "" | tostring)}' \
     > "$ASYNC_REACTION_FINAL_POLL_TMPFILE" 2>/dev/null; then
     codex_scan_comment_evidence "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
     rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
@@ -2335,7 +2625,7 @@ emit_reviewed_head_if_known
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
     # Selects every review tied at the latest timestamp and picks the one
     # requiring attention, if any (see rationale above the main-loop
@@ -2346,6 +2636,7 @@ emit_reviewed_head_if_known
     ASYNC_REACTION_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
     ASYNC_REACTION_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
     ASYNC_REACTION_FINAL_REVIEW_STATE="$SELECTED_REVIEW_STATE"
+    ASYNC_REACTION_FINAL_REVIEW_ID="$SELECTED_REVIEW_ID"
   else
     rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
     echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async reaction (treated as unavailable)"
@@ -2356,7 +2647,7 @@ emit_reviewed_head_if_known
   codex_combine_terminal_evidence "final async reaction bot response" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_REACTION_FINAL_REVIEW_STATE"
+    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_REACTION_FINAL_REVIEW_STATE" "$ASYNC_REACTION_FINAL_REVIEW_ID"
   ASYNC_REACTION_FINAL_BOT_RESPONSE="$COMBINED_BODY"
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Captured before any intervening call could touch COMBINED_TIME (see
@@ -2364,6 +2655,8 @@ emit_reviewed_head_if_known
   ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
   # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_STATE).
   ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
+  # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_ID).
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_ID="$COMBINED_REVIEW_ID"
   # Untruncated copy used for classification below (see rationale above
   # the main-loop equivalent).
   ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
@@ -2376,7 +2669,9 @@ emit_reviewed_head_if_known
     codex_require_current_head
     # Blocking is checked first, ahead of usage-limit (see rationale above
     # the main-loop equivalent).
-    if [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; }; then
+    if ! codex_finalize_verdict "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL" "$ASYNC_REACTION_FINAL_BOT_RESPONSE" \
+      "$ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_STATE" "$ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_ID" \
+      "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
@@ -2411,12 +2706,7 @@ emit_reviewed_head_if_known
       # Gated on terminal evidence (source == "review") — see the
       # async-final equivalent above for the rationale (issue #1491's
       # implementation plan, Decision 6).
-      echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
-      echo "---BEGIN BOT RESPONSE---"
-      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
-      echo "---END BOT RESPONSE---"
-emit_reviewed_head_if_known
-      exit 1
+      codex_return_unrecognized_verdict "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
     fi
   fi
   if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then

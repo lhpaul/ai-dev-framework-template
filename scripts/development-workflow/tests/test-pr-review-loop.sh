@@ -3254,6 +3254,22 @@ run_test "total_cycles_cap_under_not_exceeded" "no" \
 run_test "total_cycles_cap_at_limit_exceeded" "yes" \
   "$(reviewer_loop_cap_exceeded 25 25 needs_fixes && echo yes || echo no)"
 
+# #1757 (AC-5): three named cases, since the criterion has three distinct
+# outcomes. Per-run axis.
+run_test "codex_cap_final_cycle_canonical_clean_ready" "no" \
+  "$(reviewer_loop_cap_exceeded 10 10 clean && echo yes || echo no)"
+run_test "codex_cap_exhausted_cleared_findings_escalates" "yes" \
+  "$(reviewer_loop_cap_exceeded 10 10 waiting_on_reviewer && echo yes || echo no)"
+run_test "codex_cap_exhausted_actionable_finding_escalates" "yes" \
+  "$(reviewer_loop_cap_exceeded 10 10 needs_fixes && echo yes || echo no)"
+# Same three, lifetime axis (default 25) — same function, different pair.
+run_test "codex_cap_final_cycle_canonical_clean_ready_lifetime" "no" \
+  "$(reviewer_loop_cap_exceeded 25 25 clean && echo yes || echo no)"
+run_test "codex_cap_exhausted_cleared_findings_escalates_lifetime" "yes" \
+  "$(reviewer_loop_cap_exceeded 25 25 waiting_on_reviewer && echo yes || echo no)"
+run_test "codex_cap_exhausted_actionable_finding_escalates_lifetime" "yes" \
+  "$(reviewer_loop_cap_exceeded 25 25 needs_fixes && echo yes || echo no)"
+
 # --- reviewer_loop_resolve_cycle_counts (mocked gh) ---
 
 unset MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT MOCK_GH_EXIT
@@ -5294,10 +5310,10 @@ MOCK_POST_LOG="$_codex_cleared_thread_top_level_blocker_mock_dir/posts.log" PATH
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
   >"$_codex_cleared_thread_top_level_blocker_mock_dir/output.txt" 2>&1 || _codex_cleared_thread_top_level_blocker_exit=$?
-run_test "codex_cleared_thread_top_level_blocker_exit_needs_revision" "1" "$_codex_cleared_thread_top_level_blocker_exit"
+run_test "codex_cleared_thread_top_level_blocker_exit_needs_revision" "2" "$_codex_cleared_thread_top_level_blocker_exit"
 run_test "codex_cleared_thread_top_level_blocker_skips_trigger" "0" \
   "$(wc -l < "$_codex_cleared_thread_top_level_blocker_mock_dir/posts.log" | tr -d ' ')"
-run_test "codex_cleared_thread_top_level_blocker_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_cleared_thread_top_level_blocker_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(grep "^VERDICT:" "$_codex_cleared_thread_top_level_blocker_mock_dir/output.txt")"
 rm -rf "$_codex_cleared_thread_top_level_blocker_mock_dir"
 unset _codex_cleared_thread_top_level_blocker_mock_dir _codex_cleared_thread_top_level_blocker_exit
@@ -5648,8 +5664,8 @@ PATH="$_codex_newer_root_blocks_old_review_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_newer_root_blocks_old_review_mock_dir/output.txt" 2>&1 || _codex_newer_root_blocks_old_review_exit=$?
 _codex_newer_root_blocks_old_review_output="$(cat "$_codex_newer_root_blocks_old_review_mock_dir/output.txt")"
-run_test "codex_newer_root_blocks_old_review_exit_needs_revision" "1" "$_codex_newer_root_blocks_old_review_exit"
-run_test "codex_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_newer_root_blocks_old_review_exit_needs_revision" "2" "$_codex_newer_root_blocks_old_review_exit"
+run_test "codex_newer_root_blocks_old_review_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_newer_root_blocks_old_review_mock_dir"
 unset _codex_newer_root_blocks_old_review_mock_dir _codex_newer_root_blocks_old_review_output _codex_newer_root_blocks_old_review_exit
@@ -5689,8 +5705,8 @@ PATH="$_codex_tied_root_blocks_review_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_root_blocks_review_mock_dir/output.txt" 2>&1 || _codex_tied_root_blocks_review_exit=$?
 _codex_tied_root_blocks_review_output="$(cat "$_codex_tied_root_blocks_review_mock_dir/output.txt")"
-run_test "codex_tied_root_blocks_review_exit_needs_revision" "1" "$_codex_tied_root_blocks_review_exit"
-run_test "codex_tied_root_blocks_review_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_tied_root_blocks_review_exit_needs_revision" "2" "$_codex_tied_root_blocks_review_exit"
+run_test "codex_tied_root_blocks_review_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_tied_root_blocks_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_root_blocks_review_mock_dir"
 unset _codex_tied_root_blocks_review_mock_dir _codex_tied_root_blocks_review_output _codex_tied_root_blocks_review_exit
@@ -5734,8 +5750,8 @@ PATH="$_codex_tied_review_blocks_root_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_review_blocks_root_mock_dir/output.txt" 2>&1 || _codex_tied_review_blocks_root_exit=$?
 _codex_tied_review_blocks_root_output="$(cat "$_codex_tied_review_blocks_root_mock_dir/output.txt")"
-run_test "codex_tied_review_blocks_root_exit_needs_revision" "1" "$_codex_tied_review_blocks_root_exit"
-run_test "codex_tied_review_blocks_root_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_tied_review_blocks_root_exit_needs_revision" "2" "$_codex_tied_review_blocks_root_exit"
+run_test "codex_tied_review_blocks_root_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_tied_review_blocks_root_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_review_blocks_root_mock_dir"
 unset _codex_tied_review_blocks_root_mock_dir _codex_tied_review_blocks_root_output _codex_tied_review_blocks_root_exit
@@ -5782,8 +5798,8 @@ PATH="$_codex_tied_unrecognized_review_safe_fails_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_unrecognized_review_safe_fails_mock_dir/output.txt" 2>&1 || _codex_tied_unrecognized_review_safe_fails_exit=$?
 _codex_tied_unrecognized_review_safe_fails_output="$(cat "$_codex_tied_unrecognized_review_safe_fails_mock_dir/output.txt")"
-run_test "codex_tied_unrecognized_review_safe_fails_exit_needs_revision" "1" "$_codex_tied_unrecognized_review_safe_fails_exit"
-run_test "codex_tied_unrecognized_review_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_tied_unrecognized_review_safe_fails_exit_needs_revision" "2" "$_codex_tied_unrecognized_review_safe_fails_exit"
+run_test "codex_tied_unrecognized_review_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_tied_unrecognized_review_safe_fails_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_unrecognized_review_safe_fails_mock_dir"
 unset _codex_tied_unrecognized_review_safe_fails_mock_dir _codex_tied_unrecognized_review_safe_fails_output _codex_tied_unrecognized_review_safe_fails_exit
@@ -5829,8 +5845,8 @@ PATH="$_codex_ack_does_not_erase_blocking_root_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_ack_does_not_erase_blocking_root_mock_dir/output.txt" 2>&1 || _codex_ack_does_not_erase_blocking_root_exit=$?
 _codex_ack_does_not_erase_blocking_root_output="$(cat "$_codex_ack_does_not_erase_blocking_root_mock_dir/output.txt")"
-run_test "codex_ack_does_not_erase_blocking_root_exit_needs_revision" "1" "$_codex_ack_does_not_erase_blocking_root_exit"
-run_test "codex_ack_does_not_erase_blocking_root_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_ack_does_not_erase_blocking_root_exit_needs_revision" "2" "$_codex_ack_does_not_erase_blocking_root_exit"
+run_test "codex_ack_does_not_erase_blocking_root_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_ack_does_not_erase_blocking_root_output" | grep "^VERDICT:")"
 rm -rf "$_codex_ack_does_not_erase_blocking_root_mock_dir"
 unset _codex_ack_does_not_erase_blocking_root_mock_dir _codex_ack_does_not_erase_blocking_root_output _codex_ack_does_not_erase_blocking_root_exit
@@ -5888,8 +5904,8 @@ PATH="$_codex_async_newer_root_blocks_old_review_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_async_newer_root_blocks_old_review_mock_dir/output.txt" 2>&1 || _codex_async_newer_root_blocks_old_review_exit=$?
 _codex_async_newer_root_blocks_old_review_output="$(cat "$_codex_async_newer_root_blocks_old_review_mock_dir/output.txt")"
-run_test "codex_async_newer_root_blocks_old_review_exit_needs_revision" "1" "$_codex_async_newer_root_blocks_old_review_exit"
-run_test "codex_async_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_async_newer_root_blocks_old_review_exit_needs_revision" "2" "$_codex_async_newer_root_blocks_old_review_exit"
+run_test "codex_async_newer_root_blocks_old_review_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_async_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_async_newer_root_blocks_old_review_mock_dir"
 unset _codex_async_newer_root_blocks_old_review_mock_dir _codex_async_newer_root_blocks_old_review_output _codex_async_newer_root_blocks_old_review_exit
@@ -6404,8 +6420,8 @@ PATH="$_codex_tied_mixed_blocking_review_wins_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_mixed_blocking_review_wins_mock_dir/output.txt" 2>&1 || _codex_tied_mixed_blocking_review_wins_exit=$?
 _codex_tied_mixed_blocking_review_wins_output="$(cat "$_codex_tied_mixed_blocking_review_wins_mock_dir/output.txt")"
-run_test "codex_tied_mixed_blocking_review_wins_exit_needs_revision" "1" "$_codex_tied_mixed_blocking_review_wins_exit"
-run_test "codex_tied_mixed_blocking_review_wins_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_tied_mixed_blocking_review_wins_exit_needs_revision" "2" "$_codex_tied_mixed_blocking_review_wins_exit"
+run_test "codex_tied_mixed_blocking_review_wins_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_tied_mixed_blocking_review_wins_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_mixed_blocking_review_wins_mock_dir"
 unset _codex_tied_mixed_blocking_review_wins_mock_dir _codex_tied_mixed_blocking_review_wins_output _codex_tied_mixed_blocking_review_wins_exit
@@ -6461,8 +6477,8 @@ PATH="$_codex_long_review_body_no_sigpipe_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_review_body_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_review_body_no_sigpipe_exit=$?
 _codex_long_review_body_no_sigpipe_output="$(cat "$_codex_long_review_body_no_sigpipe_mock_dir/output.txt")"
-run_test "codex_long_review_body_no_sigpipe_exit_needs_revision" "1" "$_codex_long_review_body_no_sigpipe_exit"
-run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_long_review_body_no_sigpipe_exit_needs_revision" "2" "$_codex_long_review_body_no_sigpipe_exit"
+run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_long_review_body_no_sigpipe_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_review_body_no_sigpipe_mock_dir"
 unset _codex_long_review_body_no_sigpipe_mock_dir _codex_long_review_body_no_sigpipe_output _codex_long_review_body_no_sigpipe_exit
@@ -6664,8 +6680,8 @@ PATH="$_codex_long_root_comment_no_sigpipe_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_root_comment_no_sigpipe_exit=$?
 _codex_long_root_comment_no_sigpipe_output="$(cat "$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt")"
-run_test "codex_long_root_comment_no_sigpipe_exit_needs_revision" "1" "$_codex_long_root_comment_no_sigpipe_exit"
-run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_long_root_comment_no_sigpipe_exit_needs_revision" "2" "$_codex_long_root_comment_no_sigpipe_exit"
+run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_long_root_comment_no_sigpipe_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_root_comment_no_sigpipe_mock_dir"
 unset _codex_long_root_comment_no_sigpipe_mock_dir _codex_long_root_comment_no_sigpipe_output _codex_long_root_comment_no_sigpipe_exit
@@ -6713,8 +6729,8 @@ PATH="$_codex_blocking_terminal_beats_env_error_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_blocking_terminal_beats_env_error_mock_dir/output.txt" 2>&1 || _codex_blocking_terminal_beats_env_error_exit=$?
 _codex_blocking_terminal_beats_env_error_output="$(cat "$_codex_blocking_terminal_beats_env_error_mock_dir/output.txt")"
-run_test "codex_blocking_terminal_beats_env_error_exit_needs_revision" "1" "$_codex_blocking_terminal_beats_env_error_exit"
-run_test "codex_blocking_terminal_beats_env_error_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_blocking_terminal_beats_env_error_exit_needs_revision" "2" "$_codex_blocking_terminal_beats_env_error_exit"
+run_test "codex_blocking_terminal_beats_env_error_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_blocking_terminal_beats_env_error_output" | grep "^VERDICT:")"
 rm -rf "$_codex_blocking_terminal_beats_env_error_mock_dir"
 unset _codex_blocking_terminal_beats_env_error_mock_dir _codex_blocking_terminal_beats_env_error_output _codex_blocking_terminal_beats_env_error_exit
@@ -6760,8 +6776,8 @@ PATH="$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/output.txt" 2>&1 || _codex_quoted_setup_sentence_in_blocking_finding_exit=$?
 _codex_quoted_setup_sentence_in_blocking_finding_output="$(cat "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/output.txt")"
-run_test "codex_quoted_setup_sentence_in_blocking_finding_exit_needs_revision" "1" "$_codex_quoted_setup_sentence_in_blocking_finding_exit"
-run_test "codex_quoted_setup_sentence_in_blocking_finding_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_quoted_setup_sentence_in_blocking_finding_exit_needs_revision" "2" "$_codex_quoted_setup_sentence_in_blocking_finding_exit"
+run_test "codex_quoted_setup_sentence_in_blocking_finding_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_quoted_setup_sentence_in_blocking_finding_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir"
 unset _codex_quoted_setup_sentence_in_blocking_finding_mock_dir _codex_quoted_setup_sentence_in_blocking_finding_output _codex_quoted_setup_sentence_in_blocking_finding_exit
@@ -6809,8 +6825,8 @@ PATH="$_codex_tied_reviews_blocking_first_survives_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_reviews_blocking_first_survives_mock_dir/output.txt" 2>&1 || _codex_tied_reviews_blocking_first_survives_exit=$?
 _codex_tied_reviews_blocking_first_survives_output="$(cat "$_codex_tied_reviews_blocking_first_survives_mock_dir/output.txt")"
-run_test "codex_tied_reviews_blocking_first_survives_exit_needs_revision" "1" "$_codex_tied_reviews_blocking_first_survives_exit"
-run_test "codex_tied_reviews_blocking_first_survives_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_tied_reviews_blocking_first_survives_exit_needs_revision" "2" "$_codex_tied_reviews_blocking_first_survives_exit"
+run_test "codex_tied_reviews_blocking_first_survives_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_tied_reviews_blocking_first_survives_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_reviews_blocking_first_survives_mock_dir"
 unset _codex_tied_reviews_blocking_first_survives_mock_dir _codex_tied_reviews_blocking_first_survives_output _codex_tied_reviews_blocking_first_survives_exit
@@ -6907,8 +6923,8 @@ PATH="$_codex_tied_terminal_comments_blocking_survives_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_terminal_comments_blocking_survives_mock_dir/output.txt" 2>&1 || _codex_tied_terminal_comments_blocking_survives_exit=$?
 _codex_tied_terminal_comments_blocking_survives_output="$(cat "$_codex_tied_terminal_comments_blocking_survives_mock_dir/output.txt")"
-run_test "codex_tied_terminal_comments_blocking_survives_exit_needs_revision" "1" "$_codex_tied_terminal_comments_blocking_survives_exit"
-run_test "codex_tied_terminal_comments_blocking_survives_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_tied_terminal_comments_blocking_survives_exit_needs_revision" "2" "$_codex_tied_terminal_comments_blocking_survives_exit"
+run_test "codex_tied_terminal_comments_blocking_survives_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_tied_terminal_comments_blocking_survives_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_terminal_comments_blocking_survives_mock_dir"
 unset _codex_tied_terminal_comments_blocking_survives_mock_dir _codex_tied_terminal_comments_blocking_survives_output _codex_tied_terminal_comments_blocking_survives_exit
@@ -6954,8 +6970,8 @@ PATH="$_codex_blocking_text_mentions_usage_limit_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_blocking_text_mentions_usage_limit_mock_dir/output.txt" 2>&1 || _codex_blocking_text_mentions_usage_limit_exit=$?
 _codex_blocking_text_mentions_usage_limit_output="$(cat "$_codex_blocking_text_mentions_usage_limit_mock_dir/output.txt")"
-run_test "codex_blocking_text_mentions_usage_limit_exit_needs_revision" "1" "$_codex_blocking_text_mentions_usage_limit_exit"
-run_test "codex_blocking_text_mentions_usage_limit_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_blocking_text_mentions_usage_limit_exit_needs_revision" "2" "$_codex_blocking_text_mentions_usage_limit_exit"
+run_test "codex_blocking_text_mentions_usage_limit_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_blocking_text_mentions_usage_limit_output" | grep "^VERDICT:")"
 rm -rf "$_codex_blocking_text_mentions_usage_limit_mock_dir"
 unset _codex_blocking_text_mentions_usage_limit_mock_dir _codex_blocking_text_mentions_usage_limit_output _codex_blocking_text_mentions_usage_limit_exit
@@ -7060,8 +7076,8 @@ PATH="$_codex_bodyless_tied_review_needs_revision_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_bodyless_tied_review_needs_revision_mock_dir/output.txt" 2>&1 || _codex_bodyless_tied_review_needs_revision_exit=$?
 _codex_bodyless_tied_review_needs_revision_output="$(cat "$_codex_bodyless_tied_review_needs_revision_mock_dir/output.txt")"
-run_test "codex_bodyless_tied_review_needs_revision_exit" "1" "$_codex_bodyless_tied_review_needs_revision_exit"
-run_test "codex_bodyless_tied_review_needs_revision_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_bodyless_tied_review_needs_revision_exit" "2" "$_codex_bodyless_tied_review_needs_revision_exit"
+run_test "codex_bodyless_tied_review_needs_revision_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_bodyless_tied_review_needs_revision_output" | grep "^VERDICT:")"
 rm -rf "$_codex_bodyless_tied_review_needs_revision_mock_dir"
 unset _codex_bodyless_tied_review_needs_revision_mock_dir _codex_bodyless_tied_review_needs_revision_output _codex_bodyless_tied_review_needs_revision_exit
@@ -7109,8 +7125,8 @@ PATH="$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/output.txt" 2>&1 || _codex_tied_reviews_blocking_beats_usage_limit_exit=$?
 _codex_tied_reviews_blocking_beats_usage_limit_output="$(cat "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/output.txt")"
-run_test "codex_tied_reviews_blocking_beats_usage_limit_exit_needs_revision" "1" "$_codex_tied_reviews_blocking_beats_usage_limit_exit"
-run_test "codex_tied_reviews_blocking_beats_usage_limit_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_tied_reviews_blocking_beats_usage_limit_exit_needs_revision" "2" "$_codex_tied_reviews_blocking_beats_usage_limit_exit"
+run_test "codex_tied_reviews_blocking_beats_usage_limit_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_tied_reviews_blocking_beats_usage_limit_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir"
 unset _codex_tied_reviews_blocking_beats_usage_limit_mock_dir _codex_tied_reviews_blocking_beats_usage_limit_output _codex_tied_reviews_blocking_beats_usage_limit_exit
@@ -7161,8 +7177,8 @@ PATH="$_codex_terminal_usage_limit_vs_blocking_review_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/output.txt" 2>&1 || _codex_terminal_usage_limit_vs_blocking_review_exit=$?
 _codex_terminal_usage_limit_vs_blocking_review_output="$(cat "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/output.txt")"
-run_test "codex_terminal_usage_limit_vs_blocking_review_exit_needs_revision" "1" "$_codex_terminal_usage_limit_vs_blocking_review_exit"
-run_test "codex_terminal_usage_limit_vs_blocking_review_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_terminal_usage_limit_vs_blocking_review_exit_needs_revision" "2" "$_codex_terminal_usage_limit_vs_blocking_review_exit"
+run_test "codex_terminal_usage_limit_vs_blocking_review_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_terminal_usage_limit_vs_blocking_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir"
 unset _codex_terminal_usage_limit_vs_blocking_review_mock_dir _codex_terminal_usage_limit_vs_blocking_review_output _codex_terminal_usage_limit_vs_blocking_review_exit
@@ -7206,8 +7222,8 @@ PATH="$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/output.txt" 2>&1 || _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit=$?
 _codex_two_tied_terminal_comments_usage_limit_vs_blocking_output="$(cat "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/output.txt")"
-run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit_needs_revision" "1" "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit"
-run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit_needs_revision" "2" "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit"
+run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output" | grep "^VERDICT:")"
 rm -rf "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir"
 unset _codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir _codex_two_tied_terminal_comments_usage_limit_vs_blocking_output _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit
@@ -7320,8 +7336,8 @@ PATH="$_codex_tied_usage_limit_then_unrecognized_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tied_usage_limit_then_unrecognized_mock_dir/output.txt" 2>&1 || _codex_tied_usage_limit_then_unrecognized_exit=$?
 _codex_tied_usage_limit_then_unrecognized_output="$(cat "$_codex_tied_usage_limit_then_unrecognized_mock_dir/output.txt")"
-run_test "codex_tied_usage_limit_then_unrecognized_exit" "1" "$_codex_tied_usage_limit_then_unrecognized_exit"
-run_test "codex_tied_usage_limit_then_unrecognized_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_tied_usage_limit_then_unrecognized_exit" "2" "$_codex_tied_usage_limit_then_unrecognized_exit"
+run_test "codex_tied_usage_limit_then_unrecognized_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_tied_usage_limit_then_unrecognized_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tied_usage_limit_then_unrecognized_mock_dir"
 unset _codex_tied_usage_limit_then_unrecognized_mock_dir _codex_tied_usage_limit_then_unrecognized_output _codex_tied_usage_limit_then_unrecognized_exit
@@ -7370,8 +7386,8 @@ PATH="$_codex_long_root_review_blocker_past_cutoff_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_root_review_blocker_past_cutoff_mock_dir/output.txt" 2>&1 || _codex_long_root_review_blocker_past_cutoff_exit=$?
 _codex_long_root_review_blocker_past_cutoff_output="$(cat "$_codex_long_root_review_blocker_past_cutoff_mock_dir/output.txt")"
-run_test "codex_long_root_review_blocker_past_cutoff_exit_needs_revision" "1" "$_codex_long_root_review_blocker_past_cutoff_exit"
-run_test "codex_long_root_review_blocker_past_cutoff_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_long_root_review_blocker_past_cutoff_exit_needs_revision" "2" "$_codex_long_root_review_blocker_past_cutoff_exit"
+run_test "codex_long_root_review_blocker_past_cutoff_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_long_root_review_blocker_past_cutoff_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_root_review_blocker_past_cutoff_mock_dir"
 unset _codex_long_root_review_blocker_past_cutoff_mock_dir _codex_long_root_review_blocker_past_cutoff_output _codex_long_root_review_blocker_past_cutoff_exit
@@ -7420,8 +7436,8 @@ PATH="$_codex_long_review_blocker_past_query_cutoff_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_review_blocker_past_query_cutoff_mock_dir/output.txt" 2>&1 || _codex_long_review_blocker_past_query_cutoff_exit=$?
 _codex_long_review_blocker_past_query_cutoff_output="$(cat "$_codex_long_review_blocker_past_query_cutoff_mock_dir/output.txt")"
-run_test "codex_long_review_blocker_past_query_cutoff_exit_needs_revision" "1" "$_codex_long_review_blocker_past_query_cutoff_exit"
-run_test "codex_long_review_blocker_past_query_cutoff_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_long_review_blocker_past_query_cutoff_exit_needs_revision" "2" "$_codex_long_review_blocker_past_query_cutoff_exit"
+run_test "codex_long_review_blocker_past_query_cutoff_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_long_review_blocker_past_query_cutoff_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_review_blocker_past_query_cutoff_mock_dir"
 unset _codex_long_review_blocker_past_query_cutoff_mock_dir _codex_long_review_blocker_past_query_cutoff_output _codex_long_review_blocker_past_query_cutoff_exit
@@ -7466,8 +7482,8 @@ PATH="$_codex_negated_approval_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_negated_approval_root_comment_exit=$?
 _codex_negated_approval_root_comment_output="$(cat "$_codex_negated_approval_root_comment_mock_dir/output.txt")"
-run_test "codex_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_negated_approval_root_comment_exit"
-run_test "codex_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_negated_approval_root_comment_exit_needs_revision" "2" "$_codex_negated_approval_root_comment_exit"
+run_test "codex_negated_approval_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_negated_approval_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negated_approval_root_comment_mock_dir"
 unset _codex_negated_approval_root_comment_mock_dir _codex_negated_approval_root_comment_output _codex_negated_approval_root_comment_exit
@@ -7514,8 +7530,8 @@ PATH="$_codex_unapproved_prefix_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_unapproved_prefix_root_comment_mock_dir/output.txt" 2>&1 || _codex_unapproved_prefix_root_comment_exit=$?
 _codex_unapproved_prefix_root_comment_output="$(cat "$_codex_unapproved_prefix_root_comment_mock_dir/output.txt")"
-run_test "codex_unapproved_prefix_root_comment_exit_needs_revision" "1" "$_codex_unapproved_prefix_root_comment_exit"
-run_test "codex_unapproved_prefix_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_unapproved_prefix_root_comment_exit_needs_revision" "2" "$_codex_unapproved_prefix_root_comment_exit"
+run_test "codex_unapproved_prefix_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_unapproved_prefix_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_unapproved_prefix_root_comment_mock_dir"
 unset _codex_unapproved_prefix_root_comment_mock_dir _codex_unapproved_prefix_root_comment_output _codex_unapproved_prefix_root_comment_exit
@@ -7564,8 +7580,8 @@ PATH="$_codex_markdown_negated_approval_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_markdown_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_markdown_negated_approval_root_comment_exit=$?
 _codex_markdown_negated_approval_root_comment_output="$(cat "$_codex_markdown_negated_approval_root_comment_mock_dir/output.txt")"
-run_test "codex_markdown_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_markdown_negated_approval_root_comment_exit"
-run_test "codex_markdown_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_markdown_negated_approval_root_comment_exit_needs_revision" "2" "$_codex_markdown_negated_approval_root_comment_exit"
+run_test "codex_markdown_negated_approval_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_markdown_negated_approval_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_markdown_negated_approval_root_comment_mock_dir"
 unset _codex_markdown_negated_approval_root_comment_mock_dir _codex_markdown_negated_approval_root_comment_output _codex_markdown_negated_approval_root_comment_exit
@@ -7611,8 +7627,8 @@ PATH="$_codex_qualifier_negated_approval_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_qualifier_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_qualifier_negated_approval_root_comment_exit=$?
 _codex_qualifier_negated_approval_root_comment_output="$(cat "$_codex_qualifier_negated_approval_root_comment_mock_dir/output.txt")"
-run_test "codex_qualifier_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_qualifier_negated_approval_root_comment_exit"
-run_test "codex_qualifier_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_qualifier_negated_approval_root_comment_exit_needs_revision" "2" "$_codex_qualifier_negated_approval_root_comment_exit"
+run_test "codex_qualifier_negated_approval_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_qualifier_negated_approval_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_qualifier_negated_approval_root_comment_mock_dir"
 unset _codex_qualifier_negated_approval_root_comment_mock_dir _codex_qualifier_negated_approval_root_comment_output _codex_qualifier_negated_approval_root_comment_exit
@@ -7684,8 +7700,8 @@ PATH="$_codex_usage_limit_topic_mention_not_quota_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt" 2>&1 || _codex_usage_limit_topic_mention_not_quota_exit=$?
 _codex_usage_limit_topic_mention_not_quota_output="$(cat "$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt")"
-run_test "codex_usage_limit_topic_mention_not_quota_exit_needs_revision" "1" "$_codex_usage_limit_topic_mention_not_quota_exit"
-run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_usage_limit_topic_mention_not_quota_exit_needs_revision" "2" "$_codex_usage_limit_topic_mention_not_quota_exit"
+run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_usage_limit_topic_mention_not_quota_output" | grep "^VERDICT:")"
 rm -rf "$_codex_usage_limit_topic_mention_not_quota_mock_dir"
 unset _codex_usage_limit_topic_mention_not_quota_mock_dir _codex_usage_limit_topic_mention_not_quota_output _codex_usage_limit_topic_mention_not_quota_exit
@@ -7732,8 +7748,8 @@ PATH="$_codex_negated_no_blocking_issues_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negated_no_blocking_issues_root_comment_mock_dir/output.txt" 2>&1 || _codex_negated_no_blocking_issues_root_comment_exit=$?
 _codex_negated_no_blocking_issues_root_comment_output="$(cat "$_codex_negated_no_blocking_issues_root_comment_mock_dir/output.txt")"
-run_test "codex_negated_no_blocking_issues_root_comment_exit_needs_revision" "1" "$_codex_negated_no_blocking_issues_root_comment_exit"
-run_test "codex_negated_no_blocking_issues_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_negated_no_blocking_issues_root_comment_exit_needs_revision" "2" "$_codex_negated_no_blocking_issues_root_comment_exit"
+run_test "codex_negated_no_blocking_issues_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_negated_no_blocking_issues_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negated_no_blocking_issues_root_comment_mock_dir"
 unset _codex_negated_no_blocking_issues_root_comment_mock_dir _codex_negated_no_blocking_issues_root_comment_output _codex_negated_no_blocking_issues_root_comment_exit
@@ -7787,8 +7803,8 @@ PATH="$_codex_usage_limit_code_reviews_phrase_mention_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt" 2>&1 || _codex_usage_limit_code_reviews_phrase_mention_exit=$?
 _codex_usage_limit_code_reviews_phrase_mention_output="$(cat "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt")"
-run_test "codex_usage_limit_code_reviews_phrase_mention_exit_needs_revision" "1" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
-run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_usage_limit_code_reviews_phrase_mention_exit_needs_revision" "2" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
+run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_usage_limit_code_reviews_phrase_mention_output" | grep "^VERDICT:")"
 rm -rf "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir"
 unset _codex_usage_limit_code_reviews_phrase_mention_mock_dir _codex_usage_limit_code_reviews_phrase_mention_output _codex_usage_limit_code_reviews_phrase_mention_exit
@@ -7834,8 +7850,8 @@ PATH="$_codex_negation_beyond_bounded_window_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negation_beyond_bounded_window_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_beyond_bounded_window_root_comment_exit=$?
 _codex_negation_beyond_bounded_window_root_comment_output="$(cat "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/output.txt")"
-run_test "codex_negation_beyond_bounded_window_root_comment_exit_needs_revision" "1" "$_codex_negation_beyond_bounded_window_root_comment_exit"
-run_test "codex_negation_beyond_bounded_window_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_negation_beyond_bounded_window_root_comment_exit_needs_revision" "2" "$_codex_negation_beyond_bounded_window_root_comment_exit"
+run_test "codex_negation_beyond_bounded_window_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_negation_beyond_bounded_window_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negation_beyond_bounded_window_root_comment_mock_dir"
 unset _codex_negation_beyond_bounded_window_root_comment_mock_dir _codex_negation_beyond_bounded_window_root_comment_output _codex_negation_beyond_bounded_window_root_comment_exit
@@ -7886,8 +7902,8 @@ PATH="$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_prior_sentence_does_not_leak_root_comment_exit=$?
 _codex_negation_prior_sentence_does_not_leak_root_comment_output="$(cat "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt")"
-run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_needs_revision" "1" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
-run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_needs_revision" "2" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_negation_prior_sentence_does_not_leak_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir"
 unset _codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir _codex_negation_prior_sentence_does_not_leak_root_comment_output _codex_negation_prior_sentence_does_not_leak_root_comment_exit
@@ -7934,8 +7950,8 @@ PATH="$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_reverse_order_cannot_approve_root_comment_exit=$?
 _codex_negation_reverse_order_cannot_approve_root_comment_output="$(cat "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/output.txt")"
-run_test "codex_negation_reverse_order_cannot_approve_root_comment_exit_needs_revision" "1" "$_codex_negation_reverse_order_cannot_approve_root_comment_exit"
-run_test "codex_negation_reverse_order_cannot_approve_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_negation_reverse_order_cannot_approve_root_comment_exit_needs_revision" "2" "$_codex_negation_reverse_order_cannot_approve_root_comment_exit"
+run_test "codex_negation_reverse_order_cannot_approve_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_negation_reverse_order_cannot_approve_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir"
 unset _codex_negation_reverse_order_cannot_approve_root_comment_mock_dir _codex_negation_reverse_order_cannot_approve_root_comment_output _codex_negation_reverse_order_cannot_approve_root_comment_exit
@@ -7993,8 +8009,8 @@ PATH="$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_quotes_env_error_not_ancillary_exit=$?
 _codex_terminal_comment_quotes_env_error_not_ancillary_output="$(cat "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt")"
-run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_needs_revision" "1" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
-run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_needs_revision" "2" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_terminal_comment_quotes_env_error_not_ancillary_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir"
 unset _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir _codex_terminal_comment_quotes_env_error_not_ancillary_output _codex_terminal_comment_quotes_env_error_not_ancillary_exit
@@ -8049,8 +8065,8 @@ PATH="$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_later_negation_safe_fails_root_comment_exit=$?
 _codex_unrelated_later_negation_safe_fails_root_comment_output="$(cat "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_unrelated_later_negation_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_unrelated_later_negation_safe_fails_root_comment_exit"
-run_test "codex_unrelated_later_negation_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_unrelated_later_negation_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_unrelated_later_negation_safe_fails_root_comment_exit"
+run_test "codex_unrelated_later_negation_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_unrelated_later_negation_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir"
 unset _codex_unrelated_later_negation_safe_fails_root_comment_mock_dir _codex_unrelated_later_negation_safe_fails_root_comment_output _codex_unrelated_later_negation_safe_fails_root_comment_exit
@@ -8197,8 +8213,8 @@ PATH="$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_clean_phrase_not_approved_root_comment_exit=$?
 _codex_quoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_quoted_clean_phrase_not_approved_root_comment_exit"
-run_test "codex_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_quoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_quoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir"
 unset _codex_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_quoted_clean_phrase_not_approved_root_comment_output _codex_quoted_clean_phrase_not_approved_root_comment_exit
@@ -8250,8 +8266,8 @@ PATH="$_codex_semicolon_scoped_negation_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_semicolon_scoped_negation_root_comment_exit=$?
 _codex_semicolon_scoped_negation_root_comment_output="$(cat "$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt")"
-run_test "codex_semicolon_scoped_negation_root_comment_exit_needs_revision" "1" "$_codex_semicolon_scoped_negation_root_comment_exit"
-run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_semicolon_scoped_negation_root_comment_exit_needs_revision" "2" "$_codex_semicolon_scoped_negation_root_comment_exit"
+run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_semicolon_scoped_negation_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_semicolon_scoped_negation_root_comment_mock_dir"
 unset _codex_semicolon_scoped_negation_root_comment_mock_dir _codex_semicolon_scoped_negation_root_comment_output _codex_semicolon_scoped_negation_root_comment_exit
@@ -8297,8 +8313,8 @@ PATH="$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_backtick_quoted_phrase_not_approved_root_comment_exit=$?
 _codex_backtick_quoted_phrase_not_approved_root_comment_output="$(cat "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_backtick_quoted_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_backtick_quoted_phrase_not_approved_root_comment_exit"
-run_test "codex_backtick_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_backtick_quoted_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_backtick_quoted_phrase_not_approved_root_comment_exit"
+run_test "codex_backtick_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_backtick_quoted_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir"
 unset _codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir _codex_backtick_quoted_phrase_not_approved_root_comment_output _codex_backtick_quoted_phrase_not_approved_root_comment_exit
@@ -8354,8 +8370,8 @@ PATH="$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_rejection_in_clean_review_root_comment_exit=$?
 _codex_quoted_rejection_in_clean_review_root_comment_output="$(cat "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_needs_revision" "1" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
-run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_needs_revision" "2" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_quoted_rejection_in_clean_review_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir"
 unset _codex_quoted_rejection_in_clean_review_root_comment_mock_dir _codex_quoted_rejection_in_clean_review_root_comment_output _codex_quoted_rejection_in_clean_review_root_comment_exit
@@ -8405,8 +8421,8 @@ PATH="$_codex_comma_scoped_negation_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_comma_scoped_negation_root_comment_exit=$?
 _codex_comma_scoped_negation_root_comment_output="$(cat "$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt")"
-run_test "codex_comma_scoped_negation_root_comment_exit_needs_revision" "1" "$_codex_comma_scoped_negation_root_comment_exit"
-run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_comma_scoped_negation_root_comment_exit_needs_revision" "2" "$_codex_comma_scoped_negation_root_comment_exit"
+run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_comma_scoped_negation_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_comma_scoped_negation_root_comment_mock_dir"
 unset _codex_comma_scoped_negation_root_comment_mock_dir _codex_comma_scoped_negation_root_comment_output _codex_comma_scoped_negation_root_comment_exit
@@ -8465,8 +8481,8 @@ PATH="$_codex_terminal_review_quotes_quota_message_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt" 2>&1 || _codex_terminal_review_quotes_quota_message_exit=$?
 _codex_terminal_review_quotes_quota_message_output="$(cat "$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt")"
-run_test "codex_terminal_review_quotes_quota_message_exit_needs_revision" "1" "$_codex_terminal_review_quotes_quota_message_exit"
-run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_terminal_review_quotes_quota_message_exit_needs_revision" "2" "$_codex_terminal_review_quotes_quota_message_exit"
+run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_terminal_review_quotes_quota_message_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_review_quotes_quota_message_mock_dir"
 unset _codex_terminal_review_quotes_quota_message_mock_dir _codex_terminal_review_quotes_quota_message_output _codex_terminal_review_quotes_quota_message_exit
@@ -8522,8 +8538,8 @@ PATH="$_codex_not_only_idiom_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_safe_fails_root_comment_exit=$?
 _codex_not_only_idiom_safe_fails_root_comment_output="$(cat "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_idiom_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_not_only_idiom_safe_fails_root_comment_exit"
-run_test "codex_not_only_idiom_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_not_only_idiom_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_not_only_idiom_safe_fails_root_comment_exit"
+run_test "codex_not_only_idiom_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_not_only_idiom_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir"
 unset _codex_not_only_idiom_safe_fails_root_comment_mock_dir _codex_not_only_idiom_safe_fails_root_comment_output _codex_not_only_idiom_safe_fails_root_comment_exit
@@ -8574,8 +8590,8 @@ PATH="$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_uppercase_safe_fails_root_comment_exit=$?
 _codex_not_only_idiom_uppercase_safe_fails_root_comment_output="$(cat "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_exit"
-run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_exit"
+run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir"
 unset _codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir _codex_not_only_idiom_uppercase_safe_fails_root_comment_output _codex_not_only_idiom_uppercase_safe_fails_root_comment_exit
@@ -8619,8 +8635,8 @@ PATH="$_codex_unable_to_approve_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_unable_to_approve_root_comment_mock_dir/output.txt" 2>&1 || _codex_unable_to_approve_root_comment_exit=$?
 _codex_unable_to_approve_root_comment_output="$(cat "$_codex_unable_to_approve_root_comment_mock_dir/output.txt")"
-run_test "codex_unable_to_approve_root_comment_exit_needs_revision" "1" "$_codex_unable_to_approve_root_comment_exit"
-run_test "codex_unable_to_approve_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_unable_to_approve_root_comment_exit_needs_revision" "2" "$_codex_unable_to_approve_root_comment_exit"
+run_test "codex_unable_to_approve_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_unable_to_approve_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_unable_to_approve_root_comment_mock_dir"
 unset _codex_unable_to_approve_root_comment_mock_dir _codex_unable_to_approve_root_comment_output _codex_unable_to_approve_root_comment_exit
@@ -8666,8 +8682,8 @@ PATH="$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_blockquoted_clean_phrase_not_approved_root_comment_exit=$?
 _codex_blockquoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_blockquoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_blockquoted_clean_phrase_not_approved_root_comment_exit"
-run_test "codex_blockquoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_blockquoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_blockquoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_blockquoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_blockquoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir"
 unset _codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir _codex_blockquoted_clean_phrase_not_approved_root_comment_output _codex_blockquoted_clean_phrase_not_approved_root_comment_exit
@@ -8725,8 +8741,8 @@ PATH="$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_blocker_token_safe_fails_root_comment_exit=$?
 _codex_quoted_blocker_token_safe_fails_root_comment_output="$(cat "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_blocker_token_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_quoted_blocker_token_safe_fails_root_comment_exit"
-run_test "codex_quoted_blocker_token_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_quoted_blocker_token_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_quoted_blocker_token_safe_fails_root_comment_exit"
+run_test "codex_quoted_blocker_token_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_quoted_blocker_token_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir"
 unset _codex_quoted_blocker_token_safe_fails_root_comment_mock_dir _codex_quoted_blocker_token_safe_fails_root_comment_output _codex_quoted_blocker_token_safe_fails_root_comment_exit
@@ -8778,8 +8794,8 @@ PATH="$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_di
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit=$?
 _codex_fenced_example_outside_blocker_stays_blocking_root_comment_output="$(cat "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/output.txt")"
-run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit_needs_revision" "1" "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit"
-run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit_needs_revision" "2" "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit"
+run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir"
 unset _codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir _codex_fenced_example_outside_blocker_stays_blocking_root_comment_output _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit
@@ -9048,8 +9064,8 @@ PATH="$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir:$
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit=$?
 _codex_multiline_quoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit"
-run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir"
 unset _codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_multiline_quoted_clean_phrase_not_approved_root_comment_output _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit
@@ -9100,8 +9116,8 @@ PATH="$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit=$?
 _codex_multiline_single_quoted_whole_line_not_approved_root_comment_output="$(cat "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit"
-run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit_needs_revision" "2" "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit"
+run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir"
 unset _codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir _codex_multiline_single_quoted_whole_line_not_approved_root_comment_output _codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit
@@ -9152,8 +9168,8 @@ PATH="$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir:$PATH" 
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_backtick_span_not_approved_root_comment_exit=$?
 _codex_multiline_backtick_span_not_approved_root_comment_output="$(cat "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_multiline_backtick_span_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_backtick_span_not_approved_root_comment_exit"
-run_test "codex_multiline_backtick_span_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_multiline_backtick_span_not_approved_root_comment_exit_needs_revision" "2" "$_codex_multiline_backtick_span_not_approved_root_comment_exit"
+run_test "codex_multiline_backtick_span_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_multiline_backtick_span_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir"
 unset _codex_multiline_backtick_span_not_approved_root_comment_mock_dir _codex_multiline_backtick_span_not_approved_root_comment_output _codex_multiline_backtick_span_not_approved_root_comment_exit
@@ -9201,8 +9217,8 @@ PATH="$_codex_dont_approve_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_dont_approve_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_dont_approve_not_approved_root_comment_exit=$?
 _codex_dont_approve_not_approved_root_comment_output="$(cat "$_codex_dont_approve_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_dont_approve_not_approved_root_comment_exit_needs_revision" "1" "$_codex_dont_approve_not_approved_root_comment_exit"
-run_test "codex_dont_approve_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_dont_approve_not_approved_root_comment_exit_needs_revision" "2" "$_codex_dont_approve_not_approved_root_comment_exit"
+run_test "codex_dont_approve_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_dont_approve_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_dont_approve_not_approved_root_comment_mock_dir"
 unset _codex_dont_approve_not_approved_root_comment_mock_dir _codex_dont_approve_not_approved_root_comment_output _codex_dont_approve_not_approved_root_comment_exit
@@ -9255,8 +9271,8 @@ PATH="$_codex_double_backtick_span_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_double_backtick_span_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_double_backtick_span_not_approved_root_comment_exit=$?
 _codex_double_backtick_span_not_approved_root_comment_output="$(cat "$_codex_double_backtick_span_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_double_backtick_span_not_approved_root_comment_exit_needs_revision" "1" "$_codex_double_backtick_span_not_approved_root_comment_exit"
-run_test "codex_double_backtick_span_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_double_backtick_span_not_approved_root_comment_exit_needs_revision" "2" "$_codex_double_backtick_span_not_approved_root_comment_exit"
+run_test "codex_double_backtick_span_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_double_backtick_span_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_double_backtick_span_not_approved_root_comment_mock_dir"
 unset _codex_double_backtick_span_not_approved_root_comment_mock_dir _codex_double_backtick_span_not_approved_root_comment_output _codex_double_backtick_span_not_approved_root_comment_exit
@@ -9308,8 +9324,8 @@ PATH="$_codex_should_not_be_merged_blocking_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_should_not_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_should_not_be_merged_blocking_root_comment_exit=$?
 _codex_should_not_be_merged_blocking_root_comment_output="$(cat "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/output.txt")"
-run_test "codex_should_not_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_should_not_be_merged_blocking_root_comment_exit"
-run_test "codex_should_not_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_should_not_be_merged_blocking_root_comment_exit_needs_revision" "2" "$_codex_should_not_be_merged_blocking_root_comment_exit"
+run_test "codex_should_not_be_merged_blocking_root_comment_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_should_not_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_should_not_be_merged_blocking_root_comment_mock_dir"
 unset _codex_should_not_be_merged_blocking_root_comment_mock_dir _codex_should_not_be_merged_blocking_root_comment_output _codex_should_not_be_merged_blocking_root_comment_exit
@@ -9357,8 +9373,8 @@ PATH="$_codex_do_not_merge_blocking_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_do_not_merge_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_do_not_merge_blocking_root_comment_exit=$?
 _codex_do_not_merge_blocking_root_comment_output="$(cat "$_codex_do_not_merge_blocking_root_comment_mock_dir/output.txt")"
-run_test "codex_do_not_merge_blocking_root_comment_exit_needs_revision" "1" "$_codex_do_not_merge_blocking_root_comment_exit"
-run_test "codex_do_not_merge_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_do_not_merge_blocking_root_comment_exit_needs_revision" "2" "$_codex_do_not_merge_blocking_root_comment_exit"
+run_test "codex_do_not_merge_blocking_root_comment_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_do_not_merge_blocking_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_do_not_merge_blocking_root_comment_mock_dir"
 unset _codex_do_not_merge_blocking_root_comment_mock_dir _codex_do_not_merge_blocking_root_comment_output _codex_do_not_merge_blocking_root_comment_exit
@@ -9409,8 +9425,8 @@ PATH="$_codex_cannot_be_merged_blocking_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_cannot_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_cannot_be_merged_blocking_root_comment_exit=$?
 _codex_cannot_be_merged_blocking_root_comment_output="$(cat "$_codex_cannot_be_merged_blocking_root_comment_mock_dir/output.txt")"
-run_test "codex_cannot_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_cannot_be_merged_blocking_root_comment_exit"
-run_test "codex_cannot_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_cannot_be_merged_blocking_root_comment_exit_needs_revision" "2" "$_codex_cannot_be_merged_blocking_root_comment_exit"
+run_test "codex_cannot_be_merged_blocking_root_comment_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_cannot_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_cannot_be_merged_blocking_root_comment_mock_dir"
 unset _codex_cannot_be_merged_blocking_root_comment_mock_dir _codex_cannot_be_merged_blocking_root_comment_output _codex_cannot_be_merged_blocking_root_comment_exit
@@ -9468,8 +9484,8 @@ PATH="$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir:$
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_negation_before_merge_safe_fails_root_comment_exit=$?
 _codex_unrelated_negation_before_merge_safe_fails_root_comment_output="$(cat "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_exit"
-run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_exit"
+run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir"
 unset _codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir _codex_unrelated_negation_before_merge_safe_fails_root_comment_output _codex_unrelated_negation_before_merge_safe_fails_root_comment_exit
@@ -9519,8 +9535,8 @@ PATH="$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_shouldnt_be_merged_blocking_root_comment_exit=$?
 _codex_shouldnt_be_merged_blocking_root_comment_output="$(cat "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/output.txt")"
-run_test "codex_shouldnt_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_shouldnt_be_merged_blocking_root_comment_exit"
-run_test "codex_shouldnt_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_shouldnt_be_merged_blocking_root_comment_exit_needs_revision" "2" "$_codex_shouldnt_be_merged_blocking_root_comment_exit"
+run_test "codex_shouldnt_be_merged_blocking_root_comment_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_shouldnt_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir"
 unset _codex_shouldnt_be_merged_blocking_root_comment_mock_dir _codex_shouldnt_be_merged_blocking_root_comment_output _codex_shouldnt_be_merged_blocking_root_comment_exit
@@ -9584,8 +9600,8 @@ PATH="$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_safe_to_merge_safe_fails_root_comment_exit=$?
 _codex_not_only_safe_to_merge_safe_fails_root_comment_output="$(cat "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_not_only_safe_to_merge_safe_fails_root_comment_exit"
-run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_not_only_safe_to_merge_safe_fails_root_comment_exit"
+run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_not_only_safe_to_merge_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir"
 unset _codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir _codex_not_only_safe_to_merge_safe_fails_root_comment_output _codex_not_only_safe_to_merge_safe_fails_root_comment_exit
@@ -9630,8 +9646,8 @@ PATH="$_codex_wouldnt_approve_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_wouldnt_approve_not_approved_root_comment_exit=$?
 _codex_wouldnt_approve_not_approved_root_comment_output="$(cat "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_wouldnt_approve_not_approved_root_comment_exit_needs_revision" "1" "$_codex_wouldnt_approve_not_approved_root_comment_exit"
-run_test "codex_wouldnt_approve_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_wouldnt_approve_not_approved_root_comment_exit_needs_revision" "2" "$_codex_wouldnt_approve_not_approved_root_comment_exit"
+run_test "codex_wouldnt_approve_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_wouldnt_approve_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir"
 unset _codex_wouldnt_approve_not_approved_root_comment_mock_dir _codex_wouldnt_approve_not_approved_root_comment_output _codex_wouldnt_approve_not_approved_root_comment_exit
@@ -9694,8 +9710,8 @@ PATH="$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir:
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit=$?
 _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output="$(cat "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit"
-run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit"
+run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir"
 unset _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit
@@ -9740,8 +9756,8 @@ PATH="$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_single_quoted_phrase_not_approved_root_comment_exit=$?
 _codex_single_quoted_phrase_not_approved_root_comment_output="$(cat "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_single_quoted_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_single_quoted_phrase_not_approved_root_comment_exit"
-run_test "codex_single_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_single_quoted_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_single_quoted_phrase_not_approved_root_comment_exit"
+run_test "codex_single_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_single_quoted_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir"
 unset _codex_single_quoted_phrase_not_approved_root_comment_mock_dir _codex_single_quoted_phrase_not_approved_root_comment_output _codex_single_quoted_phrase_not_approved_root_comment_exit
@@ -9794,8 +9810,8 @@ PATH="$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt" 2>&1 || _codex_contraction_apostrophes_not_mangled_root_comment_exit=$?
 _codex_contraction_apostrophes_not_mangled_root_comment_output="$(cat "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt")"
-run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_needs_revision" "1" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
-run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_needs_revision" "2" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_contraction_apostrophes_not_mangled_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir"
 unset _codex_contraction_apostrophes_not_mangled_root_comment_mock_dir _codex_contraction_apostrophes_not_mangled_root_comment_output _codex_contraction_apostrophes_not_mangled_root_comment_exit
@@ -9846,8 +9862,8 @@ PATH="$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_code_block_phrase_not_approved_root_comment_exit=$?
 _codex_fenced_code_block_phrase_not_approved_root_comment_output="$(cat "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_fenced_code_block_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_fenced_code_block_phrase_not_approved_root_comment_exit"
-run_test "codex_fenced_code_block_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_fenced_code_block_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_fenced_code_block_phrase_not_approved_root_comment_exit"
+run_test "codex_fenced_code_block_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_fenced_code_block_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir"
 unset _codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir _codex_fenced_code_block_phrase_not_approved_root_comment_output _codex_fenced_code_block_phrase_not_approved_root_comment_exit
@@ -9896,8 +9912,8 @@ PATH="$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir:$PAT
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_nested_fence_length_phrase_not_approved_root_comment_exit=$?
 _codex_nested_fence_length_phrase_not_approved_root_comment_output="$(cat "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_nested_fence_length_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_nested_fence_length_phrase_not_approved_root_comment_exit"
-run_test "codex_nested_fence_length_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_nested_fence_length_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_nested_fence_length_phrase_not_approved_root_comment_exit"
+run_test "codex_nested_fence_length_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_nested_fence_length_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir"
 unset _codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir _codex_nested_fence_length_phrase_not_approved_root_comment_output _codex_nested_fence_length_phrase_not_approved_root_comment_exit
@@ -9945,8 +9961,8 @@ PATH="$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir:$PATH" 
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/output.txt" 2>&1 || _codex_fence_close_requires_whitespace_only_root_comment_exit=$?
 _codex_fence_close_requires_whitespace_only_root_comment_output="$(cat "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/output.txt")"
-run_test "codex_fence_close_requires_whitespace_only_root_comment_exit_needs_revision" "1" "$_codex_fence_close_requires_whitespace_only_root_comment_exit"
-run_test "codex_fence_close_requires_whitespace_only_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_fence_close_requires_whitespace_only_root_comment_exit_needs_revision" "2" "$_codex_fence_close_requires_whitespace_only_root_comment_exit"
+run_test "codex_fence_close_requires_whitespace_only_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_fence_close_requires_whitespace_only_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir"
 unset _codex_fence_close_requires_whitespace_only_root_comment_mock_dir _codex_fence_close_requires_whitespace_only_root_comment_output _codex_fence_close_requires_whitespace_only_root_comment_exit
@@ -9997,8 +10013,8 @@ PATH="$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_tilde_fence_phrase_not_approved_root_comment_exit=$?
 _codex_tilde_fence_phrase_not_approved_root_comment_output="$(cat "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_tilde_fence_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_tilde_fence_phrase_not_approved_root_comment_exit"
-run_test "codex_tilde_fence_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_tilde_fence_phrase_not_approved_root_comment_exit_needs_revision" "2" "$_codex_tilde_fence_phrase_not_approved_root_comment_exit"
+run_test "codex_tilde_fence_phrase_not_approved_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_tilde_fence_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir"
 unset _codex_tilde_fence_phrase_not_approved_root_comment_mock_dir _codex_tilde_fence_phrase_not_approved_root_comment_output _codex_tilde_fence_phrase_not_approved_root_comment_exit
@@ -10055,8 +10071,8 @@ PATH="$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_inline_backtick_pair_safe_fails_root_comment_exit=$?
 _codex_inline_backtick_pair_safe_fails_root_comment_output="$(cat "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_inline_backtick_pair_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_inline_backtick_pair_safe_fails_root_comment_exit"
-run_test "codex_inline_backtick_pair_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_inline_backtick_pair_safe_fails_root_comment_exit_needs_revision" "2" "$_codex_inline_backtick_pair_safe_fails_root_comment_exit"
+run_test "codex_inline_backtick_pair_safe_fails_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_inline_backtick_pair_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir"
 unset _codex_inline_backtick_pair_safe_fails_root_comment_mock_dir _codex_inline_backtick_pair_safe_fails_root_comment_output _codex_inline_backtick_pair_safe_fails_root_comment_exit
@@ -10110,8 +10126,8 @@ PATH="$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir:$PATH" 
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_quota_example_not_unavailable_root_comment_exit=$?
 _codex_fenced_quota_example_not_unavailable_root_comment_output="$(cat "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/output.txt")"
-run_test "codex_fenced_quota_example_not_unavailable_root_comment_exit_needs_revision" "1" "$_codex_fenced_quota_example_not_unavailable_root_comment_exit"
-run_test "codex_fenced_quota_example_not_unavailable_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_fenced_quota_example_not_unavailable_root_comment_exit_needs_revision" "2" "$_codex_fenced_quota_example_not_unavailable_root_comment_exit"
+run_test "codex_fenced_quota_example_not_unavailable_root_comment_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_fenced_quota_example_not_unavailable_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir"
 unset _codex_fenced_quota_example_not_unavailable_root_comment_mock_dir _codex_fenced_quota_example_not_unavailable_root_comment_output _codex_fenced_quota_example_not_unavailable_root_comment_exit
@@ -10162,8 +10178,8 @@ PATH="$_codex_env_error_vs_unrecognized_review_tie_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_env_error_vs_unrecognized_review_tie_mock_dir/output.txt" 2>&1 || _codex_env_error_vs_unrecognized_review_tie_exit=$?
 _codex_env_error_vs_unrecognized_review_tie_output="$(cat "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/output.txt")"
-run_test "codex_env_error_vs_unrecognized_review_tie_exit_needs_revision" "1" "$_codex_env_error_vs_unrecognized_review_tie_exit"
-run_test "codex_env_error_vs_unrecognized_review_tie_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_env_error_vs_unrecognized_review_tie_exit_needs_revision" "2" "$_codex_env_error_vs_unrecognized_review_tie_exit"
+run_test "codex_env_error_vs_unrecognized_review_tie_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_env_error_vs_unrecognized_review_tie_output" | grep "^VERDICT:")"
 run_test "codex_env_error_vs_unrecognized_review_tie_reason_not_env_missing" "" \
   "$(printf '%s\n' "$_codex_env_error_vs_unrecognized_review_tie_output" | grep "^REASON=codex-github-environment-missing")"
@@ -10509,8 +10525,8 @@ PATH="$_codex_cloud_environment_finding_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_cloud_environment_finding_mock_dir/output.txt" 2>&1 || _codex_cloud_environment_finding_exit=$?
 _codex_cloud_environment_finding_output="$(cat "$_codex_cloud_environment_finding_mock_dir/output.txt")"
-run_test "codex_cloud_environment_finding_exit_needs_revision" "1" "$_codex_cloud_environment_finding_exit"
-run_test "codex_cloud_environment_finding_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_cloud_environment_finding_exit_needs_revision" "2" "$_codex_cloud_environment_finding_exit"
+run_test "codex_cloud_environment_finding_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_cloud_environment_finding_output" | grep "^VERDICT:")"
 rm -rf "$_codex_cloud_environment_finding_mock_dir"
 unset _codex_cloud_environment_finding_mock_dir _codex_cloud_environment_finding_output _codex_cloud_environment_finding_exit
@@ -10549,8 +10565,8 @@ PATH="$_codex_environment_phrase_finding_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_environment_phrase_finding_mock_dir/output.txt" 2>&1 || _codex_environment_phrase_finding_exit=$?
 _codex_environment_phrase_finding_output="$(cat "$_codex_environment_phrase_finding_mock_dir/output.txt")"
-run_test "codex_environment_phrase_finding_exit_needs_revision" "1" "$_codex_environment_phrase_finding_exit"
-run_test "codex_environment_phrase_finding_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_environment_phrase_finding_exit_needs_revision" "2" "$_codex_environment_phrase_finding_exit"
+run_test "codex_environment_phrase_finding_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_environment_phrase_finding_output" | grep "^VERDICT:")"
 rm -rf "$_codex_environment_phrase_finding_mock_dir"
 unset _codex_environment_phrase_finding_mock_dir _codex_environment_phrase_finding_output _codex_environment_phrase_finding_exit
@@ -10589,8 +10605,8 @@ PATH="$_codex_quoted_environment_finding_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_environment_finding_mock_dir/output.txt" 2>&1 || _codex_quoted_environment_finding_exit=$?
 _codex_quoted_environment_finding_output="$(cat "$_codex_quoted_environment_finding_mock_dir/output.txt")"
-run_test "codex_quoted_environment_finding_exit_needs_revision" "1" "$_codex_quoted_environment_finding_exit"
-run_test "codex_quoted_environment_finding_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_quoted_environment_finding_exit_needs_revision" "2" "$_codex_quoted_environment_finding_exit"
+run_test "codex_quoted_environment_finding_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_quoted_environment_finding_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_environment_finding_mock_dir"
 unset _codex_quoted_environment_finding_mock_dir _codex_quoted_environment_finding_output _codex_quoted_environment_finding_exit
@@ -10861,8 +10877,8 @@ PATH="$_codex_e2_real_pr1490_review_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e2_real_pr1490_review_not_approved_mock_dir/output.txt" 2>&1 || _codex_e2_real_pr1490_review_not_approved_exit=$?
 _codex_e2_real_pr1490_review_not_approved_output="$(cat "$_codex_e2_real_pr1490_review_not_approved_mock_dir/output.txt")"
-run_test "codex_e2_real_pr1490_review_not_approved_exit_needs_revision" "1" "$_codex_e2_real_pr1490_review_not_approved_exit"
-run_test "codex_e2_real_pr1490_review_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e2_real_pr1490_review_not_approved_exit_needs_revision" "2" "$_codex_e2_real_pr1490_review_not_approved_exit"
+run_test "codex_e2_real_pr1490_review_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e2_real_pr1490_review_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e2_real_pr1490_review_not_approved_mock_dir"
 unset _codex_e2_real_pr1490_review_not_approved_mock_dir _codex_e2_real_pr1490_review_not_approved_output _codex_e2_real_pr1490_review_not_approved_exit
@@ -10907,8 +10923,8 @@ PATH="$_codex_e3_missing_swish_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e3_missing_swish_not_approved_mock_dir/output.txt" 2>&1 || _codex_e3_missing_swish_not_approved_exit=$?
 _codex_e3_missing_swish_not_approved_output="$(cat "$_codex_e3_missing_swish_not_approved_mock_dir/output.txt")"
-run_test "codex_e3_missing_swish_not_approved_exit_needs_revision" "1" "$_codex_e3_missing_swish_not_approved_exit"
-run_test "codex_e3_missing_swish_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e3_missing_swish_not_approved_exit_needs_revision" "2" "$_codex_e3_missing_swish_not_approved_exit"
+run_test "codex_e3_missing_swish_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e3_missing_swish_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e3_missing_swish_not_approved_mock_dir"
 unset _codex_e3_missing_swish_not_approved_mock_dir _codex_e3_missing_swish_not_approved_output _codex_e3_missing_swish_not_approved_exit
@@ -10954,8 +10970,8 @@ PATH="$_codex_e5_short_sha_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e5_short_sha_not_approved_mock_dir/output.txt" 2>&1 || _codex_e5_short_sha_not_approved_exit=$?
 _codex_e5_short_sha_not_approved_output="$(cat "$_codex_e5_short_sha_not_approved_mock_dir/output.txt")"
-run_test "codex_e5_short_sha_not_approved_exit_needs_revision" "1" "$_codex_e5_short_sha_not_approved_exit"
-run_test "codex_e5_short_sha_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e5_short_sha_not_approved_exit_needs_revision" "2" "$_codex_e5_short_sha_not_approved_exit"
+run_test "codex_e5_short_sha_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e5_short_sha_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e5_short_sha_not_approved_mock_dir"
 unset _codex_e5_short_sha_not_approved_mock_dir _codex_e5_short_sha_not_approved_output _codex_e5_short_sha_not_approved_exit
@@ -10998,8 +11014,8 @@ PATH="$_codex_e6_oversized_sha_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e6_oversized_sha_not_approved_mock_dir/output.txt" 2>&1 || _codex_e6_oversized_sha_not_approved_exit=$?
 _codex_e6_oversized_sha_not_approved_output="$(cat "$_codex_e6_oversized_sha_not_approved_mock_dir/output.txt")"
-run_test "codex_e6_oversized_sha_not_approved_exit_needs_revision" "1" "$_codex_e6_oversized_sha_not_approved_exit"
-run_test "codex_e6_oversized_sha_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e6_oversized_sha_not_approved_exit_needs_revision" "2" "$_codex_e6_oversized_sha_not_approved_exit"
+run_test "codex_e6_oversized_sha_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e6_oversized_sha_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e6_oversized_sha_not_approved_mock_dir"
 unset _codex_e6_oversized_sha_not_approved_mock_dir _codex_e6_oversized_sha_not_approved_output _codex_e6_oversized_sha_not_approved_exit
@@ -11085,8 +11101,8 @@ PATH="$_codex_e8_non_hex_sha_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e8_non_hex_sha_not_approved_mock_dir/output.txt" 2>&1 || _codex_e8_non_hex_sha_not_approved_exit=$?
 _codex_e8_non_hex_sha_not_approved_output="$(cat "$_codex_e8_non_hex_sha_not_approved_mock_dir/output.txt")"
-run_test "codex_e8_non_hex_sha_not_approved_exit_needs_revision" "1" "$_codex_e8_non_hex_sha_not_approved_exit"
-run_test "codex_e8_non_hex_sha_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e8_non_hex_sha_not_approved_exit_needs_revision" "2" "$_codex_e8_non_hex_sha_not_approved_exit"
+run_test "codex_e8_non_hex_sha_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e8_non_hex_sha_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e8_non_hex_sha_not_approved_mock_dir"
 unset _codex_e8_non_hex_sha_not_approved_mock_dir _codex_e8_non_hex_sha_not_approved_output _codex_e8_non_hex_sha_not_approved_exit
@@ -11129,8 +11145,8 @@ PATH="$_codex_e9_leading_prose_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e9_leading_prose_not_approved_mock_dir/output.txt" 2>&1 || _codex_e9_leading_prose_not_approved_exit=$?
 _codex_e9_leading_prose_not_approved_output="$(cat "$_codex_e9_leading_prose_not_approved_mock_dir/output.txt")"
-run_test "codex_e9_leading_prose_not_approved_exit_needs_revision" "1" "$_codex_e9_leading_prose_not_approved_exit"
-run_test "codex_e9_leading_prose_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e9_leading_prose_not_approved_exit_needs_revision" "2" "$_codex_e9_leading_prose_not_approved_exit"
+run_test "codex_e9_leading_prose_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e9_leading_prose_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e9_leading_prose_not_approved_mock_dir"
 unset _codex_e9_leading_prose_not_approved_mock_dir _codex_e9_leading_prose_not_approved_output _codex_e9_leading_prose_not_approved_exit
@@ -11174,8 +11190,8 @@ PATH="$_codex_e10_trailing_prose_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e10_trailing_prose_not_approved_mock_dir/output.txt" 2>&1 || _codex_e10_trailing_prose_not_approved_exit=$?
 _codex_e10_trailing_prose_not_approved_output="$(cat "$_codex_e10_trailing_prose_not_approved_mock_dir/output.txt")"
-run_test "codex_e10_trailing_prose_not_approved_exit_needs_revision" "1" "$_codex_e10_trailing_prose_not_approved_exit"
-run_test "codex_e10_trailing_prose_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e10_trailing_prose_not_approved_exit_needs_revision" "2" "$_codex_e10_trailing_prose_not_approved_exit"
+run_test "codex_e10_trailing_prose_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e10_trailing_prose_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e10_trailing_prose_not_approved_mock_dir"
 unset _codex_e10_trailing_prose_not_approved_mock_dir _codex_e10_trailing_prose_not_approved_output _codex_e10_trailing_prose_not_approved_exit
@@ -11221,8 +11237,8 @@ PATH="$_codex_e11_fenced_wrapper_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e11_fenced_wrapper_not_approved_mock_dir/output.txt" 2>&1 || _codex_e11_fenced_wrapper_not_approved_exit=$?
 _codex_e11_fenced_wrapper_not_approved_output="$(cat "$_codex_e11_fenced_wrapper_not_approved_mock_dir/output.txt")"
-run_test "codex_e11_fenced_wrapper_not_approved_exit_needs_revision" "1" "$_codex_e11_fenced_wrapper_not_approved_exit"
-run_test "codex_e11_fenced_wrapper_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e11_fenced_wrapper_not_approved_exit_needs_revision" "2" "$_codex_e11_fenced_wrapper_not_approved_exit"
+run_test "codex_e11_fenced_wrapper_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e11_fenced_wrapper_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e11_fenced_wrapper_not_approved_mock_dir"
 unset _codex_e11_fenced_wrapper_not_approved_mock_dir _codex_e11_fenced_wrapper_not_approved_output _codex_e11_fenced_wrapper_not_approved_exit
@@ -11332,8 +11348,8 @@ PATH="$_codex_e13_case_altered_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e13_case_altered_not_approved_mock_dir/output.txt" 2>&1 || _codex_e13_case_altered_not_approved_exit=$?
 _codex_e13_case_altered_not_approved_output="$(cat "$_codex_e13_case_altered_not_approved_mock_dir/output.txt")"
-run_test "codex_e13_case_altered_not_approved_exit_needs_revision" "1" "$_codex_e13_case_altered_not_approved_exit"
-run_test "codex_e13_case_altered_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e13_case_altered_not_approved_exit_needs_revision" "2" "$_codex_e13_case_altered_not_approved_exit"
+run_test "codex_e13_case_altered_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e13_case_altered_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e13_case_altered_not_approved_mock_dir"
 unset _codex_e13_case_altered_not_approved_mock_dir _codex_e13_case_altered_not_approved_output _codex_e13_case_altered_not_approved_exit
@@ -11378,8 +11394,8 @@ PATH="$_codex_e15_underscore_variant_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e15_underscore_variant_not_approved_mock_dir/output.txt" 2>&1 || _codex_e15_underscore_variant_not_approved_exit=$?
 _codex_e15_underscore_variant_not_approved_output="$(cat "$_codex_e15_underscore_variant_not_approved_mock_dir/output.txt")"
-run_test "codex_e15_underscore_variant_not_approved_exit_needs_revision" "1" "$_codex_e15_underscore_variant_not_approved_exit"
-run_test "codex_e15_underscore_variant_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e15_underscore_variant_not_approved_exit_needs_revision" "2" "$_codex_e15_underscore_variant_not_approved_exit"
+run_test "codex_e15_underscore_variant_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e15_underscore_variant_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e15_underscore_variant_not_approved_mock_dir"
 unset _codex_e15_underscore_variant_not_approved_mock_dir _codex_e15_underscore_variant_not_approved_output _codex_e15_underscore_variant_not_approved_exit
@@ -11424,8 +11440,8 @@ PATH="$_codex_e16_disqualifier_gap_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e16_disqualifier_gap_not_approved_mock_dir/output.txt" 2>&1 || _codex_e16_disqualifier_gap_not_approved_exit=$?
 _codex_e16_disqualifier_gap_not_approved_output="$(cat "$_codex_e16_disqualifier_gap_not_approved_mock_dir/output.txt")"
-run_test "codex_e16_disqualifier_gap_not_approved_exit_needs_revision" "1" "$_codex_e16_disqualifier_gap_not_approved_exit"
-run_test "codex_e16_disqualifier_gap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e16_disqualifier_gap_not_approved_exit_needs_revision" "2" "$_codex_e16_disqualifier_gap_not_approved_exit"
+run_test "codex_e16_disqualifier_gap_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e16_disqualifier_gap_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e16_disqualifier_gap_not_approved_mock_dir"
 unset _codex_e16_disqualifier_gap_not_approved_mock_dir _codex_e16_disqualifier_gap_not_approved_output _codex_e16_disqualifier_gap_not_approved_exit
@@ -11470,8 +11486,8 @@ PATH="$_codex_e17_zero_tolerance_gap_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e17_zero_tolerance_gap_not_approved_mock_dir/output.txt" 2>&1 || _codex_e17_zero_tolerance_gap_not_approved_exit=$?
 _codex_e17_zero_tolerance_gap_not_approved_output="$(cat "$_codex_e17_zero_tolerance_gap_not_approved_mock_dir/output.txt")"
-run_test "codex_e17_zero_tolerance_gap_not_approved_exit_needs_revision" "1" "$_codex_e17_zero_tolerance_gap_not_approved_exit"
-run_test "codex_e17_zero_tolerance_gap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e17_zero_tolerance_gap_not_approved_exit_needs_revision" "2" "$_codex_e17_zero_tolerance_gap_not_approved_exit"
+run_test "codex_e17_zero_tolerance_gap_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e17_zero_tolerance_gap_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e17_zero_tolerance_gap_not_approved_mock_dir"
 unset _codex_e17_zero_tolerance_gap_not_approved_mock_dir _codex_e17_zero_tolerance_gap_not_approved_output _codex_e17_zero_tolerance_gap_not_approved_exit
@@ -11516,8 +11532,8 @@ PATH="$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir/output.txt" 2>&1 || _codex_e18_vendor_flavor_token_gap_not_approved_exit=$?
 _codex_e18_vendor_flavor_token_gap_not_approved_output="$(cat "$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir/output.txt")"
-run_test "codex_e18_vendor_flavor_token_gap_not_approved_exit_needs_revision" "1" "$_codex_e18_vendor_flavor_token_gap_not_approved_exit"
-run_test "codex_e18_vendor_flavor_token_gap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e18_vendor_flavor_token_gap_not_approved_exit_needs_revision" "2" "$_codex_e18_vendor_flavor_token_gap_not_approved_exit"
+run_test "codex_e18_vendor_flavor_token_gap_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e18_vendor_flavor_token_gap_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir"
 unset _codex_e18_vendor_flavor_token_gap_not_approved_mock_dir _codex_e18_vendor_flavor_token_gap_not_approved_output _codex_e18_vendor_flavor_token_gap_not_approved_exit
@@ -11565,8 +11581,8 @@ PATH="$_codex_e19_non_vendor_details_block_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e19_non_vendor_details_block_not_approved_mock_dir/output.txt" 2>&1 || _codex_e19_non_vendor_details_block_not_approved_exit=$?
 _codex_e19_non_vendor_details_block_not_approved_output="$(cat "$_codex_e19_non_vendor_details_block_not_approved_mock_dir/output.txt")"
-run_test "codex_e19_non_vendor_details_block_not_approved_exit_needs_revision" "1" "$_codex_e19_non_vendor_details_block_not_approved_exit"
-run_test "codex_e19_non_vendor_details_block_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e19_non_vendor_details_block_not_approved_exit_needs_revision" "2" "$_codex_e19_non_vendor_details_block_not_approved_exit"
+run_test "codex_e19_non_vendor_details_block_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e19_non_vendor_details_block_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e19_non_vendor_details_block_not_approved_mock_dir"
 unset _codex_e19_non_vendor_details_block_not_approved_mock_dir _codex_e19_non_vendor_details_block_not_approved_output _codex_e19_non_vendor_details_block_not_approved_exit
@@ -11613,8 +11629,8 @@ PATH="$_codex_e20_tag_flexible_variant_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e20_tag_flexible_variant_not_approved_mock_dir/output.txt" 2>&1 || _codex_e20_tag_flexible_variant_not_approved_exit=$?
 _codex_e20_tag_flexible_variant_not_approved_output="$(cat "$_codex_e20_tag_flexible_variant_not_approved_mock_dir/output.txt")"
-run_test "codex_e20_tag_flexible_variant_not_approved_exit_needs_revision" "1" "$_codex_e20_tag_flexible_variant_not_approved_exit"
-run_test "codex_e20_tag_flexible_variant_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e20_tag_flexible_variant_not_approved_exit_needs_revision" "2" "$_codex_e20_tag_flexible_variant_not_approved_exit"
+run_test "codex_e20_tag_flexible_variant_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e20_tag_flexible_variant_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e20_tag_flexible_variant_not_approved_mock_dir"
 unset _codex_e20_tag_flexible_variant_not_approved_mock_dir _codex_e20_tag_flexible_variant_not_approved_output _codex_e20_tag_flexible_variant_not_approved_exit
@@ -11660,8 +11676,8 @@ PATH="$_codex_e21_filler_composed_hedge_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e21_filler_composed_hedge_not_approved_mock_dir/output.txt" 2>&1 || _codex_e21_filler_composed_hedge_not_approved_exit=$?
 _codex_e21_filler_composed_hedge_not_approved_output="$(cat "$_codex_e21_filler_composed_hedge_not_approved_mock_dir/output.txt")"
-run_test "codex_e21_filler_composed_hedge_not_approved_exit_needs_revision" "1" "$_codex_e21_filler_composed_hedge_not_approved_exit"
-run_test "codex_e21_filler_composed_hedge_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e21_filler_composed_hedge_not_approved_exit_needs_revision" "2" "$_codex_e21_filler_composed_hedge_not_approved_exit"
+run_test "codex_e21_filler_composed_hedge_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e21_filler_composed_hedge_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e21_filler_composed_hedge_not_approved_mock_dir"
 unset _codex_e21_filler_composed_hedge_not_approved_mock_dir _codex_e21_filler_composed_hedge_not_approved_output _codex_e21_filler_composed_hedge_not_approved_exit
@@ -11712,8 +11728,8 @@ PATH="$_codex_e22_refusal_inside_footer_blocking_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e22_refusal_inside_footer_blocking_mock_dir/output.txt" 2>&1 || _codex_e22_refusal_inside_footer_blocking_exit=$?
 _codex_e22_refusal_inside_footer_blocking_output="$(cat "$_codex_e22_refusal_inside_footer_blocking_mock_dir/output.txt")"
-run_test "codex_e22_refusal_inside_footer_blocking_exit_needs_revision" "1" "$_codex_e22_refusal_inside_footer_blocking_exit"
-run_test "codex_e22_refusal_inside_footer_blocking_verdict" "VERDICT: NEEDS_REVISION" \
+run_test "codex_e22_refusal_inside_footer_blocking_exit_needs_revision" "2" "$_codex_e22_refusal_inside_footer_blocking_exit"
+run_test "codex_e22_refusal_inside_footer_blocking_verdict" "VERDICT: ESCALATE — Codex finding has no stable review-thread identifier or no identifiable matching review-thread conversation" \
   "$(printf '%s\n' "$_codex_e22_refusal_inside_footer_blocking_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e22_refusal_inside_footer_blocking_mock_dir"
 unset _codex_e22_refusal_inside_footer_blocking_mock_dir _codex_e22_refusal_inside_footer_blocking_output _codex_e22_refusal_inside_footer_blocking_exit
@@ -11759,8 +11775,8 @@ PATH="$_codex_e23_footer_opening_line_only_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e23_footer_opening_line_only_not_approved_mock_dir/output.txt" 2>&1 || _codex_e23_footer_opening_line_only_not_approved_exit=$?
 _codex_e23_footer_opening_line_only_not_approved_output="$(cat "$_codex_e23_footer_opening_line_only_not_approved_mock_dir/output.txt")"
-run_test "codex_e23_footer_opening_line_only_not_approved_exit_needs_revision" "1" "$_codex_e23_footer_opening_line_only_not_approved_exit"
-run_test "codex_e23_footer_opening_line_only_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e23_footer_opening_line_only_not_approved_exit_needs_revision" "2" "$_codex_e23_footer_opening_line_only_not_approved_exit"
+run_test "codex_e23_footer_opening_line_only_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e23_footer_opening_line_only_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e23_footer_opening_line_only_not_approved_mock_dir"
 unset _codex_e23_footer_opening_line_only_not_approved_mock_dir _codex_e23_footer_opening_line_only_not_approved_output _codex_e23_footer_opening_line_only_not_approved_exit
@@ -11804,8 +11820,8 @@ PATH="$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir:$PATH
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir/output.txt" 2>&1 || _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit=$?
 _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output="$(cat "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir/output.txt")"
-run_test "codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit_needs_revision" "1" "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit"
-run_test "codex_e24a_footer_byte_mutation_mid_sentence_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit_needs_revision" "2" "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit"
+run_test "codex_e24a_footer_byte_mutation_mid_sentence_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir"
 unset _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit
@@ -11848,8 +11864,8 @@ PATH="$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_d
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir/output.txt" 2>&1 || _codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit=$?
 _codex_e24b_footer_byte_mutation_before_details_close_not_approved_output="$(cat "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir/output.txt")"
-run_test "codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit_needs_revision" "1" "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit"
-run_test "codex_e24b_footer_byte_mutation_before_details_close_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit_needs_revision" "2" "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit"
+run_test "codex_e24b_footer_byte_mutation_before_details_close_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir"
 unset _codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir _codex_e24b_footer_byte_mutation_before_details_close_not_approved_output _codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit
@@ -11892,8 +11908,8 @@ PATH="$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir/output.txt" 2>&1 || _codex_e24c_footer_byte_mutation_in_url_not_approved_exit=$?
 _codex_e24c_footer_byte_mutation_in_url_not_approved_output="$(cat "$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir/output.txt")"
-run_test "codex_e24c_footer_byte_mutation_in_url_not_approved_exit_needs_revision" "1" "$_codex_e24c_footer_byte_mutation_in_url_not_approved_exit"
-run_test "codex_e24c_footer_byte_mutation_in_url_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_e24c_footer_byte_mutation_in_url_not_approved_exit_needs_revision" "2" "$_codex_e24c_footer_byte_mutation_in_url_not_approved_exit"
+run_test "codex_e24c_footer_byte_mutation_in_url_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_e24c_footer_byte_mutation_in_url_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir"
 unset _codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir _codex_e24c_footer_byte_mutation_in_url_not_approved_output _codex_e24c_footer_byte_mutation_in_url_not_approved_exit
@@ -11959,8 +11975,8 @@ PATH="$_codex_footer_near_miss_main_loop_safe_fails_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_main_loop_safe_fails_exit=$?
 _codex_footer_near_miss_main_loop_safe_fails_output="$(cat "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/output.txt")"
-run_test "codex_footer_near_miss_main_loop_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_main_loop_safe_fails_exit"
-run_test "codex_footer_near_miss_main_loop_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_footer_near_miss_main_loop_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_main_loop_safe_fails_exit"
+run_test "codex_footer_near_miss_main_loop_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_main_loop_safe_fails_output" | grep "^VERDICT:")"
 if printf '%s\n' "$_codex_footer_near_miss_main_loop_safe_fails_output" | grep -q "^INFO: bot response detected"; then
   _codex_footer_near_miss_main_loop_safe_fails_site="main_loop"
@@ -12028,8 +12044,8 @@ PATH="$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_async_arrival_safe_fails_exit=$?
 _codex_footer_near_miss_async_arrival_safe_fails_output="$(cat "$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/output.txt")"
-run_test "codex_footer_near_miss_async_arrival_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_async_arrival_safe_fails_exit"
-run_test "codex_footer_near_miss_async_arrival_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_footer_near_miss_async_arrival_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_async_arrival_safe_fails_exit"
+run_test "codex_footer_near_miss_async_arrival_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_async_arrival_safe_fails_output" | grep "^VERDICT:")"
 if printf '%s\n' "$_codex_footer_near_miss_async_arrival_safe_fails_output" | grep -q "^INFO: async-arrival bot response detected during grace period"; then
   _codex_footer_near_miss_async_arrival_safe_fails_site="async_arrival"
@@ -12100,8 +12116,8 @@ PATH="$_codex_footer_near_miss_async_final_safe_fails_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_footer_near_miss_async_final_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_async_final_safe_fails_exit=$?
 _codex_footer_near_miss_async_final_safe_fails_output="$(cat "$_codex_footer_near_miss_async_final_safe_fails_mock_dir/output.txt")"
-run_test "codex_footer_near_miss_async_final_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_async_final_safe_fails_exit"
-run_test "codex_footer_near_miss_async_final_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_footer_near_miss_async_final_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_async_final_safe_fails_exit"
+run_test "codex_footer_near_miss_async_final_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_async_final_safe_fails_output" | grep "^VERDICT:")"
 if printf '%s\n' "$_codex_footer_near_miss_async_final_safe_fails_output" | grep -q "^INFO: final async bot response detected after acknowledgement wait"; then
   _codex_footer_near_miss_async_final_safe_fails_site="async_final"
@@ -12164,8 +12180,8 @@ PATH="$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_async_reaction_final_safe_fails_exit=$?
 _codex_footer_near_miss_async_reaction_final_safe_fails_output="$(cat "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/output.txt")"
-run_test "codex_footer_near_miss_async_reaction_final_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_async_reaction_final_safe_fails_exit"
-run_test "codex_footer_near_miss_async_reaction_final_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_footer_near_miss_async_reaction_final_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_async_reaction_final_safe_fails_exit"
+run_test "codex_footer_near_miss_async_reaction_final_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_async_reaction_final_safe_fails_output" | grep "^VERDICT:")"
 if printf '%s\n' "$_codex_footer_near_miss_async_reaction_final_safe_fails_output" | grep -q "^INFO: final async reaction bot response detected via PR reviews endpoint"; then
   _codex_footer_near_miss_async_reaction_final_safe_fails_site="async_reaction_final"
@@ -12873,8 +12889,8 @@ PATH="$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_exceeds_length_cap_not_approved_exit=$?
 _codex_placeholder_exceeds_length_cap_not_approved_output="$(cat "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/output.txt")"
-run_test "codex_placeholder_exceeds_length_cap_not_approved_exit_needs_revision" "1" "$_codex_placeholder_exceeds_length_cap_not_approved_exit"
-run_test "codex_placeholder_exceeds_length_cap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_placeholder_exceeds_length_cap_not_approved_exit_needs_revision" "2" "$_codex_placeholder_exceeds_length_cap_not_approved_exit"
+run_test "codex_placeholder_exceeds_length_cap_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_placeholder_exceeds_length_cap_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir"
 unset _codex_placeholder_exceeds_length_cap_not_approved_mock_dir _codex_placeholder_exceeds_length_cap_not_approved_output _codex_placeholder_exceeds_length_cap_not_approved_exit
@@ -12917,8 +12933,8 @@ PATH="$_codex_placeholder_asterisk_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_placeholder_asterisk_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_asterisk_not_approved_exit=$?
 _codex_placeholder_asterisk_not_approved_output="$(cat "$_codex_placeholder_asterisk_not_approved_mock_dir/output.txt")"
-run_test "codex_placeholder_asterisk_not_approved_exit_needs_revision" "1" "$_codex_placeholder_asterisk_not_approved_exit"
-run_test "codex_placeholder_asterisk_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_placeholder_asterisk_not_approved_exit_needs_revision" "2" "$_codex_placeholder_asterisk_not_approved_exit"
+run_test "codex_placeholder_asterisk_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_placeholder_asterisk_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_placeholder_asterisk_not_approved_mock_dir"
 unset _codex_placeholder_asterisk_not_approved_mock_dir _codex_placeholder_asterisk_not_approved_output _codex_placeholder_asterisk_not_approved_exit
@@ -12960,8 +12976,8 @@ PATH="$_codex_placeholder_backtick_not_approved_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_placeholder_backtick_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_backtick_not_approved_exit=$?
 _codex_placeholder_backtick_not_approved_output="$(cat "$_codex_placeholder_backtick_not_approved_mock_dir/output.txt")"
-run_test "codex_placeholder_backtick_not_approved_exit_needs_revision" "1" "$_codex_placeholder_backtick_not_approved_exit"
-run_test "codex_placeholder_backtick_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_placeholder_backtick_not_approved_exit_needs_revision" "2" "$_codex_placeholder_backtick_not_approved_exit"
+run_test "codex_placeholder_backtick_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_placeholder_backtick_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_placeholder_backtick_not_approved_mock_dir"
 unset _codex_placeholder_backtick_not_approved_mock_dir _codex_placeholder_backtick_not_approved_output _codex_placeholder_backtick_not_approved_exit
@@ -13011,8 +13027,8 @@ PATH="$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir:$PATH
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_newline_separated_overflow_not_approved_exit=$?
 _codex_placeholder_newline_separated_overflow_not_approved_output="$(cat "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir/output.txt")"
-run_test "codex_placeholder_newline_separated_overflow_not_approved_exit_needs_revision" "1" "$_codex_placeholder_newline_separated_overflow_not_approved_exit"
-run_test "codex_placeholder_newline_separated_overflow_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+run_test "codex_placeholder_newline_separated_overflow_not_approved_exit_needs_revision" "2" "$_codex_placeholder_newline_separated_overflow_not_approved_exit"
+run_test "codex_placeholder_newline_separated_overflow_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_placeholder_newline_separated_overflow_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir"
 unset _codex_placeholder_newline_separated_overflow_not_approved_mock_dir _codex_placeholder_newline_separated_overflow_not_approved_output _codex_placeholder_newline_separated_overflow_not_approved_exit
@@ -13553,6 +13569,533 @@ unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
 unset _post_summary_source _summary_call_log _body_file _body_file_used _body_file_removed
 unset _needs_fixes_create_calls _needs_fixes_patch_calls
 unset -f _post_review_summary repo_slug
+
+# ---------------------------------------------------------------------------
+# #1757 (AC-3, AC-4, AC-7, AC-9, AC-11, AC-12, AC-13, AC-14): full-decision-
+# gate-matrix regression coverage for the marker well-formedness classifier,
+# the finding-thread correlation contract, the cleared-findings wait, and
+# the evidence-unavailable escalation. Area 13's `CODEX_GITHUB_PRE_TRIGGER_
+# WAIT=0` export (see its own top-of-area comment) is still in effect, so
+# every fixture below (except the two AC-13 trigger-less cases, which pass
+# --pre-trigger-wait explicitly to override it) reaches the companion's
+# main poll loop rather than the pre-trigger check.
+# ---------------------------------------------------------------------------
+
+# AC-11: a root comment carrying the `Reviewed commit` field with NO value
+# escalates malformed; a root comment that never carries the field at all
+# is acknowledgement evidence (the wait path), never escalated.
+_codex_marker_field_empty_mock_dir="$(mktemp -d)"
+cat > "$_codex_marker_field_empty_mock_dir/gh" <<'CODEX_MARKER_FIELD_EMPTY_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e1e1e1e1234567890a\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":501,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":601,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `` <details></details>"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKER_FIELD_EMPTY_GH
+chmod +x "$_codex_marker_field_empty_mock_dir/gh"
+_codex_marker_field_empty_output=""
+_codex_marker_field_empty_exit=0
+PATH="$_codex_marker_field_empty_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_marker_field_empty_mock_dir/output.txt" 2>&1 || _codex_marker_field_empty_exit=$?
+_codex_marker_field_empty_output="$(cat "$_codex_marker_field_empty_mock_dir/output.txt")"
+run_test "codex_marker_field_empty_escalates_malformed_exit" "2" "$_codex_marker_field_empty_exit"
+run_test "codex_marker_field_empty_escalates_malformed_reason" "REASON=codex_current_verdict_malformed_revision_marker" \
+  "$(printf '%s\n' "$_codex_marker_field_empty_output" | grep "^REASON=")"
+rm -rf "$_codex_marker_field_empty_mock_dir"
+unset _codex_marker_field_empty_mock_dir _codex_marker_field_empty_output _codex_marker_field_empty_exit
+
+_codex_marker_field_absent_mock_dir="$(mktemp -d)"
+cat > "$_codex_marker_field_absent_mock_dir/gh" <<'CODEX_MARKER_FIELD_ABSENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e2e2e2e2234567890a\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":502,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":602,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Working on it, will report back shortly."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKER_FIELD_ABSENT_GH
+chmod +x "$_codex_marker_field_absent_mock_dir/gh"
+_codex_marker_field_absent_output=""
+_codex_marker_field_absent_exit=0
+PATH="$_codex_marker_field_absent_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_marker_field_absent_mock_dir/output.txt" 2>&1 || _codex_marker_field_absent_exit=$?
+_codex_marker_field_absent_output="$(cat "$_codex_marker_field_absent_mock_dir/output.txt")"
+# A non-terminal, non-reaction root comment is ancillary evidence: it never
+# reaches SHA-pinned terminal classification, so the loop just keeps
+# waiting for real evidence and exhausts its bounded poll/async-grace
+# budget — waiting_on_reviewer / codex-github-review-pending (exit 4), not
+# an escalation.
+run_test "codex_marker_field_absent_is_acknowledgement_exit" "4" "$_codex_marker_field_absent_exit"
+run_test "codex_marker_field_absent_is_acknowledgement_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_marker_field_absent_output" | grep "^REASON=")"
+rm -rf "$_codex_marker_field_absent_mock_dir"
+unset _codex_marker_field_absent_mock_dir _codex_marker_field_absent_output _codex_marker_field_absent_exit
+
+# AC-3, AC-4: a syntactically unusable marker that is an interior-substring
+# of the live head (appears inside it at a NONZERO offset — not a prefix)
+# is malformed even though the token itself is valid hex and would
+# otherwise resolve.
+_codex_marker_interior_substring_mock_dir="$(mktemp -d)"
+cat > "$_codex_marker_interior_substring_mock_dir/gh" <<'CODEX_MARKER_INTERIOR_SUBSTRING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aa11bb22cc33dd44ee55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":503,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":603,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `11bb22cc33` <details></details>"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKER_INTERIOR_SUBSTRING_GH
+chmod +x "$_codex_marker_interior_substring_mock_dir/gh"
+_codex_marker_interior_substring_output=""
+_codex_marker_interior_substring_exit=0
+PATH="$_codex_marker_interior_substring_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_marker_interior_substring_mock_dir/output.txt" 2>&1 || _codex_marker_interior_substring_exit=$?
+_codex_marker_interior_substring_output="$(cat "$_codex_marker_interior_substring_mock_dir/output.txt")"
+run_test "codex_marker_interior_substring_escalates_malformed_exit" "2" "$_codex_marker_interior_substring_exit"
+run_test "codex_marker_interior_substring_escalates_malformed_reason" "REASON=codex_current_verdict_malformed_revision_marker" \
+  "$(printf '%s\n' "$_codex_marker_interior_substring_output" | grep "^REASON=")"
+rm -rf "$_codex_marker_interior_substring_mock_dir"
+unset _codex_marker_interior_substring_mock_dir _codex_marker_interior_substring_output _codex_marker_interior_substring_exit
+
+# AC-12: a well-formed marker naming the live head but authored BEFORE the
+# live-head trigger fails the freshness boundary — neither acknowledgement
+# nor clean evidence; the loop waits (codex-github-review-pending), it does
+# not escalate malformed. The main-loop poll query already filters bot
+# comments to `created_at > trigger_time` server-side, so a stale comment
+# never reaches the companion's classification in the first place — the
+# freshness boundary is proved by the ABSENCE of a VERDICT line (no
+# terminal evidence reaches the poll loop) and the loop's own TIMED_OUT
+# safe-fail once its bounded MAX_WAIT is exhausted, never a malformed-
+# marker escalation.
+_codex_marker_freshness_fails_mock_dir="$(mktemp -d)"
+cat > "$_codex_marker_freshness_fails_mock_dir/gh" <<'CODEX_MARKER_FRESHNESS_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ff11ff22ff33ff44ff55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":504,"created_at":"2026-01-01T00:00:05Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":604,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `ff11ff22ff` <details></details>"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKER_FRESHNESS_FAILS_GH
+chmod +x "$_codex_marker_freshness_fails_mock_dir/gh"
+_codex_marker_freshness_fails_output=""
+_codex_marker_freshness_fails_exit=0
+PATH="$_codex_marker_freshness_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_marker_freshness_fails_mock_dir/output.txt" 2>&1 || _codex_marker_freshness_fails_exit=$?
+_codex_marker_freshness_fails_output="$(cat "$_codex_marker_freshness_fails_mock_dir/output.txt")"
+# AC-12: neither acknowledgement nor clean nor escalated — the comment
+# predates the trigger, so the server-side poll-query filter never even
+# surfaces it as terminal evidence; the loop exhausts its bounded budget
+# and waits (codex-github-review-pending, exit 4), it does not escalate.
+run_test "codex_marker_freshness_fails_not_escalated_exit" "4" "$_codex_marker_freshness_fails_exit"
+run_test "codex_marker_freshness_fails_not_malformed" "no" \
+  "$(printf '%s\n' "$_codex_marker_freshness_fails_output" | grep -q 'codex_current_verdict_malformed_revision_marker' && echo yes || echo no)"
+rm -rf "$_codex_marker_freshness_fails_mock_dir"
+unset _codex_marker_freshness_fails_mock_dir _codex_marker_freshness_fails_output _codex_marker_freshness_fails_exit
+
+# AC-7, AC-9: a submitted review's inline finding IS correlated (matches
+# the review's own pull_request_review_id and a live-head GraphQL thread)
+# and that thread is unresolved — needs_fixes, proving the correlation
+# contract does not over-escalate a genuinely well-formed finding.
+_codex_review_inline_finding_correlates_mock_dir="$(mktemp -d)"
+cat > "$_codex_review_inline_finding_correlates_mock_dir/gh" <<'CODEX_REVIEW_INLINE_FINDING_CORRELATES_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cc11cc22cc33cc44cc55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":505,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"id":701,"pull_request_review_id":801,"commit_id":"cc11cc22cc33cc44cc55","body":"Fix this off-by-one."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":801,"submitted_at":"2026-01-01T00:00:01Z","commit_id":"cc11cc22cc33cc44cc55","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See inline comment."}]\n'
+    exit 0 ;;
+  *"api graphql"*"databaseId"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"comments":{"nodes":[{"databaseId":701}]}}]}}}}}\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REVIEW_INLINE_FINDING_CORRELATES_GH
+chmod +x "$_codex_review_inline_finding_correlates_mock_dir/gh"
+_codex_review_inline_finding_correlates_output=""
+_codex_review_inline_finding_correlates_exit=0
+PATH="$_codex_review_inline_finding_correlates_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_review_inline_finding_correlates_mock_dir/output.txt" 2>&1 || _codex_review_inline_finding_correlates_exit=$?
+_codex_review_inline_finding_correlates_output="$(cat "$_codex_review_inline_finding_correlates_mock_dir/output.txt")"
+run_test "codex_body_finding_own_review_comment_correlates_exit" "1" "$_codex_review_inline_finding_correlates_exit"
+run_test "codex_body_finding_own_review_comment_correlates_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_review_inline_finding_correlates_output" | grep "^VERDICT:")"
+rm -rf "$_codex_review_inline_finding_correlates_mock_dir"
+unset _codex_review_inline_finding_correlates_mock_dir _codex_review_inline_finding_correlates_output _codex_review_inline_finding_correlates_exit
+
+# AC-7, AC-9: the same shape, but the inline comment belongs to an
+# UNRELATED review (a different pull_request_review_id, whose own thread is
+# RESOLVED) — the head-wide comment index must never supply correlation for
+# a different review's own findings; if it wrongly did, the resolved
+# unrelated comment would clear R's findings and route to the
+# cleared-findings wait instead of R's own CHANGES_REQUESTED structural
+# blocker.
+_codex_review_unrelated_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_review_unrelated_comment_mock_dir/gh" <<'CODEX_REVIEW_UNRELATED_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'dd11dd22dd33dd44dd55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":506,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"id":702,"pull_request_review_id":900,"commit_id":"dd11dd22dd33dd44dd55","body":"An unrelated earlier review'\''s own comment."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":802,"submitted_at":"2026-01-01T00:00:01Z","commit_id":"dd11dd22dd33dd44dd55","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See inline comment."}]\n'
+    exit 0 ;;
+  *"api graphql"*"databaseId"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":true,"comments":{"nodes":[{"databaseId":702}]}}]}}}}}\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REVIEW_UNRELATED_COMMENT_GH
+chmod +x "$_codex_review_unrelated_comment_mock_dir/gh"
+_codex_review_unrelated_comment_output=""
+_codex_review_unrelated_comment_exit=0
+PATH="$_codex_review_unrelated_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_review_unrelated_comment_mock_dir/output.txt" 2>&1 || _codex_review_unrelated_comment_exit=$?
+_codex_review_unrelated_comment_output="$(cat "$_codex_review_unrelated_comment_mock_dir/output.txt")"
+# The unrelated review's own inline comment is marked RESOLVED. If the
+# correlation join were incorrectly head-wide (not scoped to R's own
+# pull_request_review_id), R would pick it up as one of its own findings,
+# see it resolved, and reach the cleared-findings wait (exit 4). Correctly
+# scoped, R has none of its own inline findings and no body finding, so its
+# CHANGES_REQUESTED state alone is the actionable blocker: needs_fixes
+# (exit 1) — proving the join runs on pull_request_review_id.
+run_test "codex_body_finding_unrelated_review_comment_not_correlated_exit" "1" "$_codex_review_unrelated_comment_exit"
+run_test "codex_body_finding_unrelated_review_comment_not_correlated_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_review_unrelated_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_review_unrelated_comment_mock_dir"
+unset _codex_review_unrelated_comment_mock_dir _codex_review_unrelated_comment_output _codex_review_unrelated_comment_exit
+
+# AC-8, AC-9: every one of R's own inline findings correlates AND is
+# resolved, R's body carries no blocking assertion, and no other
+# applicable current-head conversation is unresolved (strict count 0) —
+# the cleared-findings wait: waiting_on_reviewer / codex-github-review-
+# pending, never needs_fixes and never a correlation-missing escalation.
+_codex_review_cleared_findings_wait_mock_dir="$(mktemp -d)"
+cat > "$_codex_review_cleared_findings_wait_mock_dir/gh" <<'CODEX_REVIEW_CLEARED_FINDINGS_WAIT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ee11ee22ee33ee44ee55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":507,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"id":703,"pull_request_review_id":803,"commit_id":"ee11ee22ee33ee44ee55","body":"Nit already fixed."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":803,"submitted_at":"2026-01-01T00:00:01Z","commit_id":"ee11ee22ee33ee44ee55","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See inline comment for the nit."}]\n'
+    exit 0 ;;
+  *"api graphql"*"databaseId"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":true,"comments":{"nodes":[{"databaseId":703}]}}]}}}}}\n'
+    exit 0 ;;
+  *"api graphql"*"headRefOid"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"ee11ee22ee33ee44ee55","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REVIEW_CLEARED_FINDINGS_WAIT_GH
+chmod +x "$_codex_review_cleared_findings_wait_mock_dir/gh"
+_codex_review_cleared_findings_wait_output=""
+_codex_review_cleared_findings_wait_exit=0
+PATH="$_codex_review_cleared_findings_wait_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_review_cleared_findings_wait_mock_dir/output.txt" 2>&1 || _codex_review_cleared_findings_wait_exit=$?
+_codex_review_cleared_findings_wait_output="$(cat "$_codex_review_cleared_findings_wait_mock_dir/output.txt")"
+run_test "codex_review_cleared_findings_wait_exit" "4" "$_codex_review_cleared_findings_wait_exit"
+run_test "codex_review_cleared_findings_wait_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_review_cleared_findings_wait_output" | grep "^REASON=")"
+rm -rf "$_codex_review_cleared_findings_wait_mock_dir"
+unset _codex_review_cleared_findings_wait_mock_dir _codex_review_cleared_findings_wait_output _codex_review_cleared_findings_wait_exit
+
+# AC-14: the bounded finding-thread correlation query itself fails (the
+# GraphQL reviewThreads call for R's own inline finding is unmocked) —
+# escalate evidence_unavailable_codex_thread_state, never needs_fixes and
+# never a silent clean.
+_codex_evidence_unavailable_correlation_mock_dir="$(mktemp -d)"
+cat > "$_codex_evidence_unavailable_correlation_mock_dir/gh" <<'CODEX_EVIDENCE_UNAVAILABLE_CORRELATION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'bb11bb22bb33bb44bb55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":508,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"id":704,"pull_request_review_id":804,"commit_id":"bb11bb22bb33bb44bb55","body":"Please fix this."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":804,"submitted_at":"2026-01-01T00:00:01Z","commit_id":"bb11bb22bb33bb44bb55","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See inline comment."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_EVIDENCE_UNAVAILABLE_CORRELATION_GH
+chmod +x "$_codex_evidence_unavailable_correlation_mock_dir/gh"
+_codex_evidence_unavailable_correlation_output=""
+_codex_evidence_unavailable_correlation_exit=0
+PATH="$_codex_evidence_unavailable_correlation_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_evidence_unavailable_correlation_mock_dir/output.txt" 2>&1 || _codex_evidence_unavailable_correlation_exit=$?
+_codex_evidence_unavailable_correlation_output="$(cat "$_codex_evidence_unavailable_correlation_mock_dir/output.txt")"
+run_test "codex_evidence_unavailable_escalates_exit" "2" "$_codex_evidence_unavailable_correlation_exit"
+run_test "codex_evidence_unavailable_escalates_reason" "REASON=evidence_unavailable_codex_thread_state" \
+  "$(printf '%s\n' "$_codex_evidence_unavailable_correlation_output" | grep "^REASON=")"
+rm -rf "$_codex_evidence_unavailable_correlation_mock_dir"
+unset _codex_evidence_unavailable_correlation_mock_dir _codex_evidence_unavailable_correlation_output _codex_evidence_unavailable_correlation_exit
+
+# AC-7, AC-9 (mixed case): one submitted review carrying BOTH a correlated,
+# unresolved inline finding AND a blocking assertion in its own body — the
+# body finding has no thread identity, so it escalates correlation-missing
+# regardless of the correlated inline finding, in both a COMMENTED and a
+# CHANGES_REQUESTED review state.
+for _codex_mixed_state in COMMENTED CHANGES_REQUESTED; do
+  _codex_mixed_finding_mock_dir="$(mktemp -d)"
+  cat > "$_codex_mixed_finding_mock_dir/gh" <<CODEX_MIXED_FINDING_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'af11af22af33af44af55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":509,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"id":705,"pull_request_review_id":805,"commit_id":"af11af22af33af44af55","body":"Correlated inline finding."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":805,"submitted_at":"2026-01-01T00:00:01Z","commit_id":"af11af22af33af44af55","state":"${_codex_mixed_state}","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking: also see the top-level summary."}]\n'
+    exit 0 ;;
+  *"api graphql"*"databaseId"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"comments":{"nodes":[{"databaseId":705}]}}]}}}}}\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "\$*" >&2
+    exit 64 ;;
+esac
+CODEX_MIXED_FINDING_GH
+  chmod +x "$_codex_mixed_finding_mock_dir/gh"
+  _codex_mixed_finding_output=""
+  _codex_mixed_finding_exit=0
+  PATH="$_codex_mixed_finding_mock_dir:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+    42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+    >"$_codex_mixed_finding_mock_dir/output.txt" 2>&1 || _codex_mixed_finding_exit=$?
+  _codex_mixed_finding_output="$(cat "$_codex_mixed_finding_mock_dir/output.txt")"
+  run_test "codex_mixed_inline_and_body_finding_escalates_${_codex_mixed_state}_exit" "2" "$_codex_mixed_finding_exit"
+  run_test "codex_mixed_inline_and_body_finding_escalates_${_codex_mixed_state}_reason" "REASON=codex_finding_thread_correlation_missing" \
+    "$(printf '%s\n' "$_codex_mixed_finding_output" | grep "^REASON=")"
+  rm -rf "$_codex_mixed_finding_mock_dir"
+  unset _codex_mixed_finding_mock_dir _codex_mixed_finding_output _codex_mixed_finding_exit
+done
+unset _codex_mixed_state
+
+# AC-7, AC-9: one dedicated case under this exact name (matrix spot check;
+# also the target of a planted-violation proof) — an unrecognized terminal
+# verdict escalates, distinguishing it from the blocking/approved paths.
+_codex_unrecognized_spot_mock_dir="$(mktemp -d)"
+cat > "$_codex_unrecognized_spot_mock_dir/gh" <<'CODEX_UNRECOGNIZED_SPOT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa11fa22fa33fa44fa55\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":510,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"fa11fa22fa33fa44fa55","user":{"login":"chatgpt-codex-connector[bot]"},"body":"An ambiguous status update with no recognized marker."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_UNRECOGNIZED_SPOT_GH
+chmod +x "$_codex_unrecognized_spot_mock_dir/gh"
+_codex_unrecognized_spot_output=""
+_codex_unrecognized_spot_exit=0
+PATH="$_codex_unrecognized_spot_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_unrecognized_spot_mock_dir/output.txt" 2>&1 || _codex_unrecognized_spot_exit=$?
+_codex_unrecognized_spot_output="$(cat "$_codex_unrecognized_spot_mock_dir/output.txt")"
+run_test "codex_unrecognized_verdict_escalates_exit" "2" "$_codex_unrecognized_spot_exit"
+run_test "codex_unrecognized_verdict_escalates_reason" "REASON=codex_current_verdict_unrecognized" \
+  "$(printf '%s\n' "$_codex_unrecognized_spot_output" | grep "^REASON=")"
+rm -rf "$_codex_unrecognized_spot_mock_dir"
+unset _codex_unrecognized_spot_mock_dir _codex_unrecognized_spot_output _codex_unrecognized_spot_exit
+
+# AC-13: a trigger-less live head (--pre-trigger-wait overrides Area 13's
+# CODEX_GITHUB_PRE_TRIGGER_WAIT=0 export) with a marker-pinned clean root
+# comment for that head is clean, proving the trigger-less path still
+# authorizes readiness with the window test in place (K1 non-regression).
+_codex_triggerless_clean_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_clean_mock_dir/gh" <<'CODEX_TRIGGERLESS_CLEAN_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ca11ca22ca33ca44ca55\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:611,created_at:"2026-01-01T00:00:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `ca11ca22ca33ca44ca55` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"ca11ca22ca33ca44ca55","headRef":{"target":{"committedDate":"2025-12-31T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_CLEAN_GH
+chmod +x "$_codex_triggerless_clean_mock_dir/gh"
+_codex_triggerless_clean_output=""
+_codex_triggerless_clean_exit=0
+PATH="$_codex_triggerless_clean_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_clean_mock_dir/output.txt" 2>&1 || _codex_triggerless_clean_exit=$?
+_codex_triggerless_clean_output="$(cat "$_codex_triggerless_clean_mock_dir/output.txt")"
+run_test "codex_triggerless_marker_pinned_clean_exit" "0" "$_codex_triggerless_clean_exit"
+run_test "codex_triggerless_marker_pinned_clean_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_triggerless_clean_output" | grep "^VERDICT:")"
+rm -rf "$_codex_triggerless_clean_mock_dir"
+unset _codex_triggerless_clean_mock_dir _codex_triggerless_clean_output _codex_triggerless_clean_exit
 
 # ---------------------------------------------------------------------------
 # Area 14: _check_release_pr_guard — release PR early-exit guard (#960)

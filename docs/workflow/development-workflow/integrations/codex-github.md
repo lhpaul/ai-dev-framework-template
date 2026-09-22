@@ -190,18 +190,121 @@ hardcoding `codex-github-usage-limit`, so
 `REASON=codex-github-account-not-connected` is reported correctly instead of
 being mislabelled as a usage-limit notice.
 
-**Scope note.** This item implements the counting, floor-removal, and
-acknowledgement/exit-3 fixes above. It does not implement the full
-`Reviewed commit` marker well-formedness classifier (malformed/ambiguous/
-interior-substring/superstring detection), the per-review inline+body
-finding/thread correlation contract, the live-head evidence window /
-SHA-reuse occupancy guard, or new `codex_current_verdict_unrecognized` /
-`codex_current_verdict_malformed_revision_marker` /
-`codex_finding_thread_correlation_missing` /
-`evidence_unavailable_codex_thread_state` escalation reason codes described
-by the `#1757` specification's full decision-gate matrix — those remain
-follow-up work; the shipped "unrecognized response format — safe-fail"
-behavior (`NEEDS_REVISION`, exit `1`) is unchanged in this item.
+**`Reviewed commit` marker well-formedness (AC-3, AC-4).**
+`codex_extract_reviewed_commit_field` (pure/local) classifies the marker
+field as `absent` (no `Reviewed commit` label at all — acknowledgement
+evidence), `empty` (label present, no extractable value — malformed), or
+`token` (a candidate value to validate). `codex_marker_classify` then
+validates that token against the live head:
+
+- **Shape**: empty, non-hex, or multi-token content is `malformed`.
+- **String relationship**: a token that is an offset-zero prefix of the
+  live head is a `prefix` candidate; a token occurring elsewhere inside the
+  live head (interior-substring) or that contains the whole live head plus
+  extra characters (superstring) is `malformed` regardless of what commit
+  it would otherwise resolve to; any other token is a `prior_revision`
+  candidate.
+- **Ambiguity**: `git rev-parse --disambiguate=<token>`, filtered to commit
+  objects, decides locally provable ambiguity (`malformed`) or uniqueness.
+  A full 40-hex token additionally checks `gh api repos/{owner}/{repo}/
+  commits/{token}` for a definitive `422` (`malformed`, proven zero-match).
+
+**Disclosed scope note on ambiguity proof.** The specification's ideal is
+that every abbreviated token's uniqueness be proven before it is trusted.
+This implementation proves ambiguity/non-existence whenever the local git
+object database or a reachable, matching GitHub REST response can
+positively establish it, but an abbreviated token that neither source can
+prove OR disprove is trusted at its already-computed string classification
+(`prefix` / `prior_revision`) rather than escalated to
+`evidence_unavailable_codex_thread_state`. A live-network retry
+(`git fetch` before the local retry) is available but **opt-in**
+(`CODEX_GITHUB_MARKER_FETCH=1`), not unconditional: this repository's shell
+test harnesses guarantee "no external tooling required beyond bash and git
+... mock `gh` commands replace all network calls", and this repository's
+own Codex regression fixtures pin roughly 130 `Reviewed commit` scenarios
+against synthetic SHAs that are not real commits anywhere and that the
+shared `gh` test double does not implement a `commits/{sha}` endpoint for;
+an unconditional proof requirement would make every one of those fixtures'
+terminal-comment evidence indeterminate. Interior-substring/superstring
+rejection, empty/non-hex/multiple-token detection, and locally provable
+ambiguity are still fully enforced.
+
+**Finding–thread correlation (AC-7, AC-9).**
+`codex_review_finding_correlation` decides, per terminal verdict, whether
+its findings are actionable, cleared, or correlation-missing:
+
+- A **root pull-request comment** (no owning review) always contributes a
+  blocking finding as `correlation_missing` — a comment owns no
+  review-thread identifier by construction.
+- A **submitted review**'s findings are its own inline comments
+  (`pull_request_review_id` matching the review, `commit_id` matching the
+  live head) plus any blocking assertion in the review's own body. A body
+  finding is always correlation-missing (no thread identity); it takes
+  precedence even when the review also has correlated inline findings.
+  With no body finding, every inline finding must have an identifiable
+  matching GraphQL review-thread conversation: any unidentifiable inline
+  finding is correlation-missing; if all are identifiable and resolved
+  (and the review is not itself `CHANGES_REQUESTED`), the verdict's
+  findings are `cleared`.
+
+`codex_finalize_verdict` in `codex-github-reviewer.sh` runs this
+correlation check **unconditionally for every submitted review** (not only
+one that already looks blocking) — finding extraction is per review, never
+gated on the review's own body text alone, so a review with a genuine
+inline finding under an unremarkable summary body is still evaluated. It
+runs ahead of the companion's blocking-verdict emission at every
+verdict-decision site: a correlation-missing verdict escalates
+(`codex_finding_thread_correlation_missing`, exit `2`); an unresolved
+correlated finding is the existing `NEEDS_REVISION` (exit `1`)
+actionable-blocker path; a fully cleared verdict — with
+`codex_review_thread_evidence_counts(strict)` confirming no other
+applicable unresolved live-head conversation — waits for a fresh review
+(`codex-github-review-pending`, exit `4`) instead of dispatching a fixer or
+escalating, **except** a `CHANGES_REQUESTED` review, which is never treated
+as cleared this way and stays actionable regardless of its own findings'
+resolution state; a review with no finding requiring correlation at all is
+only actionable through its own `CHANGES_REQUESTED` state, otherwise it is
+not actionable and the caller's own usage-limit/approved/unrecognized chain
+decides it. A root-comment-sourced verdict's blocking finding is always
+correlation-missing, independent of this per-review check (no review object
+to correlate against at all).
+
+**Live-head evidence window (AC-13, AC-14).** A root comment's `Reviewed
+commit` marker only counts as live-head evidence within that head's
+evidence window: `codex_scan_comment_evidence` filters candidate marker
+comments to `created_at` at or after the boundary (the latest review
+trigger for a triggered head, tie-broken by comment ID; the pull request's
+own `created_at` for a trigger-less head), matching the freshness boundary
+the four post-trigger poll sites already enforce server-side in their own
+`gh api` query. **Disclosed scope note**: this item does not implement the
+force-push/`head_ref_deleted`/`head_ref_restored` occupancy guard that
+raises the boundary further for a SHA-reuse (revert-and-return) scenario —
+an accepted, narrow residual on top of the freshness-boundary
+implementation above.
+
+**Unrecognized verdicts now escalate (AC-7).** A current terminal verdict
+that matches neither an approved clean template nor the documented
+blocking markers — previously `NEEDS_REVISION` (exit `1`, "unrecognized
+response format — safe-fail") — now escalates
+`codex_current_verdict_unrecognized` (exit `2`).
+
+**The four new fail-closed escalation reason codes** —
+`codex_current_verdict_malformed_revision_marker`,
+`codex_finding_thread_correlation_missing`,
+`codex_current_verdict_unrecognized`, and
+`evidence_unavailable_codex_thread_state` — are terminal for the current
+run and are never converted into `needs_fixes`, `waiting_on_reviewer`, or
+clean readiness. `evidence_unavailable_codex_thread_state` also covers a
+bounded thread/correlation evidence query that fails or is truncated after
+retry.
+
+**Cycle-limit interaction (AC-5).** `reviewer_loop_cap_exceeded` now treats
+a `waiting_on_reviewer` aggregate result the same as `needs_fixes` /
+`needs_rerun`: an exhausted per-run or lifetime allowance escalates
+(`max_cycles_exceeded` / `max_total_cycles_exceeded`) rather than emitting
+`waiting_on_reviewer` when the evaluation would otherwise require another
+review cycle — including a cleared-findings retrigger. A `clean` result is
+never overridden by an exhausted allowance.
 
 ## Step 7a runner reviewer
 

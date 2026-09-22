@@ -2198,20 +2198,19 @@ EOF
     return 2
   fi
 
-  if [ "$unresolved_count" -gt 0 ]; then
-    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
-    reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
-    print_kv RESULT needs_fixes
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv REASON existing_findings
-    print_kv COMMENT_COUNT "$unresolved_count"
-    print_kv BLOCKING_COUNT "$unresolved_count"
-    print_kv SUGGESTION_COUNT 0
-    return 1
-  fi
+  # #1757 (AC-7, AC-9): do NOT short-circuit to needs_fixes here. An
+  # unresolved-conversation count alone is necessary but not sufficient — a
+  # current fail-closed escalation for the live head (malformed marker,
+  # unrecognized verdict, correlation-missing finding, or evidence
+  # unavailable) takes precedence, and only the companion's own
+  # classification (which this count alone cannot see) can decide that.
+  # Proceed to Phase 2 below unconditionally; the companion's pre-trigger
+  # check performs this same applicability-aware count check before
+  # deciding, and the exit-1 handler performs the authoritative strict
+  # recount and reports RESULT=needs_fixes / REASON=unresolved_review_threads
+  # exactly as this removed short-circuit used to, while a fail-closed
+  # escalation instead falls into the exit-2 handler below with the
+  # matching REASON=.
 
   # Phase 2: Trigger the codex-github review and wait for response
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/codex-github-reviewer.sh"
@@ -11316,20 +11315,35 @@ reviewer_loop_resolve_max_total_cycles() {
 # Generic cap check reused for BOTH axes (call once with the per-run count
 # and per-run limit, and again with the lifetime count and lifetime limit).
 # Returns 0 (true — cap exceeded, caller should escalate) only when the loop
-# would otherwise keep going (result is needs_fixes or needs_rerun) and
-# cycle_count is known (>= 0) and has reached or passed max_cycles. A result
-# of "clean" is never overridden — a genuinely resolved PR is not escalated
-# just because it took many cycles to get there. An unknown cycle_count (-1,
-# from unreadable history) is handled separately by
-# reviewer_loop_cycle_count_unavailable_should_escalate below — this
-# function's job is strictly "is the known count at or past the cap".
+# would otherwise keep going (result is needs_fixes, needs_rerun, or
+# waiting_on_reviewer) and cycle_count is known (>= 0) and has reached or
+# passed max_cycles. A result of "clean" is never overridden — a genuinely
+# resolved PR is not escalated just because it took many cycles to get
+# there. An unknown cycle_count (-1, from unreadable history) is handled
+# separately by reviewer_loop_cycle_count_unavailable_should_escalate below
+# — this function's job is strictly "is the known count at or past the cap".
+#
+# #1757 (AC-5): waiting_on_reviewer added to the exceedable set. Spec
+# Business Rule 10: "The cycle-limit escalation takes precedence over the
+# cleared-findings retrigger path: when the allowance is exhausted and the
+# evaluation would require another review cycle — including a
+# cleared-findings retrigger — the loop escalates rather than emitting
+# waiting_on_reviewer." A cleared-findings-wait (Codex REASON=
+# codex-github-review-pending) is exactly this shape: the aggregate result
+# is waiting_on_reviewer, not needs_fixes, at the point this cap check
+# already runs (pr-review-loop.sh's reviewer-platform aggregation sets
+# aggregate_result=waiting_on_reviewer directly for that platform_result).
+# Any waiting_on_reviewer aggregate result means "the loop would otherwise
+# keep going" exactly as much as needs_fixes/needs_rerun do, so the same
+# cap applies uniformly across reviewer platforms rather than singling out
+# Codex.
 reviewer_loop_cap_exceeded() {
   local cycle_count="$1"
   local max_cycles="$2"
   local result="$3"
 
   case "$result" in
-    needs_fixes|needs_rerun) : ;;
+    needs_fixes|needs_rerun|waiting_on_reviewer) : ;;
     *) return 1 ;;
   esac
 

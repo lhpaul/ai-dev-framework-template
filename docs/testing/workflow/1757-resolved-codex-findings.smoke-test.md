@@ -10,15 +10,22 @@
 
 ## Scope of this smoke test
 
-This runbook covers the portion of the `#1757` specification implemented by
-this item: applicability-aware Codex review-thread counting (resolved,
-outdated, dismissed-review, and non-live-head-commit threads excluded from
-blocker counts), removal of the `unresolved_count=1` floor, the
-acknowledgement-only wait remap (exit `4` instead of exit `2`), and exit-`3`
-reason propagation. It does **not** cover the full decision-gate matrix
-(marker well-formedness, finding/thread correlation, the live-head evidence
-window) — see `codex-github.md`'s "Resolved Codex findings and blocker
-counting (#1757)" section for the explicit scope note and follow-up items.
+This runbook covers the full `#1757` specification: applicability-aware
+Codex review-thread counting (resolved, outdated, dismissed-review, and
+non-live-head-commit threads excluded from blocker counts), removal of the
+`unresolved_count=1` floor, the acknowledgement-only wait remap (exit `4`
+instead of exit `2`), exit-`3` reason propagation, the `Reviewed commit`
+marker well-formedness classifier, the finding-thread correlation contract,
+the live-head evidence window, the cleared-findings wait, and all four new
+fail-closed escalation reason codes
+(`codex_current_verdict_malformed_revision_marker`,
+`codex_finding_thread_correlation_missing`,
+`codex_current_verdict_unrecognized`,
+`evidence_unavailable_codex_thread_state`). See `codex-github.md`'s
+"Resolved Codex findings and blocker counting (#1757)" section for the full
+contract, including the two narrow disclosed scope notes (abbreviated-marker
+ambiguity proof and the force-push occupancy guard) under "Known
+Limitations" below.
 
 ---
 
@@ -157,15 +164,42 @@ Before running this smoke test:
 
 ## Assertions Checklist
 
-- [ ] AC-1 (partial): a resolved Codex review conversation is excluded from
+- [ ] AC-1: a resolved Codex review conversation is excluded from
       existing-finding and fallback blocker counts.
-- [ ] AC-2 (partial): historical or re-anchored Codex comments alone cannot
+- [ ] AC-2: historical or re-anchored Codex comments alone cannot
       produce `needs_fixes` once the applicable conversation count is zero.
-- [ ] AC-8 (partial): a cleared-findings verdict requests a fresh current-head
+- [ ] AC-3: a fresh Codex root pull-request comment whose `Reviewed commit`
+      marker is an unambiguous prefix of the live head, and whose body is
+      clean, authorizes readiness.
+- [ ] AC-4: a clean or finding verdict from an older revision is reported as
+      stale (`codex-github-review-pending`), not readiness.
+- [ ] AC-5: canonical terminal clean evidence in the final permitted cycle
+      proceeds to readiness even at cap exhaustion; an exhausted allowance
+      whose evaluation would otherwise require another cycle (including a
+      cleared-findings retrigger) escalates `max_cycles_exceeded` instead.
+- [ ] AC-7, AC-9: a current terminal finding with no stable review-thread
+      identifier (a root-comment finding, or a review's own body finding)
+      escalates `codex_finding_thread_correlation_missing`; a current
+      terminal verdict matching neither an approved template nor the
+      documented blocking markers escalates
+      `codex_current_verdict_unrecognized`.
+- [ ] AC-8: a cleared-findings verdict requests a fresh current-head
       review (`waiting_on_reviewer` / `codex-github-review-pending`) rather
       than dispatching a fixer.
 - [ ] AC-10: acknowledgement-only evidence yields `waiting_on_reviewer` /
       `codex-github-reaction-without-review`, never an escalation.
+- [ ] AC-11: a root comment carrying the `Reviewed commit` field with no
+      value escalates `codex_current_verdict_malformed_revision_marker`; a
+      root comment that never carries the field is acknowledgement evidence.
+- [ ] AC-12: a well-formed marker naming the live head but missing the
+      freshness boundary waits (`codex-github-review-pending`), it does not
+      escalate malformed and it is not treated as clean.
+- [ ] AC-13: a trigger-less live head's marker-pinned clean root comment is
+      superseded by newer non-dismissed terminal evidence for the same head.
+- [ ] AC-14: a syntactically unusable marker escalates
+      `codex_current_verdict_malformed_revision_marker` when it falls inside
+      the live head's evidence window; the bounded evidence query's own
+      failure escalates `evidence_unavailable_codex_thread_state`.
 - [ ] AC-15: automated regression coverage reproduces a resolved Codex finding
       that remains visible after a later revision and verifies
       `waiting_on_reviewer` / `codex-github-review-pending`
@@ -199,7 +233,18 @@ Codex GitHub App connected, or the automated regression harness fixtures in
 ## Known Limitations
 
 - This smoke test requires a live GitHub PR with real Codex GitHub App
-  activity, or the mocked regression harness for offline verification. It
-  does not cover the full `#1757` decision-gate matrix (marker
-  well-formedness, finding/thread correlation, live-head evidence window) —
-  see the scope note above.
+  activity, or the mocked regression harness for offline verification.
+- **Abbreviated-marker ambiguity proof is local-database-first, not
+  unconditionally proven remotely.** `codex_marker_classify` proves
+  ambiguity/non-existence whenever the local git object database or a
+  reachable, matching GitHub REST `commits/{sha}` response can positively
+  establish it; an abbreviated token that neither source can prove or
+  disprove is trusted at its string classification rather than escalated.
+  This is a disclosed, narrow scope note — see `codex-github.md`'s
+  "Resolved Codex findings and blocker counting (#1757)" section for the
+  full rationale.
+- **The force-push/`head_ref_deleted`/`head_ref_restored` occupancy guard
+  (SHA-reuse across a revert-and-return) is not implemented.** The
+  freshness-boundary implementation itself (trigger-based, or PR
+  `created_at` for a trigger-less head) is complete; only this narrower,
+  rare residual is out of scope.

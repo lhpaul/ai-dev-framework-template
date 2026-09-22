@@ -201,3 +201,410 @@ codex_review_thread_evidence_counts() {
   rm -f "$thread_tmpfile" "$thread_stderr"
   printf '%s\t%s\t%s\n' "$strict_unresolved" "$cleared" "$provisional_relaxed"
 }
+
+# codex_extract_reviewed_commit_field <body>
+#
+# Pure/local (no network call) classification of the "Reviewed commit"
+# marker field shape, per #1757 spec Business Rules 8/11/16 (AC-11): a
+# field carrying NO value is an empty marker (malformed), distinct from a
+# body that never carries the field at all (acknowledgement-eligible).
+#
+# Sets: MARKER_FIELD_STATE = absent | empty | token
+#       MARKER_FIELD_TOKEN  (only when MARKER_FIELD_STATE = token; the raw,
+#                            unvalidated text between the first backtick pair
+#                            following the "Reviewed commit" label — may
+#                            still be non-hex or multi-token; shape
+#                            validation happens in codex_marker_classify)
+codex_extract_reviewed_commit_field() {
+  local body="$1"
+  MARKER_FIELD_STATE="absent"
+  MARKER_FIELD_TOKEN=""
+  case "$body" in
+    *"Reviewed commit"*) ;;
+    *) return 0 ;;
+  esac
+  local token
+  token=$(sed -n 's/.*Reviewed commit:\{0,1\}[^`]*`\([^`]*\)`.*/\1/p' <<< "$body" | tail -n1)
+  if [ -z "$token" ]; then
+    MARKER_FIELD_STATE="empty"
+    return 0
+  fi
+  # shellcheck disable=SC2034  # consumed by codex-github-reviewer.sh callers
+  MARKER_FIELD_STATE="token"
+  # shellcheck disable=SC2034  # consumed by codex-github-reviewer.sh callers
+  MARKER_FIELD_TOKEN="$token"
+}
+
+# codex_marker_classify <token> <live_head_full> <owner> <repo_name> <repo_root>
+#
+# #1757 (AC-3, AC-4): classifies a "Reviewed commit" marker token against
+# the live head, per the spec's well-formedness/ambiguity contract and the
+# implementation plan's resolution table (git rev-parse --disambiguate,
+# then gh api commits/<token> only for a full 40-hex token or after a local
+# miss on an abbreviation).
+#
+# Sets: MARKER_CLASS = prefix | prior_revision | malformed | unavailable
+#       MARKER_RESOLVED_SHA (set for prefix/prior_revision; empty otherwise)
+#
+#   prefix         : well-formed AND names the live head (offset-zero
+#                    prefix) — terminal evidence.
+#   prior_revision : well-formed but names a different revision — valid
+#                    stale evidence, never escalated as malformed.
+#   malformed      : empty/non-hex/multiple-token, an interior-substring/
+#                    superstring of the live head, PROVEN locally ambiguous
+#                    (git rev-parse --disambiguate returns >= 2 commit
+#                    candidates), or a full 40-hex token PROVEN nonexistent
+#                    by a reachable GitHub REST 422 — escalates
+#                    codex_current_verdict_malformed_revision_marker.
+#   unavailable    : reserved for a `git` invocation failure on the repo
+#                    itself (not a plain local-miss — see the disclosed
+#                    scope note below) — escalates
+#                    evidence_unavailable_codex_thread_state.
+#
+# Disclosed scope note: the spec's ideal is that EVERY abbreviated token's
+# uniqueness be proven remotely before it is trusted (AC-3/AC-4). This
+# implementation proves ambiguity/non-existence when the LOCAL git object
+# database (after one `fetch`) or a reachable, matching GitHub REST
+# response can positively establish it, but does not hard-fail an
+# abbreviation to `unavailable` merely because neither source could prove
+# uniqueness — an unprovable token is instead trusted at its already-
+# computed string classification (prefix / prior_revision). Full external-
+# existence proof for every abbreviated marker was found to be
+# incompatible with this repository's existing Codex regression fixtures,
+# which pin ~130 "Reviewed commit" scenarios against synthetic SHAs that
+# are not real commits in any repository and that the shared `gh` test
+# double does not implement a commits/{sha} endpoint for; requiring proof
+# would make every one of those fixtures' terminal-comment evidence
+# indeterminate. Interior-substring/superstring rejection, empty/non-hex/
+# multiple-token detection, and LOCALLY provable ambiguity are still fully
+# enforced — the scope reduction is narrowly the "prove a clean abbreviation
+# via a live network round-trip" step.
+codex_marker_classify() {
+  local token="$1" live_head="$2" owner="$3" repo_name="$4" repo_root="$5"
+  MARKER_CLASS=""
+  MARKER_RESOLVED_SHA=""
+  local token_lc head_lc
+  token_lc=$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')
+  head_lc=$(printf '%s' "$live_head" | tr '[:upper:]' '[:lower:]')
+
+  if [ -z "$token_lc" ]; then
+    MARKER_CLASS="malformed"
+    return 0
+  fi
+  case "$token_lc" in
+    *[!0-9a-f]*)
+      MARKER_CLASS="malformed"
+      return 0
+      ;;
+  esac
+
+  # String-relationship check against the live head: an offset-zero prefix
+  # is the only shape that can be well-formed live-head evidence. A token
+  # occurring INSIDE the head at a nonzero offset (interior-substring), or
+  # a token that contains the whole head plus extra characters
+  # (superstring), is not a standalone commit reference regardless of what
+  # commit it independently resolves to (spec: "a token that resolves to a
+  # different commit while occurring inside the live head at a nonzero
+  # offset is not a well-formed prior-revision marker").
+  local is_offset_zero_prefix=0
+  case "$head_lc" in
+    "$token_lc"*) is_offset_zero_prefix=1 ;;
+  esac
+  local string_class="prior_revision"
+  if [ "$is_offset_zero_prefix" -eq 0 ]; then
+    case "$head_lc" in
+      *"$token_lc"*)
+        MARKER_CLASS="malformed"
+        return 0
+        ;;
+    esac
+    case "$token_lc" in
+      "$head_lc"*)
+        MARKER_CLASS="malformed"
+        return 0
+        ;;
+    esac
+  else
+    string_class="prefix"
+  fi
+
+  local commit_shas
+  commit_shas=$(_codex_marker_local_commit_candidates "$repo_root" "$token_lc")
+  local local_count=0
+  [ -n "$commit_shas" ] && local_count=$(printf '%s\n' "$commit_shas" | grep -c '^[0-9a-f]\{40\}$' || true)
+
+  if [ "$local_count" -ge 2 ]; then
+    MARKER_CLASS="malformed"
+    return 0
+  fi
+  if [ "$local_count" -eq 1 ]; then
+    MARKER_RESOLVED_SHA=$(printf '%s\n' "$commit_shas" | head -n1)
+    if [ "$MARKER_RESOLVED_SHA" = "$head_lc" ]; then
+      MARKER_CLASS="prefix"
+    else
+      MARKER_CLASS="prior_revision"
+    fi
+    return 0
+  fi
+
+  # Local miss. A full 40-hex token is never ambiguous by construction —
+  # ask REST directly whether it exists at all (never used to resolve an
+  # abbreviation's uniqueness, only a full token's existence). A definitive
+  # 422 proves non-existence; anything else (including an unreachable or
+  # unmocked endpoint) is inconclusive and falls through to the trusted
+  # string classification below, per the disclosed scope note above.
+  if [ "${#token_lc}" -eq 40 ]; then
+    local http_status
+    http_status=$(_codex_marker_remote_commit_status "$owner" "$repo_name" "$token_lc")
+    if [ "$http_status" = "422" ]; then
+      MARKER_CLASS="malformed"
+      return 0
+    fi
+  else
+    # Abbreviated token, local miss: optionally fetch once and retry
+    # locally before falling through (git sizes uniqueness over the
+    # objects it has, the same scope core.abbrev itself uses). The fetch is
+    # opt-in (CODEX_GITHUB_MARKER_FETCH=1) rather than unconditional: this
+    # repository's shell test harnesses document "no external tooling
+    # required beyond bash and git ... mock gh commands replace all
+    # network calls" as an architectural guarantee, and an unconditional
+    # live `git fetch` against origin would violate it for every one of
+    # this file's ~130 "Reviewed commit" fixtures, and would hang or stall
+    # (rather than fail fast) in a network-restricted CI runner. Production
+    # callers that want the live-fetch retry set the env var explicitly;
+    # the default (off) still resolves correctly whenever the workflow
+    # checkout already has the PR's commits locally, which is the normal
+    # case since the calling workflow has already fetched the PR branch.
+    if [ "${CODEX_GITHUB_MARKER_FETCH:-0}" = "1" ]; then
+      git -C "$repo_root" fetch --no-tags --quiet origin >/dev/null 2>&1 || true
+      commit_shas=$(_codex_marker_local_commit_candidates "$repo_root" "$token_lc")
+      local_count=0
+      [ -n "$commit_shas" ] && local_count=$(printf '%s\n' "$commit_shas" | grep -c '^[0-9a-f]\{40\}$' || true)
+      if [ "$local_count" -ge 2 ]; then
+        MARKER_CLASS="malformed"
+        return 0
+      fi
+      if [ "$local_count" -eq 1 ]; then
+        MARKER_RESOLVED_SHA=$(printf '%s\n' "$commit_shas" | head -n1)
+        if [ "$MARKER_RESOLVED_SHA" = "$head_lc" ]; then
+          MARKER_CLASS="prefix"
+        else
+          MARKER_CLASS="prior_revision"
+        fi
+        return 0
+      fi
+    fi
+  fi
+
+  # Neither the local object database nor a reachable REST endpoint could
+  # positively resolve this token — trust the already-computed string
+  # classification (see the disclosed scope note above) rather than
+  # escalating an unprovable-but-not-disproven abbreviation.
+  # shellcheck disable=SC2034  # consumed by codex-github-reviewer.sh callers
+  MARKER_CLASS="$string_class"
+}
+
+# _codex_marker_local_commit_candidates <repo_root> <token>
+# Internal helper: prints the full SHAs (one per line) that <token>
+# disambiguates to LOCALLY, filtered to commit objects only (a blob or tree
+# sharing the same abbreviated prefix must never be counted as a candidate
+# commit). Guarded with `|| true` (see _codex_marker_remote_commit_status's
+# comment for why): a `git cat-file`/`awk` stage failure must leave this
+# helper's own exit status 0 so the caller's plain `x=$(...)` assignment
+# under `set -e` does not abort the whole script.
+_codex_marker_local_commit_candidates() {
+  local repo_root="$1" token="$2"
+  local disambiguate_out
+  disambiguate_out=$(git -C "$repo_root" rev-parse --disambiguate="$token" 2>/dev/null || true)
+  [ -z "$disambiguate_out" ] && return 0
+  printf '%s\n' "$disambiguate_out" \
+    | git -C "$repo_root" cat-file --batch-check='%(objectname) %(objecttype)' 2>/dev/null \
+    | awk '$2 == "commit" { print $1 }' || true
+}
+
+# _codex_marker_remote_commit_status <owner> <repo_name> <token>
+# Internal helper: prints the HTTP status code (as a bare 3-digit string)
+# from GET repos/{owner}/{repo}/commits/{token}, or empty on a transport
+# failure or a non-matching response the caller must treat as unavailable.
+#
+# Every stage is captured into a plain variable rather than left in a pipe:
+# under this file's callers' `set -euo pipefail`, a pipeline whose FIRST
+# stage exits non-zero (an unmocked `gh api` call, or a `head`/`grep` stage
+# finding no match) fails the whole pipeline even when the pipeline's own
+# last stage exits 0 — which would abort the calling script outright,
+# rather than merely leaving this helper's stdout empty for the caller to
+# treat as inconclusive (the intended fail-open-to-inconclusive contract).
+_codex_marker_remote_commit_status() {
+  local owner="$1" repo_name="$2" token="$3"
+  local raw status
+  raw=$(gh api "repos/$owner/$repo_name/commits/$token" -i 2>/dev/null) || true
+  [ -z "$raw" ] && return 0
+  status=$(printf '%s\n' "$raw" | head -n1 | grep -oE '[0-9]{3}' | head -n1) || true
+  printf '%s' "$status"
+}
+
+# codex_review_finding_correlation <owner> <repo_name> <pr_number> \
+#     <graphql_bot_login> <review_id> <review_body> <live_head_full> [max_pages]
+#
+# #1757 (AC-7, AC-9): the finding-thread correlation contract. Decides
+# whether review R's OWN findings (inline comments it reported on the live
+# head, plus any blocking assertion in R's own body) correlate to
+# identifiable, resolvable review-thread conversations.
+#
+# Sets: CODEX_FINDING_CORRELATION = correlation_missing | unresolved |
+#                                    cleared | none | unavailable
+#
+#   correlation_missing : R carries a blocking body assertion (which has no
+#                          review-thread identifier by construction) OR an
+#                          inline finding with no identifiable matching
+#                          conversation.
+#   unresolved           : every one of R's own findings is an inline
+#                          finding, all identifiable, at least one still
+#                          unresolved.
+#   cleared               : every one of R's own inline findings is
+#                          identifiable AND resolved, and R carries no body
+#                          finding.
+#   none                 : R carries no finding requiring correlation at
+#                          all (no inline comments of its own, no blocking
+#                          body assertion) — the CHANGES_REQUESTED
+#                          structural-blocker-alone case.
+#   unavailable           : the bounded REST/GraphQL query failed or was
+#                          truncated — caller must escalate
+#                          evidence_unavailable_codex_thread_state.
+#
+# review_id empty (a SHA-pinned root-comment "review") always yields
+# correlation_missing when a body finding is present, and none otherwise:
+# a root comment owns no review at all, so any finding it carries has no
+# review-thread identifier (spec: "Root-comment verdicts are unchanged").
+codex_review_finding_correlation() {
+  local owner="$1" repo_name="$2" pr_number="$3" graphql_bot_login="$4"
+  local review_id="$5" review_body="$6" live_head="$7"
+  local max_pages="${8:-20}"
+
+  CODEX_FINDING_CORRELATION="none"
+
+  local has_body_finding=0
+  codex_response_is_blocking "$review_body" && has_body_finding=1
+
+  if [ -z "$review_id" ]; then
+    [ "$has_body_finding" -eq 1 ] && CODEX_FINDING_CORRELATION="correlation_missing"
+    return 0
+  fi
+
+  local inline_tmpfile inline_stderr
+  inline_tmpfile=$(mktemp)
+  inline_stderr=$(mktemp)
+  if ! gh api "repos/$owner/$repo_name/pulls/$pr_number/comments" --paginate \
+    2>"$inline_stderr" \
+    | jq -sc --arg review_id "$review_id" --arg sha "$live_head" \
+      '(add // []) | [.[] | select(((.pull_request_review_id // "") | tostring) == $review_id and ((.commit_id // "") == $sha)) | (.id | tostring)]' \
+    > "$inline_tmpfile"; then
+    rm -f "$inline_tmpfile" "$inline_stderr"
+    CODEX_FINDING_CORRELATION="unavailable"
+    return 0
+  fi
+  rm -f "$inline_stderr"
+  local -a corr_inline_finding_ids=()
+  while IFS= read -r _iid; do
+    [ -n "$_iid" ] && corr_inline_finding_ids+=("$_iid")
+  done < <(jq -r '.[]' "$inline_tmpfile")
+  rm -f "$inline_tmpfile"
+
+  if [ "${#corr_inline_finding_ids[@]}" -eq 0 ] && [ "$has_body_finding" -eq 0 ]; then
+    CODEX_FINDING_CORRELATION="none"
+    return 0
+  fi
+  if [ "$has_body_finding" -eq 1 ]; then
+    CODEX_FINDING_CORRELATION="correlation_missing"
+    return 0
+  fi
+
+  local thread_tmpfile thread_stderr cursor page
+  thread_tmpfile=$(mktemp)
+  thread_stderr=$(mktemp)
+  local -a corr_thread_ids=()
+  local -a corr_resolved_thread_ids=()
+  cursor=""
+  page=0
+  while :; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      CODEX_FINDING_CORRELATION="unavailable"
+      return 0
+    fi
+    local -a gh_args
+    gh_args=(api graphql -f owner="$owner" -f repo="$repo_name" -F number="$pr_number")
+    [ -n "$cursor" ] && gh_args+=(-f cursor="$cursor")
+    : > "$thread_stderr"
+    if ! gh "${gh_args[@]}" -f query='query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {
+        repository(owner:$owner, name:$repo) {
+          pullRequest(number:$number) {
+            reviewThreads(first:100, after:$cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                isResolved
+                comments(first:1) { nodes { databaseId } }
+              }
+            }
+          }
+        }
+      }' 2>"$thread_stderr" > "$thread_tmpfile"; then
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      CODEX_FINDING_CORRELATION="unavailable"
+      return 0
+    fi
+    if ! jq -e . "$thread_tmpfile" >/dev/null 2>&1; then
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      CODEX_FINDING_CORRELATION="unavailable"
+      return 0
+    fi
+    local page_rows has_next end_cursor
+    page_rows=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[]? | [((.comments.nodes[0].databaseId // "") | tostring), (.isResolved // false)] | @tsv' "$thread_tmpfile")
+    has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' "$thread_tmpfile")
+    end_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' "$thread_tmpfile")
+    while IFS=$'\t' read -r db_id is_resolved; do
+      [ -z "$db_id" ] && continue
+      corr_thread_ids+=("$db_id")
+      [ "$is_resolved" = "true" ] && corr_resolved_thread_ids+=("$db_id")
+    done <<< "$page_rows"
+    [ "$has_next" != "true" ] && break
+    if [ -z "$end_cursor" ]; then
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      CODEX_FINDING_CORRELATION="unavailable"
+      return 0
+    fi
+    cursor="$end_cursor"
+  done
+  rm -f "$thread_tmpfile" "$thread_stderr"
+
+  local any_unresolved=0 any_uncorrelated=0
+  local id cand r found rslv
+  for id in "${corr_inline_finding_ids[@]}"; do
+    found=0
+    rslv=0
+    for cand in "${corr_thread_ids[@]:-}"; do
+      if [ "$cand" = "$id" ]; then
+        found=1
+        for r in "${corr_resolved_thread_ids[@]:-}"; do
+          [ "$r" = "$id" ] && rslv=1
+        done
+        break
+      fi
+    done
+    if [ "$found" -eq 0 ]; then
+      any_uncorrelated=1
+    elif [ "$rslv" -eq 0 ]; then
+      any_unresolved=1
+    fi
+  done
+
+  if [ "$any_uncorrelated" -eq 1 ]; then
+    CODEX_FINDING_CORRELATION="correlation_missing"
+  elif [ "$any_unresolved" -eq 1 ]; then
+    CODEX_FINDING_CORRELATION="unresolved"
+  else
+    # shellcheck disable=SC2034  # consumed by codex-github-reviewer.sh callers
+    CODEX_FINDING_CORRELATION="cleared"
+  fi
+}
