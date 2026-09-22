@@ -1,49 +1,205 @@
-# Smoke test: Resolved Codex findings no longer block reviewer loop (#1757)
+# Smoke Test Runbook: Resolved Codex Findings No Longer Block Reviewer Loop
 
-**Related spec**: `docs/specs/developments/20260915075927_1757-resolved-codex-findings/1_1757-resolved-codex-findings_specs.md`
-**Related plan**: `docs/specs/developments/20260915075927_1757-resolved-codex-findings/2_1757-resolved-codex-findings_implementation-plan.md`
+**Feature**: Do not count resolved Codex findings as current blockers
+**Spec**: [`docs/specs/developments/20260915075927_1757-resolved-codex-findings/1_1757-resolved-codex-findings_specs.md`](../../specs/developments/20260915075927_1757-resolved-codex-findings/1_1757-resolved-codex-findings_specs.md)
+**Plan**: [`docs/specs/developments/20260915075927_1757-resolved-codex-findings/2_1757-resolved-codex-findings_implementation-plan.md`](../../specs/developments/20260915075927_1757-resolved-codex-findings/2_1757-resolved-codex-findings_implementation-plan.md)
+**Created in**: Plan Ready stage
+**Updated in**: In Development stage
 
-Run after the implementation PR merges to `develop`.
+---
+
+## Scope of this smoke test
+
+This runbook covers the portion of the `#1757` specification implemented by
+this item: applicability-aware Codex review-thread counting (resolved,
+outdated, dismissed-review, and non-live-head-commit threads excluded from
+blocker counts), removal of the `unresolved_count=1` floor, the
+acknowledgement-only wait remap (exit `4` instead of exit `2`), and exit-`3`
+reason propagation. It does **not** cover the full decision-gate matrix
+(marker well-formedness, finding/thread correlation, the live-head evidence
+window) — see `codex-github.md`'s "Resolved Codex findings and blocker
+counting (#1757)" section for the explicit scope note and follow-up items.
+
+---
 
 ## Prerequisites
 
-- A pull request with Codex GitHub review enabled and at least one **resolved**
-  inline Codex review thread still visible on the current head.
-- `gh` authenticated with permission to read PR reviews and GraphQL threads.
+Before running this smoke test:
 
-## Automated regression (required)
+- [ ] `gh` CLI is authenticated (`gh auth status`)
+- [ ] `jq` is installed
+- [ ] You have a GitHub repository with the Codex GitHub App connected and
+      `codex-github` configured as a reviewer platform
+- [ ] This feature's branch is checked out or merged (`codex-github-evidence-lib.sh`
+      exists under `scripts/development-workflow/`)
 
-From the repository root:
+---
 
-```bash
-bash scripts/development-workflow/tests/test-pr-review-loop.sh
-```
+## Test Data
 
-Confirm the run completes with no failures and that cases named
-`codex_resolved_visible_finding_waits_after_revision_push` pass.
+| Item                    | Value                                                                     |
+| ------------------------ | -------------------------------------------------------------------------- |
+| Test PR                 | A PR where Codex has posted at least one inline review thread             |
+| Bot login (Codex)       | `chatgpt-codex-connector[bot]` (REST) / `chatgpt-codex-connector` (GraphQL) |
 
-## Manual PR exercise (recommended)
+---
 
-1. Open or select a PR where Codex left findings and you resolved every inline
-   thread on the current head without pushing a new commit.
-2. Run the reviewer loop for that PR (or resume `/run-reviewer-loop` for the
-   implementation branch).
-3. Confirm the Codex platform line shows `RESULT=waiting_on_reviewer` with
-   `REASON=codex-github-review-pending` (or proceeds to clean after a fresh
-   terminal Codex review), **not** `RESULT=needs_fixes` with
-   `REASON=existing_findings` solely from resolved threads.
-4. Resolve one thread but leave another applicable unresolved thread on the same
-   head; rerun and confirm `RESULT=needs_fixes` still routes to the fix path.
+## Smoke Test Steps
 
-## Escalation spot check (optional)
+### Step 1: Resolved Codex thread does not block re-triggering (AC-1, AC-2)
 
-On a test PR, if Codex posts a root comment with an empty `Reviewed commit:`
-field on the live head, confirm the loop escalates with
-`codex_current_verdict_malformed_revision_marker` rather than waiting or fixing.
+1. Find or create a PR where Codex has posted an inline review thread with a
+   blocking finding.
+2. Resolve the thread in the GitHub UI ("Resolve conversation"), **without**
+   pushing a new commit.
+3. Run the reviewer loop against the PR:
 
-## Pass criteria
+   ```bash
+   ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
+   ```
 
-- Automated harness green.
-- Manual PR shows resolved visible findings do not alone produce `needs_fixes`.
-- No regression in existing Codex availability handling (usage-limit still
-  terminates as unavailable, not unrecognized).
+**Expected result**:
+
+- The Codex phase does **not** report `RESULT=needs_fixes` /
+  `REASON=existing_findings` from the resolved thread alone.
+- Verify directly with the shared counting function:
+
+  ```bash
+  source scripts/development-workflow/codex-github-evidence-lib.sh
+  codex_review_thread_evidence_counts "<owner>" "<repo>" <pr_number> \
+    "chatgpt-codex-connector" strict
+  ```
+
+  Output is `<strict_unresolved>\t<cleared>\t<provisional_relaxed>` — confirm
+  the resolved thread appears in the `cleared` count, not `strict_unresolved`.
+
+### Step 2: Historical visible finding after a revision push waits, not blocks (AC-2, AC-8, AC-15 — primary regression)
+
+1. On a PR with a Codex-reviewed thread, resolve the thread, then push a new
+   commit (revision push) so the PR head changes.
+2. Run the reviewer loop:
+
+   ```bash
+   ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
+   ```
+
+**Expected result**:
+
+- If the companion (`codex-github-reviewer.sh`) still reports `NEEDS_REVISION`
+  from stale/visible evidence, the loop's post-companion strict recount
+  confirms zero applicable unresolved threads and the Codex phase reports
+  `RESULT=waiting_on_reviewer` / `REASON=codex-github-review-pending` —
+  **not** `RESULT=needs_fixes`.
+- Confirm a fresh Codex trigger is posted (or was already posted) for the new
+  head, requesting a current-head verdict.
+
+### Step 3: A dismissed review's thread does not count as a blocker
+
+1. On a PR with an unresolved Codex inline thread, have a maintainer
+   **dismiss** the review that owns that thread (GitHub review dismissal, not
+   thread resolution).
+2. Run:
+
+   ```bash
+   source scripts/development-workflow/codex-github-evidence-lib.sh
+   codex_review_thread_evidence_counts "<owner>" "<repo>" <pr_number> \
+     "chatgpt-codex-connector" strict
+   ```
+
+**Expected result**:
+
+- The thread attached to the dismissed review does not appear in
+  `strict_unresolved`.
+
+### Step 4: A genuinely unresolved current-head thread still blocks (negative case)
+
+1. On a PR with a Codex inline finding on the **current** head that is
+   **not** resolved and **not** dismissed, run the reviewer loop.
+
+**Expected result**:
+
+- `RESULT=needs_fixes` / `REASON=existing_findings` (or
+  `REASON=unresolved_review_threads` if reached via the post-companion
+  recount), with `COMMENT_COUNT` reflecting the true unresolved count — the
+  fix must not silently clear a genuine blocker.
+
+### Step 5: Acknowledgement-only evidence waits, does not escalate (AC-10)
+
+1. On a fresh PR, trigger Codex, and have it react with a thumbs-up on the
+   trigger comment without ever submitting a review.
+2. Run `codex-github-reviewer.sh` directly:
+
+   ```bash
+   ./scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo> \
+     --poll-interval 5 --max-wait 10 --max-retriggers 0
+   ```
+
+**Expected result**:
+
+- Exit code `4` (not `2`).
+- Output contains `REASON=codex-github-reaction-without-review`.
+- When run through `pr-review-loop.sh`, the Codex phase reports
+  `RESULT=waiting_on_reviewer`, not `RESULT=escalate`.
+
+### Step 6: Account-not-connected keeps its own reason (Operational Visibility)
+
+1. Simulate (or find a real occurrence of) Codex responding with an
+   account-not-connected refusal for the triggering identity.
+2. Run the reviewer loop and inspect the Automated Reviewer Loop Summary /
+   raw output.
+
+**Expected result**:
+
+- `REASON=codex-github-account-not-connected` is reported — **not**
+  `REASON=codex-github-usage-limit`.
+
+---
+
+## Assertions Checklist
+
+- [ ] AC-1 (partial): a resolved Codex review conversation is excluded from
+      existing-finding and fallback blocker counts.
+- [ ] AC-2 (partial): historical or re-anchored Codex comments alone cannot
+      produce `needs_fixes` once the applicable conversation count is zero.
+- [ ] AC-8 (partial): a cleared-findings verdict requests a fresh current-head
+      review (`waiting_on_reviewer` / `codex-github-review-pending`) rather
+      than dispatching a fixer.
+- [ ] AC-10: acknowledgement-only evidence yields `waiting_on_reviewer` /
+      `codex-github-reaction-without-review`, never an escalation.
+- [ ] AC-15: automated regression coverage reproduces a resolved Codex finding
+      that remains visible after a later revision and verifies
+      `waiting_on_reviewer` / `codex-github-review-pending`
+      (`codex_resolved_visible_finding_waits_after_revision_push_*` in
+      `scripts/development-workflow/tests/test-pr-review-loop.sh`).
+- [ ] Operational Visibility: an account-not-connected hard stop keeps its own
+      exit-`3` reason instead of being reported as a usage limit.
+- [ ] Negative case: a genuinely unresolved current-head Codex thread still
+      produces `needs_fixes` with the true count.
+
+---
+
+## Seed Data Reference
+
+No persistent seed data required. All scenarios use live GitHub PRs with the
+Codex GitHub App connected, or the automated regression harness fixtures in
+`scripts/development-workflow/tests/test-pr-review-loop.sh` (mocked `gh`).
+
+---
+
+## Troubleshooting
+
+| Symptom                                                        | Likely cause                                                      | Fix                                                                                       |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `codex_review_thread_evidence_counts` not found                | Running an old checkout without this item's changes                  | Check out this feature branch; confirm `scripts/development-workflow/codex-github-evidence-lib.sh` exists |
+| Resolved thread still reported as a blocker                     | Thread's owning review commit does not match live `headRefOid`, and the commit could not be read | Fetch the review via `gh api repos/{owner}/{repo}/pulls/{pr}/reviews` and confirm the `commit_id` field is populated |
+| Acknowledgement scenario still exits `2`                        | Running an old build of `codex-github-reviewer.sh`                    | Confirm `codex_return_reaction_without_review` exits `4` in the checked-out script            |
+
+---
+
+## Known Limitations
+
+- This smoke test requires a live GitHub PR with real Codex GitHub App
+  activity, or the mocked regression harness for offline verification. It
+  does not cover the full `#1757` decision-gate matrix (marker
+  well-formedness, finding/thread correlation, live-head evidence window) —
+  see the scope note above.

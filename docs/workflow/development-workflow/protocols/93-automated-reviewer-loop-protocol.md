@@ -119,7 +119,19 @@ platform as clean after Codex publishes evidence tied to the current PR head:
 - current-head Codex inline review comments, treated as findings.
 
 A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
-not SHA-pinned review evidence and must be treated as unavailable, not clean.
+not SHA-pinned review evidence and must be treated as `waiting_on_reviewer`
+(`REASON=codex-github-reaction-without-review`), not clean and not an
+escalation (#1757).
+
+A resolved Codex review conversation must not, by itself, count as a current
+blocker: `pr-review-loop.sh` and `codex-github-reviewer.sh` share one
+applicability-aware thread counter
+(`codex-github-evidence-lib.sh`'s `codex_review_thread_evidence_counts`) that
+excludes resolved, outdated, dismissed-review, and non-live-head-commit
+threads from blocker counts. See
+[`codex-github.md`](../integrations/codex-github.md#resolved-codex-findings-and-blocker-counting-1757)
+for the full counting contract, the removed `unresolved_count=1` floor, and
+this item's scope note.
 Codex-authored root PR comments without a current-head `Reviewed commit` marker
 are not SHA-pinned clean evidence; use them only for acknowledgement,
 usage-limit, and setup-failure detection.

@@ -138,6 +138,71 @@ is, is narrowing the placeholder's bound, never widening it without new live
 evidence. See issue #1491's implementation plan (Decision 2 and its two
 addenda) for the full design history and rationale.
 
+## Resolved Codex findings and blocker counting (#1757)
+
+A resolved Codex review conversation must not, by itself, count as a
+current blocker — even if its comment remains visible or re-anchored on the
+diff. `codex-github-evidence-lib.sh` (`codex_review_thread_evidence_counts`)
+is the single shared implementation of applicability-aware Codex
+review-thread counting, sourced by both `codex-github-reviewer.sh` (the
+companion's own pre-trigger existing-evidence check) and
+`pr-review-loop.sh`'s `run_codex_github_review()` (the phase-1 gate and the
+post-companion exit-1 recount). A thread only counts toward a blocker when
+**all** of the following hold:
+
+- it is not `isResolved` and does not carry a bot `✅ Addressed` marker
+  (a resolved Codex finding is excluded regardless of visibility), and
+- it is not outdated, and
+- its owning review is not `DISMISSED`, and
+- its owning review's commit matches the pull request's live `headRefOid`
+  (when that commit cannot be read at all, the thread fails closed — it is
+  still treated as a blocker rather than silently cleared).
+
+The function exposes a `strict | provisional` mode (default fallback:
+strict). `provisional` preserves issue #1508's "fixed and replied to, but
+not yet resolved" relaxation for the companion's own re-trigger-eligibility
+decision only; `strict` never applies that relaxation and is what both the
+loop's phase-1 blocker gate and its post-companion recount use, so the
+#1508 relaxation can never leak into a gate that decides `needs_fixes`.
+
+**The pre-#1757 `unresolved_count=1` floor is removed.** Previously, when
+the companion returned `NEEDS_REVISION` (exit 1), `pr-review-loop.sh` forced
+its recounted blocker total to at least 1 even when a strict recount
+confirmed zero applicable unresolved threads — a resolved Codex finding that
+was merely still visible on the pull request was reported as a current
+blocker. Now, a confirmed-zero recount on that path returns
+`RESULT=waiting_on_reviewer` / `REASON=codex-github-review-pending` (a
+cleared-findings retrigger) instead of a stale `needs_fixes`. If the recount
+itself cannot be completed (a transient GraphQL failure), the loop still
+fails closed and reports one blocker, matching the shipped floor's original
+safety intent for that failure case only.
+
+**Acknowledgement-only evidence is a wait, not an escalation.** A thumbs-up
+reaction with no submitted review (`codex_return_reaction_without_review`)
+now exits `4` (`WAITING_ON_REVIEWER`) instead of exit `2`. The companion's
+full exit-code contract is documented in
+`codex-github-reviewer.sh`'s own header comment.
+
+**Exit `3` (hard-unavailable) reason propagation.** `pr-review-loop.sh` now
+reads the companion's own `REASON=` for an exit-3 outcome instead of
+hardcoding `codex-github-usage-limit`, so
+`codex_return_account_not_connected`'s distinct
+`REASON=codex-github-account-not-connected` is reported correctly instead of
+being mislabelled as a usage-limit notice.
+
+**Scope note.** This item implements the counting, floor-removal, and
+acknowledgement/exit-3 fixes above. It does not implement the full
+`Reviewed commit` marker well-formedness classifier (malformed/ambiguous/
+interior-substring/superstring detection), the per-review inline+body
+finding/thread correlation contract, the live-head evidence window /
+SHA-reuse occupancy guard, or new `codex_current_verdict_unrecognized` /
+`codex_current_verdict_malformed_revision_marker` /
+`codex_finding_thread_correlation_missing` /
+`evidence_unavailable_codex_thread_state` escalation reason codes described
+by the `#1757` specification's full decision-gate matrix — those remain
+follow-up work; the shipped "unrecognized response format — safe-fail"
+behavior (`NEEDS_REVISION`, exit `1`) is unchanged in this item.
+
 ## Step 7a runner reviewer
 
 `codex-github` is an opt-in Step 7a runner reviewer value; it is not in the

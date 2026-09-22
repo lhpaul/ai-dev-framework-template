@@ -85,6 +85,7 @@ evidence:
 - `scripts/development-workflow/workflow-config-resolver.py`
 - `scripts/development-workflow/validate-workflow-config.sh`
 - `scripts/development-workflow/workflow-lib.sh`
+- `scripts/development-workflow/codex-github-evidence-lib.sh`
 - `scripts/development-workflow/pr-review-loop.sh`
 - `scripts/development-workflow/pr-ci-loop.sh`
 - `scripts/development-workflow/post-merge-cleanup.sh`
