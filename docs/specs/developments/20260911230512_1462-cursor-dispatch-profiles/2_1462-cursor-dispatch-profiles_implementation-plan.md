@@ -1820,16 +1820,36 @@ drift from it: each states the requirement in a few lines and points at
 Cross-surface prose drift — the guard's entire detection target — is no longer
 a reachable defect, because there is only one copy of the prose.
 
-What remains detectable and worth detecting is a broken pointer, and that is
-already covered by the repository's existing link and markdown lints, which run
-on every PR.
+What remains detectable and worth detecting is a broken pointer. **Review
+correction**: this record originally claimed that was "already covered by the
+repository's existing link and markdown lints, which run on every PR." That
+claim was checked against the actual configuration during code review and is
+false: `.markdownlint-cli2.jsonc` — the config markdownlint-cli2 actually
+resolves, per its own header comment — disables the `relative-links` rule
+repository-wide (verified by lint-checking a deliberately broken relative link
+under `docs/workflow/**`, which produced zero findings); `.markdownlint.jsonc`
+enables it but is documented as existing only for editor integrations, not for
+the CLI run CI uses. Separately, the CI markdown-lint job's globs
+(`docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/workflow/**`,
+`changelog.d/**`, `CHANGELOG.md`) do not reach `.claude/`, `.cursor/`,
+`.agents/`, or `.codex/` at all — where every one of the 21 mirrors lives. No
+existing mechanism in this repository would have caught a broken pointer in
+any of them. `scripts/development-workflow/tests/test-cursor-dispatch-profile-pointers.sh`
+was added during this review to close that gap directly: it asserts the
+canonical document exists and that every mirror still contains its pointer
+path, with planted-violation proof for both a lost pointer and a moved/deleted
+canonical document, and is auto-selected by `select-test-suites.sh` whenever
+any of those files changes.
 
 ### Defect classes this does and does not let through
 
 - **No longer possible**: the 21 mirrors disagreeing with the canonical
   document or with each other. Removed by construction, not by testing.
 - **Still covered**: a mirror losing its pointer, or the canonical document
-  moving — existing markdown/link lint.
+  moving —
+  `scripts/development-workflow/tests/test-cursor-dispatch-profile-pointers.sh`
+  (added in review; see the correction above — markdown/link lint does not
+  cover this).
 - **Accepted, with reasoning**: nothing now asserts that the canonical
   document's own internal sections stay mutually consistent. The projected
   guard did check some of this positionally. This is accepted because the
