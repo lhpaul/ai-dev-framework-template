@@ -2034,6 +2034,31 @@ esac
   for both the triggered and the trigger-less live-head paths, with dedicated
   regression coverage for each in `test-pr-review-loop.sh`. R2 remains the only
   knowingly accepted false-clean path.
+
+  **Second scope correction (Step 7a Pass 1 re-review, same pull request
+  lineage).** The trigger-less fix above closed the gap for
+  `codex_fetch_existing_current_head_evidence`'s ROOT-COMMENT evidence, but
+  that same function also fetches SUBMITTED-REVIEW evidence
+  (`pulls/{pr}/reviews`) via a separate, independently-constructed jq query
+  that filtered only by `commit_id == live head` and `state != DISMISSED`,
+  with no floor on `submitted_at` at all — unlike every triggered-path review
+  query elsewhere in the script, which already bounds `submitted_at >=
+  $trigger_time` and is therefore occupancy-safe by construction (a fresh
+  trigger for the current occupancy always postdates any earlier occupancy's
+  reviews). A Pass 1 re-review reproduced the same false-clean class through
+  this review path instead of the comment path: a clean `APPROVED` review
+  submitted for the live head SHA during a first occupancy, followed by a
+  `head_ref_force_pushed` event and a reversion back to that same SHA with no
+  new review submitted for the second occupancy, still returned `VERDICT:
+  APPROVED`. The fix floors the trigger-less review query's `submitted_at` by
+  the same occupancy boundary already computed for that scan (or, when no
+  boundary event exists yet, the pull request's creation time), mirroring the
+  triggered-path reviews' own bound. R4 is now withdrawn for the triggered
+  path, the trigger-less comment path, and the trigger-less review path;
+  `codex_triggerless_stale_review_reuse_not_approved` and
+  `codex_triggerless_genuine_fresh_review_clean_still_works` pin the fixed and
+  not-over-eager cases respectively. R2 remains the only knowingly accepted
+  false-clean path.
 - Reversal risk: Checked — the outcome-mapping step states the revert path for
   **all 11 Implementation Order steps**: steps 3–8 are the code and docs revert
   (with step 5 self-contained and revertible alone, and steps 3–4 inseparable);

@@ -1838,17 +1838,33 @@ codex_fetch_existing_current_head_evidence() {
   fi
   rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
 
-  local existing_reviews_stderr existing_reviews_tmpfile
+  local existing_reviews_stderr existing_reviews_tmpfile existing_reviews_anchor_time
   existing_reviews_stderr=$(mktemp)
   existing_reviews_tmpfile=$(mktemp)
   EXISTING_REVIEW_BODY=""
   EXISTING_REVIEW_TIME=""
   EXISTING_REVIEW_STATE=""
   EXISTING_REVIEW_ID=""
+  # #1757 follow-up (BR-9): a submitted review's `commit_id` matching the
+  # live head is NECESSARY but not SUFFICIENT evidence that the review
+  # covers the live head's CURRENT occupancy — GitHub's Reviews endpoint
+  # returns every review ever submitted for the PR, including one
+  # submitted during an EARLIER occupancy of the same SHA (a revert or
+  # force-push-back reuses a SHA without submitting a new review for it).
+  # The triggered-path review queries below are already occupancy-safe by
+  # construction (`submitted_at >= $trigger_time`, and a trigger for THIS
+  # occupancy always postdates any earlier occupancy's reviews), but this
+  # trigger-less pre-check has no trigger to anchor on. Floor submitted_at
+  # by the same occupancy boundary already computed above (or, when no
+  # boundary event exists yet, the pull request's own creation time) so a
+  # stale review from an earlier occupancy of the live head SHA cannot be
+  # selected as evidence for the current one — the same false-clean class
+  # BR-9 forbids for comments, reproduced here via review evidence instead.
+  existing_reviews_anchor_time="${EXISTING_OCCUPANCY_BOUNDARY_TIME:-$CODEX_PR_CREATED_AT}"
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$existing_reviews_stderr" \
-    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA_FULL" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA_FULL" --arg anchor_time "$existing_reviews_anchor_time" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $anchor_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // ""), id:(.id // "" | tostring)} end' \
     > "$existing_reviews_tmpfile"; then
     codex_select_review_evidence "$existing_reviews_tmpfile"
     EXISTING_REVIEW_BODY="$SELECTED_REVIEW_BODY"

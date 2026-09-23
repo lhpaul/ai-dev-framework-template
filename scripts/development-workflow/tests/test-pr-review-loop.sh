@@ -15069,6 +15069,131 @@ rm -rf "$_codex_triggerless_boundary_unreadable_mock_dir"
 unset _codex_triggerless_boundary_unreadable_mock_dir _codex_triggerless_boundary_unreadable_output _codex_triggerless_boundary_unreadable_exit
 
 # ---------------------------------------------------------------------------
+# #1757 follow-up (BR-9): the trigger-less occupancy guard above closed the
+# gap for ROOT-COMMENT evidence in codex_fetch_existing_current_head_evidence,
+# but the SAME function also fetches SUBMITTED REVIEW evidence
+# (`pulls/{pr}/reviews`) via a completely separate, unguarded query: it
+# filtered only by commit_id == live head, with no floor on submitted_at at
+# all. GitHub's Reviews endpoint returns every review ever submitted for the
+# PR, including one submitted during an EARLIER occupancy of the same head
+# SHA — a Step 7a code review reproduced this against the unmodified script:
+# a clean APPROVED review for SHA A submitted during a first occupancy,
+# followed by a head_ref_force_pushed timeline event (the intervening
+# occupancy), with the head reverted back to A and no new review submitted
+# for this second occupancy, still returned VERDICT: APPROVED — the same
+# false-clean class BR-9 forbids, via review evidence instead of a comment.
+# The four TRIGGERED review queries elsewhere in this script are already
+# occupancy-safe by construction (`submitted_at >= $trigger_time`, and a
+# trigger for the current occupancy always postdates any earlier occupancy's
+# reviews); only this trigger-less pre-check lacked an equivalent floor.
+# ---------------------------------------------------------------------------
+
+# codex_triggerless_stale_review_reuse_not_approved: a clean APPROVED review
+# for the live head SHA was submitted during a FIRST occupancy, then the head
+# was force-pushed away and back (a head_ref_force_pushed event newer than
+# that review) with no new review ever submitted for this SECOND occupancy.
+# Must not be approved from the stale review alone.
+_codex_triggerless_stale_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_stale_review_mock_dir/gh" <<'CODEX_TRIGGERLESS_STALE_REVIEW_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":9501,"created_at":"2026-01-01T00:20:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:00Z",commit_id:"1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa",state:"APPROVED",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `1111aaaa1111` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"issues/"*"/timeline"*)
+    jq -nc '[{event:"head_ref_force_pushed",created_at:"2026-01-01T00:15:00Z",commit_id:"1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa"}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_STALE_REVIEW_GH
+chmod +x "$_codex_triggerless_stale_review_mock_dir/gh"
+: > "$_codex_triggerless_stale_review_mock_dir/posts.log"
+_codex_triggerless_stale_review_exit=0
+MOCK_POST_LOG="$_codex_triggerless_stale_review_mock_dir/posts.log" PATH="$_codex_triggerless_stale_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_stale_review_mock_dir/output.txt" 2>&1 || _codex_triggerless_stale_review_exit=$?
+_codex_triggerless_stale_review_output="$(cat "$_codex_triggerless_stale_review_mock_dir/output.txt")"
+run_test "codex_triggerless_stale_review_reuse_not_approved_exit" "4" "$_codex_triggerless_stale_review_exit"
+run_test "codex_triggerless_stale_review_reuse_not_approved_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_triggerless_stale_review_output" | grep "^REASON=")"
+run_test "codex_triggerless_stale_review_reuse_not_approved_no_approved_verdict" "0" \
+  "$(grep_count_or_zero '^VERDICT: APPROVED' "$_codex_triggerless_stale_review_mock_dir/output.txt")"
+run_test "codex_triggerless_stale_review_reuse_not_approved_posts_fresh_trigger" "1" \
+  "$(wc -l < "$_codex_triggerless_stale_review_mock_dir/posts.log" | tr -d ' ')"
+rm -rf "$_codex_triggerless_stale_review_mock_dir"
+unset _codex_triggerless_stale_review_mock_dir _codex_triggerless_stale_review_output _codex_triggerless_stale_review_exit
+
+# codex_triggerless_genuine_fresh_review_clean_still_works: a clean APPROVED
+# review for the live head, submitted after PR creation, with NO intervening
+# timeline event at all. Proves the new submitted_at floor is not over-eager
+# — a genuine first-occupancy clean review must still authorize readiness.
+_codex_triggerless_fresh_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_fresh_review_mock_dir/gh" <<'CODEX_TRIGGERLESS_FRESH_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:00Z",commit_id:"2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb",state:"APPROVED",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `2222bbbb2222` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_FRESH_REVIEW_GH
+chmod +x "$_codex_triggerless_fresh_review_mock_dir/gh"
+_codex_triggerless_fresh_review_exit=0
+PATH="$_codex_triggerless_fresh_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_fresh_review_mock_dir/output.txt" 2>&1 || _codex_triggerless_fresh_review_exit=$?
+_codex_triggerless_fresh_review_output="$(cat "$_codex_triggerless_fresh_review_mock_dir/output.txt")"
+run_test "codex_triggerless_genuine_fresh_review_clean_still_works_exit" "0" "$_codex_triggerless_fresh_review_exit"
+run_test "codex_triggerless_genuine_fresh_review_clean_still_works_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_triggerless_fresh_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_triggerless_fresh_review_mock_dir"
+unset _codex_triggerless_fresh_review_mock_dir _codex_triggerless_fresh_review_output _codex_triggerless_fresh_review_exit
+
+# ---------------------------------------------------------------------------
 # Area 14: _check_release_pr_guard — release PR early-exit guard (#960)
 # ---------------------------------------------------------------------------
 echo ""
