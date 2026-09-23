@@ -13730,6 +13730,7 @@ _codex_overrides='
   reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() { :; }
   reviewer_loop_print_blocking_from_unresolved_bot_threads() { :; }
   codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
+  codex_current_head_changes_requested_blocker() { printf "0\n"; return 0; }
 '
 actual_output=""
 actual_exit=0
@@ -13747,6 +13748,53 @@ run_test "codex_resolved_visible_finding_waits_after_revision_push_reason" "REAS
 run_test "codex_resolved_visible_finding_waits_after_revision_push_exit" "4" "$actual_exit"
 rm -rf "$_codex_resolved_visible_tmp"
 unset _codex_resolved_visible_tmp _codex_overrides actual_output actual_exit
+
+# Bugbot regression (PR #1780, "CHANGES_REQUESTED remapped to wait"): the
+# same zero-thread-recount shape as the case immediately above, but a
+# live-head CHANGES_REQUESTED review IS active (a body-only review, or one
+# whose own inline threads are all separately resolved). This must never be
+# waved through to waiting_on_reviewer — GitHub's structured
+# request-for-changes state is not a thread and is never cleared by
+# resolving conversations (spec Business Rules 5/6).
+_codex_changes_requested_not_waved_tmp="$(mktemp -d)"
+mkdir -p "$_codex_changes_requested_not_waved_tmp/scripts/development-workflow"
+cat > "$_codex_changes_requested_not_waved_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_CHANGES_REQUESTED_NOT_WAVED_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: NEEDS_REVISION\n'
+printf 'REVIEWED_HEAD=ffffffffffffffffffffffffffffffffffffffff\n'
+exit 1
+CODEX_CHANGES_REQUESTED_NOT_WAVED_REVIEWER
+chmod +x "$_codex_changes_requested_not_waved_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_changes_requested_not_waved_tmp"; }
+  reviewer_loop_print_reviewed_head_from_unresolved_bot_threads() { :; }
+  reviewer_loop_print_blocking_from_unresolved_bot_threads() { :; }
+  codex_review_thread_evidence_counts() { printf "0\t0\t0\n"; return 0; }
+  codex_current_head_changes_requested_blocker() { printf "1\n"; return 0; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_changes_requested_not_waved_to_wait_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_changes_requested_not_waved_to_wait_reason" "REASON=unresolved_review_threads" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_changes_requested_not_waved_to_wait_comment_count" "COMMENT_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_changes_requested_not_waved_to_wait_blocking_count" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_changes_requested_not_waved_to_wait_exit" "1" "$actual_exit"
+rm -rf "$_codex_changes_requested_not_waved_tmp"
+unset _codex_changes_requested_not_waved_tmp _codex_overrides actual_output actual_exit
 
 # Negative counterpart: a genuinely unresolved live-head recount must still
 # produce needs_fixes with the true count — the fix must not silently clear
@@ -14181,6 +14229,118 @@ run_test "codex_evidence_lib_provisional_preserves_relaxation" "1	0	1" "$_codex_
 run_test "codex_evidence_lib_unknown_mode_falls_back_to_strict" "1	0	0" "$_codex_evidence_unknown_output"
 rm -rf "$_codex_evidence_mode_mock_dir"
 unset _codex_evidence_mode_mock_dir _codex_evidence_strict_output _codex_evidence_provisional_output _codex_evidence_unknown_output
+
+# Bugbot follow-up (PR #1780, "CHANGES_REQUESTED remapped to wait"): direct
+# coverage of codex_current_head_changes_requested_blocker() itself (real,
+# non-stubbed function, sourced via the same HARNESS_MODE=1 source at the
+# top of this file). Five cases: REST "[bot]"-suffixed login match, GraphQL
+# plain-login match, no match (state/commit mismatch), head-SHA lookup
+# failure (fail closed), and reviews-query failure (fail closed).
+_codex_cr_blocker_bracket_mock_dir="$(mktemp -d)"
+cat > "$_codex_cr_blocker_bracket_mock_dir/gh" <<'CODEX_CR_BLOCKER_BRACKET_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view"*headRefOid*)
+    printf 'aaaa111122223333444455556666777788889999\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":901,"commit_id":"aaaa111122223333444455556666777788889999","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See summary."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CR_BLOCKER_BRACKET_GH
+chmod +x "$_codex_cr_blocker_bracket_mock_dir/gh"
+_codex_cr_blocker_bracket_output="$(PATH="$_codex_cr_blocker_bracket_mock_dir:$PATH" \
+  codex_current_head_changes_requested_blocker "owner" "repo" "42" "chatgpt-codex-connector[bot]" "chatgpt-codex-connector")"
+run_test "codex_cr_blocker_matches_bracket_login" "1" "$_codex_cr_blocker_bracket_output"
+rm -rf "$_codex_cr_blocker_bracket_mock_dir"
+unset _codex_cr_blocker_bracket_mock_dir _codex_cr_blocker_bracket_output
+
+_codex_cr_blocker_plain_mock_dir="$(mktemp -d)"
+cat > "$_codex_cr_blocker_plain_mock_dir/gh" <<'CODEX_CR_BLOCKER_PLAIN_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view"*headRefOid*)
+    printf 'bbbb111122223333444455556666777788889999\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":902,"commit_id":"bbbb111122223333444455556666777788889999","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector"},"body":"See summary."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CR_BLOCKER_PLAIN_GH
+chmod +x "$_codex_cr_blocker_plain_mock_dir/gh"
+_codex_cr_blocker_plain_output="$(PATH="$_codex_cr_blocker_plain_mock_dir:$PATH" \
+  codex_current_head_changes_requested_blocker "owner" "repo" "42" "chatgpt-codex-connector[bot]" "chatgpt-codex-connector")"
+run_test "codex_cr_blocker_matches_plain_login" "1" "$_codex_cr_blocker_plain_output"
+rm -rf "$_codex_cr_blocker_plain_mock_dir"
+unset _codex_cr_blocker_plain_mock_dir _codex_cr_blocker_plain_output
+
+_codex_cr_blocker_no_match_mock_dir="$(mktemp -d)"
+cat > "$_codex_cr_blocker_no_match_mock_dir/gh" <<'CODEX_CR_BLOCKER_NO_MATCH_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view"*headRefOid*)
+    printf 'cccc111122223333444455556666777788889999\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":903,"commit_id":"stalecommit0000000000000000000000000000","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Stale head review."},{"id":904,"commit_id":"cccc111122223333444455556666777788889999","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Non-blocking comment."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CR_BLOCKER_NO_MATCH_GH
+chmod +x "$_codex_cr_blocker_no_match_mock_dir/gh"
+_codex_cr_blocker_no_match_output="$(PATH="$_codex_cr_blocker_no_match_mock_dir:$PATH" \
+  codex_current_head_changes_requested_blocker "owner" "repo" "42" "chatgpt-codex-connector[bot]" "chatgpt-codex-connector")"
+run_test "codex_cr_blocker_no_live_head_match_is_zero" "0" "$_codex_cr_blocker_no_match_output"
+rm -rf "$_codex_cr_blocker_no_match_mock_dir"
+unset _codex_cr_blocker_no_match_mock_dir _codex_cr_blocker_no_match_output
+
+_codex_cr_blocker_head_fail_mock_dir="$(mktemp -d)"
+cat > "$_codex_cr_blocker_head_fail_mock_dir/gh" <<'CODEX_CR_BLOCKER_HEAD_FAIL_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view"*headRefOid*)
+    exit 1 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CR_BLOCKER_HEAD_FAIL_GH
+chmod +x "$_codex_cr_blocker_head_fail_mock_dir/gh"
+_codex_cr_blocker_head_fail_output="$(PATH="$_codex_cr_blocker_head_fail_mock_dir:$PATH" \
+  codex_current_head_changes_requested_blocker "owner" "repo" "42" "chatgpt-codex-connector[bot]" "chatgpt-codex-connector")"
+run_test "codex_cr_blocker_head_sha_lookup_failure_fails_closed" "1" "$_codex_cr_blocker_head_fail_output"
+rm -rf "$_codex_cr_blocker_head_fail_mock_dir"
+unset _codex_cr_blocker_head_fail_mock_dir _codex_cr_blocker_head_fail_output
+
+_codex_cr_blocker_reviews_fail_mock_dir="$(mktemp -d)"
+cat > "$_codex_cr_blocker_reviews_fail_mock_dir/gh" <<'CODEX_CR_BLOCKER_REVIEWS_FAIL_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view"*headRefOid*)
+    printf 'dddd111122223333444455556666777788889999\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf 'boom\n' >&2; exit 1 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CR_BLOCKER_REVIEWS_FAIL_GH
+chmod +x "$_codex_cr_blocker_reviews_fail_mock_dir/gh"
+_codex_cr_blocker_reviews_fail_output="$(PATH="$_codex_cr_blocker_reviews_fail_mock_dir:$PATH" \
+  codex_current_head_changes_requested_blocker "owner" "repo" "42" "chatgpt-codex-connector[bot]" "chatgpt-codex-connector")"
+run_test "codex_cr_blocker_reviews_query_failure_fails_closed" "1" "$_codex_cr_blocker_reviews_fail_output"
+rm -rf "$_codex_cr_blocker_reviews_fail_mock_dir"
+unset _codex_cr_blocker_reviews_fail_mock_dir _codex_cr_blocker_reviews_fail_output
 
 # AC-3/AC-4 abbreviated-token resolution contract: the two branches the
 # implementation plan names explicitly ("Tests:

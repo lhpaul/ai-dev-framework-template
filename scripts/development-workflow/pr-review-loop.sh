@@ -2293,25 +2293,48 @@ EOF
       # (multi-commit thread heads must stay unattributable per AC-11) or when
       # the thread audit could not be completed.
       if [ "$recount_ok" -eq 1 ] && [ "$actual_unresolved_count" -eq 0 ]; then
-        local companion_reviewed_head
-        companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
-        [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+        # Bugbot (PR #1780): a zero-thread recount alone must never wave
+        # through a live-head CHANGES_REQUESTED review — GitHub's structured
+        # request-for-changes state is not itself a thread and is never
+        # cleared by resolving conversations (spec Business Rules 5/6).
+        # codex_current_head_changes_requested_blocker re-derives this
+        # directly from the live PR review state, fail-closed on any lookup
+        # failure, since the companion's exit code alone does not tell us
+        # WHY it said NEEDS_REVISION.
+        local live_head_changes_requested
+        live_head_changes_requested="$(codex_current_head_changes_requested_blocker \
+          "$owner" "$repo_name" "$pr_number" "$bot_login" "$graphql_bot_login")"
 
-        # #1757 (AC-2, AC-8): the companion reported NEEDS_REVISION, but a
-        # strict, applicability-aware recount confirms zero live-head Codex
-        # conversations remain unresolved — historical visibility alone must
-        # not produce needs_fixes. Request a fresh current-head review
-        # (cleared-findings retrigger) instead of a stale needs_fixes.
-        print_kv RESULT waiting_on_reviewer
-        print_kv REASON codex-github-review-pending
-        print_kv PLATFORM "$platform"
-        print_kv PR_NUMBER "$pr_number"
-        print_kv BRANCH "$branch_name"
-        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-        print_kv COMMENT_COUNT 0
-        print_kv BLOCKING_COUNT 0
-        print_kv SUGGESTION_COUNT 0
-        return 4
+        if [ "$live_head_changes_requested" != "1" ]; then
+          local companion_reviewed_head
+          companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+          [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+
+          # #1757 (AC-2, AC-8): the companion reported NEEDS_REVISION, but a
+          # strict, applicability-aware recount confirms zero live-head Codex
+          # conversations remain unresolved, and no live-head CHANGES_REQUESTED
+          # review is active — historical visibility alone must not produce
+          # needs_fixes. Request a fresh current-head review (cleared-findings
+          # retrigger) instead of a stale needs_fixes.
+          print_kv RESULT waiting_on_reviewer
+          print_kv REASON codex-github-review-pending
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 4
+        fi
+
+        # A confirmed (or indeterminate, fail-closed) live-head
+        # CHANGES_REQUESTED review is an actionable blocker: fall through to
+        # needs_fixes below. Floor to 1 so COMMENT_COUNT/BLOCKING_COUNT never
+        # report zero for a real blocker (mirrors the Copilot
+        # CHANGES_REQUESTED-with-no-inline-comments floor elsewhere in this
+        # file).
+        [ "$unresolved_count" -eq 0 ] && unresolved_count=1
       fi
 
       print_kv RESULT needs_fixes

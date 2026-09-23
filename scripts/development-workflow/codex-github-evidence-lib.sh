@@ -202,6 +202,78 @@ codex_review_thread_evidence_counts() {
   printf '%s\t%s\t%s\n' "$strict_unresolved" "$cleared" "$provisional_relaxed"
 }
 
+# codex_current_head_changes_requested_blocker <owner> <repo_name> <pr_number> \
+#     <bot_login> <bot_login_plain>
+#
+# #1757 follow-up (Cursor Bugbot finding on PR #1780, "CHANGES_REQUESTED
+# remapped to wait"): codex_review_thread_evidence_counts above counts only
+# INLINE REVIEW THREADS. A submitted Codex review whose GitHub review state
+# is CHANGES_REQUESTED is itself an actionable blocker per spec Business
+# Rules 5/6, even when it carries no inline thread at all (a body-only
+# review) or when every one of its own inline threads is separately
+# resolved — GitHub's structured request-for-changes state is not a thread
+# and is never cleared by resolving conversations.
+# codex_finalize_verdict's "cleared"/"none" branches (codex-github-
+# reviewer.sh) already refuse to treat such a review as cleared for exactly
+# this reason, but that refusal collapses to a bare exit code once the
+# companion returns to its caller — pr-review-loop.sh's exit-1 recount
+# cannot see WHY the companion said NEEDS_REVISION. Without this check, a
+# zero-thread recount was silently remapped to waiting_on_reviewer even
+# though the live head still carries an active CHANGES_REQUESTED verdict,
+# discarding a genuine blocker. This function re-derives that fact directly
+# from the live PR review state so the exit-1 recount can guard against it.
+#
+# stdout : "1" — a live-head, non-dismissed submitted review authored by
+#                the bot (matching either the REST "[bot]"-suffixed login
+#                or the GraphQL plain login) carries GitHub review state
+#                CHANGES_REQUESTED, OR the live head SHA or the review list
+#                could not be determined (fail closed — an indeterminate
+#                read must never be treated as "confirmed absent");
+#          "0" — the live head SHA and review list were both read
+#                successfully and no such review was found.
+# return : always 0. The fail-closed decision is encoded in the printed
+#          value itself (never the exit status), so callers can consume it
+#          with a plain command substitution under `set -e` without a
+#          separate `set +e`/`set -e` pair at every call site.
+codex_current_head_changes_requested_blocker() {
+  local owner="$1"
+  local repo_name="$2"
+  local pr_number="$3"
+  local bot_login="$4"
+  local bot_login_plain="$5"
+  local live_head_sha="" result stderr_file
+
+  set +e
+  live_head_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+  set -e
+  if [ -z "$live_head_sha" ]; then
+    printf '1\n'
+    return 0
+  fi
+
+  stderr_file=$(mktemp)
+  if ! result="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>"$stderr_file" \
+    | jq -rs --arg bot "$bot_login" --arg bot_plain "$bot_login_plain" --arg sha "$live_head_sha" \
+      '[ .[] | .[] | select((.user.login == $bot or .user.login == $bot_plain) and ((.commit_id // "") == $sha) and ((.state // "") == "CHANGES_REQUESTED")) ] | length')"; then
+    local err
+    err=$(cat "$stderr_file")
+    rm -f "$stderr_file"
+    echo "ERROR: codex_current_head_changes_requested_blocker: failed to fetch or parse Codex PR reviews for PR #$pr_number: $err" >&2
+    printf '1\n'
+    return 0
+  fi
+  rm -f "$stderr_file"
+  case "$result" in
+    ''|*[!0-9]*) result=0 ;;
+  esac
+  if [ "$result" -gt 0 ]; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+  return 0
+}
+
 # codex_extract_reviewed_commit_field <body>
 #
 # Pure/local (no network call) classification of the "Reviewed commit"
