@@ -585,7 +585,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot,ronda] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -2709,6 +2709,202 @@ run_copilot_review() {
   done
 
   # Timeout — no review posted within max_wait.
+  print_kv RESULT escalate
+  print_kv REASON timeout
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  return 2
+}
+
+run_ronda_review() {
+  # Waits on Ronda's GitHub check run for the PR's current head SHA and maps
+  # its conclusion to the standard exit-code contract.
+  #
+  # Ronda is a GitHub-facing bot (not a chat-completions endpoint): it posts
+  # a pull-request review plus a single check run (default name
+  # "Ronda review") per head SHA, out of band. Per Ronda's architecture the
+  # check run is created exactly once, at the end of a pass, already
+  # `completed` — there is deliberately no `in_progress` write. Absence of
+  # the check run therefore means "not finished yet", never "no review
+  # configured" or "clean": this loop keeps polling rather than returning
+  # skipped/clean until the check run appears (or the wait budget runs out).
+  # Re-resolving the head SHA on every poll iteration, and scoping the
+  # check-runs query to that SHA, means a new commit mid-poll naturally
+  # supersedes any in-flight pass — the loop keys on head SHA, not on a
+  # review/check-run count.
+  #
+  #   0 → RESULT=clean       (conclusion=success)
+  #   1 → RESULT=needs_fixes (conclusion=failure or action_required)
+  #   2 → RESULT=escalate    (timeout, head-sha-unavailable, fetch-failed, or
+  #                           an unrecognized terminal conclusion)
+  #
+  # Env var overrides:
+  #   RONDA_BOT_LOGIN   — override bot login (default: "ronda[bot]")
+  #   RONDA_CHECK_NAME  — override check-run name (default: "Ronda review")
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="ronda"
+  local bot_login="${RONDA_BOT_LOGIN:-ronda[bot]}"
+  local check_name="${RONDA_CHECK_NAME:-Ronda review}"
+  local repo owner repo_name
+  local elapsed=0
+  local head_sha=""
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Resolve head SHA before polling so an early lookup failure escalates
+  # immediately rather than risk matching a stale check run (#759 pattern,
+  # mirrored from run_copilot_review).
+  if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    head_sha=""
+  fi
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  local effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    local current_sha _sha_rc
+    set +e
+    current_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+    _sha_rc=$?
+    set -e
+    if [ "$_sha_rc" -ne 0 ] || [ -z "$current_sha" ]; then
+      echo "WARN: run_ronda_review: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
+      current_sha="$head_sha"
+    fi
+
+    # No `-e` on the jq flags below: an empty/no-match result must produce
+    # `null` with jq exit 0 (never yet — keep polling), while a real gh/jq
+    # failure must still be distinguishable via a non-zero pipeline exit
+    # (pipefail propagates gh's failure through jq's success).
+    local fetch_output fetch_rc
+    set +e
+    fetch_output="$(
+      gh api "repos/$owner/$repo_name/commits/$current_sha/check-runs" --paginate 2>/dev/null \
+        | jq -s --arg name "$check_name" '
+            [ .[].check_runs[] | select(.name == $name) ] | sort_by(.started_at) | last
+          ' 2>/dev/null
+    )"
+    fetch_rc=$?
+    set -e
+    if [ "$fetch_rc" -ne 0 ]; then
+      echo "WARN: run_ronda_review: check-run fetch/parse failed for PR #$pr_number (SHA=$current_sha)" >&2
+      print_kv RESULT escalate
+      print_kv REASON fetch-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+    fi
+
+    if [ -z "$fetch_output" ] || [ "$fetch_output" = "null" ]; then
+      # No "Ronda review" check run yet for this head SHA. Ronda writes it
+      # exactly once, already completed, at the end of a pass — absence
+      # means "not finished yet", so keep polling rather than declaring
+      # clean or skipped.
+      _interruptible_sleep "$effective_poll_interval"
+      elapsed=$(( elapsed + effective_poll_interval ))
+      continue
+    fi
+
+    local status conclusion
+    status="$(printf '%s' "$fetch_output" | jq -r '.status // ""')"
+    conclusion="$(printf '%s' "$fetch_output" | jq -r '.conclusion // ""')"
+
+    if [ "$status" != "completed" ]; then
+      # Ronda's contract never writes in_progress, but fail safe if a future
+      # rollout ever does: keep waiting for the terminal write.
+      _interruptible_sleep "$effective_poll_interval"
+      elapsed=$(( elapsed + effective_poll_interval ))
+      continue
+    fi
+
+    case "$conclusion" in
+      success)
+        print_kv RESULT clean
+        print_kv REVIEWED_HEAD "$current_sha"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 0
+        ;;
+      failure|action_required)
+        # Fetch the actual review-comment count so COMMENT_COUNT/BLOCKING_COUNT
+        # reflect how many inline findings Ronda posted, not just "at least 1".
+        local review_id comment_count
+        review_id=""
+        comment_count=0
+        set +e
+        review_id="$(gh api --paginate \
+          "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+          | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
+            '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .id // empty')"
+        if [ -n "$review_id" ]; then
+          local _cnt
+          _cnt="$(gh api --paginate \
+            "repos/$owner/$repo_name/pulls/$pr_number/reviews/$review_id/comments" \
+            2>/dev/null | jq -rs '[ .[] | .[] ] | length' 2>/dev/null)"
+          [ -n "$_cnt" ] && [ "$_cnt" -gt 0 ] && comment_count="$_cnt"
+        fi
+        set -e
+        # Ronda may place findings in the review body rather than as inline
+        # comments. Ensure BLOCKING_COUNT >= 1 so callers always see at least
+        # one blocking finding when the check run concludes failure.
+        [ "$comment_count" -eq 0 ] && comment_count=1
+        print_kv RESULT needs_fixes
+        print_kv REVIEWED_HEAD "$current_sha"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REASON ronda_blocking_findings
+        print_kv COMMENT_COUNT "$comment_count"
+        print_kv BLOCKING_COUNT "$comment_count"
+        print_kv SUGGESTION_COUNT 0
+        return 1
+        ;;
+      *)
+        # Unrecognized/unexpected terminal conclusion (e.g. neutral,
+        # cancelled, skipped, timed_out, stale) — fail closed rather than
+        # guess whether it means clean or blocking.
+        echo "WARN: run_ronda_review: unexpected check-run conclusion '$conclusion' for PR #$pr_number (SHA=$current_sha)" >&2
+        print_kv RESULT escalate
+        print_kv REASON ronda_unexpected_conclusion
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        return 2
+        ;;
+    esac
+  done
+
+  # Timeout — no completed check run observed within max_wait.
   print_kv RESULT escalate
   print_kv REASON timeout
   print_kv PLATFORM "$platform"
@@ -7384,6 +7580,7 @@ bot_login_for_platform() {
     copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
     haystack)            printf '\n' ;;
     bugbot)              printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
+    ronda)               printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
     *)                   printf '\n' ;;
   esac
 }
@@ -7600,6 +7797,9 @@ run_platform_review() {
       ;;
     bugbot)
       run_bugbot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    ronda)
+      run_ronda_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
