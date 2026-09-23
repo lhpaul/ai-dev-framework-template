@@ -575,6 +575,10 @@ issue_tracker:
     type_field: Work type
 CUSTOM_TYPE_FIELD_CONFIG
 
+  # MOCK_PRIORITY_FIELD_MODE selects the whole "fields(first:" response (all
+  # of Status/Priority/Size/Type-or-configured-field), not only Priority —
+  # the name predates this test's Type/Size coverage. "custom_type_field"
+  # selects the variant whose classification field is named "Work type".
   export MOCK_PRIORITY_FIELD_MODE=custom_type_field
   # No --type flag: the item is left with no value on "Work type", which
   # triggers the "has no Type value" warning path inside
