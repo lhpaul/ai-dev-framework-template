@@ -547,7 +547,7 @@ Mapping table (each carrying the identical
 ### § No-named-stop denial treatment
 
 A reachable stage role's harness tool or local file-path permission denial on
-a specific delegated action **is not a named stop condition condition at
+a specific delegated action **is not a named stop condition at
 all** — `missing_required_secret_or_permission` does not apply to it. This
 failure is only **observably similar** to the `SUBAGENT_PERMISSION_DENIAL`
 contract `91-orchestrate-work-protocol.md` defines, which governs solely a
