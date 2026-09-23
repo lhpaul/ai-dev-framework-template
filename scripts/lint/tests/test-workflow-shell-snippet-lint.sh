@@ -453,8 +453,7 @@ fixture_dir="$REPO_ROOT/scripts/development-workflow/tests/fixtures/ws-lint-self
 mkdir -p "$fixture_dir"
 
 # --all mode: a real file with invalid UTF-8 bytes under tests/fixtures/ must
-# not crash the whole-repository scan (this reproduces the exact failure mode
-# from scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/r1-invalid-utf8.fixture.md).
+# not crash the whole-repository scan.
 python3 - "$fixture_dir/invalid-utf8.fixture.md" <<'PYWRITE'
 import sys
 open(sys.argv[1], "wb").write(b"invalid bytes follow \xff\xfe end")

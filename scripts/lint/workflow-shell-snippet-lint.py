@@ -66,14 +66,19 @@ def markdown_paths(root: str) -> list[Path]:
 
 def diff_text(base_ref: str | None, input_file: str | None) -> str:
     if input_file:
-        return Path(input_file).read_text(encoding="utf-8")
-    result = subprocess.run(["git", "diff", "--unified=0", f"{base_ref}...HEAD"], text=True, capture_output=True)
+        return Path(input_file).read_bytes().decode("utf-8", errors="replace")
+    # Read the diff as bytes and decode leniently. A diff can legitimately carry
+    # undecodable bytes -- for example when a commit deletes a fixture that holds
+    # deliberately invalid UTF-8 -- and this linter must report on the rest of the
+    # diff instead of crashing on it. Undecodable bytes are replaced, never raised:
+    # they only ever appear inside content this linter already skips.
+    result = subprocess.run(["git", "diff", "--unified=0", f"{base_ref}...HEAD"], capture_output=True)
     # `git diff --exit-code` uses 1 to report differences. The normal command
     # above does not request that behavior, but accepting it keeps this helper
     # correct if the invocation is ever extended with that option.
     if result.returncode not in (0, 1):
-        raise RuntimeError(result.stderr.strip())
-    return result.stdout
+        raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip())
+    return result.stdout.decode("utf-8", errors="replace")
 
 
 # Structure this parser can actually consume. changed_lines() reads exactly two

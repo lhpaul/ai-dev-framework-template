@@ -327,9 +327,14 @@ repository is likewise prohibited.
 
 1. Open each bounded command adapter (`.cursor/commands/run-item.md`, `run-item-work.md`, `run-items.md`, `run-epic.md`, `run-work.md`, plus Claude and `.agents/skills` parity paths).
 2. Confirm each references `integrations/cursor-dispatch-profiles.md` and names the declaration requirement, and states that the requirement applies only in a Cursor environment (other runners unchanged).
-3. Run `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh` (exists once the implementation PR is checked out; required).
+3. Confirm no adapter restates the contract itself — evaluation order, stop
+   conditions, postures and boundaries live only in the canonical document, so
+   an adapter that reproduces them has reintroduced the drift class the pointer
+   structure removes.
 
-**Expected result**: Test exits 0; manual spot-check matches.
+**Expected result**: every adapter carries the pointer and the Cursor-only
+scoping; none restates the contract. See the plan's Test-Scope Deviation Record
+for why no surface guard ships.
 
 ### Step 3: Guardrails stop conditions
 
@@ -479,17 +484,19 @@ Control session**, not a simulated one, on the **implementation PR head**.
 **Maps to**: AC6, AC9, AC10, AC17, AC20
 
 1. Record the current head SHA (`git rev-parse HEAD`).
-2. **Mandatory**: run
-   `bash scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`
-   and confirm its `simulate_bounded_paths` branch passes **every** `/run-item`
-   scenario marked Y in the plan's scenario table (S1, S3, S5, S7-S10, S10b,
-   S11-S19), including unconfirmed initial/onward handoff, profile/fact
-   mismatch in both directions, mid-run recovery, and reachable-stage
-   credential denial.
+2. **Mandatory**: walk the canonical document's Decision-gate section by hand
+   against **every** `/run-item` scenario marked Y in the plan's scenario table
+   (S1, S3, S5, S7-S10, S10b, S11-S19), confirming each produces the outcome
+   and next action the gate states — including unconfirmed initial/onward
+   handoff, profile/fact mismatch in both directions, mid-run recovery, and
+   reachable-stage credential denial. Record any scenario the document does not
+   resolve unambiguously.
 3. The live `/run-item` evidence is Step 8 (required, real Remote Control).
-   Step 12 covers the simulation only; it never replaces Step 8.
+   Step 12 covers the walkthrough only; it never replaces Step 8.
 
-**Expected result**: The simulation passes every `/run-item` scenario; evidence names the head SHA.
+**Expected result**: every `/run-item` scenario resolves to exactly one outcome
+and next action; evidence names the head SHA. This walkthrough is manual by
+design — see the plan's Test-Scope Deviation Record.
 
 ### Step 13: `/run-items` explicit-list terminal behavior at current head
 
