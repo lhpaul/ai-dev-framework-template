@@ -9,7 +9,7 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$SCRIPT_DIR/.." <<'PY'
-import json, os, pathlib, shlex, shutil, signal, subprocess, sys, tempfile, time
+import json, os, pathlib, shlex, shutil, signal, subprocess, sys, tempfile, time, yaml
 
 scripts = pathlib.Path(sys.argv[1]).resolve()
 helper = scripts / 'resolve-reviewer-availability.sh'
@@ -526,9 +526,40 @@ reviews:
     reset();a=run(expected=1);fake('codex','exit 0');b=run();(bins/'codex').unlink();c=run(expected=1)
     check('T-32 fresh absent/present/absent',[x['REVIEWER_1_STATUS'] for x in (a,b,c)]==['unreachable','reachable','unreachable'])
     shipped=(scripts.parent.parent/'.ai-dev-workflow.yaml').read_text()
+    # Derive the shipped review.on_draft.runner list from the shipped config
+    # itself rather than hardcoding which drivers it covers (same D-9 class of
+    # defect as #1781): commit 7fb67d72 deliberately narrowed the shipped list
+    # to [claude], so a driver outside that list has no native entry to match.
+    shipped_runner=(((yaml.safe_load(shipped) or {}).get('review') or {}).get('on_draft') or {}).get('runner') or []
     for driver in ('claude','cursor','codex'):
-        reset();cfg.write_text(shipped);d=run(driver)
-        check(f'T-33 / T-44 shipped native {driver}',d['OUTCOME']!='blocked' and driver in d['REACHABLE'].split(','))
+        reset();cfg.write_text(shipped)
+        if driver in shipped_runner:
+            d=run(driver)
+            check(f'T-33 / T-44 shipped native {driver}',d['OUTCOME']!='blocked' and driver in d['REACHABLE'].split(','))
+        else:
+            # `driver` is not among the shipped runner entries, so it cannot claim
+            # any entry as "native reviewer in the driving session"
+            # (resolve-reviewer-availability.sh only takes that path when
+            # entry == runner_kind); every configured entry instead falls through
+            # to a probe (probe_local for claude/cursor/codex, probe_hosted for
+            # coderabbit/codex-github). This hermetic PATH never fakes any of
+            # those back in for this block, so no entry can be found reachable.
+            # The resolver's documented, intended outcome for that case — not
+            # merely tolerated here — is OUTCOME=blocked / BLOCK_CAUSE=zero-reachable.
+            # For local-runtime entries specifically, the probe deterministically
+            # reports REASON=runtime-absent in this hermetic PATH; assert that
+            # only for those entries (not blanket over every configured type,
+            # e.g. a shipped coderabbit/codex-github entry would report a
+            # different, probe_hosted-specific reason) so this stays derived
+            # from the resolver's actual per-type contract, not a re-hardcoded
+            # assumption of the same class this fix removes.
+            d=run(driver,1)
+            local_entries=[n for n in range(1,int(d['REVIEWER_COUNT'])+1) if d[f'REVIEWER_{n}_NAME'] in ('claude','cursor','codex')]
+            check(f'T-33 / T-44 shipped non-native {driver} blocks on absent local runtime',
+                  d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='zero-reachable' and
+                  int(d['REVIEWER_COUNT'])>0 and
+                  all(d[f'REVIEWER_{n}_REASON']=='runtime-absent' for n in local_entries),
+                  d)
     reset('[claude,cursor,codex]');main=root/'main';wtgit=main/'.git/worktrees/linked';wtgit.mkdir(parents=True)
     (wtgit/'commondir').write_text('../..\n');(repo/'.git').write_text(f'gitdir: {wtgit}\n')
     (main/'.ai-dev-workflow.local.yaml').write_text('review:\n  on_draft:\n    runner: [codex]\n')
