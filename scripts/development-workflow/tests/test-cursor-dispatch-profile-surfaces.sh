@@ -17,16 +17,35 @@
 # the required declaration-contract clauses (E1-E6) and stop-condition
 # tokens; that the canonical doc carries its own structural requirements
 # (including the Decision 7 per-command dispatch table); that Protocol
-# 90/91/95 carry their Decision-7 exact-text insertions; that the
-# explicit-list format string stays in parity across the canonical guide,
-# guardrails-enforcement.md, Protocol 90, and the merged spec; and, under
-# `--self-test`, that the scanner primitives themselves (fence/indented-code/
-# inline-construct stripping, boundary-aware identifier matching, block
-# splitting, UTF-8 validity, and the router-serialization contract) behave
-# correctly against the full 158-row fixture manifest from the implementation
-# plan (docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/
+# 90/91/95 carry their Decision-7 exact-text insertions; that
+# agent-model-config.md carries the full profile/evidence-marker and
+# model-assignment tables; that the explicit-list format string stays in
+# parity across the canonical guide, guardrails-enforcement.md, Protocol 90,
+# and the merged spec; and, under `--self-test`, that the scanner primitives
+# themselves (fence/indented-code/inline-construct stripping, boundary-aware
+# identifier matching, block splitting, UTF-8 validity, and the
+# router-serialization contract) behave correctly against the full 158-row
+# fixture manifest from the implementation plan
+# (docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/
 # 2_1462-cursor-dispatch-profiles_implementation-plan.md, Fixture manifest
 # section).
+#
+# Note on `simulate_bounded_paths` scope: neither the merged spec's
+# Decision-Gate Consistency Matrix nor the canonical doc's Decision-gate
+# table carries a machine-parseable row or scenario identifier (rows are
+# distinguished only by multi-sentence prose, matched positionally per the
+# plan's own "Row identities (spec order)" note). The real-surface check
+# below is therefore scoped to what is provably checkable per the Parser-Risk
+# Addendum's token/phrase rules: Decision-gate row-count parity between the
+# spec and the canonical doc, and presence of all three named stop strings in
+# the canonical doc. The full per-scenario C1-C4/S1-S19 mapping LOGIC is
+# implemented and proven at the fixture level (sim-*/serialization-* fixtures
+# 60-68 and 147-148, MANIFEST rows, `--self-test`) against a synthetic
+# labeled table; extending that per-scenario granularity to the real,
+# unlabeled prose tables would require brittle whole-paragraph exact-text
+# matching outside the addendum's scope and is intentionally not implemented
+# here (see the PR description's proof-cycle log for the corresponding
+# narrow exception on plan proof cycle 16's real-surface sub-scope).
 #
 # Usage:
 #   test-cursor-dispatch-profile-surfaces.sh              # check real repo surfaces
@@ -1658,6 +1677,54 @@ def simulate_bounded_paths_real(root):
     return failures
 
 
+MODEL_CONFIG_REL = "docs/workflow/development-workflow/agent-model-config.md"
+
+
+def check_model_config_real(root):
+    """Real-surface counterpart to check_model_config(): the actual
+    agent-model-config.md table layout has more columns (Rationale /
+    per-layer model cells) than the synthetic fixture table, so the row
+    regexes are looser (evidence marker is always the LAST cell)."""
+    import re as _re
+    text = read_path(root, MODEL_CONFIG_REL)
+    failures = []
+
+    profile_rows = _re.findall(
+        r'^\|\s*(Cursor [A-Za-z]+(?: [A-Za-z]+)*)\s*\|\s*(Portfolio|Epic|Item)\s*\|[^|]*\|\s*([^|]*?)\s*\|[^|]*\|\s*$',
+        text, _re.M)
+    if len(profile_rows) != 9:
+        failures.append("model-config rows")
+    seen = {(e, l) for e, l, _ in profile_rows}
+    expected = {(e, l) for e, l, _ in PROFILE_ROWS}
+    if expected - seen:
+        failures.append("model-config rows")
+
+    ref_profile = {(e, l): m for e, l, m in PROFILE_ROWS}
+    for env, layer, marker in profile_rows:
+        ref = ref_profile.get((env, layer))
+        if ref is None:
+            continue
+        if not marker.strip():
+            failures.append("evidence-marker")
+        elif marker.strip().startswith("confirmed by observation") and ref == "explicit assumption":
+            failures.append("evidence-marker")
+
+    model_rows = _re.findall(
+        r'^\|\s*(Cursor [A-Za-z]+(?: [A-Za-z]+)*)\s*\|[^|]*\|[^|]*\|[^|]*\|\s*([^|]*?)\s*\|\s*$',
+        text, _re.M)
+    ref_model = {e: m for e, m in MODEL_ROWS}
+    for env, marker in model_rows:
+        ref = ref_model.get(env)
+        if ref is None:
+            continue
+        if not marker.strip():
+            failures.append("evidence-marker")
+        elif marker.strip().startswith("confirmed by observation") and ref == "explicit assumption":
+            failures.append("evidence-marker")
+
+    return failures
+
+
 def run_real(root):
     failures = {}
 
@@ -1700,6 +1767,8 @@ def run_real(root):
     failures["<structural>"].extend(check_proto95(p95))
     failures["<structural>"].extend(explicit_list_format_parity_real(root))
     failures["<structural>"].extend(simulate_bounded_paths_real(root))
+    failures["<structural>"].extend(
+        "model-config:" + f for f in check_model_config_real(root))
     if not failures["<structural>"]:
         del failures["<structural>"]
 
@@ -1707,6 +1776,7 @@ def run_real(root):
 
 
 # ---- from selftest_dispatch.py ----
+import json
 
 FAMILY_OF_ROW = {}
 

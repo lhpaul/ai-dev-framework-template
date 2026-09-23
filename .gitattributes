@@ -1,0 +1,8 @@
+# The R1 (UTF-8 validity) self-test fixture deliberately contains invalid
+# UTF-8 bytes to prove the Cursor dispatch-profile surface guard's scanner
+# rejects malformed input (see the fixture manifest, row 137, in
+# docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/2_1462-cursor-dispatch-profiles_implementation-plan.md).
+# Mark it binary so `git diff` and tools that shell out to it (for example
+# scripts/lint/workflow-shell-guard-lint.py) do not attempt a UTF-8 text
+# diff and crash on the intentionally invalid bytes.
+scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/r1-invalid-utf8.fixture.md -diff -text
