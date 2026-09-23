@@ -1679,6 +1679,19 @@ def simulate_bounded_paths_real(root):
 
 MODEL_CONFIG_REL = "docs/workflow/development-workflow/agent-model-config.md"
 
+# Decision 6: the exact profile assigned per Cursor environment x layer.
+PROFILE_CODE_REF = {
+    ("Cursor Desktop", "Portfolio"): "cursor-native-handoff",
+    ("Cursor Desktop", "Epic"): "cursor-native-handoff",
+    ("Cursor Desktop", "Item"): "cursor-native-handoff",
+    ("Cursor Remote Control", "Portfolio"): "cursor-parent-orchestrated",
+    ("Cursor Remote Control", "Epic"): "cursor-parent-orchestrated",
+    ("Cursor Remote Control", "Item"): "cursor-parent-orchestrated",
+    ("Cursor Cloud Agents", "Portfolio"): "cursor-inline-fallback",
+    ("Cursor Cloud Agents", "Epic"): "cursor-inline-fallback",
+    ("Cursor Cloud Agents", "Item"): "cursor-inline-fallback",
+}
+
 
 def check_model_config_real(root):
     """Real-surface counterpart to check_model_config(): the actual
@@ -1690,17 +1703,22 @@ def check_model_config_real(root):
     failures = []
 
     profile_rows = _re.findall(
-        r'^\|\s*(Cursor [A-Za-z]+(?: [A-Za-z]+)*)\s*\|\s*(Portfolio|Epic|Item)\s*\|[^|]*\|\s*([^|]*?)\s*\|[^|]*\|\s*$',
+        r'^\|\s*(Cursor [A-Za-z]+(?: [A-Za-z]+)*)\s*\|\s*(Portfolio|Epic|Item)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|[^|]*\|\s*$',
         text, _re.M)
     if len(profile_rows) != 9:
         failures.append("model-config rows")
-    seen = {(e, l) for e, l, _ in profile_rows}
+    seen = {(e, l) for e, l, _, _ in profile_rows}
     expected = {(e, l) for e, l, _ in PROFILE_ROWS}
     if expected - seen:
         failures.append("model-config rows")
 
+    for env, layer, profile_cell, marker in profile_rows:
+        expected_code = PROFILE_CODE_REF.get((env, layer))
+        if expected_code is not None and not identifier_present(profile_cell, expected_code):
+            failures.append("model-config rows")
+
     ref_profile = {(e, l): m for e, l, m in PROFILE_ROWS}
-    for env, layer, marker in profile_rows:
+    for env, layer, _profile_cell, marker in profile_rows:
         ref = ref_profile.get((env, layer))
         if ref is None:
             continue
