@@ -442,6 +442,58 @@ else
   check all_mode_examined_nonzero ok "$(cat "$TMP_DIR/last.out")"
 fi
 
+# --- tests/fixtures/ exclusion (PR #1783 CI fix) ---
+#
+# A `tests/fixtures/` directory under any in-scope root legitimately holds
+# deliberately malformed content (e.g. invalid UTF-8 bytes proving a guard
+# rejects malformed input). This linter must not crash reading it in --all
+# mode, and must not lint its content in diff-scoped mode either.
+
+fixture_dir="$REPO_ROOT/scripts/development-workflow/tests/fixtures/ws-lint-selftest"
+mkdir -p "$fixture_dir"
+
+# --all mode: a real file with invalid UTF-8 bytes under tests/fixtures/ must
+# not crash the whole-repository scan (this reproduces the exact failure mode
+# from scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/r1-invalid-utf8.fixture.md).
+python3 - "$fixture_dir/invalid-utf8.fixture.md" <<'PYWRITE'
+import sys
+open(sys.argv[1], "wb").write(b"invalid bytes follow \xff\xfe end")
+PYWRITE
+all_fixture_rc="$(run_linter python3 "$LINTER" --all)"
+if [ "$all_fixture_rc" = "0" ] || [ "$all_fixture_rc" = "1" ]; then
+  check all_mode_ignores_invalid_utf8_fixture ok ok
+else
+  check all_mode_ignores_invalid_utf8_fixture ok "rc=$all_fixture_rc: $(cat "$TMP_DIR/last.out")"
+fi
+if grep -q "UnicodeDecodeError\|Traceback" "$TMP_DIR/last.out"; then
+  check all_mode_no_crash_on_invalid_utf8_fixture clean "$(cat "$TMP_DIR/last.out")"
+else
+  check all_mode_no_crash_on_invalid_utf8_fixture clean clean
+fi
+rm -f "$fixture_dir/invalid-utf8.fixture.md"
+
+# diff-scoped mode: a fixture that would otherwise trip WS001 (untagged fenced
+# shell block, no adjacent contract marker) must be excluded from linting
+# because it lives under tests/fixtures/, even though its parent root
+# (scripts/development-workflow/) is in scope.
+fixture_doc_rel="scripts/development-workflow/tests/fixtures/ws-lint-selftest/would-fail-ws001.md"
+printf '%s\n' '```bash' 'echo hello' '```' > "$REPO_ROOT/$fixture_doc_rel"
+fixture_diff="$TMP_DIR/fixture-exclusion.diff"
+{
+  printf 'diff --git a/%s b/%s\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%s @@\n' \
+    "$fixture_doc_rel" "$fixture_doc_rel" "$fixture_doc_rel" \
+    "$(wc -l < "$REPO_ROOT/$fixture_doc_rel" | tr -d ' ')"
+  sed 's/^/+/' "$REPO_ROOT/$fixture_doc_rel"
+} > "$fixture_diff"
+check tests_fixtures_excluded_from_diff_scope 0 "$(run_linter python3 "$LINTER" --input "$fixture_diff" --allow-empty)"
+if grep -q "examined=0 files" "$TMP_DIR/last.out"; then
+  check tests_fixtures_excluded_examined_zero ok ok
+else
+  check tests_fixtures_excluded_examined_zero ok "$(cat "$TMP_DIR/last.out")"
+fi
+rm -f "$REPO_ROOT/$fixture_doc_rel"
+rmdir "$fixture_dir" 2>/dev/null || true
+
 # The summary line is printed on every run, clean or not, so "exit 0 + silence"
 # can no longer exist.
 summary_doc="docs/workflow/snippet-summary-clean.md"
