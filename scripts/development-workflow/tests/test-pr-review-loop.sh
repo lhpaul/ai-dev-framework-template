@@ -15013,6 +15013,52 @@ run_test "codex_marker_boundary_unreadable_reason" "REASON=evidence_unavailable_
 rm -rf "$_codex_occupancy_boundary_unreadable_mock_dir"
 unset _codex_occupancy_boundary_unreadable_mock_dir _codex_occupancy_boundary_unreadable_output _codex_occupancy_boundary_unreadable_exit
 
+# Pass 1 follow-up (PR #1780, same class as codex_cr_blocker_malformed_jq_
+# output_fails_closed above): a successful jq invocation over well-formed
+# input always emits a plain integer for the occupancy guard's own
+# unusable-event count, so this path is not reachable through the real `jq`
+# binary today. This test forces it by shadowing `jq` on PATH with a stub
+# that answers the guard's unusable-count filter with non-numeric output
+# (exit 0) while delegating every other jq call to the real binary,
+# proving codex_compute_occupancy_boundary's own numeric sanitizer fails
+# closed (CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1) instead of letting an
+# unsanitized `[ "$unusable_count" -gt 0 ]` integer-comparison error
+# silently fall through as "no unusable event found" — spec Business Rule
+# 9 requires this guard to fail closed on an unreadable boundary.
+_codex_occ_boundary_malformed_real_jq="$(command -v jq)"
+_codex_occ_boundary_malformed_mock_dir="$(mktemp -d)"
+cat > "$_codex_occ_boundary_malformed_mock_dir/gh" <<'CODEX_OCC_BOUNDARY_MALFORMED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"issues/"*"/timeline"*)
+    printf '[{"event":"head_ref_force_pushed","created_at":"2026-02-01T00:00:00Z"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_OCC_BOUNDARY_MALFORMED_GH
+chmod +x "$_codex_occ_boundary_malformed_mock_dir/gh"
+cat > "$_codex_occ_boundary_malformed_mock_dir/jq" <<CODEX_OCC_BOUNDARY_MALFORMED_JQ
+#!/usr/bin/env bash
+case "\$*" in
+  *"select(.created_at == null"*)
+    cat >/dev/null
+    printf 'not-a-number\n'
+    exit 0 ;;
+  *)
+    exec "$_codex_occ_boundary_malformed_real_jq" "\$@" ;;
+esac
+CODEX_OCC_BOUNDARY_MALFORMED_JQ
+chmod +x "$_codex_occ_boundary_malformed_mock_dir/jq"
+CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=0
+PATH="$_codex_occ_boundary_malformed_mock_dir:$PATH" \
+  codex_compute_occupancy_boundary "owner" "repo" "42" "2026-01-01T00:00:00Z"
+run_test "codex_occupancy_boundary_malformed_jq_output_fails_closed" "1" "$CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE"
+rm -rf "$_codex_occ_boundary_malformed_mock_dir"
+unset _codex_occ_boundary_malformed_mock_dir _codex_occ_boundary_malformed_real_jq CODEX_OCCUPANCY_BOUNDARY_TIME CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE
+
 # ---------------------------------------------------------------------------
 # #1757 follow-up (AC-13, AC-14, spec Business Rule 9): the occupancy guard
 # above was originally wired only into the four TRIGGERED live-head call

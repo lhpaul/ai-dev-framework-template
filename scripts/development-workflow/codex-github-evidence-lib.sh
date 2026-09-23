@@ -785,6 +785,19 @@ codex_compute_occupancy_boundary() {
     CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1
     return 0
   fi
+  # Defense-in-depth (Pass 1 follow-up, PR #1780, same class as the
+  # codex_current_head_changes_requested_blocker sanitizer above): a
+  # successful jq invocation over well-formed input always emits a plain
+  # non-negative integer here, so this branch is not reachable today. But an
+  # unsanitized non-numeric value would make `[ "$unusable_count" -gt 0 ]`
+  # itself fail with a shell "integer expression expected" error — a
+  # non-zero exit that `||` treats as false, silently skipping the
+  # escalation this guard exists to raise (spec Business Rule 9: the
+  # occupancy guard must fail closed on an unreadable boundary, never fail
+  # open). Sanitize to empty so the existing `-z` branch below escalates.
+  case "$unusable_count" in
+    ''|*[!0-9]*) unusable_count="" ;;
+  esac
   if [ -z "$unusable_count" ] || [ "$unusable_count" -gt 0 ]; then
     rm -f "$timeline_tmpfile"
     CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE=1
