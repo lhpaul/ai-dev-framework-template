@@ -42,6 +42,7 @@ shared helper.
 When possible, call the repository helper instead of re-implementing the
 loop inline:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> --platform ronda
 ```
@@ -84,6 +85,7 @@ When the check run concludes `failure` or `action_required`, the helper
 looks up Ronda's pull-request review for the current head SHA and counts
 its inline review comments for `COMMENT_COUNT`/`BLOCKING_COUNT`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api --paginate repos/{owner}/{repo}/pulls/{pr_number}/reviews \
   --jq '[.[] | select(.user.login == "ronda[bot]" and .commit_id == "'"$head_sha"'")] | last | .id'
