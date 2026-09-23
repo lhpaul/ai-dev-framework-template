@@ -352,6 +352,45 @@ run_test "ronda_unexpected_conclusion_exit_code" "2" "$actual_exit"
 rm -rf "$_ronda_mock_37"
 unset _ronda_mock_37 actual_output actual_exit
 
+# --- Test 3.8: initial headRefOid lookup is scoped to the target repo ---
+# Bugbot finding: the initial head-SHA lookup omitted --repo while every
+# later poll call passes it, so a product-repo target (WORKFLOW_TARGET_GITHUB_REPO
+# / --repo) would resolve the initial SHA against the wrong repository and
+# escalate with head-sha-unavailable instead of ever polling the intended PR.
+_ronda_mock_38="$(mktemp -d)"
+cat > "$_ronda_mock_38/gh" <<'RONDA_GH_38'
+#!/usr/bin/env bash
+case "$*" in
+  *"headRefOid"*)
+    case "$*" in
+      *"--repo owner/repo"*) printf 'abc38sha\n'; exit 0 ;;
+      *) printf '\n'; exit 0 ;;
+    esac ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+RONDA_GH_38
+chmod +x "$_ronda_mock_38/gh"
+
+unset RONDA_BOT_LOGIN RONDA_CHECK_NAME
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_ronda_overrides"
+  _ec=0
+  PATH="$_ronda_mock_38:$PATH" run_ronda_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "ronda_initial_lookup_repo_scoped_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "ronda_initial_lookup_repo_scoped_exit_code" "0" "$actual_exit"
+rm -rf "$_ronda_mock_38"
+unset _ronda_mock_38 actual_output actual_exit
+
 unset _ronda_overrides
 
 if [ "$FAIL_COUNT" -ne 0 ]; then

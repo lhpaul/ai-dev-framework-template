@@ -2762,8 +2762,11 @@ run_ronda_review() {
 
   # Resolve head SHA before polling so an early lookup failure escalates
   # immediately rather than risk matching a stale check run (#759 pattern,
-  # mirrored from run_copilot_review).
-  if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+  # mirrored from run_copilot_review). Scope to the target repo explicitly
+  # (matching the poll loop below) so a product-repo target via
+  # WORKFLOW_TARGET_GITHUB_REPO / --repo does not fall through to the
+  # workflow repo's own PR list on the first lookup.
+  if ! head_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
     head_sha=""
   fi
   if [ -z "$head_sha" ]; then
