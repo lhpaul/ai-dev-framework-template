@@ -1725,6 +1725,20 @@ def check_model_config_real(root):
     return failures
 
 
+def explicit_list_tokens_missing(raw):
+    """Boundary-aware check for the explicit-list sub-clause tokens (R4): a
+    suffix lookalike such as `verbatim2` or `percent-encodedish` must not
+    satisfy the requirement."""
+    missing = []
+    if "explicit_list_invocation_targets=" not in raw:
+        missing.append("explicit_list_invocation_targets=")
+    if not identifier_present(raw.lower(), "verbatim"):
+        missing.append("verbatim")
+    if not identifier_present(raw.lower(), "percent-encoded"):
+        missing.append("percent-encoded")
+    return missing
+
+
 def run_real(root):
     failures = {}
 
@@ -1738,8 +1752,7 @@ def run_real(root):
         extra = "explicit_list" if rel in EXPLICIT_LIST_SURFACES else None
         clause_failures = check_clauses(raw, FULL_CLAUSES)
         if extra == "explicit_list":
-            missing_el = [t for t in ["explicit_list_invocation_targets=", "verbatim", "percent-encoded"]
-                          if t.lower() not in raw.lower()]
+            missing_el = explicit_list_tokens_missing(raw)
             if missing_el:
                 clause_failures.append("E3b_explicit_list")
         if clause_failures:
@@ -1750,8 +1763,7 @@ def run_real(root):
     if not check_link(root, grel):
         failures.setdefault(grel, []).append("link")
     gfail = check_clauses(graw, GUARDRAILS_CLAUSES)
-    missing_el = [t for t in ["explicit_list_invocation_targets=", "verbatim", "percent-encoded"]
-                  if t.lower() not in graw.lower()]
+    missing_el = explicit_list_tokens_missing(graw)
     if missing_el:
         gfail.append("E3b_explicit_list")
     if gfail:
