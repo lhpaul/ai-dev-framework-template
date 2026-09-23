@@ -14,7 +14,7 @@ Human unblocking action: not resumed or corrected in place; start a fresh invoca
 
 Move to an environment where initial handoff is confirmed available and re-run, or explicitly accept the read-only result; confirm the specific stage role the action needed is reachable.
 
-Grant the identified credential and re-run the same delegated action, or reassign to the same stage role or explicitly accept the action does not proceed; the absorbing context never performs it inline.
+The unblocking action: grant the identified credential and re-run the same delegated action, or reassign to the same stage role or explicitly accept the action does not proceed; the absorbing context never performs it inline.
 
 A harness or local-path denial is not a named stop condition; it is only observably similar to `SUBAGENT_PERMISSION_DENIAL`, and is Out of Scope, tracked as #1746.
 
