@@ -1171,6 +1171,7 @@ def check_model_config(text):
 
 
 # ---- from proto_family.py ----
+import re
 
 GENERIC_PARAGRAPH = (
     "If the runner does **not** support Work Item Runner handoff natively, "
@@ -1213,10 +1214,47 @@ def check_proto95(text):
     return []
 
 
+DISPATCH_TABLE_HEADING = "## Per-command dispatch decision (Decision 7)"
+DISPATCH_TABLE_COMMANDS = ["/run-item", "/run-items", "/run-epic", "/run-work"]
+
+
 def check_canonical_dispatch(text):
     normalized = text.replace("*", "").replace("`", "").lower()
     if not all(t.lower() in normalized for t in CANONICAL_DISPATCH_TOKENS):
         return ["canonical_dispatch_decision"]
+
+    # Row-scoped check: when the real per-command table is present, each
+    # command must have its OWN row carrying an absorb/dispatch token --
+    # otherwise a row could be deleted while the tokens survive elsewhere
+    # in the document's prose and the coarse whole-document check above
+    # would miss it.
+    if DISPATCH_TABLE_HEADING in text:
+        idx = text.index(DISPATCH_TABLE_HEADING)
+        rest = text[idx + len(DISPATCH_TABLE_HEADING):]
+        next_heading = rest.find("\n## ")
+        section = rest if next_heading == -1 else rest[:next_heading]
+        rows = blocks(section)
+        # /run-work is a read-only scan: its row legitimately says "Same"
+        # (matching the row above) rather than repeating absorb/dispatch
+        # wording, so only its own row presence is required.
+        absorb_dispatch_required = {"/run-item", "/run-items", "/run-epic"}
+        for cmd in DISPATCH_TABLE_COMMANDS:
+            cmd_pattern = re.compile(re.escape(cmd.lower()) + r'(?![A-Za-z])')
+            found = False
+            for row in rows:
+                row_norm = row.replace("*", "").replace("`", "").lower()
+                if not cmd_pattern.search(row_norm):
+                    continue
+                if cmd in absorb_dispatch_required:
+                    if "absorb" in row_norm and "dispatch" in row_norm:
+                        found = True
+                        break
+                else:
+                    found = True
+                    break
+            if not found:
+                return ["canonical_dispatch_decision"]
+
     return []
 
 
