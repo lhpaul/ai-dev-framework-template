@@ -144,28 +144,28 @@ that now escapes. A finding that names only one half does not satisfy the rule.
    the only exercise of a named behavior — a swap, a consolidation, or a
    rewrite that nets out even or up.
 
-**Expected result**: **not** A0. A removal that nets even or larger is still a
-removal, so the delta continues into A1-A6 by what it touches, the plan
-marking, and the record — exactly as the equivalent shrinking delta would — and
-is never closed on the total alone.
+**Expected result**: exclusion **X2 does not apply** — a removal that nets even
+or larger is still a removal. The delta therefore enters the table and is
+resolved by the plan marking and the record, exactly as the equivalent
+shrinking delta would be, and is never closed on the total alone.
 
-Then confirm all three Gate A preamble statements are present and mutually
-consistent:
+Then confirm Gate A is stated as **two independent scope questions settled
+before any row is read** — X1 (what the delta touches) and X2 (whether anything
+was removed) — followed by a table whose rows turn only on marking, record, and
+harm statement. Confirm the `Item count is never a gate input` paragraph ties
+the swap case to X2 explicitly.
 
-1. Rows are evaluated in order, **first match wins**.
-2. **A0 is the entry condition**, evaluated before every other row, and A1-A6
-   apply to removals only.
-3. **Item count is never a gate input.**
+Finally check all three directions the two dimensions must keep separate:
 
-Finally check both converse directions:
-
-- An **addition-only** delta (nothing removed, no deviation record) must land
-  on A0 and produce no finding. It must **not** reach A4 and become
-  `important`, which is what an ordering that put A1-A6 ahead of A0 would do.
+- An **addition-only** scaffolding delta (nothing removed, no deviation record)
+  is excluded by X2 and produces no finding. It must **not** reach A4 and
+  become `important`.
+- A **behavior or acceptance-criterion** delta that leaves the projected tests
+  intact is excluded by X1 and stays `blocking` under the unchanged Pass 1
+  rule. It must **not** be absorbed by X2 and silently pass.
 - A *smaller* but coverage-equivalent reduction must still reach A3 (record
   present) or A4 (record missing), and a reduced `**Binding enumeration**` must
-  still reach A5/A6. A0 must not absorb either, because A0 matches only when
-  **nothing is removed**.
+  still reach A5/A6. Neither exclusion may absorb them.
 
 ### Step 7: A missing record is requested, not used to block
 
@@ -188,7 +188,7 @@ and Path 2 PR descriptions, so the request has a defined place to land.
    of an acceptance criterion.
 
 **Expected result**: the first case lands on row A5 or A6 — blocking. The second
-lands on row A1 — blocking under the unchanged Pass 1 rule, with no
+is excluded by X1 — blocking under the unchanged Pass 1 rule, with no
 Coverage-Harm Statement required beyond naming the criterion or behavior. Also
 confirm the non-weakening clause is present: review of production-code
 correctness and of third-party reviewer output is explicitly unchanged.
@@ -264,7 +264,8 @@ report no violations.
       both the specific coverage lost and the defect class that escapes
 - [ ] Item count is never a gate input: a delta that nets even or larger while
       dropping uniquely-covering items is still treated as the equivalent
-      shrinking delta, and an addition-only delta lands on A0 with no finding
+      shrinking delta, and an addition-only delta is excluded by X2 with no
+      finding
 - [ ] A Test-Scope Deviation Record format exists, and the gate documents how it
       is evaluated, including the missing-record outcome
 - [ ] Plan-authoring guidance makes enumerations indicative unless marked with

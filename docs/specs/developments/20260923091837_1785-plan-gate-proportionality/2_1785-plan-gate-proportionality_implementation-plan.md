@@ -164,7 +164,7 @@ that introduces it. Unmarked enumerations express coverage intent and may be
 satisfied by a different, coverage-equivalent set. The default is deliberately
 permissive because over-binding is the defect being fixed; the fail-closed
 direction is preserved by routing behavior and acceptance-criterion deltas back
-to the unchanged Pass 1 rule (matrix row A1). An exact literal is used rather
+to the unchanged Pass 1 rule (Gate A exclusion X1). An exact literal is used rather
 than a loose grammar so that a plan cannot become binding by accidental
 phrasing.
 
@@ -202,32 +202,50 @@ incident — per the catalogue's own rules and `review-doctrine-lint.sh`.
 
 ### Gate A — Reviewer evaluating a delta between the plan's projected test scope and the delivered test scope
 
-Inputs: whether the delivered scope **removes** anything the plan projected;
-what the delta touches; how the plan marked the enumeration; whether a
-Test-Scope Deviation Record is present and complete; whether the reviewer can
-state both halves of a Coverage-Harm Statement.
+Gate A resolves on two independent questions, in this order: **what the delta
+touches**, then **whether anything was removed**. Both are scope questions,
+settled before any row is read. A delta that either exclusion catches never
+reaches the table; only a delta caught by neither is resolved by a row.
 
-**Rows are evaluated in order; the first matching row wins.** Row A0 is this
-gate's entry condition and is evaluated before every other row: a delta that
-removes nothing never reaches A1-A6, so a change that only adds tests is never
-`important` or `blocking` under this gate. Rows A1-A6 apply to removals only.
+**Exclusion X1 — what the delta touches.** A delta touching observable behavior,
+or the coverage of an acceptance criterion, is governed by the **unchanged
+Pass 1 rule** and is `blocking` there, whatever it does to test counts and
+whatever this gate says. Gate A neither relaxes nor restates that rule, and a
+behavior delta never enters the table below.
 
-**Item count is never a gate input.** Gate A keys on whether anything was
-removed, not on whether the delivered scope is smaller or larger than the
-projection. A removal that nets even or larger — a swap, a consolidation, a
-rewrite — is still a removal and is treated exactly as the equivalent shrinking
-delta; a raised total is never a defense against a coverage loss.
+**Exclusion X2 — whether anything was removed.** A delta that removes nothing —
+the delivered scope only adds to, or leaves intact, every item the plan
+projected — produces **no finding from this gate**, whatever the totals and
+whatever the plan marking or record. Ordinary Pass 2 quality review still
+applies.
 
-| # | Delta touches | Plan marking | Deviation record | Harm statement available | Outcome | Required next action |
-| --- | --- | --- | --- | --- | --- | --- |
-| A0 | **Nothing is removed** — the delivered scope only adds to, or leaves intact, every item the plan projected, whatever the totals | Any | Not required | Not applicable | No finding; **Gate A does not apply** | Ordinary Pass 2 quality review still applies |
-| A1 | Observable behavior, or coverage of an acceptance criterion | Any | Any | Not required | `blocking` | Unchanged Pass 1 rule; name the criterion or behavior affected |
-| A2 | Test scaffolding only | Indicative (unmarked) | Present and complete | Yes — reviewer names the lost coverage **and** the defect class | `blocking` | Reviewer states both halves; implementer restores that coverage or narrows the deviation |
-| A3 | Test scaffolding only | Indicative | Present and complete | No | Not blocking; `suggestion` at most | Accept the recorded rationale; do not restate the count as a requirement |
-| A4 | Test scaffolding only | Indicative | Missing or incomplete | Any | `important` | Request the record before `ready-for-human-review`; do not block on the delta alone |
-| A5 | Test scaffolding only | `**Binding enumeration**` | Present | Not required | `blocking` | Restore the listed items, or obtain a human decision to amend the plan |
-| A6 | Test scaffolding only | `**Binding enumeration**` | Missing | Not required | `blocking` | Same as A5 |
-| A8 | Test scaffolding only, but the marking is malformed — marker text present in a form other than the exact literal, or attached to an unclear span | Treated as indicative | Any | Any | `important` on the plan wording; delta itself follows A2/A3/A4 | Ask for the plan marker to be corrected; missing or malformed marking never upgrades the delta to blocking |
+The two exclusions are independent and neither overrides the other: a behavior
+delta is Pass 1's business whatever its test totals, and an addition-only
+scaffolding delta is outside Gate A whatever its marking or record.
+
+**In scope, therefore:** a delta that touches test scaffolding only **and**
+removes at least one item the plan projected. Rows A2-A6 and A8 cover exactly
+that set and are mutually exclusive on `Plan marking` x `Deviation record` x
+`Harm statement available`.
+
+**Item count is never a gate input.** X2 asks whether anything was removed, not
+whether the delivered scope is smaller or larger. A removal that nets even or
+larger — a swap, a consolidation, a rewrite — is still a removal, does not
+satisfy X2, and is treated exactly as the equivalent shrinking delta. A raised
+total is never a defense against a coverage loss.
+
+Inputs to the table: how the plan marked the enumeration; whether a Test-Scope
+Deviation Record is present and complete; whether the reviewer can state both
+halves of a Coverage-Harm Statement.
+
+| # | Plan marking | Deviation record | Harm statement available | Outcome | Required next action |
+| --- | --- | --- | --- | --- | --- |
+| A2 | Indicative (unmarked) | Present and complete | Yes — reviewer names the lost coverage **and** the defect class | `blocking` | Reviewer states both halves; implementer restores that coverage or narrows the deviation |
+| A3 | Indicative | Present and complete | No | Not blocking; `suggestion` at most | Accept the recorded rationale; do not restate the count as a requirement |
+| A4 | Indicative | Missing or incomplete | Any | `important` | Request the record before `ready-for-human-review`; do not block on the delta alone |
+| A5 | `**Binding enumeration**` | Present | Not required | `blocking` | Restore the listed items, or obtain a human decision to amend the plan |
+| A6 | `**Binding enumeration**` | Missing | Not required | `blocking` | Same as A5 |
+| A8 | Marking malformed — marker text present in a form other than the exact literal, or attached to an unclear span | Any | Any | `important` on the plan wording; the delta itself follows A2/A3/A4 as indicative | Ask for the plan marker to be corrected; missing or malformed marking never upgrades the delta to blocking |
 
 ### Gate B — Plan reviewer applying the advisory test-scope sanity signal
 
@@ -292,7 +310,7 @@ Log. Nothing is delegated to implementation-time discovery.
       entry "Implementation diverges from the approved spec or plan in a way
       that changes observable behaviour" so it names the Coverage-Harm Statement
       requirement for test-scope deltas. Behavior and acceptance-criterion
-      deltas keep their current force (row A1).
+      deltas keep their current force (exclusion X1).
 - [ ] `REVIEW.md` — `Plan Review Checklist`: add one bullet for the advisory
       Gate B signal (explicitly `suggestion`, never blocking) and one bullet
       requiring that any enumeration the plan intends as binding carries the
@@ -552,8 +570,8 @@ Beyond that list:
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| The rule is read as a general licence to ship less testing | Med | High | The canonical document scopes the rule to test scaffolding, names the blocking rules it does not relax, and routes behavior and acceptance-criterion deltas back to the unchanged Pass 1 rule (row A1) |
-| A reviewer uses "no harm statement available" to wave through a real coverage gap | Med | High | Row A3 fires only when the record is present and complete and the reviewer still cannot name either half of a Coverage-Harm Statement; a reviewer who can name the harm states it and the delta becomes A2 instead. The unchanged rules — planted-violation proof, E2E fixture contract, filter-schema canary, scope-residual evidence, and acceptance-criterion coverage (row A1) — continue to require their specific coverage kinds regardless of counts, a missing record is `important` rather than silently accepted (A4), and binding enumerations stay blocking regardless (A5/A6) |
+| The rule is read as a general licence to ship less testing | Med | High | The canonical document scopes the rule to test scaffolding, names the blocking rules it does not relax, and routes behavior and acceptance-criterion deltas back to the unchanged Pass 1 rule (exclusion X1) |
+| A reviewer uses "no harm statement available" to wave through a real coverage gap | Med | High | Row A3 fires only when the record is present and complete and the reviewer still cannot name either half of a Coverage-Harm Statement; a reviewer who can name the harm states it and the delta becomes A2 instead. The unchanged rules — planted-violation proof, E2E fixture contract, filter-schema canary, scope-residual evidence, and acceptance-criterion coverage (exclusion X1) — continue to require their specific coverage kinds regardless of counts, a missing record is `important` rather than silently accepted (A4), and binding enumerations stay blocking regardless (A5/A6) |
 | Someone applies the new permissiveness to matching third-party reviewer output | Low | High | Explicit non-weakening clause in both `REVIEW.md` and the canonical document, stated as: be literal about what a third party emits; be substantive about what your own team delivers |
 | Editing `strict-plan-checks.md` breaks registry extraction (an extra level-3 heading or a second `Source:` line makes extraction refuse the file) | Med | High | Explicit constraint in the layer list, plus a dedicated extraction verification step in the Implementation Order before any test is touched |
 | Stale identifier counts left behind in the integration doc, the #1655 runbook, or test expectations | High | Med | The discovery grep is recorded in the Verification Log and re-run as the residual-evidence sweep before readiness |
