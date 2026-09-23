@@ -276,11 +276,33 @@ comments to `created_at` at or after the boundary (the latest review
 trigger for a triggered head, tie-broken by comment ID; the pull request's
 own `created_at` for a trigger-less head), matching the freshness boundary
 the four post-trigger poll sites already enforce server-side in their own
-`gh api` query. **Disclosed scope note**: this item does not implement the
-force-push/`head_ref_deleted`/`head_ref_restored` occupancy guard that
-raises the boundary further for a SHA-reuse (revert-and-return) scenario —
-an accepted, narrow residual on top of the freshness-boundary
-implementation above.
+`gh api` query.
+
+**Occupancy guard (Business Rule 9).** A SHA can occupy the pull request's
+head position more than once (a revert, or a force-push back), and each
+such occupancy is its own evidence window. `codex_compute_occupancy_boundary`
+(`codex-github-evidence-lib.sh`) computes, fresh before every scan, the
+newest `head_ref_force_pushed` / `head_ref_deleted` / `head_ref_restored`
+pull-request timeline event strictly newer than the same anchor used for the
+freshness boundary above (the latest trigger for a triggered head; the pull
+request's own `created_at` for a trigger-less head) — deliberately not
+filtered by the event's own `commit_id`, since an A→B→A force-push
+sequence's final event names the live head. Inside
+`codex_scan_comment_evidence`, this boundary is raised further by a
+dedicated pre-pass over comment evidence: any well-formed marker naming a
+different, existing SHA (`prior_revision`) at or after the anchor is itself
+proof the head moved away, and raises the boundary to that comment's own
+timestamp. A comment or submitted review only counts as current-occupancy
+evidence when it is strictly newer than the resulting boundary — no
+comment-ID tiebreak. This applies uniformly to both the triggered
+(`codex_refresh_occupancy_boundary_or_escalate`) and trigger-less
+(`codex_refresh_existing_occupancy_boundary_or_escalate`) live-head paths,
+and to both root-comment and submitted-review evidence on the trigger-less
+path (the four triggered-path review queries are occupancy-safe by
+construction, since `submitted_at >= $trigger_time` already excludes any
+earlier occupancy). A timeline read that fails or is truncated after one
+retry escalates `evidence_unavailable_codex_thread_state` (the "boundary
+unreadable" case) rather than silently skipping the guard.
 
 **Unrecognized verdicts now escalate (AC-7).** A current terminal verdict
 that matches neither an approved clean template nor the documented

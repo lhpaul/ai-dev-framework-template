@@ -16,16 +16,16 @@ non-live-head-commit threads excluded from blocker counts), removal of the
 `unresolved_count=1` floor, the acknowledgement-only wait remap (exit `4`
 instead of exit `2`), exit-`3` reason propagation, the `Reviewed commit`
 marker well-formedness classifier, the finding-thread correlation contract,
-the live-head evidence window, the cleared-findings wait, and all four new
-fail-closed escalation reason codes
-(`codex_current_verdict_malformed_revision_marker`,
+the live-head evidence window, the live-head occupancy guard (SHA-reuse
+across a revert-and-return, for both a triggered and a trigger-less live
+head), the cleared-findings wait, and all four new fail-closed escalation
+reason codes (`codex_current_verdict_malformed_revision_marker`,
 `codex_finding_thread_correlation_missing`,
 `codex_current_verdict_unrecognized`,
 `evidence_unavailable_codex_thread_state`). See `codex-github.md`'s
 "Resolved Codex findings and blocker counting (#1757)" section for the full
-contract, including the two narrow disclosed scope notes (abbreviated-marker
-ambiguity proof and the force-push occupancy guard) under "Known
-Limitations" below.
+contract, including the one narrow disclosed scope note (abbreviated-marker
+ambiguity proof) under "Known Limitations" below.
 
 ---
 
@@ -242,9 +242,9 @@ Codex GitHub App connected, or the automated regression harness fixtures in
   disprove is trusted at its string classification rather than escalated.
   This is a disclosed, narrow scope note — see `codex-github.md`'s
   "Resolved Codex findings and blocker counting (#1757)" section for the
-  full rationale.
-- **The force-push/`head_ref_deleted`/`head_ref_restored` occupancy guard
-  (SHA-reuse across a revert-and-return) is not implemented.** The
-  freshness-boundary implementation itself (trigger-based, or PR
-  `created_at` for a trigger-less head) is complete; only this narrower,
-  rare residual is out of scope.
+  full rationale. (The force-push/`head_ref_deleted`/`head_ref_restored`
+  occupancy guard for SHA-reuse across a revert-and-return is implemented,
+  for both a triggered and a trigger-less live head, covering root-comment
+  and submitted-review evidence alike — see `codex-github.md`'s "Occupancy
+  guard (Business Rule 9)" subsection — so it is not listed here as a
+  limitation.)
