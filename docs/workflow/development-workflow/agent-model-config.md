@@ -106,6 +106,61 @@ and `inherit` as quota controls:
 
 Update pinned IDs and tier mappings when your provider deprecates a model; keep the tier intent stable.
 
+### Cursor dispatch profiles
+
+Applies only in a Cursor environment; other runners are unchanged. Profile
+selection is declared, not automatically detected, per
+`integrations/cursor-dispatch-profiles.md` (the canonical, normative source).
+For an environment or orchestration layer whose handoff behavior has not been
+directly observed, the profile recorded below is an explicit assumption, not
+an observed fact, and takes the more restrictive of the profiles under
+consideration until confirmed by observation.
+
+**Profile and evidence marker per environment x layer**:
+
+| Environment | Layer | Profile | Evidence marker | Rationale |
+| --- | --- | --- | --- | --- |
+| Cursor Desktop | Portfolio | Native handoff (`cursor-native-handoff`) | confirmed by observation | The two-hop handoff holds on desktop, naming the portfolio orchestrator |
+| Cursor Desktop | Epic | Native handoff (`cursor-native-handoff`) | confirmed by observation | Same, naming the epic runner |
+| Cursor Desktop | Item | Native handoff (`cursor-native-handoff`) | confirmed by observation | Same, naming the work item runner |
+| Cursor Remote Control | Portfolio | Parent orchestrated (`cursor-parent-orchestrated`) | explicit assumption | Onward-handoff failure is recorded only environment-wide ("frequently"); no portfolio-layer case is recorded, so onward capability cannot be confirmed at this layer and the conservative default applies. At this layer the current context absorbs the portfolio and item layers and runs items one at a time (Protocol 90 Step 4 Cursor-scoped paragraph) |
+| Cursor Remote Control | Epic | Parent orchestrated (`cursor-parent-orchestrated`) | explicit assumption | No epic-layer case is recorded; onward capability is unconfirmed, so the conservative default applies |
+| Cursor Remote Control | Item | Parent orchestrated (`cursor-parent-orchestrated`) | confirmed by observation | The recorded incident (one context doing orchestration and implementation at once) is an item-layer case |
+| Cursor Cloud Agents | Portfolio | Inline fallback (`cursor-inline-fallback`) | explicit assumption | Nothing observed for this environment, so initial handoff cannot be confirmed and the matrix assigns inline fallback |
+| Cursor Cloud Agents | Epic | Inline fallback (`cursor-inline-fallback`) | explicit assumption | Same |
+| Cursor Cloud Agents | Item | Inline fallback (`cursor-inline-fallback`) | explicit assumption | Same |
+
+Consequence for Cloud Agents: a mutating bounded run stops with
+`dispatch_handoff_unavailable` recording that initial handoff is unconfirmed,
+rather than absorbing a role. An operator who observes and records in run
+output that initial handoff is available makes the **next** run declare
+afresh against the confirmed facts (parent orchestrated if onward handoff is
+unavailable or unconfirmed, native handoff if both are available); a run
+never upgrades in place. The same applies to a Remote Control portfolio or
+epic layer once an operator observes and records the onward fact for that
+layer: the next run declares afresh.
+
+**Model assignment per environment x layer** (evidence marker in the last
+column; the tiers come from the Agent Assignments table above — Portfolio
+Orchestrator `economy`/`fast`, Work Item Runner `balanced`/`auto`; the epic
+layer has no dedicated agent file, so it takes the Work Item Runner tier
+(`balanced`) as its floor; stage roles always keep their own configured
+models under every profile):
+
+| Environment | Portfolio layer model | Epic layer model | Item layer model | Evidence marker |
+| --- | --- | --- | --- | --- |
+| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | explicit assumption (the framework documents that a Cursor subagent's frontmatter `model` applies on native handoff, but no model observation is recorded) |
+| Cursor Remote Control | The floor is the highest tier among the layers the run absorbs: a `/run-work` scan absorbs nothing (observing), so the `economy` floor applies (`fast` where selectable); `/run-items` absorbs the portfolio **and** item layers, so the `balanced` floor applies (`auto` where selectable) | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | explicit assumption at every layer (the remote session's model is not switched by role frontmatter, and no model observation is recorded) |
+| Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | explicit assumption (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row the confirmed facts assign, including its model floor |
+
+Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
+as a substitute for the floor: if the session model is below the absorbed
+role's tier, the declaration records the shortfall and the operator switches
+the session model before the first mutating action. Under
+`cursor-inline-fallback` no orchestration role is absorbed, so no role floor
+applies. Unobserved environments use the more restrictive applicable profile
+until an operator confirms otherwise in run output.
+
 See also:
 
 - [`provider-contingency-runner-failover.md`](provider-contingency-runner-failover.md) — quota, timeout, and runner-switch recovery
