@@ -144,18 +144,28 @@ that now escapes. A finding that names only one half does not satisfy the rule.
    the only exercise of a named behavior — a swap, a consolidation, or a
    rewrite that nets out even or up.
 
-**Expected result**: row A7b, not A7. A7b is not terminal — the documents must
-fall through to A1-A6 by what the delta touches, the plan marking, and the
-record, exactly as they would route the equivalent shrinking delta, and must not
-close it on the total alone.
+**Expected result**: **not** A0. A removal that nets even or larger is still a
+removal, so the delta continues into A1-A6 by what it touches, the plan
+marking, and the record — exactly as the equivalent shrinking delta would — and
+is never closed on the total alone.
 
-Also confirm both Gate A preamble paragraphs are present: that rows are
-evaluated in order with **A1-A6 taking precedence** over A7/A7b, and that
-**item count is never a gate input**. Then check the converse case: a
-*smaller* but coverage-equivalent reduction must still reach A3 (record
-present) or A4 (record missing), and a reduced `**Binding enumeration**` must
-still reach A5/A6 — A7 must not absorb either, because A7 matches only when
-**nothing is removed**.
+Then confirm all three Gate A preamble statements are present and mutually
+consistent:
+
+1. Rows are evaluated in order, **first match wins**.
+2. **A0 is the entry condition**, evaluated before every other row, and A1-A6
+   apply to removals only.
+3. **Item count is never a gate input.**
+
+Finally check both converse directions:
+
+- An **addition-only** delta (nothing removed, no deviation record) must land
+  on A0 and produce no finding. It must **not** reach A4 and become
+  `important`, which is what an ordering that put A1-A6 ahead of A0 would do.
+- A *smaller* but coverage-equivalent reduction must still reach A3 (record
+  present) or A4 (record missing), and a reduced `**Binding enumeration**` must
+  still reach A5/A6. A0 must not absorb either, because A0 matches only when
+  **nothing is removed**.
 
 ### Step 7: A missing record is requested, not used to block
 
@@ -253,8 +263,8 @@ report no violations.
 - [ ] A test-scope enumeration delta is blocking only when the reviewer states
       both the specific coverage lost and the defect class that escapes
 - [ ] Item count is never a gate input: a delta that nets even or larger while
-      dropping uniquely-covering items routes to A7b and is treated as the
-      equivalent shrinking delta
+      dropping uniquely-covering items is still treated as the equivalent
+      shrinking delta, and an addition-only delta lands on A0 with no finding
 - [ ] A Test-Scope Deviation Record format exists, and the gate documents how it
       is evaluated, including the missing-record outcome
 - [ ] Plan-authoring guidance makes enumerations indicative unless marked with

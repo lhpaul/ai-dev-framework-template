@@ -202,30 +202,31 @@ incident — per the catalogue's own rules and `review-doctrine-lint.sh`.
 
 ### Gate A — Reviewer evaluating a delta between the plan's projected test scope and the delivered test scope
 
-Inputs: what the delta touches; how the plan marked the enumeration; whether a
+Inputs: whether the delivered scope **removes** anything the plan projected;
+what the delta touches; how the plan marked the enumeration; whether a
 Test-Scope Deviation Record is present and complete; whether the reviewer can
 state both halves of a Coverage-Harm Statement.
 
-**Rows are evaluated in order; the first matching row wins.** A1-A6 take
-precedence over A7 and A7b in every case.
+**Rows are evaluated in order; the first matching row wins.** Row A0 is this
+gate's entry condition and is evaluated before every other row: a delta that
+removes nothing never reaches A1-A6, so a change that only adds tests is never
+`important` or `blocking` under this gate. Rows A1-A6 apply to removals only.
 
 **Item count is never a gate input.** Gate A keys on whether anything was
 removed, not on whether the delivered scope is smaller or larger than the
-projection. A delta that raises the total while dropping items that uniquely
-exercised a behavior is still a removal, and a raised total is never a defense
-against one. Equally, a delta that removes nothing is out of this gate whatever
-its size.
+projection. A removal that nets even or larger — a swap, a consolidation, a
+rewrite — is still a removal and is treated exactly as the equivalent shrinking
+delta; a raised total is never a defense against a coverage loss.
 
 | # | Delta touches | Plan marking | Deviation record | Harm statement available | Outcome | Required next action |
 | --- | --- | --- | --- | --- | --- | --- |
+| A0 | **Nothing is removed** — the delivered scope only adds to, or leaves intact, every item the plan projected, whatever the totals | Any | Not required | Not applicable | No finding; **Gate A does not apply** | Ordinary Pass 2 quality review still applies |
 | A1 | Observable behavior, or coverage of an acceptance criterion | Any | Any | Not required | `blocking` | Unchanged Pass 1 rule; name the criterion or behavior affected |
 | A2 | Test scaffolding only | Indicative (unmarked) | Present and complete | Yes — reviewer names the lost coverage **and** the defect class | `blocking` | Reviewer states both halves; implementer restores that coverage or narrows the deviation |
 | A3 | Test scaffolding only | Indicative | Present and complete | No | Not blocking; `suggestion` at most | Accept the recorded rationale; do not restate the count as a requirement |
 | A4 | Test scaffolding only | Indicative | Missing or incomplete | Any | `important` | Request the record before `ready-for-human-review`; do not block on the delta alone |
 | A5 | Test scaffolding only | `**Binding enumeration**` | Present | Not required | `blocking` | Restore the listed items, or obtain a human decision to amend the plan |
 | A6 | Test scaffolding only | `**Binding enumeration**` | Missing | Not required | `blocking` | Same as A5 |
-| A7 | **Nothing is removed** — the delivered scope only adds to, or leaves intact, every item the plan projected | Any | Not required | Not applicable | No finding from this gate | Ordinary Pass 2 quality review still applies |
-| A7b | **Anything is removed**, whatever the totals — a shrink, a swap, a consolidation, or a rewrite that nets even or up | Any | Any | Evaluated as normal | Not a terminal row: fall through to A1-A6 by what the delta touches, the plan marking, and the record | Never close on the total alone; a removal that nets even or larger is treated exactly as the equivalent shrinking delta |
 | A8 | Test scaffolding only, but the marking is malformed — marker text present in a form other than the exact literal, or attached to an unclear span | Treated as indicative | Any | Any | `important` on the plan wording; delta itself follows A2/A3/A4 | Ask for the plan marker to be corrected; missing or malformed marking never upgrades the delta to blocking |
 
 ### Gate B — Plan reviewer applying the advisory test-scope sanity signal
