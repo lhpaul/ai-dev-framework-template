@@ -1777,7 +1777,13 @@ print(project.get('id') or '', end='')
 # workflow_github_project_item_for_issue <issue_number> <project_number>
 #
 # Prints compact JSON with project item details for one issue in one project:
-#   {"item_id":"...","project_id":"...","status":"...","type":"..."}
+#   {"item_id":"...","project_id":"...","status":"...","type":"...","priority":"...","size":"..."}
+#
+# priority/size are read from the board's "Priority"/"Size" single-select
+# fields by exact display name (no custom-name override — see
+# workflow_github_project_named_field_json for the write path, which
+# resolves the same literal names). Used by add-backlog-item.sh's
+# post-creation field verification (issue #1778) as well as status/type reads.
 #
 # This intentionally uses repository.issue(...).projectItems instead of
 # `gh project item-list` so single-item status reads/updates do not paginate the
@@ -1855,6 +1861,12 @@ workflow_github_project_item_for_issue() {
                   type: fieldValueByName(name: "Type") {
                     ... on ProjectV2ItemFieldSingleSelectValue { name }
                   }
+                  priority: fieldValueByName(name: "Priority") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  size: fieldValueByName(name: "Size") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
                 }
                 pageInfo { hasNextPage endCursor }
               }
@@ -1910,11 +1922,15 @@ for item in project_items.get('nodes') or []:
         if not type_value.get('name'):
             missing.append('Type')
         missing_fields = ','.join(missing)
+        priority_value = item.get('priority') or {}
+        size_value = item.get('size') or {}
         match = json.dumps({
             'item_id': item.get('id') or '',
             'project_id': project.get('id') or '',
             'status': status_value.get('name') or '',
             'type': type_value.get('name') or '',
+            'priority': priority_value.get('name') or '',
+            'size': size_value.get('name') or '',
         }, separators=(',', ':'))
         break
 page_info = project_items.get('pageInfo') or {}
@@ -1952,7 +1968,16 @@ EOF
       esac
       case ",$missing_fields," in
         *",Type,"*)
-          echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Type'." >&2
+          # issue #1778: honour custom_fields.type_field instead of always
+          # naming the literal 'Type' field — a board configured with
+          # custom_fields.type_field: 'Work type' (or any other name) never
+          # has a field literally named 'Type', so hardcoding it here made
+          # this warning fire on every correctly configured board.
+          if [ -n "$type_field_name" ]; then
+            echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly '${type_field_name}' (issue_tracker.custom_fields.type_field), falling back to 'Custom Type', 'CustomType', or 'Type'." >&2
+          else
+            echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Custom Type', 'CustomType', or 'Type'." >&2
+          fi
           ;;
       esac
       printf '%s' "$item_json"
@@ -2694,13 +2719,27 @@ finalize_release_marker_best_effort() {
   return 0
 }
 
-# update_tracker_type_best_effort <issue_number> <type_label>
+# update_tracker_type_best_effort <issue_number> <type_label> [required]
 #
-# Best-effort update for the GitHub Projects Type field. This intentionally
-# mirrors update_tracker_status_best_effort while avoiding status-order logic.
+# Update for the GitHub Projects Type field. This intentionally mirrors
+# update_tracker_status_best_effort while avoiding status-order logic, and
+# keeps its own field-resolution path (workflow_github_project_type_field_json)
+# rather than delegating to update_tracker_named_field_best_effort, because
+# Type resolution honours a preference chain (custom_fields.type_field, then
+# 'Custom Type', 'CustomType', 'Type' — see issue #1191) that the generic
+# named-field helper does not implement.
+#
+# When [required] is the literal string "required" (issue #1778: add-backlog-item.sh
+# always passes this so an explicitly-requested Type that fails to resolve or
+# write is a hard, non-zero failure rather than a silent "Warning:" line),
+# every failure below that is not a genuine provider/project mismatch becomes
+# an "Error:" message and a non-zero return. When [required] is omitted, all
+# failure branches remain best-effort (return 0), matching the pre-existing
+# behavior for callers that do not depend on this field landing.
 update_tracker_type_best_effort() {
   local issue_number="$1"
   local type_label="$2"
+  local required="${3:-}"
   local project_number project_id field_json field_id option_id item_json item_id
 
   local _uttbe_provider
@@ -2722,6 +2761,10 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project item ID for issue #${issue_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
@@ -2730,19 +2773,35 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project ID for issue #${issue_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
   if [ -z "$item_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: issue #${issue_number} not found in project #${project_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker Type update."
     return 0
   fi
   if [ -z "$project_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve project ID for issue #${issue_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
 
   if ! field_json="$(workflow_github_project_type_field_json "$project_id")"; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not read project Type field metadata; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not read project Type field metadata; skipping tracker Type update."
     return 0
   fi
@@ -2751,6 +2810,10 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse Type field metadata; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse Type field metadata; skipping tracker Type update."
     return 0
   fi
@@ -2759,10 +2822,18 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$type_label"); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse Type option '${type_label}'; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse Type option '${type_label}'; skipping tracker Type update."
     return 0
   fi
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve Type field or option '${type_label}'; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve Type field or option '${type_label}'; skipping tracker Type update."
     return 0
   fi
@@ -2788,6 +2859,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
   else
+    if [ "$required" = "required" ]; then
+      echo "Error: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated." >&2
+      workflow_print_captured_gh_stderr
+      return 1
+    fi
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated."
     workflow_print_captured_gh_stderr
   fi
@@ -3237,13 +3313,19 @@ update_tracker_priority_best_effort() {
 
 # update_tracker_size_best_effort <issue_number> <size_value>
 #
-# Best-effort update for the GitHub Projects Size field.
-# Valid values: XS, S, M, L, XL
-# Returns 0 in all failure cases (fail-open).
+# Update for the GitHub Projects Size field. Valid values: XS, S, M, L, XL.
+# Size is always explicitly requested by add-backlog-item.sh (only called
+# when --size was passed), so — matching update_tracker_priority_best_effort's
+# rationale — an unresolvable value or failed write is a hard error (non-zero
+# return) whenever the tracker provider and project are configured (issue
+# #1778: this previously always returned 0, so a dropped Size write was
+# indistinguishable from success). When the provider/project genuinely does
+# not apply, this remains best-effort (returns 0), matching
+# update_tracker_named_field_best_effort.
 update_tracker_size_best_effort() {
   local issue_number="$1"
   local size_value="$2"
-  update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value"
+  update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value" "required"
 }
 
 # list_open_workflow_type_issues

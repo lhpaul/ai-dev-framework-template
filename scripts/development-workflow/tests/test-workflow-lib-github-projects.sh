@@ -418,7 +418,10 @@ export MOCK_PROJECT_ITEM_MODE=missing_fields
 missing_fields_stderr="$(workflow_github_project_item_for_issue 824 1 2>&1 >/dev/null || true)"
 unset MOCK_PROJECT_ITEM_MODE
 case "$missing_fields_stderr" in
-  *"named exactly 'Status'"*"named exactly 'Type'"*) missing_fields_result="warned" ;;
+  # issue #1778: when no issue_tracker.custom_fields.type_field override is
+  # configured, the Type warning lists the fallback chain ('Custom Type',
+  # 'CustomType', 'Type') instead of hardcoding the literal 'Type'.
+  *"named exactly 'Status'"*"named exactly 'Custom Type', 'CustomType', or 'Type'"*) missing_fields_result="warned" ;;
   *) missing_fields_result="$missing_fields_stderr" ;;
 esac
 run_test "project_item_missing_named_fields_warns" "warned" "$missing_fields_result"
@@ -1135,7 +1138,11 @@ run_test "default_wrong_provider_returns_medium" "Medium" "$default_wrong_provid
 reset_log
 __workflow_project_named_field_cache_keys=()
 __workflow_project_named_field_cache_vals=()
-size_output="$(update_tracker_size_best_effort 824 "S" 2>&1)"
+# issue #1778: update_tracker_size_best_effort now always runs in "required"
+# mode, so a lookup failure like this one returns non-zero. This test only
+# cares about the message content, not the exit code — swallow it with
+# `|| true` so set -e cannot abort the whole suite on this assignment.
+size_output="$(update_tracker_size_best_effort 824 "S" 2>&1 || true)"
 case "$size_output" in
   *"could not read project 'Size' field metadata"*) size_result="routed-to-size" ;;
   *) size_result="$size_output" ;;

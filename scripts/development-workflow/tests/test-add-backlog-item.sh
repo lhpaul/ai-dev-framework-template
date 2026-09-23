@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # test-add-backlog-item.sh — Unit tests for add-backlog-item.sh create flow.
 #
-# Exercises issue #965's Priority/Size field updates, and issue #1501's fix
-# for the inverted Medium/Normal priority alias (the board has no "Normal"
-# option; "Medium" is the real board value):
+# Exercises issue #965's Priority/Size field updates, issue #1501's fix for
+# the inverted Medium/Normal priority alias (the board has no "Normal"
+# option; "Medium" is the real board value), and issue #1778's fail-open
+# fix (Status/Type/Size writes could silently not land — the mock `gh`
+# below is stateful specifically so it can reproduce that: it tracks
+# whether the item has actually been added to the board yet, and what each
+# field's value actually is after each mutation, instead of always
+# returning a static "everything already matches" response):
 #   1. Malformed gh output warns and skips project field updates
 #   2. Non-numeric issue number in URL warns and skips project field updates
-#   3. Happy path: URL parsed, board membership checked, Priority defaults to Medium
+#   3. Happy path: URL parsed, board membership checked, Priority defaults to
+#      Medium, and every field (including Status) is verified against the
+#      board's actual state before exiting
 #   4. --priority flag: uses supplied value instead of the Medium default
 #   5. --size flag: triggers Size field update
 #   6. No --size: Size field update is not called
@@ -14,6 +21,17 @@
 #   8. A priority value that does not resolve against the board's actual
 #      Priority options (issue #1501) is a hard error: create exits non-zero
 #      and no mutation is sent.
+#   9. issue #1778 regressions: a field write whose GraphQL mutation reports
+#      success but silently does not land (the exact "200 OK, value never
+#      stuck" symptom from the issue) is caught by post-creation
+#      verification and turned into a loud, non-zero failure — for Type,
+#      Size, and Status independently.
+#  10. issue #1778: GitHub Projects' read-after-write lag on a just-added
+#      item — a lookup immediately after `gh project item-add` finding
+#      nothing — is absorbed by a bounded retry when it clears in time, and
+#      surfaces as a loud failure when it does not.
+#  11. issue #1778: the hardcoded 'Type' wording in the "has no Type value"
+#      warning honours issue_tracker.custom_fields.type_field.
 #
 # Usage: bash scripts/development-workflow/tests/test-add-backlog-item.sh
 
@@ -26,16 +44,18 @@ SCRIPT="$REPO_ROOT/scripts/development-workflow/add-backlog-item.sh"
 TMP_ROOT="$(mktemp -d)"
 MOCK_BIN="$TMP_ROOT/bin"
 CALL_LOG="$TMP_ROOT/calls.log"
+STATE_FILE="$TMP_ROOT/state.env"
 mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
 
-# _config_backup is set before the linear test section overwrites
-# .ai-dev-workflow.yaml; cleanup restores it on any exit (including set -e).
+# _config_backup is set before the linear/custom-type-field test sections
+# overwrite .ai-dev-workflow.yaml; cleanup restores it on any exit
+# (including set -e).
 _config_backup=""
 _config_file="$REPO_ROOT/.ai-dev-workflow.yaml"
 
 cleanup() {
-  # Restore .ai-dev-workflow.yaml if it was swapped out by the linear tests.
+  # Restore .ai-dev-workflow.yaml if it was swapped out by a test section.
   # The guard ([ -f "$_config_backup" ]) ensures cp is only called when the
   # backup was successfully created; do not suppress errors — a restore failure
   # means the workspace is clobbered and the test runner must know.
@@ -46,9 +66,88 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The mock `gh` tracks project-item state in $STATE_FILE (a flat, sourced
+# key=value file — bash 3.2 compatible, no associative arrays) so that:
+#   - the board-membership check before item-add correctly reports "not on
+#     board" for a freshly created issue (the old static mock always
+#     reported the item as already present, which never exercised the real
+#     add-then-set-initial-status path);
+#   - each field mutation actually updates the value a later read-back sees,
+#     instead of every read always echoing the same canned "Feature" type
+#     and no status;
+#   - MOCK_*_UPDATE_MODE=silent_drop can reproduce issue #1778's core
+#     symptom — a mutation that returns a valid success payload but never
+#     changes the field the caller asked for;
+#   - MOCK_LOOKUP_MISSING_UNTIL can reproduce GitHub Projects' read-after-
+#     write lag on a just-added item (a lookup that finds nothing for the
+#     first N calls after the item was added).
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+
+STATE_FILE="${MOCK_GH_STATE_FILE:?MOCK_GH_STATE_FILE must be set}"
+ON_BOARD="no"
+ITEM_STATUS=""
+ITEM_TYPE=""
+ITEM_PRIORITY=""
+ITEM_SIZE=""
+LOOKUP_COUNT="0"
+# shellcheck disable=SC1090 # generated, test-local state file
+[ -f "$STATE_FILE" ] && . "$STATE_FILE"
+
+save_state() {
+  cat > "$STATE_FILE" <<STATE
+ON_BOARD="$ON_BOARD"
+ITEM_STATUS="$ITEM_STATUS"
+ITEM_TYPE="$ITEM_TYPE"
+ITEM_PRIORITY="$ITEM_PRIORITY"
+ITEM_SIZE="$ITEM_SIZE"
+LOOKUP_COUNT="$LOOKUP_COUNT"
+STATE
+}
+
+# Maps the option IDs this mock's "fields(first:" response hands out back to
+# their display names, so the mutation handler below can tell which value a
+# given optionId= actually represents without a second round trip.
+option_id_to_name() {
+  case "$1" in
+    OPT_urgent) printf 'Urgent' ;;
+    OPT_high) printf 'High' ;;
+    OPT_medium) printf 'Medium' ;;
+    OPT_normal) printf 'Normal' ;;
+    OPT_low) printf 'Low' ;;
+    OPT_p0) printf 'P0' ;;
+    OPT_p1) printf 'P1' ;;
+    OPT_size_xs) printf 'XS' ;;
+    OPT_size_s) printf 'S' ;;
+    OPT_size_m) printf 'M' ;;
+    OPT_size_l) printf 'L' ;;
+    OPT_size_xl) printf 'XL' ;;
+    OPT_type_feature) printf 'Feature' ;;
+    OPT_type_bug) printf 'Bug' ;;
+    OPT_type_refactor) printf 'Refactor' ;;
+    OPT_type_workflow) printf 'Workflow' ;;
+    OPT_status_backlog) printf 'Backlog' ;;
+    OPT_status_in_dev) printf 'In Development' ;;
+    OPT_status_merged) printf 'Merged' ;;
+    *) printf '' ;;
+  esac
+}
+
+extract_arg_value() {
+  # Extracts the value of a "-f name=value"-shaped token from "$@" (as
+  # passed through as positional params by the caller below).
+  local prefix="$1"
+  shift
+  local tok
+  for tok in "$@"; do
+    case "$tok" in
+      "$prefix"*) printf '%s' "${tok#"$prefix"}"; return 0 ;;
+    esac
+  done
+  printf ''
+}
+
 case "$*" in
   "auth status")
     exit 0
@@ -67,6 +166,12 @@ case "$*" in
     esac
     ;;
   "project item-add "*)
+    if [ "${MOCK_ITEM_ADD_MODE:-ok}" = "fail" ]; then
+      printf 'item-add failed\n' >&2
+      exit 1
+    fi
+    ON_BOARD="yes"
+    save_state
     printf 'PVTI_added\n'
     ;;
   *"api graphql"*)
@@ -75,7 +180,19 @@ case "$*" in
         printf '{"data":{"user":{"projectV2":{"id":"PVT_project_1"}},"organization":null}}\n'
         ;;
       *"projectItems(first:"*)
-        printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"Backlog"},"type":{"name":"Feature"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+        LOOKUP_COUNT=$((LOOKUP_COUNT + 1))
+        save_state
+        if [ "$ON_BOARD" != "yes" ]; then
+          printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+        elif [ -n "${MOCK_LOOKUP_MISSING_UNTIL:-}" ] && [ "$LOOKUP_COUNT" -le "$MOCK_LOOKUP_MISSING_UNTIL" ]; then
+          # Simulates GitHub Projects' read-after-write lag: the item was
+          # just added, but a lookup issued moments later still finds
+          # nothing for the configured number of calls (issue #1778).
+          printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+        else
+          printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"%s"},"configuredType":{"name":"%s"},"customType":null,"compactCustomType":null,"type":{"name":"%s"},"priority":{"name":"%s"},"size":{"name":"%s"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n' \
+            "$ITEM_STATUS" "$ITEM_TYPE" "$ITEM_TYPE" "$ITEM_PRIORITY" "$ITEM_SIZE"
+        fi
         ;;
       *"fields(first:"*)
         case "${MOCK_PRIORITY_FIELD_MODE:-medium}" in
@@ -84,24 +201,64 @@ case "$*" in
             # framework's pre-#1501 docs: Urgent, High, Normal, Low — no
             # "Medium" option (issue #1501 code review, "Preserve
             # compatibility with Normal-priority boards").
-            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_normal","name":"Normal"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_status_backlog","name":"Backlog"},{"id":"OPT_status_in_dev","name":"In Development"},{"id":"OPT_status_merged","name":"Merged"}]},{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_normal","name":"Normal"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
             ;;
           neither)
             # Simulates a board using an entirely different Priority
             # vocabulary (neither "Medium" nor "Normal" present).
-            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_p0","name":"P0"},{"id":"OPT_p1","name":"P1"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_status_backlog","name":"Backlog"},{"id":"OPT_status_in_dev","name":"In Development"},{"id":"OPT_status_merged","name":"Merged"}]},{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_p0","name":"P0"},{"id":"OPT_p1","name":"P1"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            ;;
+          custom_type_field)
+            # Simulates a board whose classification field is named "Work
+            # type" (issue_tracker.custom_fields.type_field: "Work type"),
+            # with no field literally named "Type" (issue #1778, criterion 4).
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_status_backlog","name":"Backlog"},{"id":"OPT_status_in_dev","name":"In Development"},{"id":"OPT_status_merged","name":"Merged"}]},{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_worktype","name":"Work type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
             ;;
           *)
             # Matches the real board's Priority options verified on issue
             # #1501: Urgent, High, Medium, Low — there is no "Normal" option.
-            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_status_backlog","name":"Backlog"},{"id":"OPT_status_in_dev","name":"In Development"},{"id":"OPT_status_merged","name":"Merged"}]},{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
             ;;
         esac
         ;;
       *"updateProjectV2ItemFieldValue"*)
-        if [ "${MOCK_PRIORITY_UPDATE_MODE:-ok}" = "fail" ]; then
+        field_id="$(extract_arg_value "fieldId=" "$@")"
+        option_id="$(extract_arg_value "optionId=" "$@")"
+        option_name="$(option_id_to_name "$option_id")"
+        case "$field_id" in
+          PVTSSF_status)
+            mode="${MOCK_STATUS_UPDATE_MODE:-ok}"
+            ;;
+          PVTSSF_type|PVTSSF_worktype)
+            mode="${MOCK_TYPE_UPDATE_MODE:-ok}"
+            ;;
+          PVTSSF_priority)
+            mode="${MOCK_PRIORITY_UPDATE_MODE:-ok}"
+            ;;
+          PVTSSF_size)
+            mode="${MOCK_SIZE_UPDATE_MODE:-ok}"
+            ;;
+          *)
+            mode="ok"
+            ;;
+        esac
+        if [ "$mode" = "fail" ]; then
           printf 'transient GraphQL write failure\n' >&2
           exit 42
+        fi
+        if [ "$mode" != "silent_drop" ]; then
+          # A real write: update the tracked state so a later read-back sees
+          # it. "silent_drop" intentionally skips this — the mutation below
+          # still returns a valid success payload, reproducing issue
+          # #1778's "a 200 from updateProjectV2ItemFieldValue is not
+          # evidence the value stuck" symptom.
+          case "$field_id" in
+            PVTSSF_status) ITEM_STATUS="$option_name" ;;
+            PVTSSF_type|PVTSSF_worktype) ITEM_TYPE="$option_name" ;;
+            PVTSSF_priority) ITEM_PRIORITY="$option_name" ;;
+            PVTSSF_size) ITEM_SIZE="$option_name" ;;
+          esac
+          save_state
         fi
         printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item_123"}}}}\n'
         ;;
@@ -120,6 +277,7 @@ chmod +x "$MOCK_BIN/gh"
 
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
+export MOCK_GH_STATE_FILE="$STATE_FILE"
 export GITHUB_PROJECT_NUMBER="1"
 export GITHUB_PROJECT_OWNER="lhpaul"
 
@@ -138,6 +296,7 @@ run_test() {
 }
 
 reset_log() { : > "$CALL_LOG"; }
+reset_state() { rm -f "$STATE_FILE"; }
 
 count_log_matches() {
   local pattern="$1"
@@ -147,6 +306,21 @@ count_log_matches() {
 run_create() {
   local mode="${1:-ok}"; shift
   reset_log
+  reset_state
+  # PRESEED_ON_BOARD / PRESEED_STATUS, when set, write a custom initial mock
+  # state (e.g. an item already on the board, with a given Status, before
+  # `create` runs) after the normal reset, instead of the default
+  # empty/not-on-board state.
+  if [ -n "${PRESEED_ON_BOARD:-}" ]; then
+    {
+      printf 'ON_BOARD="%s"\n' "$PRESEED_ON_BOARD"
+      printf 'ITEM_STATUS="%s"\n' "${PRESEED_STATUS:-}"
+      printf 'ITEM_TYPE=""\n'
+      printf 'ITEM_PRIORITY=""\n'
+      printf 'ITEM_SIZE=""\n'
+      printf 'LOOKUP_COUNT="0"\n'
+    } > "$STATE_FILE"
+  fi
   local exit_code=0
   set +e
   MOCK_GH_ISSUE_CREATE_MODE="$mode" \
@@ -191,7 +365,7 @@ run_test "nonnumeric_skips_board_check" "0" "$(count_log_matches 'projectItems')
 run_test "nonnumeric_skips_priority_update" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 echo ""
-echo "=== create: happy path — issue URL in output, Priority defaults to Medium ==="
+echo "=== create: happy path — issue URL in output, Priority defaults to Medium, all fields verified ==="
 
 run_create "ok" --title "Test" --body "body"
 run_test "happy_path_exits_zero" "0" "$(get_exit)"
@@ -203,6 +377,8 @@ esac
 run_test "happy_path_prints_issue_url" "yes" "$url_in_output"
 board_check_count="$(count_log_matches 'projectItems')"
 run_test "happy_path_checks_board_membership" "yes" "$([ "$board_check_count" -ge 1 ] && echo yes || echo no)"
+run_test "happy_path_adds_item_to_board" "1" "$(count_log_matches 'project item-add ')"
+run_test "happy_path_sets_status_backlog" "1" "$(count_log_matches 'optionId=OPT_status_backlog')"
 run_test "happy_path_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
 # Regression for issue #1501: the requested (defaulted) priority must
 # actually be present on the board item afterward — assert the mutation was
@@ -324,6 +500,164 @@ run_test "type_flag_exits_zero" "0" "$(get_exit)"
 run_test "type_flag_updates_type_field" "1" "$(count_log_matches 'fieldId=PVTSSF_type')"
 run_test "type_flag_uses_workflow_option" "1" "$(count_log_matches 'optionId=OPT_type_workflow')"
 run_test "type_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
+
+echo ""
+echo "=== create (issue #1778): a Type write that reports success but silently does not land is a loud failure ==="
+
+export MOCK_TYPE_UPDATE_MODE=silent_drop
+run_create "ok" --title "Test" --body "body" --type "Bug"
+unset MOCK_TYPE_UPDATE_MODE
+run_test "silent_type_drop_exits_five" "5" "$(get_exit)"
+silent_type_stderr="$(get_stderr)"
+case "$silent_type_stderr" in
+  *"Type: requested 'Bug'"*) silent_type_result="reported" ;;
+  *) silent_type_result="$silent_type_stderr" ;;
+esac
+run_test "silent_type_drop_reports_mismatch" "reported" "$silent_type_result"
+# The mutation itself must have actually been attempted (this is not the
+# pre-flight validation path) — it just didn't take effect on the board. A
+# mismatch that persists is retried (issue #1778 review finding), so the
+# write is attempted once up front plus once per retry (3 verify attempts
+# total) — assert "at least one", the retry count is an implementation
+# detail, not the contract under test here.
+type_mutation_count="$(count_log_matches 'fieldId=PVTSSF_type')"
+run_test "silent_type_drop_attempted_mutation" "yes" "$([ "$type_mutation_count" -ge 1 ] && echo yes || echo no)"
+
+echo ""
+echo "=== create (issue #1778): a Size write that reports success but silently does not land is a loud failure ==="
+
+export MOCK_SIZE_UPDATE_MODE=silent_drop
+run_create "ok" --title "Test" --body "body" --size "L"
+unset MOCK_SIZE_UPDATE_MODE
+run_test "silent_size_drop_exits_five" "5" "$(get_exit)"
+silent_size_stderr="$(get_stderr)"
+case "$silent_size_stderr" in
+  *"Size: requested 'L'"*) silent_size_result="reported" ;;
+  *) silent_size_result="$silent_size_stderr" ;;
+esac
+run_test "silent_size_drop_reports_mismatch" "reported" "$silent_size_result"
+
+echo ""
+echo "=== create (issue #1778): a Status write that reports success but silently does not land is a loud failure ==="
+echo "    (ensure_on_project_board itself stays fail-open by design — the create_cmd"
+echo "     verification pass is what must catch this)"
+
+export MOCK_STATUS_UPDATE_MODE=silent_drop
+run_create "ok" --title "Test" --body "body"
+unset MOCK_STATUS_UPDATE_MODE
+run_test "silent_status_drop_exits_five" "5" "$(get_exit)"
+silent_status_stderr="$(get_stderr)"
+case "$silent_status_stderr" in
+  *"Status: requested 'Backlog'"*) silent_status_result="reported" ;;
+  *) silent_status_result="$silent_status_stderr" ;;
+esac
+run_test "silent_status_drop_reports_mismatch" "reported" "$silent_status_result"
+
+echo ""
+echo "=== create (issue #1778): read-after-write lag that clears within the retry budget still succeeds ==="
+
+export MOCK_LOOKUP_MISSING_UNTIL=1
+run_create "ok" --title "Test" --body "body" --type "Feature" --size "S"
+unset MOCK_LOOKUP_MISSING_UNTIL
+run_test "transient_lookup_lag_still_exits_zero" "0" "$(get_exit)"
+
+echo ""
+echo "=== create (issue #1778): read-after-write lag that persists past the retry budget is a loud failure ==="
+echo "    (this reproduces the 'completely empty' board items reported in issue #1778 —"
+echo "     Status/Type/Priority/Size all fail to resolve the item, but silently, unless caught)"
+
+export MOCK_LOOKUP_MISSING_UNTIL=999
+run_create "ok" --title "Test" --body "body" --type "Feature" --size "S"
+unset MOCK_LOOKUP_MISSING_UNTIL
+run_test "persistent_lookup_lag_exits_five" "5" "$(get_exit)"
+persistent_lag_stderr="$(get_stderr)"
+case "$persistent_lag_stderr" in
+  *"item not found on the project board"*) persistent_lag_result="reported" ;;
+  *) persistent_lag_result="$persistent_lag_stderr" ;;
+esac
+run_test "persistent_lookup_lag_reports_item_not_found" "reported" "$persistent_lag_result"
+
+echo ""
+echo "=== create (issue #1778 review finding): a write that fails on its first attempt due to lag is retried, not just re-read ==="
+echo "    (a bounded MOCK_LOOKUP_MISSING_UNTIL that clears mid-way through the post-add writes means"
+echo "     Type/Priority/Size fail their FIRST attempt outright — proving the fix must retry the WRITE,"
+echo "     not only the verification read, for create to still land every field and exit 0)"
+
+export MOCK_LOOKUP_MISSING_UNTIL=4
+run_create "ok" --title "Test" --body "body" --type "Feature" --size "S"
+unset MOCK_LOOKUP_MISSING_UNTIL
+run_test "write_retry_recovers_from_first_attempt_lag_exits_zero" "0" "$(get_exit)"
+# At MOCK_LOOKUP_MISSING_UNTIL=4, Status/Type/Priority's FIRST write attempt
+# each fail outright at the item lookup step (before ever reaching a
+# mutation call) — a clean single-pass run needs 6 project-item lookups
+# (board precheck, status, type, priority, size, one verify read); this
+# scenario needs more than that because the mismatched fields force at
+# least one additional retry round. This is the proof that a genuine write
+# retry happened, not only a read-only retry that would have kept polling a
+# value nothing ever wrote (issue #1778 review finding).
+write_retry_lookup_count="$(count_log_matches 'projectItems')"
+run_test "write_retry_required_multiple_lookup_rounds" "yes" "$([ "$write_retry_lookup_count" -gt 6 ] && echo yes || echo no)"
+
+echo ""
+echo "=== create (issue #1778 review finding): Status is not enforced when the item was already on the board ==="
+echo "    (ensure_on_project_board leaves Status untouched when the issue is already present — e.g. a racing"
+echo "     org/project 'auto-add' automation added it before this script's own check ran; create must not"
+echo "     fail on that pre-existing item's Status, which this invocation never requested)"
+
+export PRESEED_ON_BOARD=yes
+export PRESEED_STATUS=Merged
+run_create "ok" --title "Test" --body "body"
+unset PRESEED_ON_BOARD PRESEED_STATUS
+run_test "preexisting_item_status_not_enforced_exits_zero" "0" "$(get_exit)"
+preexisting_stdout="$(get_stdout)"
+case "$preexisting_stdout" in
+  *"already on project board"*) preexisting_board_check_result="already_on_board" ;;
+  *) preexisting_board_check_result="$preexisting_stdout" ;;
+esac
+run_test "preexisting_item_board_check_reports_already_present" "already_on_board" "$preexisting_board_check_result"
+# The Status field must never have been written — ensure_on_project_board's
+# own contract (leave Status alone when already present) is unchanged by
+# this fix; create only stops enforcing a value it never requested.
+run_test "preexisting_item_status_never_written" "0" "$(count_log_matches 'fieldId=PVTSSF_status')"
+
+echo ""
+echo "=== create (issue #1778): the 'has no Type value' warning honours custom_fields.type_field ==="
+
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+if [ ! -f "$_config_file" ]; then
+  echo "SKIP: $_config_file not found; skipping custom type_field warning test." >&2
+else
+  cp "$_config_file" "$_config_backup"
+  cat > "$_config_file" <<'CUSTOM_TYPE_FIELD_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+  custom_fields:
+    type_field: Work type
+CUSTOM_TYPE_FIELD_CONFIG
+
+  # MOCK_PRIORITY_FIELD_MODE selects the whole "fields(first:" response (all
+  # of Status/Priority/Size/Type-or-configured-field), not only Priority —
+  # the name predates this test's Type/Size coverage. "custom_type_field"
+  # selects the variant whose classification field is named "Work type".
+  export MOCK_PRIORITY_FIELD_MODE=custom_type_field
+  # No --type flag: the item is left with no value on "Work type", which
+  # triggers the "has no Type value" warning path inside
+  # workflow_github_project_item_for_issue.
+  run_create "ok" --title "Test" --body "body"
+  unset MOCK_PRIORITY_FIELD_MODE
+
+  cp "$_config_backup" "$_config_file"
+
+  custom_type_field_stderr="$(get_stderr)"
+  case "$custom_type_field_stderr" in
+    *"single-select field named exactly 'Work type'"*) custom_type_field_result="honours_custom_name" ;;
+    *"single-select field named exactly 'Type'."*) custom_type_field_result="still_hardcoded_Type" ;;
+    *) custom_type_field_result="$custom_type_field_stderr" ;;
+  esac
+  run_test "type_warning_honours_custom_field_name" "honours_custom_name" "$custom_type_field_result"
+fi
 
 echo ""
 echo "=== create: Linear provider — emits TRACKER_ACTION_REQUIRED=create_item title=... ==="

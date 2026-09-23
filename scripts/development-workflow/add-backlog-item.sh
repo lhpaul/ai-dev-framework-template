@@ -45,11 +45,14 @@ Exit codes (create, GitHub destination):
      provider/project genuinely does not apply).
   1  A value passed to --priority could not be resolved against the board's
      actual Priority options; no issue was created.
-  5  Partial success: the issue WAS created (see the printed URL) but the
-     required post-creation Priority update failed — do not retry issue
-     creation; retry only the Priority update, or set it manually. Type and
-     Size updates (if requested) are attempted independently and are not
-     skipped by a Priority failure.
+  5  Partial success: the issue WAS created (see the printed URL) but one or
+     more required post-creation project field updates did not land — either
+     the write itself failed, or a post-write verification read found the
+     board does not actually show the requested value (Status is always
+     verified against "Backlog"; Type/Priority/Size are verified only when
+     requested). Do not retry issue creation; retry only the affected
+     field(s), or set them manually. Every requested field update is
+     attempted independently and is not skipped by another field's failure.
 EOF
 }
 
@@ -198,39 +201,173 @@ create_cmd() {
         ;;
     esac
     # Ensure the issue is on the project board (adds it with Status=Backlog if absent).
-    # The ensure_on_project_board helper is fail-open; it always returns 0.
-    ensure_on_project_board "$issue_number" "Backlog"
+    # ensure_on_project_board itself remains fail-open (it is documented and reused
+    # across Protocols 01/02/03/91 as a non-blocking step) — but the mandatory
+    # verification pass below re-reads the item and independently catches a Status
+    # write that did not land, regardless of what ensure_on_project_board reported
+    # (issue #1778).
+    local project_number
+    project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+    # issue #1778 review finding: `create` must not enforce Status="Backlog" when
+    # this invocation never actually requested it. ensure_on_project_board leaves
+    # Status untouched when the issue is already on the board — which can happen
+    # for a just-created issue if a racing org/project "auto-add" automation adds
+    # it before this script's own check runs (see the PR description's root-cause
+    # discussion for the Merged/In Development reports). Capture its stdout (still
+    # printed below) to distinguish "we added it and set Backlog" from "it was
+    # already there" without a second API call.
+    local board_check_output
+    board_check_output="$(ensure_on_project_board "$issue_number" "Backlog")"
+    printf '%s\n' "$board_check_output"
+    local status_requested="no"
+    case "$board_check_output" in
+      *"added to project board."*) status_requested="yes" ;;
+    esac
     # Update project Type, Priority, and Size when GitHub Projects is configured.
-    # update_tracker_type_best_effort and update_tracker_size_best_effort are fail-open (always
-    # return 0). effective_priority is empty only when the default adapter above found no safe
-    # value (see its docstring) — skip the call entirely in that case, same as omitted --size/--type.
-    #
-    # When effective_priority is non-empty, update_tracker_priority_best_effort runs in required
-    # mode: the common failure case (an invalid value) was already ruled out above, before the
-    # issue was created, so this call is a safety net for the rarer cases the pre-check cannot see
-    # (e.g. the issue unexpectedly missing from the board, or a transient GraphQL write failure).
-    # Those necessarily surface after issue creation, at which point the issue URL has already
-    # been printed to stdout above — do not let a failure here look identical to "nothing
-    # happened": exit with a distinct code (5) and an explicit message so a caller does not retry
-    # `create` and mint a duplicate issue (see issue #1501 code review). Field updates are
-    # independent of each other, so a Priority failure must not prevent Type/Size from being
-    # attempted (issue #1501 code review, "Continue requested field updates after Priority
-    # failure") — priority_update_failed defers the exit-5 signal until every requested field
-    # has had its chance to run.
-    local priority_update_failed=0
+    # update_tracker_type_best_effort (in "required" mode) and update_tracker_priority_best_effort
+    # /update_tracker_size_best_effort now report failure via a non-zero return whenever the
+    # tracker provider/project apply (issue #1778 — these previously always returned 0, so a
+    # dropped write was indistinguishable from success; see issue #1501 code review for the same
+    # fix already applied to Priority). effective_priority is empty only when the default adapter
+    # above found no safe value (see its docstring) — skip the call entirely in that case, same as
+    # omitted --size/--type. Their return codes are not inspected directly here — the verification
+    # pass below re-reads the board and retries any write that has not landed (including a first
+    # attempt that failed outright), so a single source of truth (the read-back) drives both the
+    # retry decision and the final failure report.
     if [ -n "$type_label" ]; then
-      update_tracker_type_best_effort "$issue_number" "$type_label"
+      update_tracker_type_best_effort "$issue_number" "$type_label" "required" || true
     fi
     if [ -n "$effective_priority" ]; then
-      if ! update_tracker_priority_best_effort "$issue_number" "$effective_priority"; then
-        priority_update_failed=1
-      fi
+      update_tracker_priority_best_effort "$issue_number" "$effective_priority" || true
     fi
     if [ -n "$size" ]; then
-      update_tracker_size_best_effort "$issue_number" "$size"
+      update_tracker_size_best_effort "$issue_number" "$size" || true
     fi
-    if [ "$priority_update_failed" -eq 1 ]; then
-      echo "Error: issue #${issue_number} was already created (${issue_url}) — the required post-creation Priority update failed (see the Error above). Do NOT retry issue creation; instead retry only the Priority update for issue #${issue_number}, or set it manually on the project board." >&2
+
+    # Post-creation field verification with write retry (issue #1778, acceptance
+    # criterion 2): the writers above can each report success while the underlying
+    # GraphQL write silently does not land — this is the fail-open pattern
+    # #965/#1183/#1191/#1501 each patched for one field at a time, and the same
+    # pattern independently applies to Status via ensure_on_project_board (which by
+    # design stays fail-open for its many non-create callers — see Protocols
+    # 01/02/03/91). Re-read the item and compare every field this invocation
+    # actually requested against what the board now shows.
+    #
+    # issue #1778 review finding: a read-after-write lag on the item lookup fails
+    # the WRITE itself (every writer above re-resolves the item via the same
+    # lookup right after ensure_on_project_board added it), not only a later
+    # verification read — retrying only the read would leave a field that failed
+    # on its first (laggy) write attempt permanently unset. So each retry below
+    # re-issues the write for exactly the field(s) still mismatched (or, when the
+    # item itself was not found, every requested field) before reading again. A
+    # mismatch that persists across the bounded retry budget is a hard, non-zero
+    # failure, never a silent success line.
+    local -a field_verify_mismatches=()
+    if [ -n "$project_number" ]; then
+      local verify_attempt=0 verify_json item_missing
+      local verify_status="" verify_type="" verify_priority="" verify_size=""
+      local status_mismatch="" type_mismatch="" priority_mismatch="" size_mismatch=""
+      while :; do
+        verify_attempt=$((verify_attempt + 1))
+        status_mismatch=""
+        type_mismatch=""
+        priority_mismatch=""
+        size_mismatch=""
+        verify_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
+        if [ -z "$verify_json" ]; then
+          item_missing="yes"
+        else
+          item_missing="no"
+          verify_status="$(printf '%s' "$verify_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('status') or '', end='')
+" 2>/dev/null || true)"
+          verify_type="$(printf '%s' "$verify_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('type') or '', end='')
+" 2>/dev/null || true)"
+          verify_priority="$(printf '%s' "$verify_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('priority') or '', end='')
+" 2>/dev/null || true)"
+          verify_size="$(printf '%s' "$verify_json" | python3 -c "
+import json, sys
+item = json.loads(sys.stdin.read(), strict=False)
+print(item.get('size') or '', end='')
+" 2>/dev/null || true)"
+          if [ "$status_requested" = "yes" ] && [ "$verify_status" != "Backlog" ]; then
+            status_mismatch="Status: requested 'Backlog', board shows '${verify_status:-<unset>}'"
+          fi
+          if [ -n "$type_label" ] && [ "$verify_type" != "$type_label" ]; then
+            type_mismatch="Type: requested '${type_label}', board shows '${verify_type:-<unset>}'"
+          fi
+          if [ -n "$effective_priority" ] && [ "$verify_priority" != "$effective_priority" ]; then
+            priority_mismatch="Priority: requested '${effective_priority}', board shows '${verify_priority:-<unset>}'"
+          fi
+          if [ -n "$size" ] && [ "$verify_size" != "$size" ]; then
+            size_mismatch="Size: requested '${size}', board shows '${verify_size:-<unset>}'"
+          fi
+        fi
+
+        if [ "$item_missing" = "no" ] && [ -z "$status_mismatch$type_mismatch$priority_mismatch$size_mismatch" ]; then
+          break
+        fi
+        if [ "$verify_attempt" -ge 3 ]; then
+          break
+        fi
+        sleep 1
+
+        if [ "$item_missing" = "yes" ]; then
+          # The item itself was not resolvable — nothing above could have
+          # landed. Retry every requested field.
+          if [ "$status_requested" = "yes" ]; then
+            update_tracker_status_best_effort "$issue_number" "Backlog" >/dev/null || true
+          fi
+          if [ -n "$type_label" ]; then
+            update_tracker_type_best_effort "$issue_number" "$type_label" "required" || true
+          fi
+          if [ -n "$effective_priority" ]; then
+            update_tracker_priority_best_effort "$issue_number" "$effective_priority" || true
+          fi
+          if [ -n "$size" ]; then
+            update_tracker_size_best_effort "$issue_number" "$size" || true
+          fi
+        else
+          # The item was found; retry only the field(s) still mismatched.
+          if [ -n "$status_mismatch" ]; then
+            update_tracker_status_best_effort "$issue_number" "Backlog" >/dev/null || true
+          fi
+          if [ -n "$type_mismatch" ]; then
+            update_tracker_type_best_effort "$issue_number" "$type_label" "required" || true
+          fi
+          if [ -n "$priority_mismatch" ]; then
+            update_tracker_priority_best_effort "$issue_number" "$effective_priority" || true
+          fi
+          if [ -n "$size_mismatch" ]; then
+            update_tracker_size_best_effort "$issue_number" "$size" || true
+          fi
+        fi
+      done
+
+      if [ "$item_missing" = "yes" ]; then
+        field_verify_mismatches+=("item not found on the project board")
+      fi
+      local mismatch_candidate
+      for mismatch_candidate in "$status_mismatch" "$type_mismatch" "$priority_mismatch" "$size_mismatch"; do
+        [ -n "$mismatch_candidate" ] && field_verify_mismatches+=("$mismatch_candidate")
+      done
+    fi
+
+    if [ "${#field_verify_mismatches[@]}" -gt 0 ]; then
+      echo "Error: issue #${issue_number} was already created (${issue_url}) — one or more required post-creation project field updates did not land after retrying:" >&2
+      local mismatch
+      for mismatch in "${field_verify_mismatches[@]}"; do
+        echo "  - ${mismatch}" >&2
+      done
+      echo "Do NOT retry issue creation; instead retry only the affected field update(s) for issue #${issue_number}, or set them manually on the project board." >&2
       exit 5
     fi
     return 0
