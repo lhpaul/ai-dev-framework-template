@@ -541,17 +541,24 @@ reviews:
             # any entry as "native reviewer in the driving session"
             # (resolve-reviewer-availability.sh only takes that path when
             # entry == runner_kind); every configured entry instead falls through
-            # to a local-runtime probe (probe_local). This hermetic PATH never
-            # fakes claude/cursor-agent/codex back in for this block, so that
-            # probe genuinely finds nothing runnable on PATH. The resolver's
-            # documented, intended outcome for that case — not merely tolerated
-            # here — is OUTCOME=blocked / BLOCK_CAUSE=zero-reachable with every
-            # configured entry reporting REASON=runtime-absent.
+            # to a probe (probe_local for claude/cursor/codex, probe_hosted for
+            # coderabbit/codex-github). This hermetic PATH never fakes any of
+            # those back in for this block, so no entry can be found reachable.
+            # The resolver's documented, intended outcome for that case — not
+            # merely tolerated here — is OUTCOME=blocked / BLOCK_CAUSE=zero-reachable.
+            # For local-runtime entries specifically, the probe deterministically
+            # reports REASON=runtime-absent in this hermetic PATH; assert that
+            # only for those entries (not blanket over every configured type,
+            # e.g. a shipped coderabbit/codex-github entry would report a
+            # different, probe_hosted-specific reason) so this stays derived
+            # from the resolver's actual per-type contract, not a re-hardcoded
+            # assumption of the same class this fix removes.
             d=run(driver,1)
+            local_entries=[n for n in range(1,int(d['REVIEWER_COUNT'])+1) if d[f'REVIEWER_{n}_NAME'] in ('claude','cursor','codex')]
             check(f'T-33 / T-44 shipped non-native {driver} blocks on absent local runtime',
                   d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='zero-reachable' and
                   int(d['REVIEWER_COUNT'])>0 and
-                  all(d[f'REVIEWER_{n}_REASON']=='runtime-absent' for n in range(1,int(d['REVIEWER_COUNT'])+1)),
+                  all(d[f'REVIEWER_{n}_REASON']=='runtime-absent' for n in local_entries),
                   d)
     reset('[claude,cursor,codex]');main=root/'main';wtgit=main/'.git/worktrees/linked';wtgit.mkdir(parents=True)
     (wtgit/'commondir').write_text('../..\n');(repo/'.git').write_text(f'gitdir: {wtgit}\n')
