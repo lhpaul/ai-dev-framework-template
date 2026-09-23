@@ -14342,6 +14342,43 @@ run_test "codex_cr_blocker_reviews_query_failure_fails_closed" "1" "$_codex_cr_b
 rm -rf "$_codex_cr_blocker_reviews_fail_mock_dir"
 unset _codex_cr_blocker_reviews_fail_mock_dir _codex_cr_blocker_reviews_fail_output
 
+# Pass 2 defense-in-depth follow-up (PR #1780): a successful jq invocation
+# always emits a plain integer today, so this path is not reachable through
+# the real `jq` binary. This test forces it by shadowing `jq` on PATH with a
+# stub that exits 0 but prints non-numeric output, proving the numeric
+# sanitizer fails closed to "1" (not "0") when it cannot trust the parsed
+# result, consistent with every other failure path in this function.
+_codex_cr_blocker_malformed_jq_mock_dir="$(mktemp -d)"
+cat > "$_codex_cr_blocker_malformed_jq_mock_dir/gh" <<'CODEX_CR_BLOCKER_MALFORMED_JQ_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view"*headRefOid*)
+    printf 'eeee111122223333444455556666777788889999\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":905,"commit_id":"eeee111122223333444455556666777788889999","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"See summary."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CR_BLOCKER_MALFORMED_JQ_GH
+chmod +x "$_codex_cr_blocker_malformed_jq_mock_dir/gh"
+cat > "$_codex_cr_blocker_malformed_jq_mock_dir/jq" <<'CODEX_CR_BLOCKER_MALFORMED_JQ_JQ'
+#!/usr/bin/env bash
+# Drain stdin (this stub sits in a pipe) then emit non-numeric output with a
+# clean exit, simulating an unexpected `jq` that does not fail loudly.
+cat >/dev/null
+printf 'not-a-number\n'
+exit 0
+CODEX_CR_BLOCKER_MALFORMED_JQ_JQ
+chmod +x "$_codex_cr_blocker_malformed_jq_mock_dir/jq"
+_codex_cr_blocker_malformed_jq_output="$(PATH="$_codex_cr_blocker_malformed_jq_mock_dir:$PATH" \
+  codex_current_head_changes_requested_blocker "owner" "repo" "42" "chatgpt-codex-connector[bot]" "chatgpt-codex-connector")"
+run_test "codex_cr_blocker_malformed_jq_output_fails_closed" "1" "$_codex_cr_blocker_malformed_jq_output"
+rm -rf "$_codex_cr_blocker_malformed_jq_mock_dir"
+unset _codex_cr_blocker_malformed_jq_mock_dir _codex_cr_blocker_malformed_jq_output
+
 # AC-3/AC-4 abbreviated-token resolution contract: the two branches the
 # implementation plan names explicitly ("Tests:
 # codex_marker_remote_zero_match_malformed and

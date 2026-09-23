@@ -263,9 +263,19 @@ codex_current_head_changes_requested_blocker() {
     return 0
   fi
   rm -f "$stderr_file"
+  # Defense-in-depth: a successful jq invocation over well-formed input
+  # always emits a plain non-negative integer here, so this branch is not
+  # reachable today. Sanitize to the function's fail-closed value (not "0")
+  # anyway, so a future change to the jq filter or an unexpected `jq` on
+  # PATH cannot silently downgrade an indeterminate read to "confirmed
+  # absent" — consistent with every other failure path in this function.
   case "$result" in
-    ''|*[!0-9]*) result=0 ;;
+    ''|*[!0-9]*) result="" ;;
   esac
+  if [ -z "$result" ]; then
+    printf '1\n'
+    return 0
+  fi
   if [ "$result" -gt 0 ]; then
     printf '1\n'
   else
