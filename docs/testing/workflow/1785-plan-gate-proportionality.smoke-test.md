@@ -144,11 +144,18 @@ that now escapes. A finding that names only one half does not satisfy the rule.
    the only exercise of a named behavior — a swap, a consolidation, or a
    rewrite that nets out even or up.
 
-**Expected result**: row A7b, not A7. The documents must route this by what the
-delta touches, the plan marking, and the record — exactly as they would route
-the equivalent shrinking delta — and must not close it on the total alone.
-Confirm Gate A's `Item count is never a gate input` paragraph is present and
-says a raised total is never a defense against a coverage loss.
+**Expected result**: row A7b, not A7. A7b is not terminal — the documents must
+fall through to A1-A6 by what the delta touches, the plan marking, and the
+record, exactly as they would route the equivalent shrinking delta, and must not
+close it on the total alone.
+
+Also confirm both Gate A preamble paragraphs are present: that rows are
+evaluated in order with **A1-A6 taking precedence** over A7/A7b, and that
+**item count is never a gate input**. Then check the converse case: a
+*smaller* but coverage-equivalent reduction must still reach A3 (record
+present) or A4 (record missing), and a reduced `**Binding enumeration**` must
+still reach A5/A6 — A7 must not absorb either, because A7 matches only when
+**nothing is removed**.
 
 ### Step 7: A missing record is requested, not used to block
 
