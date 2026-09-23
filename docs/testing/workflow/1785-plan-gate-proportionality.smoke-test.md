@@ -135,6 +135,21 @@ count alone, and neither instructs the implementer to rebuild the projected set.
 and the finding must name both the specific coverage lost and the defect class
 that now escapes. A finding that names only one half does not satisfy the rule.
 
+### Step 6b: A net-larger swap that drops unique coverage is still blocking
+
+**Maps to**: blocking-threshold criterion (count-is-not-an-input rule)
+
+1. Take a delta where the delivered test scope is **equal to or larger** than
+   the plan's projection in item count, but the change drops items that were
+   the only exercise of a named behavior — a swap, a consolidation, or a
+   rewrite that nets out even or up.
+
+**Expected result**: row A7b, not A7. The documents must route this by what the
+delta touches, the plan marking, and the record — exactly as they would route
+the equivalent shrinking delta — and must not close it on the total alone.
+Confirm Gate A's `Item count is never a gate input` paragraph is present and
+says a raised total is never a defense against a coverage loss.
+
 ### Step 7: A missing record is requested, not used to block
 
 **Maps to**: recorded-deviation criterion
@@ -230,6 +245,9 @@ report no violations.
 
 - [ ] A test-scope enumeration delta is blocking only when the reviewer states
       both the specific coverage lost and the defect class that escapes
+- [ ] Item count is never a gate input: a delta that nets even or larger while
+      dropping uniquely-covering items routes to A7b and is treated as the
+      equivalent shrinking delta
 - [ ] A Test-Scope Deviation Record format exists, and the gate documents how it
       is evaluated, including the missing-record outcome
 - [ ] Plan-authoring guidance makes enumerations indicative unless marked with
