@@ -1784,3 +1784,54 @@ planted proof cycle 19; fixtures `parity-explicit-list-format-match` and
 
 Implementer must record `Still valid` or `Stale or conflicting` for A1-A6
 before file edits per Protocol 03 assumption check.
+
+---
+
+## Implementation Addendum — narrow real-surface proof exceptions (post-#1783 review)
+
+Recorded during implementation, per this plan's own "no substitute for an
+actual fail/pass cycle... removed from the guard... coverage table updated to
+match" rule (Workflow tooling section, Coverage rules paragraph). Both items
+below are narrow: the underlying LOGIC is implemented and fixture-proven; only
+a specific real-surface proof sub-case is out of scope, and neither removes an
+already-shipped guard branch.
+
+1. **Proof cycle 16, per-scenario real-canonical-doc granularity.** Neither
+   the merged spec's Decision-Gate Consistency Matrix nor the canonical doc's
+   Decision-gate table carries a machine-parseable row or scenario identifier
+   (rows are distinguished only by multi-sentence prose, matched
+   positionally — see this plan's own "Row identities (spec order)" note,
+   which is a plan-level naming convention, not text present in either
+   table). The guard's real-surface `simulate_bounded_paths` check is
+   therefore scoped to what the Parser-Risk Addendum's token/phrase rules can
+   provably check: Decision-gate row-count parity between the spec and the
+   canonical doc (proof cycle 16a/16b, `simulate_bounded_paths:C1_row_count_mismatch`),
+   and presence of all three named stop strings in the canonical doc (proof
+   cycle 16c, `simulate_bounded_paths:missing_stop_<name>`). Cycle 16's
+   per-scenario mutation proofs (one mutation per S1-S19 scenario naming that
+   scenario ID, and the C2/C3/C4 assertions) are implemented and proven only
+   at the fixture level (`sim-*` fixtures, rows 60-68 and 147-148 of the
+   fixture manifest, validated by `--self-test`) against a synthetic labeled
+   table built for that purpose; extending that per-scenario granularity to
+   the real, unlabeled prose tables would require brittle whole-paragraph
+   exact-text matching outside the addendum's scope and outside what the
+   real surface guard implements. The coverage completeness map's
+   "Spec matrix rows R1-R18 and scenarios S1-S19" row is narrowed
+   accordingly: proof cycle 16 covers the row-count/stop-presence real-surface
+   checks plus the full per-scenario C1-C4 fixture proofs; it does not cover
+   a per-scenario real-canonical-doc mutation proof.
+2. **Proof cycle 14, model-assignment cell content.** The real-surface
+   `agent-model-config.md` checker (`check_model_config_real`) validates, per
+   environment x layer: row presence (`model-config rows`), the Decision-6
+   profile value (`model-config rows`), and evidence-marker overclaim
+   (`evidence-marker`) — proven by proof cycles 14a-14e. It does not validate
+   the free-text *content* of an individual model-assignment cell (the
+   "remove ... the model-assignment cell of one row" sub-case); only the
+   evidence-marker column of that table is checked. This sub-case is removed
+   from the guard's proven scope rather than shipped unproved.
+
+No other guard branch or fixture-manifest row is affected by this addendum;
+`--self-test` still validates the full 158-row manifest (`MANIFEST_COUNT =
+158`) and the real-surface run (`test-cursor-dispatch-profile-surfaces.sh`)
+still passes against every mirror/protocol/role-agent/Codex-skill/
+`agent-model-config.md`/canonical-doc surface.
