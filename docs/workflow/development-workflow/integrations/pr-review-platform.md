@@ -13,6 +13,7 @@ Platform-specific setup lives in each platform's own integration doc. See:
 - [`integrations/greptile.md`](greptile.md)
 - [`integrations/devin.md`](devin.md)
 - [`integrations/haystack-triage.md`](haystack-triage.md)
+- [`integrations/ronda.md`](ronda.md)
 
 ---
 

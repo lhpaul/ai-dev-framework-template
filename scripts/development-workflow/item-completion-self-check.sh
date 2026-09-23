@@ -242,6 +242,7 @@ bot_login_for_platform() {
     claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
     copilot) printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
     bugbot) printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
+    ronda) printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
     *) printf '\n' ;;
   esac
 }
@@ -460,6 +461,7 @@ reviewer_check_name_for_platform() {
   case "$1" in
     haystack) printf '%s\n' "${HAYSTACK_CHECK_NAME:-Haystack / Review}" ;;
     bugbot) printf '%s\n' "${BUGBOT_CHECK_NAME:-Cursor Bugbot}" ;;
+    ronda) printf '%s\n' "${RONDA_CHECK_NAME:-Ronda review}" ;;
     *) printf '\n' ;;
   esac
 }

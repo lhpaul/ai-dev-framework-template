@@ -63,7 +63,7 @@ review:
     # PRs. These run before the PR is converted to ready.
     # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
     # coderabbit-cli, local-ai-reviewer, pr-agent, codex-github,
-    # claude-code-action, haystack, copilot, bugbot.
+    # claude-code-action, haystack, copilot, bugbot, ronda.
     github:
       - pr-agent
 
@@ -170,6 +170,15 @@ review:
   #                             (default: "Cursor Bugbot")
   #   BUGBOT_TRIGGER_COMMENT  — override the trigger comment posted to start a run
   #                             (default: "bugbot run")
+  #
+  # Ronda platform options (GitHub-facing reviewer bot; place "ronda" in
+  # on_draft.github or on_ready.github). Ronda reacts to the PR automatically
+  # (no trigger comment) and posts a pull-request review plus a single check
+  # run per head SHA, created exactly once, already completed:
+  #   RONDA_BOT_LOGIN   — override the Ronda bot login
+  #                       (default: "ronda[bot]")
+  #   RONDA_CHECK_NAME  — override the check-run name to poll
+  #                       (default: "Ronda review")
 
   # Each supported runner's own reviewer is reachable by construction. Other
   # entries are probed against this machine at each gate run. A machine that

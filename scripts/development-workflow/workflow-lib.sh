@@ -498,7 +498,8 @@ print_kv() {
 # configured_reviewer_check_names_json [config_file]
 #
 # Returns a JSON array of GitHub check-run names owned by configured review
-# platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot). Shared by
+# platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot, ronda →
+# Ronda review). Shared by
 # pr-ci-loop.sh (to exclude reviewer checks from the baseline CI set) and
 # pr-review-loop.sh (expensive-reviewer gate baseline-check classification).
 # Relocated from pr-ci-loop.sh (#1649) with no behavior change.
@@ -521,6 +522,9 @@ configured_reviewer_check_names_json() {
           ;;
         bugbot)
           names+=("${BUGBOT_CHECK_NAME:-Cursor Bugbot}")
+          ;;
+        ronda)
+          names+=("${RONDA_CHECK_NAME:-Ronda review}")
           ;;
       esac
     done < <(
