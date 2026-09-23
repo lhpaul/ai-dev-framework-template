@@ -1794,10 +1794,14 @@ def header_consistency_check(root):
     read_set = set(FULL_CONTRACT_SURFACES) | {
         GUARDRAILS_SURFACE, CANON_REL, MODEL_CONFIG_REL, SPEC_REL,
     }
-    selection_only = {FIXTURES_GLOB, SMOKE_REL, SELF_REL}
+    # A suite always covers itself and its own fixture directory implicitly
+    # (select-test-suites.sh convention); the header need not spell SELF_REL
+    # out, so it is not part of the required set here.
+    selection_only = {FIXTURES_GLOB, SMOKE_REL}
 
-    missing_from_covers = read_set - declared
-    extra_in_covers = declared - read_set - selection_only
+    full_expected = read_set | selection_only
+    missing_from_covers = full_expected - declared
+    extra_in_covers = declared - full_expected
 
     failures = []
     if missing_from_covers:
