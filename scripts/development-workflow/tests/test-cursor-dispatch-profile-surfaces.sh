@@ -1571,6 +1571,12 @@ EXPLICIT_LIST_SURFACES = {
 }
 
 
+SELF_REL = "scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh"
+SPEC_REL = "docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/1_1462-cursor-dispatch-profiles_specs.md"
+SMOKE_REL = "docs/testing/workflow/1462-cursor-dispatch-profiles.smoke-test.md"
+FIXTURES_GLOB = "scripts/development-workflow/tests/fixtures/cursor-dispatch-profile-surfaces/**"
+
+
 def read_path(root, rel):
     allowed_prefixes = (
         ".cursor/commands/", ".claude/commands/", ".agents/skills/",
@@ -1581,6 +1587,7 @@ def read_path(root, rel):
         "docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md",
         ".cursor/rules/workflow.mdc",
         "docs/specs/developments/20260911230512_1462-cursor-dispatch-profiles/",
+        SELF_REL,
     )
     if not rel.startswith(allowed_prefixes):
         raise SystemExit("read_path() refused an undeclared path: %s" % rel)
@@ -1757,6 +1764,49 @@ def explicit_list_tokens_missing(raw):
     return missing
 
 
+def parse_covers_header(text):
+    """Parse leading '# covers: <path> <path> ...' lines (bounded to the
+    comment header at the top of the file, mirroring select-test-suites.sh's
+    own bounded parse)."""
+    declared = set()
+    for line in text.splitlines()[:40]:
+        line = line.rstrip("\n")
+        if line.startswith("#!"):
+            continue
+        if not line.startswith("#"):
+            if line.strip() == "" or line.startswith("#"):
+                continue
+            break
+        if "covers:" in line:
+            rest = line.split("covers:", 1)[1]
+            for tok in rest.split():
+                declared.add(tok)
+    return declared
+
+
+def header_consistency_check(root):
+    """The guard's own `# covers:` header must equal the set of paths it
+    actually reads (read_path() calls) plus its selection-only entries (the
+    fixtures glob, the smoke runbook, and itself)."""
+    self_text = read_path(root, SELF_REL)
+    declared = parse_covers_header(self_text)
+
+    read_set = set(FULL_CONTRACT_SURFACES) | {
+        GUARDRAILS_SURFACE, CANON_REL, MODEL_CONFIG_REL, SPEC_REL,
+    }
+    selection_only = {FIXTURES_GLOB, SMOKE_REL, SELF_REL}
+
+    missing_from_covers = read_set - declared
+    extra_in_covers = declared - read_set - selection_only
+
+    failures = []
+    if missing_from_covers:
+        failures.append("header_consistency:missing=" + ",".join(sorted(missing_from_covers)))
+    if extra_in_covers:
+        failures.append("header_consistency:extra=" + ",".join(sorted(extra_in_covers)))
+    return failures
+
+
 def run_real(root):
     failures = {}
 
@@ -1799,6 +1849,7 @@ def run_real(root):
     failures["<structural>"].extend(simulate_bounded_paths_real(root))
     failures["<structural>"].extend(
         "model-config:" + f for f in check_model_config_real(root))
+    failures["<structural>"].extend(header_consistency_check(root))
     if not failures["<structural>"]:
         del failures["<structural>"]
 
