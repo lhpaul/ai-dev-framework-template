@@ -307,6 +307,20 @@ run_create() {
   local mode="${1:-ok}"; shift
   reset_log
   reset_state
+  # PRESEED_ON_BOARD / PRESEED_STATUS, when set, write a custom initial mock
+  # state (e.g. an item already on the board, with a given Status, before
+  # `create` runs) after the normal reset, instead of the default
+  # empty/not-on-board state.
+  if [ -n "${PRESEED_ON_BOARD:-}" ]; then
+    {
+      printf 'ON_BOARD="%s"\n' "$PRESEED_ON_BOARD"
+      printf 'ITEM_STATUS="%s"\n' "${PRESEED_STATUS:-}"
+      printf 'ITEM_TYPE=""\n'
+      printf 'ITEM_PRIORITY=""\n'
+      printf 'ITEM_SIZE=""\n'
+      printf 'LOOKUP_COUNT="0"\n'
+    } > "$STATE_FILE"
+  fi
   local exit_code=0
   set +e
   MOCK_GH_ISSUE_CREATE_MODE="$mode" \
@@ -501,8 +515,13 @@ case "$silent_type_stderr" in
 esac
 run_test "silent_type_drop_reports_mismatch" "reported" "$silent_type_result"
 # The mutation itself must have actually been attempted (this is not the
-# pre-flight validation path) — it just didn't take effect on the board.
-run_test "silent_type_drop_attempted_mutation" "1" "$(count_log_matches 'fieldId=PVTSSF_type')"
+# pre-flight validation path) — it just didn't take effect on the board. A
+# mismatch that persists is retried (issue #1778 review finding), so the
+# write is attempted once up front plus once per retry (3 verify attempts
+# total) — assert "at least one", the retry count is an implementation
+# detail, not the contract under test here.
+type_mutation_count="$(count_log_matches 'fieldId=PVTSSF_type')"
+run_test "silent_type_drop_attempted_mutation" "yes" "$([ "$type_mutation_count" -ge 1 ] && echo yes || echo no)"
 
 echo ""
 echo "=== create (issue #1778): a Size write that reports success but silently does not land is a loud failure ==="
@@ -557,6 +576,49 @@ case "$persistent_lag_stderr" in
   *) persistent_lag_result="$persistent_lag_stderr" ;;
 esac
 run_test "persistent_lookup_lag_reports_item_not_found" "reported" "$persistent_lag_result"
+
+echo ""
+echo "=== create (issue #1778 review finding): a write that fails on its first attempt due to lag is retried, not just re-read ==="
+echo "    (a bounded MOCK_LOOKUP_MISSING_UNTIL that clears mid-way through the post-add writes means"
+echo "     Type/Priority/Size fail their FIRST attempt outright — proving the fix must retry the WRITE,"
+echo "     not only the verification read, for create to still land every field and exit 0)"
+
+export MOCK_LOOKUP_MISSING_UNTIL=4
+run_create "ok" --title "Test" --body "body" --type "Feature" --size "S"
+unset MOCK_LOOKUP_MISSING_UNTIL
+run_test "write_retry_recovers_from_first_attempt_lag_exits_zero" "0" "$(get_exit)"
+# At MOCK_LOOKUP_MISSING_UNTIL=4, Status/Type/Priority's FIRST write attempt
+# each fail outright at the item lookup step (before ever reaching a
+# mutation call) — a clean single-pass run needs 6 project-item lookups
+# (board precheck, status, type, priority, size, one verify read); this
+# scenario needs more than that because the mismatched fields force at
+# least one additional retry round. This is the proof that a genuine write
+# retry happened, not only a read-only retry that would have kept polling a
+# value nothing ever wrote (issue #1778 review finding).
+write_retry_lookup_count="$(count_log_matches 'projectItems')"
+run_test "write_retry_required_multiple_lookup_rounds" "yes" "$([ "$write_retry_lookup_count" -gt 6 ] && echo yes || echo no)"
+
+echo ""
+echo "=== create (issue #1778 review finding): Status is not enforced when the item was already on the board ==="
+echo "    (ensure_on_project_board leaves Status untouched when the issue is already present — e.g. a racing"
+echo "     org/project 'auto-add' automation added it before this script's own check ran; create must not"
+echo "     fail on that pre-existing item's Status, which this invocation never requested)"
+
+export PRESEED_ON_BOARD=yes
+export PRESEED_STATUS=Merged
+run_create "ok" --title "Test" --body "body"
+unset PRESEED_ON_BOARD PRESEED_STATUS
+run_test "preexisting_item_status_not_enforced_exits_zero" "0" "$(get_exit)"
+preexisting_stdout="$(get_stdout)"
+case "$preexisting_stdout" in
+  *"already on project board"*) preexisting_board_check_result="already_on_board" ;;
+  *) preexisting_board_check_result="$preexisting_stdout" ;;
+esac
+run_test "preexisting_item_board_check_reports_already_present" "already_on_board" "$preexisting_board_check_result"
+# The Status field must never have been written — ensure_on_project_board's
+# own contract (leave Status alone when already present) is unchanged by
+# this fix; create only stops enforcing a value it never requested.
+run_test "preexisting_item_status_never_written" "0" "$(count_log_matches 'fieldId=PVTSSF_status')"
 
 echo ""
 echo "=== create (issue #1778): the 'has no Type value' warning honours custom_fields.type_field ==="
