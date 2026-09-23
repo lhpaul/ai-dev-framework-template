@@ -233,7 +233,11 @@ fi
 # alone is used as the trigger-less boundary. Best-effort: a separate call
 # from the headRefOid resolution above, kept isolated with 'if !' so its
 # failure (or an unmocked test double) degrades to an empty boundary — i.e.
-# no window filtering — rather than aborting the run.
+# no window filtering — rather than aborting the run. This same value is
+# also the trigger-less occupancy guard's anchor instant (#1757 follow-up,
+# BR-9; see codex_refresh_existing_occupancy_boundary_or_escalate below):
+# an empty value here degrades that guard to a no-op the same way, never an
+# escalation, matching this fallback's own degrade-safely philosophy.
 CODEX_PR_CREATED_AT=""
 if CODEX_PR_CREATED_AT_RAW=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json createdAt --jq '.createdAt' 2>/dev/null); then
   CODEX_PR_CREATED_AT=$(printf '%s' "$CODEX_PR_CREATED_AT_RAW" | tr -d '\n')
@@ -1015,21 +1019,31 @@ codex_select_terminal_evidence() {
 # occupancy-bound — passing boundary_time/boundary_id alone would let a
 # clean comment authored during a FIRST occupancy of SHA A authorize
 # readiness during a SECOND occupancy of A, with no review in between. Pass
-# apply_occupancy_guard=1 only from a TRIGGERED live-head call site (the
-# implementation plan scopes the occupancy guard to "Live head has at least
-# one trigger"; the trigger-less path's own boundary is unchanged by this
-# guard). occupancy_boundary_time is the caller's precomputed
-# CODEX_OCCUPANCY_BOUNDARY_TIME (codex_compute_occupancy_boundary) — the
-# newest head_ref_force_pushed/head_ref_deleted/head_ref_restored timeline
-# event newer than the trigger, or empty when none exists. Inside this
+# apply_occupancy_guard=1 from EVERY live-head call site, triggered or
+# trigger-less: a TRIGGERED call site anchors boundary_time/occupancy_
+# boundary_time on its trigger (codex_refresh_occupancy_boundary_or_
+# escalate), while the TRIGGER-LESS pre-check call site
+# (codex_fetch_existing_current_head_evidence) has no trigger of its own to
+# anchor on yet and instead anchors both on the pull request's own creation
+# time (codex_refresh_existing_occupancy_boundary_or_escalate) — the
+# pre-pass and occupancy check below are identical either way, because SHA
+# reuse is exactly as possible before this run's first trigger as it is
+# between two of its triggers. occupancy_boundary_time is the caller's
+# precomputed CODEX_OCCUPANCY_BOUNDARY_TIME (codex_compute_occupancy_
+# boundary) — the newest head_ref_force_pushed/head_ref_deleted/head_ref_
+# restored timeline event newer than the anchor, or empty when none exists.
+# Inside this
 # function that boundary is raised further, via a dedicated PRE-PASS over
 # the whole comments_file (before the main classification pass below), by
 # any "prior_revision"-classified comment (a well-formed marker naming a
 # DIFFERENT, existing SHA) found at or after boundary_time: such a comment
-# is itself proof the head moved away after the trigger (implementation
-# plan: "Terminal evidence naming a different SHA that is newer than the
-# trigger... raise B to that evidence's timestamp. Uses only evidence the
-# classifier already reads"). This MUST be a separate pass, not folded into
+# is itself proof the head moved away after that anchor — the trigger for a
+# triggered call site, or the pull request's creation for the trigger-less
+# one (implementation plan: "Terminal evidence naming a different SHA that
+# is newer than the trigger... raise B to that evidence's timestamp. Uses
+# only evidence the classifier already reads" — the same reasoning applies
+# unchanged when the anchor is PR creation instead of a trigger). This MUST
+# be a separate pass, not folded into
 # the single forward classification pass: the comment that raises the
 # boundary can be chronologically NEWER than the stale first-occupancy
 # comment it needs to exclude (head A triggered and reviewed clean, THEN
@@ -1759,6 +1773,37 @@ codex_refresh_occupancy_boundary_or_escalate() {
   OCCUPANCY_BOUNDARY_TIME="$CODEX_OCCUPANCY_BOUNDARY_TIME"
 }
 
+# #1757 follow-up (AC-13, AC-14, spec Business Rule 9): the same occupancy
+# guard as codex_refresh_occupancy_boundary_or_escalate, but for the
+# TRIGGER-LESS pre-check path (codex_fetch_existing_current_head_evidence),
+# which runs before this run's own trigger exists. A Step 7a code review
+# found — and reproduced against the unmodified script — that this path had
+# no occupancy protection at all: a stale marker-pinned clean comment for
+# SHA A, an intervening comment naming a different SHA B with blocking
+# findings, and the live head reverted to A with no new trigger posted, was
+# read as a clean current-occupancy comment and returned VERDICT: APPROVED,
+# exactly the false clean BR-9 forbids. This path has no trigger of its own
+# to anchor on, so it anchors on the pull request's own creation time
+# instead: SHA reuse always requires a force-update of the ref, and that is
+# exactly as possible before this run's first trigger as it is between two
+# of its later triggers, so the same "raise past a newer different-SHA
+# comment or a newer head_ref_force_pushed/_deleted/_restored event" guard
+# applies unchanged, computed fresh immediately before every pre-trigger
+# scan of existing comments (never once up-front), for the same reason
+# codex_refresh_occupancy_boundary_or_escalate recomputes on every poll.
+# Sets EXISTING_OCCUPANCY_BOUNDARY_TIME for the caller to pass through to
+# codex_scan_comment_evidence as its occupancy_boundary_time argument.
+# Escalates immediately (exit 2, evidence_unavailable_codex_thread_state)
+# when the timeline could not be read after its retry — the "boundary
+# unreadable" case is never a silent skip here either.
+codex_refresh_existing_occupancy_boundary_or_escalate() {
+  codex_compute_occupancy_boundary "$OWNER" "$REPO" "$PR_NUMBER" "$CODEX_PR_CREATED_AT"
+  if [ "$CODEX_OCCUPANCY_BOUNDARY_UNAVAILABLE" -eq 1 ]; then
+    codex_return_evidence_unavailable
+  fi
+  EXISTING_OCCUPANCY_BOUNDARY_TIME="$CODEX_OCCUPANCY_BOUNDARY_TIME"
+}
+
 codex_fetch_existing_current_head_evidence() {
   local existing_comments_stderr existing_comments_tmpfile
   existing_comments_stderr=$(mktemp)
@@ -1768,6 +1813,11 @@ codex_fetch_existing_current_head_evidence() {
   COMMENT_LATEST_BODY=""
   COMMENT_LATEST_TIME=""
   COMMENT_LATEST_IS_TERMINAL=0
+  # #1757 follow-up (BR-9): compute the trigger-less occupancy boundary
+  # before the comments fetch below, so a comment naming a different SHA
+  # (or a force-push/delete/restore event) that raises it is available to
+  # the pre-pass inside codex_scan_comment_evidence for THIS scan.
+  codex_refresh_existing_occupancy_boundary_or_escalate
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$existing_comments_stderr" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
@@ -1775,7 +1825,10 @@ codex_fetch_existing_current_head_evidence() {
     > "$existing_comments_tmpfile"; then
     # #1757 (AC-13, AC-14): trigger-less live head — the window boundary is
     # the pull request's own creation time (see CODEX_PR_CREATED_AT above).
-    codex_scan_comment_evidence "$existing_comments_tmpfile" "$CODEX_PR_CREATED_AT" ""
+    # apply_occupancy_guard=1 (#1757 follow-up, BR-9): the reused-SHA
+    # occupancy guard now applies to this trigger-less path too, exactly as
+    # it already does at every triggered live-head call site.
+    codex_scan_comment_evidence "$existing_comments_tmpfile" "$CODEX_PR_CREATED_AT" "" 1 "$EXISTING_OCCUPANCY_BOUNDARY_TIME"
   else
     local existing_comments_err
     existing_comments_err=$(cat "$existing_comments_stderr")

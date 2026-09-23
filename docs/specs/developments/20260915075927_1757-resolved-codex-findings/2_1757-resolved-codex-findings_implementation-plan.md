@@ -2010,6 +2010,30 @@ esac
   withdrawn because the occupancy guard's force-push input closes the SHA-reuse
   case. R2 is the only knowingly accepted false-clean path, and it is a human
   decision rather than a plan self-acceptance.
+
+  **Scope correction (post-merge follow-up, same pull request lineage).** When
+  this section was first written, "the occupancy guard" above described only
+  the TRIGGERED live-head call sites (**Live-head evidence window**'s "Live
+  head has at least one trigger" case) — the guard had not yet been wired into
+  the trigger-less pre-check path (`codex_fetch_existing_current_head_evidence`,
+  the common case when Codex's GitHub App auto-reviews a push before this
+  workflow posts its own trigger comment), even though that same plan section
+  already specified a boundary for a trigger-less live head (`B = max(latest
+  trigger naming another SHA, PR created_at)`, see "Live head is trigger-less"
+  above). R4's "withdrawn" claim was therefore accurate only for the triggered
+  path; a Step 7a code review reproduced the trigger-less gap against the
+  unmodified script — a stale marker-pinned clean comment for a reused SHA, an
+  intervening comment naming a different SHA with real findings, and the head
+  reverted with no new trigger posted, returned `VERDICT: APPROVED`. The fix
+  extends the identical occupancy-guard mechanism (comment-based boundary
+  raising via any comment naming a different, well-formed, existing SHA; and a
+  `head_ref_force_pushed`/`head_ref_deleted`/`head_ref_restored` timeline query,
+  scoped to the pull request's whole lifetime since there is no trigger time to
+  bound it) to `codex_fetch_existing_current_head_evidence`, anchored on the
+  pull request's creation time in place of a trigger time. R4 is now withdrawn
+  for both the triggered and the trigger-less live-head paths, with dedicated
+  regression coverage for each in `test-pr-review-loop.sh`. R2 remains the only
+  knowingly accepted false-clean path.
 - Reversal risk: Checked — the outcome-mapping step states the revert path for
   **all 11 Implementation Order steps**: steps 3–8 are the code and docs revert
   (with step 5 self-contained and revertible alone, and steps 3–4 inseparable);

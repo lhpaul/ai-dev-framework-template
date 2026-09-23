@@ -14817,6 +14817,258 @@ rm -rf "$_codex_occupancy_boundary_unreadable_mock_dir"
 unset _codex_occupancy_boundary_unreadable_mock_dir _codex_occupancy_boundary_unreadable_output _codex_occupancy_boundary_unreadable_exit
 
 # ---------------------------------------------------------------------------
+# #1757 follow-up (AC-13, AC-14, spec Business Rule 9): the occupancy guard
+# above was originally wired only into the four TRIGGERED live-head call
+# sites. A Step 7a code review found — and reproduced against the
+# unmodified script — that the TRIGGER-LESS pre-check path
+# (codex_fetch_existing_current_head_evidence, the common case when Codex's
+# GitHub App auto-reviews a push before this workflow ever posts its own
+# trigger comment) had no occupancy protection at all: a stale
+# marker-pinned clean comment for SHA A, a comment naming a different SHA B
+# with real blocking findings (an intervening occupancy), and the live head
+# reverted to A with no new trigger posted, was read as clean and returned
+# VERDICT: APPROVED. The four fixtures below mirror the triggered-path
+# coverage above for this path: (1) the exact reproduced scenario, (2) the
+# force-push-only signal alone (no comment ever named the intervening SHA),
+# (3) a genuine fresh clean case with the guard active but no real reuse —
+# proving it is not over-eager, and (4) the fail-closed escalation when the
+# occupancy guard's own timeline read cannot be established.
+# ---------------------------------------------------------------------------
+
+# codex_triggerless_sha_reuse_comment_not_approved: head A triggered and
+# reviewed clean during a FIRST occupancy (comment id 9001), then a comment
+# naming a DIFFERENT SHA B with real blocking findings (id 9002, occupancy
+# 1's own valid prior-revision evidence) is authored after it, then the
+# head is force-pushed back to A with no new trigger posted for THIS run —
+# the trigger-less pre-check runs before any trigger exists. B's newer
+# comment evidence alone (no timeline event is even present in this
+# fixture) raises the occupancy boundary past A's stale first-occupancy
+# comment, so the pre-check must find no terminal evidence, fall through to
+# the ordinary idempotency/trigger-post path (no existing trigger for A
+# exists either — comment 9001/9002 are both bot-authored, so the
+# idempotency check's non-bot filter excludes them), post a fresh trigger,
+# and time out waiting for a genuine review of this occupancy: never
+# VERDICT: APPROVED.
+_codex_triggerless_sha_reuse_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_sha_reuse_comment_mock_dir/gh" <<'CODEX_TRIGGERLESS_SHA_REUSE_COMMENT_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cccc5555cccc5555cccc5555cccc5555cccc5555\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":9401,"created_at":"2026-01-01T00:10:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[
+      {id:9001,created_at:"2026-01-01T00:00:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `cccc5555cccc5555cccc` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")},
+      {id:9002,created_at:"2026-01-01T00:05:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Found a real bug that must be fixed. **Reviewed commit:** `dddd6666dddd6666dddd`")}
+    ]'
+    exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"cccc5555cccc5555cccc5555cccc5555cccc5555","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_SHA_REUSE_COMMENT_GH
+chmod +x "$_codex_triggerless_sha_reuse_comment_mock_dir/gh"
+: > "$_codex_triggerless_sha_reuse_comment_mock_dir/posts.log"
+_codex_triggerless_sha_reuse_comment_exit=0
+MOCK_POST_LOG="$_codex_triggerless_sha_reuse_comment_mock_dir/posts.log" PATH="$_codex_triggerless_sha_reuse_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_sha_reuse_comment_mock_dir/output.txt" 2>&1 || _codex_triggerless_sha_reuse_comment_exit=$?
+_codex_triggerless_sha_reuse_comment_output="$(cat "$_codex_triggerless_sha_reuse_comment_mock_dir/output.txt")"
+run_test "codex_triggerless_sha_reuse_comment_not_approved_exit" "4" "$_codex_triggerless_sha_reuse_comment_exit"
+run_test "codex_triggerless_sha_reuse_comment_not_approved_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_triggerless_sha_reuse_comment_output" | grep "^REASON=")"
+run_test "codex_triggerless_sha_reuse_comment_not_approved_no_approved_verdict" "0" \
+  "$(grep_count_or_zero '^VERDICT: APPROVED' "$_codex_triggerless_sha_reuse_comment_mock_dir/output.txt")"
+run_test "codex_triggerless_sha_reuse_comment_not_approved_posts_fresh_trigger" "1" \
+  "$(wc -l < "$_codex_triggerless_sha_reuse_comment_mock_dir/posts.log" | tr -d ' ')"
+rm -rf "$_codex_triggerless_sha_reuse_comment_mock_dir"
+unset _codex_triggerless_sha_reuse_comment_mock_dir _codex_triggerless_sha_reuse_comment_output _codex_triggerless_sha_reuse_comment_exit
+
+# codex_triggerless_sha_reuse_force_push_only_not_approved: the intervening
+# head produced NO Codex evidence and NO trigger of its own — the only
+# signal that the head moved is a head_ref_force_pushed timeline event
+# newer than the sole clean comment for A. The event's own commit_id is
+# deliberately set to the LIVE head (A) to prove the guard does not filter
+# events by commit_id (an A -> B -> A force-push sequence's FINAL event
+# always names the live head). Expect the same not-approved/pending
+# outcome as above, proving SHA reuse is caught even with zero comment
+# evidence about the intervening occupancy.
+_codex_triggerless_sha_reuse_event_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_sha_reuse_event_mock_dir/gh" <<'CODEX_TRIGGERLESS_SHA_REUSE_EVENT_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'eeee7777eeee7777eeee7777eeee7777eeee7777\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":9402,"created_at":"2026-01-01T00:20:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    jq -nc '[{event:"head_ref_force_pushed",created_at:"2026-01-01T00:15:00Z",commit_id:"eeee7777eeee7777eeee7777eeee7777eeee7777"}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[
+      {id:9101,created_at:"2026-01-01T00:00:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `eeee7777eeee7777eeee` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}
+    ]'
+    exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"eeee7777eeee7777eeee7777eeee7777eeee7777","headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_SHA_REUSE_EVENT_GH
+chmod +x "$_codex_triggerless_sha_reuse_event_mock_dir/gh"
+: > "$_codex_triggerless_sha_reuse_event_mock_dir/posts.log"
+_codex_triggerless_sha_reuse_event_exit=0
+MOCK_POST_LOG="$_codex_triggerless_sha_reuse_event_mock_dir/posts.log" PATH="$_codex_triggerless_sha_reuse_event_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_sha_reuse_event_mock_dir/output.txt" 2>&1 || _codex_triggerless_sha_reuse_event_exit=$?
+_codex_triggerless_sha_reuse_event_output="$(cat "$_codex_triggerless_sha_reuse_event_mock_dir/output.txt")"
+run_test "codex_triggerless_sha_reuse_force_push_only_not_approved_exit" "4" "$_codex_triggerless_sha_reuse_event_exit"
+run_test "codex_triggerless_sha_reuse_force_push_only_not_approved_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_triggerless_sha_reuse_event_output" | grep "^REASON=")"
+run_test "codex_triggerless_sha_reuse_force_push_only_not_approved_no_approved_verdict" "0" \
+  "$(grep_count_or_zero '^VERDICT: APPROVED' "$_codex_triggerless_sha_reuse_event_mock_dir/output.txt")"
+rm -rf "$_codex_triggerless_sha_reuse_event_mock_dir"
+unset _codex_triggerless_sha_reuse_event_mock_dir _codex_triggerless_sha_reuse_event_output _codex_triggerless_sha_reuse_event_exit
+
+# codex_triggerless_genuine_fresh_clean_with_guard_active: an OLDER
+# head_ref_force_pushed event predates the sole marker-pinned clean
+# comment for the live head — the occupancy guard raises the boundary to
+# the event's time, but the comment is still STRICTLY newer than it, so
+# this is genuine current-occupancy evidence and must still authorize
+# readiness. Proves the guard is not over-eager: an event's mere presence
+# does not invalidate a review that already covers this same occupancy.
+_codex_triggerless_genuine_fresh_clean_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_genuine_fresh_clean_mock_dir/gh" <<'CODEX_TRIGGERLESS_GENUINE_FRESH_CLEAN_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ffff8888ffff8888ffff8888ffff8888ffff8888\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    jq -nc '[{event:"head_ref_force_pushed",created_at:"2025-12-31T12:00:00Z",commit_id:"ffff8888ffff8888ffff8888ffff8888ffff8888"}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:9201,created_at:"2026-01-01T00:00:00Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `ffff8888ffff8888ffff` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"ffff8888ffff8888ffff8888ffff8888ffff8888","headRef":{"target":{"committedDate":"2025-12-31T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_GENUINE_FRESH_CLEAN_GH
+chmod +x "$_codex_triggerless_genuine_fresh_clean_mock_dir/gh"
+_codex_triggerless_genuine_fresh_clean_exit=0
+PATH="$_codex_triggerless_genuine_fresh_clean_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_genuine_fresh_clean_mock_dir/output.txt" 2>&1 || _codex_triggerless_genuine_fresh_clean_exit=$?
+_codex_triggerless_genuine_fresh_clean_output="$(cat "$_codex_triggerless_genuine_fresh_clean_mock_dir/output.txt")"
+run_test "codex_triggerless_genuine_fresh_clean_with_guard_active_exit" "0" "$_codex_triggerless_genuine_fresh_clean_exit"
+run_test "codex_triggerless_genuine_fresh_clean_with_guard_active_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_triggerless_genuine_fresh_clean_output" | grep "^VERDICT:")"
+rm -rf "$_codex_triggerless_genuine_fresh_clean_mock_dir"
+unset _codex_triggerless_genuine_fresh_clean_mock_dir _codex_triggerless_genuine_fresh_clean_output _codex_triggerless_genuine_fresh_clean_exit
+
+# codex_triggerless_boundary_unreadable: the trigger-less occupancy guard's
+# own timeline read fails (and fails again on its one retry) BEFORE the
+# pre-check ever reads a single comment — this is the fail-closed
+# "boundary unreadable" escalation, never a silent skip that would leave
+# the trigger-less window test unapplied. Expect the same fail-closed
+# escalation code as the triggered-path equivalent above, and confirm no
+# trigger was ever posted (the escalation must fire before that step).
+_codex_triggerless_boundary_unreadable_mock_dir="$(mktemp -d)"
+cat > "$_codex_triggerless_boundary_unreadable_mock_dir/gh" <<'CODEX_TRIGGERLESS_BOUNDARY_UNREADABLE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '0123abcd0123abcd0123abcd0123abcd0123abcd\n'; exit 0 ;;
+  *"pr view"*createdAt*)
+    printf '2025-12-31T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR=duplicate-trigger-post\n' >&2
+    exit 64 ;;
+  *"issues/"*"/timeline"*)
+    printf 'ERROR=timeline-unavailable\n' >&2
+    exit 64 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRefOid":"0123abcd0123abcd0123abcd0123abcd0123abcd","headRef":{"target":{"committedDate":"2025-12-31T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TRIGGERLESS_BOUNDARY_UNREADABLE_GH
+chmod +x "$_codex_triggerless_boundary_unreadable_mock_dir/gh"
+_codex_triggerless_boundary_unreadable_exit=0
+PATH="$_codex_triggerless_boundary_unreadable_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 --pre-trigger-wait 1 \
+  >"$_codex_triggerless_boundary_unreadable_mock_dir/output.txt" 2>&1 || _codex_triggerless_boundary_unreadable_exit=$?
+_codex_triggerless_boundary_unreadable_output="$(cat "$_codex_triggerless_boundary_unreadable_mock_dir/output.txt")"
+run_test "codex_triggerless_boundary_unreadable_exit" "2" "$_codex_triggerless_boundary_unreadable_exit"
+run_test "codex_triggerless_boundary_unreadable_reason" "REASON=evidence_unavailable_codex_thread_state" \
+  "$(printf '%s\n' "$_codex_triggerless_boundary_unreadable_output" | grep "^REASON=")"
+run_test "codex_triggerless_boundary_unreadable_no_duplicate_post" "0" \
+  "$(grep_count_or_zero 'duplicate-trigger-post' "$_codex_triggerless_boundary_unreadable_mock_dir/output.txt")"
+rm -rf "$_codex_triggerless_boundary_unreadable_mock_dir"
+unset _codex_triggerless_boundary_unreadable_mock_dir _codex_triggerless_boundary_unreadable_output _codex_triggerless_boundary_unreadable_exit
+
+# ---------------------------------------------------------------------------
 # Area 14: _check_release_pr_guard — release PR early-exit guard (#960)
 # ---------------------------------------------------------------------------
 echo ""

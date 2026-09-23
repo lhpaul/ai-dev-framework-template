@@ -624,12 +624,16 @@ codex_review_finding_correlation() {
 # job is: does the timeline show the head moved after <trigger_time>, and if
 # so, when.
 #
-# <trigger_time> is the created_at of the latest trigger naming the live
-# head, computed by the caller (companion script). This function is a no-op
-# when <trigger_time> is empty — the occupancy guard applies only to a
-# TRIGGERED live head (implementation plan: "Live head has at least one
-# trigger"); the trigger-less path's own boundary/escalation logic is
-# unchanged by this item and must not be affected by this function.
+# <trigger_time> is the caller's chosen anchor instant, not necessarily a
+# real trigger: a TRIGGERED live-head call site (codex_refresh_occupancy_
+# boundary_or_escalate) passes the created_at of the latest trigger naming
+# the live head; the TRIGGER-LESS pre-check call site (codex_refresh_
+# existing_occupancy_boundary_or_escalate, #1757 follow-up closing the
+# reviewer-reproduced trigger-less gap) passes the pull request's own
+# creation time instead, because that path runs before this run's first
+# trigger exists and SHA reuse — which always requires a force-update of the
+# ref — is exactly as possible before a first trigger as it is between two
+# later ones. This function is a no-op when <trigger_time> is empty.
 #
 # Sets:
 #   CODEX_OCCUPANCY_BOUNDARY_TIME       — the newest created_at, among
