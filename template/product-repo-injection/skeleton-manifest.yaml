@@ -45,6 +45,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: shell helpers used by product-repo validation and PR readiness scripts
+  - group: shared Codex evidence helpers
+    path: scripts/development-workflow/codex-github-evidence-lib.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: applicability-aware Codex review-thread evidence helpers required by pr-review-loop.sh
   - group: PR reviewer loop
     path: scripts/development-workflow/pr-review-loop.sh
     mode_scope: product_repo_injection

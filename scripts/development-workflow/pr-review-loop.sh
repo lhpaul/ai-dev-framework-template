@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=scripts/development-workflow/codex-github-evidence-lib.sh
+source "$SCRIPT_DIR/codex-github-evidence-lib.sh"
 
 # Effective harness mode: only active when HARNESS_MODE=1 AND the script is
 # sourced (BASH_SOURCE[0] != $0). When executed directly with HARNESS_MODE=1
@@ -2149,8 +2151,9 @@ run_codex_github_review() {
   # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
   # bot logins WITH the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]").
   # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
-  # (e.g. "chatgpt-codex-connector"). Strip it here so check_unresolved_threads,
-  # which queries GraphQL, compares against the correct login form.
+  # (e.g. "chatgpt-codex-connector"). Strip it here so
+  # codex_review_thread_evidence_counts, which queries GraphQL, compares
+  # against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
@@ -2159,22 +2162,30 @@ run_codex_github_review() {
   local thread_check_output=""
   local thread_check_status=0
   local unresolved_count=0
+  local owner repo_name
 
   require_gh
   cd_workflow_repo_root
   repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
   # Phase 1: Check for existing unresolved review threads from the codex bot.
-  # mode=provisional (#1508): a thread whose last comment is a non-bot reply
-  # posted after the current head commit does not block re-triggering the
-  # review here — see check_unresolved_threads for why this cannot cause a
-  # false RESULT=clean.
+  # #1757 (AC-1, AC-2): use the shared, applicability-aware Codex evidence
+  # counter (codex-github-evidence-lib.sh) with mode=strict, not the generic
+  # check_unresolved_threads used by other reviewer platforms. Codex-specific
+  # applicability (dismissed reviews, live-head commit correlation) matters
+  # here because this count decides needs_fixes directly; strict mode never
+  # applies the #1508 reply-after-push relaxation, so it cannot under-report
+  # a real blocker.
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" provisional "$graphql_bot_login")"
+  thread_check_output="$(codex_review_thread_evidence_counts "$owner" "$repo_name" "$pr_number" "$graphql_bot_login" strict)"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
-    unresolved_count="$thread_check_output"
+    IFS=$'\t' read -r unresolved_count _ _ <<EOF
+$thread_check_output
+EOF
   else
     # Thread check failed — escalate rather than proceeding with stale unresolved_count=0,
     # which would dispatch a new review even if blocking threads already exist.
@@ -2187,27 +2198,23 @@ run_codex_github_review() {
     return 2
   fi
 
-  if [ "$unresolved_count" -gt 0 ]; then
-    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
-    reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
-    print_kv RESULT needs_fixes
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv REASON existing_findings
-    print_kv COMMENT_COUNT "$unresolved_count"
-    print_kv BLOCKING_COUNT "$unresolved_count"
-    print_kv SUGGESTION_COUNT 0
-    return 1
-  fi
+  # #1757 (AC-7, AC-9): do NOT short-circuit to needs_fixes here. An
+  # unresolved-conversation count alone is necessary but not sufficient — a
+  # current fail-closed escalation for the live head (malformed marker,
+  # unrecognized verdict, correlation-missing finding, or evidence
+  # unavailable) takes precedence, and only the companion's own
+  # classification (which this count alone cannot see) can decide that.
+  # Proceed to Phase 2 below unconditionally; the companion's pre-trigger
+  # check performs this same applicability-aware count check before
+  # deciding, and the exit-1 handler performs the authoritative strict
+  # recount and reports RESULT=needs_fixes / REASON=unresolved_review_threads
+  # exactly as this removed short-circuit used to, while a fail-closed
+  # escalation instead falls into the exit-2 handler below with the
+  # matching REASON=.
 
   # Phase 2: Trigger the codex-github review and wait for response
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/codex-github-reviewer.sh"
 
-  local owner repo_name
-  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
-  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
   local max_retriggers
   max_retriggers="${CODEX_GITHUB_MAX_RETRIGGERS:-1}"
   case "$max_retriggers" in
@@ -2252,18 +2259,31 @@ run_codex_github_review() {
     1)
       unresolved_count=0
       local actual_unresolved_count=0
-      # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
-      # reporting and must reflect true resolution state, not the provisional
-      # reply relaxation used to decide whether to trigger the review above.
+      local recount_ok=0
+      # #1757 (AC-1, AC-2, AC-8): recount with the shared strict,
+      # applicability-aware counter — this feeds the caller's
+      # needs_fixes/COMMENT_COUNT reporting and must reflect true resolution
+      # state, not the provisional reply relaxation used to decide whether to
+      # trigger the review above. Unlike the pre-#1757 recount, a genuine
+      # zero-unresolved result is no longer floored to 1: a resolved Codex
+      # finding that is merely still visible on the pull request must not be
+      # reported as a current blocker (spec Business Rule 2, AC-2).
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
+      thread_check_output="$(codex_review_thread_evidence_counts "$owner" "$repo_name" "$pr_number" "$graphql_bot_login" strict)"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
-        unresolved_count="$thread_check_output"
+        IFS=$'\t' read -r unresolved_count _ _ <<EOF
+$thread_check_output
+EOF
         actual_unresolved_count="$unresolved_count"
+        recount_ok=1
+      else
+        # Recount failed — fail closed exactly as the shipped floor did:
+        # treat as one unresolved blocker rather than silently clearing the
+        # pull request from an indeterminate thread-state read.
+        unresolved_count=1
       fi
-      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
 
       reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
       reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
@@ -2272,10 +2292,49 @@ run_codex_github_review() {
       # paths with no unresolved threads; do not fall back when threads exist
       # (multi-commit thread heads must stay unattributable per AC-11) or when
       # the thread audit could not be completed.
-      if [ "$thread_check_status" -eq 0 ] && [ "$actual_unresolved_count" -eq 0 ]; then
-        local companion_reviewed_head
-        companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
-        [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+      if [ "$recount_ok" -eq 1 ] && [ "$actual_unresolved_count" -eq 0 ]; then
+        # Bugbot (PR #1780): a zero-thread recount alone must never wave
+        # through a live-head CHANGES_REQUESTED review — GitHub's structured
+        # request-for-changes state is not itself a thread and is never
+        # cleared by resolving conversations (spec Business Rules 5/6).
+        # codex_current_head_changes_requested_blocker re-derives this
+        # directly from the live PR review state, fail-closed on any lookup
+        # failure, since the companion's exit code alone does not tell us
+        # WHY it said NEEDS_REVISION.
+        local live_head_changes_requested
+        live_head_changes_requested="$(codex_current_head_changes_requested_blocker \
+          "$owner" "$repo_name" "$pr_number" "$bot_login" "$graphql_bot_login")"
+
+        if [ "$live_head_changes_requested" != "1" ]; then
+          local companion_reviewed_head
+          companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+          [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+
+          # #1757 (AC-2, AC-8): the companion reported NEEDS_REVISION, but a
+          # strict, applicability-aware recount confirms zero live-head Codex
+          # conversations remain unresolved, and no live-head CHANGES_REQUESTED
+          # review is active — historical visibility alone must not produce
+          # needs_fixes. Request a fresh current-head review (cleared-findings
+          # retrigger) instead of a stale needs_fixes.
+          print_kv RESULT waiting_on_reviewer
+          print_kv REASON codex-github-review-pending
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 4
+        fi
+
+        # A confirmed (or indeterminate, fail-closed) live-head
+        # CHANGES_REQUESTED review is an actionable blocker: fall through to
+        # needs_fixes below. Floor to 1 so COMMENT_COUNT/BLOCKING_COUNT never
+        # report zero for a real blocker (mirrors the Copilot
+        # CHANGES_REQUESTED-with-no-inline-comments floor elsewhere in this
+        # file).
+        [ "$unresolved_count" -eq 0 ] && unresolved_count=1
       fi
 
       print_kv RESULT needs_fixes
@@ -2290,8 +2349,14 @@ run_codex_github_review() {
       return 1
       ;;
     3)
+      # #1757 (Operational Visibility): read the companion's own REASON=
+      # instead of hardcoding the usage-limit code, so
+      # codex_return_account_not_connected's REASON=codex-github-account-not-connected
+      # is not mislabelled as a usage limit. Falls back to today's value when
+      # the companion emits no REASON= (should not happen on exit 3, but keeps
+      # a reason-less exit 3 unchanged).
       print_kv RESULT escalate
-      print_kv REASON codex-github-usage-limit
+      print_kv REASON "$(kv_value_default REASON "$script_output" codex-github-usage-limit)"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -2320,6 +2385,25 @@ run_codex_github_review() {
     *)
       local codex_reason
       codex_reason="$(kv_value_default REASON "$script_output" timeout)"
+      # #1757 (AC-9, AC-10): the companion's shipped contract for
+      # acknowledgement-only evidence is exit 4 (see
+      # codex_return_reaction_without_review). This is a defensive safety net
+      # only — if a companion code path is ever missed and still exits with
+      # this REASON= on a non-4 exit, map it to waiting_on_reviewer rather than
+      # escalate, since the spec's complete fail-closed escalation set
+      # excludes both wait reason codes.
+      if [ "$codex_reason" = "codex-github-reaction-without-review" ]; then
+        print_kv RESULT waiting_on_reviewer
+        print_kv REASON "$codex_reason"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 4
+      fi
       print_kv RESULT escalate
       print_kv REASON "$codex_reason"
       print_kv PLATFORM "$platform"
@@ -11254,20 +11338,35 @@ reviewer_loop_resolve_max_total_cycles() {
 # Generic cap check reused for BOTH axes (call once with the per-run count
 # and per-run limit, and again with the lifetime count and lifetime limit).
 # Returns 0 (true — cap exceeded, caller should escalate) only when the loop
-# would otherwise keep going (result is needs_fixes or needs_rerun) and
-# cycle_count is known (>= 0) and has reached or passed max_cycles. A result
-# of "clean" is never overridden — a genuinely resolved PR is not escalated
-# just because it took many cycles to get there. An unknown cycle_count (-1,
-# from unreadable history) is handled separately by
-# reviewer_loop_cycle_count_unavailable_should_escalate below — this
-# function's job is strictly "is the known count at or past the cap".
+# would otherwise keep going (result is needs_fixes, needs_rerun, or
+# waiting_on_reviewer) and cycle_count is known (>= 0) and has reached or
+# passed max_cycles. A result of "clean" is never overridden — a genuinely
+# resolved PR is not escalated just because it took many cycles to get
+# there. An unknown cycle_count (-1, from unreadable history) is handled
+# separately by reviewer_loop_cycle_count_unavailable_should_escalate below
+# — this function's job is strictly "is the known count at or past the cap".
+#
+# #1757 (AC-5): waiting_on_reviewer added to the exceedable set. Spec
+# Business Rule 10: "The cycle-limit escalation takes precedence over the
+# cleared-findings retrigger path: when the allowance is exhausted and the
+# evaluation would require another review cycle — including a
+# cleared-findings retrigger — the loop escalates rather than emitting
+# waiting_on_reviewer." A cleared-findings-wait (Codex REASON=
+# codex-github-review-pending) is exactly this shape: the aggregate result
+# is waiting_on_reviewer, not needs_fixes, at the point this cap check
+# already runs (pr-review-loop.sh's reviewer-platform aggregation sets
+# aggregate_result=waiting_on_reviewer directly for that platform_result).
+# Any waiting_on_reviewer aggregate result means "the loop would otherwise
+# keep going" exactly as much as needs_fixes/needs_rerun do, so the same
+# cap applies uniformly across reviewer platforms rather than singling out
+# Codex.
 reviewer_loop_cap_exceeded() {
   local cycle_count="$1"
   local max_cycles="$2"
   local result="$3"
 
   case "$result" in
-    needs_fixes|needs_rerun) : ;;
+    needs_fixes|needs_rerun|waiting_on_reviewer) : ;;
     *) return 1 ;;
   esac
 

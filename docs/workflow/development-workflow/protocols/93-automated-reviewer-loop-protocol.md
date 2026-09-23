@@ -119,7 +119,19 @@ platform as clean after Codex publishes evidence tied to the current PR head:
 - current-head Codex inline review comments, treated as findings.
 
 A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
-not SHA-pinned review evidence and must be treated as unavailable, not clean.
+not SHA-pinned review evidence and must be treated as `waiting_on_reviewer`
+(`REASON=codex-github-reaction-without-review`), not clean and not an
+escalation (#1757).
+
+A resolved Codex review conversation must not, by itself, count as a current
+blocker: `pr-review-loop.sh` and `codex-github-reviewer.sh` share one
+applicability-aware thread counter
+(`codex-github-evidence-lib.sh`'s `codex_review_thread_evidence_counts`) that
+excludes resolved, outdated, dismissed-review, and non-live-head-commit
+threads from blocker counts. See
+[`codex-github.md`](../integrations/codex-github.md#resolved-codex-findings-and-blocker-counting-1757)
+for the full counting contract, the removed `unresolved_count=1` floor, and
+this item's scope note.
 Codex-authored root PR comments without a current-head `Reviewed commit` marker
 are not SHA-pinned clean evidence; use them only for acknowledgement,
 usage-limit, and setup-failure detection.
@@ -160,7 +172,37 @@ plan). A bare, non-terminal acknowledgement comment is still routed to
 wait-for-more-evidence as before; that wait is gated on the evidence being
 non-terminal, so a footer-bearing near-miss on genuinely terminal evidence
 always reaches the `NEEDS_REVISION` safe-fail rather than being misrouted to
-a wait/timeout.
+a wait/timeout — **unless** that terminal evidence itself matches neither an
+approved template nor the documented blocking markers, in which case it now
+escalates rather than safe-failing (see the outcome table below, #1757).
+
+##### Codex phase outcomes (#1757)
+
+The Codex phase's normative outcome set — cross-linked to the spec's own
+decision-gate matrix rows in
+[`1_1757-resolved-codex-findings_specs.md`](../../../specs/developments/20260915075927_1757-resolved-codex-findings/1_1757-resolved-codex-findings_specs.md#complex-workflow-decision-gate-matrix)
+— is:
+
+| Outcome | `REASON=` | Meaning |
+| --- | --- | --- |
+| `clean` | — | Terminal clean evidence for the live head (submitted non-blocking review with the full head SHA and a clean body, or a fresh marker-pinned clean root comment) |
+| `needs_fixes` | `unresolved_review_threads` | An applicable unresolved live-head conversation, a `CHANGES_REQUESTED` review, or a terminal finding correlated to an unresolved conversation |
+| `waiting_on_reviewer` | `codex-github-review-pending` | No terminal live-head evidence yet, only stale/prior-revision evidence, or every current-head finding is cleared (resolved) with no other applicable unresolved conversation — the cleared-findings retrigger path |
+| `waiting_on_reviewer` | `codex-github-reaction-without-review` | Acknowledgement-only evidence (reaction, draft review, or a clean-looking comment with no reviewed-revision field) for the live-head attempt |
+| `escalate` | `codex_current_verdict_malformed_revision_marker` | A `Reviewed commit` marker is syntactically unusable (empty, non-hex, multiple tokens, or an interior-substring/superstring of the live head) and is the newest live-head evidence within the head's evidence window |
+| `escalate` | `codex_current_verdict_unrecognized` | A current terminal verdict reproduces neither an approved template nor the documented blocking markers, and is not a recognized availability response |
+| `escalate` | `codex_finding_thread_correlation_missing` | A current terminal finding has no stable review-thread identifier (a root-comment finding, or a review's own body finding) or no identifiable matching conversation |
+| `escalate` | `evidence_unavailable_codex_thread_state` | The bounded thread/correlation evidence query failed or was left indeterminate after retry |
+
+The four `escalate` reason codes are terminal for the current run and are
+never converted into `needs_fixes`, `waiting_on_reviewer`, or clean
+readiness by the loop or its callers. `reviewer_loop_cap_exceeded` treats an
+exhausted per-run or lifetime allowance the same way across all of
+`needs_fixes`, `needs_rerun`, and `waiting_on_reviewer`: when the evaluation
+would otherwise require another review cycle — including a cleared-findings
+retrigger — the loop escalates (`max_cycles_exceeded` /
+`max_total_cycles_exceeded`) instead. Canonical terminal clean evidence
+received in the final permitted cycle still proceeds to readiness.
 
 When both a SHA-pinned root comment and a submitted review qualify as terminal
 evidence, the strictly newer one wins. On an exact timestamp tie (GitHub

@@ -337,6 +337,20 @@ run_not_contains \
   "category=always_sync mode_scope=shared path=docs/workflow/retro-metrics-platforms.md" \
   "$real_single_output"
 
+# #1757: codex-github-evidence-lib.sh must be injected into product
+# repositories alongside pr-review-loop.sh, which sources it unconditionally
+# — a manifest entry for one without the other would ship a product-repo
+# pr-review-loop.sh that fails at load time.
+real_product_output="$(python3 "$SELECTOR" --manifest "$real_manifest" --role product_repo)"
+run_contains \
+  "product_selects_codex_evidence_lib" \
+  "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/codex-github-evidence-lib.sh glob=" \
+  "$real_product_output"
+run_contains \
+  "product_selects_pr_review_loop_with_evidence_lib" \
+  "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/pr-review-loop.sh glob=" \
+  "$real_product_output"
+
 echo ""
 echo "sync-template mode-scope tests complete: $PASS_COUNT passed, $FAIL_COUNT failed."
 

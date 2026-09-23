@@ -2010,6 +2010,92 @@ esac
   withdrawn because the occupancy guard's force-push input closes the SHA-reuse
   case. R2 is the only knowingly accepted false-clean path, and it is a human
   decision rather than a plan self-acceptance.
+
+  **Scope correction (post-merge follow-up, same pull request lineage).** When
+  this section was first written, "the occupancy guard" above described only
+  the TRIGGERED live-head call sites (**Live-head evidence window**'s "Live
+  head has at least one trigger" case) — the guard had not yet been wired into
+  the trigger-less pre-check path (`codex_fetch_existing_current_head_evidence`,
+  the common case when Codex's GitHub App auto-reviews a push before this
+  workflow posts its own trigger comment), even though that same plan section
+  already specified a boundary for a trigger-less live head (`B = max(latest
+  trigger naming another SHA, PR created_at)`, see "Live head is trigger-less"
+  above). R4's "withdrawn" claim was therefore accurate only for the triggered
+  path; a Step 7a code review reproduced the trigger-less gap against the
+  unmodified script — a stale marker-pinned clean comment for a reused SHA, an
+  intervening comment naming a different SHA with real findings, and the head
+  reverted with no new trigger posted, returned `VERDICT: APPROVED`. The fix
+  extends the identical occupancy-guard mechanism (comment-based boundary
+  raising via any comment naming a different, well-formed, existing SHA; and a
+  `head_ref_force_pushed`/`head_ref_deleted`/`head_ref_restored` timeline query,
+  scoped to the pull request's whole lifetime since there is no trigger time to
+  bound it) to `codex_fetch_existing_current_head_evidence`, anchored on the
+  pull request's creation time in place of a trigger time. R4 is now withdrawn
+  for both the triggered and the trigger-less live-head paths, with dedicated
+  regression coverage for each in `test-pr-review-loop.sh`. R2 remains the only
+  knowingly accepted false-clean path.
+
+  **Second scope correction (Step 7a Pass 1 re-review, same pull request
+  lineage).** The trigger-less fix above closed the gap for
+  `codex_fetch_existing_current_head_evidence`'s ROOT-COMMENT evidence, but
+  that same function also fetches SUBMITTED-REVIEW evidence
+  (`pulls/{pr}/reviews`) via a separate, independently-constructed jq query
+  that filtered only by `commit_id == live head` and `state != DISMISSED`,
+  with no floor on `submitted_at` at all — unlike every triggered-path review
+  query elsewhere in the script, which already bounds `submitted_at >=
+  $trigger_time` and is therefore occupancy-safe by construction (a fresh
+  trigger for the current occupancy always postdates any earlier occupancy's
+  reviews). A Pass 1 re-review reproduced the same false-clean class through
+  this review path instead of the comment path: a clean `APPROVED` review
+  submitted for the live head SHA during a first occupancy, followed by a
+  `head_ref_force_pushed` event and a reversion back to that same SHA with no
+  new review submitted for the second occupancy, still returned `VERDICT:
+  APPROVED`. The fix floors the trigger-less review query's `submitted_at` by
+  the same occupancy boundary already computed for that scan (or, when no
+  boundary event exists yet, the pull request's creation time), mirroring the
+  triggered-path reviews' own bound. R4 is now withdrawn for the triggered
+  path, the trigger-less comment path, and the trigger-less review path;
+  `codex_triggerless_stale_review_reuse_not_approved` and
+  `codex_triggerless_genuine_fresh_review_clean_still_works` pin the fixed and
+  not-over-eager cases respectively. R2 remains the only knowingly accepted
+  false-clean path.
+
+  **Third scope correction (Step 7 external reviewer loop, same pull request
+  lineage).** Cursor Bugbot, reviewing this pull request during the Step 7
+  external reviewer loop, found a gap in the same exit-1 recount the two
+  scope corrections above hardened for occupancy, but through a different
+  mechanism: that recount (`pr-review-loop.sh` `run_codex_github_review`)
+  counts only INLINE REVIEW THREADS, so once it reached zero it
+  unconditionally remapped the companion's `NEEDS_REVISION` verdict to
+  `waiting_on_reviewer` — even when that verdict came from a live-head
+  submitted Codex review whose GitHub review state is `CHANGES_REQUESTED`, an
+  actionable blocker per spec Business Rules 5/6 regardless of whether it
+  carries any inline thread of its own (a body-only review is one example;
+  every one of its own inline threads being separately resolved is another).
+  `codex_finalize_verdict`'s own `cleared`/`none` branches
+  (`codex-github-reviewer.sh`) already correctly refuse to treat such a
+  review as cleared and return `NEEDS_REVISION`/exit 1 for exactly this
+  reason, but that refusal collapses to a bare exit code by the time it
+  reaches `pr-review-loop.sh` — the exit-1 handler cannot see WHY the
+  companion said `NEEDS_REVISION` from the exit code alone, only that its own
+  thread-only recount hit zero. The fix adds
+  `codex_current_head_changes_requested_blocker`
+  (`codex-github-evidence-lib.sh`), which re-derives the live-head review
+  state directly from the pull request's submitted reviews (matching either
+  the REST `[bot]`-suffixed or the GraphQL plain bot login, and the live
+  head's full commit SHA), fail-closed on any lookup failure; the recount now
+  only remaps to `waiting_on_reviewer` once that check confirms no such
+  review is active, and otherwise falls through to `needs_fixes`, flooring
+  `unresolved_count` to 1. This is a genuinely independent signal from the
+  occupancy guard above — that guard governs which SHA's evidence is
+  admissible, not which review state a live-head review carries — and does
+  not duplicate it. Regression coverage:
+  `codex_changes_requested_not_waved_to_wait_*` reproduces the exact Bugbot
+  scenario end-to-end (asserting `RESULT=needs_fixes`,
+  `REASON=unresolved_review_threads`, and both counts floored to 1, not
+  `waiting_on_reviewer`), and five direct unit tests exercise the new
+  helper's bracket/plain-login matching, its live-head/state/commit
+  filtering, and both of its fail-closed lookup-failure paths.
 - Reversal risk: Checked — the outcome-mapping step states the revert path for
   **all 11 Implementation Order steps**: steps 3–8 are the code and docs revert
   (with step 5 self-contained and revertible alone, and steps 3–4 inseparable);
