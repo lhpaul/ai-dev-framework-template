@@ -2059,6 +2059,43 @@ esac
   `codex_triggerless_genuine_fresh_review_clean_still_works` pin the fixed and
   not-over-eager cases respectively. R2 remains the only knowingly accepted
   false-clean path.
+
+  **Third scope correction (Step 7 external reviewer loop, same pull request
+  lineage).** Cursor Bugbot, reviewing this pull request during the Step 7
+  external reviewer loop, found a gap in the same exit-1 recount the two
+  scope corrections above hardened for occupancy, but through a different
+  mechanism: that recount (`pr-review-loop.sh` `run_codex_github_review`)
+  counts only INLINE REVIEW THREADS, so once it reached zero it
+  unconditionally remapped the companion's `NEEDS_REVISION` verdict to
+  `waiting_on_reviewer` — even when that verdict came from a live-head
+  submitted Codex review whose GitHub review state is `CHANGES_REQUESTED`, an
+  actionable blocker per spec Business Rules 5/6 regardless of whether it
+  carries any inline thread of its own (a body-only review is one example;
+  every one of its own inline threads being separately resolved is another).
+  `codex_finalize_verdict`'s own `cleared`/`none` branches
+  (`codex-github-reviewer.sh`) already correctly refuse to treat such a
+  review as cleared and return `NEEDS_REVISION`/exit 1 for exactly this
+  reason, but that refusal collapses to a bare exit code by the time it
+  reaches `pr-review-loop.sh` — the exit-1 handler cannot see WHY the
+  companion said `NEEDS_REVISION` from the exit code alone, only that its own
+  thread-only recount hit zero. The fix adds
+  `codex_current_head_changes_requested_blocker`
+  (`codex-github-evidence-lib.sh`), which re-derives the live-head review
+  state directly from the pull request's submitted reviews (matching either
+  the REST `[bot]`-suffixed or the GraphQL plain bot login, and the live
+  head's full commit SHA), fail-closed on any lookup failure; the recount now
+  only remaps to `waiting_on_reviewer` once that check confirms no such
+  review is active, and otherwise falls through to `needs_fixes`, flooring
+  `unresolved_count` to 1. This is a genuinely independent signal from the
+  occupancy guard above — that guard governs which SHA's evidence is
+  admissible, not which review state a live-head review carries — and does
+  not duplicate it. Regression coverage:
+  `codex_changes_requested_not_waved_to_wait_*` reproduces the exact Bugbot
+  scenario end-to-end (asserting `RESULT=needs_fixes`,
+  `REASON=unresolved_review_threads`, and both counts floored to 1, not
+  `waiting_on_reviewer`), and five direct unit tests exercise the new
+  helper's bracket/plain-login matching, its live-head/state/commit
+  filtering, and both of its fail-closed lookup-failure paths.
 - Reversal risk: Checked — the outcome-mapping step states the revert path for
   **all 11 Implementation Order steps**: steps 3–8 are the code and docs revert
   (with step 5 self-contained and revertible alone, and steps 3–4 inseparable);
