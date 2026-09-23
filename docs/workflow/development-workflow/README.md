@@ -683,6 +683,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`
 - `docs/workflow/development-workflow/integrations/actions-cost-audit.md`
+- `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`
 
 ---
 

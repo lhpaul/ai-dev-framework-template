@@ -70,6 +70,19 @@ The JSON output includes:
 
 ---
 
+## Ordering: prelude vs. Cursor dispatch-profile declaration
+
+In a Cursor environment, this shared prelude's read-only scope and policy
+resolution (steps below) may complete **before** the dispatch-profile
+declaration required by
+[`integrations/cursor-dispatch-profiles.md`](integrations/cursor-dispatch-profiles.md).
+The declaration itself must still appear **immediately before the first
+mutating action** (branch create, file edit that changes tracked artifacts,
+tracker mutation, PR open) — the prelude running first does not satisfy or
+substitute for it. For `/run-work`, the declaration precedes reporting scan
+results, not any mutation, because the scan never mutates. This ordering note
+applies only in a Cursor environment; other runners are unaffected.
+
 ## Contract
 
 1. **Read-only** — no tracker updates, branches, PRs, merges, or issue closure.

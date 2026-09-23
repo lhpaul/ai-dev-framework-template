@@ -29,7 +29,26 @@ class Finding:
     message: str
 
 
+def in_test_fixtures(path: str) -> bool:
+    """A path under any suite's `tests/fixtures/` directory.
+
+    Fixtures deliberately hold malformed or non-prose content (e.g. invalid
+    UTF-8 bytes proving a guard rejects malformed input) and are not
+    framework-owned guidance surfaces. Excluding them keeps this linter's
+    scope consistent with how markdownlint-cli2's globs and
+    scripts/lint/markdown-heuristic-lint.py's invocation already treat test
+    fixture directories as out of scope for prose/lint tooling.
+    """
+    parts = Path(path).parts
+    return any(
+        parts[index] == "tests" and index + 1 < len(parts) and parts[index + 1] == "fixtures"
+        for index in range(len(parts))
+    )
+
+
 def in_scope(path: str) -> bool:
+    if in_test_fixtures(path):
+        return False
     return any(
         path == root.rstrip("/") or path.startswith(f"{root.rstrip('/')}/")
         for root in ROOTS
@@ -39,20 +58,27 @@ def in_scope(path: str) -> bool:
 def markdown_paths(root: str) -> list[Path]:
     candidate = Path(root)
     if candidate.is_file():
-        return [candidate] if candidate.suffix == ".md" else []
-    return list(candidate.rglob("*.md")) if candidate.is_dir() else []
+        return [candidate] if candidate.suffix == ".md" and not in_test_fixtures(str(candidate)) else []
+    if not candidate.is_dir():
+        return []
+    return [path for path in candidate.rglob("*.md") if not in_test_fixtures(str(path))]
 
 
 def diff_text(base_ref: str | None, input_file: str | None) -> str:
     if input_file:
-        return Path(input_file).read_text(encoding="utf-8")
-    result = subprocess.run(["git", "diff", "--unified=0", f"{base_ref}...HEAD"], text=True, capture_output=True)
+        return Path(input_file).read_bytes().decode("utf-8", errors="replace")
+    # Read the diff as bytes and decode leniently. A diff can legitimately carry
+    # undecodable bytes -- for example when a commit deletes a fixture that holds
+    # deliberately invalid UTF-8 -- and this linter must report on the rest of the
+    # diff instead of crashing on it. Undecodable bytes are replaced, never raised:
+    # they only ever appear inside content this linter already skips.
+    result = subprocess.run(["git", "diff", "--unified=0", f"{base_ref}...HEAD"], capture_output=True)
     # `git diff --exit-code` uses 1 to report differences. The normal command
     # above does not request that behavior, but accepting it keeps this helper
     # correct if the invocation is ever extended with that option.
     if result.returncode not in (0, 1):
-        raise RuntimeError(result.stderr.strip())
-    return result.stdout
+        raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip())
+    return result.stdout.decode("utf-8", errors="replace")
 
 
 # Structure this parser can actually consume. changed_lines() reads exactly two

@@ -1784,3 +1784,87 @@ planted proof cycle 19; fixtures `parity-explicit-list-format-match` and
 
 Implementer must record `Still valid` or `Stale or conflicting` for A1-A6
 before file edits per Protocol 03 assumption check.
+
+---
+
+## Test-Scope Deviation Record
+
+The plan's Workflow tooling section projected a surface guard
+(`scripts/development-workflow/tests/test-cursor-dispatch-profile-surfaces.sh`),
+a 158-row fixture manifest, and a 20-item proof-cycle list. **None of the three
+is delivered.** This record states what was reduced, to what, and why, so a
+reviewer can evaluate the coverage argument rather than the counts.
+
+### What was reduced
+
+| Projected | Delivered | Delta |
+| --- | --- | --- |
+| Surface guard, 2,276 lines | none | removed |
+| 158 fixture files | none | removed |
+| 20 proof cycles (88 reps) | none | removed |
+| Duplicated declaration block in 21 mirror surfaces | pointer to the canonical document in each | ~12 lines each instead of ~24 |
+
+### Coverage argument
+
+The guard's job was to confirm that required prose remained present in 25
+documentation surfaces. It did that by re-implementing a Markdown parser in
+Bash — fence semantics, indented code inside blockquotes, link-reference
+definitions, entity non-decoding, `<pre>` handling — and the 158 fixtures
+existed to test **that parser**, not the workflow. Guard plus fixtures came to
+roughly 7,200 lines protecting a ~1,400-line documentation deliverable.
+
+The restructuring removes most of what the guard was protecting against. The
+21 mirrors no longer carry the declaration contract, so they can no longer
+drift from it: each states the requirement in a few lines and points at
+`integrations/cursor-dispatch-profiles.md` as the single normative source.
+Cross-surface prose drift — the guard's entire detection target — is no longer
+a reachable defect, because there is only one copy of the prose.
+
+What remains detectable and worth detecting is a broken pointer. **Review
+correction**: this record originally claimed that was "already covered by the
+repository's existing link and markdown lints, which run on every PR." That
+claim was checked against the actual configuration during code review and is
+false: `.markdownlint-cli2.jsonc` — the config markdownlint-cli2 actually
+resolves, per its own header comment — disables the `relative-links` rule
+repository-wide (verified by lint-checking a deliberately broken relative link
+under `docs/workflow/**`, which produced zero findings); `.markdownlint.jsonc`
+enables it but is documented as existing only for editor integrations, not for
+the CLI run CI uses. Separately, the CI markdown-lint job's globs
+(`docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/workflow/**`,
+`changelog.d/**`, `CHANGELOG.md`) do not reach `.claude/`, `.cursor/`,
+`.agents/`, or `.codex/` at all — where every one of the 21 mirrors lives. No
+existing mechanism in this repository would have caught a broken pointer in
+any of them. `scripts/development-workflow/tests/test-cursor-dispatch-profile-pointers.sh`
+was added during this review to close that gap directly: it asserts the
+canonical document exists and that every mirror still contains its pointer
+path, with planted-violation proof for both a lost pointer and a moved/deleted
+canonical document, and is auto-selected by `select-test-suites.sh` whenever
+any of those files changes.
+
+### Defect classes this does and does not let through
+
+- **No longer possible**: the 21 mirrors disagreeing with the canonical
+  document or with each other. Removed by construction, not by testing.
+- **Still covered**: a mirror losing its pointer, or the canonical document
+  moving —
+  `scripts/development-workflow/tests/test-cursor-dispatch-profile-pointers.sh`
+  (added in review; see the correction above — markdown/link lint does not
+  cover this).
+- **Accepted, with reasoning**: nothing now asserts that the canonical
+  document's own internal sections stay mutually consistent. The projected
+  guard did check some of this positionally. This is accepted because the
+  document is a single file reviewed as a unit, positional matching over
+  unlabeled prose was already documented in the superseded addendum as
+  unreliable, and the smoke runbook walks the document's decision gate by hand.
+
+### Why the plan's counts were not binding
+
+The plan did not mark the fixture manifest or the proof-cycle list as a binding
+enumeration. They were a projection of how the guard would be proven, written
+before the mirrors were restructured to remove the drift class the guard
+targeted. Delivering 158 fixtures for a parser that no longer needs to exist
+would satisfy the enumeration and protect nothing.
+
+This record is the mechanism proposed in item #1785 and is deliberately its
+first use.
+
