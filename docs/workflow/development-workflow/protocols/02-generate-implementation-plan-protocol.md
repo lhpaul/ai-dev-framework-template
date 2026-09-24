@@ -483,6 +483,7 @@ If no blocking human decision remains:
 
    The per-rule outcome record documents that:
 
+   <!-- markdown-heuristic-disable COUNT001 -->
    - All six rules appear exactly once.
    - Outcomes use the three display labels only (`Satisfied`, `Not applicable`,
      `Unsatisfied`), per
