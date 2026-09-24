@@ -701,8 +701,9 @@ branch is created, any pull request is opened, or any tracker status changes
 on this item's own account, not merely before the reviewer gates (Step 7a /
 Step 7) run — cross-check the reviewer configuration surfaces with:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/reviewer-preflight.sh \
+bash scripts/development-workflow/reviewer-preflight.sh \
   --repo-root "$ARTIFACT_REPO_ROOT" \
   --mode <pre-dispatch|branch-resume|pr-resume> \
   --target-base "$BASE_BRANCH" \
