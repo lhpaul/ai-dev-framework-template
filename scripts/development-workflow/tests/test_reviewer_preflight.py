@@ -328,6 +328,31 @@ class OverrideTests(unittest.TestCase):
         coderabbit_entry = platform(result, "coderabbit")
         self.assertFalse(coderabbit_entry["override_added"])
 
+    def test_partial_removal_preserved_in_still_covered_platform_row(self):
+        # coderabbit is shared in both draft and ready, but the local
+        # override narrows it to ready-only. The platform is NOT fully
+        # override-excluded (it still has resolved coverage in on_ready), so
+        # the "override-excluded" platform-row branch does not apply here —
+        # the removed draft bucket must still be visible in this platform's
+        # own bucket_results, not silently dropped.
+        payload = base_payload(
+            remaining_stages=["on_draft_github", "on_ready_github"],
+            pr_state={"on_draft_github": "draft", "on_ready_github": "ready"},
+            shared={"on_draft_github": ["coderabbit"], "on_ready_github": ["coderabbit"]},
+            resolved={"on_draft_github": [], "on_ready_github": ["coderabbit"]},
+            local_override_state="applied",
+        )
+        result = rp.classify(payload)
+        entry = platform(result, "coderabbit")
+        # The still-resolved ready bucket keeps its own operable verdict —
+        # the partial removal must not change the platform's overall verdict.
+        self.assertEqual(entry["verdict"], "operable")
+        bucket_names = {b["bucket"] for b in entry["bucket_results"]}
+        self.assertIn("on_ready_github", bucket_names)
+        self.assertIn("on_draft_github", bucket_names)
+        removed = next(b for b in entry["bucket_results"] if b["bucket"] == "on_draft_github")
+        self.assertEqual(removed["verdict"], "override-excluded")
+
 
 class MultiBucketAggregationTests(unittest.TestCase):
     def test_oq4_bucket_results_and_severity(self):

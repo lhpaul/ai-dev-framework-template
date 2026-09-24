@@ -361,6 +361,20 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
         override_added_buckets = [
             stage for stage in resolved_buckets if name not in (shared.get(stage, []) or [])
         ]
+        # The mirror case: a bucket where this platform is in the *shared*
+        # list but the override removed it there specifically, while the
+        # platform still has resolved coverage in another remaining bucket
+        # (so the "override-excluded" platform row above does not apply —
+        # this platform is not excluded overall, only from this one bucket).
+        # Without recording this, a partial per-bucket removal is invisible:
+        # the row shows only the still-covered bucket's operable verdict
+        # plus the global LOCAL_OVERRIDE_STATE flag, with no sign the
+        # override reduced this platform's coverage at all.
+        override_removed_buckets = [
+            stage
+            for stage in remaining_stages
+            if stage not in resolved_buckets and name in (shared.get(stage, []) or [])
+        ]
         bucket_results = [
             classify_platform_in_bucket(
                 name,
@@ -394,6 +408,21 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
                 merged_details.append(result["detail"])
             if result["remedy"] and result["remedy"] not in merged_remedies:
                 merged_remedies.append(result["remedy"])
+        # Appended after aggregation so a partial per-bucket removal never
+        # changes this platform's overall verdict or merged reason/detail
+        # text — it only adds visible provenance to bucket_results.
+        for stage in override_removed_buckets:
+            bucket_results.append(
+                {
+                    "bucket": stage,
+                    "verdict": "override-excluded",
+                    "reasons": [],
+                    "surface": "",
+                    "setting": "",
+                    "detail": "removed from the resolved reviewer list by the machine-local override for this bucket",
+                    "remedy": "",
+                }
+            )
         platforms.append(
             {
                 "name": name,

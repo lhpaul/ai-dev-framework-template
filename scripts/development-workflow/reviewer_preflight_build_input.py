@@ -99,6 +99,20 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     else:
         remaining_stages = _parse_stage_list(args.remaining_stages)
 
+    # Decision 5's malformed-shared-list stop applies only to buckets a
+    # lifecycle stage still ahead of this item will actually use. Checking
+    # every bucket unconditionally — including one from an already-completed
+    # stage nothing remaining reads — would fail closed on history that
+    # cannot affect this run, and would run ahead of the engine's own fixed
+    # prerequisite order (stage-set resolvability, then the empty-remaining-
+    # stages short-circuit, both of which must be able to win first). An
+    # unresolved remaining-stage set (missing --remaining-stages) defers
+    # entirely to the engine's own prerequisite-failed handling for that.
+    if remaining_stages is None:
+        malformed_buckets = []
+    else:
+        malformed_buckets = [bucket for bucket in malformed_buckets if bucket in remaining_stages]
+
     payload: dict[str, Any] = {
         "target_base": args.target_base or None,
         "remaining_stages": remaining_stages,

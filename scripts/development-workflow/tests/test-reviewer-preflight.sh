@@ -296,5 +296,85 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-11: branch-resume reads the remote tip, not a stale local checkout,
+    # when the two diverge — the local copy still has the coherent config
+    # (review enabled) an operator ran the preflight from days ago, but the
+    # remote branch has since been pushed with review disabled. Every other
+    # fixture in this suite aliases "origin" to its own working directory,
+    # which cannot represent genuine divergence (fetching it always syncs to
+    # whatever the local branch currently points to); this one needs an
+    # actually separate bare remote so the local branch can be reset back to
+    # the older commit while the remote-tracking ref still reflects the
+    # remote's own, independently newer, history.
+    repo11 = root / 'repo11'
+    write_repo(repo11, coherent_shared, coherent_coderabbit)
+    remote11 = root / 'remote11.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo11), str(remote11)], check=True)
+    git(repo11, 'remote', 'set-url', 'origin', str(remote11))
+    git(repo11, 'checkout', '-q', '-b', 'feature/stale-local-test')
+    stale_sha = git(repo11, 'rev-parse', 'HEAD').stdout.strip()
+    git(repo11, 'push', '-q', 'origin', 'feature/stale-local-test')
+    (repo11 / '.coderabbit.yaml').write_text(disabled_coderabbit)
+    git(repo11, 'add', '-A')
+    git(repo11, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'disable on remote push')
+    fresh_sha = git(repo11, 'rev-parse', 'HEAD').stdout.strip()
+    git(repo11, 'push', '-q', 'origin', 'feature/stale-local-test')
+    git(repo11, 'reset', '-q', '--hard', stale_sha)
+    git(repo11, 'fetch', '-q', 'origin', 'feature/stale-local-test')
+    check(
+        'T-11 fixture: local is behind the remote-tracking ref',
+        git(repo11, 'rev-parse', 'HEAD').stdout.strip() == stale_sha
+        and git(repo11, 'rev-parse', 'refs/remotes/origin/feature/stale-local-test').stdout.strip() == fresh_sha,
+        (stale_sha, fresh_sha),
+    )
+    rc, data, out, err = run(
+        repo11, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/stale-local-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=1,
+    )
+    check(
+        'T-11 branch-resume reads the remote tip over a stale local checkout',
+        data.get('OUTCOME') == 'blocked',
+        data,
+    )
+    check(
+        'T-11 branch-resume stale-local platform ref names origin/',
+        'origin/feature/stale-local-test' in data.get('CHECKED_PLATFORM_CONFIG_REF', ''),
+        data,
+    )
+
+    # T-12: a malformed bucket from an already-completed lifecycle stage
+    # must not block a resume that stage no longer reaches — Decision 5's
+    # malformed-shared-list stop is scoped to remaining stages, and must not
+    # outrun the engine's own fixed prerequisite order (stage-set
+    # resolvability and the empty-remaining-stages short-circuit both need
+    # to be able to win first).
+    malformed_runner_shared = (
+        'review:\n'
+        '  on_draft:\n'
+        '    runner: not-a-list\n'
+    )
+    repo12 = root / 'repo12'
+    write_repo(repo12, malformed_runner_shared, coherent_coderabbit)
+    rc, data, out, err = run(
+        repo12, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', '', expected=0,
+    )
+    check(
+        'T-12 malformed historical bucket does not block empty remaining-stages',
+        data.get('OUTCOME') == 'no-review-remaining',
+        data,
+    )
+    rc, data, out, err = run(
+        repo12, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_ready.github', '--pr-state', 'on_ready.github=ready',
+        expected=0,
+    )
+    check(
+        'T-12 malformed historical bucket ignored when excluded from remaining stages',
+        data.get('OUTCOME') == 'passed',
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY

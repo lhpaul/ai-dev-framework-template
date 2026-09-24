@@ -192,17 +192,24 @@ case "$mode" in
     fetch_ref "$target_base" || true
     shared_ref="origin/$target_base"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, not the branch)"
-    # A resume on another machine or checkout can find the workflow branch
-    # present only as a remote-tracking ref. A bare branch name that does
-    # not resolve locally must not fall back to a check-inconclusive read
-    # when it could instead read the real, current remote copy.
-    if git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1; then
+    # The branch in force for Step 7's own hosted reviewers is always the
+    # remote copy (GitHub reads from origin, not whatever a local checkout
+    # happens to have) — refresh from the remote and prefer it whenever it
+    # resolves, even when a local copy also exists and could be stale or
+    # diverged (branch-reuse validation treats that divergence as
+    # diagnostic, not something this preflight may silently prefer around).
+    # Only degrade to the local-only copy when the branch has not been
+    # pushed to the remote yet.
+    fetch_ref "$branch" || true
+    if git -C "$repo_root" rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1; then
+      platform_ref="origin/$branch"
+      checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote)"
+    elif git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1; then
+      platform_ref="$branch"
+      checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch; not yet pushed to the remote)"
+    else
       platform_ref="$branch"
       checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch, no pull request yet)"
-    else
-      fetch_ref "$branch" || true
-      platform_ref="origin/$branch"
-      checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, resolved from the remote; no local copy of it exists in this checkout)"
     fi
     ;;
   pr-resume)
