@@ -347,10 +347,20 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
                     "detail": "removed from the resolved reviewer list by the machine-local override",
                     "remedy": "",
                     "bucket_results": [],
+                    "override_added": False,
                 }
             )
             continue
 
+        # Provenance: a bucket where this platform is in the resolved
+        # (post-override) list but not in the shared (pre-override) list
+        # means the machine-local override added it there — coverage the
+        # shared configuration alone would not have produced. Without this,
+        # LOCAL_OVERRIDE_STATE=applied is a global flag an operator cannot
+        # attribute to any specific platform.
+        override_added_buckets = [
+            stage for stage in resolved_buckets if name not in (shared.get(stage, []) or [])
+        ]
         bucket_results = [
             classify_platform_in_bucket(
                 name,
@@ -394,6 +404,7 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
                 "detail": "; ".join(merged_details),
                 "remedy": " ".join(merged_remedies),
                 "bucket_results": bucket_results,
+                "override_added": bool(override_added_buckets),
             }
         )
 

@@ -215,10 +215,15 @@ case "$mode" in
     pr_head=$(jq -er '.headRefName' "$work_dir/pr.json") || fail 'pull request metadata missing headRefName'
     target_base="$pr_base"
     fetch_ref "$pr_base" || fail "cannot refresh origin/$pr_base from the remote"
-    fetch_ref "pull/$pr/head:refs/reviewer-preflight/pr-$pr" || fail "cannot fetch pull request #$pr head"
-    created_pr_ref="refs/reviewer-preflight/pr-$pr"
+    # A fixed ref name would race across two concurrent invocations that
+    # inspect the same PR: one invocation's cleanup could delete the ref
+    # before the other reads it. mktemp's own per-invocation directory name
+    # (already unique) makes this ref unique too, at no extra cost.
+    pr_ref="refs/reviewer-preflight/pr-$pr.$(basename "$work_dir")"
+    fetch_ref "pull/$pr/head:$pr_ref" || fail "cannot fetch pull request #$pr head"
+    created_pr_ref="$pr_ref"
     shared_ref="origin/$pr_base"
-    platform_ref="refs/reviewer-preflight/pr-$pr"
+    platform_ref="$pr_ref"
     checked_shared_config_ref="origin/$pr_base:.ai-dev-workflow.yaml (PR #$pr's own target base branch, refreshed)"
     checked_platform_config_ref="PR #$pr's own branch ($pr_head):.coderabbit.yaml"
     ;;
@@ -376,6 +381,7 @@ while [ "$i" -lt "$platform_count" ]; do
   print_kv_escaped "PLATFORM_${n}_SETTING" "$(jq -r ".platforms[$i].setting" "$output_json")"
   print_kv_escaped "PLATFORM_${n}_DETAIL" "$(jq -r ".platforms[$i].detail" "$output_json")"
   print_kv_escaped "PLATFORM_${n}_REMEDY" "$(jq -r ".platforms[$i].remedy" "$output_json")"
+  print_kv_escaped "PLATFORM_${n}_OVERRIDE_ADDED" "$(jq -r ".platforms[$i].override_added" "$output_json")"
   print_kv_escaped "PLATFORM_${n}_BUCKET_JSON" "$(jq -c ".platforms[$i].bucket_results" "$output_json")"
   i=$((i + 1))
 done

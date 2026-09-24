@@ -205,15 +205,18 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         ).split('(')[0],
         data,
     )
-    # AC-2: the pr-resume path fetches the PR head into a temporary ref to
-    # read it the same way every other ref is read; that ref must not survive
-    # the run — a porcelain diff cannot see it, since refs live outside the
-    # working tree the porcelain check covers.
-    ref_check = git(repo6, 'show-ref', '--verify', '--quiet', 'refs/reviewer-preflight/pr-7', check_call=False)
+    # AC-2: the pr-resume path fetches the PR head into a temporary,
+    # invocation-unique ref (never a fixed name — two concurrent invocations
+    # on the same PR must not race on the same ref) to read it the same way
+    # every other ref is read; that ref must not survive the run — a
+    # porcelain diff cannot see it, since refs live outside the working tree
+    # the porcelain check covers. Match by prefix, since the invocation-unique
+    # suffix is not known in advance.
+    ref_listing = git(repo6, 'for-each-ref', 'refs/reviewer-preflight/')
     check(
         'T-6 pr-resume does not leave a temporary PR-head ref behind',
-        ref_check.returncode != 0,
-        ref_check,
+        ref_listing.stdout.strip() == '',
+        ref_listing.stdout,
     )
 
     # T-7: budget timeout degrades to undetermined, not blocked, when nothing

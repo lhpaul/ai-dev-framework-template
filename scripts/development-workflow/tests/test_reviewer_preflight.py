@@ -300,6 +300,34 @@ class OverrideTests(unittest.TestCase):
         excluded = platform(result, "pr-agent")
         self.assertEqual(excluded["verdict"], "override-excluded")
 
+    def test_override_added_platform_has_provenance(self):
+        # LOCAL_OVERRIDE_STATE=applied is a global flag; an operator also
+        # needs to know *which* platform the override added, not only that
+        # some override was applied somewhere.
+        payload = base_payload(
+            shared={"on_draft_github": ["pr-agent"]},
+            resolved={"on_draft_github": ["coderabbit"]},
+            local_override_state="applied",
+        )
+        result = rp.classify(payload)
+        added = platform(result, "coderabbit")
+        self.assertTrue(added["override_added"])
+        excluded = platform(result, "pr-agent")
+        self.assertFalse(excluded["override_added"])
+
+    def test_shared_platform_not_reported_as_override_added(self):
+        # A platform present in both the shared and resolved lists was not
+        # added by the override, even when the override changed something
+        # else in the same bucket.
+        payload = base_payload(
+            shared={"on_draft_github": ["coderabbit", "pr-agent"]},
+            resolved={"on_draft_github": ["coderabbit"]},
+            local_override_state="applied",
+        )
+        result = rp.classify(payload)
+        coderabbit_entry = platform(result, "coderabbit")
+        self.assertFalse(coderabbit_entry["override_added"])
+
 
 class MultiBucketAggregationTests(unittest.TestCase):
     def test_oq4_bucket_results_and_severity(self):
