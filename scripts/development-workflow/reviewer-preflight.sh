@@ -86,10 +86,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# workflow-shell-guard: allow SH001 - AC-2's before/after porcelain diff only
+# needs the two snapshots to match; a git failure here (e.g. repo-root is not
+# a git repository) surfaces as a comparison against an empty string on both
+# sides, and the real failure is already caught by the earlier --repo-root
+# readable-directory check.
 before_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true)
 
 clamp_bound() {
-  local remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
+  local remaining
+  remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
   [ "$remaining" -gt 0 ] || remaining=0
   bound=$remaining
   [ "$bound" -le "$1" ] || bound=$1
@@ -106,7 +112,8 @@ run_bounded() {
     timeout --kill-after=1 "$bound" "$@" >"$output" 2>"$error" || rc=$?
     case "$rc" in 124|137) return 124 ;; *) return "$rc" ;; esac
   fi
-  local finish=$((SECONDS + bound)) pid
+  local finish pid
+  finish=$((SECONDS + bound))
   "$@" >"$output" 2>"$error" &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
@@ -202,7 +209,7 @@ clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$overrides_json" "$work_dir/overrides.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-overrides --repo-root "$repo_root" --json || overrides_rc=$?
 [ "$overrides_rc" = 0 ] || fail "review-overrides failed (exit $overrides_rc): $(cat "$work_dir/overrides.err" 2>/dev/null)"
-local_override_file=$(jq -r '.LOCAL_OVERRIDE_FILE' "$overrides_json")
+local_override_file=$(jq -er '.LOCAL_OVERRIDE_FILE // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_FILE from review-overrides output'
 if [ -n "$local_override_file" ] && [ -f "$local_override_file" ]; then
   cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml"
 fi
@@ -280,7 +287,7 @@ python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
 # list as an empty (deliberately-configured) one.
 malformed_count=$(jq -er '.malformed_buckets | length' "$input_json") || fail 'cannot inspect resolved reviewer-list state'
 if [ "$malformed_count" -gt 0 ]; then
-  malformed_list=$(jq -r '.malformed_buckets | join(", ")' "$input_json")
+  malformed_list=$(jq -er '.malformed_buckets | join(", ")' "$input_json") || malformed_list='(unreadable)'
   fail "the shared reviewer list is malformed for: $malformed_list — repair .ai-dev-workflow.yaml (or the local override) before re-running; this is the pre-existing configuration-loading step's failure, not a preflight verdict"
 fi
 
@@ -292,6 +299,7 @@ if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && ! jq -e . "$output
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
 
+# workflow-shell-guard: allow SH001 - same rationale as before_porcelain above.
 after_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true)
 if [ "$before_porcelain" != "$after_porcelain" ]; then
   fail 'reviewer-preflight.sh must not change the working tree (AC-2); the checkout differs after this run'
@@ -310,7 +318,7 @@ print_kv_escaped OUTCOME_LABEL "$(jq -r '.outcome_label' "$output_json")"
 print_kv_escaped CHECKED_SHARED_CONFIG_REF "$(jq -r '.checked_shared_config_ref' "$output_json")"
 print_kv_escaped CHECKED_PLATFORM_CONFIG_REF "$(jq -r '.checked_platform_config_ref' "$output_json")"
 print_kv_escaped LOCAL_OVERRIDE_STATE "$(jq -r '.local_override_state' "$output_json")"
-platform_count=$(jq -r '.platforms | length' "$output_json")
+platform_count=$(jq -er '.platforms | length' "$output_json") || fail 'cannot read platform count from reviewer_preflight.py output'
 print_kv_escaped PLATFORM_COUNT "$platform_count"
 i=0
 while [ "$i" -lt "$platform_count" ]; do
