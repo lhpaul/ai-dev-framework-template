@@ -35,6 +35,26 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: resolves bounded reviewer availability for product-owned pull requests
+  - group: reviewer preflight
+    path: scripts/development-workflow/reviewer-preflight.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reviewer preflight cross-check CLI (#1561), invoked by Protocol 91 before an item's first mutation
+  - group: reviewer preflight engine
+    path: scripts/development-workflow/reviewer_preflight.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reviewer preflight cross-check engine, invoked by reviewer-preflight.sh
+  - group: reviewer preflight input builder
+    path: scripts/development-workflow/reviewer_preflight_build_input.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reviewer preflight input-JSON builder, invoked by reviewer-preflight.sh
+  - group: shared CodeRabbit configuration parser
+    path: scripts/development-workflow/reviewer_preflight_coderabbit.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: shared CodeRabbit own-configuration parser, used by both resolve-reviewer-availability.sh and reviewer-preflight.sh
   - group: workflow configuration validator
     path: scripts/development-workflow/validate-workflow-config.sh
     mode_scope: product_repo_injection
