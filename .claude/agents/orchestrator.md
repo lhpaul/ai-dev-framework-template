@@ -107,6 +107,13 @@ That document is the single source of truth for this supporting role. Key respon
   and `--require-review-threads true` (helper defaults are false). Missing
   evidence, `discrepancy`, or `unavailable_required` keeps the item under
   Protocol 90 Step 5 supervision.
+- Where a child item's stop condition is `architecture_decision`, the batch
+  summary references that the child carried the canonical escalation report
+  (axis-separated, per-citation conformance declarations, requested decision
+  scoped to open axes) per
+  `docs/workflow/development-workflow/architecture-decision-escalation.md` —
+  never restate the whole question as undifferentiated open in the batch
+  summary.
 
 ---
 

@@ -90,6 +90,13 @@ proposal step.
 15. For `spec/*` and `implementation-plan/*` PRs, require Protocol 91 Step 8a's
    documentation-stage alignment checker before accepting readiness. A
    mismatch keeps the item under supervision until corrected or escalated.
+15a. Where a child item's stop condition is `architecture_decision`, the batch
+   summary references that the child carried the canonical escalation report
+   (axis-separated, per-citation conformance declarations, requested decision
+   scoped to open axes) per
+   `docs/workflow/development-workflow/architecture-decision-escalation.md` —
+   never restate the whole question as undifferentiated open in the batch
+   summary. Per Protocol 90.
 16. Before accepting any in-scope item as terminal, require the item runner's
    `## Ground-Truth Completion Verification` output from
    `item-completion-self-check.sh` or run the helper directly from current

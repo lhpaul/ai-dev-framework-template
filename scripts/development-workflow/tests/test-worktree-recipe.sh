@@ -914,6 +914,444 @@ else
   check p93_retry_wrong_checkout_names_condition yes "$(cat "$TMP_DIR/last.out")"
 fi
 
+# --- AC (issue #1515): architecture_decision escalation mirror audit --------
+# audit_escalation_mirrors extends audit_stop_surfaces: that helper only
+# discovers `stop_conditions:` surfaces and greps for `push_verification_failed`,
+# so it cannot validate the canonical escalation page or detect a weakened
+# mirror. This is a NEW, separate audit for issue #1515's escalation content
+# requirement (axis decomposition, coverage verdicts, per-citation conformance
+# declarations, and the requested decision scoped to open axes only).
+
+_escalation_audit_file() {
+  # _escalation_audit_file <file> <term1> [<term2> ...]
+  # Prints one MISSING=<file>:<line>:<term> per required term not found inside
+  # the file's architecture_decision anchor section (outside fenced code
+  # blocks and HTML comments), or ANCHOR_MISSING=<file> when no line in the
+  # file mentions `architecture_decision` at all (including an empty or
+  # missing file). Matching is exact (case-sensitive, word-bounded).
+  local file="$1"
+  shift
+  python3 - "$file" "$@" <<'PYEOF'
+import re
+import sys
+
+path = sys.argv[1]
+terms = sys.argv[2:]
+
+ANCHOR_RE = re.compile(r'architecture_decision')
+ATX_RE = re.compile(r'^(#{1,6})\s')
+
+try:
+    with open(path, 'r', encoding='utf-8', newline='') as fh:
+        raw = fh.read()
+except (FileNotFoundError, IsADirectoryError, OSError):
+    raw = ""
+
+if raw == "":
+    print("ANCHOR_MISSING=" + path)
+    sys.exit(0)
+
+lines = raw.split('\n')
+if lines and lines[-1] == '':
+    lines = lines[:-1]
+lines = [ln[:-1] if ln.endswith('\r') else ln for ln in lines]
+n = len(lines)
+
+in_fence = False
+fence_char = ''
+fence_len = 0
+in_comment = False
+
+line_excluded = [False] * n
+line_visible = [None] * n
+heading_level = [0] * n
+
+for i in range(n):
+    line = lines[i]
+    stripped = line.strip()
+
+    if not in_fence:
+        open_m = re.match(r'^(`{3,}|~{3,})', stripped)
+        if open_m and not in_comment:
+            fence_char = open_m.group(1)[0]
+            fence_len = len(open_m.group(1))
+            in_fence = True
+            line_excluded[i] = True
+            continue
+    else:
+        close_m = re.match(r'^(' + re.escape(fence_char) + r'{' + str(fence_len) + r',})\s*$', stripped)
+        line_excluded[i] = True
+        if close_m:
+            in_fence = False
+        continue
+
+    text = line
+    if in_comment:
+        end = text.find('-->')
+        if end == -1:
+            line_excluded[i] = True
+            continue
+        text = text[end + 3:]
+        in_comment = False
+
+    out = []
+    pos = 0
+    while True:
+        start = text.find('<!--', pos)
+        if start == -1:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:start])
+        end = text.find('-->', start + 4)
+        if end == -1:
+            in_comment = True
+            break
+        pos = end + 3
+    visible = ''.join(out)
+
+    heading_m = ATX_RE.match(line)
+    if heading_m:
+        heading_level[i] = len(heading_m.group(1))
+
+    line_visible[i] = visible
+
+anchor_idx = None
+for i in range(n):
+    if line_excluded[i] or line_visible[i] is None:
+        continue
+    if ANCHOR_RE.search(line_visible[i]):
+        anchor_idx = i
+        break
+
+if anchor_idx is None:
+    print("ANCHOR_MISSING=" + path)
+    sys.exit(0)
+
+anchor_line_no = anchor_idx + 1
+
+# The "section" is the enclosing heading's content, not merely a forward scan
+# from the anchor line: a mirror file's required terms (the canonical link,
+# the declaration vocabulary) routinely appear earlier in the same paragraph
+# or bullet than the literal `architecture_decision` phrase itself. Using the
+# nearest enclosing heading as the section start (rather than the anchor line)
+# still excludes an out-of-section decoy under an unrelated heading, while
+# correctly covering the whole bullet/paragraph the anchor lives in.
+enclosing_heading_idx = None
+enclosing_level = None
+for i in range(anchor_idx, -1, -1):
+    if heading_level[i] > 0:
+        enclosing_heading_idx = i
+        enclosing_level = heading_level[i]
+        break
+
+section_start = enclosing_heading_idx if enclosing_heading_idx is not None else 0
+
+section_end = n
+for i in range(anchor_idx + 1, n):
+    if heading_level[i] > 0 and (enclosing_level is None or heading_level[i] <= enclosing_level):
+        section_end = i
+        break
+
+# Join included lines with a single space so a multi-word term wrapped
+# across a Markdown soft line break (e.g. "...`Not yet" / "implemented`...")
+# still reads, and matches, the same way a human sees it rendered.
+joined = ' '.join(
+    line_visible[i].strip() for i in range(section_start, section_end)
+    if not line_excluded[i] and line_visible[i] is not None
+)
+joined = re.sub(r'[ \t]+', ' ', joined)
+
+found = set()
+for term in terms:
+    if re.search(r'(?<![A-Za-z0-9])' + re.escape(term) + r'(?![A-Za-z0-9])', joined):
+        found.add(term)
+
+for term in terms:
+    if term not in found:
+        print("MISSING=%s:%d:%s" % (path, anchor_line_no, term))
+PYEOF
+}
+
+audit_escalation_mirrors() {
+  # audit_escalation_mirrors <repo-root>
+  # Prints COUNT=<n> then one MISSING=<file>:<line>:<term> or
+  # ANCHOR_MISSING=<file> per violation, across the 21-file discovery scope:
+  # the canonical page, Protocols 90/91/93, and the 17 lockstep mirrors.
+  local repo_root="$1"
+  local count=0
+  local canonical_file vocab_file link_file
+  canonical_file="docs/workflow/development-workflow/architecture-decision-escalation.md"
+  local -a vocab_files
+  vocab_files=(
+    "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
+    "docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md"
+    ".cursor/agents/developer.md"
+    ".claude/agents/developer.md"
+    ".codex/skills/workflow-implementer/SKILL.md"
+    ".cursor/agents/code-reviewer.md"
+    ".claude/agents/code-reviewer.md"
+    ".codex/skills/workflow-code-reviewer/SKILL.md"
+    ".cursor/agents/item-orchestrator.md"
+    ".claude/agents/item-orchestrator.md"
+    ".codex/skills/workflow-item-orchestrator/SKILL.md"
+    ".agents/skills/run-item/SKILL.md"
+  )
+  local -a link_files
+  link_files=(
+    "docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md"
+    ".cursor/agents/orchestrator.md"
+    ".claude/agents/orchestrator.md"
+    ".codex/skills/workflow-orchestrator/SKILL.md"
+    ".cursor/agents/automated-reviewer-loop.md"
+    ".claude/agents/automated-reviewer-loop.md"
+    ".codex/skills/workflow-reviewer-loop/SKILL.md"
+    ".agents/skills/run-items/SKILL.md"
+  )
+
+  count=$((count + 1))
+  _escalation_audit_file "$repo_root/$canonical_file" "Recommendation" "Conforms" "Departs" "Not yet implemented"
+
+  for vocab_file in "${vocab_files[@]}"; do
+    count=$((count + 1))
+    _escalation_audit_file "$repo_root/$vocab_file" "architecture-decision-escalation.md" "Conforms" "Departs" "Not yet implemented"
+  done
+
+  for link_file in "${link_files[@]}"; do
+    count=$((count + 1))
+    _escalation_audit_file "$repo_root/$link_file" "architecture-decision-escalation.md"
+  done
+
+  printf 'COUNT=%s\n' "$count"
+}
+
+ESCALATION_AUDIT="$(audit_escalation_mirrors "$REPO_ROOT")"
+ESCALATION_MISSING="$(printf '%s\n' "$ESCALATION_AUDIT" | grep -E '^(MISSING|ANCHOR_MISSING)=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 when nothing is missing, which is the passing state
+ESCALATION_COUNT="$(printf '%s\n' "$ESCALATION_AUDIT" | awk -F= '/^COUNT=/{print $2; exit}')"
+check escalation_mirrors_well_formed "" "$ESCALATION_MISSING"
+check escalation_mirror_discovery_not_vacuous 21 "$ESCALATION_COUNT"
+
+# Planted violation 1: delete the canonical link from a required mirror.
+ESCALATION_PLANT_ROOT="$TMP_DIR/escalation-mirrors"
+mkdir -p "$ESCALATION_PLANT_ROOT/.claude/agents" "$ESCALATION_PLANT_ROOT/.codex/skills/workflow-code-reviewer"
+cp "$REPO_ROOT/.claude/agents/code-reviewer.md" "$ESCALATION_PLANT_ROOT/.claude/agents/code-reviewer.md"
+cp "$REPO_ROOT/.codex/skills/workflow-code-reviewer/SKILL.md" "$ESCALATION_PLANT_ROOT/.codex/skills/workflow-code-reviewer/SKILL.md"
+CODE_REVIEWER_CLAUDE="$ESCALATION_PLANT_ROOT/.claude/agents/code-reviewer.md"
+python3 - "$CODE_REVIEWER_CLAUDE" <<'PYPLANTLINK'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = """When replying to a review thread and citing a workflow specification line as
+support for the current behavior or a decision the reviewer will weigh,
+attach the conformance declaration (`Conforms` / `Departs` / `Not yet
+implemented`, or a plain undetermined statement) required by
+`docs/workflow/development-workflow/architecture-decision-escalation.md`.
+Where a finding would lead to a full `architecture_decision` escalation, point
+to Protocol 91 and that canonical page rather than a lighter requirement.
+"""
+new = """When replying to a review thread and citing a workflow specification line as
+support for the current behavior or a decision the reviewer will weigh,
+attach the conformance declaration (`Conforms` / `Departs` / `Not yet
+implemented`, or a plain undetermined statement) — this is an
+`architecture_decision`-adjacent requirement.
+"""
+if old not in text:
+    sys.exit("plant target not found")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+PYPLANTLINK
+CODE_REVIEWER_HEADING_LINE="$(grep -n 'architecture_decision' "$CODE_REVIEWER_CLAUDE" | head -1 | cut -d: -f1 || true)"  # workflow-shell-guard: allow SH001 - grep is expected to match here; guarded defensively
+PLANT_LINK_AUDIT="$(_escalation_audit_file "$CODE_REVIEWER_CLAUDE" "architecture-decision-escalation.md" "Conforms" "Departs" "Not yet implemented")"
+check plant_deleted_link_is_reported \
+  "MISSING=$CODE_REVIEWER_CLAUDE:$CODE_REVIEWER_HEADING_LINE:architecture-decision-escalation.md" \
+  "$(printf '%s\n' "$PLANT_LINK_AUDIT" | grep '^MISSING=' || true)"
+RESTORED_LINK_AUDIT="$(_escalation_audit_file "$REPO_ROOT/.claude/agents/code-reviewer.md" "architecture-decision-escalation.md" "Conforms" "Departs" "Not yet implemented")"
+check plant_restored_link_passes "" "$(printf '%s\n' "$RESTORED_LINK_AUDIT" | grep '^MISSING=' || true)"
+
+# Planted violation 2: weaken the declaration vocabulary in a Codex mirror.
+CODE_REVIEWER_CODEX="$ESCALATION_PLANT_ROOT/.codex/skills/workflow-code-reviewer/SKILL.md"
+python3 - "$CODE_REVIEWER_CODEX" <<'PYPLANTVOCAB'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = ("attach the conformance declaration (`Conforms` / `Departs` / `Not\n"
+       "    yet implemented`, or a plain undetermined statement) required by")
+new = "attach a conformance declaration, as applicable, required by"
+if old not in text:
+    sys.exit("plant target not found")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+PYPLANTVOCAB
+PLANT_VOCAB_AUDIT="$(_escalation_audit_file "$CODE_REVIEWER_CODEX" "architecture-decision-escalation.md" "Conforms" "Departs" "Not yet implemented")"
+PLANT_VOCAB_MISSING="$(printf '%s\n' "$PLANT_VOCAB_AUDIT" | grep '^MISSING=' || true)"  # workflow-shell-guard: allow SH001 - grep exits 1 only if nothing is missing, which this plant must not produce
+check plant_weakened_vocab_reports_conforms 1 "$(printf '%s\n' "$PLANT_VOCAB_MISSING" | grep -c ":Conforms$" || true)"
+check plant_weakened_vocab_reports_departs 1 "$(printf '%s\n' "$PLANT_VOCAB_MISSING" | grep -c ":Departs$" || true)"
+
+# --- Parser-risk edge cases (protocol 02 Step 3 rules apply to this audit) --
+ESCALATION_FIXTURE_DIR="$TMP_DIR/escalation-fixtures"
+mkdir -p "$ESCALATION_FIXTURE_DIR"
+
+write_fixture() {
+  # write_fixture <name> <<'EOF' ... EOF
+  local name="$1"
+  cat > "$ESCALATION_FIXTURE_DIR/$name"
+}
+
+# 1. Term present only outside the escalation section (out-of-section decoy).
+write_fixture case1.md <<'EOF'
+Conforms mentioned here, before any escalation section exists.
+
+## architecture_decision escalation
+
+Nothing required lives here.
+EOF
+CASE1_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case1.md" "Conforms")"
+check case1_out_of_section_decoy_reported 1 "$(printf '%s\n' "$CASE1_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+
+# 2. Escalation heading absent.
+write_fixture case2.md <<'EOF'
+## Some unrelated heading
+
+Nothing here mentions the trigger condition at all.
+EOF
+CASE2_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case2.md" "Conforms")"
+check case2_anchor_missing "ANCHOR_MISSING=$ESCALATION_FIXTURE_DIR/case2.md" "$CASE2_AUDIT"
+
+# 3. Term only inside a fenced code block within the section.
+write_fixture case3.md <<'EOF'
+## architecture_decision escalation
+
+```text
+Conforms
+```
+EOF
+CASE3_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case3.md" "Conforms")"
+check case3_fenced_term_reported 1 "$(printf '%s\n' "$CASE3_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+
+# 4. Term only inside an HTML comment within the section.
+write_fixture case4.md <<'EOF'
+## architecture_decision escalation
+
+<!-- Conforms -->
+EOF
+CASE4_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case4.md" "Conforms")"
+check case4_comment_term_reported 1 "$(printf '%s\n' "$CASE4_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+
+# 5. Two escalation headings — the first is scoped; a term only under the
+#    second is reported.
+write_fixture case5.md <<'EOF'
+## architecture_decision escalation
+
+First section names only Departs, never the other declaration term.
+
+## architecture_decision escalation (second)
+
+Conforms appears only here.
+EOF
+CASE5_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case5.md" "Conforms")"
+check case5_second_heading_not_scoped 1 "$(printf '%s\n' "$CASE5_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+
+# 6. Term with different case ("conforms") does not satisfy "Conforms".
+write_fixture case6.md <<'EOF'
+## architecture_decision escalation
+
+conforms, lowercase, is not the same term.
+EOF
+CASE6_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case6.md" "Conforms")"
+check case6_case_mismatch_reported 1 "$(printf '%s\n' "$CASE6_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+
+# 7. CRLF line endings — a correct file still passes; line number unchanged.
+printf '## architecture_decision escalation\r\n\r\nConforms is present here.\r\n' > "$ESCALATION_FIXTURE_DIR/case7.md"
+CASE7_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case7.md" "Conforms")"
+check case7_crlf_passes "" "$(printf '%s\n' "$CASE7_AUDIT" | grep '^MISSING=' || true)"
+
+# 8. Empty file and deleted (missing) file — reported, not silently skipped.
+: > "$ESCALATION_FIXTURE_DIR/case8-empty.md"
+CASE8_EMPTY_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case8-empty.md" "Conforms")"
+check case8_empty_file_reported "ANCHOR_MISSING=$ESCALATION_FIXTURE_DIR/case8-empty.md" "$CASE8_EMPTY_AUDIT"
+CASE8_DELETED_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case8-does-not-exist.md" "Conforms")"
+check case8_deleted_file_reported "ANCHOR_MISSING=$ESCALATION_FIXTURE_DIR/case8-does-not-exist.md" "$CASE8_DELETED_AUDIT"
+
+# 9. Term twice on one line (in-section decoy + required rule) counted once;
+#    a term only in a trailing decoy after an HTML comment opener is reported.
+write_fixture case9.md <<'EOF'
+## architecture_decision escalation
+
+Conforms is required here, and Conforms is restated for emphasis.
+
+Trailing decoy: <!-- opens here and Departs never closes on this line
+EOF
+CASE9_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case9.md" "Conforms" "Departs")"
+check case9_repeated_term_counted_once "" "$(printf '%s\n' "$CASE9_AUDIT" | grep '^MISSING=.*:Conforms$' || true)"
+check case9_trailing_comment_decoy_reported 1 "$(printf '%s\n' "$CASE9_AUDIT" | grep -c '^MISSING=.*:Departs$')"
+
+# 10. Boundary characters: punctuation/backtick-adjacent terms match; a term
+#     embedded in a longer word does not.
+write_fixture case10.md <<'EOF'
+## architecture_decision escalation
+
+The word Nonconformsx should never satisfy the required declaration term.
+The declaration is `Departs`, and separately **Not yet implemented** is shown.
+EOF
+CASE10_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case10.md" "Conforms" "Departs" "Not yet implemented")"
+check case10_boundary_punctuation_matches "" "$(printf '%s\n' "$CASE10_AUDIT" | grep -E '^MISSING=.*:(Departs|Not yet implemented)$' || true)"
+check case10_embedded_word_reported 1 "$(printf '%s\n' "$CASE10_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+
+# 11. Nested constructs: a fenced block inside a list item, and an HTML
+#     comment inside a fenced block — scoping stays correct in both.
+write_fixture case11.md <<'EOF'
+## architecture_decision escalation
+
+- A list item with a nested fence:
+
+  ```text
+  <!-- Conforms -->
+  ```
+
+Departs is stated in normal prose outside any fence or comment.
+EOF
+CASE11_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case11.md" "Conforms" "Departs")"
+check case11_nested_fence_comment_excluded 1 "$(printf '%s\n' "$CASE11_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+check case11_prose_outside_nesting_found "" "$(printf '%s\n' "$CASE11_AUDIT" | grep '^MISSING=.*:Departs$' || true)"
+
+# 12. CommonMark fence flexibility: closing fence longer than opener, a tilde
+#     fence, and an unterminated fence (runs to end of file).
+write_fixture case12.md <<'EOF'
+## architecture_decision escalation
+
+```text
+Conforms
+````
+
+~~~text
+Departs
+~~~
+
+The next fence never closes, and only its body carries the target phrase:
+```text
+Not yet implemented
+EOF
+CASE12_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case12.md" "Conforms" "Departs" "Not yet implemented")"
+check case12_longer_closing_fence_excluded 1 "$(printf '%s\n' "$CASE12_AUDIT" | grep -c '^MISSING=.*:Conforms$')"
+check case12_tilde_fence_excluded 1 "$(printf '%s\n' "$CASE12_AUDIT" | grep -c '^MISSING=.*:Departs$')"
+check case12_unterminated_fence_excluded 1 "$(printf '%s\n' "$CASE12_AUDIT" | grep -c '^MISSING=.*:Not yet implemented$')"
+
+# 13. Correct file — no MISSING= / ANCHOR_MISSING= lines, only a clean result,
+#     asserted after each planted case above is restored (the audits against
+#     $REPO_ROOT files throughout this block always read the real, unmodified
+#     tree — only the $ESCALATION_PLANT_ROOT / $ESCALATION_FIXTURE_DIR copies
+#     were mutated).
+write_fixture case13.md <<'EOF'
+## architecture_decision escalation
+
+Conforms, Departs, and Not yet implemented are all present in-section.
+EOF
+CASE13_AUDIT="$(_escalation_audit_file "$ESCALATION_FIXTURE_DIR/case13.md" "Conforms" "Departs" "Not yet implemented")"
+check case13_correct_file_passes "" "$(printf '%s\n' "$CASE13_AUDIT" | grep -E '^(MISSING|ANCHOR_MISSING)=' || true)"
+FINAL_ESCALATION_AUDIT="$(audit_escalation_mirrors "$REPO_ROOT")"
+check escalation_mirrors_still_clean_after_fixtures "" "$(printf '%s\n' "$FINAL_ESCALATION_AUDIT" | grep -E '^(MISSING|ANCHOR_MISSING)=' || true)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -88,6 +88,13 @@ Key rules:
   `implementation-plan/*` branches. If a documentation-stage PR is in scope,
   Protocol 91 Step 8a must run `check-documentation-stage-alignment.sh`; correct
   or escalate any mismatch before `ready-for-human-review`.
+- Before stopping under `architecture_decision`, run the per-axis coverage
+  analysis and produce the well-formed escalation report required by
+  `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+  axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+  `Departs` / `Not yet implemented` declaration, and a requested decision
+  scoped to genuinely open axes only. When citing a workflow specification
+  line as support in a review-thread reply, attach the same declaration.
 - Never bypass build/lint/test verification
 - Never force-push, force-with-lease, or otherwise rewrite a published workflow
   PR branch directly. Use follow-up commits; if a destructive branch update is

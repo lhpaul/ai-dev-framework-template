@@ -84,6 +84,14 @@ advances exactly one non-epic item through Protocol 91.
 10. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
    documentation-stage alignment checker before readiness; correct or escalate
    mismatches instead of applying `ready-for-human-review`.
+10a. Before stopping under `architecture_decision`, run the per-axis coverage
+   analysis and produce the well-formed escalation report required by
+   `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+   axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+   `Departs` / `Not yet implemented` declaration, and a requested decision
+   scoped to genuinely open axes only. Never describe such an escalation as
+   well-formed without that analysis. Upsert the PR marker comment per
+   Protocol 91.
 11. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
 12. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker

@@ -2137,6 +2137,17 @@ Approval required before tracker status changes or branch/PR work starts for the
 This offer belongs only after the human confirms PRs have been merged.
 Adding it here is a protocol violation even when it feels like a natural closing.
 
+**`architecture_decision` stop reporting parity**: where a child item's stop
+condition is `architecture_decision`, the "Guardrails Stops" (or "Waiting on
+Human") entry for that item does not restate the whole question as
+undifferentiated open. It instead references that the child carried the
+canonical escalation report — axis-separated, per-citation conformance
+declarations, requested decision scoped to genuinely open axes — per
+[`architecture-decision-escalation.md`](../architecture-decision-escalation.md).
+Point the human at the child item's PR comment or Work Item Runner Summary
+`Stops:` line for the full report rather than duplicating it in the batch
+summary.
+
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
 
 **Retrospective timing**: Do **not** suggest a retrospective at this point. The batch is not fully complete yet — PRs that are `ready-for-human-review` still need human review and merge before the work is done.

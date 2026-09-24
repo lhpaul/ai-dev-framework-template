@@ -1528,6 +1528,21 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings. Apply the [Pre-post verification guard](#pre-post-verification-guard-mandatory-before-every-gh-pr-comment--gh-pr-review-call) before composing each fix commit comment.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
+- **Conformance declaration on cited specification lines (as support)**: where a
+  reply on a review thread cites a workflow specification line **as support**
+  for the runner's behavior or for a decision the reviewer will weigh, the
+  reply carries the conformance declaration required by
+  [`architecture-decision-escalation.md`](../architecture-decision-escalation.md):
+  `Conforms`, `Departs`, or `Not yet implemented`. `Not yet implemented` is
+  never used for behavior that already exists in the cited surface. Where the
+  citation's conformance genuinely cannot be determined, the reply states this
+  plainly instead, using none of the three declarations, without alone opening
+  a full `architecture_decision` escalation for that citation. A citation
+  named only to identify a source, not offered as support, carries no
+  declaration. Where a reviewer finding would lead the runner to raise
+  `architecture_decision`, the reply points to Protocol 91 and the canonical
+  page for the full escalation report — this reply-level declaration is never
+  a lighter substitute for that full report.
 - When the loop terminates with `clean`, `needs_fixes`, or `escalate`, **`pr-review-loop.sh` automatically posts or updates the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. On `needs_fixes`, the script updates the existing summary in place so active findings are visible while the fixer loop continues. The script-posted comment satisfies the Step 8c `hasReviewSummary` check.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
