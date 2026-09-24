@@ -64,6 +64,14 @@ Recommended model tier: `balanced`
     documentation-stage alignment checker before readiness. Include the
     alignment result in the runner summary when readiness is blocked; correct
     or escalate mismatches instead of applying `ready-for-human-review`.
+19a. Before stopping under `architecture_decision`, run the per-axis coverage
+     analysis and produce the well-formed escalation report required by
+     `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+     axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+     `Departs` / `Not yet implemented` declaration, and a requested decision
+     scoped to genuinely open axes only. Never describe such an escalation as
+     well-formed without that analysis. Upsert the PR marker comment per
+     Protocol 91.
 20. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
     `escalated`, waiting on human, waiting on merge, or cleanup complete), run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
