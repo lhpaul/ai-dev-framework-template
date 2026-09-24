@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Shared CodeRabbit own-configuration reader.
+
+Extracted from the embedded probe that used to live inline in
+``resolve-reviewer-availability.sh`` (issue #1495) so that Step 7a's
+reachability probe and the reviewer preflight (#1561) read
+``.coderabbit.yaml`` through one code path instead of two that could drift
+apart. Behavior for the ``enabled-bool`` mode is unchanged from the original
+embedded script: same stdout contract (``true``/``false``), same stderr
+message text, and the same exit codes (0 success, 3 config error, 4 missing
+PyYAML dependency) that ``resolve-reviewer-availability.sh`` already depends
+on for ``coderabbit-config`` / ``coderabbit-dependency`` classification.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+
+class ConfigError(ValueError):
+    """Raised for a malformed or unreadable .coderabbit.yaml."""
+
+
+def _mapping(value: Any, name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{name} must be a mapping")
+    return value
+
+
+def _build_loader():
+    import yaml
+
+    class ConfigLoader(yaml.SafeLoader):
+        # Keep YAML core true/false spellings typed; quoted strings and YAML
+        # 1.1 yes/no/on/off are not CodeRabbit boolean settings.
+        yaml_implicit_resolvers = {
+            initial: [(tag, pattern) for tag, pattern in rules if tag != "tag:yaml.org,2002:bool"]
+            for initial, rules in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        }
+
+        def flatten_mapping(self, node):
+            # Validate explicit keys before SafeLoader expands merges.
+            # Explicit values may legitimately override merged defaults;
+            # duplicates may not.
+            if not hasattr(self, "checked_mappings"):
+                self.checked_mappings = set()
+            if node not in self.checked_mappings:
+                self.checked_mappings.add(node)
+                seen = set()
+                for key_node, _value_node in node.value:
+                    key = (
+                        "<<"
+                        if key_node.tag == "tag:yaml.org,2002:merge"
+                        else self.construct_object(key_node)
+                    )
+                    try:
+                        duplicate = key in seen
+                        seen.add(key)
+                    except TypeError as error:
+                        raise yaml.constructor.ConstructorError(
+                            None, None, "unsupported complex mapping key", key_node.start_mark
+                        ) from error
+                    if duplicate:
+                        raise yaml.constructor.ConstructorError(
+                            None, None, "duplicate mapping key", key_node.start_mark
+                        )
+            super().flatten_mapping(node)
+
+    def construct_boolean(loader, node):
+        value = loader.construct_scalar(node)
+        if value not in ("true", "True", "TRUE", "false", "False", "FALSE"):
+            raise yaml.constructor.ConstructorError(
+                None, None, "unsupported boolean spelling", node.start_mark
+            )
+        return value.lower() == "true"
+
+    ConfigLoader.add_constructor("tag:yaml.org,2002:bool", construct_boolean)
+    ConfigLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool",
+        re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+        list("tTfF"),
+    )
+    return ConfigLoader, yaml
+
+
+def parse_coderabbit_text(text: str) -> dict[str, Any]:
+    """Parse .coderabbit.yaml text into a structured, cross-checkable result.
+
+    Returns a dict with keys:
+      - ``auto_review_enabled``: bool (defaults False when the key is absent,
+        matching the pre-existing Step 7a interpretation).
+      - ``drafts``: bool | None (None when the key is absent — no repository
+        commitment either way).
+      - ``base_branches``: list[str] | None (None when the key is absent —
+        no restriction is configured).
+
+    Raises ``ConfigError`` (bad schema) or the underlying ``yaml.YAMLError``
+    on a malformed document. Both are ``ValueError`` subclasses.
+    """
+    ConfigLoader, yaml = _build_loader()
+    try:
+        config = _mapping(yaml.load(text, Loader=ConfigLoader), "document")
+    except yaml.YAMLError:
+        raise
+    reviews = _mapping(config.get("reviews"), "reviews")
+    auto_review = _mapping(reviews.get("auto_review"), "reviews.auto_review")
+
+    if "enabled" not in auto_review:
+        enabled = False
+    else:
+        enabled = auto_review["enabled"]
+        if type(enabled) is not bool:
+            raise ConfigError("reviews.auto_review.enabled must be a boolean")
+
+    drafts: bool | None = None
+    if "drafts" in auto_review:
+        drafts = auto_review["drafts"]
+        if type(drafts) is not bool:
+            raise ConfigError("reviews.auto_review.drafts must be a boolean")
+
+    base_branches: list[str] | None = None
+    if "base_branches" in auto_review:
+        raw = auto_review["base_branches"]
+        if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+            raise ConfigError("reviews.auto_review.base_branches must be a list of strings")
+        base_branches = raw
+
+    return {
+        "auto_review_enabled": enabled,
+        "drafts": drafts,
+        "base_branches": base_branches,
+    }
+
+
+def load_coderabbit_config(path: Path) -> dict[str, Any]:
+    """Read and parse ``path``. A missing file behaves like an empty document."""
+    if not path.exists():
+        return {"auto_review_enabled": False, "drafts": None, "base_branches": None}
+    text = path.read_text(encoding="utf-8")
+    return parse_coderabbit_text(text)
+
+
+def base_branch_covered(base_branches: list[str] | None, target_base: str) -> bool:
+    """``base_branches`` entries are regexes (documented in .coderabbit.yaml)."""
+    if base_branches is None:
+        return True
+    for pattern in base_branches:
+        try:
+            if re.fullmatch(pattern, target_base):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def _cmd_enabled_bool(path: Path) -> int:
+    """Preserve the exact stdout/stderr/exit-code contract of the original
+    embedded probe in resolve-reviewer-availability.sh."""
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        print(
+            "CodeRabbit configuration validation requires PyYAML; install "
+            "PyYAML==6.0.2 for the python3 used by this gate",
+            file=sys.stderr,
+        )
+        return 4
+    try:
+        result = load_coderabbit_config(path)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 3
+    except Exception as error:  # yaml.YAMLError does not subclass ValueError on all versions
+        import yaml
+
+        if isinstance(error, yaml.YAMLError):
+            print(str(error), file=sys.stderr)
+            return 3
+        raise
+    print("true" if result["auto_review_enabled"] else "false")
+    return 0
+
+
+def _cmd_full_json(path: Path) -> int:
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        print(
+            "CodeRabbit configuration validation requires PyYAML; install "
+            "PyYAML==6.0.2 for the python3 used by this gate",
+            file=sys.stderr,
+        )
+        return 4
+    try:
+        result = load_coderabbit_config(path)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 3
+    except Exception as error:
+        import yaml
+
+        if isinstance(error, yaml.YAMLError):
+            print(str(error), file=sys.stderr)
+            return 3
+        raise
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Read .coderabbit.yaml (shared parser)")
+    parser.add_argument(
+        "--mode",
+        choices=["enabled-bool", "full-json"],
+        default="enabled-bool",
+        help="enabled-bool: print true/false (Step 7a contract). full-json: print structured JSON (preflight).",
+    )
+    parser.add_argument("path", help="path to .coderabbit.yaml")
+    args = parser.parse_args(argv)
+    path = Path(args.path)
+    if args.mode == "enabled-bool":
+        return _cmd_enabled_bool(path)
+    return _cmd_full_json(path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
