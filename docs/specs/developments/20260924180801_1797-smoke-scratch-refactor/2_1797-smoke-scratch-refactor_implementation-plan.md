@@ -104,7 +104,7 @@ configuration value dependency.
 
 ### Plan authoring rigor — per-rule outcome record
 
-Plan revision: `<to be filled with this branch's HEAD short SHA after commit>`
+Plan revision: `87ba5a35`
 
 | Rule | Outcome | Rationale / first external inspection finding |
 | --- | --- | --- |
