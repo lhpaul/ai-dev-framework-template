@@ -16,3 +16,11 @@ Recommended model tier: `balanced`
 7. When dispatched for a specific pass (Pass 1: Spec Compliance or Pass 2: Code Quality), restrict evaluation to the corresponding `REVIEW.md` sub-checklist. The pass name is provided in the dispatch prompt by the orchestrating skill.
 8. When the change under review touches workflow-policy surfaces — `REVIEW.md`, the root agent instruction files, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `scripts/development-workflow/**`, or the per-tool instruction trees `.claude/**`, `.cursor/**`, `.codex/**` and `.agents/**` — also evaluate the `## Workflow Policy Review Checklist`, in addition to the dispatched pass.
 9. Resolve and report the implementation artifact owner before reviewing. In `workflow_hub`, product implementation PRs are reviewed in the selected product repository while hub-only workflow PRs remain hub-owned.
+10. When replying to a review thread and citing a workflow specification line
+    as support for the current behavior or a decision the reviewer will
+    weigh, attach the conformance declaration (`Conforms` / `Departs` / `Not
+    yet implemented`, or a plain undetermined statement) required by
+    `docs/workflow/development-workflow/architecture-decision-escalation.md`.
+    Where a finding would lead to a full `architecture_decision` escalation,
+    point to Protocol 91 and that canonical page rather than a lighter
+    requirement.
