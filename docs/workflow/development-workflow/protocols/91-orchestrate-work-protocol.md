@@ -1485,6 +1485,7 @@ After the selected item reaches a terminal condition, provide a concise summary:
 - Final state: ready for human review / waiting on human decision / blocked / escalated
 - Path taken: plan written -> reviewed -> PR opened -> automated review clean -> CI green
 - Next human action: merge PR / answer architecture question / unblock dependency
+- Stops: [named cause, affected item, unblocking action; for `architecture_decision`, the full escalation report per [`architecture-decision-escalation.md`](../architecture-decision-escalation.md)]
 - Local reviewer head evidence: LOCAL_AI_CONFIGURED=[0|1], LOCAL_AI_REVIEWED_HEAD=[sha|empty], LOCAL_AI_HEAD_CURRENT=[1|0|empty]
 - Cursor dispatch profile (when a Cursor dispatch profile was declared for this run, per `integrations/cursor-dispatch-profiles.md`): profile in force at the end of the run; every profile transition that occurred, with its reason; and, under `cursor-parent-orchestrated`, which orchestration layers were absorbed and which stages were handed off
 
@@ -3579,3 +3580,74 @@ Stop conditions never weaken below the baseline human-stops defined in
 `guardrails-enforcement.md` section 4. Every stop appears in the Work Item
 Runner Summary under a "Stops" section with its named cause, affected item, and
 unblocking action.
+
+**`architecture_decision` coverage analysis (required before the terminal
+summary)**: where the named stop condition is `architecture_decision`, before
+emitting the terminal Work Item Runner Summary, the runner performs the
+per-axis coverage analysis and produces the well-formed escalation report
+defined by the canonical page
+[`architecture-decision-escalation.md`](../architecture-decision-escalation.md)
+— axis decomposition, per-axis coverage verdict, per-citation conformance
+declaration (including the per-citation declaration rule for mixed reports),
+and a requested decision scoped to genuinely open axes only. Attach the full
+report to the Work Item Runner Summary's `Stops:` line. Do not restate the
+canonical page's full vocabulary here — link to it.
+
+**No genuinely open axis (continuation, not suppression)**: where the coverage
+analysis finds every axis Settled by specification, every citation on those
+axes carrying a determined declaration of `Conforms` or `Not yet implemented`
+(never `Departs`, never undetermined conformance, and never an unresolved
+raised substance question), the runner is not uncertain, and the runner does
+not dispute any citation's substance, the `architecture_decision` trigger's own
+precondition was never actually met — applying the cited lines is what the
+specification already required. The runner applies the cited lines and
+continues; this is **not** a relaxation of the stop condition, only a
+recognition that the analysis has shown no genuinely unanswered question
+exists. This continuation path does **not** apply — and the run stops under
+`architecture_decision` instead — when: any axis remains Genuinely open; any
+citation on a settled axis is `Departs` and correction is not the obvious next
+step (see the dispute branch below); any citation's conformance cannot be
+determined; or a reviewer or human has actually raised a citation's substance
+in question and the runner genuinely cannot resolve it (the canonical page's
+raised-question gate).
+
+**Departs on an otherwise-fully-settled report**: where every axis is settled
+but a citation declares `Departs`, the runner either corrects the behavior to
+conform (the citation then conforms, and the continuation path above applies)
+or, where the departure is instead a substance dispute, raises the departure as
+its own separate axis — **Genuinely open** with the reason **Governing line
+disputed**, carrying a required proposed amendment for what the line should
+become — while the covered axis stays **Settled by specification**. The runner
+then stops for that new axis only; it does not continue past it.
+
+**PR durability (upsert, not append-only)**: where a pull request exists for
+the work item and the run stops under `architecture_decision`, the runner
+**upserts** a single durable PR issue comment carrying the escalation report,
+rather than posting a new comment on every run. The comment body starts with
+the HTML marker `<!-- architecture-decision-escalation -->` followed by the
+heading `## Architecture decision escalation`, then the full report content
+already attached to the run summary. Do **not** model this on Step 7a's
+`gh pr comment` — that call posts a new comment on every exit and is not the
+pattern here. Instead, use the same idempotent find-marker-then-PATCH-or-POST
+algorithm `apply_comment`/`find_marker_comment_id` in
+`scripts/development-workflow/run-epic-audit-trail.sh` already use for
+checkpoint-status and security-advisory marker comments (or an equivalent
+shared helper with the same contract):
+
+1. Paginate the PR's issue comments (`gh api --paginate` across
+   `issues/<pr>/comments`) and locate an existing comment whose body contains
+   the marker `<!-- architecture-decision-escalation -->`.
+2. If found, `gh api` `PATCH` that comment's body in place.
+3. If not found, **re-run the marker lookup immediately before POSTing** (the
+   same re-check `apply_comment` performs) so a concurrent run cannot create a
+   duplicate; `PATCH` if the re-check now finds it, otherwise `POST` a new
+   comment.
+
+This reuses the *existing* marker-comment upsert mechanism to satisfy the
+spec's PR-durability acceptance criterion (the report must be "readable on
+that pull request after the run ends" where a PR exists) — it is not a new
+routing or notification destination (spec Out of Scope, item 7). A run that
+stops before any pull request exists gets no new durable destination from this
+requirement; its durability remains whatever the existing stop-message
+contract already provides. No new script is required for this MVP unless
+implementation extracts a shared helper.
