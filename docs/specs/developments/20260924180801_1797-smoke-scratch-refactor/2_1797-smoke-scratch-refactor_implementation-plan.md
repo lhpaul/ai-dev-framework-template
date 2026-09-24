@@ -25,6 +25,7 @@ and update its one call site.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `d79d41dc` |
+| Helper definition count | `grep -n "_parse_number" scripts/lint/markdown-heuristic-lint.py` | 2 matches: line 160 (definition), line 284 (one call site) — the population counted is occurrences of the exact identifier `_parse_number` in this one file |
 | No other consumers | `grep -rn "_parse_number" scripts/ .github/` | Only the 2 matches above; no other file references this identifier |
 
 ---
