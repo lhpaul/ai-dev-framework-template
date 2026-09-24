@@ -78,6 +78,8 @@ This stage protects the codebase from "understood in my head" engineering. It al
 
 When relevant, the plan should make observability and analytics explicit instead of leaving them implicit. That can include frontend crash reporting, backend logging and alerting, product analytics events, and any downstream analytical-data handling needed to make the feature measurable and supportable in production.
 
+Every plan also follows the six portable plan-authoring rigor rules in [`plan-authoring-rigor-rules.md`](./plan-authoring-rigor-rules.md), which the plan review gate applies as a backstop check.
+
 Plans must also record the `Cross-Cutting Operational Assumption Check`. When a
 plan depends on an operational fact that concurrent work could invalidate, such
 as an environment target, approved base branch, artifact owner, linked resource,
