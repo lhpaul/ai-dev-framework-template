@@ -27,6 +27,13 @@ Recommended model tier: `balanced`
    work, produce and verify residual evidence with
    `scope-residual-gate.sh` before readiness.
 10. Implementation files belong on implementation branches, not `spec/*` or `implementation-plan/*` branches. If a documentation-stage PR is in scope, run Protocol 91 Step 8a's documentation-stage alignment checker before readiness and correct or escalate any mismatch.
+10a. Before stopping under `architecture_decision`, run the per-axis coverage
+    analysis and produce the well-formed escalation report required by
+    `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+    axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+    `Departs` / `Not yet implemented` declaration, and a requested decision
+    scoped to genuinely open axes only. When citing a workflow specification
+    line as support in a review-thread reply, attach the same declaration.
 11. Before opening the draft implementation PR, complete the Protocol 03
     **Pre-Submission Self-Review Pass**: review
     `git diff <base-branch>...HEAD`, remove stale markers, verify

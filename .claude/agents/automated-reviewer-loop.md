@@ -25,4 +25,11 @@ That document is the single source of truth. Key responsibilities:
 - When `BATCH_CONTEXT=true`, pass the full Protocol 90 isolation assignment to any fixer handoff: resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`.
 - Apply `ready-for-human-review` / `needs-fixes` per 92-pr-readiness-signal-protocol.md. For `spec/*` and `implementation-plan/*` PRs, route through Protocol 91 Step 8a so `check-documentation-stage-alignment.sh` runs before `ready-for-human-review`.
 - Track all blocking findings across cycles in an issue ledger. After each fixer push, post a fix commit comment listing resolved issues. When the loop terminates, post a final summary table on the PR using `gh pr comment`.
+- When a review-thread reply cites a workflow specification line as support,
+  attach the conformance declaration (`Conforms` / `Departs` / `Not yet
+  implemented`, or a plain undetermined statement) required by
+  `docs/workflow/development-workflow/architecture-decision-escalation.md`.
+  Where a finding would lead to a full `architecture_decision` escalation,
+  point to Protocol 91 and that canonical page rather than a lighter
+  requirement.
 - Use the helper scripts in `scripts/development-workflow/`
