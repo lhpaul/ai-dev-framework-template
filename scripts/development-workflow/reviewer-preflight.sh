@@ -14,7 +14,10 @@
 # labels, or writes any tracked file under --repo-root. git fetch updates
 # only remote-tracking refs under .git/, not a tracked file or the working
 # tree, and is required by the spec's "refreshed from the remote before
-# reading" rule for the shared configuration on the pr-resume path.
+# reading" rule for the shared configuration on the pr-resume path. The
+# pr-resume path also fetches the PR head into a temporary ref so it can be
+# read the same way as every other ref this script reads; that ref is
+# deleted again before exit (see the cleanup trap) and never persists.
 set -euo pipefail
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 3; }
@@ -79,8 +82,16 @@ for dependency in python3 git jq mktemp; do
 done
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
+# pr-resume fetches the PR head into this ref so read_ref_file can address it
+# the same way as every other ref this script reads; the ref is a temporary
+# reading aid, not a change this script is allowed to leave behind (AC-2), so
+# cleanup deletes it whenever it was created, on every exit path.
+created_pr_ref=
 cleanup() {
   local rc=$?
+  if [ -n "$created_pr_ref" ]; then
+    git -C "$repo_root" update-ref -d "$created_pr_ref" >/dev/null 2>&1 || true
+  fi
   [ -z "$work_dir" ] || rm -rf -- "$work_dir"
   return "$rc"
 }
@@ -182,6 +193,7 @@ case "$mode" in
     target_base="$pr_base"
     fetch_ref "$pr_base" || fail "cannot refresh origin/$pr_base from the remote"
     fetch_ref "pull/$pr/head:refs/reviewer-preflight/pr-$pr" || fail "cannot fetch pull request #$pr head"
+    created_pr_ref="refs/reviewer-preflight/pr-$pr"
     shared_ref="origin/$pr_base"
     platform_ref="refs/reviewer-preflight/pr-$pr"
     checked_shared_config_ref="origin/$pr_base:.ai-dev-workflow.yaml (PR #$pr's own target base branch, refreshed)"

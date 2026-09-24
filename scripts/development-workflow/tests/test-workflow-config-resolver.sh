@@ -1764,6 +1764,45 @@ run_test "review-github-effective local override does not touch on_ready.github"
 run_test "review-github-effective local override applied" true "$(jq -r '.local_review_override_applied' <<< "$g5_json")"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# review-github-effective legacy fallback (#1802 codex-github finding): a
+# shared config still on the transition-release legacy `review.platforms` /
+# `review.phase_after_clean` keys, with no modern on_draft.github /
+# on_ready.github keys at all, must resolve the same lists
+# workflow_config_review_on_draft_github / _on_ready_github (workflow-lib.sh,
+# consumed by pr-review-loop.sh / Step 7) would dispatch — otherwise the
+# preflight can report `passed` without having cross-checked a reviewer Step
+# 7 goes on to run.
+write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent, bugbot]' '  phase_after_clean: [bugbot]'
+g6_json="$(review_github_effective_json)"
+run_test "review-github-effective legacy on_draft.github derived" '["coderabbit","pr-agent"]' "$(jq -c '.effective_on_draft_github' <<< "$g6_json")"
+run_test "review-github-effective legacy on_draft.github state" defined "$(jq -r '.effective_on_draft_github_state' <<< "$g6_json")"
+run_test "review-github-effective legacy on_ready.github derived" '["bugbot"]' "$(jq -c '.effective_on_ready_github' <<< "$g6_json")"
+run_test "review-github-effective legacy on_ready.github state" defined "$(jq -r '.effective_on_ready_github_state' <<< "$g6_json")"
+
+# Without a phase_after_clean split, legacy on_ready.github falls back to the
+# full platforms list (matching the shell's elif/else chain exactly).
+write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent]'
+g7_json="$(review_github_effective_json)"
+run_test "review-github-effective legacy on_ready.github falls back to platforms" '["coderabbit","pr-agent"]' "$(jq -c '.effective_on_ready_github' <<< "$g7_json")"
+
+# A present modern key — even an explicitly empty one — still wins over the
+# legacy alias, matching review_runner_value's documented precedence for
+# on_draft.runner (a malformed/empty modern key must not silently regain
+# legacy coverage).
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []' '  platforms: [coderabbit]'
+g8_json="$(review_github_effective_json)"
+run_test "review-github-effective present empty modern key beats legacy" empty "$(jq -r '.effective_on_draft_github_state' <<< "$g8_json")"
+
+# The local override still never sees the legacy alias (workflow-lib.sh's
+# workflow_config_review_local_list_if_declared reads only the modern local
+# key) — a legacy-only shared config paired with an unrelated local override
+# must still resolve the shared legacy list for the untouched bucket.
+write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent]' '  phase_after_clean: [pr-agent]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g9_json="$(review_github_effective_json)"
+run_test "review-github-effective legacy fallback survives an unrelated local override" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g9_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

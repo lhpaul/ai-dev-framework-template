@@ -196,6 +196,16 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         ).split('(')[0],
         data,
     )
+    # AC-2: the pr-resume path fetches the PR head into a temporary ref to
+    # read it the same way every other ref is read; that ref must not survive
+    # the run — a porcelain diff cannot see it, since refs live outside the
+    # working tree the porcelain check covers.
+    ref_check = git(repo6, 'show-ref', '--verify', '--quiet', 'refs/reviewer-preflight/pr-7', check_call=False)
+    check(
+        'T-6 pr-resume does not leave a temporary PR-head ref behind',
+        ref_check.returncode != 0,
+        ref_check,
+    )
 
     # T-7: budget timeout degrades to undetermined, not blocked, when nothing
     # else already proved a disagreement — never hangs past the test budget.

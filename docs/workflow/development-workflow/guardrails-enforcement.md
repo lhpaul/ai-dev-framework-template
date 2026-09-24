@@ -334,6 +334,8 @@ table is required for consistent stop reporting.
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
 | `missing_audit_evidence` | A delegated decision required an audit record but the record could not be produced or verified. |
 | `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object (`.policy`), or `.statusChecks` is missing, `null`, or not an array — which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state (unless `ciPolicy`/`ci_policy` is `none`, where `.statusChecks` is not required at all); fix the evidence file's shape before treating the result as a real denial or CI verdict. |
+| `reviewer_preflight_blocked` | The reviewer preflight (`reviewer-preflight.sh`, Protocol 91 § Reviewer preflight before child dispatch) found the shared reviewer configuration, the machine-local override, and a reviewer platform's own configuration disagree for a lifecycle stage still ahead of this item (`OUTCOME=blocked`). |
+| `reviewer_preflight_prerequisite_failed` | The reviewer preflight's own run inputs — target base, remaining-stage set, or per-stage pull-request state — are unresolved or malformed (`OUTCOME=prerequisite-failed`); a run-input failure, not a reviewer-configuration verdict. |
 
 **Additive rule**: These stop conditions may **add** to but may **never remove**
 the framework's baseline human-stop conditions. The baseline stops
@@ -344,7 +346,9 @@ surface but may never loosen it below the baseline. This section adds
 `dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable` under
 this additive rule, and reuses `missing_required_secret_or_permission`
 (already defined above) for one additional cause rather than inventing a
-third new string.
+third new string. It also adds `reviewer_preflight_blocked` and
+`reviewer_preflight_prerequisite_failed` under this additive rule for the
+reviewer preflight gate (issue #1561).
 
 ### Cursor dispatch-profile stop conditions
 

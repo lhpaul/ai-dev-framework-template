@@ -23,6 +23,7 @@ agents = [
     root / '.cursor/agents/item-orchestrator.md',
 ]
 coderabbit_doc = root / 'docs/workflow/development-workflow/integrations/coderabbit.md'
+guardrails_doc = root / 'docs/workflow/development-workflow/guardrails-enforcement.md'
 
 passed = 0
 failed = []
@@ -83,6 +84,23 @@ for outcome, code in exit_codes.items():
 
 for mode in ('pre-dispatch', 'branch-resume', 'pr-resume'):
     check(f'Protocol 91 names --mode {mode}', mode in gate_section)
+
+# Named-stop contract (guardrails-enforcement.md § 5 Stop-Message Contract):
+# a Blocked/Prerequisite-not-met preflight stop must use one of the exact
+# stop-condition strings recognized by § 4 Named Stop Conditions, not a
+# generic "stop" description.
+guardrails_text = guardrails_doc.read_text()
+for stop_condition in ('reviewer_preflight_blocked', 'reviewer_preflight_prerequisite_failed'):
+    check(
+        f'guardrails-enforcement.md defines {stop_condition}',
+        f'`{stop_condition}`' in guardrails_text,
+        guardrails_text,
+    )
+    check(
+        f'Protocol 91 names the {stop_condition} stop condition',
+        f'`{stop_condition}`' in gate_section,
+        gate_section,
+    )
 
 for agent_path in agents:
     text = agent_path.read_text()

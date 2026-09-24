@@ -1228,6 +1228,47 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
     return legacy_raw, legacy_present, legacy_structure_error
 
 
+def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tuple[Any, bool, bool]:
+    """Derive the legacy ``on_draft.github`` / ``on_ready.github`` list.
+
+    Mirrors ``workflow_config_review_on_draft_github`` /
+    ``workflow_config_review_on_ready_github`` in ``workflow-lib.sh``: the
+    legacy top-level ``review.platforms`` / ``review.phase_after_clean``
+    keys remain accepted for one transition release (AGENTS.md), and
+    ``pr-review-loop.sh`` (Step 7) still dispatches reviewers resolved that
+    way. Without this fallback, a downstream repository still on the legacy
+    keys would see the preflight report ``passed`` while never having
+    cross-checked a reviewer Step 7 goes on to run — exactly the gap this
+    module exists to close (#1561).
+    """
+    platforms_raw, platforms_present, platforms_error = review_effective_value_from_path(
+        data, ["review", "platforms"]
+    )
+    phase_raw, phase_present, phase_error = review_effective_value_from_path(
+        data, ["review", "phase_after_clean"]
+    )
+    platforms_list, _ = review_runner_state(platforms_raw, platforms_present)
+    phase_list, _ = review_runner_state(phase_raw, phase_present)
+    present = platforms_present or phase_present
+    structure_error = platforms_error or phase_error
+    if bucket == "on_draft_github":
+        derived = [entry for entry in platforms_list if entry not in phase_list]
+    else:
+        derived = phase_list if phase_list else platforms_list
+    return derived, present, structure_error
+
+
+def review_github_value(data: dict[str, Any], bucket: str, path: list[str]) -> tuple[Any, bool, bool]:
+    """Resolve modern ``on_draft.github`` / ``on_ready.github`` before the
+    supported legacy alias, mirroring ``review_runner_value``'s precedence: a
+    present modern key wins even when empty or malformed.
+    """
+    modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(data, path)
+    if modern_present or modern_structure_error:
+        return modern_raw, modern_present, modern_structure_error
+    return review_github_legacy_derived_value(data, bucket)
+
+
 def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
     if not present:
         return "", None, "absent"
@@ -1392,13 +1433,16 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     (absent/empty/malformed/defined) for ``review.on_draft.github`` and
     ``review.on_ready.github``, generalizing ``review_runner_value`` /
     ``review_runner_state`` (previously runner-only) to both GitHub buckets.
-    Unlike ``workflow_config_review_on_draft_github`` /
-    ``workflow_config_review_on_ready_github`` in workflow-lib.sh, this
-    resolver reads only the modern nested keys — the legacy
-    ``phase_after_clean`` / ``platforms`` fallback is not replicated here,
-    because a structured YAML cross-check needs a single well-formed source
-    per bucket and this repository, like the shipped default, already uses
-    the modern keys exclusively.
+    Also mirrors ``workflow_config_review_on_draft_github`` /
+    ``workflow_config_review_on_ready_github`` in workflow-lib.sh: when the
+    **shared** config's modern nested key is absent, the shared-config legacy
+    ``review.platforms`` / ``review.phase_after_clean`` fallback is applied
+    (``review_github_value``/``review_github_legacy_derived_value``) so a
+    downstream repository still on the legacy keys (AGENTS.md: "remain
+    accepted for one transition release") gets the same reviewer list here
+    that Step 7 (``pr-review-loop.sh``) actually dispatches. As with
+    ``workflow_config_review_local_list_if_declared``, the local override
+    never falls back to legacy — only the modern local key is read.
     """
     repo_root = repo_root_from_args(args.repo_root)
     if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
@@ -1452,8 +1496,8 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
 
     local_review_override_applied = False
     for bucket_key, path in buckets.items():
-        shipped_raw, shipped_present, shipped_structure_error = review_effective_value_from_path(
-            shared, path
+        shipped_raw, shipped_present, shipped_structure_error = review_github_value(
+            shared, bucket_key, path
         )
         shipped_list, _ = review_runner_state(shipped_raw, shipped_present)
         local_raw, local_present, local_structure_error = review_effective_value_from_path(local, path)
