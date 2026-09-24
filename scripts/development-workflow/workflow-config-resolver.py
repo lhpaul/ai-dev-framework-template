@@ -1385,6 +1385,105 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     return base
 
 
+def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve per-bucket effective GitHub reviewer lists for the preflight (#1561).
+
+    Mirrors ``resolve_review_effective``'s parse-state handling
+    (absent/empty/malformed/defined) for ``review.on_draft.github`` and
+    ``review.on_ready.github``, generalizing ``review_runner_value`` /
+    ``review_runner_state`` (previously runner-only) to both GitHub buckets.
+    Unlike ``workflow_config_review_on_draft_github`` /
+    ``workflow_config_review_on_ready_github`` in workflow-lib.sh, this
+    resolver reads only the modern nested keys — the legacy
+    ``phase_after_clean`` / ``platforms`` fallback is not replicated here,
+    because a structured YAML cross-check needs a single well-formed source
+    per bucket and this repository, like the shipped default, already uses
+    the modern keys exclusively.
+    """
+    repo_root = repo_root_from_args(args.repo_root)
+    if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
+        raise ConfigError(f"{repo_root}: repository root is not a readable directory")
+
+    shared_path = repo_root / ".ai-dev-workflow.yaml"
+    local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
+    local_file = str(local_path) if local_path.is_file() else ""
+    if not local_file:
+        local_origin = ""
+
+    buckets = {
+        "on_draft_github": ["review", "on_draft", "github"],
+        "on_ready_github": ["review", "on_ready", "github"],
+    }
+    base: dict[str, Any] = {
+        "unreadable_file": "",
+        "unreadable_detail": "",
+        "local_override_file": local_file,
+        "local_override_origin": local_origin,
+        "local_review_override_applied": False,
+        "main_clone_local_override_file": str(main_clone_file) if main_clone_file else "",
+    }
+    for bucket_key in buckets:
+        base[f"effective_{bucket_key}"] = []
+        base[f"effective_{bucket_key}_state"] = "malformed"
+        base[f"effective_{bucket_key}_source"] = ""
+        base[f"shipped_{bucket_key}"] = []
+        base[f"override_excluded_{bucket_key}"] = []
+
+    try:
+        shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
+    except (ConfigError, UnicodeDecodeError) as exc:
+        base.update({"unreadable_file": str(shared_path), "unreadable_detail": str(exc)})
+        return base
+
+    parse_path = local_path
+    try:
+        local = parse_yaml_subset(local_path, preserve_empty_values=True)
+        if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
+            parse_path = main_clone_file
+            main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
+            if "review" in main_local:
+                local_path, local_origin, local = main_clone_file, "main_clone", main_local
+                local_file = str(local_path)
+                base["local_override_file"] = local_file
+                base["local_override_origin"] = local_origin
+    except (ConfigError, UnicodeDecodeError) as exc:
+        base.update({"unreadable_file": str(parse_path), "unreadable_detail": str(exc)})
+        return base
+
+    local_review_override_applied = False
+    for bucket_key, path in buckets.items():
+        shipped_raw, shipped_present, shipped_structure_error = review_effective_value_from_path(
+            shared, path
+        )
+        shipped_list, _ = review_runner_state(shipped_raw, shipped_present)
+        local_raw, local_present, local_structure_error = review_effective_value_from_path(local, path)
+        raw, present, source = (
+            (local_raw, local_present, str(local_path))
+            if local_present or local_structure_error
+            else (
+                shipped_raw,
+                shipped_present,
+                str(shared_path) if shipped_present or shipped_structure_error else "",
+            )
+        )
+        effective_list, effective_state = review_runner_state(raw, present)
+        structure_error = local_structure_error or (not local_present and shipped_structure_error)
+        if structure_error:
+            effective_state = "malformed"
+        if local_present or local_structure_error:
+            local_review_override_applied = True
+        base[f"effective_{bucket_key}"] = effective_list
+        base[f"effective_{bucket_key}_state"] = effective_state
+        base[f"effective_{bucket_key}_source"] = source
+        base[f"shipped_{bucket_key}"] = shipped_list
+        base[f"override_excluded_{bucket_key}"] = [
+            entry for entry in shipped_list if local_present and entry not in effective_list
+        ]
+
+    base["local_review_override_applied"] = local_review_override_applied
+    return base
+
+
 def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
     value: Any = data
     for key in path:
@@ -1542,6 +1641,12 @@ def cmd_review_effective(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review_github_effective(args: argparse.Namespace) -> int:
+    # JSON is the sole form, for the same reason as review-effective above.
+    print(json.dumps(resolve_review_github_effective(args), sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -1600,6 +1705,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     effective.add_argument("--repo-root")
     effective.set_defaults(func=cmd_review_effective)
+
+    github_effective = subcommands.add_parser(
+        "review-github-effective",
+        help="print effective on_draft.github / on_ready.github reviewer configuration as JSON",
+    )
+    github_effective.add_argument("--repo-root")
+    github_effective.set_defaults(func=cmd_review_github_effective)
     return parser
 
 

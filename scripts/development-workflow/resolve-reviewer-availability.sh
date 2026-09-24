@@ -37,6 +37,7 @@ case "$owner" in */*|.|..) fail 'invalid owner' ;; esac
 case "$repo" in */*|.|..) fail 'invalid repo' ;; esac
 case "$runner_kind" in claude|cursor|codex|unknown) ;; *) fail 'unsupported runner-kind' ;; esac
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 for dependency in python3 jq mktemp rm sleep cat; do
@@ -361,9 +362,16 @@ probe_hosted() {
   if [ "$entry" = coderabbit ]; then
     probe_context=coderabbit-parser
     clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
-    run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B \
-      "$SCRIPT_DIR/reviewer_preflight_coderabbit.py" --mode enabled-bool \
-      "$repo_root/.coderabbit.yaml" || rc=$?
+    # Invoked as `-B -c <script>` (not a direct script path) so a test-mode
+    # python3 stub that intercepts "$1=-B $2=-c" to plant an ImportError
+    # (T-22 dependency-remedy case) still sees the same argv shape it saw
+    # before this probe was extracted into reviewer_preflight_coderabbit.py.
+    run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B -c '
+import os, sys
+sys.path.insert(0, os.environ["REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR"])
+import reviewer_preflight_coderabbit as _rpc
+sys.exit(_rpc.main(["--mode", "enabled-bool", sys.argv[1]]))
+' "$repo_root/.coderabbit.yaml" || rc=$?
     if [ "$rc" = 4 ]; then
       probe_context=coderabbit-dependency
       detail=$(cat "$work_dir/probe.err")
