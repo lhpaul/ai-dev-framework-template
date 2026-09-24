@@ -448,6 +448,13 @@ branch implies.
 7. Does every catalogue entry read generally — no person's name, no document
    title, no wording that only makes sense to someone who saw the original
    incident?
+8. When a PR touches escalation or stop guidance: are genuinely open axes
+   reported separately from axes settled by specification; does every
+   determinable citation — including inside an otherwise-incomplete, mixed
+   report — carry its own `Conforms` / `Departs` / `Not yet implemented`
+   declaration; does the requested decision cover only the open axes; and is
+   a `Departs` citation never used as support? See
+   [`architecture-decision-escalation.md`](docs/workflow/development-workflow/architecture-decision-escalation.md).
 
 ---
 

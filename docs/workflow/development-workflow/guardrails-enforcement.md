@@ -477,6 +477,34 @@ silent skip. Every stop must appear in the run summary under a "Stops" or
 "Blocked" section with its named cause, the affected item, and the unblocking
 action.
 
+### `architecture_decision` escalation content
+
+When a stop's named cause is `architecture_decision`, the stop message's third
+element (the human action required to unblock) is additionally shaped by the
+axis-separated coverage analysis defined in the canonical page
+[`architecture-decision-escalation.md`](architecture-decision-escalation.md).
+The three baseline stop elements above are **unchanged and still required** —
+this shapes element 3 only, and is never a replacement for any of the three:
+
+- For a **complete** escalation report (no citation whose conformance or
+  substance could not be determined), the required human action names the
+  **genuinely open axes only** — never settled axes.
+- For an **incomplete** report under the canonical page's malformed-input
+  rows, the required human action instead supplies what that rule names: the
+  missing question or its source, a redone decomposition, the missing
+  conformance evidence, or confirmation of a citation's substance.
+- A **substance-confirmation** request is stated **only where a reviewer or a
+  human has actually raised** the citation's substance in question and the
+  runner genuinely cannot resolve it — internal runner uncertainty alone,
+  absent an actually raised question, does not trigger this request (the
+  canonical page's raised-question gate).
+- Where a malformed-input request is combined with genuinely open axes in the
+  same report, the required human action names both, and the report is
+  incomplete regardless of how many axes it also settles or leaves open.
+
+See the canonical page for the full vocabulary, mandatory report outline, and
+worked example; this section states the stop-message shaping rule only.
+
 ---
 
 ## 6. Unreadable / Contradictory Config Rule
