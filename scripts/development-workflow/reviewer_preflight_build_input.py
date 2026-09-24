@@ -106,9 +106,17 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     # cannot affect this run, and would run ahead of the engine's own fixed
     # prerequisite order (stage-set resolvability, then the empty-remaining-
     # stages short-circuit, both of which must be able to win first). An
-    # unresolved remaining-stage set (missing --remaining-stages) defers
-    # entirely to the engine's own prerequisite-failed handling for that.
-    if remaining_stages is None:
+    # unresolved remaining-stage set (missing --remaining-stages), or one
+    # containing a token classify()'s own validation would reject, must defer
+    # entirely to the engine's own prerequisite-failed handling for that —
+    # screening malformed_buckets against an invalid stage set here would let
+    # this module's shell-level malformed-list stop preempt the engine's
+    # prerequisite-failed verdict for the stage set itself, which the fixed
+    # order requires to win first.
+    stage_set_valid = remaining_stages is not None and all(
+        isinstance(stage, str) and stage in ALL_BUCKETS for stage in remaining_stages
+    )
+    if not stage_set_valid:
         malformed_buckets = []
     else:
         malformed_buckets = [bucket for bucket in malformed_buckets if bucket in remaining_stages]

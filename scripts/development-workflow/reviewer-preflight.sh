@@ -192,21 +192,33 @@ case "$mode" in
     fetch_ref "$target_base" || true
     shared_ref="origin/$target_base"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, not the branch)"
-    # The branch in force for Step 7's own hosted reviewers is always the
-    # remote copy (GitHub reads from origin, not whatever a local checkout
-    # happens to have) — refresh from the remote and prefer it whenever it
-    # resolves, even when a local copy also exists and could be stale or
-    # diverged (branch-reuse validation treats that divergence as
-    # diagnostic, not something this preflight may silently prefer around).
-    # Only degrade to the local-only copy when the branch has not been
-    # pushed to the remote yet.
+    # The branch in force for Step 7's own hosted reviewers is whichever of
+    # the local checkout and the remote copy is actually ahead: GitHub reads
+    # from origin (so a local checkout that is behind must not shadow a
+    # disabling push already on the remote — the earlier stale-local
+    # finding), but a local checkout with genuinely unpushed commits is what
+    # will actually become the PR once pushed, so preferring the remote
+    # there would just as wrongly read older, already-superseded content.
+    # True divergence (neither is an ancestor of the other, e.g. an amended
+    # or rebased local branch) cannot be resolved by "ahead" comparison at
+    # all; fail closed rather than silently guessing which copy is real.
     fetch_ref "$branch" || true
-    if git -C "$repo_root" rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1; then
+    local_resolves=0 origin_resolves=0
+    git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1 && local_resolves=1
+    git -C "$repo_root" rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1 && origin_resolves=1
+    if [ "$local_resolves" = 1 ] && [ "$origin_resolves" = 1 ]; then
+      if git -C "$repo_root" merge-base --is-ancestor "origin/$branch" "$branch" 2>/dev/null; then
+        platform_ref="$branch"
+        checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch; the local copy is at or ahead of the remote)"
+      elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$branch" 2>/dev/null; then
+        platform_ref="origin/$branch"
+        checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote; the local copy is behind)"
+      else
+        fail "the local and remote copies of branch '$branch' have diverged (neither is an ancestor of the other) — reconcile them (pull/rebase, or push local changes) before re-running; this preflight cannot determine which copy's .coderabbit.yaml is the branch in force"
+      fi
+    elif [ "$origin_resolves" = 1 ]; then
       platform_ref="origin/$branch"
-      checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote)"
-    elif git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1; then
-      platform_ref="$branch"
-      checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch; not yet pushed to the remote)"
+      checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, resolved from the remote; no local copy of it exists in this checkout)"
     else
       platform_ref="$branch"
       checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch, no pull request yet)"

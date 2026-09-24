@@ -375,6 +375,83 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data.get('OUTCOME') == 'passed',
         data,
     )
+    # An unrecognized --remaining-stages token must let the engine's own
+    # stage-set validation win (prerequisite-failed, exit 2), not have this
+    # module's malformed-bucket screen retain a same-repo malformed bucket
+    # and preempt that with a tooling failure (exit 3) instead.
+    rc, data, out, err = run(
+        repo12, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.runner,not-a-real-bucket', '--pr-state', 'on_draft.runner=draft,not-a-real-bucket=draft',
+        expected=2,
+    )
+    check(
+        'T-12 invalid remaining-stages token yields prerequisite-failed, not tooling failure',
+        data.get('OUTCOME') == 'prerequisite-failed',
+        data,
+    )
+
+    # T-13: branch-resume reads a genuinely local-ahead branch (unpushed
+    # work), the mirror case of T-11 — the earlier stale-local fix must not
+    # overcorrect into unconditionally preferring the remote when the local
+    # checkout is what will actually become the PR once pushed.
+    repo13 = root / 'repo13'
+    write_repo(repo13, coherent_shared, coherent_coderabbit)
+    remote13 = root / 'remote13.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo13), str(remote13)], check=True)
+    git(repo13, 'remote', 'set-url', 'origin', str(remote13))
+    git(repo13, 'checkout', '-q', '-b', 'feature/local-ahead-test')
+    git(repo13, 'push', '-q', 'origin', 'feature/local-ahead-test')
+    git(repo13, 'fetch', '-q', 'origin', 'feature/local-ahead-test')
+    (repo13 / '.coderabbit.yaml').write_text(disabled_coderabbit)
+    git(repo13, 'add', '-A')
+    git(repo13, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'disable, not yet pushed')
+    check(
+        'T-13 fixture: local is ahead of the remote-tracking ref',
+        git(repo13, 'rev-parse', 'HEAD').stdout.strip()
+        != git(repo13, 'rev-parse', 'refs/remotes/origin/feature/local-ahead-test').stdout.strip(),
+        None,
+    )
+    rc, data, out, err = run(
+        repo13, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/local-ahead-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=1,
+    )
+    check(
+        'T-13 branch-resume reads the local-ahead branch over a stale remote',
+        data.get('OUTCOME') == 'blocked',
+        data,
+    )
+    check(
+        'T-13 branch-resume local-ahead platform ref does not name origin/',
+        data.get('CHECKED_PLATFORM_CONFIG_REF', '').startswith('feature/local-ahead-test:'),
+        data,
+    )
+
+    # T-14: branch-resume fails closed on genuine divergence — neither copy
+    # is an ancestor of the other, so there is no safe "ahead" answer.
+    repo14 = root / 'repo14'
+    write_repo(repo14, coherent_shared, coherent_coderabbit)
+    remote14 = root / 'remote14.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo14), str(remote14)], check=True)
+    git(repo14, 'remote', 'set-url', 'origin', str(remote14))
+    git(repo14, 'checkout', '-q', '-b', 'feature/diverged-test')
+    base_sha = git(repo14, 'rev-parse', 'HEAD').stdout.strip()
+    (repo14 / '.coderabbit.yaml').write_text(disabled_coderabbit)
+    git(repo14, 'add', '-A')
+    git(repo14, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'remote-side change')
+    git(repo14, 'push', '-q', 'origin', 'feature/diverged-test')
+    git(repo14, 'reset', '-q', '--hard', base_sha)
+    (repo14 / 'other-file.txt').write_text('local-side change\n')
+    git(repo14, 'add', '-A')
+    git(repo14, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'local-side change')
+    git(repo14, 'fetch', '-q', 'origin', 'feature/diverged-test')
+    rc, data, out, err = run(
+        repo14, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/diverged-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-14 branch-resume fails closed on true divergence', 'OUTCOME' not in data, data)
+    check('T-14 branch-resume divergence message names the branch', 'diverged' in err, err)
 
 print(f'\nPassed: {passed}')
 PY
