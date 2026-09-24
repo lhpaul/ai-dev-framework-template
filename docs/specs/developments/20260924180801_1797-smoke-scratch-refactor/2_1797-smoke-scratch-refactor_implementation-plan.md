@@ -104,7 +104,7 @@ configuration value dependency.
 
 ### Plan authoring rigor — per-rule outcome record
 
-Plan revision: `87ba5a35`
+Plan revision: `3e6b3f89`
 
 | Rule | Outcome | Rationale / first external inspection finding |
 | --- | --- | --- |
