@@ -91,7 +91,7 @@ trap cleanup EXIT
 # a git repository) surfaces as a comparison against an empty string on both
 # sides, and the real failure is already caught by the earlier --repo-root
 # readable-directory check.
-before_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true)
+before_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true) # workflow-shell-guard: allow SH001 - both sides of the AC-2 diff compare equal empty strings on failure; the readable-directory check above already catches a bad --repo-root
 
 clamp_bound() {
   local remaining
@@ -299,8 +299,7 @@ if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && ! jq -e . "$output
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
 
-# workflow-shell-guard: allow SH001 - same rationale as before_porcelain above.
-after_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true)
+after_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true) # workflow-shell-guard: allow SH001 - same rationale as before_porcelain above
 if [ "$before_porcelain" != "$after_porcelain" ]; then
   fail 'reviewer-preflight.sh must not change the working tree (AC-2); the checkout differs after this run'
 fi
