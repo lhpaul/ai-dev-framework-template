@@ -212,7 +212,12 @@ def classify_platform_in_bucket(
     if cfg.get("auto_review_enabled") is False:
         reasons.append("review-disabled")
     stage_pr_state = pr_state.get(bucket)
-    if stage_pr_state == "draft" and cfg.get("drafts") is False:
+    # coderabbit.md's documented default: CodeRabbit cannot review drafts
+    # both when `drafts: false` is explicit *and* when the key is absent
+    # (`cfg["drafts"] is None`) — only an explicit `drafts: true` preserves
+    # draft reachability. Only `is not True` matches that "false or absent"
+    # rule; checking `is False` alone would miss the absent case.
+    if stage_pr_state == "draft" and cfg.get("drafts") is not True:
         reasons.append("stage-excluded")
     base_branches = cfg.get("base_branches")
     if base_branches is not None and not base_branch_covered(base_branches, target_base):

@@ -191,9 +191,19 @@ case "$mode" in
   branch-resume)
     fetch_ref "$target_base" || true
     shared_ref="origin/$target_base"
-    platform_ref="$branch"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, not the branch)"
-    checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch, no pull request yet)"
+    # A resume on another machine or checkout can find the workflow branch
+    # present only as a remote-tracking ref. A bare branch name that does
+    # not resolve locally must not fall back to a check-inconclusive read
+    # when it could instead read the real, current remote copy.
+    if git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1; then
+      platform_ref="$branch"
+      checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch, no pull request yet)"
+    else
+      fetch_ref "$branch" || true
+      platform_ref="origin/$branch"
+      checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, resolved from the remote; no local copy of it exists in this checkout)"
+    fi
     ;;
   pr-resume)
     pr_json_rc=0
@@ -350,6 +360,10 @@ print_kv_escaped OUTCOME_LABEL "$(jq -r '.outcome_label' "$output_json")"
 print_kv_escaped CHECKED_SHARED_CONFIG_REF "$(jq -r '.checked_shared_config_ref' "$output_json")"
 print_kv_escaped CHECKED_PLATFORM_CONFIG_REF "$(jq -r '.checked_platform_config_ref' "$output_json")"
 print_kv_escaped LOCAL_OVERRIDE_STATE "$(jq -r '.local_override_state' "$output_json")"
+# Only present when OUTCOME=prerequisite-failed; the orchestrator's stop
+# message needs this to name the specific failed input (Protocol 91's
+# named-stop contract), not just the outcome label.
+print_kv_escaped PREREQUISITE_DETAIL "$(jq -r '.prerequisite_detail // ""' "$output_json")"
 platform_count=$(jq -er '.platforms | length' "$output_json") || fail 'cannot read platform count from reviewer_preflight.py output'
 print_kv_escaped PLATFORM_COUNT "$platform_count"
 i=0

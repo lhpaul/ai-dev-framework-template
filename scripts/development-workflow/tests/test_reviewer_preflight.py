@@ -73,6 +73,19 @@ class OutcomeMatrixTests(unittest.TestCase):
         entry = platform(result, "coderabbit")
         self.assertEqual(entry["reasons"], ["stage-excluded"])
 
+    def test_stage_excluded_on_absent_drafts_setting(self):
+        # coderabbit.md's documented default: CodeRabbit declines drafts both
+        # when `drafts: false` is explicit and when the key is absent
+        # (`drafts: None` — "no repository commitment either way" at the
+        # config-reader layer, but Step 7a's own documented interpretation
+        # of that absence is still "cannot review drafts").
+        payload = base_payload()
+        payload["platform_configs"]["coderabbit"]["drafts"] = None
+        result = rp.classify(payload)
+        self.assertEqual(result["outcome"], "blocked")
+        entry = platform(result, "coderabbit")
+        self.assertEqual(entry["reasons"], ["stage-excluded"])
+
     def test_stage_excluded_resolved_by_draft_to_ready_adjustment(self):
         # Decision 7: the shell-supplied pr_state already reflects the
         # post-adjustment state, so a drafts:false platform dispatched

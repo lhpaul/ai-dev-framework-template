@@ -86,6 +86,7 @@ disabled_coderabbit = (
     'reviews:\n'
     '  auto_review:\n'
     '    enabled: false\n'
+    '    drafts: true\n'
 )
 
 with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
@@ -119,6 +120,14 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # T-3: missing --remaining-stages is prerequisite-failed, exit 2.
     rc, data, out, err = run(repo1, '--mode', 'pre-dispatch', '--target-base', 'develop', expected=2)
     check('T-3 missing remaining-stages is prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
+    # Protocol 91's named-stop contract needs the specific failed input in
+    # the default (non-JSON) report, not only in --json output, to name a
+    # concrete unblock action.
+    check(
+        'T-3 prerequisite-failed report names the specific failed input',
+        bool(data.get('PREREQUISITE_DETAIL')),
+        data,
+    )
 
     # T-4: explicit empty --remaining-stages is no-review-remaining, exit 0.
     rc, data, out, err = run(
@@ -258,6 +267,30 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         'T-9 unresolved shared ref names the ref, not "absent"',
         'nonexistent-target-branch' in err and 'did not resolve' in err,
         err,
+    )
+
+    # T-10: branch-resume resolves a branch that exists only as a
+    # remote-tracking ref (a resume on another machine or checkout) instead
+    # of degrading to check-inconclusive.
+    repo10 = root / 'repo10'
+    write_repo(repo10, coherent_shared, coherent_coderabbit)
+    git(repo10, 'checkout', '-q', '-b', 'feature/remote-only-test')
+    (repo10 / '.coderabbit.yaml').write_text(disabled_coderabbit)
+    git(repo10, 'add', '-A')
+    git(repo10, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'disable on remote-only branch')
+    git(repo10, 'fetch', '-q', 'origin', 'feature/remote-only-test')
+    git(repo10, 'checkout', '-q', 'develop')
+    git(repo10, 'branch', '-D', 'feature/remote-only-test')
+    rc, data, out, err = run(
+        repo10, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/remote-only-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=1,
+    )
+    check('T-10 branch-resume resolves a remote-only branch', data.get('OUTCOME') == 'blocked', data)
+    check(
+        'T-10 branch-resume remote-only platform ref names origin/',
+        'origin/feature/remote-only-test' in data.get('CHECKED_PLATFORM_CONFIG_REF', ''),
+        data,
     )
 
 print(f'\nPassed: {passed}')
