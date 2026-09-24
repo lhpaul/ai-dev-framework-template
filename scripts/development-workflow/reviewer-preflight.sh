@@ -90,7 +90,7 @@ created_pr_ref=
 cleanup() {
   local rc=$?
   if [ -n "$created_pr_ref" ]; then
-    git -C "$repo_root" update-ref -d "$created_pr_ref" >/dev/null 2>&1 || true
+    git -C "$repo_root" update-ref -d "$created_pr_ref" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - best-effort cleanup inside the EXIT trap; the process is already exiting and there is no further step that could react to this failure
   fi
   [ -z "$work_dir" ] || rm -rf -- "$work_dir"
   return "$rc"
@@ -142,12 +142,25 @@ run_bounded() {
 }
 
 read_ref_file() {
-  # read_ref_file <ref> <path-in-repo> <outfile> -> 0 present, 1 absent, 124 timeout
+  # read_ref_file <ref> <path-in-repo> <outfile>
+  # -> 0 present, 1 absent (path missing at a ref that itself resolves),
+  #    2 ref-invalid-or-read-failed (do not treat as "file absent"), 124 timeout
   local ref=$1 path=$2 outfile=$3 rc=0
   clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
   run_bounded "$bound" "$outfile" "$work_dir/read.err" \
     git -C "$repo_root" show "${ref}:${path}" || rc=$?
-  return "$rc"
+  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 124 ] && return 124
+  # A `git show` failure for a reason other than a bounded timeout is only
+  # safe to read as "this file is absent" when the ref itself resolves — a
+  # ref that does not resolve (bad branch name, unfetched remote, transient
+  # git error) must not be silently read as "file absent," or a caller can
+  # report a coherent verdict on a shared or platform configuration it never
+  # actually read.
+  if git -C "$repo_root" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 2
 }
 
 fetch_ref() {
@@ -212,9 +225,13 @@ esac
 # override.
 shared_dir="$work_dir/shared-config"
 mkdir -p "$shared_dir"
-if read_ref_file "$shared_ref" .ai-dev-workflow.yaml "$shared_dir/.ai-dev-workflow.yaml"; then :; else
-  : >"$shared_dir/.ai-dev-workflow.yaml"
-fi
+shared_read_rc=0
+read_ref_file "$shared_ref" .ai-dev-workflow.yaml "$shared_dir/.ai-dev-workflow.yaml" || shared_read_rc=$?
+case "$shared_read_rc" in
+  0) : ;;
+  1) : >"$shared_dir/.ai-dev-workflow.yaml" ;;
+  *) fail "cannot read $shared_ref:.ai-dev-workflow.yaml (read_ref_file exit $shared_read_rc): the shared reviewer configuration ref did not resolve or the bounded read did not complete — this is not the same as the file being absent" ;;
+esac
 overrides_json="$work_dir/overrides.json"
 overrides_rc=0
 clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
@@ -250,9 +267,13 @@ coderabbit_json="$work_dir/coderabbit.json"
 coderabbit_raw="$work_dir/coderabbit-raw.yaml"
 coderabbit_read_rc=0
 read_ref_file "$platform_ref" .coderabbit.yaml "$coderabbit_raw" || coderabbit_read_rc=$?
-if [ "$coderabbit_read_rc" = 124 ]; then
+if [ "$coderabbit_read_rc" = 124 ] || [ "$coderabbit_read_rc" = 2 ]; then
+  # 124: bounded read timed out. 2: the platform ref itself did not resolve
+  # or the read otherwise failed — not the same as the file being absent at
+  # a ref that does resolve, and must not be reported as a readable-but-
+  # default configuration.
   coderabbit_read=check-inconclusive
-elif [ "$coderabbit_read_rc" != 0 ]; then
+elif [ "$coderabbit_read_rc" = 1 ]; then
   # Missing file: CodeRabbit's own default is auto_review disabled (matches
   # reviewer_preflight_coderabbit.load_coderabbit_config's missing-file case).
   printf '{}\n' >"$coderabbit_raw"

@@ -30,8 +30,13 @@ from reviewer_preflight_coderabbit import base_branch_covered
 # A value supported in one bucket is not automatically supported in another —
 # review.on_draft.runner, review.on_draft.github, and review.on_ready.github
 # each have their own list, matching .ai-dev-workflow.yaml's own comments and
-# pr-review-loop.sh's shipped GitHub reviewer roster.
-SUPPORTED_RUNNER = frozenset({"claude", "cursor", "codex"})
+# pr-review-loop.sh's shipped GitHub reviewer roster. review.on_draft.runner
+# also accepts the two hosted Step 7a reviewers resolve-reviewer-availability.sh
+# probes there (probe_hosted, entry case coderabbit|codex-github) alongside the
+# three local-runtime driving-session values — the same platforms classify
+# generically below (coderabbit reads .coderabbit.yaml regardless of bucket;
+# codex-github is Undetermined/no-readable-surface in every bucket, Decision 8).
+SUPPORTED_RUNNER = frozenset({"claude", "cursor", "codex", "coderabbit", "codex-github"})
 SUPPORTED_GITHUB = frozenset(
     {
         "greptile",

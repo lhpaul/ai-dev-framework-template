@@ -124,6 +124,30 @@ class OutcomeMatrixTests(unittest.TestCase):
         self.assertEqual(entry["reasons"], ["value-not-supported"])
         self.assertIn("on_ready.github", entry["setting"])
 
+    def test_hosted_reviewers_supported_in_runner_bucket(self):
+        # resolve-reviewer-availability.sh (Step 7a) accepts coderabbit and
+        # codex-github in review.on_draft.runner (probe_hosted, entry case
+        # coderabbit|codex-github) alongside the three local-runtime driving-
+        # session values; the preflight must not reject an existing valid
+        # configuration as value-not-supported.
+        payload = base_payload(
+            remaining_stages=["on_draft_runner"],
+            pr_state={"on_draft_runner": "draft"},
+            shared={"on_draft_runner": ["coderabbit", "codex-github"]},
+            resolved={"on_draft_runner": ["coderabbit", "codex-github"]},
+        )
+        result = rp.classify(payload)
+        coderabbit_entry = platform(result, "coderabbit")
+        codex_github_entry = platform(result, "codex-github")
+        self.assertNotIn("value-not-supported", coderabbit_entry["reasons"])
+        self.assertNotIn("value-not-supported", codex_github_entry["reasons"])
+        # coderabbit still reads its own repo-hosted config regardless of
+        # which bucket it is configured in.
+        self.assertEqual(coderabbit_entry["verdict"], "operable")
+        # codex-github has no repo-local config in any bucket (Decision 8).
+        self.assertEqual(codex_github_entry["verdict"], "undetermined")
+        self.assertIn("no-readable-surface", codex_github_entry["reasons"])
+
     def test_multi_reason_aggregation_on_one_verdict(self):
         payload = base_payload()
         payload["platform_configs"]["coderabbit"].update(

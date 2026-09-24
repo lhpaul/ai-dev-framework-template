@@ -242,5 +242,23 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     parsed = json.loads(out)
     check('T-8 json output mode', parsed.get('outcome') == 'passed', parsed)
 
+    # T-9: a shared-config ref that does not resolve at all (never pushed,
+    # bad branch name) is not the same as ".ai-dev-workflow.yaml is absent at
+    # a ref that does resolve" — treating both alike would let the preflight
+    # report a coherent verdict on a shared configuration it never read.
+    # fetch_ref's own remote-add-to-self loopback means `origin/<name>` never
+    # existing is reachable simply by never having pushed that branch name.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'nonexistent-target-branch',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-9 unresolved shared ref fails closed, not empty-config', 'OUTCOME' not in data, data)
+    check(
+        'T-9 unresolved shared ref names the ref, not "absent"',
+        'nonexistent-target-branch' in err and 'did not resolve' in err,
+        err,
+    )
+
 print(f'\nPassed: {passed}')
 PY

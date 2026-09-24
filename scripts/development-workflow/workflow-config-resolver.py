@@ -1252,7 +1252,12 @@ def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tup
     present = platforms_present or phase_present
     structure_error = platforms_error or phase_error
     if bucket == "on_draft_github":
-        derived = [entry for entry in platforms_list if entry not in phase_list]
+        # workflow_config_review_on_draft_github only emits anything when
+        # `phase_after_clean` itself has entries; an empty/absent
+        # `phase_after_clean` means the legacy config never split draft from
+        # ready, and the full `platforms` list belongs to on_ready.github
+        # only (the `else` branch below), not to both buckets.
+        derived = [entry for entry in platforms_list if entry not in phase_list] if phase_list else []
     else:
         derived = phase_list if phase_list else platforms_list
     return derived, present, structure_error
@@ -1260,13 +1265,37 @@ def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tup
 
 def review_github_value(data: dict[str, Any], bucket: str, path: list[str]) -> tuple[Any, bool, bool]:
     """Resolve modern ``on_draft.github`` / ``on_ready.github`` before the
-    supported legacy alias, mirroring ``review_runner_value``'s precedence: a
-    present modern key wins even when empty or malformed.
+    supported legacy alias.
+
+    Unlike ``review_runner_value`` (whose present-even-if-empty precedence
+    is deliberate for Step 7a's own runner classification), this mirrors
+    ``workflow_config_review_on_draft_github`` / ``_on_ready_github`` in
+    workflow-lib.sh exactly, because *this* resolver's whole purpose is to
+    report the same reviewer list Step 7 (``pr-review-loop.sh``) actually
+    dispatches: those shell functions fall through to the legacy alias
+    whenever the modern list emits no entries (absent **or** explicitly
+    empty), not only when it is absent. A malformed modern value (wrong
+    type) still wins outright — a malformed ancestor must not silently
+    regain legacy coverage.
     """
     modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(data, path)
-    if modern_present or modern_structure_error:
+    if modern_structure_error:
         return modern_raw, modern_present, modern_structure_error
-    return review_github_legacy_derived_value(data, bucket)
+    modern_list, modern_state = review_runner_state(modern_raw, modern_present)
+    if modern_state == "malformed" or modern_list:
+        # A malformed leaf value (e.g. a scalar instead of a list) must not
+        # silently regain legacy coverage, same as a structurally malformed
+        # ancestor above. A present, well-formed, non-empty list also wins
+        # outright — only "nothing here" falls through.
+        return modern_raw, modern_present, modern_structure_error
+    legacy_raw, legacy_present, legacy_structure_error = review_github_legacy_derived_value(data, bucket)
+    if legacy_present or legacy_structure_error:
+        return legacy_raw, legacy_present, legacy_structure_error
+    # Neither the modern key nor the legacy alias has anything to offer;
+    # report the modern key's own state (absent vs. explicitly empty) rather
+    # than the legacy derivation's, which is always "absent" once both of
+    # its own source keys are also absent.
+    return modern_raw, modern_present, modern_structure_error
 
 
 def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
@@ -1435,8 +1464,9 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     ``review_runner_state`` (previously runner-only) to both GitHub buckets.
     Also mirrors ``workflow_config_review_on_draft_github`` /
     ``workflow_config_review_on_ready_github`` in workflow-lib.sh: when the
-    **shared** config's modern nested key is absent, the shared-config legacy
-    ``review.platforms`` / ``review.phase_after_clean`` fallback is applied
+    **shared** config's modern nested key is absent or resolves to an empty
+    list, the shared-config legacy ``review.platforms`` /
+    ``review.phase_after_clean`` fallback is applied
     (``review_github_value``/``review_github_legacy_derived_value``) so a
     downstream repository still on the legacy keys (AGENTS.md: "remain
     accepted for one transition release") gets the same reviewer list here

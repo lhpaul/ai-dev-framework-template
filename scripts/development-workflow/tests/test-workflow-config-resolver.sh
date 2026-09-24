@@ -1785,13 +1785,28 @@ write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent]'
 g7_json="$(review_github_effective_json)"
 run_test "review-github-effective legacy on_ready.github falls back to platforms" '["coderabbit","pr-agent"]' "$(jq -c '.effective_on_ready_github' <<< "$g7_json")"
 
-# A present modern key — even an explicitly empty one — still wins over the
-# legacy alias, matching review_runner_value's documented precedence for
-# on_draft.runner (a malformed/empty modern key must not silently regain
-# legacy coverage).
-write_review_effective_fixture 'review:' '  on_draft:' '    github: []' '  platforms: [coderabbit]'
+# A present but explicitly *empty* modern key, unlike on_draft.runner's
+# review_runner_value precedent, falls through to the legacy alias when one
+# is present — mirroring workflow_config_review_on_draft_github's own
+# `grep -q .` check (empty output falls through, same as absent), because
+# this resolver's purpose is to report what Step 7 actually dispatches.
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []' '  platforms: [coderabbit, pr-agent]' '  phase_after_clean: [pr-agent]'
 g8_json="$(review_github_effective_json)"
-run_test "review-github-effective present empty modern key beats legacy" empty "$(jq -r '.effective_on_draft_github_state' <<< "$g8_json")"
+run_test "review-github-effective empty modern key falls through to legacy" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g8_json")"
+
+# A present but *malformed* modern key still wins outright, even when a
+# legacy alias is present — a malformed leaf value must not silently regain
+# legacy coverage, same as a malformed ancestor (review_runner_value's
+# documented precedent, which this deliberately does keep).
+write_review_effective_fixture 'review:' '  on_draft:' '    github: pr-agent' '  platforms: [coderabbit]' '  phase_after_clean: [coderabbit]'
+g8b_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed modern key beats legacy" malformed "$(jq -r '.effective_on_draft_github_state' <<< "$g8b_json")"
+
+# A present but empty modern key with no legacy alias present at all keeps
+# reporting its own "empty" state, not the legacy derivation's "absent".
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []'
+g8c_json="$(review_github_effective_json)"
+run_test "review-github-effective empty modern key with no legacy stays empty" empty "$(jq -r '.effective_on_draft_github_state' <<< "$g8c_json")"
 
 # The local override still never sees the legacy alias (workflow-lib.sh's
 # workflow_config_review_local_list_if_declared reads only the modern local
