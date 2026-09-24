@@ -112,6 +112,18 @@ categories:
     - path: scripts/development-workflow/resolve-reviewer-availability.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for Step 7a reviewer availability resolution
+    - path: scripts/development-workflow/reviewer-preflight.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper for the reviewer preflight cross-check (#1561), invoked by Protocol 91 before an item's first mutation
+    - path: scripts/development-workflow/reviewer_preflight.py
+      mode_scope: product_repo_injection
+      note: reviewer preflight cross-check engine, invoked by reviewer-preflight.sh
+    - path: scripts/development-workflow/reviewer_preflight_build_input.py
+      mode_scope: product_repo_injection
+      note: reviewer preflight input-JSON builder, invoked by reviewer-preflight.sh
+    - path: scripts/development-workflow/reviewer_preflight_coderabbit.py
+      mode_scope: product_repo_injection
+      note: shared CodeRabbit own-configuration parser, used by both resolve-reviewer-availability.sh and reviewer-preflight.sh
     - path: scripts/development-workflow/validate-workflow-config.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for non-secret workflow configuration validation
