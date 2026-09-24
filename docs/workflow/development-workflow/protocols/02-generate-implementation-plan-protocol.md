@@ -180,6 +180,18 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - **Explicit freeze exception**: You may copy a fixed enumeration only when the spec explicitly freezes scope to a named subset; quote that spec section in the plan.
 - **Verification Log required**: Every plan must include a reproducible Verification Log (command/query, repo SHA, and resulting counts/paths that drive scope statements).
 - **Changelog fragment literal format**: When the Implementation Order includes a literal changelog fragment body for the developer to copy, it must follow the project's `**Bold Title** (#N):` bullet format (e.g., `- **Fix tech-lead CHANGELOG format** (#226): ...`). Never use conventional-commit format (`fix(scope): message`) in a changelog literal — that format is for git commit messages, not release notes. The impl agent will copy the literal verbatim; a wrong format wastes a reviewer cycle.
+- **Plan authoring rigor**: Read
+  [`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md) before
+  writing Layer-by-Layer changes. It states six portable rules (Rule 1
+  sampling an external output distribution; Rule 2 one normative statement
+  per fact; Rule 3 counts of codebase artifacts; Rule 4 independent
+  verification of existence claims; Rule 5 expectations at the composed call
+  site; Rule 6 a conditional obligation names its scope) that apply to every
+  plan this protocol produces, including Refactor / no-spec plans. Record
+  firing-rule evidence in the plan itself — the Verification Log and/or the
+  template's optional "Factual claim evidence" subsection — never only in PR
+  comments. Rule 2 fires on every non-empty plan; record it Not applicable
+  only for an essentially empty plan.
 - **Verification command simplicity**: Verification steps in Implementation Order steps must be simple and human-readable. Follow these rules:
   - Prefer prose assertions ("confirm the output lists only the renamed files") over exact file counts or byte counts.
   - Avoid multi-flag grep one-liners that are difficult to verify by reading (e.g., complex exclusion scopes, self-referencing exclusion globs, chained pipes with hard-coded counts).
@@ -457,7 +469,32 @@ If no blocking human decision remains:
    - Verification support: Checked - broad claims cite Verification Log evidence.
    - Complex workflow decision-gate matrix: Not applicable - this plan does not add or modify workflow decision-gate behavior.
    - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
+
+   ### Plan authoring rigor — per-rule outcome record
+
+   Plan revision: `<git rev-parse --short HEAD of plan branch>`
+
+   | Rule | Outcome | Rationale / first external inspection finding |
+   | --- | --- | --- |
+   | Rule 1 | Not applicable | No design depends on external free-text output. |
+   | Rule 2 | Satisfied | Single assertion per fact; see Verification Log. |
+   | … | … | … |
    ```
+
+   The per-rule outcome record documents that:
+
+   <!-- markdown-heuristic-disable COUNT001 -->
+   - All six rules appear exactly once.
+   - Outcomes use the three display labels only (`Satisfied`, `Not applicable`,
+     `Unsatisfied`), per
+     [`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md).
+   - `Not applicable` rows include a one-line trigger rationale.
+   - Rows for Rule 1 external citations (contract, manifest, notice, protected
+     artifact) include the first-inspecting round's finding when applicable.
+   - Authors refresh the record whenever plan text changes; the revision SHA
+     must match the PR head before `ready-for-human-review`.
+   - These obligations apply to every Protocol 02 plan, including Refactor /
+     no-spec work items — there is no bypass when a product spec is absent.
 
    Before the PR is opened, verify:
 

@@ -1,236 +1,37 @@
-# Plan-Authoring Rigor for Factual Claims in Implementation Plans — Spec
+# Plan-Authoring Rigor Rules
+
+**Canonical surface**: This file is the single canonical statement of the six
+plan-authoring rules below, the outcome labels each rule resolves to, and the
+plan review gate matrix that governs the plan review backstop check. Every
+other surface (Protocol 02, `REVIEW.md`, the implementation-plan template, the
+tech-lead / implementation-plan-reviewer agent and skill files) points to this
+file rather than restating its normative text.
+
+**Historical context**: These rules originate from spec
+[`1_1496-plan-authoring-rigor_specs.md`](../../specs/developments/20260911230253_1496-plan-authoring-rigor/1_1496-plan-authoring-rigor_specs.md)
+(issue #1496). The spec remains historical product intent; this file is
+authoritative for day-to-day plan work.
 
 ---
 
-## Overview
-
-An implementation plan is read as fact. The implementer executes its steps without re-deriving them, and every later reader trusts its counts, its statements about what exists in the codebase, and its descriptions of how the system behaves. The plan review gate today reasons about the plan's diff and the plan's internal consistency, so a plan can be entirely self-consistent, survive many rounds of automated review, and still be wrong about the world outside the document.
-
-This feature gives the plan author a small set of authoring rules that make a plan's factual claims and conditional obligations verifiable, and gives the plan reviewer the matching backstop check. Each rule fires only when the plan contains a claim of the class it governs, each requires evidence recorded in the plan itself, and each resolves to an unambiguous pass or fail for a reader who re-runs the recorded evidence. The rules are derived from failure modes observed on real work items — five from a retrospective in this repository, one contributed by a downstream repository that consumes this framework. Every one of them reached a merged plan, none was caught by the review loop, and several drove wrong implementation work.
-
-Because this repository ships as a framework template, every rule must be expressed so that any repository adopting the framework inherits it unchanged, regardless of language, stack, or test runner.
-
----
-
-## Use Cases
-
-### Use Case 1: The plan author's design depends on text produced outside the project
-
-**Actor**: The plan author — the role writing an implementation plan.
-**Preconditions**: The design under consideration depends on the wording, shape, or presence of free text that some system outside this project produces — a third-party service, another team's tool, or a generative model — including any design that matches, parses, classifies, or enumerates that text.
-
-**Steps**:
-
-1. The author recognizes that the design's correctness depends on the wording or shape of output they do not control.
-2. The author checks whether the producer publishes a contract fixing the set of possible outputs, and cites it if one exists; a cited contract fixes the design's output set on its own, and no separate sampling record is needed to justify that binding.
-3. With no such contract, before committing to a design the author gathers real occurrences of that output and records the sampling under Rule 1 — or, where the population is finite and closed, provenance establishes that closure, and a single recorded command reproduces its complete membership, enumerates it that way instead.
-4. With no such contract, the author designs for an open set and states in the plan what the system does when an unseen output arrives.
-
-**Postconditions**: The plan's design and its sampling record, its enumeration record, or its cited producer contract, are in the plan. A reader can see how much of the distribution was observed, or which contract fixed it, and whether the design would survive an output the sample did not contain.
-
-**Information shown**:
-
-- The sampling record, the enumeration and the command or query that produced it, or the cited producer contract fixing the output set, as defined in Rule 1.
-- Either the cited producer contract fixing the output set, or the stated behavior on an unseen variant.
-
-**Actions available**:
-
-- Bind to a fixed set of literal outputs, when a producer contract fixing that set is cited.
-- Design tolerantly against the stable part of the output, otherwise.
-
-**Considerations**:
-
-- A large sample does not turn an observed set into a fixed one. Only the producer can fix its own output set, and only by saying so.
-- The failure this case prevents is silent and late: a design that matches every captured example passes review and then fails on the first output nobody captured.
-- Saturation — a sample no longer yielding new variants — is not itself sufficient. The plan states why the sample is adequate to the design either way, because this feature does not define a mechanical saturation threshold and treats saturation as an inherently judgment-based property.
-- A closed-population claim needs cited provenance, not only a command that currently reproduces the same list; a command alone proves only what is captured today, not that nothing more can appear.
-
----
-
-### Use Case 2: The plan author states how many artifacts exist in the codebase
-
-**Actor**: The plan author.
-**Preconditions**: The plan needs to say how many files, tests, call sites, or configuration entries of some kind exist, and the number affects scope, effort, or what an implementation step touches.
-
-**Steps**:
-
-1. The author derives the number directly, with a command or query run against the repository.
-2. The author records the derivation under Rule 3, together with the population the number counts over.
-3. Where the number decides which artifacts a step touches, the author keeps the enumeration the derivation produced and carries it into the step.
-
-**Postconditions**: Every quantity in the plan is reproducible by a reader at the recorded revision, and every step whose scope is set by a quantity names the artifacts, not only the count.
-
-**Information shown**:
-
-- The command or query, the repository revision it was run at, and the population it counts over.
-- The enumeration, wherever a quantity decides scope.
-
-**Actions available**:
-
-- Derive a further quantity directly with its own command.
-- Combine quantities arithmetically, only under the partition condition in Rule 3.
-
-**Considerations**:
-
-- The failure this case prevents is a number that is arithmetically defensible and factually wrong, because the sets subtracted were not parts of one homogeneous whole. Such a number does not merely misinform: it sends the implementer to touch artifacts the change has nothing to do with.
-
----
-
-### Use Case 3: The plan author receives a claim that something does or does not exist
-
-**Actor**: The plan author, working from a delegated investigation, an earlier document, or a prior conversation.
-**Preconditions**: A claim of the form "this test already exists", "there is no such helper", or "that concern is already covered" is about to enter the plan, and its support is not a reproducible search recorded in the plan.
-
-**Steps**:
-
-1. The author treats the claim as unverified regardless of its source.
-2. The author runs a direct search against the repository, covering the places the thing could live.
-3. The author records the search and its result under Rule 4, and either states the claim with that support or drops it.
-
-**Postconditions**: Every existence claim in the plan has support a reader can reproduce.
-
-**Information shown**:
-
-- The search, the revision it was run at, and, for a non-existence claim, the places it covered.
-
-**Actions available**:
-
-- State the claim, with its recorded search.
-- Drop the claim and plan without it.
-
-**Considerations**:
-
-- A delegated summary can be confidently wrong in a way that reads exactly like a correct one. The cost of re-running the search is a minute; the cost of a fabricated fact is an implementation step built on something that was never there.
-- A plan-wide assertion that everything was checked is itself one of these claims, and the weakest kind, because it is the one no reader can reproduce.
-
----
-
-### Use Case 4: The plan author changes a unit that several consumers depend on
-
-**Actor**: The plan author.
-**Preconditions**: The plan changes, deletes, or replaces a function, guard, rule, or check that has more than one consumer, and those consumers sit on an ordered path where an earlier branch can decide the outcome before a later one is reached.
-
-**Steps**:
-
-1. The author enumerates every consumer of the unit with a reproducible search recorded at a repository revision, the same evidentiary standard Rule 3 applies to a count's derivation.
-2. For each consumer, the author works out the outcome after the change, including for consumers the plan does not otherwise touch.
-3. The author writes every expected-behavior statement against a consumer site from that enumeration, naming the path through the chain that produces the outcome.
-
-**Postconditions**: The plan's expectations describe what the system does, not only what the changed unit returns.
-
-**Information shown**:
-
-- The consumer enumeration with the outcome at each consumer.
-- For each expectation, the observation point and the path that reaches it.
-
-**Actions available**:
-
-- Proceed with the change, with expectations anchored at real consumer sites.
-- Narrow the change when a consumer outcome turns out to be unacceptable.
-
-**Considerations**:
-
-- The two failures this case prevents are symmetric: a branch removed whose absence lets an earlier consumer answer wrongly, and a branch left in place that quietly absorbs inputs the change was supposed to redirect. Both are invisible from the unit alone.
-
----
-
-### Use Case 5: The plan author states an obligation that applies only sometimes
-
-**Actor**: The plan author.
-**Preconditions**: The plan is about to state a rule, step, or expectation of the form "required when X", "checkable once Y", or "must hold after Z" — an obligation whose applicability depends on a condition.
-
-**Steps**:
-
-1. The author writes the condition precisely.
-2. The author then names the scope the obligation binds to: which edges, revisions, call sites, or input classes it governs.
-3. The author names where the obligation is discharged — the step or site that checks it.
-4. The author re-reads the statement for words that stand in for a scope without naming one, and rewrites any it finds.
-
-**Postconditions**: The obligation says not only when it applies, but the scope it governs and where it is discharged.
-
-**Information shown**:
-
-- The condition, the governed scope, and the discharge point, in the statement or in a statement it explicitly references.
-
-**Actions available**:
-
-- State the obligation once its scope is named.
-- Split it into several scoped obligations where one scope does not fit.
-
-**Considerations**:
-
-- This defect is the hardest of the set to see, because the sentence reads complete. Nothing in the plan contradicts it, and the surrounding reasoning may be entirely correct. The gap only appears when a reader asks "required where?" and finds the document has no answer.
-- The defect is cheap to catch at implementation review, where the escape paths become concrete, and expensive to catch at plan review, where the sentence looks finished. That asymmetry is the reason the obligation sits on the author rather than on the reviewer.
-
----
-
-### Use Case 6: The plan author corrects a plan across review rounds
-
-**Actor**: The plan author, revising a plan in response to review findings.
-**Preconditions**: A plan already exists, a review round has produced findings, and a fact the plan states must change.
-
-**Steps**:
-
-1. The author locates the single place the fact is asserted.
-2. The author edits that assertion.
-3. The author confirms that no other mention of the fact restates it, and that each other mention names where it is asserted.
-
-**Postconditions**: The corrected fact is asserted once. No second, older statement of it survives elsewhere in the plan.
-
-**Information shown**:
-
-- For each repeated mention, the location of the assertion it refers to.
-
-**Actions available**:
-
-- Edit the assertion.
-- Replace a duplicate statement with a reference to the assertion.
-
-**Considerations**:
-
-- The failure this case prevents is a plan that grows through correction rounds until it describes the same design in several places, and then contradicts itself because a round updated one description and not the others.
-- Nothing in this case concerns the plan's length. A long plan that asserts each fact once is well-formed; a short plan that asserts a fact twice is not.
-
----
-
-### Use Case 7: The plan reviewer applies the backstop check
-
-**Actor**: The plan reviewer — the automated or human reviewer at the plan review gate.
-**Preconditions**: A plan pull request has reached the plan review gate and carries a per-rule outcome record.
-
-**Steps**:
-
-1. The reviewer reads the recorded outcome for each rule.
-2. For each rule the author recorded as firing, the reviewer locates the required evidence and re-runs what can be re-run against the state it was recorded at — the repository revision for repository-derived evidence, the population and window for a Rule 1 sampling record, the cited closure provenance and recorded command for a Rule 1 enumeration record, or, for a Rule 1 record satisfied instead by a cited producer contract fixing the output set, the cited contract itself. On the round that first evaluates a cited producer contract, export manifest, decommissioning notice, or protected artifact, the reviewer inspects it directly under Group A's narrow exception and records the finding; on a later round with no corresponding plan-text change, the reviewer reads that recorded finding instead of re-inspecting the source. An occurrence's own locator has no such persisted-finding path and is inspected directly every round.
-3. For each rule recorded as not applicable, the reviewer checks the stated rationale against the plan's contents.
-4. The reviewer raises a finding for every outcome that does not hold up, naming the rule and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record — the claim, when the finding is against a firing rule's claim, or the contradictory outcome or record itself, when the finding is an outcome-record defect with no underlying claim to name.
-
-**Postconditions**: Each rule has a reviewer-confirmed outcome. Findings that block the plan from becoming human-ready are distinguished from findings that do not.
-
-**Information shown**:
-
-- The per-rule outcome record on the plan pull request.
-- The evidence in the plan document, for each firing rule.
-
-**Actions available**:
-
-- Confirm the outcome.
-- Raise a finding with the rule name and the action that clears it.
-
-**Considerations**:
-
-- This check is a backstop. A rule that is only ever satisfied because a reviewer demanded it has already cost the rounds the rule exists to save.
-- The reviewer checks claims against the repository, not only against the rest of the plan. Internal consistency is what the existing gate already provides, and is exactly what these failures survived.
+## Purpose
+
+An implementation plan is read as fact. The implementer executes its steps
+without re-deriving them, and every later reader trusts its counts, its
+statements about what exists in the codebase, and its descriptions of how the
+system behaves. The plan review gate reasons about the plan's diff and its
+internal consistency, so a plan can be entirely self-consistent, survive many
+rounds of automated review, and still be wrong about the world outside the
+document. This backstop complements diff review: it makes a plan's factual
+claims and conditional obligations verifiable by a reader holding the plan,
+the repository at the recorded revision, and a search tool.
 
 ---
 
 ## Business Rules
 
-The rules below were the normative statement of this feature during spec
-authoring. Since implementation, the canonical statement of the six rules
-lives in
-[`plan-authoring-rigor-rules.md`](../../../workflow/development-workflow/plan-authoring-rigor-rules.md);
-the text below is retained here as historical product-intent record only.
+Every rule below is stated with a named trigger, the evidence it requires,
+and the condition that decides pass or fail.
 
 ### Rule 1 — Sampling an external output distribution
 
@@ -292,7 +93,7 @@ the text below is retained here as historical product-intent record only.
 - The rules are stated without reference to any language, framework, test runner, or repository-specific path, because every repository that adopts this framework inherits them.
 - The rules apply to every implementation plan the workflow produces, including plans for work items that have no spec.
 - Rule outcomes describe one plan revision. They are determined again on each review round and never carry forward. The per-rule outcome record names the plan revision or commit it was determined against, so a reviewer can tell without re-deriving anything whether the record governs the plan's current revision.
-- Exactly one surface carries the canonical statement of the rules. Every other surface that mentions them agrees with it, adds no rule it does not carry, and weakens none of its pass conditions. Which surface is canonical is decided in the implementation plan.
+- Exactly one surface carries the canonical statement of the rules. Every other surface that mentions them agrees with it, adds no rule it does not carry, and weakens none of its pass conditions. This file is that surface.
 
 ---
 
@@ -306,7 +107,7 @@ Each rule carries one outcome per plan revision.
 | `not-applicable` | Not applicable | The plan contains no claim of the class this rule governs, and the record states a rationale naming why the trigger is absent.                            |
 | `unsatisfied`    | Unsatisfied    | The rule fired and the required evidence is missing, does not reproduce at the state it was recorded at — a repository revision for repository-derived evidence, the population and window for a Rule 1 sampling record, or the cited closure provenance and recorded command for a Rule 1 enumeration record — or an open blocking finding stands against the claim. Also the outcome for a rule with no record at all, for a not-applicable record with no rationale, and for a record whose value is not one of these three labels. |
 
-**Valid transitions**:
+### Valid transitions
 
 A transition happens for one of two reasons: a later plan revision changes the plan's claim or evidence, or the outcome record was simply wrong at the plan's current revision and is corrected to match evidence already in the plan — a same-head correction that needs no new plan revision. Both kinds determine the outcome afresh, per the closing bullet.
 
@@ -330,27 +131,15 @@ No outcome persists across plan revisions or across a same-head correction; ever
 
 ---
 
-## Operational Visibility
+## Plan review gate — Decision-Gate Consistency Matrix
 
-- **Per-rule outcome record on the plan pull request**: every rule with its display label, the plan revision or commit the record was determined against, and, for each not-applicable rule, the rationale — and, for a rule whose evidence includes a cited producer or source contract, export manifest, decommissioning notice, or protected artifact (never an occurrence's own locator, which is inspected directly every round instead), what the first-inspecting round's inspection found, so a later round finding no corresponding plan-text change reads that recorded finding instead of re-inspecting the source. A reviewer can tell from this record alone which rules the author claims fired and whether the record governs the plan's current revision, without first reading the plan.
-- **Evidence in the plan document**: the count derivations, existence searches, and consumer enumerations the firing rules require, each naming the repository revision it was gathered at; the sampling records Rule 1 requires, each naming the population and window it covers; the enumeration records Rule 1's escape hatch requires instead, each naming its cited closure provenance and recorded command; the cited producer contract Rule 1 requires instead when the design binds to a fixed set of literal outputs, with no separate sampling record needed; and the scope statements Rule 6 requires, each naming the governed scope and discharge point. This is what survives merge and reaches the implementer.
-- **Review findings**: each finding names the rule and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record — the claim it concerns, when the finding is against a firing rule's claim, or the contradictory outcome or record itself, when the finding is an outcome-record defect with no underlying claim to name — so the author knows which statement to fix rather than which section to reread.
-- No new notification, report, or dashboard is introduced. The records above sit on surfaces the plan stage already produces.
-
----
-
-## Decision-Gate Consistency Matrix
-
-The plan review gate is a workflow decision gate, and this feature adds inputs to it and outcomes that can hold a plan back from human review. The matrix below was the canonical statement of that changed behavior during spec
-authoring. Since implementation, the canonical statement lives in the
-"Plan review gate — Decision-Gate Consistency Matrix" section of
-[`plan-authoring-rigor-rules.md`](../../../workflow/development-workflow/plan-authoring-rigor-rules.md);
-the matrix below is retained here as historical product-intent record only.
+This section is the canonical statement of the plan review gate's changed
+behavior, copied unchanged in substance from the spec.
 
 ### Gate inputs
 
 | Input                                                       | Where it comes from                            | Why it matters                                                                          |
-| ----------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| ----------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Whether the plan contains a claim of each rule's class       | Reading the plan                               | Decides whether a rule fires at all                                                      |
 | The evidence a firing rule requires                          | The plan document                              | Decides Satisfied against Unsatisfied for that rule                                       |
 | Whether that evidence reproduces at the state it was recorded at | Re-running the recorded command or search for repository-derived evidence; re-checking a Rule 1 sampling record's locators against its stated population and window; re-running a Rule 1 enumeration record's recorded command and inspecting its cited closure provenance | A record that does not reproduce is not evidence, whether the record names a repository revision, a population and window, or a closure-provenance citation |
@@ -424,7 +213,7 @@ No outcome above changes the plan's contents on the author's behalf, gathers evi
 
 ### Mirror surfaces
 
-Surfaces are named here by the role they play, not by file. Which document carries the canonical statement is an implementation-plan decision; the product requirement is that exactly one does and the rest agree with it.
+Surfaces are named here by the role they play, not by file. Which document carries the canonical statement is an implementation-plan decision; the product requirement is that exactly one does and the rest agree with it. In this repository, this file (`plan-authoring-rigor-rules.md`) is that canonical surface.
 
 | Surface                                                            | Relationship                                                      | Consistency requirement                                                                                  |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -464,7 +253,10 @@ Surfaces are named here by the role they play, not by file. Which document carri
 
 ---
 
-## Acceptance Criteria
+## Referenced material (appendix)
+
+The Business Rules section above cross-references the sections below. They are
+copied here verbatim so every reference resolves inside this file.
 
 ### Group A — The rules are stated so both roles can apply them
 
@@ -474,56 +266,6 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - [ ] Every check can be performed with the plan, the repository at the recorded revision, the per-rule outcome record on the plan pull request, and a search tool, with one narrow, explicitly-scoped exception: verifying any evidence element Rule 1 permits to reference a source outside the plan and the repository — an occurrence's locator, a cited producer or source contract, an authoritative export manifest, a decommissioning notice, or a cited durable protected artifact — requires access to that external source. For a protected source this is because copying it into the plan or the repository would defeat the access control or retention policy it exists to enforce; for the others it is because the referenced source is external by nature. That exception applies only to what Rule 1 permits to reference an external source, and to no other rule or check in this feature. No check names a tool that would have to be built first.
 - [ ] No rule text names a language, framework, test runner, or repository-specific path, so a repository adopting this framework can apply each rule unchanged.
 - [ ] The rules apply to every implementation plan the workflow produces, including plans for work items that have no spec.
-
-### Group B — Sampling an external output distribution (Rule 1)
-
-- [ ] A plan whose design depends on the wording, shape, or presence of free text produced outside the project — including any design that matches, parses, classifies, or enumerates that text — fails the check when it carries none of: a sampling record, an enumeration record satisfying the escape hatch below, or a cited producer contract fixing the output set the design binds to.
-- [ ] A sampling record passes only when it states the producer, the population and window sampled, the number of real occurrences examined, the number of distinct variants observed, whether further occurrences had stopped yielding new variants, and, for each occurrence counted, a locator sufficient for a reader to find or inspect it independently. A record missing any one of those fails.
-- [ ] A locator pointing only to a short-retention or deletable source passes only when the record also embeds the occurrence's own text. A locator that later readers cannot use satisfies this bullet only when the record already embeds that text; otherwise it fails, regardless of whether the locator resolved at capture time.
-- [ ] A record for an access-restricted occurrence (secrets, PII, or customer data) passes only when it embeds an appropriately redacted capture or cites a durable protected artifact with documented access and retention guarantees. A record that embeds the raw, unredacted occurrence fails, even though the locator would otherwise be durable.
-- [ ] When a source is both short-retention or deletable and access-restricted, the same redacted capture satisfies both the preceding two criteria at once — a redacted capture counts as "embedding the occurrence's own text" for the durability criterion. Neither criterion demands the raw occurrence in this case.
-- [ ] A plan that binds to a fixed set of literal outputs passes only when it cites a producer contract fixing that set. The same plan with a large observed sample, citing no contract fixing that set — whether no contract at all or one that does not fix it — fails.
-- [ ] A plan citing no contract fixing the output set — whether it cites no contract at all or cites one that does not fix that set — passes only when it states the part of the output it relies on as stable and what the system does when an output outside the observed variants arrives.
-- [ ] Every sampling record passes only when the plan states why the observed sample is adequate to the design being proposed, whether or not the record reports saturation. A record with no stated adequacy rationale fails, regardless of whether it reports saturation or non-saturation. Where the sampled population is known to be heterogeneous, the record passes only when the rationale also addresses that heterogeneity — which classes the sample spans and why the classes it does not span do not defeat the design's adequacy; a rationale silent on known heterogeneity fails. A structurally complete rationale that the reviewer finds unpersuasive produces a non-blocking finding and leaves the rule Satisfied; persuasiveness is not a blocking pass/fail input.
-- [ ] A sampling record whose occurrences are curated examples fails, and a sampling record of two or fewer occurrences fails; a qualifying enumeration record under the escape hatch below is judged by that escape hatch's own conditions, not by this bullet's occurrence-count floor.
-- [ ] A plan enumerates a population instead of sampling it only when it cites provenance establishing that the enumerated set is the population's complete historical membership — one or more of a producer or source contract, an authoritative export manifest, or a decommissioning notice, whose citations collectively state that nothing earlier is missing and nothing further will be added — together with a single recorded command, query, or listing that reproduces its complete current membership. A plan that enumerates a population with a reproducible command but no cited closure provenance fails: a command alone proves only the archive's present contents, not that the archive is complete. A plan that instead lists a curated subset of a large or open distribution and calls that subset the whole population fails.
-
-### Group C — One normative statement per fact (Rule 2)
-
-- [ ] Take any value, count, name, decision, or behavioral statement that appears more than once in a plan. The author's obligation is to assert it in exactly one occurrence and have every other occurrence name where it is asserted; the next criterion governs whether a plan that instead repeats the assertion leaves the rule Satisfied or Unsatisfied.
-- [ ] Two occurrences that both assert the same fact are a defect whether or not they agree, and the pair produces one finding naming both occurrences, but only a disagreeing pair leaves the rule's outcome Unsatisfied. An agreeing pair produces a non-blocking consolidation finding and leaves the rule Satisfied; a disagreeing pair produces a blocking contradiction finding and leaves the rule Unsatisfied.
-- [ ] No rule, check, outcome, or finding introduced by this feature uses a plan's length in bytes, lines, words, or pages as a pass or fail condition. A plan cannot fail anything in this feature because of its size, and a rule may name these units only to state that they are not a basis for failure.
-- [ ] After a correction round, the corrected fact is asserted exactly once. A reader comparing the two revisions finds the assertion edited rather than a second statement added.
-
-### Group D — Counts of codebase artifacts (Rule 3)
-
-- [ ] Every quantity of artifacts that exist in the codebase or test suite, at the plan's stated revision, carries the command or query that produced it, the revision it was run at, and the population it counts over. A reader re-running it at that revision obtains the same number, or the plan fails. A quantity of artifacts the plan proposes to create — no command can reproduce something not yet created — is outside Rule 3's trigger and is not held to this criterion.
-- [ ] A quantity obtained by arithmetic passes only when the plan shows the operand sets are disjoint subsets that exhaust one homogeneous population and each was derived by its own recorded command. A subtraction of one measured count from another, without that showing, fails.
-- [ ] A count whose population includes members that do not share the property the plan reasons about fails, even when the arithmetic over it is correct.
-- [ ] A quantity that decides which artifacts an implementation step touches is accompanied by the enumeration its derivation produced. A step that names a number without the enumeration fails.
-
-### Group E — Independent verification of existence claims (Rule 4)
-
-- [ ] Every statement that a named thing does or does not exist in the codebase, or that a concern is already covered or already handled, carries a recorded search and the revision it was run at. A reader re-running it reaches the same yes or no, or the plan fails.
-- [ ] A claim whose recorded support is a delegated summary, a prior conversation, or another document, rather than a reproducible search recorded in the plan, fails.
-- [ ] A statement that a class of claims was all verified passes only when the per-item evidence is present. The completeness statement alone fails.
-- [ ] A non-existence claim passes only when its record names the places searched and those places are where the thing could plausibly live.
-
-### Group F — Expectations at the composed call site (Rule 5)
-
-- [ ] When a plan changes, deletes, or replaces a unit with more than one consumer on an ordered decision path, it carries an enumeration of every consumer with the outcome at each after the change. A consumer missing from the enumeration fails.
-- [ ] The consumer enumeration passes only when it names a reproducible search or query recorded at a repository revision — required whether or not the plan separately states a quantity that fires Rule 3. An enumeration with no recorded search fails, even when every consumer listed happens to be correct.
-- [ ] The consumer enumeration passes only when the record names the places searched and those places are where a consumer could plausibly exist. A search scoped narrower than where consumers are known to exist fails, even when that narrower search is itself reproducible.
-- [ ] Consumers the plan does not otherwise modify appear in the enumeration when they sit on the path.
-- [ ] Every expected-behavior statement names an observation point that appears in the consumer enumeration, and the path that produces the outcome there. A statement naming only the changed unit fails.
-- [ ] A plan that removes or narrows a branch passes only when it states which branch then receives the inputs that branch used to absorb, and what it does with them.
-
-### Group G — A conditional obligation names its scope (Rule 6)
-
-- [ ] A reader searching a plan for conditional obligation phrasing finds, for every occurrence, the governed scope and the discharge point named in the same statement or in a statement it explicitly references. An occurrence missing either one fails.
-- [ ] A conditional whose scope is carried only by a word standing in for it fails, even when the condition is precise and the surrounding reasoning is correct.
-- [ ] A statement that explains why an obligation cannot always be discharged, without naming which occurrences it governs, fails.
-- [ ] The rule is stated as an obligation on the plan author, and the reviewer check is described as a backstop. No surface describes plan review as the place this defect is expected to be found.
 
 ### Group H — Outcomes and the plan review gate
 
@@ -540,9 +282,7 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - [ ] The evidence a firing rule requires is in the plan document. A plan whose only evidence for a firing rule is in a pull request comment or a chat transcript fails.
 - [ ] Every review finding this feature introduces names the rule and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record — the claim, when the finding is against a firing rule's claim, or the contradictory outcome or record itself, when the finding is an outcome-record defect with no underlying claim to name.
 
----
-
-## Out of Scope (MVP)
+### Out of Scope (MVP)
 
 - **Automated enforcement.** No script, linter, or bot that detects violations of these rules is built here. The rules must be checkable by a reader without new tooling; automating them is separate work that becomes possible once the rules are stable.
 - **Any plan size ceiling.** No limit on a plan's bytes, lines, words, or pages is introduced, now or as a fallback. This is a deliberate rejection rather than a deferral — see the deferral notes below.
@@ -556,29 +296,49 @@ Surfaces are named here by the role they play, not by file. Which document carri
 - **Changing the review gate's existing severity vocabulary.** This feature classifies its own findings using the classifications the gate already has; it does not add new ones or alter the meaning of existing ones.
 - **A stricter evidentiary tier for Rule 4's "handled" or "already covered" claims.** Rule 4 accepts a direct, reproducible search as sufficient support for a "handled" or "already covered" claim, the same evidentiary standard it applies to a plain existence claim; this feature does not distinguish the two. A search proves that matching text or a candidate artifact is present at the searched location — it does not, by itself, prove that the matched artifact executes on the path the claim relies on, or that it actually produces the claimed behavior. Whether "handled" claims should instead require stronger evidence — for example, a passing test that exercises the matched artifact on the claimed path, or a traced call path from the concern's trigger to the matched code — is deliberately out of scope for this feature. Issue #1755 owns that decision.
 
-### Deferral notes
+#### Deferral notes
 
 - **A plan size ceiling** — from brief objective 2, "adopt a testable plan-quality rule targeting size/assertion density … rather than leaving size unconstrained". The objective itself is covered by Rule 2, which is the testable rule the brief asked for. The byte ceiling the brief named as the alternative it did not want is deliberately excluded: the observed correlation between plan size and stale-prose findings is explained by duplicated assertions, and a ceiling would penalize well-formed long plans while permitting short self-contradicting ones. No human confirmation is requested; this follows the brief's own stated preference.
 - **Per-repository opt-out** — not raised in the brief. Recorded here because this repository ships as a framework template, so every downstream repository inherits these rules whether or not they fit its plans. Human confirmation is requested if downstream friction appears; nothing in this feature forecloses adding configuration later.
 - **A numeric or mechanical saturation threshold, and a mechanized sample-selection procedure** — raised as Step 7 review findings on Rule 1's sampling-adequacy rationale. A fixed number of further occurrences or amount of further time would test how large or how long the sample ran, not whether it actually supports the design, for the same reason Rule 2 declines a plan-size ceiling; a selection algorithm, quota, or stratification rule has the identical defect — it would test whether the sample matches a predefined shape, not whether it actually supports the design being proposed. Saturation and representativeness are both treated as inherently judgment-based properties this feature does not fully mechanize; the adequacy rationale this feature requires for every sampling record, saturated or not, is where that judgment is recorded and reviewed. This feature accepts, as a known and deliberate consequence of that choice, that an author can select a small number of real occurrences from a heterogeneous population, supply valid locators for each, and assert adequacy in a rationale that a mechanized procedure would have rejected — cherry-picking from a heterogeneous population is not prevented by this feature's rules; it is bounded only by the requirement that the rationale address known heterogeneity (Rule 1) and by the reviewer's backstop judgment of whether that rationale actually holds up (Use Case 7). No human confirmation requested beyond the confirmed decision recorded on issue #1496.
 - **Re-verifying evidence against the repository's current state, or against a cited external source's current state, on every review round** — raised as Step 7 review findings on the population-change matrix row and, separately, on whether external citations (a producer or source contract, an export manifest, a decommissioning notice, or a protected artifact) must be pinned to an immutable or versioned reference. Rules 1, 3, 4, and 5 all judge their evidence against the state it was recorded at — a population and window for Rule 1's sampling records, cited closure provenance and a recorded command for Rule 1's enumeration records, and a repository revision for Rules 3, 4, and 5's repository-derived records — not against the gate's current state; re-verifying every record against current HEAD on every round would apply a different evidentiary model to this one row alone and would impose a materially heavier operational cost — effectively a full repository re-scan on every review round — than this feature's snapshot design contemplates. The gate re-derives evidence when a plan-text revision changes the described population; it does not re-scan the repository for drift with no corresponding plan edit. A cited external source shares that same deliberate boundary rather than a stricter one: mandating an immutable or versioned pin for every external citation would mechanize a source's own durability, which is outside this repository's control the same way the source itself is — an extension the confirmed decisions on issue #1496 about the snapshot model and about Group A's narrow external-source exception both decline. A citation should use an immutable or versioned reference where the source offers one, because it serves the reader longer, but this feature does not gate on it. No human confirmation requested beyond the confirmed decisions recorded on issue #1496.
 
+### Use Case 7: The plan reviewer applies the backstop check
+
+**Actor**: The plan reviewer — the automated or human reviewer at the plan review gate.
+**Preconditions**: A plan pull request has reached the plan review gate and carries a per-rule outcome record.
+
+**Steps**:
+
+1. The reviewer reads the recorded outcome for each rule.
+2. For each rule the author recorded as firing, the reviewer locates the required evidence and re-runs what can be re-run against the state it was recorded at — the repository revision for repository-derived evidence, the population and window for a Rule 1 sampling record, the cited closure provenance and recorded command for a Rule 1 enumeration record, or, for a Rule 1 record satisfied instead by a cited producer contract fixing the output set, the cited contract itself. On the round that first evaluates a cited producer contract, export manifest, decommissioning notice, or protected artifact, the reviewer inspects it directly under Group A's narrow exception and records the finding; on a later round with no corresponding plan-text change, the reviewer reads that recorded finding instead of re-inspecting the source. An occurrence's own locator has no such persisted-finding path and is inspected directly every round.
+3. For each rule recorded as not applicable, the reviewer checks the stated rationale against the plan's contents.
+4. The reviewer raises a finding for every outcome that does not hold up, naming the rule and what was missing, failed to reproduce, or contradicted by the plan's own evidence or outcome record — the claim, when the finding is against a firing rule's claim, or the contradictory outcome or record itself, when the finding is an outcome-record defect with no underlying claim to name.
+
+**Postconditions**: Each rule has a reviewer-confirmed outcome. Findings that block the plan from becoming human-ready are distinguished from findings that do not.
+
+**Information shown**:
+
+- The per-rule outcome record on the plan pull request.
+- The evidence in the plan document, for each firing rule.
+
+**Actions available**:
+
+- Confirm the outcome.
+- Raise a finding with the rule name and the action that clears it.
+
+**Considerations**:
+
+- This check is a backstop. A rule that is only ever satisfied because a reviewer demanded it has already cost the rounds the rule exists to save.
+- The reviewer checks claims against the repository, not only against the rest of the plan. Internal consistency is what the existing gate already provides, and is exactly what these failures survived.
+
 ---
 
-## Brief Coverage Matrix
+## Historical context
 
-Acceptance criteria are referenced by group, because group names are stable across review rounds while criterion numbering is not.
-
-| Objective from issue #1496                                                                                                             | Disposition                                                     |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Sub-requirement 1 — sample a representative distribution of third-party free-text output before binding to a fixed grammar or template   | Covered. Rule 1; Use Case 1; Groups A and B                       |
-| Sub-requirement 2 — adopt a testable plan-quality rule targeting size or assertion density, rather than leaving size unconstrained        | Covered. Rule 2; Use Case 6; Group C. The byte-ceiling alternative the brief declined is recorded in Out of Scope with a deferral note |
-| Sub-requirement 3 — every codebase or test-suite count states its exact derivation command, and no count is obtained by subtraction unless both subsets are independently verified as a true partition of a homogeneous set | Covered. Rule 3; Use Case 2; Group D                              |
-| Sub-requirement 4 — independently re-verify any delegated claim that something does or does not exist in the codebase, with a direct search, before it enters a plan | Covered. Rule 4; Use Case 3; Group E                              |
-| Sub-requirement 5 — when a plan changes a unit with multiple call sites forming a decision chain, write verification expectations against the real call site in the composed chain, not the unit in isolation | Covered. Rule 5; Use Case 4; Group F                              |
-| Sub-requirement 6 — every conditional obligation names the scope it binds to and where it is discharged (confirmed decision, contributed by a downstream repository's retrospective) | Covered. Rule 6; Use Case 5; Group G                              |
-| The rules are expressed as authoring rules for the plan-writing role, with the review checklist as the place the check is applied        | Covered. The cross-cutting business rules; Use Case 7; Groups A and H |
-| The observation that the scope-naming defect is cheap to catch at implementation review and expensive at plan review, which argues for an authoring rule rather than a review rule | Covered. Rule 6's final clause; Group G's last criterion           |
-| The underlying diagnosis — the review loop reasons about the diff, not about whether the plan's factual claims are true                  | Covered. Overview; Use Case 7's considerations; the gate inputs, which are read from the repository and not only from the plan |
-
-No objective from the brief is deferred to Out of Scope. The out-of-scope entries are boundaries around covered objectives or decisions the brief did not raise.
+For the full product-intent narrative (Overview, Use Cases 1–6, Operational
+Visibility, Acceptance Criteria groups B–G, Brief Coverage Matrix), see the
+spec dev folder:
+[docs/specs/developments/20260911230253_1496-plan-authoring-rigor/](../../specs/developments/20260911230253_1496-plan-authoring-rigor/).
+That spec is historical; this file is the canonical statement of the rules and
+gate matrix for day-to-day plan work.

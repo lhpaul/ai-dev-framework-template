@@ -71,6 +71,15 @@ For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
 plans, name the residual verification strategy and evidence source the
 implementation must produce before readiness.
 
+Before Document Quality Gate, read
+`docs/workflow/development-workflow/plan-authoring-rigor-rules.md` and follow
+its six plan-authoring rules. Record firing-rule evidence in the plan itself
+(Verification Log and/or the template's "Factual claim evidence" subsection),
+then complete the per-rule outcome record in the PR description's `Document
+Quality Gate` section — all six rules, the plan revision SHA, and a rationale
+beside each `Not applicable` row. These obligations apply to every plan,
+including Refactor / no-spec items.
+
 Before committing in Step 5, run the cross-section consistency self-check and
 Document Quality Gate defined in protocol 02. Check every item that appears more
 than once across plan sections: function/method names, constant names, decision

@@ -175,6 +175,46 @@ Check:
   - Cross-reference consistency: line numbers, counts, and symbolic references (e.g., smoke test counts, Verification Log output counts, log line references) must be consistent across the plan document; flag any number or reference that cannot be confirmed against the codebase or a prior plan step
 - Behavioral guarantee mechanism citation: every behavioral guarantee stated in the plan (e.g., "at most once per run", "bounded", "idempotent") cites the specific mechanism that enforces it (flag, guard clause, constraint, lock, etc.); a guarantee without a cited enforcement mechanism is unverifiable and must be flagged
 - Cross-section consistency: all references to the same function, constant, architecture decision, file path, directory name, or route/URL structure are consistent across all sections of the plan (e.g., a function described in the Architecture section must have the same signature in the Implementation Order steps; a constant must carry the same value everywhere it appears; a decision index must map to the same decision in every reference; a file path or route pattern defined in one section must match every other section where it appears)
+- **Plan authoring rigor (backstop)**:
+  - Read
+    [`plan-authoring-rigor-rules.md`](docs/workflow/development-workflow/plan-authoring-rigor-rules.md)
+    (the canonical statement) and the plan's per-rule outcome record.
+  - For each rule recorded as firing, re-run repository-derived evidence at
+    the recorded revision; for Rule 1 sampling/enumeration, follow the
+    canonical file's Group A external-source exception.
+  - Raise blocking findings per the canonical file's gate matrix;
+    distinguish non-blocking consolidation and adequacy judgments from
+    blocking findings.
+  - Treat a missing outcome record, a missing `Not applicable` rationale, a
+    stale revision SHA, or evidence recorded only in PR comments as blocking
+    per Group H.
+  - **Required content (so the mirror harness assertions hold):** this block
+    names all six rules by their canonical names, one line each, in the form
+    `Rule N — <canonical name>: <one-line trigger>`:
+    - Rule 1 — Sampling an external output distribution: fires when the
+      design depends on wording, shape, or presence of externally produced
+      free text.
+    - Rule 2 — One normative statement per fact: fires on every plan that
+      asserts a fact.
+    - Rule 3 — Counts of codebase artifacts: fires when the plan states a
+      quantity of artifacts that exist in the codebase or test suite.
+    - Rule 4 — Independent verification of existence claims: fires when the
+      plan states that something does or does not exist, or is already
+      handled.
+    - Rule 5 — Expectations at the composed call site: fires when the plan
+      changes a unit with more than one consumer on an ordered decision
+      path.
+    - Rule 6 — A conditional obligation names its scope: fires on every
+      conditional obligation ("required when X", "checkable once Y", "must
+      hold after Z").
+
+    It also names the three outcome labels (`Satisfied`, `Not applicable`,
+    `Unsatisfied`) and links
+    [`plan-authoring-rigor-rules.md`](docs/workflow/development-workflow/plan-authoring-rigor-rules.md)
+    as the canonical statement; it never restates pass conditions.
+
+  Do **not** duplicate the full matrix prose here — reference the canonical
+  file.
 
 Typical `blocking` issues:
 

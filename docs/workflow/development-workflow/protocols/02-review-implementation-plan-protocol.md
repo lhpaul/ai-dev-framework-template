@@ -21,6 +21,12 @@ Read and follow:
 
 `REVIEW.md` is authoritative. If this wrapper and `REVIEW.md` ever differ, follow `REVIEW.md`.
 
+Plan reviewers additionally apply the plan authoring rigor backstop in
+`REVIEW.md`'s `Plan Review Checklist` and the gate matrix in
+[`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md); the
+per-rule outcome record the backstop checks against lives in the plan pull
+request description's `Document Quality Gate` section.
+
 ---
 
 ## Runner Guidance

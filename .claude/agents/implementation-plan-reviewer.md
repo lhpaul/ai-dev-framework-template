@@ -27,3 +27,12 @@ hub-owned in `workflow_hub` mode unless a future protocol explicitly changes
 that; missing mode or `single_repo` means the current repository owns the plan.
 
 That document is the single source of truth for this review stage. Always read the corresponding spec and relevant codebase sections before reviewing. Apply fixes directly where possible; if invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a human decision is required.
+
+Also apply the plan authoring rigor backstop check: read
+`docs/workflow/development-workflow/plan-authoring-rigor-rules.md` (the
+canonical gate matrix) and the plan PR's per-rule outcome record. For each
+rule recorded as firing, re-run its evidence at the recorded revision; raise a
+blocking finding per the canonical gate matrix for missing, non-reproducing,
+or contradicted evidence, and for a missing, stale, or malformed outcome
+record. Verify the record's plan revision resolves to and equals the PR's
+current head before approving.
