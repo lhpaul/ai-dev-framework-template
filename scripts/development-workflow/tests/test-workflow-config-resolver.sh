@@ -1727,6 +1727,43 @@ run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.ya
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
 assert_review_effective_states "same key in separate mappings is valid" defined absent
 
+# review-github-effective (#1561): on_draft.github / on_ready.github mirror
+# review-effective's parse-state handling, generalized to two buckets.
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+review_github_effective_json() {
+  python3 "$RESOLVER" review-github-effective --repo-root "$review_effective_dir"
+}
+write_review_effective_fixture 'review:' '  on_draft:' '    github: [coderabbit]' '  on_ready:' '    github: [bugbot]'
+g1_json="$(review_github_effective_json)"
+run_test "review-github-effective on_draft.github defined" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g1_json")"
+run_test "review-github-effective on_draft.github state" defined "$(jq -r '.effective_on_draft_github_state' <<< "$g1_json")"
+run_test "review-github-effective on_ready.github defined" '["bugbot"]' "$(jq -c '.effective_on_ready_github' <<< "$g1_json")"
+run_test "review-github-effective on_ready.github state" defined "$(jq -r '.effective_on_ready_github_state' <<< "$g1_json")"
+run_test "review-github-effective override not applied" false "$(jq -r '.local_review_override_applied' <<< "$g1_json")"
+
+write_review_effective_fixture 'review:' '  on_draft: {}'
+g2_json="$(review_github_effective_json)"
+run_test "review-github-effective absent on_draft.github" absent "$(jq -r '.effective_on_draft_github_state' <<< "$g2_json")"
+run_test "review-github-effective absent on_ready.github" absent "$(jq -r '.effective_on_ready_github_state' <<< "$g2_json")"
+
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []'
+g3_json="$(review_github_effective_json)"
+run_test "review-github-effective empty on_draft.github" empty "$(jq -r '.effective_on_draft_github_state' <<< "$g3_json")"
+
+write_review_effective_fixture 'review:' '  on_draft:' '    github: pr-agent'
+g4_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed scalar on_draft.github" malformed "$(jq -r '.effective_on_draft_github_state' <<< "$g4_json")"
+
+write_review_effective_fixture 'review:' '  on_draft:' '    github: [coderabbit, pr-agent]' '  on_ready:' '    github: [bugbot]'
+printf '%s\n' 'review:' '  on_draft:' '    github: [coderabbit]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g5_json="$(review_github_effective_json)"
+run_test "review-github-effective local override narrows on_draft.github" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g5_json")"
+run_test "review-github-effective local override exclusions" '["pr-agent"]' "$(jq -c '.override_excluded_on_draft_github' <<< "$g5_json")"
+run_test "review-github-effective local override retains shipped on_draft.github" '["coderabbit","pr-agent"]' "$(jq -c '.shipped_on_draft_github' <<< "$g5_json")"
+run_test "review-github-effective local override does not touch on_ready.github" '["bugbot"]' "$(jq -c '.effective_on_ready_github' <<< "$g5_json")"
+run_test "review-github-effective local override applied" true "$(jq -r '.local_review_override_applied' <<< "$g5_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
