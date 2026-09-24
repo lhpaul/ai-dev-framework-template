@@ -26,10 +26,18 @@ def check(name, condition, detail=''):
 
 
 def run(root, *args, env=None, expected=None):
-    full_env = {**os.environ, **(env or {})}
+    # Default to a generous, explicit test-mode budget/cap so a briefly loaded
+    # CI/sandbox host does not flake a test that is not itself exercising the
+    # timeout path (T-7 supplies its own, deliberately tight, override).
+    base_env = {
+        'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+        'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '45',
+        'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '20',
+    }
+    full_env = {**os.environ, **base_env, **(env or {})}
     result = subprocess.run(
         [bash, str(helper), '--repo-root', str(root), *args],
-        env=full_env, text=True, capture_output=True, timeout=60,
+        env=full_env, text=True, capture_output=True, timeout=90,
     )
     if expected is not None and result.returncode != expected:
         raise AssertionError(
