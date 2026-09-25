@@ -1818,6 +1818,26 @@ g9_json="$(review_github_effective_json)"
 run_test "review-github-effective legacy fallback survives an unrelated local override" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g9_json")"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# A bare `key:` local override (YAML null, no inline list and no list
+# items) is not the same as a declared empty override:
+# workflow_config_review_local_list_if_declared (workflow-lib.sh, what
+# Step 7 actually consults) only treats an inline `[...]` or an actual
+# `- item` line as declared, so a null local key falls through to the
+# shared list there. This must match, or the preflight can report `passed`
+# without having cross-checked a shared reviewer Step 7 still dispatches.
+write_review_effective_fixture 'review:' '  on_draft:' '    github: [coderabbit]'
+printf '%s\n' 'review:' '  on_draft:' '    github:' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g10_json="$(review_github_effective_json)"
+run_test "review-github-effective null local bucket falls back to shared" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g10_json")"
+run_test "review-github-effective null local bucket is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g10_json")"
+# An *explicit* empty local override ([]) is still a real, declared
+# narrowing — the null case above must not be confused with this one.
+printf '%s\n' 'review:' '  on_draft:' '    github: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g11_json="$(review_github_effective_json)"
+run_test "review-github-effective explicit empty local override still narrows" '[]' "$(jq -c '.effective_on_draft_github' <<< "$g11_json")"
+run_test "review-github-effective explicit empty local override is applied" true "$(jq -r '.local_review_override_applied' <<< "$g11_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

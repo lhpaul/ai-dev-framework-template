@@ -84,7 +84,31 @@ validate_branch_name() {
   esac
   git check-ref-format "refs/heads/$value" >/dev/null 2>&1 || fail "$label is not a valid branch name: $value"
 }
-validate_branch_name "$target_base" '--target-base'
+# The preflight contract classifies an empty, unresolved, or malformed
+# --target-base as OUTCOME=prerequisite-failed (exit 2, with
+# PREREQUISITE_DETAIL) — the same documented outcome reviewer_preflight.py
+# itself raises for other target_base problems (empty/non-string). A bare
+# `fail()` here (exit 3, unstructured stderr) would route this one specific
+# malformed-input case through the wrong documented outcome, even though
+# validation must still happen before git ever sees the value.
+if [ "$target_base" != "${target_base#+}" ] || ! git check-ref-format "refs/heads/$target_base" >/dev/null 2>&1; then
+  target_base_detail="--target-base is not a valid branch name: $target_base"
+  if [ "$json_output" = true ]; then
+    jq -n --arg detail "$target_base_detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
+      '{outcome:"prerequisite-failed",outcome_label:"Prerequisite not met",checked_shared_config_ref:"",checked_platform_config_ref:"",local_override_state:"none",platforms:[],prerequisite_detail:$detail,elapsed_seconds:$elapsed,budget_seconds:$budget}'
+  else
+    print_kv_escaped OUTCOME prerequisite-failed
+    print_kv_escaped OUTCOME_LABEL 'Prerequisite not met'
+    print_kv_escaped CHECKED_SHARED_CONFIG_REF ''
+    print_kv_escaped CHECKED_PLATFORM_CONFIG_REF ''
+    print_kv_escaped LOCAL_OVERRIDE_STATE none
+    print_kv_escaped PREREQUISITE_DETAIL "$target_base_detail"
+    print_kv_escaped PLATFORM_COUNT 0
+    print_kv_escaped ELAPSED_SECONDS "$SECONDS"
+    print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
+  fi
+  exit 2
+fi
 if [ "$mode" = branch-resume ]; then
   [ -n "$branch" ] || fail '--branch is required for --mode branch-resume'
   validate_branch_name "$branch" '--branch'

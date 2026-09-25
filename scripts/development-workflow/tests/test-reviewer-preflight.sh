@@ -494,14 +494,22 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # syntax (a "<src>:<dst>" separator, or a leading '+' force prefix)
     # before it ever reaches git, so this nominally read-only gate cannot be
     # made to create or overwrite an arbitrary local ref.
+    # --target-base routes through the documented prerequisite-failed
+    # outcome (exit 2, PREREQUISITE_DETAIL) like every other malformed-
+    # target-base case the engine itself raises, not a bare tooling failure
+    # — validation still happens before git ever sees the value.
     injected_ref = 'refs/heads/injected-by-preflight'
     rc, data, out, err = run(
         repo1, '--mode', 'pre-dispatch', '--target-base', f'develop:{injected_ref}',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
-        expected=3,
+        expected=2,
     )
-    check('T-16 refspec-syntax --target-base is rejected', 'OUTCOME' not in data, data)
-    check('T-16 rejection message names --target-base', '--target-base' in err, err)
+    check('T-16 refspec-syntax --target-base is rejected', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check(
+        'T-16 rejection message names --target-base',
+        '--target-base' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
+    )
     injected_check = git(repo1, 'show-ref', '--verify', '--quiet', injected_ref, check_call=False)
     check('T-16 refspec-syntax --target-base never creates the injected ref', injected_check.returncode != 0, injected_check)
     rc, data, out, err = run(
@@ -571,6 +579,17 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         elapsed <= 4.0,
         data,
     )
+
+    # T-19: --json mode also routes a malformed --target-base through the
+    # structured prerequisite-failed JSON shape, not bare stderr text.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop:refs/heads/injected-json',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        '--json', expected=2,
+    )
+    parsed = json.loads(out)
+    check('T-19 json prerequisite-failed for malformed target-base', parsed.get('outcome') == 'prerequisite-failed', parsed)
+    check('T-19 json prerequisite_detail names --target-base', '--target-base' in parsed.get('prerequisite_detail', ''), parsed)
 
 print(f'\nPassed: {passed}')
 PY

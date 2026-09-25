@@ -1531,9 +1531,18 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
         )
         shipped_list, _ = review_runner_state(shipped_raw, shipped_present)
         local_raw, local_present, local_structure_error = review_effective_value_from_path(local, path)
+        # A bare `key:` with nothing after it (YAML null) is not the same as
+        # a declared, possibly-empty, override: workflow_config_review_
+        # local_list_if_declared (workflow-lib.sh, what Step 7 actually
+        # consults) only treats an inline `[...]` or an actual `- item` line
+        # as declared, so a null local key falls through to the shared list
+        # there. Treating `None` as "present" here would instead let a null
+        # local key silently narrow the effective list to empty, diverging
+        # from what Step 7 dispatches.
+        local_declared = local_present and local_raw is not None
         raw, present, source = (
             (local_raw, local_present, str(local_path))
-            if local_present or local_structure_error
+            if local_declared or local_structure_error
             else (
                 shipped_raw,
                 shipped_present,
@@ -1541,17 +1550,17 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         effective_list, effective_state = review_runner_state(raw, present)
-        structure_error = local_structure_error or (not local_present and shipped_structure_error)
+        structure_error = local_structure_error or (not local_declared and shipped_structure_error)
         if structure_error:
             effective_state = "malformed"
-        if local_present or local_structure_error:
+        if local_declared or local_structure_error:
             local_review_override_applied = True
         base[f"effective_{bucket_key}"] = effective_list
         base[f"effective_{bucket_key}_state"] = effective_state
         base[f"effective_{bucket_key}_source"] = source
         base[f"shipped_{bucket_key}"] = shipped_list
         base[f"override_excluded_{bucket_key}"] = [
-            entry for entry in shipped_list if local_present and entry not in effective_list
+            entry for entry in shipped_list if local_declared and entry not in effective_list
         ]
 
     base["local_review_override_applied"] = local_review_override_applied
