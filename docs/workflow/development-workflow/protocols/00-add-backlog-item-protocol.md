@@ -92,7 +92,7 @@ assets or a fidelity baseline.
    - Equivalent `gh issue create` with the same title/body, followed by manual project field updates.
 3. For **Linear**, use the Linear API/MCP per [`linear.md`](../integrations/linear.md). `add-backlog-item.sh create` now emits `TRACKER_ACTION_REQUIRED=create_item title=<title>` to stdout and exits 0 (not non-zero) when the configured provider is Linear. Multi-word titles are single-quoted (e.g., `title='My New Feature'`); strip the quotes before passing to the Linear MCP `createIssue` tool. Guidance referencing `linear.md` is also written to stderr for operator visibility.
 4. For **GitHub Projects** after the issue exists: if the team uses a project board, add/update the project item per `github-projects.md` (optional field updates such as Status = Backlog and Type = Feature/Bug/Refactor/Workflow) **only when** the human or repo docs supply enough context (project number, owner). If project context is missing, **ask** rather than guessing.
-5. When GitHub Projects is configured, use the project **Type** field for classification instead of repository labels. Set `Type = Workflow` for AI-development-framework/process/tooling work, `Type = Feature` for full-pipeline product work, `Type = Bug` for fast-track fixes, and `Type = Refactor` for plan-only refactors. Do not apply legacy classification labels such as `workflow`, `bug`, `enhancement`, or `type:*`; operational labels such as `integration-branch:<slug>` remain valid when the protocol requires them.
+5. When GitHub Projects is configured, use the project **Type** field for classification instead of repository labels. In a **consumer repository**, set `Type = Workflow` for AI-development-framework/process/tooling work. In a **framework-mode repository** (`template.is_template: true` in `.ai-dev-workflow.yaml` — this template repository is one), `--type Workflow` is refused before creation (#1583); classify this repository's own framework/process/tooling work as `Type = Feature`, `Type = Bug`, or `Type = Refactor` instead. Set `Type = Feature` for full-pipeline product work, `Type = Bug` for fast-track fixes, and `Type = Refactor` for plan-only refactors. Do not apply legacy classification labels such as `workflow`, `bug`, `enhancement`, or `type:*`; operational labels such as `integration-branch:<slug>` remain valid when the protocol requires them.
 6. When GitHub Projects is configured, set **Type**, **Priority**, and **Size** on the project item. Use the inference heuristics below to determine values without asking the human for every routine item.
 
 ### Type, Priority, and Size inference heuristics (GitHub Projects)
@@ -107,13 +107,17 @@ field, not repository labels.
 | Full Pipeline feature or product capability | `--type Feature` |
 | Fast Track bug fix, defect, or simple corrective change | `--type Bug` |
 | Plan-only restructuring or non-feature refactor | `--type Refactor` |
-| AI-development-framework/process/tooling item | `--type Workflow` |
+| AI-development-framework/process/tooling item — **consumer repository** | `--type Workflow` |
+| AI-development-framework/process/tooling item — **framework-mode repository** (`template.is_template: true`) | `--type Feature`, `--type Bug`, or `--type Refactor` per the change's shape; `--type Workflow` is refused before creation (#1583) |
 
 When two signals appear to conflict, prefer the classification that preserves
-the repository's routing source of truth. AI-development-framework,
-workflow-process, and tooling items use `--type Workflow` even when the item
-fixes a defect in that workflow surface. Use `--type Bug` for defects outside
-the framework/process/tooling classification.
+the repository's routing source of truth. In a consumer repository,
+AI-development-framework, workflow-process, and tooling items use
+`--type Workflow` even when the item fixes a defect in that workflow
+surface; use `--type Bug` for defects outside the framework/process/tooling
+classification. In a framework-mode repository, the same
+framework/process/tooling items are classified `Feature`, `Bug`, or
+`Refactor` (never `Workflow`) by the same signal table above.
 
 **Priority** — infer from the request. When no explicit urgency/low signal
 applies (the routine case), **omit `--priority` entirely** and let the
@@ -150,7 +154,10 @@ silent no-op:
 | Multiple scripts + protocol + docs touched, or new reusable function | `L` |
 | New subsystem, major refactor spanning many files, cross-cutting change | `XL` |
 
-Pass inferred values directly to the helper:
+Pass inferred values directly to the helper. This example is a **consumer-repository**
+AI-development-framework/process/tooling item (`--type Workflow`); in a
+framework-mode repository, pass `--type Feature`, `--type Bug`, or
+`--type Refactor` instead — `--type Workflow` is refused before creation (#1583):
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
