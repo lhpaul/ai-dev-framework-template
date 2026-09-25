@@ -431,7 +431,22 @@ reviews:
             check(f'T-31 canonical null policy defaults {source.name} {token}',d['POLICY_STATE']=='empty' and d['POLICY']=='warn',d)
             reset();source.write_text('review:\n  on_draft:\n    runner: '+token+'\n')
             d=run('codex')
-            check(f'T-31 canonical null runner falls back {source.name} {token}',d['CONFIG_LIST_STATE']=='empty' and d['FALLBACK_APPLIED']=='true',d)
+            if source is local:
+                # #1561: a null LOCAL override (`runner:` with nothing, or
+                # an explicit null token, after it) is not "declared" per
+                # workflow_config_review_local_list_if_declared
+                # (workflow-lib.sh) — that function only treats an inline
+                # "[...]" or an actual "- item" line as declared. It falls
+                # through to the SHARED list (reset()'s own default,
+                # [codex]), not to this gate's own internal shipped
+                # fallback list; review-effective's own suite
+                # (test-workflow-config-resolver.sh, "review-effective
+                # null local runner falls back to shared") already
+                # establishes this for the underlying resolver — assert
+                # the same contract through this gate's own report.
+                check(f'T-31 null local runner falls through to shared, not this gate\'s fallback {source.name} {token}',d['CONFIG_LIST_STATE']=='defined' and d['FALLBACK_APPLIED']=='false' and d['REACHABLE']=='codex',d)
+            else:
+                check(f'T-31 canonical null runner falls back {source.name} {token}',d['CONFIG_LIST_STATE']=='empty' and d['FALLBACK_APPLIED']=='true',d)
         for token in ('True','FALSE'):
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
             d=run('codex',1)
