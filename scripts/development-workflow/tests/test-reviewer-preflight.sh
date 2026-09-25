@@ -748,20 +748,29 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         git(repo25, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feature/deleted-remote-test', check_call=False).returncode == 0,
         None,
     )
+    # This fixture deletes the branch both on the live remote AND locally
+    # (a genuine "neither copy exists anywhere" state, not merely a stale
+    # local cache — the round-26 redesign already eliminated the
+    # refs/remotes/origin/* caching concern this test originally targeted;
+    # see T-26 below). The bounded-Codex-pass "reject branch-resume when
+    # neither branch copy exists" fix now correctly fails closed here
+    # rather than silently degrading to Undetermined/check-inconclusive
+    # and potentially still exiting 0 — never re-reads the stale cached
+    # (coherent/enabled) config as current either way.
     rc, data, out, err = run(
         repo25, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/deleted-remote-test',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
-        expected=0,
+        expected=3,
     )
     check(
-        'T-25 deleted-remote branch does not read the stale cached config as current',
-        data.get('OUTCOME') != 'passed' or data.get('PLATFORM_1_VERDICT') != 'operable',
+        'T-25 deleted-remote-and-local branch fails closed, not OUTCOME=passed on the stale cached config',
+        'OUTCOME' not in data,
         data,
     )
     check(
-        'T-25 stale cache ref is discarded, not named as the checked ref',
-        'origin/feature/deleted-remote-test' not in data.get('CHECKED_PLATFORM_CONFIG_REF', ''),
-        data,
+        'T-25 failure message names the branch and that it resolves neither locally nor on the remote',
+        'feature/deleted-remote-test' in err and 'neither locally nor on the remote' in err,
+        err,
     )
 
     # T-26 (#1561 round-26 redesign): the whole "undeletable stale ref"
@@ -1629,6 +1638,63 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         'T-46 no lazy fetch occurred while distinguishing the two cases (object store unchanged)',
         objects_before46 == objects_after46,
         f'before={len(objects_before46)} after={len(objects_after46)}',
+    )
+
+    # T-47 (bounded-Codex-pass, P2): a branch that never existed anywhere
+    # (never pushed, never locally created — distinct from T-25's
+    # "existed then was deleted" case) must fail closed the same way.
+    repo47 = root / 'repo47'
+    write_repo(repo47, coherent_shared, coherent_coderabbit)
+    rc, data, out, err = run(
+        repo47, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/never-existed-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-47 a branch that never existed anywhere fails closed, not a degraded-but-successful outcome', 'OUTCOME' not in data, data)
+    check(
+        'T-47 failure message names the branch and that it resolves neither locally nor on the remote',
+        'feature/never-existed-test' in err and 'neither locally nor on the remote' in err,
+        err,
+    )
+
+    # T-48 (bounded-Codex-pass, P2): if copying the local override file
+    # fails for any reason (it disappears, becomes unreadable, or the copy
+    # itself fails between review-overrides resolving it and this script's
+    # own read — review-overrides must itself still succeed first, or the
+    # existing "review-overrides failed" tooling failure fires instead,
+    # never reaching the cp this test targets), that must be a tooling
+    # failure (exit 3, named), not an unguarded `cp` exiting 1 under
+    # `set -e` with no OUTCOME report — exit 1 is reserved for the
+    # structured `blocked` verdict, so a caller distinguishing outcomes by
+    # exit code alone could misclassify this staging failure as a
+    # reviewer-configuration disagreement. Fake `cp` itself to fail
+    # deterministically for exactly this one target, isolating the guard
+    # from needing to reproduce a genuine, inherently racy TOCTOU window.
+    repo48 = root / 'repo48'
+    write_repo(repo48, coherent_shared, coherent_coderabbit)
+    local48 = repo48 / '.ai-dev-workflow.local.yaml'
+    local48.write_text('review:\n  on_draft:\n    runner: [claude]\n')
+    bins48 = root / 'bin48'
+    bins48.mkdir(exist_ok=True)
+    real_cp48 = shutil.which('cp')
+    failing_cp48 = bins48 / 'cp'
+    failing_cp48.write_text(
+        '#!/bin/bash\n'
+        'for arg in "$@"; do case "$arg" in *.ai-dev-workflow.local.yaml) echo "cp: simulated I/O error" >&2; exit 1;; esac; done\n'
+        f'exec {real_cp48!r} "$@"\n'
+    )
+    failing_cp48.chmod(0o755)
+    rc, data, out, err = run(
+        repo48, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins48}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-48 a failed copy of the local override file fails closed as a tooling failure, not a bare cp exit 1', 'OUTCOME' not in data, data)
+    check(
+        'T-48 failure message names the local override file and the copy failure',
+        str(local48) in err and 'cannot copy the local override file' in err,
+        err,
     )
 
 print(f'\nPassed: {passed}')

@@ -587,9 +587,26 @@ case "$mode" in
     elif [ "$origin_resolves" = 1 ]; then
       platform_ref="$remote_branch_sha"
       checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, resolved from the remote; no local copy of it exists in this checkout)"
-    else
+    elif [ "$local_resolves" = 1 ]; then
       platform_ref="$local_branch_ref"
       checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch, no pull request yet)"
+    else
+      # Neither the local nor the remote copy resolves — the branch this
+      # mode was invoked to resume against does not currently exist
+      # anywhere this script can see it (e.g. deleted after Protocol 91's
+      # own resume-state discovery already chose branch-resume on the
+      # assumption an existing branch is present). Reproduced live: the
+      # previous fallback here silently set platform_ref to a nonexistent
+      # local ref, which read_ref_file then correctly reported as
+      # unreadable (rc=2) — but that only degrades this ONE platform's own
+      # verdict to Undetermined/check-inconclusive, not the whole run, so
+      # OUTCOME could still be passed-unverified (or even passed, when no
+      # configured platform's own read actually exercises platform_ref) —
+      # exit 0 despite branch-resume's own precondition (an existing
+      # branch) being violated. Fail closed instead: this is an invalid
+      # resume state, a tooling/environment inconsistency, not a
+      # reviewer-configuration verdict to report.
+      fail "branch-resume was invoked for branch '$branch', but it resolves neither locally nor on the remote — it does not currently exist; branch-resume requires an existing branch (Protocol 91's own resume-state discovery should not have selected this mode otherwise)"
     fi
     ;;
   pr-resume)
@@ -656,7 +673,17 @@ run_bounded "$bound" "$overrides_json" "$work_dir/overrides.err" \
 local_override_file=$(jq -er '.LOCAL_OVERRIDE_FILE // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_FILE from review-overrides output'
 local_override_origin=$(jq -er '.LOCAL_OVERRIDE_ORIGIN // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_ORIGIN from review-overrides output'
 if [ -n "$local_override_file" ] && [ -f "$local_override_file" ]; then
-  cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml"
+  # An unguarded `cp` here is terminated by `set -e` on failure with the
+  # command's own exit status (typically 1) — the same exit code this
+  # script's own structured `blocked` verdict (OUTCOME=blocked) uses, but
+  # with no OUTCOME report at all, since the script never reaches the
+  # point that would print one. A caller distinguishing outcomes by exit
+  # code alone could misclassify this staging/tooling failure (the file
+  # disappearing or becoming unreadable between review-overrides
+  # resolving it and this copy) as a reviewer-configuration disagreement.
+  # Route it through fail() instead, so it is unambiguously a tooling
+  # failure (exit 3) with diagnostic context.
+  cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml" || fail "cannot copy the local override file ($local_override_file) for reading: it may have disappeared or become unreadable after review-overrides already resolved it"
   # Matches the documented contract's three states (none | applied |
   # present-unpropagated <details>): a file was found (accounting for the
   # linked-worktree -> main-clone fallback via LOCAL_OVERRIDE_ORIGIN) but
