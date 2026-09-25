@@ -71,7 +71,24 @@ done
 [ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'
 case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be pre-dispatch, branch-resume, or pr-resume' ;; esac
 [ -n "$target_base" ] || fail 'missing --target-base'
-if [ "$mode" = branch-resume ]; then [ -n "$branch" ] || fail '--branch is required for --mode branch-resume'; fi
+# --target-base and --branch reach `git fetch origin "<value>"` as a bare
+# refspec, not merely a branch name: `git fetch` accepts full
+# "<src>:<dst>[+]" refspec syntax there, so an unvalidated value such as
+# "develop:refs/heads/injected" (or a leading '+' forcing an overwrite)
+# would create or update an arbitrary local ref — this nominally read-only
+# gate must never be able to do that.
+validate_branch_name() {
+  local value=$1 label=$2
+  case "$value" in
+    +*) fail "$label must not start with '+' (refspec force syntax is not a valid branch name): $value" ;;
+  esac
+  git check-ref-format "refs/heads/$value" >/dev/null 2>&1 || fail "$label is not a valid branch name: $value"
+}
+validate_branch_name "$target_base" '--target-base'
+if [ "$mode" = branch-resume ]; then
+  [ -n "$branch" ] || fail '--branch is required for --mode branch-resume'
+  validate_branch_name "$branch" '--branch'
+fi
 if [ "$mode" = pr-resume ]; then
   [ -n "$pr" ] || fail '--pr is required for --mode pr-resume'
   [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
@@ -108,6 +125,24 @@ clamp_bound() {
   local remaining
   remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
   [ "$remaining" -gt 0 ] || remaining=0
+  bound=$remaining
+  [ "$bound" -le "$1" ] || bound=$1
+}
+
+# Like clamp_bound, but never shrinks to zero: the input builder and the
+# classifier do no I/O of their own (only in-memory JSON work on fragments
+# every earlier bounded read has already produced), so they must always get
+# a real, if small, chance to run and still produce the graceful-degrade
+# outcome (check-inconclusive per platform) this preflight's time-bound
+# design exists to reach — starving them to zero just because upstream
+# reads consumed the whole budget would turn that intended degrade path
+# into a tooling failure instead. The 1-second floor keeps the worst-case
+# total overrun past PREFLIGHT_BUDGET_SECONDS small and bounded, rather
+# than the unconditional per-step cap this replaces.
+clamp_bound_floor() {
+  local remaining
+  remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
+  [ "$remaining" -ge 1 ] || remaining=1
   bound=$remaining
   [ "$bound" -le "$1" ] || bound=$1
 }
@@ -208,7 +243,17 @@ case "$mode" in
     # True divergence (neither is an ancestor of the other, e.g. an amended
     # or rebased local branch) cannot be resolved by "ahead" comparison at
     # all; fail closed rather than silently guessing which copy is real.
-    fetch_ref "$branch" || true
+    # A swallowed failure here is the same risk as the base-branch refresh
+    # above, with one legitimate exception: the branch may genuinely not
+    # exist on the remote yet (not pushed). Git's own message distinguishes
+    # that case from every other fetch failure (network, auth, timeout);
+    # only the former is safe to treat as "no remote copy to prefer" rather
+    # than a stop.
+    if ! fetch_ref "$branch"; then
+      if ! grep -q "couldn't find remote ref" "$work_dir/fetch.err" 2>/dev/null; then
+        fail "cannot refresh origin/$branch from the remote: $(cat "$work_dir/fetch.err" 2>/dev/null)"
+      fi
+    fi
     local_resolves=0 origin_resolves=0
     git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1 && local_resolves=1
     git -C "$repo_root" rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1 && origin_resolves=1
@@ -340,14 +385,7 @@ fi
 
 input_json="$work_dir/input.json"
 build_input_rc=0
-# A fixed bound, not clamp_bound's remaining-wall-clock-budget: this step
-# does no I/O (only in-memory JSON assembly from already-read fragments),
-# so it must always get a real chance to run and produce an outcome even
-# when earlier bounded reads consumed the whole overall budget — that is
-# exactly the graceful-degrade path (check-inconclusive per platform) this
-# preflight is supposed to reach, not a reason to starve the one step that
-# still has to assemble that degraded result.
-bound="$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$work_dir/build-input.out" "$work_dir/build-input.err" \
   python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
   --runner-json "$runner_json" \
@@ -377,11 +415,7 @@ fi
 
 output_json="$work_dir/output.json"
 preflight_rc=0
-# Same rationale as build_input_rc above: a fixed bound, not the remaining
-# wall-clock budget, so the classification step that turns a degraded
-# input into a reportable outcome is never itself the thing starved to
-# zero by upstream I/O.
-bound="$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$output_json" "$work_dir/preflight.err" \
   python3 "$SCRIPT_DIR/reviewer_preflight.py" --input-json "$input_json" || preflight_rc=$?
 if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && ! jq -e . "$output_json" >/dev/null 2>&1; }; then

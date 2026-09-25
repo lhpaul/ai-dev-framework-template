@@ -489,5 +489,88 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
+    # T-16: --target-base / --branch reach `git fetch origin "<value>"` as a
+    # bare refspec argument, not merely a branch name — reject refspec
+    # syntax (a "<src>:<dst>" separator, or a leading '+' force prefix)
+    # before it ever reaches git, so this nominally read-only gate cannot be
+    # made to create or overwrite an arbitrary local ref.
+    injected_ref = 'refs/heads/injected-by-preflight'
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', f'develop:{injected_ref}',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-16 refspec-syntax --target-base is rejected', 'OUTCOME' not in data, data)
+    check('T-16 rejection message names --target-base', '--target-base' in err, err)
+    injected_check = git(repo1, 'show-ref', '--verify', '--quiet', injected_ref, check_call=False)
+    check('T-16 refspec-syntax --target-base never creates the injected ref', injected_check.returncode != 0, injected_check)
+    rc, data, out, err = run(
+        repo1, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', '+develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-16 force-prefixed --branch is rejected', 'OUTCOME' not in data, data)
+    check('T-16 rejection message names --branch', '--branch' in err, err)
+
+    # T-17: branch-resume distinguishes a branch that genuinely does not
+    # exist on the remote (T-10's case — safe to degrade to the local-only
+    # copy) from an operational fetch failure (network/auth/timeout) with a
+    # branch that *does* exist remotely — the latter must fail closed, not
+    # silently read a stale cached origin/<branch> as current.
+    repo17 = root / 'repo17'
+    write_repo(repo17, coherent_shared, coherent_coderabbit)
+    git(repo17, 'checkout', '-q', '-b', 'feature/fetch-failure-test')
+    git(repo17, 'fetch', '-q', 'origin', 'feature/fetch-failure-test')
+    repo17_bins = root / 'repo17-bin'
+    repo17_bins.mkdir(exist_ok=True)
+    real_git17 = shutil.which('git')
+    failing_git17 = repo17_bins / 'git'
+    failing_git17.write_text(
+        '#!/bin/bash\n'
+        # Only fail the branch fetch (not the base-branch fetch, which runs
+        # first in branch-resume and must still succeed for this case to
+        # isolate the branch-fetch failure specifically).
+        'has_fetch=0; has_branch=0\n'
+        'for arg in "$@"; do\n'
+        '  [ "$arg" = fetch ] && has_fetch=1\n'
+        '  [ "$arg" = feature/fetch-failure-test ] && has_branch=1\n'
+        'done\n'
+        'if [ "$has_fetch" = 1 ] && [ "$has_branch" = 1 ]; then echo "fatal: simulated network failure" >&2; exit 1; fi\n'
+        f'exec {real_git17!r} "$@"\n'
+    )
+    failing_git17.chmod(0o755)
+    rc, data, out, err = run(
+        repo17, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/fetch-failure-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{repo17_bins}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-17 operational branch-fetch failure fails closed', 'OUTCOME' not in data, data)
+    check(
+        'T-17 operational branch-fetch failure message names the branch',
+        'feature/fetch-failure-test' in err and 'cannot refresh' in err,
+        err,
+    )
+
+    # T-18: the final subprocess steps' bound floor keeps the worst-case
+    # total wall clock close to PREFLIGHT_BUDGET_SECONDS, not the much
+    # larger fixed-cap-per-step overrun a naive fixed bound would allow.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '4',
+        },
+        expected=0,
+    )
+    elapsed = float(data.get('ELAPSED_SECONDS', '999'))
+    check(
+        'T-18 bound floor keeps total elapsed close to the budget, not 2x the per-step cap',
+        elapsed <= 4.0,
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY
