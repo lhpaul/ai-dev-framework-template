@@ -62,6 +62,30 @@ emit_guardrails_unreadable_stop() {
   exit 1
 }
 
+# emit_misclassified_type_stop <issue> <reason_text>
+#
+# Single-item routing stop for #1583: a framework-mode repository's Backlog
+# item is Type Workflow with no work started
+# (framework-mode-backlog-type-gate.sh RESULT=stop). Modeled on
+# emit_guardrails_unreadable_stop's shape (stopCondition / affectedWorkItem
+# / humanActionRequired / readOnlyGuarantee).
+emit_misclassified_type_stop() {
+  local issue="$1"
+  local reason_text="$2"
+  local affected="#${issue}"
+  local human_action="Re-classify issue #${issue} as Feature, Bug, or Refactor, then rerun."
+  if [ "$json_output" -eq 1 ]; then
+    jq -nc --arg detail "$reason_text" --arg affected "$affected" --arg humanAction "$human_action" \
+      '{stopCondition: "missing_tracker_context", affectedWorkItem: $affected, humanActionRequired: $humanAction, readOnlyGuarantee: "No tracker updates, branch creation, PR edits, labels, comments, merges, issue closure, or branch deletion were performed.", detail: $detail}'
+    exit 1
+  fi
+  printf "STOP: guardrail 'missing_tracker_context' halted this run\n"
+  printf 'Affected work item: %s\n' "$affected"
+  printf 'Human action required: %s\n' "$human_action"
+  printf '%s\n' "$reason_text" >&2
+  exit 1
+}
+
 require_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
@@ -480,6 +504,57 @@ case "$scope_mode" in
     fi
     ;;
 esac
+
+# framework-mode-backlog-type-gate.sh wiring (#1583) — item scope only. The
+# `items` and `epic` scope modes are deliberately not wired; see the plan's
+# Out of Scope section (deferred to #1779).
+if [ "$scope_mode" = "item" ] && [ "$(workflow_template_is_template)" = "true" ]; then
+  fm_repo_root="$(workflow_repo_root)"
+  fm_tracker_read_deferred="$(jq -r '.trackerReadDeferred // false' "$scope_file")"
+  fm_issue_number="$(jq -r '.resolvedIssueNumber // .items[0].number // empty' "$scope_file")"
+  if [ -n "$fm_issue_number" ] && [ "$fm_tracker_read_deferred" != "true" ]; then
+    fm_status="$(jq -r '.items[0].status // ""' "$scope_file")"
+    fm_type="$(jq -r '.items[0].type // ""' "$scope_file")"
+    fm_prs_json="$(jq -c '.items[0].pullRequests // {open: [], merged: []}' "$scope_file")"
+
+    # Resolve the item's development folder — the reverse of the mapping
+    # extract_github_issue_number already provides (issue number from a
+    # folder's contents). Zero matches means no development-folder
+    # artifacts (fast-track work has none by design); exactly one match
+    # supplies the artifact stage from workflow-next-action.sh; two or
+    # more is ambiguous and the gate is skipped entirely (deterministic,
+    # non-destructive — duplicate folders mean work exists somewhere).
+    fm_matching_folders=()
+    if [ -d "$fm_repo_root/docs/specs/developments" ]; then
+      while IFS= read -r fm_folder; do
+        [ -z "$fm_folder" ] && continue
+        if [ "$(extract_github_issue_number "$fm_folder")" = "$fm_issue_number" ]; then
+          fm_matching_folders+=("$fm_folder")
+        fi
+      done < <(find "$fm_repo_root/docs/specs/developments" -mindepth 1 -maxdepth 1 -type d | sort)
+    fi
+
+    if [ "${#fm_matching_folders[@]}" -le 1 ]; then
+      fm_artifact_stage=""
+      if [ "${#fm_matching_folders[@]}" -eq 1 ]; then
+        if fm_next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "${fm_matching_folders[0]}" --repo-root "$fm_repo_root" 2>/dev/null)"; then
+          fm_artifact_stage="$(printf '%s\n' "$fm_next_action_output" | awk -F= '$1=="STATUS"{print $2; exit}')"
+        fi
+      fi
+
+      fm_branch_pr_evidence="$(workflow_branch_pr_evidence_single_item "$fm_issue_number" "$fm_tracker_read_deferred" "$fm_prs_json")"
+      fm_gate_output="$("$SCRIPT_DIR/framework-mode-backlog-type-gate.sh" \
+        --issue "$fm_issue_number" --status "$fm_status" --type "$fm_type" \
+        --artifact-stage "$fm_artifact_stage" --branch-pr-evidence "$fm_branch_pr_evidence" \
+        --caller single --repo-root "$fm_repo_root")"
+      fm_result="$(printf '%s\n' "$fm_gate_output" | awk -F= '$1=="RESULT"{print $2; exit}')"
+      if [ "$fm_result" = "stop" ]; then
+        fm_reason_text="$(printf '%s\n' "$fm_gate_output" | sed -n 's/^REASON_TEXT=//p')"
+        emit_misclassified_type_stop "$fm_issue_number" "$fm_reason_text"
+      fi
+    fi
+  fi
+fi
 
 if [ -z "$may_merge_override" ]; then
   may_merge_override="$(guardrails_scope_may_merge "$guardrails_json" "$scope_file")"

@@ -325,6 +325,60 @@ ere_escape() {
   printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
 }
 
+# _fm_gate_check <issue-number> <tracker-status> <tracker-status-deferred: yes|no> <artifact-stage> <github-repo>
+#
+# Framework-mode Backlog routing gate wiring (#1583). Consumer mode and a
+# blank issue number are no-ops. Populates FM_HOLD (0/1),
+# FM_MISCLASSIFIED_TYPE, FM_MISCLASSIFIED_TYPE_REASON, and
+# FM_MISCLASSIFIED_TYPE_CHECK (applied/deferred/not_applicable — a report
+# field only; it changes no routing decision). The gate itself reads Type
+# (the scan retains only the status string, not Type — see the plan's
+# "Tracker-read cost" accounting), so this helper never reads Type.
+#
+# Branch/PR evidence is only probed when the tracker status reconciles to
+# Backlog (order 0) AND the artifact stage is empty — exactly the
+# combination under which the gate's decision table actually consults it.
+# This bounds the extra `gh pr list` + `git show-ref` cost to genuine
+# no-work-yet Backlog folders instead of every scanned non-terminal folder.
+_fm_gate_check() {
+  FM_HOLD=0
+  FM_MISCLASSIFIED_TYPE=""
+  FM_MISCLASSIFIED_TYPE_REASON=""
+  FM_MISCLASSIFIED_TYPE_CHECK="not_applicable"
+
+  [ "$(workflow_template_is_template)" = "true" ] || return 0
+
+  local _fm_issue="$1" _fm_status="$2" _fm_deferred="$3" _fm_artifact_stage="$4" _fm_github_repo="$5"
+  [ -n "$_fm_issue" ] || return 0
+
+  local _fm_branch_pr_evidence="none"
+  if [ "$(workflow_status_order "$_fm_status")" = "0" ] && [ -z "$_fm_artifact_stage" ]; then
+    _fm_branch_pr_evidence="$(workflow_branch_pr_evidence "$_fm_issue" "$_fm_github_repo")"
+  fi
+
+  local _fm_gate_output
+  _fm_gate_output="$("$SCRIPT_DIR/framework-mode-backlog-type-gate.sh" \
+    --issue "$_fm_issue" --status "$_fm_status" --artifact-stage "$_fm_artifact_stage" \
+    --branch-pr-evidence "$_fm_branch_pr_evidence" --caller scan --repo-root "$repo_root")"
+
+  local _fm_result _fm_check
+  _fm_result="$(printf '%s\n' "$_fm_gate_output" | awk -F= '$1=="RESULT"{print $2; exit}')"
+  _fm_check="$(printf '%s\n' "$_fm_gate_output" | awk -F= '$1=="MISCLASSIFIED_TYPE_CHECK"{print $2; exit}')"
+  if [ -n "$_fm_check" ]; then
+    FM_MISCLASSIFIED_TYPE_CHECK="$_fm_check"
+  elif [ "$_fm_deferred" = "yes" ]; then
+    FM_MISCLASSIFIED_TYPE_CHECK="deferred"
+  else
+    FM_MISCLASSIFIED_TYPE_CHECK="applied"
+  fi
+
+  if [ "$_fm_result" = "hold" ]; then
+    FM_HOLD=1
+    FM_MISCLASSIFIED_TYPE="Workflow"
+    FM_MISCLASSIFIED_TYPE_REASON="$(printf '%s\n' "$_fm_gate_output" | sed -n 's/^REASON_TEXT=//p')"
+  fi
+}
+
 # open_implementation_pr_metadata <issue-number> <slug> <github-repo>
 #
 # Emits PR_NUMBER, PR_BRANCH, and PR_LABELS for the first open implementation PR
@@ -537,9 +591,28 @@ for development_path in "${development_paths[@]}"; do
     # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated
     # block so the orchestrator still sees TOOL_FIX for this folder.
     echo "Skipping $development_path: $next_action_output" >&2
+    # framework-mode-backlog-type-gate.sh wiring (#1583). This is the case
+    # the feature exists for: no folder artifacts (next-action just failed),
+    # so a genuinely no-work Backlog + Workflow item is caught here.
+    _fm_gate_check "$issue_number" "$tracker_status" "$_tracker_status_deferred" "" ""
+    if [ "$FM_HOLD" -eq 1 ]; then
+      print_kv TARGET "development:$development_path"
+      print_kv DEVELOPMENT_PATH "$development_path"
+      print_kv SLUG "$slug"
+      print_kv STATUS "$tracker_status"
+      print_kv NEXT_ACTION "hold-misclassified-type"
+      print_kv MISCLASSIFIED_TYPE "$FM_MISCLASSIFIED_TYPE"
+      print_kv MISCLASSIFIED_TYPE_REASON "$FM_MISCLASSIFIED_TYPE_REASON"
+      print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
+      print_kv TOOL_FIX "$tool_fix"
+      [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+      echo
+      continue
+    fi
     print_kv TARGET "development:$development_path"
     print_kv DEVELOPMENT_PATH "$development_path"
     print_kv SLUG "$slug"
+    [ "$FM_MISCLASSIFIED_TYPE_CHECK" != "not_applicable" ] && print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
     print_kv TOOL_FIX "$tool_fix"
     [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
     echo
@@ -596,6 +669,29 @@ for development_path in "${development_paths[@]}"; do
       ;;
   esac
 
+  # framework-mode-backlog-type-gate.sh wiring (#1583). A stale Backlog with
+  # artifacts (status here is next-action's artifact-derived value, e.g.
+  # "Spec Ready") passes as stale_backlog_reconciled and this block is
+  # emitted unchanged — the gate only replaces the block below when it
+  # genuinely holds.
+  _fm_gate_check "$issue_number" "$tracker_status" "$_tracker_status_deferred" "$status" "$action_github_repo"
+  if [ "$FM_HOLD" -eq 1 ]; then
+    print_kv TARGET "development:$development_path"
+    print_kv DEVELOPMENT_PATH "$development_path"
+    print_kv SLUG "$slug"
+    [ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
+    [ "$_tracker_status_deferred" = "yes" ] && print_kv TRACKER_STATUS_DEFERRED "$issue_number"
+    print_kv STATUS "$tracker_status"
+    print_kv NEXT_ACTION "hold-misclassified-type"
+    print_kv MISCLASSIFIED_TYPE "$FM_MISCLASSIFIED_TYPE"
+    print_kv MISCLASSIFIED_TYPE_REASON "$FM_MISCLASSIFIED_TYPE_REASON"
+    print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
+    print_kv TOOL_FIX "$tool_fix"
+    [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+    echo
+    continue
+  fi
+
   print_kv TARGET "development:$development_path"
   print_kv DEVELOPMENT_PATH "$development_path"
   print_kv SLUG "$slug"
@@ -615,5 +711,6 @@ for development_path in "${development_paths[@]}"; do
   [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
   [ -n "$file_set" ] && print_kv FILE_SET "$file_set"
   [ -n "$local_runtime" ] && print_kv LOCAL_RUNTIME "$local_runtime"
+  [ "$FM_MISCLASSIFIED_TYPE_CHECK" != "not_applicable" ] && print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
   echo
 done
