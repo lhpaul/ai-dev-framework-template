@@ -388,8 +388,36 @@ cp "$_consumer_backup" "$REPO_ROOT/.ai-dev-workflow.yaml"
 run_test "consumer_mode_workflow_passes" "pass" "$(kv RESULT "$consumer_gate_out")"
 run_test "consumer_mode_workflow_reason" "consumer_mode" "$(kv REASON "$consumer_gate_out")"
 
+# consumer-routing-all-classes-unchanged: under consumer config, every class
+# (including Workflow and no --type at all) passes as consumer_mode — the
+# gate exits before reading Type at all in that mode, so re-classification
+# never changes this half of the claim.
+for _consumer_class in Feature Bug Refactor Workflow ""; do
+  _consumer_backup3="$TMP_ROOT/consumer-swap3.bak"
+  cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$_consumer_backup3"
+  cp "$consumer_config" "$REPO_ROOT/.ai-dev-workflow.yaml"
+  _consumer_class_out="$("$GATE" --repo-root "$REPO_ROOT" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --type "$_consumer_class")"
+  cp "$_consumer_backup3" "$REPO_ROOT/.ai-dev-workflow.yaml"
+  _consumer_class_label="${_consumer_class:-none}"
+  run_test "consumer_routing_all_classes_unchanged_${_consumer_class_label}_result" "pass" "$(kv RESULT "$_consumer_class_out")"
+  run_test "consumer_routing_all_classes_unchanged_${_consumer_class_label}_reason" "consumer_mode" "$(kv REASON "$_consumer_class_out")"
+done
+
 gate_case "type_routes_today_feature" pass type_routes_today \
   --repo-root "$REPO_ROOT" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --type Feature
+
+# reclassify-then-route: after the fixture re-classes the same item to
+# Feature, then Bug, then Refactor, the gate routes each identically
+# (pass/type_routes_today) — it never distinguishes among non-Workflow
+# types, so none of the three reclassifications trip a hold this gate
+# controls. The Bug scope check itself lives entirely outside this gate
+# (it runs unconditionally once the gate passes), so a gate that always
+# passes for Bug cannot be the thing that skips it.
+gate_case "reclassify_then_route_bug" pass type_routes_today \
+  --repo-root "$REPO_ROOT" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --type Bug
+
+gate_case "reclassify_then_route_refactor" pass type_routes_today \
+  --repo-root "$REPO_ROOT" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --type Refactor
 
 gate_case "type_absent" pass type_absent \
   --repo-root "$REPO_ROOT" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --type ""
@@ -513,6 +541,315 @@ if guidance_check_all_pass; then
 else
   run_test "guidance_check_planted_violation_reverted_passes" "pass" "fail"
 fi
+
+# ===========================================================================
+# Branch/PR evidence probes: local-only and origin-only ref namespaces
+# (stale-backlog-open-fix-branch-no-pr-continues,
+# stale-backlog-pushed-fix-branch-no-pr-continues)
+# ===========================================================================
+
+echo ""
+echo "=== workflow_branch_ref_evidence / workflow_branch_pr_evidence_single_item: local-only and origin-only ref probes ==="
+
+REF_REPO="$TMP_ROOT/ref-repo-local"
+mkdir -p "$REF_REPO"
+git -C "$REF_REPO" init -q
+git -C "$REF_REPO" config user.email test@example.com
+git -C "$REF_REPO" config user.name "Test User"
+git -C "$REF_REPO" commit --allow-empty -m "initial" >/dev/null
+git -C "$REF_REPO" branch fix/9002-local-only-slug >/dev/null
+
+# stale-backlog-open-fix-branch-no-pr-continues: a live fix/ branch that
+# exists ONLY as a local refs/heads/ ref — not pushed, no
+# refs/remotes/origin/ ref, and no PR at all — the normal state right after
+# a fast-track branch is cut. workflow-next-action.sh's own probe
+# (:602-:620) is origin-only and would miss this.
+local_only_ref_evidence="$(cd "$REF_REPO" && workflow_branch_ref_evidence 9002)"
+run_test "stale_backlog_open_fix_branch_no_pr_continues_ref_probe" "present" "$local_only_ref_evidence"
+local_only_single_item_evidence="$(cd "$REF_REPO" && workflow_branch_pr_evidence_single_item 9002 false '{"open":[],"merged":[]}')"
+run_test "stale_backlog_open_fix_branch_no_pr_continues_single_item" "present" "$local_only_single_item_evidence"
+
+REF_REPO_ORIGIN="$TMP_ROOT/ref-repo-origin"
+mkdir -p "$REF_REPO_ORIGIN"
+git -C "$REF_REPO_ORIGIN" init -q
+git -C "$REF_REPO_ORIGIN" config user.email test@example.com
+git -C "$REF_REPO_ORIGIN" config user.name "Test User"
+git -C "$REF_REPO_ORIGIN" commit --allow-empty -m "initial" >/dev/null
+git -C "$REF_REPO_ORIGIN" update-ref refs/remotes/origin/fix/9003-origin-only-slug HEAD
+
+# stale-backlog-pushed-fix-branch-no-pr-continues: the same shape, but the
+# branch is present ONLY as refs/remotes/origin/fix/<issue>-<slug> with no
+# local ref (a fresh clone, or the local branch deleted post-push). Pins
+# the other namespace: neither fixture is satisfiable by a probe that
+# reads only the other.
+origin_only_ref_evidence="$(cd "$REF_REPO_ORIGIN" && workflow_branch_ref_evidence 9003)"
+run_test "stale_backlog_pushed_fix_branch_no_pr_continues_ref_probe" "present" "$origin_only_ref_evidence"
+origin_only_single_item_evidence="$(cd "$REF_REPO_ORIGIN" && workflow_branch_pr_evidence_single_item 9003 false '{"open":[],"merged":[]}')"
+run_test "stale_backlog_pushed_fix_branch_no_pr_continues_single_item" "present" "$origin_only_single_item_evidence"
+
+REF_REPO_NONE="$TMP_ROOT/ref-repo-none"
+mkdir -p "$REF_REPO_NONE"
+git -C "$REF_REPO_NONE" init -q
+git -C "$REF_REPO_NONE" config user.email test@example.com
+git -C "$REF_REPO_NONE" config user.name "Test User"
+git -C "$REF_REPO_NONE" commit --allow-empty -m "initial" >/dev/null
+none_ref_evidence="$(cd "$REF_REPO_NONE" && workflow_branch_ref_evidence 9004)"
+run_test "branch_ref_evidence_no_match_is_none" "none" "$none_ref_evidence"
+
+# ===========================================================================
+# End-to-end real scan -> lanes fixture (#1583). Unlike the gate-level
+# scan_backlog_no_artifacts_held cases above (which call
+# framework-mode-backlog-type-gate.sh directly with synthetic
+# --status/--artifact-stage/--branch-pr-evidence flags), this section runs
+# the REAL workflow-batch-plan.sh --scan against a real git fixture repo and
+# a mocked-gh tracker read, piped into the REAL workflow-batch-lanes.sh,
+# proving both scan-caller wiring points end to end:
+#   - scan-backlog-no-artifacts-held (the case the feature exists for)
+#   - scan-merged-implementation-pr-continues
+#   - scan-status-unreadable-defers
+# ===========================================================================
+
+echo ""
+echo "=== end-to-end: workflow-batch-plan.sh --scan -> workflow-batch-lanes.sh (real fixture) ==="
+
+E2E_ROOT="$TMP_ROOT/e2e-fm-scan"
+mkdir -p "$E2E_ROOT/docs/specs/developments"
+cat > "$E2E_ROOT/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+template:
+  is_template: true
+guardrails:
+  mode: manual
+YAML
+git -C "$E2E_ROOT" init -q
+git -C "$E2E_ROOT" config user.email test@example.com
+git -C "$E2E_ROOT" config user.name "Test User"
+git -C "$E2E_ROOT" commit --allow-empty -m "initial e2e fixture" >/dev/null
+
+# Empty development folder (no spec/plan .md) for issue #9001 — the exact
+# "next-action fails, no folder artifacts" shape the gate exists for. The
+# leading digits of the slug (9001) are the only issue-number source since
+# there is no markdown file to carry "**Issue**: #NNN".
+E2E_DEV="$E2E_ROOT/docs/specs/developments/20260101000000_9001-e2e-empty-folder"
+mkdir -p "$E2E_DEV"
+
+E2E_BIN="$TMP_ROOT/e2e-mock-bin"
+mkdir -p "$E2E_BIN"
+cat > "$E2E_BIN/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
+  exit 0
+fi
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *'--json owner'*) printf 'e2e-owner\n' ;;
+    *'--json name'*) printf 'e2e-repo\n' ;;
+    *) printf 'e2e-owner/e2e-repo\n' ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ]; then
+  case "$*" in
+    *"projectV2(number:"*)
+      printf '{"data":{"user":{"projectV2":{"id":"PVT_e2e"}}}}\n'
+      ;;
+    *"repository(owner:"*)
+      if [ "${MOCK_E2E_ITEM_MODE:-found}" = "missing" ]; then
+        printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+      else
+        printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_9001","project":{"id":"PVT_e2e","number":1},"status":{"name":"Backlog"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+      fi
+      ;;
+    *)
+      printf 'unexpected gh graphql call: %s\n' "$*" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  case "$*" in
+    *"--state merged"*)
+      if [ "${MOCK_E2E_PR_MODE:-empty}" = "merged" ]; then
+        printf '[{"number":77,"headRefName":"feature/9001-e2e-empty-folder"}]\n'
+      else
+        printf '[]\n'
+      fi
+      ;;
+    *"--state open"*)
+      printf '[]\n'
+      ;;
+    *)
+      printf 'unexpected gh pr list call: %s\n' "$*" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+printf 'unexpected gh call: %s\n' "$*" >&2
+exit 1
+MOCK_GH
+chmod +x "$E2E_BIN/gh"
+
+run_e2e_scan() {
+  PATH="$E2E_BIN:$PATH" WORKFLOW_SKIP_FETCH=1 AI_DEV_WORKFLOW_CONFIG_FILE="$E2E_ROOT/.ai-dev-workflow.yaml" \
+    "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" --repo-root "$E2E_ROOT"
+}
+
+# --- scan-backlog-no-artifacts-held, driven end to end ---
+e2e_held_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=empty run_e2e_scan)"
+run_test "e2e_scan_backlog_no_artifacts_held_next_action" "hold-misclassified-type" "$(kv NEXT_ACTION "$e2e_held_out")"
+e2e_held_lanes_out="$(printf '%s\n' "$e2e_held_out" | "$REPO_ROOT/scripts/development-workflow/workflow-batch-lanes.sh" --repo-root "$E2E_ROOT")"
+run_test "e2e_scan_backlog_no_artifacts_held_dispatch" "held" "$(kv DISPATCH "$e2e_held_lanes_out")"
+
+# --- scan-merged-implementation-pr-continues: same empty folder, but a
+# merged implementation PR exists for the issue and no open PR/live branch.
+# open_implementation_pr_metadata only lists --state open, so this fails
+# unless the scan also runs the merged-PR probe. ---
+e2e_merged_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=merged run_e2e_scan)"
+run_test "e2e_scan_merged_implementation_pr_continues_not_held" "no" "$(printf '%s\n' "$e2e_merged_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "e2e_scan_merged_implementation_pr_continues_check" "applied" "$(kv MISCLASSIFIED_TYPE_CHECK "$e2e_merged_out")"
+e2e_merged_lanes_out="$(printf '%s\n' "$e2e_merged_out" | "$REPO_ROOT/scripts/development-workflow/workflow-batch-lanes.sh" --repo-root "$E2E_ROOT")"
+run_test "e2e_scan_merged_implementation_pr_continues_not_dispatch_held" "no" "$([ "$(kv DISPATCH "$e2e_merged_lanes_out")" = "held" ] && echo yes || echo no)"
+
+# --- scan-status-unreadable-defers: tracker status read returns empty
+# because the issue is not on the configured board (missing project item) —
+# not the Linear-specific TRACKER_ACTION_REQUIRED signal. Proves the
+# workflow-batch-plan.sh fix landed alongside this test: any empty status
+# read is "unreadable" for MISCLASSIFIED_TYPE_CHECK, not only Linear's. ---
+e2e_unreadable_out="$(MOCK_E2E_ITEM_MODE=missing MOCK_E2E_PR_MODE=empty run_e2e_scan)"
+run_test "e2e_scan_status_unreadable_defers_not_held" "no" "$(printf '%s\n' "$e2e_unreadable_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "e2e_scan_status_unreadable_defers_check" "deferred" "$(kv MISCLASSIFIED_TYPE_CHECK "$e2e_unreadable_out")"
+
+# --- consumer-batch-plan-workflow-unchanged: the identical empty-folder
+# shape under a consumer config (no template.is_template) emits no
+# MISCLASSIFIED_TYPE* keys at all and never holds — this is the scenario
+# that fails if the new gate call leaks into consumer mode.
+#
+# workflow_template_is_template (no args) resolves its config file via
+# workflow_repo_root — the directory workflow-lib.sh itself lives in — not
+# via --repo-root or AI_DEV_WORKFLOW_CONFIG_FILE (workflow-lib.sh:32-38;
+# only workflow_effective_config_file honors the env override, and
+# is_template does not call it). That is pre-existing, unrelated to #1583,
+# and consistent with this repository's own single_repo assumption (plan
+# Cross-Cutting Operational Assumption Check). So a consumer-mode fixture
+# for this check must swap the REAL repo's .ai-dev-workflow.yaml for the
+# duration of the call — passing --repo-root/--config alone does not
+# change which config framework-mode reads. ---
+CONSUMER_E2E_ROOT="$TMP_ROOT/e2e-consumer-scan"
+mkdir -p "$CONSUMER_E2E_ROOT/docs/specs/developments"
+git -C "$CONSUMER_E2E_ROOT" init -q
+git -C "$CONSUMER_E2E_ROOT" config user.email test@example.com
+git -C "$CONSUMER_E2E_ROOT" config user.name "Test User"
+git -C "$CONSUMER_E2E_ROOT" commit --allow-empty -m "initial consumer e2e fixture" >/dev/null
+mkdir -p "$CONSUMER_E2E_ROOT/docs/specs/developments/20260101000000_9001-e2e-empty-folder"
+
+_consumer_e2e_backup="$TMP_ROOT/consumer-e2e-real-config.bak"
+cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$_consumer_e2e_backup"
+cp "$consumer_config" "$REPO_ROOT/.ai-dev-workflow.yaml"
+consumer_e2e_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=empty PATH="$E2E_BIN:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" --repo-root "$CONSUMER_E2E_ROOT")"
+cp "$_consumer_e2e_backup" "$REPO_ROOT/.ai-dev-workflow.yaml"
+run_test "consumer_batch_plan_workflow_unchanged_no_next_action_hold" "no" "$(printf '%s\n' "$consumer_e2e_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "consumer_batch_plan_workflow_unchanged_no_misclassified_key" "no" "$(printf '%s\n' "$consumer_e2e_out" | grep -q '^MISCLASSIFIED_TYPE' && echo yes || echo no)"
+
+# ===========================================================================
+# Single-item folder resolution (#1583, prelude-issue-*): the same
+# primitives run-bounded-prelude.sh's item-scope wiring composes
+# (extract_github_issue_number + workflow-next-action.sh), exercised
+# directly against real fixture folders rather than through the full
+# run-item-scope-resolver.sh (which requires a live tracker read this test
+# suite does not stand up). This proves the folder-count decision table;
+# the stop/pass decision itself is covered by the gate-level tests above.
+# ===========================================================================
+
+echo ""
+echo "=== single-item folder resolution: zero / one / multiple matching folders (prelude-issue-*) ==="
+
+FOLD_ROOT="$TMP_ROOT/fold-repo"
+mkdir -p "$FOLD_ROOT/docs/specs/developments"
+git -C "$FOLD_ROOT" init -q
+git -C "$FOLD_ROOT" config user.email test@example.com
+git -C "$FOLD_ROOT" config user.name "Test User"
+git -C "$FOLD_ROOT" commit --allow-empty -m "initial" >/dev/null
+
+resolve_folder_stage() {
+  local issue="$1" repo_root="$2"
+  local matches=()
+  while IFS= read -r folder; do
+    [ -z "$folder" ] && continue
+    if [ "$(extract_github_issue_number "$folder")" = "$issue" ]; then
+      matches+=("$folder")
+    fi
+  done < <(find "$repo_root/docs/specs/developments" -mindepth 1 -maxdepth 1 -type d | sort)
+  case "${#matches[@]}" in
+    0) printf '' ;;
+    1)
+      WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" --development "${matches[0]}" --repo-root "$repo_root" 2>/dev/null \
+        | awk -F= '$1=="STATUS"{print $2; exit}'
+      ;;
+    *) printf 'AMBIGUOUS:%s' "${#matches[@]}" ;;
+  esac
+}
+
+run_test "prelude_issue_no_folder_stops_zero_matches" "" "$(resolve_folder_stage 9101 "$FOLD_ROOT")"
+
+one_folder="$FOLD_ROOT/docs/specs/developments/20260101000000_9102-one-folder"
+mkdir -p "$one_folder"
+cat > "$one_folder/1_9102-one-folder_specs.md" <<'MD'
+# Spec
+MD
+run_test "prelude_issue_one_folder_uses_its_stage" "Spec Ready" "$(resolve_folder_stage 9102 "$FOLD_ROOT")"
+
+dup_a="$FOLD_ROOT/docs/specs/developments/20260101000000_9103-dup-a"
+dup_b="$FOLD_ROOT/docs/specs/developments/20260102000000_9103-dup-b"
+mkdir -p "$dup_a" "$dup_b"
+run_test "prelude_issue_multiple_folders_passes_ambiguous" "AMBIGUOUS:2" "$(resolve_folder_stage 9103 "$FOLD_ROOT")"
+
+# ===========================================================================
+# Structural consumer-unchanged proofs (#1583)
+# ===========================================================================
+
+echo ""
+echo "=== consumer-prelude-workflow-unchanged / consumer-next-action-workflow-unchanged ==="
+
+# consumer-prelude-workflow-unchanged: the gate wiring block in
+# run-bounded-prelude.sh is unconditionally gated on
+# workflow_template_is_template = true, so it is a structural no-op in
+# consumer mode (the whole block is skipped, not merely a pass-through).
+run_test "consumer_prelude_workflow_unchanged_gated" "yes" "$(grep -Fq '[ "$(workflow_template_is_template)" = "true" ]' "$REPO_ROOT/scripts/development-workflow/run-bounded-prelude.sh" && echo yes || echo no)"
+
+# consumer-next-action-workflow-unchanged: workflow-next-action.sh is not
+# modified by this item at all — it carries no reference to the new gate or
+# its report keys — so its NEXT_ACTION/STATUS output cannot have regressed
+# in either mode. This doubles as the regression guard proving the gate was
+# never wired into it.
+run_test "consumer_next_action_workflow_unchanged_no_gate_reference" "no" "$(grep -qE 'framework-mode-backlog-type-gate|MISCLASSIFIED_TYPE' "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" && echo yes || echo no)"
+
+# ===========================================================================
+# Protocol 05 / 06 flow-level unavailable handling (#1583)
+#   release-unavailable-continues-unsatisfied / retro-unavailable-continues-unsatisfied
+# ===========================================================================
+
+echo ""
+echo "=== protocols 05/06: unavailable framework-item lookup continues the flow and is not recorded as satisfied ==="
+
+cd "$REPO_ROOT"
+
+release_unavailable_ok=pass
+grep -Fq '**Continue** the' docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md || release_unavailable_ok=fail
+grep -Fq 'release flow; state in this step' docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md || release_unavailable_ok=fail
+grep -Fq 'the downstream script-bug review as satisfied — it did not run.' docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md || release_unavailable_ok=fail
+run_test "release_unavailable_continues_unsatisfied" "pass" "$release_unavailable_ok"
+
+retro_unavailable_ok=pass
+grep -Fq '**Continue** the' docs/workflow/development-workflow/protocols/06-retrospective-protocol.md || retro_unavailable_ok=fail
+grep -Fq 'retrospective; state that the lookup was not performed' docs/workflow/development-workflow/protocols/06-retrospective-protocol.md || retro_unavailable_ok=fail
+grep -Fq 'no related item solely because the lookup was unavailable.' docs/workflow/development-workflow/protocols/06-retrospective-protocol.md || retro_unavailable_ok=fail
+run_test "retro_unavailable_continues_unsatisfied" "pass" "$retro_unavailable_ok"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

@@ -119,6 +119,7 @@ gh issue list --state open --limit 100 --json number,title,body
 
 **`github_projects`**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # The only supported entrypoint for this read (#1583).
 ./scripts/development-workflow/list_open_framework_items.sh
@@ -506,6 +507,7 @@ Report the updated issue with its URL.
 
 **`github_issues` or `github_projects`**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 

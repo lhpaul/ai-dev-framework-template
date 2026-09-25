@@ -201,6 +201,7 @@ For manual debugging, call `workflow_github_project_item_for_issue <issue> <proj
 
 Use the shared Type helpers when GitHub Projects is the configured tracker:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
