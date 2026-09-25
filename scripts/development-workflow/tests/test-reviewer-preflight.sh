@@ -1394,5 +1394,139 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-42 (bounded-Codex-pass finding, contract violation): `git status
+    # --porcelain` must not itself write .git/index (an optional stat-cache
+    # refresh) — AC-2's own before/after diff cannot detect that, since
+    # porcelain output stays empty either way. Force a stale-mtime,
+    # unchanged-content scenario (the documented trigger for this optional
+    # write) and compare the raw index file's bytes, not just the porcelain
+    # diff this suite already exercises everywhere else.
+    repo42 = root / 'repo42'
+    write_repo(repo42, coherent_shared, coherent_coderabbit)
+    os.utime(repo42 / '.coderabbit.yaml', (1735689600, 1735689600))  # 2025-01-01, well in the past
+    index_before = (repo42 / '.git' / 'index').read_bytes()
+    run(
+        repo42, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=0,
+    )
+    index_after = (repo42 / '.git' / 'index').read_bytes()
+    check(
+        'T-42 git status --porcelain does not rewrite .git/index (--no-optional-locks)',
+        index_before == index_after,
+        f'index changed: {len(index_before)} -> {len(index_after)} bytes',
+    )
+
+    # T-43 (bounded-Codex-pass finding, security/ReDoS): base_branches
+    # patterns that each individually survive the per-pattern alarm (a
+    # "near miss," not a per-pattern timeout) must still be bounded in
+    # aggregate — many near-miss patterns together must not exhaust the
+    # classifier's own outer per-platform deadline. This exercises
+    # reviewer_preflight_coderabbit.py directly (round-24's T-33/T-34-style
+    # shell fixtures cover the *shell* launcher's own bounds; this is the
+    # python-internal aggregate bound those shell bounds sit on top of).
+    coderabbit_helper = scripts / 'reviewer_preflight_coderabbit.py'
+    near_miss_yaml = (
+        'reviews:\n  auto_review:\n    enabled: true\n    base_branches:\n'
+        + ''.join('      - "(a+)+$"\n' for _ in range(30))
+    )
+    coderabbit_file42 = root / 'near-miss-coderabbit.yaml'
+    coderabbit_file42.write_text(near_miss_yaml)
+    start43 = _time33.monotonic()
+    result43 = subprocess.run(
+        [sys.executable, str(coderabbit_helper), '--mode', 'full-json', str(coderabbit_file42)],
+        capture_output=True, text=True, timeout=15,
+    )
+    wall43 = _time33.monotonic() - start43
+    check(
+        'T-43 parsing many near-miss base_branches patterns completes (no per-pattern timeout expected here; base_branch_covered is exercised separately)',
+        result43.returncode == 0,
+        (result43.returncode, result43.stdout, result43.stderr),
+    )
+    # The aggregate bound lives in base_branch_covered, called from
+    # reviewer_preflight.py's classify(), not from this file's own
+    # full-json parse — invoke it directly against the wall-clock claim.
+    sys.path.insert(0, str(scripts))
+    import importlib
+    rpc = importlib.import_module('reviewer_preflight_coderabbit')
+    importlib.reload(rpc)
+    start43b = _time33.monotonic()
+    try:
+        rpc.base_branch_covered(['(a+)+$'] * 30, 'a' * 23 + '!', per_pattern_timeout_seconds=0.5, aggregate_timeout_seconds=3.0)
+        check('T-43 aggregate bound raised PatternTimeoutError', False, 'expected PatternTimeoutError, none raised')
+    except rpc.PatternTimeoutError:
+        wall43b = _time33.monotonic() - start43b
+        check(
+            'T-43 30 near-miss patterns are bounded in aggregate (~3s), not left to run to ~10.5s unbounded',
+            wall43b <= 5.0,
+            f'wall={wall43b}s',
+        )
+
+    # T-44 (bounded-Codex-pass finding, contract violation): on the manual
+    # (non-GNU-timeout) fallback launcher, a timed-out command's own
+    # descendant process must be terminated too, not merely its direct
+    # PID. Force the fallback path (T-24's fake, non-GNU `timeout`) and
+    # fake `git` so its `ls-remote` invocation spawns a background
+    # grandchild that writes a marker file after a delay — if only the
+    # direct PID is signaled, the grandchild survives the cleanup (already
+    # detached into the background before the parent is killed) and
+    # writes the marker after this test has already moved on; if the whole
+    # process group is signaled, the grandchild dies with it and the
+    # marker is never written.
+    repo44 = root / 'repo44'
+    write_repo(repo44, coherent_shared, coherent_coderabbit)
+    bins44 = root / 'bin44'
+    bins44.mkdir(exist_ok=True)
+    fake_timeout44 = bins44 / 'timeout'
+    fake_timeout44.write_text(
+        '#!/bin/bash\n'
+        'if [ "$1" = --version ]; then printf "busybox timeout 1.0\\n"; exit 0; fi\n'
+        'echo "timeout: unrecognized option" >&2\n'
+        'exit 125\n'
+    )
+    fake_timeout44.chmod(0o755)
+    real_git44 = shutil.which('git')
+    marker44 = root / 'grandchild-survived.marker'
+    slow_git44 = bins44 / 'git'
+    slow_git44.write_text(
+        '#!/bin/bash\n'
+        'is_lsremote=0\n'
+        'for arg in "$@"; do [ "$arg" = ls-remote ] && is_lsremote=1; done\n'
+        'if [ "$is_lsremote" = 1 ]; then\n'
+        f'  (sleep 2.5; touch {str(marker44)!r}) &\n'
+        '  disown\n'
+        '  sleep 30\n'
+        '  exit 0\n'
+        'fi\n'
+        f'exec {real_git44!r} "$@"\n'
+    )
+    slow_git44.chmod(0o755)
+    start44 = _time33.monotonic()
+    rc, data, out, err = run(
+        repo44, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins44}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+    )
+    wall44 = _time33.monotonic() - start44
+    check(
+        'T-44 a stalled fallback-launcher command does not let the run hang for the grandchild\'s full sleep',
+        wall44 <= 10.0,
+        f'wall={wall44}s rc={rc} data={data} err={err}',
+    )
+    # Wait past when the marker would appear if the grandchild survived
+    # (2.5s from its own spawn, well before this check), then confirm it
+    # never did.
+    _time33.sleep(max(0.0, 3.5 - wall44))
+    check(
+        'T-44 the ls-remote grandchild is killed with its parent (process-group kill), not left running',
+        not marker44.exists(),
+        f'marker exists: {marker44.exists()}',
+    )
+
 print(f'\nPassed: {passed}')
 PY

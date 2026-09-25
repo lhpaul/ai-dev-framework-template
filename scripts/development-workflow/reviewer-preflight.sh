@@ -259,12 +259,36 @@ run_bounded() {
   fi
   local finish pid
   finish=$((SECONDS + bound))
-  "$@" >"$output" 2>"$error" &
+  # On hosts without GNU timeout (this fallback path — including the
+  # explicitly supported BusyBox/macOS case), signaling only the direct PID
+  # is not enough: commands run here (e.g. git ls-remote) can spawn
+  # transport, credential-helper, or hook descendants that ignore or
+  # outlive a signal sent only to their parent, leaving them running after
+  # this function returns. Start the command as its own process group
+  # leader (setsid on Linux/BusyBox; macOS has no setsid, so fall back to
+  # perl's setpgrp — the same two-tier fallback resolve-reviewer-
+  # availability.sh's own bounded launcher already uses) so a timeout can
+  # terminate the whole group, not just the leader. When neither helper is
+  # available, degrade to the previous single-PID behavior rather than
+  # failing outright — this script's own children are still one-shot git/
+  # gh/python3 reads, not long-lived servers, so the residual risk on that
+  # rare host is a narrowing of protection, not a new one.
+  if have_cmd setsid; then
+    setsid "$@" >"$output" 2>"$error" &
+  elif have_cmd perl; then
+    perl -e 'setpgrp(0,0) or die "setpgrp: $!"; exec @ARGV; die "exec: $!"' -- "$@" >"$output" 2>"$error" &
+  else
+    "$@" >"$output" 2>"$error" &
+  fi
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$SECONDS" -ge "$finish" ]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
       kill -TERM "$pid" 2>/dev/null || true
       sleep 1
+      # Unconditional: the group (or a lone ungrouped child, on the
+      # no-setsid-or-perl fallback) can outlive TERM.
+      kill -KILL -- "-$pid" 2>/dev/null || true
       kill -KILL "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
       return 124
@@ -272,6 +296,7 @@ run_bounded() {
     sleep 0.05
   done
   wait "$pid" || rc=$?
+  kill -KILL -- "-$pid" 2>/dev/null || true
   return "$rc"
 }
 
@@ -291,8 +316,15 @@ run_bounded() {
 # exactly like clamp_bound_floor's own no-I/O-step rationale.
 before_porcelain_rc=0
 clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+# --no-optional-locks: without it, `git status` can itself write .git/index
+# (refreshing its stat cache when tracked-file mtimes look stale but content
+# is unchanged) — confirmed live: the index's inode and content hash changed
+# across this exact before/after pair while porcelain output stayed empty,
+# so the AC-2 diff could not detect it. This flag disables that optional
+# write for this read-only status query without changing its reported
+# output.
 run_bounded "$bound" "$work_dir/porcelain-before.out" "$work_dir/porcelain-before.err" \
-  git -C "$repo_root" status --porcelain || before_porcelain_rc=$?
+  git --no-optional-locks -C "$repo_root" status --porcelain || before_porcelain_rc=$?
 before_porcelain=$(cat "$work_dir/porcelain-before.out" 2>/dev/null || true)
 
 read_ref_file() {
@@ -687,7 +719,7 @@ fi
 after_porcelain_rc=0
 clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$work_dir/porcelain-after.out" "$work_dir/porcelain-after.err" \
-  git -C "$repo_root" status --porcelain || after_porcelain_rc=$?
+  git --no-optional-locks -C "$repo_root" status --porcelain || after_porcelain_rc=$?
 after_porcelain=$(cat "$work_dir/porcelain-after.out" 2>/dev/null || true)
 # A bounded-timeout (124) on either snapshot is not the same as "no
 # changes": both sides could time out and compare equal-empty while the

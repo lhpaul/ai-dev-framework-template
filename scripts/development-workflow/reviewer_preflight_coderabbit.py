@@ -20,6 +20,7 @@ import json
 import re
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -195,21 +196,43 @@ def base_branch_covered(
     target_base: str,
     *,
     per_pattern_timeout_seconds: float = 0.5,
+    aggregate_timeout_seconds: float = 3.0,
 ) -> bool:
     """``base_branches`` entries are regexes (documented in .coderabbit.yaml).
 
     Raises ``PatternTimeoutError`` if a single pattern's match against
     ``target_base`` does not complete within ``per_pattern_timeout_seconds``
-    (see ``PatternTimeoutError``'s docstring). The caller decides how to
-    report that — this function does not itself know whether an earlier or
-    later pattern in the list would have matched, so it cannot silently
-    substitute True or False for a genuinely inconclusive result.
+    (see ``PatternTimeoutError``'s docstring), OR if the combined time spent
+    across every pattern in this call exceeds ``aggregate_timeout_seconds``.
+    The per-pattern bound alone does not bound this function's own total
+    wall-clock time: confirmed live, 30 copies of a pattern individually
+    tuned to finish just under the per-pattern bound (each a near-miss
+    against a catastrophic-backtracking shape, not a full timeout) together
+    still exhausted the calling classifier subprocess's own outer deadline,
+    which the caller (reviewer-preflight.sh) then reports as an
+    undifferentiated tooling failure (exit 3) rather than this function's
+    own documented check-inconclusive degrade. Each individual pattern's
+    own bound is additionally clamped to whatever aggregate budget remains,
+    so a pattern late in the list cannot spend the full per-pattern budget
+    after earlier patterns have already consumed most of the aggregate one.
+
+    The caller decides how to report a raised PatternTimeoutError — this
+    function does not itself know whether an earlier or later pattern in
+    the list would have matched, so it cannot silently substitute True or
+    False for a genuinely inconclusive result.
     """
     if base_branches is None:
         return True
+    deadline = time.monotonic() + aggregate_timeout_seconds
     for pattern in base_branches:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PatternTimeoutError(
+                "aggregate base_branches match budget exceeded across the pattern list"
+            )
+        bound = per_pattern_timeout_seconds if per_pattern_timeout_seconds < remaining else remaining
         try:
-            with _bounded_regex_match(per_pattern_timeout_seconds):
+            with _bounded_regex_match(bound):
                 if re.fullmatch(pattern, target_base):
                     return True
         except re.error:
