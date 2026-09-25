@@ -315,45 +315,10 @@ PYEOF
   done
 }
 
-# extract_github_issue_number <development-folder-path>
-#
-# Extracts the GitHub issue number from the spec or plan markdown files in a
-# development folder.  Looks for lines matching:
-#   **Issue**: #NNN
-#   **Issue**: [#NNN](...)
-# and also tries the folder slug prefix pattern (e.g. "291-some-slug" -> 291).
-#
-# Prints the bare numeric issue number, or an empty string when not found.
-extract_github_issue_number() {
-  local dev_path="$1"
-  local doc_files=() issue_number="" line
-
-  while IFS= read -r f; do
-    doc_files+=("$f")
-  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
-
-  # Scan markdown files for "**Issue**: #NNN" or "**Issue**: [#NNN](...)"
-  for f in "${doc_files[@]}"; do
-    while IFS= read -r line; do
-      # Match: **Issue**: #123  or  **Issue**: [#123](url)
-      if printf '%s\n' "$line" | grep -qE '^\*\*Issue\*\*:[[:space:]]*\[?#[0-9]+'; then
-        issue_number="$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
-        break 2
-      fi
-    done < "$f"
-  done
-
-  # Fallback: extract leading issue number from folder slug (e.g. "291-some-slug").
-  if [ -z "$issue_number" ]; then
-    local slug
-    slug="$(basename "$dev_path" | sed 's/^[0-9]\{14\}_//')"
-    if printf '%s\n' "$slug" | grep -qE '^[0-9]+-'; then
-      issue_number="$(printf '%s\n' "$slug" | grep -oE '^[0-9]+')"
-    fi
-  fi
-
-  printf '%s' "${issue_number:-}"
-}
+# extract_github_issue_number is defined in workflow-lib.sh (relocated
+# verbatim, #1583) so framework-mode-backlog-type-gate.sh's single-item
+# folder resolution reuses the same mapping. workflow-lib.sh is already
+# sourced above, so the call site below is unchanged.
 
 # Escape string for use in extended regular expressions.
 ere_escape() {

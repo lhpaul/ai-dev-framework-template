@@ -1038,6 +1038,11 @@ workflow_config_review_github_reviewer_configured() {
 # check name — are only meaningful in the template itself. Downstream
 # consumers legitimately replace those files, so those suites must skip there
 # rather than report a red required check on a successful sync (#1631).
+#
+# "Framework mode" in specs/protocols (#1583) means exactly this: this helper
+# returns `true`. There is no second detector or alias — callers that need a
+# shorter name may wrap this function, but must delegate to it rather than
+# re-parsing `template.is_template` themselves.
 workflow_template_is_template() {
   local config_file="${1:-$(workflow_config_file)}"
   local value
@@ -3496,6 +3501,237 @@ _workflow_lowti_candidate_keys_json() {
     return 0
   fi
   printf '%s\n' "${keys[@]}" | jq -R . | jq -sc .
+}
+
+# extract_github_issue_number <development-folder-path>
+#
+# Extracts the GitHub issue number from the spec or plan markdown files in a
+# development folder.  Looks for lines matching:
+#   **Issue**: #NNN
+#   **Issue**: [#NNN](...)
+# and also tries the folder slug prefix pattern (e.g. "291-some-slug" -> 291).
+#
+# Prints the bare numeric issue number, or an empty string when not found.
+#
+# Relocated verbatim from workflow-batch-plan.sh (#1583) so
+# framework-mode-backlog-type-gate.sh's single-item folder resolution can
+# reuse the same mapping without a second convention.
+extract_github_issue_number() {
+  local dev_path="$1"
+  local doc_files=() issue_number="" line
+
+  while IFS= read -r f; do
+    doc_files+=("$f")
+  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
+
+  # Scan markdown files for "**Issue**: #NNN" or "**Issue**: [#NNN](...)"
+  for f in "${doc_files[@]}"; do
+    while IFS= read -r line; do
+      # Match: **Issue**: #123  or  **Issue**: [#123](url)
+      if printf '%s\n' "$line" | grep -qE '^\*\*Issue\*\*:[[:space:]]*\[?#[0-9]+'; then
+        issue_number="$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
+        break 2
+      fi
+    done < "$f"
+  done
+
+  # Fallback: extract leading issue number from folder slug (e.g. "291-some-slug").
+  if [ -z "$issue_number" ]; then
+    local slug
+    slug="$(basename "$dev_path" | sed 's/^[0-9]\{14\}_//')"
+    if printf '%s\n' "$slug" | grep -qE '^[0-9]+-'; then
+      issue_number="$(printf '%s\n' "$slug" | grep -oE '^[0-9]+')"
+    fi
+  fi
+
+  printf '%s' "${issue_number:-}"
+}
+
+# _workflow_ere_escape <string>
+#
+# Escape a string for use in an extended regular expression. Shared by the
+# branch/PR evidence helpers below.
+_workflow_ere_escape() {
+  printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
+}
+
+# workflow_branch_ref_evidence <issue_number>
+#
+# Probes LOCAL (refs/heads/) and REMOTE (refs/remotes/origin/) refs for a
+# live feature/fix/refactor/hotfix branch keyed to <issue_number>, using the
+# existing branch-name convention
+# (workflow-next-action.sh:102 — ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-)).
+# A single `git show-ref` invocation already lists both namespaces, so
+# covering both costs nothing (#1583) — unlike workflow-next-action.sh's
+# origin-only probe, which misses a branch that has been cut but not pushed.
+# Prints one of: present | none | unavailable.
+workflow_branch_ref_evidence() {
+  local issue_number="$1"
+  local show_ref_output prefix ref status
+
+  if show_ref_output="$(git show-ref 2>/dev/null)"; then
+    :
+  else
+    status=$?
+    if [ "$status" -eq 1 ]; then
+      printf 'none\n'
+      return 0
+    fi
+    printf 'unavailable\n'
+    return 0
+  fi
+
+  for prefix in feature fix refactor hotfix; do
+    while IFS= read -r ref; do
+      [ -z "$ref" ] && continue
+      if printf '%s\n' "$ref" | grep -qE "^([A-Za-z]{2,8}-)?${issue_number}(-|\$)"; then
+        printf 'present\n'
+        return 0
+      fi
+    done < <(printf '%s\n' "$show_ref_output" | sed -n "s|.*refs/heads/${prefix}/||p; s|.*refs/remotes/origin/${prefix}/||p")
+  done
+  printf 'none\n'
+}
+
+# workflow_branch_pr_evidence_from_json <issue_number> <pull_requests_json>
+#
+# Given a `{open: [...], merged: [...]}` object (the shape
+# run-epic-scope-resolver.sh already emits per item), reports whether any PR
+# headRefName matches an implementation branch for <issue_number>. Used by
+# the single-item caller, which already holds this JSON in its resolved
+# scope and should not make an extra `gh` call for it. Prints one of:
+# present | none | unavailable.
+workflow_branch_pr_evidence_from_json() {
+  local issue_number="$1" prs_json="$2" count
+  if [ -z "$prs_json" ] || [ "$prs_json" = "null" ]; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
+    ((.open // []) + (.merged // []))
+    | map(.headRefName // "")
+    | map(select(test("^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?" + $issue + "(-|$)")))
+    | length
+  ' 2>/dev/null)"; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ "${count:-0}" -gt 0 ] 2>/dev/null; then
+    printf 'present\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# workflow_gh_pr_evidence <issue_number> <state: open|merged> [github_repo]
+#
+# Runs `gh pr list --state <state>` and reports whether any PR head matches
+# an implementation branch for <issue_number>. Used by the scan caller,
+# which retains only tracker status (not a pre-fetched PR list) per item.
+# Prints one of: present | none | unavailable.
+workflow_gh_pr_evidence() {
+  local issue_number="$1" state="$2" github_repo="${3:-}"
+  local prs_json count
+
+  if ! gh_available; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ -n "$github_repo" ]; then
+    if ! prs_json="$(gh pr list --repo "$github_repo" --state "$state" --limit 500 --json headRefName 2>/dev/null)"; then
+      printf 'unavailable\n'
+      return 0
+    fi
+  else
+    if ! prs_json="$(gh pr list --state "$state" --limit 500 --json headRefName 2>/dev/null)"; then
+      printf 'unavailable\n'
+      return 0
+    fi
+  fi
+  if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
+    [ .[] | (.headRefName // "") | select(test("^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?" + $issue + "(-|$)")) ] | length
+  ' 2>/dev/null)"; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ "${count:-0}" -gt 0 ] 2>/dev/null; then
+    printf 'present\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# workflow_branch_pr_evidence <issue_number> [github_repo]
+#
+# Scan-path combiner: live branch (both ref namespaces) + open PR + merged
+# PR. `present` outranks `unavailable`, which outranks `none` — finding work
+# is conclusive, and a probe that could not run must not silently read as
+# "no work" (#1583). Prints one of: present | none | unavailable.
+workflow_branch_pr_evidence() {
+  local issue_number="$1" github_repo="${2:-}"
+  local ref_evidence open_evidence merged_evidence any_unavailable=0
+
+  ref_evidence="$(workflow_branch_ref_evidence "$issue_number")"
+  if [ "$ref_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+  [ "$ref_evidence" = "unavailable" ] && any_unavailable=1
+
+  open_evidence="$(workflow_gh_pr_evidence "$issue_number" "open" "$github_repo")"
+  if [ "$open_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+  [ "$open_evidence" = "unavailable" ] && any_unavailable=1
+
+  merged_evidence="$(workflow_gh_pr_evidence "$issue_number" "merged" "$github_repo")"
+  if [ "$merged_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+  [ "$merged_evidence" = "unavailable" ] && any_unavailable=1
+
+  if [ "$any_unavailable" -eq 1 ]; then
+    printf 'unavailable\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# workflow_branch_pr_evidence_single_item <issue_number> <tracker_read_deferred> <pull_requests_json>
+#
+# Single-item-path combiner: live branch (both ref namespaces, local `git
+# show-ref`, no API call) + the PR evidence already carried in the resolved
+# scope JSON. Costs no extra tracker/API call, per #1583's tracker-read-cost
+# accounting. A deferred (Linear placeholder) scope is always `unavailable`.
+# Prints one of: present | none | unavailable.
+workflow_branch_pr_evidence_single_item() {
+  local issue_number="$1" tracker_read_deferred="$2" prs_json="$3"
+  local ref_evidence json_evidence
+
+  if [ "$tracker_read_deferred" = "true" ]; then
+    printf 'unavailable\n'
+    return 0
+  fi
+
+  ref_evidence="$(workflow_branch_ref_evidence "$issue_number")"
+  if [ "$ref_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+
+  json_evidence="$(workflow_branch_pr_evidence_from_json "$issue_number" "$prs_json")"
+  if [ "$json_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+
+  if [ "$ref_evidence" = "unavailable" ] || [ "$json_evidence" = "unavailable" ]; then
+    printf 'unavailable\n'
+  else
+    printf 'none\n'
+  fi
 }
 
 # workflow_is_plan_document_path <path>
