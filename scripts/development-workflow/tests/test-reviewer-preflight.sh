@@ -1697,22 +1697,43 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
-    # T-49 (bounded-Codex-pass, P2): an explicit empty --remaining-stages
-    # must short-circuit to no-review-remaining before any ref resolution
-    # or configuration read — confirmed with a --target-base that does not
-    # exist on the remote at all: pre-fix this reached mode dispatch and
-    # failed with prerequisite-failed (exit 2) despite no remaining stage
-    # ever needing that information; post-fix it must report
-    # no-review-remaining, exit 0, without ever attempting to resolve it.
+    # T-49 (#1561 round-6 finding, P2): an explicit empty --remaining-stages
+    # short-circuits straight to no-review-remaining WITHOUT reading either
+    # reviewer configuration — but it must still resolve (and validate the
+    # existence of) the run's own base first, the same prerequisite-failed
+    # gate every other mode applies: the base is a run-input precondition,
+    # not merely a value only the skipped reviewer-configuration reads would
+    # have consulted. A --target-base that does not exist on the remote at
+    # all must report prerequisite-failed (exit 2), not silently succeed
+    # with an unvalidated base.
     repo49 = root / 'repo49'
     write_repo(repo49, coherent_shared, coherent_coderabbit)
     rc, data, out, err = run(
         repo49, '--mode', 'pre-dispatch', '--target-base', 'nonexistent-base-that-would-fail',
         '--remaining-stages', '',
+        expected=2,
+    )
+    check('T-49 empty remaining-stages still resolves (and validates) target-base before short-circuiting', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check(
+        'T-49 prerequisite_detail names --target-base and the branch',
+        '--target-base' in data.get('PREREQUISITE_DETAIL', '') and 'nonexistent-base-that-would-fail' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
+    )
+
+    # T-49b: with a base that DOES exist on the remote, the empty
+    # --remaining-stages short-circuit must still report no-review-remaining
+    # and never compute any platform — confirming the base-resolution fix
+    # above did not reintroduce the reviewer-configuration reads the
+    # original round-5 fix removed.
+    repo49b = root / 'repo49b'
+    write_repo(repo49b, coherent_shared, coherent_coderabbit)
+    rc, data, out, err = run(
+        repo49b, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', '',
         expected=0,
     )
-    check('T-49 empty remaining-stages short-circuits before target-base resolution (no-review-remaining, not prerequisite-failed)', data.get('OUTCOME') == 'no-review-remaining', data)
-    check('T-49 no platforms computed', data.get('PLATFORM_COUNT') == '0', data)
+    check('T-49b empty remaining-stages against a valid base still short-circuits to no-review-remaining', data.get('OUTCOME') == 'no-review-remaining', data)
+    check('T-49b no platforms computed', data.get('PLATFORM_COUNT') == '0', data)
 
     # T-50 (bounded-Codex-pass, P2): when review-overrides resolves a
     # local override path but that path is no longer a readable regular

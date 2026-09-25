@@ -479,6 +479,27 @@ checked_shared_config_ref= checked_platform_config_ref=
 # the same reviewer_preflight_build_input.py this script always uses, so
 # the two paths cannot drift in output shape) instead.
 if [ "$remaining_stages_provided" = 1 ] && [ -z "$remaining_stages_raw" ]; then
+  # The gate matrix requires an unresolved base to produce
+  # prerequisite-failed even on this short-circuit: only the reviewer-
+  # configuration reads (shared/platform config refs) are skippable when no
+  # stage remains, not validation of the run's own base input. pr-resume's
+  # authoritative base is the PR's own baseRefName (read via `gh pr view`),
+  # not whatever --target-base happened to be passed on the CLI, so it must
+  # be read here too, before the short-circuit — matching the full-path
+  # pr-resume case below (which this branch never reaches).
+  if [ "$mode" = pr-resume ]; then
+    pr_json_rc=0
+    clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+    run_bounded "$bound" "$work_dir/pr.json" "$work_dir/pr.err" \
+      gh pr view "$pr" --repo "$owner/$repo" --json baseRefName || pr_json_rc=$?
+    [ "$pr_json_rc" = 0 ] || fail "cannot read pull request #$pr metadata (exit $pr_json_rc): $(cat "$work_dir/pr.err" 2>/dev/null)"
+    pr_base=$(jq -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
+    if is_option_or_refspec_like "$pr_base"; then
+      prerequisite_failed_report "pull request #$pr's base branch is not a valid branch name: $pr_base"
+    fi
+    target_base="$pr_base"
+  fi
+  resolve_target_base_or_fail "$target_base" "--target-base"
   input_json="$work_dir/input.json"
   build_input_rc=0
   clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
