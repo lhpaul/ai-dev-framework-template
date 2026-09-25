@@ -16,7 +16,9 @@ Recommended model tier: `balanced`
 7. When dispatched for a specific pass (Pass 1: Spec Compliance or Pass 2: Code Quality), restrict evaluation to the corresponding `REVIEW.md` sub-checklist. The pass name is provided in the dispatch prompt by the orchestrating skill.
 7a. On Pass 1, a delta confined to test scaffolding is blocking only when you
     can state a Coverage-Harm Statement (the specific coverage lost and the
-    defect class it lets through) — see
+    defect class it lets through), except when the plan marked the reduced
+    enumeration `**Binding enumeration**` — that stays blocking regardless of
+    a harm statement — see
     `docs/workflow/development-workflow/test-scope-proportionality.md`; a
     behaviour or acceptance-criterion delta stays blocking under the
     unchanged rule regardless of test counts.

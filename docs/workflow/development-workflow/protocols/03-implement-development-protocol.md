@@ -136,10 +136,15 @@ record explicit out-of-scope rationale.
 ## Test-Scope Deviation Record
 
 When the test scaffolding you ship (fixture manifests, proof-cycle lists,
-case tables, scenario enumerations) is smaller than what the plan projected,
-but coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
-description before opening the PR. The full rule — including when a plan
-enumeration is binding rather than indicative — is
+case tables, scenario enumerations) removes at least one item the plan
+projected, but is coverage-equivalent, write a `## Test-Scope Deviation
+Record` in the PR description before opening the PR. This is the same
+condition Gate A uses (canonical document, exclusion X2): item count is not
+the trigger — a swap, consolidation, or rewrite that nets even or larger in
+total count but drops a projected item still requires the record, while a
+delta that only adds to, or leaves intact, every projected item does not,
+whatever the totals. The full rule — including when a plan enumeration is
+binding rather than indicative — is
 [`test-scope-proportionality.md`](../test-scope-proportionality.md). The
 record does not apply to a delta that changes observable behavior or drops
 acceptance-criterion coverage; that stays governed by the unchanged Pass 1
@@ -557,8 +562,10 @@ Complete all applicable checks:
    - Full Pipeline: confirm every spec acceptance criterion is implemented or explicitly documented as an approved deviation.
    - Refactor: confirm every implementation-plan acceptance criterion is addressed.
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
-   - When the delivered test scope differs from what the plan projected, write
-     the [Test-Scope Deviation Record](#test-scope-deviation-record) before
+   - When the delivered test scaffolding removes at least one item the plan
+     projected (an addition-only delta does not trigger this; a net-even or
+     net-larger swap that drops a projected item does), write the
+     [Test-Scope Deviation Record](#test-scope-deviation-record) before
      opening the PR.
 4. **Branch-stage discipline check**: implementation files belong on
    implementation branches (`feature/*`, `fix/*`, `refactor/*`, or
@@ -936,7 +943,7 @@ or `develop-<slug>` for integration-branch items) with:
   - What was implemented
   - Link to spec and plan
   - Test plan (how to validate)
-  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation reduces planned test scaffolding
+  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included (an addition-only delta does not need the record)
   - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -1310,7 +1317,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - What was refactored and why
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
-      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation reduces planned test scaffolding
+      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included (an addition-only delta does not need the record)
       - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:

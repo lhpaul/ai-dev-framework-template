@@ -291,7 +291,7 @@ Check:
 
 Typical `blocking` issues:
 
-- Implementation diverges from the approved spec or plan in a way that changes observable behaviour, or drops the coverage of an acceptance criterion; a test-scaffolding-only delta is blocking only when the reviewer states a Coverage-Harm Statement (both the specific coverage lost and the defect class it lets through) per [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
+- Implementation diverges from the approved spec or plan in a way that changes observable behaviour, or drops the coverage of an acceptance criterion; a test-scaffolding-only delta is blocking only when the reviewer states a Coverage-Harm Statement (both the specific coverage lost and the defect class it lets through), except when the plan marked the reduced enumeration `**Binding enumeration**` — that delta stays blocking regardless of a harm statement — per [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
 - Missing acceptance criteria coverage
 - Stale markers, caller inconsistencies, or uncovered spec/plan/issue-body requirements remain in the PR after the pre-submission pass
 - Missing implementation-start operational-assumption re-verification for a
