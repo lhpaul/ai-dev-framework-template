@@ -386,13 +386,19 @@ case "$mode" in
       # `merge-base --is-ancestor` walks commit history and can be slow on a
       # large history, slow object store, or stalled filesystem, the same
       # class of unbounded-wall-clock risk the AC-2 porcelain checks above
-      # had. Bound each call the same way (floor variant: a normal ancestry
-      # check is fast, so it must not be starved to a zero-second bound
-      # purely because earlier reads already consumed the nominal budget)
-      # and fail closed — not silently treat a timeout as "not an
-      # ancestor" — if the check itself cannot complete in time.
+      # had. Bound each call — but with the plain (non-floor) variant, not
+      # the porcelain checks' clamp_bound_floor: those are each a single,
+      # essential, final-mile check, while this is a decision-branching
+      # step that can run up to twice per invocation. Granting a fresh
+      # per-check floor here would let branch-resume repeatedly re-extend
+      # past the whole invocation's nominal deadline (Decision 3's
+      # total-wall-clock guarantee) once the budget is already exhausted,
+      # rather than merely tolerating one bounded final check. Fail
+      # closed — not silently treat a timeout as "not an ancestor" —
+      # whether that timeout comes from a genuine stall or from the
+      # deadline already being spent (bound=0).
       ancestry_rc_a=0
-      clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+      clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
       run_bounded "$bound" "$work_dir/ancestry-a.out" "$work_dir/ancestry-a.err" \
         git -C "$repo_root" merge-base --is-ancestor "$remote_branch_ref" "$local_branch_ref" || ancestry_rc_a=$?
       if [ "$ancestry_rc_a" = 124 ]; then
@@ -403,7 +409,7 @@ case "$mode" in
         checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch; the local copy is at or ahead of the remote)"
       else
         ancestry_rc_b=0
-        clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+        clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
         run_bounded "$bound" "$work_dir/ancestry-b.out" "$work_dir/ancestry-b.err" \
           git -C "$repo_root" merge-base --is-ancestor "$local_branch_ref" "$remote_branch_ref" || ancestry_rc_b=$?
         if [ "$ancestry_rc_b" = 124 ]; then

@@ -1124,5 +1124,29 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
+    # T-35 (#1561 round-23 finding): the two ancestry checks must clamp to
+    # the remaining invocation deadline (clamp_bound), not reset a fresh
+    # per-check floor (clamp_bound_floor) — the latter lets branch-resume
+    # repeatedly re-extend past the whole invocation's nominal budget by up
+    # to one floor-second per check (up to two checks) once the budget is
+    # already exhausted, eroding Decision 3's total-wall-clock guarantee.
+    # A live timing reproduction of this specific regression is impractical
+    # to construct hermetically without also perturbing the (separately
+    # unbounded, out of this round's scope) rev-parse resolution calls that
+    # precede the ancestry checks in the same block; assert the source
+    # directly instead, scoped to exactly the two call sites this fix
+    # touches.
+    ancestry_block = helper.read_text().split('local_resolves=0 origin_resolves=0', 1)[1]
+    ancestry_block = ancestry_block[: ancestry_block.find("elif [ \"$origin_resolves\" = 1 ]")]
+    check(
+        'T-35 both ancestry-check clamp calls use clamp_bound, not clamp_bound_floor',
+        ancestry_block.count('clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"') == 2
+        # Substring match alone would false-positive on this fix's own
+        # explanatory comment, which names clamp_bound_floor to contrast
+        # against it; require the actual call form instead.
+        and 'clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"' not in ancestry_block,
+        ancestry_block,
+    )
+
 print(f'\nPassed: {passed}')
 PY
