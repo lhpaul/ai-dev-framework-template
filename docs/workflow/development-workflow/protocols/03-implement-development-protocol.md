@@ -564,8 +564,11 @@ Complete all applicable checks:
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
    - When the delivered test scaffolding removes at least one item the plan
      projected (an addition-only delta does not trigger this; a net-even or
-     net-larger swap that drops a projected item does) and the deviation is
-     coverage-equivalent, write the
+     net-larger swap that drops a projected item does): if the plan marked
+     that enumeration `**Binding enumeration**`, restore the listed item, or
+     obtain a human decision to amend the plan, before opening the PR — this
+     is required regardless of whether a Coverage-Harm Statement can be
+     named. Otherwise, when the deviation is coverage-equivalent, write the
      [Test-Scope Deviation Record](#test-scope-deviation-record) before
      opening the PR. If a reviewer could instead name lost coverage and the
      defect class it lets through, restore that coverage or narrow the

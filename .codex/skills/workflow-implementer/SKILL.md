@@ -27,9 +27,12 @@ Recommended model tier: `balanced`
    work, produce and verify residual evidence with
    `scope-residual-gate.sh` before readiness.
 9a. When shipped test scaffolding removes at least one item the plan
-    projected (an addition-only delta does not trigger this) but is
-    coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
-    description before opening the PR — see
+    projected (an addition-only delta does not trigger this): if the plan
+    marked that enumeration `**Binding enumeration**`, restore the listed
+    item, or obtain a human decision to amend the plan, before opening the
+    PR, regardless of a Coverage-Harm Statement. Otherwise, when the
+    deviation is coverage-equivalent, write a `## Test-Scope Deviation
+    Record` in the PR description before opening the PR — see
     `docs/workflow/development-workflow/test-scope-proportionality.md` and
     Protocol 03's `Test-Scope Deviation Record` section.
 10. Implementation files belong on implementation branches, not `spec/*` or `implementation-plan/*` branches. If a documentation-stage PR is in scope, run Protocol 91 Step 8a's documentation-stage alignment checker before readiness and correct or escalate any mismatch.
