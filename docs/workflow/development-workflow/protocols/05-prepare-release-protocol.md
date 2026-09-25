@@ -385,13 +385,30 @@ If any artifact is missing or incorrect, fix it on the release branch, push, and
 **Downstream script-bug review**: Before labeling the production PR
 `ready-for-human-review`, search for open workflow-framework GitHub issues that
 were filed from downstream sync retrospectives. When `issue_tracker.provider` is
-`github_projects`, use the project Type field instead of the legacy `workflow`
-label:
+`github_projects`, use `list_open_framework_items.sh` — the only supported
+entrypoint for this read (#1583) — instead of the legacy `workflow` label:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
+./scripts/development-workflow/list_open_framework_items.sh
 ```
+
+Read `FRAMEWORK_ITEMS_LOOKUP_STATUS` (exact key; the third key,
+`FRAMEWORK_ITEMS_JSON`, has no `LOOKUP_` segment):
+
+- `ok` or `empty` — the lookup completed; review `FRAMEWORK_ITEMS_JSON`
+  (empty on `empty`) as the open-item list.
+- `unavailable` — the lookup could not be performed. **Continue** the
+  release flow; state in this step's output that the lookup was not
+  performed and why (`FRAMEWORK_ITEMS_LOOKUP_REASON`); do **not** record
+  the downstream script-bug review as satisfied — it did not run.
+
+In a **consumer repository**, `list_open_framework_items.sh` delegates to
+the unchanged `list_open_workflow_type_issues` (Workflow-only filtering). In
+a **framework-mode repository**, it returns every open, non-terminal board
+item regardless of Type — because this template repository refuses to file
+new `Workflow`-typed items (#1583), so a Workflow-only filter would
+silently stop discovering this repository's own open framework work.
 
 When the provider is `github_issues`, use the repository's configured
 classification convention. Older repositories may still use:

@@ -495,10 +495,15 @@ run_test "size_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVT
 echo ""
 echo "=== create: --type flag updates Type field ==="
 
-run_create "ok" --title "Test" --body "body" --type "Workflow"
+# Uses --type Refactor (not Workflow) so this generic mutation-plumbing test
+# is unaffected by the framework-mode Workflow refusal (#1583) tested in its
+# own section below — this repository's own .ai-dev-workflow.yaml sets
+# template.is_template: true, so a bare --type Workflow here would now be
+# refused before creation rather than exercising the field-update path.
+run_create "ok" --title "Test" --body "body" --type "Refactor"
 run_test "type_flag_exits_zero" "0" "$(get_exit)"
 run_test "type_flag_updates_type_field" "1" "$(count_log_matches 'fieldId=PVTSSF_type')"
-run_test "type_flag_uses_workflow_option" "1" "$(count_log_matches 'optionId=OPT_type_workflow')"
+run_test "type_flag_uses_refactor_option" "1" "$(count_log_matches 'optionId=OPT_type_refactor')"
 run_test "type_flag_also_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
 
 echo ""
@@ -721,6 +726,106 @@ case "$_linear_stderr" in
   *) linear_guidance_result="no-guidance" ;;
 esac
 run_test "linear_create_item_stderr_guidance" "has-guidance" "$linear_guidance_result"
+
+echo ""
+echo "=== create (#1583): framework-mode Workflow refusal ==="
+echo "    This repository's own .ai-dev-workflow.yaml sets template.is_template: true,"
+echo "    so these run against real framework-mode config — no config swap needed."
+
+# framework-creation-type-exact-match: exact, case-sensitive comparison.
+# "Workflow" is refused; "workflow" (lowercase) is NOT newly rejected and
+# keeps today's behavior (falls through to the normal create path).
+run_create "ok" --title "Test" --body "body" --type "Workflow"
+run_test "framework_creation_type_exact_match_refuses_workflow" "1" "$(get_exit)"
+run_test "framework_creation_type_exact_match_no_issue_created" "0" "$(count_log_matches 'issue create')"
+_framework_refusal_stderr="$(get_stderr)"
+case "$_framework_refusal_stderr" in
+  *"--type Workflow is not valid"*"Feature, Bug, or Refactor"*) _framework_refusal_result="actionable" ;;
+  *) _framework_refusal_result="$_framework_refusal_stderr" ;;
+esac
+run_test "framework_creation_type_exact_match_actionable_message" "actionable" "$_framework_refusal_result"
+
+run_create "ok" --title "Test" --body "body" --type "workflow"
+# Lowercase "workflow" is not the exact-case match this refusal targets, so
+# it is not newly rejected: the issue IS created (unlike the exact-case
+# refusal above, which creates nothing). The mock board has no "workflow"
+# (lowercase) Type option, so the unresolved-option failure further below is
+# today's pre-existing field-update behavior, not this refusal — assert the
+# refusal message never appears and creation was attempted.
+run_test "framework_creation_type_exact_match_lowercase_creates_issue" "1" "$(count_log_matches 'issue create')"
+_lowercase_workflow_stderr="$(get_stderr)"
+case "$_lowercase_workflow_stderr" in
+  *"--type Workflow is not valid"*) _lowercase_workflow_result="wrongly-refused" ;;
+  *) _lowercase_workflow_result="not-refused" ;;
+esac
+run_test "framework_creation_type_exact_match_lowercase_not_refused" "not-refused" "$_lowercase_workflow_result"
+
+echo ""
+echo "=== create (#1583): creation-refusal-no-bypass ==="
+echo "    Inventory of force/confirm/yes-style flags accepted by add-backlog-item.sh"
+echo "    is empty today (only --title/--body/--body-file/--label/--priority/--size/--type)."
+echo "    This section asserts the refusal holds for the Linear create handoff path too."
+
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+cp "$_config_file" "$_config_backup"
+cat > "$_config_file" <<'LINEAR_FRAMEWORK_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: linear
+template:
+  is_template: true
+LINEAR_FRAMEWORK_CONFIG
+
+run_create "ok" --title "Test" --body "body" --type "Workflow"
+cp "$_config_backup" "$_config_file"
+
+run_test "creation_refusal_no_bypass_linear_exits_one" "1" "$(get_exit)"
+_linear_framework_stdout="$(get_stdout)"
+case "$_linear_framework_stdout" in
+  *"TRACKER_ACTION_REQUIRED"*) _linear_framework_bypass_result="leaked-bypass" ;;
+  *) _linear_framework_bypass_result="no-bypass" ;;
+esac
+run_test "creation_refusal_no_bypass_linear_no_tracker_action_required" "no-bypass" "$_linear_framework_bypass_result"
+
+echo ""
+echo "=== create (#1583): framework-creation-valid-types-preserved ==="
+
+for _valid_type in Feature Bug Refactor; do
+  run_create "ok" --title "Test" --body "body" --type "$_valid_type"
+  run_test "framework_creation_valid_types_preserved_${_valid_type}_exits_zero" "0" "$(get_exit)"
+  run_test "framework_creation_valid_types_preserved_${_valid_type}_creates_issue" "1" "$(count_log_matches 'issue create')"
+done
+
+echo ""
+echo "=== create (#1583): consumer-creation-all-classes-unchanged ==="
+echo "    Consumer fixture (template.is_template absent) — every class, including"
+echo "    Workflow, and no --type at all, creates the item exactly as before this item."
+
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+cp "$_config_file" "$_config_backup"
+cat > "$_config_file" <<'CONSUMER_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+CONSUMER_CONFIG
+
+for _consumer_type in Feature Bug Refactor Workflow; do
+  run_create "ok" --title "Test" --body "body" --type "$_consumer_type"
+  run_test "consumer_creation_all_classes_unchanged_${_consumer_type}_exits_zero" "0" "$(get_exit)"
+  _consumer_stderr="$(get_stderr)"
+  case "$_consumer_stderr" in
+    *"framework-mode"*|*"template.is_template"*) _consumer_note_result="leaked-framework-note" ;;
+    *) _consumer_note_result="clean" ;;
+  esac
+  run_test "consumer_creation_all_classes_unchanged_${_consumer_type}_no_framework_note" "clean" "$_consumer_note_result"
+done
+
+# No --type at all: also unchanged.
+run_create "ok" --title "Test" --body "body"
+run_test "consumer_creation_all_classes_unchanged_no_type_exits_zero" "0" "$(get_exit)"
+
+cp "$_config_backup" "$_config_file"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

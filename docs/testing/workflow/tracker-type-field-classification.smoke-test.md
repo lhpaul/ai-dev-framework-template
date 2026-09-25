@@ -29,8 +29,13 @@ Before running this smoke test:
 
 ### Step 1: Create temporary issues without classification labels
 
-1. Create one temporary issue whose project Type will be set to `Workflow`.
-2. Create one temporary issue whose project Type will be set to `Bug`.
+**Consumer-mode fixture** (`template.is_template` absent, `false`, or an
+unrecognized value in `.ai-dev-workflow.yaml`) — this template repository
+itself is framework mode and refuses `--type Workflow` on creation (#1583),
+so Steps 1–2 below must run against a consumer-mode repository or fixture.
+
+1. Create one temporary issue and plan to set its project Type to `Workflow`.
+2. Create one temporary issue and plan to set its project Type to `Bug`.
 3. Add both issues to the configured project board.
 4. Confirm neither issue has `workflow`, `bug`, `enhancement`, or `type:*`
    classification labels.
@@ -54,6 +59,12 @@ Type `Bug`.
 
 ### Step 3: Verify Workflow Type discovery
 
+`list_open_workflow_type_issues` keeps Workflow-only filtering in both
+repository modes and is unchanged by #1583, so this step remains a correct
+test of it in either mode. Framework-mode discovery of every open item
+regardless of Type is covered separately by
+`1583-template-mode-type-routing.smoke-test.md`'s wrapper steps.
+
 1. Run the Workflow Type discovery helper:
 
    ```bash
@@ -70,11 +81,18 @@ Type `Bug`.
 1. Run the orchestrator or next-action classification path against the temporary
    Bug issue.
 2. Confirm the issue is treated as a fast-track bug/fix candidate based on Type.
-3. Run the workflow discovery path against the temporary Workflow issue.
-4. Confirm it remains discoverable as workflow-framework work without the
-   `workflow` label.
+3. **Consumer-mode fixture**: run the workflow discovery path against the
+   temporary Workflow issue. Confirm it remains discoverable as
+   workflow-framework work without the `workflow` label.
+4. **Framework-mode outcome** (`template.is_template: true`): a Backlog item
+   with Type `Workflow`, no development-folder artifacts, and no
+   implementation branch/PR is **held** as misclassified
+   (`framework-mode-backlog-type-gate.sh` / `NEXT_ACTION=hold-misclassified-type`
+   in a scan, or a single-item `missing_tracker_context` stop) rather than
+   routed as discoverable framework work (#1583).
 
-**Expected result**: Type values drive classification and routing.
+**Expected result**: Type values drive classification and routing, with
+framework-mode Backlog+Workflow items held instead of routed.
 
 ### Step 5: Verify operational labels are unchanged
 
@@ -93,10 +111,12 @@ review/CI behavior.
 
 ## Assertions Checklist
 
-- [ ] Workflow issue discovery works through project Type `Workflow`.
+- [ ] Workflow issue discovery works through project Type `Workflow` (`list_open_workflow_type_issues`, both modes).
 - [ ] Bug/fix routing works through project Type `Bug`.
 - [ ] Retired classification labels are not required for the tested flows.
 - [ ] Operational labels remain unchanged.
+- [ ] **Consumer-mode**: Backlog + Type `Workflow` remains discoverable/routable as workflow-framework work.
+- [ ] **Framework-mode**: Backlog + Type `Workflow` with no artifacts/branch/PR is held as misclassified, not routed.
 - [ ] Temporary issues are closed or cleaned up after the test.
 
 ## Seed Data Reference

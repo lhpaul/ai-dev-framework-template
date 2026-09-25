@@ -109,6 +109,64 @@ run_test "held_label" "HELD - not included in proposed batch" "$(block_value "$c
 run_test "held_reason_reuses_hold_reason" "implementation lane cap (max 1)" "$(block_value "$category_output" "held-impl-b" "REPORT_REASON")"
 run_test "skip_reason_reported" "merged implementation branch already cleaned up" "$(block_value "$category_output" "skip-item-with-reason" "REPORT_REASON")"
 
+echo ""
+echo "=== #1583: scan-misclassified-item-held / scan-misclassified-not-informational ==="
+
+misclassified_file="$TMP_ROOT/misclassified.batch"
+cat > "$misclassified_file" <<'EOF'
+TARGET=development:docs/specs/developments/fake/misclassified-item
+DEVELOPMENT_PATH=docs/specs/developments/fake/misclassified-item
+SLUG=misclassified-item
+STATUS=Backlog
+NEXT_ACTION=hold-misclassified-type
+MISCLASSIFIED_TYPE=Workflow
+MISCLASSIFIED_TYPE_REASON=Issue #1583 is Type Workflow at Backlog with no work started; framework-mode repositories do not route Workflow-typed items.
+MISCLASSIFIED_TYPE_CHECK=applied
+TOOL_FIX=no
+
+TARGET=development:docs/specs/developments/fake/sibling-feature
+DEVELOPMENT_PATH=docs/specs/developments/fake/sibling-feature
+SLUG=sibling-feature
+STATUS=Backlog
+NEXT_ACTION=write-spec
+TOOL_FIX=no
+
+EOF
+
+misclassified_output="$("$LANES" --repo-root "$fixture_repo" < "$misclassified_file")"
+run_test "scan_misclassified_item_held_dispatch" "held" "$(block_value "$misclassified_output" "misclassified-item" "DISPATCH")"
+run_test "scan_misclassified_item_held_category" "held" "$(block_value "$misclassified_output" "misclassified-item" "REPORT_CATEGORY")"
+run_test "scan_misclassified_item_held_label" "HELD - not included in proposed batch" "$(block_value "$misclassified_output" "misclassified-item" "REPORT_LABEL")"
+misclassified_hold_reason="$(block_value "$misclassified_output" "misclassified-item" "HOLD_REASON")"
+case "$misclassified_hold_reason" in
+  *"#1583"*) misclassified_names_item="yes" ;;
+  *) misclassified_names_item="no" ;;
+esac
+run_test "scan_misclassified_item_held_reason_names_item" "yes" "$misclassified_names_item"
+run_test "scan_misclassified_sibling_stays_proposed" "proposed" "$(block_value "$misclassified_output" "sibling-feature" "DISPATCH")"
+run_test "scan_misclassified_sibling_stays_proposed_batch" "proposed_batch" "$(block_value "$misclassified_output" "sibling-feature" "REPORT_CATEGORY")"
+
+# scan-misclassified-not-informational: a ready-for-human-review label and an
+# in-review status must not downgrade the hold to INFORMATIONAL — the early
+# report_category_for_item arm is ordered ahead of both checks.
+misclassified_labeled_file="$TMP_ROOT/misclassified-labeled.batch"
+cat > "$misclassified_labeled_file" <<'EOF'
+TARGET=development:docs/specs/developments/fake/misclassified-labeled
+DEVELOPMENT_PATH=docs/specs/developments/fake/misclassified-labeled
+SLUG=misclassified-labeled
+STATUS=Development in Review
+NEXT_ACTION=hold-misclassified-type
+LABELS=ready-for-human-review
+MISCLASSIFIED_TYPE=Workflow
+MISCLASSIFIED_TYPE_REASON=Issue #1584 is Type Workflow at Backlog with no work started; framework-mode repositories do not route Workflow-typed items.
+TOOL_FIX=no
+
+EOF
+
+misclassified_labeled_output="$("$LANES" --repo-root "$fixture_repo" < "$misclassified_labeled_file")"
+run_test "scan_misclassified_not_informational_dispatch" "held" "$(block_value "$misclassified_labeled_output" "misclassified-labeled" "DISPATCH")"
+run_test "scan_misclassified_not_informational_category" "held" "$(block_value "$misclassified_labeled_output" "misclassified-labeled" "REPORT_CATEGORY")"
+
 review_cap_file="$TMP_ROOT/review-cap.batch"
 : > "$review_cap_file"
 write_batch_block "$review_cap_file" "waiting-review-a" "wait-human-review" "" "Development in Review" "ready-for-human-review"

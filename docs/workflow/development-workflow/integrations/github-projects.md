@@ -104,10 +104,18 @@ then `Type`. If your board uses a different name, set
 - `Feature` routes through the full pipeline: spec, plan, implementation.
 - `Bug` routes through the fast-track fix path when the scope check allows it.
 - `Refactor` routes through the plan-only refactor path.
-- `Workflow` marks AI-development-framework/tooling work. In downstream product
-  repositories, reserve `Feature` and `Bug` for product work and use `Workflow`
-  for framework/process/tooling items. In this template repository, workflow
-  framework work also uses `Workflow`.
+- `Workflow` marks AI-development-framework/tooling work — in a **consumer
+  repository** (`template.is_template` not `true`): reserve `Feature` and
+  `Bug` for product work and use `Workflow` for framework/process/tooling
+  items. In a **framework-mode repository** (`template.is_template: true` —
+  this template repository is one), `Workflow` is refused before creation
+  and an existing Backlog item typed `Workflow` is stopped or held — not
+  routed to a pipeline — via a single-item run (`/run-item`) or a portfolio
+  scan (`/run-work`); `/run-items` and `/run-epic` are unchanged and do not
+  consult this gate (deferred to #1779), and a stale Backlog item that
+  already has development-folder artifacts or branch/PR evidence continues
+  unaffected (#1583). This repository's own framework/process/tooling items
+  are classified `Feature`, `Bug`, or `Refactor` instead.
 
 ### 4. Issue Labels (on the Repository)
 
@@ -135,7 +143,10 @@ Migration checklist:
 
 1. Add the `Workflow` option to the project **Type** field.
 2. Backfill Type values for open items from current labels and issue context.
-3. Verify open workflow/framework items have `Type = Workflow`.
+3. Verify open workflow/framework items have `Type = Workflow` in a
+   **consumer repository**; in a **framework-mode repository**
+   (`template.is_template: true`), verify they have `Type = Feature`,
+   `Type = Bug`, or `Type = Refactor` instead — never `Workflow` (#1583).
 4. Remove retired classification labels from open issues after Type is set.
 
 ---
@@ -194,11 +205,16 @@ For manual debugging, call `workflow_github_project_item_for_issue <issue> <proj
 
 Use the shared Type helpers when GitHub Projects is the configured tracker:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
 
 get_tracker_type_for_issue "$ISSUE_NUMBER"
+# "Workflow" is a consumer-repository value here. In a framework-mode
+# repository (template.is_template: true), pass "Feature", "Bug", or
+# "Refactor" instead — add-backlog-item.sh and this helper's callers refuse
+# Workflow in framework mode (#1583).
 update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"
 list_open_workflow_type_issues
 ```
@@ -211,7 +227,12 @@ Type writes remain limited to configured project fields; this does not add
 native Issue Type mutation support.
 `list_open_workflow_type_issues` fetches open issues first and then
 cross-references a single project item-list result, so callers do not perform
-one full-board scan per issue.
+one full-board scan per issue. It keeps Workflow-only filtering in every
+repository mode and is unchanged by #1583; for release/retrospective "open
+framework items" reads, use `list_open_framework_items.sh` instead — the
+wrapper that returns every open item regardless of Type in a framework-mode
+repository (see `05-prepare-release-protocol.md` and
+`06-retrospective-protocol.md`).
 
 ### Status values by workflow stage (Step 8b targets)
 

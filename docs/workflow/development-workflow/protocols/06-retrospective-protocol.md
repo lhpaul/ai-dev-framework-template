@@ -119,16 +119,29 @@ gh issue list --state open --limit 100 --json number,title,body
 
 **`github_projects`**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Fetch open GitHub Project items whose Type is Workflow
-bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
+# The only supported entrypoint for this read (#1583).
+./scripts/development-workflow/list_open_framework_items.sh
 ```
 
-The helper uses the configured project number and owner, fetches open issues
-first, and cross-references one project item-list result so the retrospective
-does not paginate the whole board once per issue. It treats the project
-**Type** field, not repository labels, as authoritative for workflow-framework
-item discovery.
+Read `FRAMEWORK_ITEMS_LOOKUP_STATUS` (exact key; the third key,
+`FRAMEWORK_ITEMS_JSON`, has no `LOOKUP_` segment):
+
+- `ok` or `empty` — the lookup completed; use `FRAMEWORK_ITEMS_JSON` as the
+  candidate list for de-duplication.
+- `unavailable` — the lookup could not be performed. **Continue** the
+  retrospective; state that the lookup was not performed and why
+  (`FRAMEWORK_ITEMS_LOOKUP_REASON`); do **not** record a finding as having
+  no related item solely because the lookup was unavailable.
+
+In a **consumer repository**, the wrapper delegates to the unchanged
+`list_open_workflow_type_issues` (Workflow-only filtering — it treats the
+project **Type** field, not repository labels, as authoritative for
+workflow-framework item discovery). In a **framework-mode repository**
+(`template.is_template: true`), it returns every open, non-terminal board
+item regardless of Type, because this template repository refuses to file
+new `Workflow`-typed items (#1583).
 
 **`linear`**: Use the Linear MCP tool to list open issues in the relevant team or project. See [`integrations/linear.md`](../integrations/linear.md) for setup details.
 
@@ -494,6 +507,7 @@ Report the updated issue with its URL.
 
 **`github_issues` or `github_projects`**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
@@ -507,14 +521,26 @@ source scripts/development-workflow/workflow-lib.sh
 PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
 if [ "$PROVIDER" = "github_projects" ]; then
   ensure_on_project_board "$ISSUE_NUMBER" "Backlog"
-  update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"
+  # Consumer repository default; a framework-mode repository
+  # (template.is_template: true) refuses Workflow on backlog creation
+  # (#1583) — classify by the change's shape instead (Feature/Bug/Refactor).
+  TARGET_TYPE="Workflow"
+  if [ "$(workflow_template_is_template)" = "true" ]; then
+    TARGET_TYPE="Feature"
+  fi
+  update_tracker_type_best_effort "$ISSUE_NUMBER" "$TARGET_TYPE"
 else
   gh issue edit "$ISSUE_NUMBER" --add-label "workflow"
 fi
 ```
 
-For `github_projects`, Type `Workflow` replaces the legacy `workflow` label.
-For `github_issues`, keep using the repository's configured label/tag
+For `github_projects` in a **consumer repository**, Type `Workflow` replaces
+the legacy `workflow` label. For `github_projects` in a **framework-mode
+repository** (`template.is_template: true`), classify the retrospective's
+own item as `Feature`, `Bug`, or `Refactor` instead — never `Workflow`
+(#1583); the snippet above defaults to `Feature` and should be adjusted to
+`Bug` or `Refactor` when the finding's shape calls for it. For
+`github_issues`, keep using the repository's configured label/tag
 convention.
 
 **`linear`**, **`jira`**, **`clickup`**, **`notion`**: Use the respective MCP tool or API to create a new issue with an equivalent title, body, and type/tag.

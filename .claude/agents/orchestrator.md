@@ -26,12 +26,22 @@ instead of dispatching when the base is missing or ambiguous.
 
 When `issue_tracker.provider: github_projects` is configured, the GitHub
 Projects **Type** field is the source of truth for work-item classification:
-`Feature`, `Bug`, `Refactor`, or `Workflow`. Use `Workflow` for
-AI-development-framework/process/tooling items. Do not use legacy repository
-classification labels (`workflow`, `bug`, `enhancement`, or `type:*`) for new
-automation; keep operational labels such as `ready-for-human-review`,
-`needs-fixes`, `ready-for-regression`, `reviewer-failed`, and
-`integration-branch:<slug>`.
+`Feature`, `Bug`, `Refactor`, or `Workflow`. In a **consumer repository**,
+classify AI-development-framework/process/tooling items as `Workflow`. In a
+**framework-mode repository** (`template.is_template: true` in
+`.ai-dev-workflow.yaml`), `Workflow` is refused on backlog creation and an
+existing Backlog item typed `Workflow` is stopped or held rather than
+routed to a pipeline via a single-item run (`/run-item`) or a portfolio
+scan (`/run-work`) — the two scopes this item covers; `/run-items` and
+`/run-epic` are unchanged and do not consult this gate (deferred to
+#1779), and a stale Backlog item that already has development-folder
+artifacts (spec/plan) or branch/PR evidence continues unaffected.
+Classify this repository's own framework/process/tooling items as
+`Feature`, `Bug`, or `Refactor` instead (#1583). Do not use legacy
+repository classification labels (`workflow`, `bug`, `enhancement`, or
+`type:*`) for new automation; keep operational labels such as
+`ready-for-human-review`, `needs-fixes`, `ready-for-regression`,
+`reviewer-failed`, and `integration-branch:<slug>`.
 
 ## Guardrails Enforcement
 

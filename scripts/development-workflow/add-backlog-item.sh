@@ -39,12 +39,21 @@ create
                       When omitted, the Size field is left unset.
   --type <value>      Optional. Set the project classification field. Valid values: Feature, Bug,
                       Refactor, Workflow. When omitted, the Type field is left unset.
+                      In a framework-mode repository (template.is_template: true in
+                      .ai-dev-workflow.yaml), --type Workflow is refused before
+                      creation (exit 1) — framework-mode repositories classify their
+                      own workflow/process/tooling items as Feature, Bug, or Refactor
+                      instead. This refusal is exact and case-sensitive; it applies to
+                      the GitHub destination and the Linear create handoff alike, and
+                      no flag or environment variable bypasses it.
 
 Exit codes (create, GitHub destination):
   0  Success (including a resolved-value tracker-field skip when the tracker
      provider/project genuinely does not apply).
   1  A value passed to --priority could not be resolved against the board's
-     actual Priority options; no issue was created.
+     actual Priority options (no issue was created), OR --type Workflow was
+     requested in a framework-mode repository (refused before creation; no
+     issue was created — see --type above).
   5  Partial success: the issue WAS created (see the printed URL) but one or
      more required post-creation project field updates did not land — either
      the write itself failed, or a post-write verification read found the
@@ -131,6 +140,18 @@ create_cmd() {
 
   local kind
   kind="$(workflow_backlog_destination_kind)"
+
+  # Framework-mode Workflow refusal (#1583) — checked before any creation
+  # path (GitHub or Linear) so no destination can be used to bypass it.
+  # Exact, case-sensitive comparison: update_tracker_type_best_effort looks
+  # the option up exactly, so a variant such as "workflow" is not refused
+  # here and keeps today's behavior. There is no force/confirm/yes flag or
+  # override env var that accepts Workflow in framework mode; add one only
+  # alongside a spec change.
+  if [ "$type_label" = "Workflow" ] && [ "$(workflow_template_is_template)" = "true" ]; then
+    echo "add-backlog-item: --type Workflow is not valid in this repository. This is a framework-mode repository (template.is_template: true); framework/process/tooling items are classified as Feature, Bug, or Refactor here, never Workflow. Re-run with --type Feature, --type Bug, or --type Refactor." >&2
+    exit 1
+  fi
 
   if [ "$kind" = "github" ]; then
     require_gh
