@@ -89,8 +89,8 @@ addition-only scaffolding delta is outside Gate A whatever its marking or
 record.
 
 **In scope, therefore:** a delta that touches test scaffolding only **and**
-removes at least one item the plan projected. Rows A2–A6 and A8 cover exactly
-that set and are mutually exclusive on `Plan marking` x `Deviation record` x
+removes at least one item the plan projected. Rows A2–A8 cover exactly that
+set and are mutually exclusive on `Plan marking` x `Deviation record` x
 `Harm statement available`.
 
 **Item count is never a gate input.** X2 asks whether anything was removed,
@@ -103,10 +103,11 @@ delta. A raised total is never a defense against a coverage loss.
 | --- | --- | --- | --- | --- | --- |
 | A2 | Indicative (unmarked) | Present and complete | Yes — reviewer names the lost coverage **and** the defect class | `blocking` | Reviewer states both halves; implementer restores that coverage or narrows the deviation |
 | A3 | Indicative | Present and complete | No | Not blocking; `suggestion` at most | Accept the recorded rationale; do not restate the count as a requirement |
-| A4 | Indicative | Missing or incomplete | Any | `important` | Request the record before `ready-for-human-review`; do not block on the delta alone |
+| A4 | Indicative | Missing or incomplete | No | `important` | Request the record before `ready-for-human-review`; do not block on the delta alone |
 | A5 | `**Binding enumeration**` | Present | Not required | `blocking` | Restore the listed items, or obtain a human decision to amend the plan |
 | A6 | `**Binding enumeration**` | Missing | Not required | `blocking` | Same as A5 |
-| A8 | Marking malformed — marker text present in a form other than the exact literal, or attached to an unclear span | Any | Any | `important` on the plan wording; the delta itself follows A2/A3/A4 as indicative | Ask for the plan marker to be corrected; missing or malformed marking never upgrades the delta to blocking |
+| A7 | Indicative | Missing or incomplete | Yes — reviewer names the lost coverage **and** the defect class | `blocking` | A stated harm is blocking whether or not the record was written; reviewer states both halves and also requests the record |
+| A8 | Marking malformed — marker text present in a form other than the exact literal, or attached to an unclear span | Any | Any | `important` on the plan wording; the delta itself follows A2/A3/A4/A7 as indicative | Ask for the plan marker to be corrected; missing or malformed marking never upgrades the delta to blocking |
 
 ## Gate B — Plan reviewer applying the advisory test-scope sanity signal
 

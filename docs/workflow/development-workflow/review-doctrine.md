@@ -93,4 +93,7 @@ the review blocks on the count alone, without naming what the removed rows
 exercised or what now goes unverified.
 
 **Detect**: For each entry called missing, can you name the behavior it
-exercised and the failure that now goes unnoticed?
+exercised and the failure that now goes unnoticed? This question does not
+apply when the source document explicitly marked the list binding — a
+binding list's delta is blocking on its own terms, with no need to name what
+it protected.
