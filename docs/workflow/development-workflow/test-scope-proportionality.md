@@ -31,7 +31,10 @@ with the exact literal `**Binding enumeration**` on, or immediately above,
 the line that introduces it. An unmarked enumeration expresses coverage
 intent and may be satisfied by a different, coverage-equivalent set. An
 enumeration marked with the exact literal binds the implementer to the listed
-items; a delta from it is blocking regardless of any Coverage-Harm Statement.
+items; a delta that removes at least one listed item is blocking regardless
+of any Coverage-Harm Statement. An implementation that retains every listed
+item and only adds further cases is an addition-only delta — Gate A exclusion
+X2 applies, and it is not blocking under this marking either.
 
 The exact literal is required — a marker in a different form, or attached to
 an unclear span, does not make the enumeration binding (see Gate A row A8
@@ -41,9 +44,12 @@ fixes.
 
 ## The Test-Scope Deviation Record
 
-An implementer who ships test scaffolding smaller than what the plan
-projected, but coverage-equivalent, records a **Test-Scope Deviation Record**
-in the PR. The format and authoring obligation live in
+An implementer whose shipped test scaffolding removes at least one item the
+plan projected — the same trigger Gate A's exclusion X2 uses, so a net-even
+or net-larger swap that drops a projected item still qualifies, and an
+addition-only delta never does — but is coverage-equivalent, records a
+**Test-Scope Deviation Record** in the PR. The format and authoring
+obligation live in
 `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 (`## Test-Scope Deviation Record`). This is what Gate A evaluates.
 

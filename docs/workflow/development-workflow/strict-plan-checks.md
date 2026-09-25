@@ -84,11 +84,14 @@ statement that none exists.
 
 Source: not required
 
-**Question:** Does the plan state what coverage each group of projected test
-scaffolding provides, mark any enumeration it intends as binding, and keep
-projected volume proportionate to the deliverable?
+**Question:** Does projected test scaffolding volume in the plan stay
+proportionate to the deliverable it protects, and does a prose-only or
+documentation-only deliverable avoid proposing a custom parser, scanner, or
+matcher to validate it? (Gate B, `test-scope-proportionality.md`; this
+question is exactly Gate B's two signals — it does not separately require a
+coverage rationale or a binding marker.)
 
-**Finding shape:** a fixture manifest, proof-cycle list, case table, or
-scenario enumeration with no stated coverage rationale, no binding marker
-where one is intended, or a volume that is out of proportion to the
-deliverable it protects.
+**Finding shape:** projected test scaffolding whose volume clearly exceeds
+the size of the deliverable it protects, or a prose-only/documentation-only
+deliverable that proposes a custom parser, scanner, or matcher to validate
+it. Neither signal present is not a finding.

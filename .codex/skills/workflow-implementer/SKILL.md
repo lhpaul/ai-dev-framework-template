@@ -26,7 +26,8 @@ Recommended model tier: `balanced`
 9. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    work, produce and verify residual evidence with
    `scope-residual-gate.sh` before readiness.
-9a. When shipped test scaffolding is smaller than what the plan projected but
+9a. When shipped test scaffolding removes at least one item the plan
+    projected (an addition-only delta does not trigger this) but is
     coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
     description before opening the PR — see
     `docs/workflow/development-workflow/test-scope-proportionality.md` and
