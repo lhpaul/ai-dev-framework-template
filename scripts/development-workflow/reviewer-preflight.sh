@@ -102,6 +102,23 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# #1561 round-11 finding: every dependency this script uses must be
+# confirmed present BEFORE any validation or reporting path can reach it —
+# including prerequisite_failed_report's own `jq -n` (JSON mode) and
+# is_option_or_refspec_like's own `git check-ref-format` call, both of
+# which run ahead of this check previously. A missing `git` made
+# is_option_or_refspec_like's `if git check-ref-format ...; then` branch
+# fail with "command not found" (bash's own 127), which the `if` then
+# treated as "the check-ref-format call itself rejected this ref" —
+# misclassifying a genuinely valid --target-base like "develop" as
+# prerequisite-failed (exit 2, a run-input verdict) instead of the
+# documented tooling failure (exit 3) a missing dependency actually is. A
+# missing `jq` in --json mode would similarly make prerequisite_failed_
+# report's own `jq -n` call fail unguarded. Check dependencies first.
+for dependency in python3 git jq mktemp; do
+  have_cmd "$dependency" || fail "missing dependency: $dependency"
+done
+
 [ -n "$repo_root" ] || fail 'missing --repo-root'
 [ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'
 case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be pre-dispatch, branch-resume, or pr-resume' ;; esac
@@ -199,10 +216,6 @@ if [ "$mode" = pr-resume ]; then
   esac
   [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
 fi
-
-for dependency in python3 git jq mktemp; do
-  have_cmd "$dependency" || fail "missing dependency: $dependency"
-done
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
 # As of #1561's round-26 read-only redesign, this script resolves every
@@ -802,8 +815,21 @@ clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$overrides_json" "$work_dir/overrides.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-overrides --repo-root "$repo_root" --json || overrides_rc=$?
 [ "$overrides_rc" = 0 ] || fail "review-overrides failed (exit $overrides_rc): $(cat "$work_dir/overrides.err" 2>/dev/null)"
-local_override_file=$(jq -er '.LOCAL_OVERRIDE_FILE // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_FILE from review-overrides output'
-local_override_origin=$(jq -er '.LOCAL_OVERRIDE_ORIGIN // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_ORIGIN from review-overrides output'
+# #1561 round-11 finding: this resolver-output parse (and the
+# local_review_override_applied probe below) previously ran unbounded —
+# jq reading an already-written local file is normally instant, but a
+# stalled filesystem or a malfunctioning jq wrapper could otherwise hang
+# an already-bounded preflight indefinitely before classification. Route
+# it through the shared deadline like every other read in this script.
+overrides_fields_rc=0
+clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$work_dir/overrides-fields.out" "$work_dir/overrides-fields.err" \
+  jq -j '(.LOCAL_OVERRIDE_FILE // ""), "\u0000", (.LOCAL_OVERRIDE_ORIGIN // ""), "\u0000"' "$overrides_json" || overrides_fields_rc=$?
+[ "$overrides_fields_rc" = 0 ] || fail "cannot read LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN from review-overrides output (exit $overrides_fields_rc): $(cat "$work_dir/overrides-fields.err" 2>/dev/null)"
+overrides_fields=()
+while IFS= read -r -d '' overrides_field; do overrides_fields+=("$overrides_field"); done <"$work_dir/overrides-fields.out"
+local_override_file="${overrides_fields[0]:-}"
+local_override_origin="${overrides_fields[1]:-}"
 if [ -n "$local_override_file" ]; then
   if [ ! -f "$local_override_file" ]; then
     # review-overrides resolved a local override path (a non-empty
@@ -851,8 +877,14 @@ run_bounded "$bound" "$github_json" "$work_dir/resolver-github.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-github-effective --repo-root "$shared_dir" || resolver_rc=$?
 [ "$resolver_rc" = 0 ] || fail "review-github-effective failed (exit $resolver_rc): $(cat "$work_dir/resolver-github.err" 2>/dev/null)"
 
-if jq -e '.local_review_override_applied == true' "$runner_json" >/dev/null 2>&1 ||
-   jq -e '.local_review_override_applied == true' "$github_json" >/dev/null 2>&1; then
+override_applied_rc=0
+clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$work_dir/override-applied.out" "$work_dir/override-applied.err" \
+  jq -j -n --slurpfile runner "$runner_json" --slurpfile github "$github_json" \
+  'if ($runner[0].local_review_override_applied == true) or ($github[0].local_review_override_applied == true) then "true" else "false" end' \
+  || override_applied_rc=$?
+[ "$override_applied_rc" = 0 ] || fail "cannot check the local override's applied state (exit $override_applied_rc): $(cat "$work_dir/override-applied.err" 2>/dev/null)"
+if [ "$(cat "$work_dir/override-applied.out" 2>/dev/null)" = true ]; then
   local_override_state=applied
 fi
 

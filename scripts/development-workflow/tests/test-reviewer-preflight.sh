@@ -1889,5 +1889,74 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-53 a stalled JSON-report jq is bounded, not left to run its full stall duration', elapsed53 <= 8.0, elapsed53)
     check('T-53 failure message names the JSON report render failure', 'cannot render the JSON report' in err, err)
 
+    # T-54 (#1561 round-11 finding, P2): required dependencies must be
+    # checked BEFORE any validation or reporting path can reach them.
+    # is_option_or_refspec_like's own `git check-ref-format` call used to
+    # run ahead of the dependency loop: with git genuinely unresolvable, a
+    # perfectly valid --target-base like "develop" was misclassified as
+    # prerequisite-failed (exit 2, a run-input verdict) instead of the
+    # documented tooling failure (exit 3) a missing dependency actually
+    # is. Use a minimal, curated PATH (not merely a shadowing prepend) so
+    # git is genuinely unresolvable via `command -v git`, not just a
+    # faked binary that would still satisfy have_cmd.
+    bins54 = root / 'bin54'
+    bins54.mkdir(exist_ok=True)
+    stub_python54 = bins54 / 'python3'
+    stub_python54.write_text('#!/bin/bash\nexit 0\n')
+    stub_python54.chmod(0o755)
+    (bins54 / 'dirname').symlink_to(shutil.which('dirname'))
+    repo54 = root / 'repo54'
+    repo54.mkdir(exist_ok=True)
+    rc, data, out, err = run(
+        repo54, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': str(bins54)},
+        expected=3,
+    )
+    check(
+        'T-54 a genuinely-missing git is reported as a tooling failure, not prerequisite-failed on a valid branch name',
+        'OUTCOME' not in data,
+        f'rc={rc} data={data} err={err}',
+    )
+    check('T-54 failure message names the missing dependency', 'missing dependency: git' in err, err)
+
+    # T-55 (#1561 round-11 finding, P2): the resolver-output field reads
+    # (LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN) and the subsequent
+    # local_review_override_applied probe used to run unbounded — a
+    # stalled filesystem or malfunctioning jq wrapper could hang an
+    # already-bounded preflight indefinitely before classification. Fake
+    # jq to stall specifically on a `.LOCAL_OVERRIDE_FILE` filter
+    # (identifiable by its own distinct string, so every other jq call
+    # this script makes still delegates to the real binary); the run must
+    # still reach a bounded, fail-closed outcome well within the test's
+    # own subprocess timeout.
+    repo55 = root / 'repo55'
+    write_repo(repo55, coherent_shared, coherent_coderabbit)
+    bins55 = root / 'bin55'
+    bins55.mkdir(exist_ok=True)
+    real_jq55 = shutil.which('jq')
+    stalled_jq55 = bins55 / 'jq'
+    stalled_jq55.write_text(
+        '#!/bin/bash\n'
+        'for arg in "$@"; do case "$arg" in *LOCAL_OVERRIDE_FILE*) sleep 10;; esac; done\n'
+        f'exec {real_jq55!r} "$@"\n'
+    )
+    stalled_jq55.chmod(0o755)
+    started55 = time.monotonic()
+    rc, data, out, err = run(
+        repo55, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins55}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+        expected=3,
+    )
+    elapsed55 = time.monotonic() - started55
+    check('T-55 a stalled resolver-output jq is bounded, not left to run its full stall duration', elapsed55 <= 8.0, elapsed55)
+    check('T-55 failure message names the LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN parse failure', 'cannot read LOCAL_OVERRIDE_FILE' in err, err)
+
 print(f'\nPassed: {passed}')
 PY
