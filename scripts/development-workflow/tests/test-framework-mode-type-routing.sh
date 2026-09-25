@@ -33,11 +33,18 @@ REAL_CONFIG="$REPO_ROOT/.ai-dev-workflow.yaml"
 REAL_CONFIG_BACKUP="$TMP_ROOT/real-config-master.bak"
 cp "$REAL_CONFIG" "$REAL_CONFIG_BACKUP"
 
+REAL_AGENTS="$REPO_ROOT/AGENTS.md"
+REAL_AGENTS_BACKUP="$TMP_ROOT/real-agents-master.bak"
+cp "$REAL_AGENTS" "$REAL_AGENTS_BACKUP"
+
 cleanup() {
-  # Safety net: restore the real repo config even if a test aborts mid-swap
+  # Safety net: restore real repo files even if a test aborts mid-swap
   # (each swap site also restores explicitly on its own success path).
   if [ -f "$REAL_CONFIG_BACKUP" ]; then
     cp "$REAL_CONFIG_BACKUP" "$REAL_CONFIG"
+  fi
+  if [ -f "$REAL_AGENTS_BACKUP" ]; then
+    cp "$REAL_AGENTS_BACKUP" "$REAL_AGENTS"
   fi
   rm -rf "$TMP_ROOT"
 }
@@ -435,6 +442,77 @@ echo "=== framework-mode-backlog-type-gate.sh: stop-path-no-mutation ==="
 reset_log
 "$GATE" --repo-root "$REPO_ROOT" --issue 1583 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --type Workflow >/dev/null
 run_test "stop_path_no_mutation_no_gh_calls" "0" "$(wc -l < "$CALL_LOG" | tr -d ' ')"
+
+# ===========================================================================
+# Guidance mirror grep (Step 4 of the smoke runbook; named scenario
+# `guidance-check-planted-violation`)
+# ===========================================================================
+
+echo ""
+echo "=== guidance mirror grep: closed mirror list has no surviving Workflow guidance ==="
+
+# Not `! rg …`: under set -e a command negated by `!` is exempt from
+# errexit in bash and zsh, so that form would silently continue past a
+# real violation. assert_absent captures rg's status explicitly instead.
+assert_absent() {
+  local label="$1"; shift
+  local status=0
+  rg -n "$@" >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) echo "  stale guidance still present: $label" >&2; return 1 ;;
+    1) return 0 ;;  # no match — the only passing case
+    *) echo "  rg exited $status while checking: $label" >&2; return 2 ;;
+  esac
+}
+
+guidance_check_all_pass() {
+  assert_absent 'agent-guidance Workflow recommendation' \
+    'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
+    .cursor/agents/orchestrator.md .claude/agents/orchestrator.md || return 1
+  assert_absent 'retrospective create assigns Workflow' \
+    'update_tracker_type_best_effort "\$ISSUE_NUMBER" "Workflow"' \
+    docs/workflow/development-workflow/protocols/06-retrospective-protocol.md \
+    docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md || return 1
+  assert_absent 'protocol 90 route-by-brief row' \
+    'route by brief: full pipeline' \
+    docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md || return 1
+  assert_absent 'protocol 91 route-by-brief row' \
+    "Route by the brief's concrete path" \
+    docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md || return 1
+  assert_absent 'retrospective runbook Workflow expectation' \
+    'with Type `Workflow`' \
+    docs/testing/workflow/retrospective-protocol.smoke-test.md || return 1
+  assert_absent 'tracker-Type runbook Workflow creation step' \
+    'project Type will be set to `Workflow`' \
+    docs/testing/workflow/tracker-type-field-classification.smoke-test.md || return 1
+  return 0
+}
+
+cd "$REPO_ROOT"
+if guidance_check_all_pass; then
+  run_test "guidance_mirror_check_clean_tree_passes" "pass" "pass"
+else
+  run_test "guidance_mirror_check_clean_tree_passes" "pass" "fail"
+fi
+
+# guidance-check-planted-violation: re-introduce one pre-change string and
+# assert the check now fails; revert and assert it passes again. A guard
+# that has never failed is not known to work.
+_agents_backup="$TMP_ROOT/AGENTS.md.bak"
+cp "$REPO_ROOT/AGENTS.md" "$_agents_backup"
+printf '\nUse `Workflow` for framework work (planted violation).\n' >> "$REPO_ROOT/AGENTS.md"
+if guidance_check_all_pass; then
+  run_test "guidance_check_planted_violation_detected" "fail" "pass"
+else
+  run_test "guidance_check_planted_violation_detected" "fail" "fail"
+fi
+cp "$_agents_backup" "$REPO_ROOT/AGENTS.md"
+
+if guidance_check_all_pass; then
+  run_test "guidance_check_planted_violation_reverted_passes" "pass" "pass"
+else
+  run_test "guidance_check_planted_violation_reverted_passes" "pass" "fail"
+fi
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
