@@ -167,7 +167,13 @@ if ! printf '%s' "$fm_open_issues" | jq -e 'type == "array"' >/dev/null 2>&1; th
   exit 0
 fi
 
-if ! fm_project_items="$(gh project item-list "$fm_project_number" --owner "$fm_owner" --limit 1000 --format json 2>/dev/null)"; then
+# --query "is:issue" excludes pull requests and draft issues from the
+# project item list: issue and PR content share independent number
+# sequences within a project's cross-repository scope, so joining by
+# .content.number alone (below) could otherwise accept a PR item whose
+# number happens to match an open issue's number, and emit that issue with
+# the PR's status/priority/type (codex-github finding, #1583).
+if ! fm_project_items="$(gh project item-list "$fm_project_number" --owner "$fm_owner" --limit 1000 --format json --query "is:issue" 2>/dev/null)"; then
   _emit_unavailable "item_list_failed"
   exit 0
 fi

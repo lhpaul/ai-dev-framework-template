@@ -18,14 +18,18 @@ Before creating anything, read:
   - [`docs/workflow/development-workflow/integrations/linear.md`](../integrations/linear.md)
   - [`docs/workflow/development-workflow/integrations/github-projects.md`](../integrations/github-projects.md)
 
-Optional deterministic helper (destination resolution and GitHub issue creation):
+Optional deterministic helper (destination resolution and GitHub issue creation).
+`--type Workflow` is a **consumer-repository** example; in a framework-mode
+repository (`template.is_template: true` — this template repository is
+one), `Workflow` is refused before creation, so use `Feature`, `Bug`, or
+`Refactor` instead (#1583):
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
 ./scripts/development-workflow/add-backlog-item.sh resolve
-./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - --type Workflow
+./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - --type Bug
 ```
 
 ---

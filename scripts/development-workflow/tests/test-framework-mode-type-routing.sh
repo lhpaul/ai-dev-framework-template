@@ -96,7 +96,7 @@ JSON
         ;;
     esac
     ;;
-  "project item-list 1 --owner lhpaul --limit 1000 --format json")
+  "project item-list 1 --owner lhpaul --limit 1000 --format json --query is:issue")
     case "${MOCK_ITEM_LIST_MODE:-ok}" in
       fail) exit 42 ;;
       unparseable) printf 'not json' ;;
@@ -258,6 +258,16 @@ reset_log
 MOCK_ITEM_LIST_MODE=renamed_type_field run_wrapper_in_repo "$framework_config"
 renamed_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
 run_test "framework_lookup_ignores_type_field_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$renamed_out")"
+
+echo ""
+echo "=== list_open_framework_items.sh: excludes pull requests from the project item-list query (codex-github finding, #1583) ==="
+
+# Issue and PR content share independent number sequences; joining by
+# .content.number alone could otherwise accept a PR item whose number
+# matches an open issue's number and emit that issue with the PR's
+# status/priority/type. --query "is:issue" is the fix; assert the exact
+# call the gh CLI actually receives.
+run_test "item_list_query_excludes_pull_requests" "1" "$(grep -c 'project item-list 1 --owner lhpaul --limit 1000 --format json --query is:issue' "$CALL_LOG")"
 
 echo ""
 echo "=== list_open_framework_items.sh: cross-repo issue-number collision is excluded (codex-github finding, #1583) ==="
