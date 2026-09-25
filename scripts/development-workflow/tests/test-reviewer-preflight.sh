@@ -1234,5 +1234,61 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
+    # T-38 (#1561 round-25 finding): read_ref_file's own failure-path
+    # `rev-parse --verify` (run after a `git show` failure, to distinguish
+    # "file absent at a ref that resolves" from "ref itself does not
+    # resolve") must be bounded too — same class of unbounded-wall-clock
+    # risk. Use a repo with no .coderabbit.yaml at all, so `git show
+    # <ref>:.coderabbit.yaml` fails for the ordinary (non-timeout) reason
+    # this verification probe exists to disambiguate.
+    repo38 = root / 'repo38'
+    write_repo(repo38, coherent_shared, coderabbit_yaml=None)
+    bins38 = root / 'bin38'
+    bins38.mkdir(exist_ok=True)
+    real_git38 = shutil.which('git')
+    slow_git38 = bins38 / 'git'
+    slow_git38.write_text(
+        '#!/bin/bash\n'
+        'is_verify=0\n'
+        'for arg in "$@"; do case "$arg" in --verify) is_verify=1;; esac; done\n'
+        'if [ "$is_verify" = 1 ]; then sleep 30; fi\n'
+        f'exec {real_git38!r} "$@"\n'
+    )
+    slow_git38.chmod(0o755)
+    start38 = _time33.monotonic()
+    rc, data, out, err = run(
+        repo38, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins38}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+    )
+    wall38 = _time33.monotonic() - start38
+    check(
+        'T-38 a stalled read_ref_file verify-probe does not let the run exceed a small multiple of its budget',
+        wall38 <= 15.0,
+        f'wall={wall38}s rc={rc} data={data} err={err}',
+    )
+    # The shared config file (.ai-dev-workflow.yaml) exists in this
+    # fixture, so its own read_ref_file call succeeds immediately (rc=0)
+    # without ever reaching this verify sub-probe; only the coderabbit
+    # read (.coderabbit.yaml is absent from this fixture on purpose, so
+    # `git show` genuinely fails and falls through to the now-slowed
+    # verify probe) exercises the bound. Its caller already degrades a
+    # 124 there to Undetermined/check-inconclusive for that one platform
+    # (this test's own load-bearing assertion is the wall-clock bound
+    # above, which proves that degrade happened quickly rather than after
+    # hanging for the fake's full 30s sleep).
+    check(
+        'T-38 a bounded verify-probe timeout degrades to Undetermined/check-inconclusive, not a hang',
+        data.get('OUTCOME') == 'passed-unverified'
+        and data.get('PLATFORM_1_VERDICT') == 'undetermined'
+        and data.get('PLATFORM_1_REASONS') == 'check-inconclusive',
+        f'rc={rc} data={data} err={err}',
+    )
+
 print(f'\nPassed: {passed}')
 PY

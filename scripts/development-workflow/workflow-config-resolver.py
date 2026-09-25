@@ -1216,6 +1216,15 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
 
     A present modern key wins even when empty or malformed. Its malformed
     ancestors must also block rather than letting the alias change coverage.
+
+    This precedence is correct only for resolve_review_effective's *local
+    override* call site: workflow_config_review_local_list_if_declared
+    (workflow-lib.sh, what Step 7a actually consults for the local file)
+    treats a locally *declared* empty runner list as a deliberate opt-out,
+    not a signal to fall back to anything — including that same local
+    file's own internal_reviewers, which Step 7a never even reads for the
+    local-override check. Do not reuse this function for the shared/shipped
+    side of the resolution; see review_runner_shared_value below.
     """
     modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
         data, ["review", "on_draft", "runner"]
@@ -1226,6 +1235,44 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
     if modern_present or modern_structure_error:
         return modern_raw, modern_present, modern_structure_error
     return legacy_raw, legacy_present, legacy_structure_error
+
+
+def review_runner_shared_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
+    """Resolve the shared config's on_draft.runner list, falling back to the
+    legacy ``internal_reviewers`` alias when the modern list emits no
+    entries (absent, explicitly empty, or present-but-empty) — not only
+    when it is entirely absent.
+
+    Mirrors ``workflow_config_review_on_draft_runner`` (workflow-lib.sh):
+    once ``workflow_config_review_local_list_if_declared`` has already
+    handled a locally *declared* override (a separate, earlier check —
+    this function resolves only the shared/shipped side, matching this
+    module's own local vs. shared split), the shell falls through to
+    ``review.internal_reviewers`` whenever the modern nested list is empty.
+    ``review_runner_value``'s present-even-if-empty precedence is correct
+    for the local-override call site above but was wrong here: a present,
+    modern-but-empty shared runner list (or an absent one) alongside a
+    non-empty ``review.internal_reviewers`` previously reported the runner
+    bucket as empty even though Step 7a's own resolver goes on to dispatch
+    the legacy list — the same gap ``review_github_value`` already closes
+    for the GitHub buckets, applied here to the runner bucket's own legacy
+    alias (a single key, not a platforms/phase_after_clean pair, so this is
+    its own function rather than a call to review_github_value).
+    """
+    modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
+        data, ["review", "on_draft", "runner"]
+    )
+    if modern_structure_error:
+        return modern_raw, modern_present, modern_structure_error
+    modern_list, modern_state = review_runner_state(modern_raw, modern_present)
+    if modern_state == "malformed" or modern_list:
+        return modern_raw, modern_present, modern_structure_error
+    legacy_raw, legacy_present, legacy_structure_error = review_effective_value_from_path(
+        data, ["review", "internal_reviewers"]
+    )
+    if legacy_present or legacy_structure_error:
+        return legacy_raw, legacy_present, legacy_structure_error
+    return modern_raw, modern_present, modern_structure_error
 
 
 def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tuple[Any, bool, bool]:
@@ -1274,7 +1321,10 @@ def review_github_value(data: dict[str, Any], bucket: str, path: list[str]) -> t
     supported legacy alias.
 
     Unlike ``review_runner_value`` (whose present-even-if-empty precedence
-    is deliberate for Step 7a's own runner classification), this mirrors
+    is deliberate, but only for resolve_review_effective's *local override*
+    call site — see that function's own docstring; the analogous shared-
+    config precedence for the runner bucket lives in
+    ``review_runner_shared_value``, not here), this mirrors
     ``workflow_config_review_on_draft_github`` / ``_on_ready_github`` in
     workflow-lib.sh exactly, because *this* resolver's whole purpose is to
     report the same reviewer list Step 7 (``pr-review-loop.sh``) actually
@@ -1377,7 +1427,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         })
         return base
 
-    shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_value(shared)
+    shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_shared_value(shared)
     shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
     local_runner_raw, local_runner_present, local_runner_structure_error = review_runner_value(local)
     # A bare `runner:` with nothing after it (YAML null) is not the same as

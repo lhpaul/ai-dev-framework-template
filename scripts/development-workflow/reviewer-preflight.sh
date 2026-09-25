@@ -295,10 +295,17 @@ read_ref_file() {
   # ref that does not resolve (bad branch name, unfetched remote, transient
   # git error) must not be silently read as "file absent," or a caller can
   # report a coherent verdict on a shared or platform configuration it never
-  # actually read.
-  if git -C "$repo_root" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1; then
-    return 1
-  fi
+  # actually read. Bound this verification probe too — same class of
+  # unbounded-wall-clock risk as every other git subprocess this script
+  # reads through — and treat a genuine timeout here as this function's own
+  # 124 (inconclusive read), not silently as absent (1) or invalid (2):
+  # neither of those is proven when the check itself could not complete.
+  local verify_rc=0
+  clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+  run_bounded "$bound" "$work_dir/read-verify.out" "$work_dir/read-verify.err" \
+    git -C "$repo_root" rev-parse --verify --quiet "${ref}^{commit}" || verify_rc=$?
+  [ "$verify_rc" = 124 ] && return 124
+  [ "$verify_rc" = 0 ] && return 1
   return 2
 }
 
