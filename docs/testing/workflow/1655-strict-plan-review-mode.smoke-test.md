@@ -72,9 +72,10 @@ The findings look like a plan with no coverage at all. Proof P2.
 2. Run one on a directory that does not.
 3. Read `STRICT_PLAN_APPLIED` in both.
 
-**Expected result**: step 1 reports all **seven** identifiers. Step 2 reports
-exactly `source_declaration`, `phase_ordering`, `dependency_state` and
-`reversal_risk`. In both, `STRICT_PLAN_APPLIED` is present and non-empty.
+**Expected result**: step 1 reports all **eight** identifiers. Step 2 reports
+exactly `source_declaration`, `phase_ordering`, `dependency_state`,
+`reversal_risk` and `test_scope_proportionality`. In both, `STRICT_PLAN_APPLIED`
+is present and non-empty.
 
 **A count without its denominator is not a rate**, and this step is where that
 becomes concrete. A count of one on a Refactor plan and a count of one on a
@@ -85,14 +86,14 @@ to tell them apart. Proof P3.
 alone: the sibling spec is supplied when `git show` retrieves it and not when it
 does not, and the plan's own text is never consulted. Whether the plan's
 declaration is valid is `source_declaration`'s answer, on its own axis — a plan
-that declares nothing with its spec beside it has all seven applied **and** the
+that declares nothing with its spec beside it has all eight applied **and** the
 finding. Step 8 is where that is exercised.
 
 ## Step 4: A finding for a check that was not applied is not counted
 
 **Maps to**: AC-19a.
 
-1. Run a review on a plan with no source, so the applied set is the four.
+1. Run a review on a plan with no source, so the applied set is the five.
 2. Return a strict response containing a finding whose `check` is
    `spec_traceability` — in the checklist, not in the applied set.
 
@@ -226,8 +227,8 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | --- | --- | --- |
 | P1 | 1655_s8_git_show_text | `strict_git_show_at_head` returns committed bytes |
 | P2 | 1655_s9_whole_document | supplied `text` length equals full plan at HEAD, not diff size |
-| P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set7 | `STRICT_PLAN_APPLIED` present |
-| P3a | 1655_s7a_all_seven | all seven when spec sibling present despite Refactor declaration |
+| P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set8 | `STRICT_PLAN_APPLIED` present |
+| P3a | 1655_s7a_all_eight | all eight when spec sibling present despite Refactor declaration |
 | P4 | 1655_s17_unknown_detail | `STRICT_1_CHECK=unknown` for out-of-applied source-dependent finding |
 | P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
 | P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |

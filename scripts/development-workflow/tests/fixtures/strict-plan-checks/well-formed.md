@@ -41,3 +41,9 @@ Source: not required
 Source: not required
 
 **Question:** Is reversal risk stated?
+
+### test_scope_proportionality
+
+Source: not required
+
+**Question:** Does the plan state what coverage projected test scaffolding provides?

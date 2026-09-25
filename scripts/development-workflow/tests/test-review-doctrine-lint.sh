@@ -119,7 +119,7 @@ run_test "s15_reviewer_no_literal_gt" "no" "$(printf '%s\n' "$_reviewer_supply_f
 # Scenario 16: shipped catalogue
 run_test "s16_shipped_passes_linter" "0" "$(lint_exit "$CATALOGUE")"
 _pattern_count="$(grep -c '^### ' "$CATALOGUE" || true)"
-run_test "s16_five_patterns" "5" "$_pattern_count"
+run_test "s16_six_patterns" "6" "$_pattern_count"
 run_test "s16_ac3_not_only_reporting" "yes" "$(grep -Fq 'set of things worth reporting' "$CATALOGUE" && echo yes || echo no)"
 run_test "s16_ac3a_name_pattern" "yes" "$(grep -Fq 'name it' "$CATALOGUE" && echo yes || echo no)"
 
