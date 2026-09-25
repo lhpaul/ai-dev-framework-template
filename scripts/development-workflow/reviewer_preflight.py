@@ -142,23 +142,40 @@ def classify_platform_in_bucket(
     pr_state: dict[str, str],
     platform_configs: dict[str, Any],
     shared_config_ref: str,
+    override_added: bool = False,
 ) -> dict[str, Any]:
     """Classify one platform's ability to review, scoped to one lifecycle bucket."""
     supported = BUCKET_SUPPORTED[bucket]
     dotted = BUCKET_DOTTED[bucket]
     if name not in supported:
+        # When the machine-local override is what added this unsupported
+        # value to this bucket, the shared config never contained it —
+        # pointing the operator at the shared file/list (and telling them
+        # to remove it from there) sends them to a file that does not have
+        # the bad value, so the documented remedy cannot actually unblock
+        # dispatch. Name the local override instead.
+        if override_added:
+            surface = ".ai-dev-workflow.local.yaml"
+            remedy = (
+                f"Correct '{name}' to a supported platform's name for "
+                f"review.{dotted} in .ai-dev-workflow.local.yaml, or remove "
+                "it from the local override list, and re-run."
+            )
+        else:
+            surface = shared_config_ref or ".ai-dev-workflow.yaml"
+            remedy = (
+                f"Correct '{name}' to a supported platform's name for "
+                f"review.{dotted}, or remove it from the shared reviewer "
+                "list, and re-run."
+            )
         return {
             "bucket": bucket,
             "verdict": "not-operable",
             "reasons": ["value-not-supported"],
-            "surface": shared_config_ref or ".ai-dev-workflow.yaml",
+            "surface": surface,
             "setting": f"review.{dotted}",
             "detail": f"'{name}' is not a supported reviewer platform for review.{dotted}.",
-            "remedy": (
-                f"Correct '{name}' to a supported platform's name for "
-                f"review.{dotted}, or remove it from the shared reviewer "
-                "list, and re-run."
-            ),
+            "remedy": remedy,
         }
 
     cfg = platform_configs.get(name)
@@ -383,6 +400,7 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
                 pr_state=pr_state,
                 platform_configs=platform_configs,
                 shared_config_ref=checked_shared_config_ref,
+                override_added=bucket in override_added_buckets,
             )
             for bucket in resolved_buckets
         ]

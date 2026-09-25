@@ -123,6 +123,24 @@ class OutcomeMatrixTests(unittest.TestCase):
         entry = platform(result, "not-a-reviewer")
         self.assertEqual(entry["reasons"], ["value-not-supported"])
 
+    def test_value_not_supported_override_added_points_at_local_override(self):
+        # A shared config with a coherent list, plus a machine-local
+        # override that added an unsupported value not present in the
+        # shared list at all — the remedy must name the local override
+        # file, not the shared config the bad value was never in.
+        payload = base_payload(
+            shared={"on_draft_github": []},
+            resolved={"on_draft_github": ["not-a-reviewer"]},
+            local_override_state="applied",
+        )
+        payload["platform_configs"] = {}
+        result = rp.classify(payload)
+        self.assertEqual(result["outcome"], "blocked")
+        entry = platform(result, "not-a-reviewer")
+        self.assertEqual(entry["reasons"], ["value-not-supported"])
+        self.assertEqual(entry["surface"], ".ai-dev-workflow.local.yaml")
+        self.assertIn(".ai-dev-workflow.local.yaml", entry["remedy"])
+
     def test_value_not_supported_bucket_scoped(self):
         # claude is supported for on_draft.runner but not on_ready.github.
         payload = base_payload(
