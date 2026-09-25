@@ -115,6 +115,15 @@ JSON
 {"items":[{"content":{"number":900,"repository":"https://github.com/lhpaul/some-other-repo"},"status":"Backlog","priority":"High","type":"Feature","title":"Foreign repo's issue 900"}]}
 JSON
         ;;
+      custom_type_field)
+        # Board's classification field is named "Custom Type" (via
+        # issue_tracker.custom_fields.type_field), so gh project item-list
+        # exposes it under the "custom Type" key, never plain "type"
+        # (codex-github finding, #1583).
+        cat <<'JSON'
+{"items":[{"content":{"number":900},"status":"Backlog","priority":"High","custom Type":"Feature","title":"Feature helper issue"}]}
+JSON
+        ;;
       *)
         cat <<'JSON'
 {"items":[{"content":{"number":900},"status":"Backlog","priority":"High","type":"Feature","title":"Feature helper issue"},{"content":{"number":901},"status":"Done","priority":"High","type":"Bug","title":"Done bug helper issue"}]}
@@ -258,6 +267,49 @@ MOCK_ITEM_LIST_MODE=cross_repo_collision run_wrapper_in_repo "$framework_config"
 cross_repo_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
 run_test "cross_repo_collision_excluded_status" "empty" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$cross_repo_out")"
 run_test "cross_repo_collision_excluded_json_empty" "FRAMEWORK_ITEMS_JSON=[]" "$(printf '%s\n' "$cross_repo_out" | grep '^FRAMEWORK_ITEMS_JSON=')"
+
+echo ""
+echo "=== list_open_framework_items.sh: type projection resolves the configured custom field key (codex-github finding, #1583) ==="
+
+custom_type_config="$TMP_ROOT/custom-type.yaml"
+cat > "$custom_type_config" <<'EOF'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+  custom_fields:
+    type_field: "Custom Type"
+template:
+  is_template: true
+EOF
+reset_log
+MOCK_ITEM_LIST_MODE=custom_type_field run_wrapper_in_repo "$custom_type_config"
+custom_type_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "framework_type_projection_resolves_custom_field" "yes" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"type":"Feature"' && echo yes || echo no)"
+run_test "framework_type_projection_not_empty_for_custom_field" "no" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"type":""' && echo yes || echo no)"
+
+echo ""
+echo "=== list_open_framework_items.sh: --repo-root controls which config framework mode is read from (codex-github finding, #1583) ==="
+
+# Planted-violation proof: this worktree's own ambient .ai-dev-workflow.yaml
+# (unmodified, no swap) has template.is_template: true. --repo-root points
+# at a scratch CONSUMER fixture instead. Before the fix,
+# workflow_template_is_template (no args) ignored --repo-root entirely and
+# read the ambient framework-mode config, so the framework branch ran and
+# returned item #900 (type Feature) regardless of its Type. After the fix,
+# the wrapper reads the target repo's own consumer-mode config and delegates
+# to list_open_workflow_type_issues, which excludes item #900 (not
+# Workflow-typed) from its Workflow-only JSON.
+repo_root_consumer_fixture="$TMP_ROOT/repo-root-consumer-fixture"
+mkdir -p "$repo_root_consumer_fixture"
+cp "$consumer_config" "$repo_root_consumer_fixture/.ai-dev-workflow.yaml"
+reset_log
+set +e
+"$WRAPPER" --repo-root "$repo_root_consumer_fixture" >"$TMP_ROOT/repo-root-stdout.log" 2>"$TMP_ROOT/repo-root-stderr.log"
+set -e
+repo_root_out="$(cat "$TMP_ROOT/repo-root-stdout.log")"
+run_test "repo_root_overrides_ambient_framework_mode" "no" "$(printf '%s\n' "$repo_root_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"number":900' && echo yes || echo no)"
+run_test "repo_root_overrides_ambient_framework_mode_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$repo_root_out")"
 
 echo ""
 echo "=== list_open_framework_items.sh: nine closed-list unavailable causes ==="

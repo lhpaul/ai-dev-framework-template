@@ -93,7 +93,17 @@ else
   cd_workflow_repo_root
 fi
 
-is_template="$(workflow_template_is_template)"
+# codex-github finding (#1583): workflow_template_is_template (and the
+# config-provider/project-number readers below) default to
+# workflow_config_file(), which resolves relative to workflow-lib.sh's own
+# location, NOT the current directory — so --repo-root pointing at a
+# different repository would silently read framework mode from the wrong
+# config. Resolve and pass the target repo's own config file explicitly
+# everywhere this script reads mode/provider/project-number, now that the
+# cd above has landed us in the requested repository root.
+fm_config_file="$PWD/.ai-dev-workflow.yaml"
+
+is_template="$(workflow_template_is_template "$fm_config_file")"
 
 if [ "$is_template" != "true" ]; then
   consumer_json="$(list_open_workflow_type_issues)"
@@ -105,13 +115,13 @@ fi
 
 # --- Framework mode: own all-open-items lookup, never Type-filtered. ---
 
-fm_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+fm_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$fm_config_file")")"
 if [ "$fm_provider" != "github_projects" ]; then
   _emit_unavailable "provider_unsupported"
   exit 0
 fi
 
-fm_project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+fm_project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_config_field issue_tracker project_number "$fm_config_file")}"
 if [ -z "$fm_project_number" ]; then
   _emit_unavailable "project_number_missing"
   exit 0
@@ -162,6 +172,17 @@ if ! fm_project_items="$(gh project item-list "$fm_project_number" --owner "$fm_
   exit 0
 fi
 
+# Framework mode never reads Type for FILTERING (that is the whole point of
+# this wrapper — see framework-lookup-ignores-type-field), but the output
+# JSON still reports the classification value for release/retrospective
+# consumers, so that projection must resolve the same configured/fallback
+# candidate key set the (untouched) Workflow lookup primitive uses, not a
+# hardcoded ".type" — a board with issue_tracker.custom_fields.type_field
+# set to e.g. "Custom Type" exposes that value under a derived item-list
+# key, never literally "type" (codex-github finding, #1583).
+fm_type_preferred_field="$(workflow_issue_tracker_custom_field type_field "$fm_config_file")"
+fm_type_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$fm_type_preferred_field")"
+
 # Join by issue number is only safe within one repository: an
 # organization-owned project can span multiple repositories, and issue
 # numbers are not globally unique across them (codex-github finding,
@@ -170,10 +191,13 @@ fi
 # repository's slug when present, and accept the match unfiltered only when
 # the field is absent (older gh CLI output shape) — narrowing false
 # positives without introducing a new false negative on older gh versions.
-if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$fm_open_issues" --arg repoSlug "$fm_repo_slug" '
+if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$fm_open_issues" --arg repoSlug "$fm_repo_slug" --argjson candidateKeys "$fm_type_candidate_keys_json" '
   def terminal($status):
     ($status // "") as $s
     | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
+
+  def item_type($item):
+    ( [ $candidateKeys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
 
   [ .items[]
     | . as $item
@@ -188,7 +212,7 @@ if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$
         createdAt: $issue.createdAt,
         status: ($item.status // ""),
         priority: ($item.priority // ""),
-        type: ($item.type // "")
+        type: item_type($item)
       }
   ]
 ' 2>/dev/null)"; then

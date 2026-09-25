@@ -150,7 +150,12 @@ emit_pass() {
   exit 0
 }
 
-is_template="$(workflow_template_is_template)"
+# workflow_template_is_template (no args) defaults to workflow_config_file(),
+# which resolves relative to workflow-lib.sh's own location, not the current
+# directory — so pass the target repo's own config file explicitly now that
+# the cd above has landed us in the requested --repo-root (same fix as
+# list_open_framework_items.sh; codex-github finding, #1583).
+is_template="$(workflow_template_is_template "$PWD/.ai-dev-workflow.yaml")"
 if [ "$is_template" != "true" ]; then
   emit_pass "consumer_mode"
 fi

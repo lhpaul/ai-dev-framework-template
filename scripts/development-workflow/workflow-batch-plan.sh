@@ -346,7 +346,12 @@ _fm_gate_check() {
   FM_MISCLASSIFIED_TYPE_REASON=""
   FM_MISCLASSIFIED_TYPE_CHECK="not_applicable"
 
-  [ "$(workflow_template_is_template)" = "true" ] || return 0
+  # workflow_template_is_template (no args) resolves relative to
+  # workflow-lib.sh's own location, not $repo_root — pass this scan's
+  # target repo config explicitly (same root cause as
+  # list_open_framework_items.sh and framework-mode-backlog-type-gate.sh;
+  # codex-github finding, #1583).
+  [ "$(workflow_template_is_template "$repo_root/.ai-dev-workflow.yaml")" = "true" ] || return 0
 
   local _fm_issue="$1" _fm_status="$2" _fm_deferred="$3" _fm_artifact_stage="$4" _fm_github_repo="$5"
   [ -n "$_fm_issue" ] || return 0
