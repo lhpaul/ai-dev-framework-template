@@ -1183,13 +1183,26 @@ def review_effective_value_from_path(
     value: Any = data
     for index, key in enumerate(path):
         if not isinstance(value, dict):
-            # Empty optional review/on_draft sections (including sections that
-            # contain only comments) retain the historic absent-field meaning.
-            # A list, scalar, or mapping in the wrong position remains a
-            # structural error and cannot fall through to another file.
+            # Empty optional review/on_draft/on_ready sections (including
+            # sections that contain only comments, which the YAML subset
+            # parser represents as a null value at that key) retain the
+            # historic absent-field meaning. A list, scalar, or mapping in
+            # the wrong position remains a structural error and cannot fall
+            # through to another file.
+            #
+            # #1561 round-9 finding: on_ready was missing from this
+            # null-parent exemption even though on_draft already had it — a
+            # comment-only or null `review.on_ready:` section (a shape
+            # workflow_config_review_local_list_if_declared, workflow-lib.sh,
+            # does not treat as a declared override either) was misclassified
+            # as a structural error, marking on_ready.github malformed and
+            # exiting this preflight as a tooling failure, while Step 7
+            # correctly falls back to the shared ready-stage list for that
+            # exact shape.
             if value is None and (
                 (index == 1 and path[:1] == ["review"])
                 or (index == 2 and path[:2] == ["review", "on_draft"])
+                or (index == 2 and path[:2] == ["review", "on_ready"])
             ):
                 return None, False, False
             return None, False, True

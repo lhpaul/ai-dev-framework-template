@@ -1867,6 +1867,23 @@ run_test "review-github-effective explicit empty local override still narrows" '
 run_test "review-github-effective explicit empty local override is applied" true "$(jq -r '.local_review_override_applied' <<< "$g11_json")"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# #1561 round-9 finding (P2): the null-parent exemption in
+# review_effective_value_from_path only covered `review:` and
+# `review.on_draft:` being null (a comment-only or bare-key section), not
+# `review.on_ready:` — the same shape workflow_config_review_local_list_
+# if_declared does not treat as a declared override for on_ready either. A
+# local override file with a comment-only `on_ready:` section (parsed as a
+# null value there) must fall back to the shared on_ready.github list, the
+# same as the already-covered on_draft case above, not be reported as a
+# structural error / malformed.
+write_review_effective_fixture 'review:' '  on_ready:' '    github: [coderabbit]'
+printf '%s\n' 'review:' '  on_ready:' '    # local override not yet configured' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g11b_json="$(review_github_effective_json)"
+run_test "review-github-effective null local on_ready section falls back to shared" '["coderabbit"]' "$(jq -c '.effective_on_ready_github' <<< "$g11b_json")"
+run_test "review-github-effective null local on_ready section state" defined "$(jq -r '.effective_on_ready_github_state' <<< "$g11b_json")"
+run_test "review-github-effective null local on_ready section is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g11b_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
 # A malformed legacy scalar (e.g. `review.platforms: coderabbit`, not a
 # list) must propagate as malformed, not be silently reclassified as an
 # empty (deliberately-configured) legacy bucket — the same "malformed

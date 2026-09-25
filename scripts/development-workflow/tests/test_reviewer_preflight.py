@@ -18,6 +18,7 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import reviewer_preflight as rp  # noqa: E402
+import reviewer_preflight_coderabbit as rpc  # noqa: E402
 
 
 def base_payload(**overrides):
@@ -600,6 +601,36 @@ class SharedBaseBranchBudgetTests(unittest.TestCase):
         # state here) is not a draft stage: only base-branch-unmatched.
         self.assertNotIn("stage-excluded", by_bucket["on_draft_github"]["reasons"])
         self.assertIn("base-branch-unmatched", by_bucket["on_draft_github"]["reasons"])
+
+
+class CoderabbitMissingFileWithoutYamlTests(unittest.TestCase):
+    # #1561 round-9 finding (P1): reviewer_preflight_coderabbit.py's
+    # --mode full-json is what reviewer-preflight.sh calls with a
+    # deliberately nonexistent placeholder path when CodeRabbit is not in
+    # the resolved reviewer list at all — the missing-file case is meant
+    # to resolve to a default disabled config without ever needing PyYAML
+    # (load_coderabbit_config's own missing-file branch does no parsing).
+    # _cmd_full_json previously imported yaml unconditionally before ever
+    # checking whether the file existed, so a missing file plus a missing
+    # PyYAML install returned dependency error 4 (which reviewer-preflight
+    # .sh's caller degrades to check-inconclusive/passed-unverified)
+    # instead of the documented disabled/prerequisite-missing outcome —
+    # exactly the class of silent disagreement this preflight exists to
+    # catch, not a graceful degrade.
+    def test_missing_file_succeeds_even_when_pyyaml_is_unavailable(self):
+        missing_path = pathlib.Path("/this/path/does/not/exist/.coderabbit.yaml")
+        self.assertFalse(missing_path.exists())
+        with unittest.mock.patch.dict(sys.modules, {"yaml": None}):
+            rc = rpc._cmd_full_json(missing_path)
+        self.assertEqual(rc, 0)
+
+    def test_existing_file_still_requires_pyyaml(self):
+        # The fix must not weaken the existing, intentional dependency
+        # requirement for a file that genuinely needs parsing.
+        with unittest.mock.patch.object(rpc.Path, "exists", return_value=True), \
+             unittest.mock.patch.dict(sys.modules, {"yaml": None}):
+            rc = rpc._cmd_full_json(pathlib.Path("/this/path/does/not/matter/.coderabbit.yaml"))
+        self.assertEqual(rc, 4)
 
 
 if __name__ == "__main__":

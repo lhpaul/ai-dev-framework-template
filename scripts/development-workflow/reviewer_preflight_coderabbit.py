@@ -269,6 +269,21 @@ def _cmd_enabled_bool(path: Path) -> int:
 
 
 def _cmd_full_json(path: Path) -> int:
+    # A missing .coderabbit.yaml is the deliberate "not configured" signal
+    # reviewer-preflight.sh sends here (via a nonexistent placeholder path)
+    # when CodeRabbit is not in the resolved reviewer list at all —
+    # load_coderabbit_config's own missing-file branch returns a default
+    # disabled config WITHOUT ever needing PyYAML to parse anything.
+    # Requiring PyYAML unconditionally before checking this classified a
+    # missing file as dependency error 4 (which reviewer-preflight.sh's
+    # caller then degrades to check-inconclusive/passed-unverified) instead
+    # of the documented and Step 7a-consistent disabled/prerequisite-missing
+    # outcome — a genuine disagreement this preflight exists to catch, not
+    # a graceful degrade. Check existence first; only require PyYAML when a
+    # real file actually needs parsing.
+    if not path.exists():
+        print(json.dumps(load_coderabbit_config(path), sort_keys=True))
+        return 0
     try:
         import yaml  # noqa: F401
     except ImportError:
