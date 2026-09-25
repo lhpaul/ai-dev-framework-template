@@ -180,11 +180,13 @@ Finally check all three directions the two dimensions must keep separate:
 **Expected result**: step 1 lands on row A4 — `important`, request the
 record before `ready-for-human-review`. Step 2 lands on row A7 —
 `blocking`: a stated harm is blocking whether or not the record was
-written, so the missing record does not downgrade it, and the record is
-also requested. Confirm Protocol 03 tells the implementer to write the
-record during the Pre-Submission Self-Review Pass and to include it in the
-Path 1 and Path 2 PR descriptions, so the request has a defined place to
-land.
+written, so the missing record does not downgrade it. The remediation is
+the same as A2 — restore that coverage or narrow the deviation — and a
+record is requested only if a coverage-equivalent deviation remains after
+that; it is not a substitute for the harmful removal. Confirm Protocol 03
+tells the implementer to write the record during the Pre-Submission
+Self-Review Pass and to include it in the Path 1 and Path 2 PR
+descriptions, so the request has a defined place to land.
 
 ### Step 8: Explicit binding still binds, and behavior deltas are untouched
 

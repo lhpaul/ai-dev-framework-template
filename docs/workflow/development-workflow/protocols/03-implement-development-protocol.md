@@ -564,9 +564,13 @@ Complete all applicable checks:
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
    - When the delivered test scaffolding removes at least one item the plan
      projected (an addition-only delta does not trigger this; a net-even or
-     net-larger swap that drops a projected item does), write the
+     net-larger swap that drops a projected item does) and the deviation is
+     coverage-equivalent, write the
      [Test-Scope Deviation Record](#test-scope-deviation-record) before
-     opening the PR.
+     opening the PR. If a reviewer could instead name lost coverage and the
+     defect class it lets through, restore that coverage or narrow the
+     deviation first — a record is not a substitute for a harmful removal,
+     and is written only once a coverage-equivalent deviation remains.
 4. **Branch-stage discipline check**: implementation files belong on
    implementation branches (`feature/*`, `fix/*`, `refactor/*`, or
    `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
@@ -943,7 +947,7 @@ or `develop-<slug>` for integration-branch items) with:
   - What was implemented
   - Link to spec and plan
   - Test plan (how to validate)
-  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included (an addition-only delta does not need the record)
+  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record, and a harmful removal is restored or narrowed rather than recorded)
   - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -1317,7 +1321,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - What was refactored and why
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
-      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included (an addition-only delta does not need the record)
+      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record, and a harmful removal is restored or narrowed rather than recorded)
       - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
