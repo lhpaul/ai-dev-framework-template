@@ -117,6 +117,11 @@ for agent_path in agents:
         section[:400],
     )
     check(
+        f'{agent_path.name} requires stop on tooling failure (exit 3)',
+        'exit `3`' in section,
+        section[:600],
+    )
+    check(
         f'{agent_path.name} requires the report before item output',
         'before this item' in section,
         section[:400],

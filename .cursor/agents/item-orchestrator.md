@@ -65,9 +65,12 @@ listed stage. Print the full report — outcome, and every platform's verdict �
 before this item's own output. Stop before mutation on `blocked` (exit `1`)
 or `prerequisite-failed` (exit `2`); `passed`, `passed-unverified`, and
 `no-review-remaining` (all exit `0`) proceed, carrying any unverified-platform
-list into the Work Item Runner summary. See Protocol 91's "Reviewer preflight
-before child dispatch" section for the full outcome table and per-mode input
-resolution.
+list into the Work Item Runner summary. Also stop before mutation on a
+tooling failure (exit `3`, no `OUTCOME` line) — the script itself failed
+rather than reaching a verdict; report this as a stop with the failure
+detail and re-run once the tooling problem is fixed, not as a `passed`
+proceed. See Protocol 91's "Reviewer preflight before child dispatch"
+section for the full outcome table and per-mode input resolution.
 
 After candidate discovery and a clean nested-artifact guard, run
 `validate-branch-reuse.sh` with the issue, exact expected branch, approved base,

@@ -186,6 +186,17 @@ clamp_bound_floor() {
   [ "$bound" -le "$1" ] || bound=$1
 }
 
+# A binary named `timeout` is not necessarily GNU timeout (e.g. BusyBox),
+# which does not support `--kill-after`; on such a host the branch below
+# would fail every bounded call outright instead of reaching the manual
+# fallback, breaking this mandatory dispatch gate entirely. Probe once
+# (resolve-reviewer-availability.sh's own same-purpose check, condensed
+# for this script's simpler single-launcher shape).
+use_gnu_timeout=0
+if have_cmd timeout && timeout --version 2>/dev/null | grep -q 'GNU coreutils'; then
+  use_gnu_timeout=1
+fi
+
 # A lighter-weight bounded launcher than Step 7a's (resolve-reviewer-availability.sh):
 # this script's own children are git/gh/python3 one-shot reads, not long-lived
 # local reviewer runtimes, so a plain owned-process wait/kill loop is adequate.
@@ -193,7 +204,7 @@ run_bounded() {
   local bound=$1 output=$2 error=$3 rc=0
   shift 3
   [ "$bound" -gt 0 ] || return 124
-  if have_cmd timeout; then
+  if [ "$use_gnu_timeout" = 1 ]; then
     timeout --kill-after=1 "$bound" "$@" >"$output" 2>"$error" || rc=$?
     case "$rc" in 124|137) return 124 ;; *) return "$rc" ;; esac
   fi

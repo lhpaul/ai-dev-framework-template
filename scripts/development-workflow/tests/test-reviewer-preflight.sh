@@ -666,5 +666,28 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-24: a `timeout` binary that is not GNU coreutils (e.g. BusyBox,
+    # which has no --kill-after / --version does not print "GNU coreutils")
+    # must not break every bounded call — the script must detect this and
+    # fall back to its manual owned-process launcher, still reaching a
+    # normal outcome instead of failing every read.
+    bins24 = root / 'bin24'
+    bins24.mkdir(exist_ok=True)
+    fake_timeout = bins24 / 'timeout'
+    fake_timeout.write_text(
+        '#!/bin/bash\n'
+        'if [ "$1" = --version ]; then printf "busybox timeout 1.0\\n"; exit 0; fi\n'
+        'echo "timeout: unrecognized option" >&2\n'
+        'exit 125\n'
+    )
+    fake_timeout.chmod(0o755)
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins24}:{os.environ.get("PATH", "")}'},
+        expected=0,
+    )
+    check('T-24 non-GNU timeout falls back to the manual launcher', data.get('OUTCOME') == 'passed', data)
+
 print(f'\nPassed: {passed}')
 PY
