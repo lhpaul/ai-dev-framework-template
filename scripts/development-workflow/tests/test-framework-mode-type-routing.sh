@@ -565,17 +565,24 @@ run_test "stop_path_no_mutation_no_gh_calls" "0" "$(wc -l < "$CALL_LOG" | tr -d 
 echo ""
 echo "=== guidance mirror grep: closed mirror list has no surviving Workflow guidance ==="
 
-# Not `! rg …`: under set -e a command negated by `!` is exempt from
+# Not `! grep …`: under set -e a command negated by `!` is exempt from
 # errexit in bash and zsh, so that form would silently continue past a
-# real violation. assert_absent captures rg's status explicitly instead.
+# real violation. assert_absent captures grep's status explicitly instead.
+#
+# grep -E (not rg): ripgrep is not guaranteed to be installed in every CI
+# runner this suite executes in (observed CI failure, #1583 — `rg exited
+# 127`, i.e. command not found), while grep -E is POSIX-portable and ships
+# everywhere. grep and rg share the same exit-code convention (0 = match,
+# 1 = no match, 2 = error) and both treat `\$` as a literal `$` in this
+# pattern set, so the patterns below are unchanged.
 assert_absent() {
   local label="$1"; shift
   local status=0
-  rg -n "$@" >/dev/null 2>&1 || status=$?
+  grep -n -E "$@" >/dev/null 2>&1 || status=$?
   case "$status" in
     0) echo "  stale guidance still present: $label" >&2; return 1 ;;
     1) return 0 ;;  # no match — the only passing case
-    *) echo "  rg exited $status while checking: $label" >&2; return 2 ;;
+    *) echo "  grep exited $status while checking: $label" >&2; return 2 ;;
   esac
 }
 

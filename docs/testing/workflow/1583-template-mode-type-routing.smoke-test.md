@@ -384,14 +384,19 @@ this repository.
 2. Grep check that **must fail** if old framework-mode Workflow guidance survives (run from
    repo root; adjust wrapper if harness owns this).
 
-   **Why this is not written as `! rg …`**: under `set -e`, a command whose status is inverted
-   by `!` is exempt from errexit in both bash and zsh, so a `! rg` that finds stale guidance
+   **Why this is not written as `! grep …`**: under `set -e`, a command whose status is inverted
+   by `!` is exempt from errexit in both bash and zsh, so a `! grep` that finds stale guidance
    returns non-zero and the script **keeps going** — the check reports nothing and passes. The
-   assertion below therefore inspects `rg`'s status explicitly and exits itself. It also
-   distinguishes `rg`'s three exits: `0` = match found (stale guidance survives → fail),
-   `1` = no match (the only passing case), `2` or higher = `rg` itself errored, e.g. a bad
+   assertion below therefore inspects `grep`'s status explicitly and exits itself. It also
+   distinguishes `grep`'s three exits: `0` = match found (stale guidance survives → fail),
+   `1` = no match (the only passing case), `2` or higher = `grep` itself errored, e.g. a bad
    pattern or an unreadable path (→ fail, because a check that did not run must not report
    clean).
+
+   **Why `grep -E`, not `rg`**: ripgrep is not guaranteed to be installed in every CI runner
+   this check runs in (observed CI failure, #1583 — `rg exited 127`, i.e. command not found).
+   `grep -E` is POSIX-portable and ships everywhere; it shares the same exit-code convention as
+   `rg` and treats `\$` as a literal `$` the same way, so the patterns below are unchanged.
 
 ```bash
 set -uo pipefail   # deliberately not -e: assert_absent does its own exiting
@@ -399,11 +404,11 @@ set -uo pipefail   # deliberately not -e: assert_absent does its own exiting
 assert_absent() {
   local label="$1"; shift
   local status=0
-  rg -n "$@" || status=$?
+  grep -n -E "$@" || status=$?
   case "$status" in
     0) printf 'FAIL: stale guidance still present (%s)\n' "$label" >&2; exit 1 ;;
     1) printf 'ok: %s\n' "$label" ;;
-    *) printf 'FAIL: rg exited %s while checking %s — check did not run\n' \
+    *) printf 'FAIL: grep exited %s while checking %s — check did not run\n' \
          "$status" "$label" >&2; exit 1 ;;
   esac
 }
