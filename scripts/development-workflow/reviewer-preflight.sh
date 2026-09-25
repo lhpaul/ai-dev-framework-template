@@ -736,6 +736,48 @@ case "$mode" in
     ;;
 esac
 
+# #1561 round-8 finding: validate the remaining-stage set (and, for a
+# non-empty stage set, --pr-state) BEFORE any configuration is read — a
+# git-show/read_ref_file failure on the (now-resolved) base or branch/PR
+# ref below must not mask an earlier malformed or omitted
+# --remaining-stages/--pr-state input behind an unstructured tooling
+# failure (exit 3) instead of the documented prerequisite-failed (exit 2)
+# the decision matrix requires for that malformed input. reviewer_
+# preflight_build_input.py's own stage-list parsing and reviewer_
+# preflight.py's classify() are the single source of truth for what counts
+# as a malformed stage set or pull-request state; reuse them directly here
+# against an otherwise-empty payload (no shared/resolved/platform data has
+# been read yet, and none of this validation needs any) rather than
+# duplicating that logic in bash, where it could drift. The explicit empty
+# --remaining-stages short-circuit above already handles its own case
+# before ever reaching this branch, so this only ever runs for an omitted,
+# non-empty, or malformed stage set.
+early_input_json="$work_dir/early-input.json"
+early_build_rc=0
+clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$work_dir/early-build.out" "$work_dir/early-build.err" \
+  python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
+  --target-base "$target_base" \
+  --remaining-stages "$remaining_stages_raw" \
+  --remaining-stages-provided "$remaining_stages_provided" \
+  --pr-state "$pr_state_raw" \
+  --output "$early_input_json" || early_build_rc=$?
+[ "$early_build_rc" = 0 ] || fail "reviewer_preflight_build_input.py failed (exit $early_build_rc): $(cat "$work_dir/early-build.err" 2>/dev/null)"
+early_output_json="$work_dir/early-output.json"
+early_classify_rc=0
+clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$early_output_json" "$work_dir/early-classify.err" \
+  python3 "$SCRIPT_DIR/reviewer_preflight.py" --input-json "$early_input_json" || early_classify_rc=$?
+if [ "$early_classify_rc" -gt 3 ] || { [ "$early_classify_rc" != 0 ] && ! jq -e . "$early_output_json" >/dev/null 2>&1; }; then
+  cat "$work_dir/early-classify.err" >&2
+  fail "reviewer_preflight.py failed (exit $early_classify_rc)"
+fi
+early_outcome=$(jq -er '.outcome' "$early_output_json") || fail 'cannot inspect early stage-set validation output'
+if [ "$early_outcome" = prerequisite-failed ]; then
+  early_detail=$(jq -er '.prerequisite_detail' "$early_output_json") || early_detail='the set of lifecycle stages this run will exercise is unresolved or malformed'
+  prerequisite_failed_report "$early_detail"
+fi
+
 # Shared reviewer list: resolved YAML at $shared_ref, with the machine-local
 # override applied from this machine (never from the branch/PR being read).
 # The override file itself is resolved once, normally, against the real

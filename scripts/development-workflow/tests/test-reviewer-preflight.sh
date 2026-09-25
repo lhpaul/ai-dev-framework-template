@@ -1806,5 +1806,47 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-52 (#1561 round-8 finding, P2): an omitted --remaining-stages must
+    # be classified prerequisite-failed (exit 2) even when the resolved
+    # base's own config blob cannot be read locally — the config-read
+    # failure must not mask the earlier malformed/omitted stage-set input
+    # behind an unstructured tooling failure (exit 3). Reuse T-46's own
+    # partial-clone fixture (--filter=blob:none --no-checkout: the tip's
+    # own .ai-dev-workflow.yaml blob is never fetched, so a config read
+    # would fail with read_ref_file exit 2) — T-46 itself proves that same
+    # fixture DOES route through `fail()` (exit 3) when --remaining-stages
+    # is otherwise valid; this proves the earlier, prerequisite-failed
+    # stage-set check now wins first when it is not.
+    origin52 = root / 'origin52'
+    origin52.mkdir()
+    git(origin52, 'init', '-q')
+    git(origin52, 'checkout', '-q', '-b', 'develop')
+    (origin52 / '.ai-dev-workflow.yaml').write_text(coherent_shared)
+    git(origin52, 'add', '-A')
+    git(origin52, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'commit1: coherent shared config requiring coderabbit')
+    remote52 = root / 'remote52.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(origin52), str(remote52)], check=True)
+    git(remote52, 'config', 'uploadpack.allowFilter', 'true')
+    git(remote52, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
+    repo52 = root / 'repo52'
+    subprocess.run(
+        ['git', 'clone', '-q', '--filter=blob:none', '--no-checkout', f'file://{remote52}', str(repo52)],
+        check=True,
+    )
+    rc, data, out, err = run(
+        repo52, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        expected=2,
+    )
+    check(
+        'T-52 an omitted --remaining-stages is prerequisite-failed even when the base config blob is unreadable, not a tooling failure',
+        data.get('OUTCOME') == 'prerequisite-failed',
+        f'rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-52 prerequisite_detail names the unresolved stage set, not a config-read failure',
+        'lifecycle stages' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY
