@@ -26,6 +26,12 @@ Recommended model tier: `premium`
 9. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    plans, name the residual verification strategy and evidence source
    implementation must produce before readiness.
+9a. Test scaffolding enumerations (fixture manifests, proof-cycle lists, case
+    tables, scenario enumerations) are indicative by default — express
+    coverage intent, and mark an enumeration `**Binding enumeration**` only
+    when the implementer must not substitute a coverage-equivalent set;
+    before committing the plan, self-check it against Gate B in
+    `docs/workflow/development-workflow/test-scope-proportionality.md`.
 10. Before finalizing Step 3, classify parser-risk using the deterministic signals in protocol 02 (tooling-path parser/lint changes, parser/scanner-oriented module naming, or explicit regex/structured-text scanning behavior). When parser-risk applies, include the mandatory edge-case enumeration and unit-test mapping subsections before deep Layer-by-Layer walkthroughs. If suppressions are part of the feature, include suppression semantics (recognized directives, placement, and multi-suppression behavior).
 11. Before finalizing Step 3, also classify concurrent-event-source using the deterministic signals in protocol 02 (two or more concurrent event listeners/socket callbacks/timers/async queues, shared mutable state across execution contexts, or initialization/teardown sequences that race with incoming events). When concurrent-event-source applies, include the mandatory concurrency safety checklist section with design decisions for each of the seven items.
 12. Before finalizing Step 3, also check whether the plan introduces or modifies a cross-cutting checklist (a safety, quality, or compliance category that applies across multiple feature implementations). When cross-cutting checklist applies, enumerate ALL files that need updating — including the developer protocol, all agent/skill guidance files, `REVIEW.md`, and any Codex skill files that invoke the affected stage. Run the live search defined in protocol 02's "Cross-cutting checklist plans" block before writing the enumeration.

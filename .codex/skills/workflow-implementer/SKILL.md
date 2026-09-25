@@ -26,6 +26,11 @@ Recommended model tier: `balanced`
 9. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    work, produce and verify residual evidence with
    `scope-residual-gate.sh` before readiness.
+9a. When shipped test scaffolding is smaller than what the plan projected but
+    coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
+    description before opening the PR — see
+    `docs/workflow/development-workflow/test-scope-proportionality.md` and
+    Protocol 03's `Test-Scope Deviation Record` section.
 10. Implementation files belong on implementation branches, not `spec/*` or `implementation-plan/*` branches. If a documentation-stage PR is in scope, run Protocol 91 Step 8a's documentation-stage alignment checker before readiness and correct or escalate any mismatch.
 10a. Before stopping under `architecture_decision`, run the per-axis coverage
     analysis and produce the well-formed escalation report required by

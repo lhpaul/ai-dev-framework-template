@@ -84,6 +84,11 @@ Key rules:
   work, produce and verify residual evidence with `scope-residual-gate.sh`
   before `ready-for-human-review`; block or escalate instead of silently
   deferring residuals.
+- When shipped test scaffolding is smaller than what the plan projected but
+  coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
+  description before opening the PR — see
+  `docs/workflow/development-workflow/test-scope-proportionality.md` and
+  Protocol 03's `Test-Scope Deviation Record` section.
 - Implementation files belong on implementation branches, not `spec/*` or
   `implementation-plan/*` branches. If a documentation-stage PR is in scope,
   Protocol 91 Step 8a must run `check-documentation-stage-alignment.sh`; correct
