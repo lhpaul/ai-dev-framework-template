@@ -55,14 +55,16 @@ obligation live in
 
 ## The Coverage-Harm Statement
 
-A blocking finding on a test-scope enumeration delta requires a
-**Coverage-Harm Statement**: the reviewer names both
+A blocking finding on an **indicative** test-scope enumeration delta
+requires a **Coverage-Harm Statement**: the reviewer names both
 
 1. the specific coverage the removed items provided, and
 2. the defect class that now escapes because that coverage is gone.
 
 A finding that names only one half does not satisfy the rule and is not
-blocking on that ground alone.
+blocking on that ground alone. This threshold does not apply to a delta
+from an enumeration marked `**Binding enumeration**` (rows A5/A6 below) —
+that stays blocking with no harm statement required.
 
 ## Gate A — Reviewer evaluating a test-scope delta
 

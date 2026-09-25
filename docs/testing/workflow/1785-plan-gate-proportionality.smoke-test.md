@@ -167,16 +167,24 @@ Finally check all three directions the two dimensions must keep separate:
   present) or A4 (record missing), and a reduced `**Binding enumeration**` must
   still reach A5/A6. Neither exclusion may absorb them.
 
-### Step 7: A missing record is requested, not used to block
+### Step 7: A missing record is requested, not used to block — unless harm can be named
 
 **Maps to**: recorded-deviation criterion
 
-1. Take a test-scope reduction shipped with no Test-Scope Deviation Record.
+1. Take an indicative test-scope reduction shipped with no Test-Scope
+   Deviation Record, where no reviewer can name either half of a
+   Coverage-Harm Statement.
+2. Take the same missing-record case, but where the reviewer can name both
+   the specific coverage lost and the defect class that now escapes.
 
-**Expected result**: row A4 — `important`, request the record before
-`ready-for-human-review`. Confirm Protocol 03 tells the implementer to write the
-record during the Pre-Submission Self-Review Pass and to include it in the Path 1
-and Path 2 PR descriptions, so the request has a defined place to land.
+**Expected result**: step 1 lands on row A4 — `important`, request the
+record before `ready-for-human-review`. Step 2 lands on row A7 —
+`blocking`: a stated harm is blocking whether or not the record was
+written, so the missing record does not downgrade it, and the record is
+also requested. Confirm Protocol 03 tells the implementer to write the
+record during the Pre-Submission Self-Review Pass and to include it in the
+Path 1 and Path 2 PR descriptions, so the request has a defined place to
+land.
 
 ### Step 8: Explicit binding still binds, and behavior deltas are untouched
 
