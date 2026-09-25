@@ -377,6 +377,12 @@ gate_usage_case "gate_usage_errors_bad_artifact_stage" --issue 1 --status Backlo
 gate_usage_case "gate_usage_errors_missing_branch_pr_evidence" --issue 1 --status Backlog --artifact-stage '' --caller single
 gate_usage_case "gate_usage_errors_bad_branch_pr_evidence" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence maybe --caller single
 gate_usage_case "gate_usage_errors_nonnumeric_issue" --issue abc --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single
+# codex-github finding, #1583: --issue 0 (and leading-zero forms) must be
+# rejected, matching run-item-scope-resolver.sh's is_positive_int (0* is
+# rejected there too), not silently accepted as a routing outcome for a
+# nonexistent issue #0.
+gate_usage_case "gate_usage_errors_zero_issue" --issue 0 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single
+gate_usage_case "gate_usage_errors_leading_zero_issue" --issue 01 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single
 gate_usage_case "gate_usage_errors_flag_no_value" --issue
 gate_usage_case "gate_usage_errors_unknown_flag" --issue 1 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller single --bogus-flag value
 

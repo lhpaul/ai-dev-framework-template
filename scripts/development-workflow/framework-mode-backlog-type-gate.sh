@@ -119,7 +119,7 @@ done
 [ "$caller_set" -eq 1 ] || usage_error "--caller is required"
 
 case "$issue" in
-  ''|*[!0-9]*) usage_error "--issue must be a positive integer (with or without a leading #): '$issue'" ;;
+  ''|*[!0-9]*|0*) usage_error "--issue must be a positive integer (with or without a leading #): '$issue'" ;;
 esac
 
 case "$caller" in
