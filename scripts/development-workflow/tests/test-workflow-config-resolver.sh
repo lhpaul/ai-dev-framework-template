@@ -1125,15 +1125,22 @@ assert_review_effective_states "E-21 malformed legacy runner alias" malformed ab
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude]' '  internal_reviewers: [codex]'
 assert_review_effective_states "E-21 modern runner wins shared alias" defined absent
 run_test "review-effective E-21 modern runner shared alias entries" '["claude"]' "$(review_effective_json | jq -c '.effective_runner')"
-# #1561 round-25 finding: an empty or null modern runner list must fall
-# through to a non-empty legacy alias in the SAME (shared) file, mirroring
-# workflow_config_review_on_draft_runner (workflow-lib.sh) — Step 7a's own
-# resolver dispatches the legacy list here, so review-effective must not
-# report the bucket as empty. (A malformed modern value below still wins
-# outright; only "modern emits no entries" falls through.)
+# #1561 round-25 finding (partially corrected in round-27): a NULL or
+# absent modern runner list falls through to a non-empty legacy alias in
+# the SAME (shared) file, mirroring workflow_config_review_on_draft_runner
+# (workflow-lib.sh) — Step 7a's own resolver dispatches the legacy list
+# here, so review-effective must not report the bucket as empty. But an
+# EXPLICIT empty list `[]` is a deliberate "no reviewers" declaration, not
+# "no information here" — resolve-reviewer-availability.sh's own suite
+# (T-48, "explicit modern empty overrides legacy alias") establishes that
+# this must win outright, not fall through; round-25 wrongly conflated
+# "explicit []" with "null" (both produced state="empty" from
+# review_runner_state) and fell through in both cases. (A malformed modern
+# value below still wins outright either way; only null/absent falls
+# through.)
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: []' '  internal_reviewers: [codex]'
-assert_review_effective_states "E-21 empty modern runner falls through to alias" defined absent
-run_test "review-effective E-21 empty modern runner alias entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+assert_review_effective_states "E-21 explicit empty modern runner overrides alias" empty absent
+run_test "review-effective E-21 explicit empty modern runner entries" '[]' "$(review_effective_json | jq -c '.effective_runner')"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: null' '  internal_reviewers: [codex]'
 assert_review_effective_states "E-21 null modern runner falls through to alias" defined absent
 run_test "review-effective E-21 null modern runner alias entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"

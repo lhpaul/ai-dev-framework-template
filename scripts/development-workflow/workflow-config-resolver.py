@@ -1239,25 +1239,24 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
 
 def review_runner_shared_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
     """Resolve the shared config's on_draft.runner list, falling back to the
-    legacy ``internal_reviewers`` alias when the modern list emits no
-    entries (absent, explicitly empty, or present-but-empty) — not only
-    when it is entirely absent.
+    legacy ``internal_reviewers`` alias when the modern list is absent or
+    null (undeclared) — but NOT when it is an explicit empty list ``[]``,
+    which is a deliberate "no reviewers" declaration that must win outright,
+    the same way a locally *declared* empty list wins outright over its own
+    fallback (review_runner_value above) rather than triggering one.
 
-    Mirrors ``workflow_config_review_on_draft_runner`` (workflow-lib.sh):
-    once ``workflow_config_review_local_list_if_declared`` has already
-    handled a locally *declared* override (a separate, earlier check —
-    this function resolves only the shared/shipped side, matching this
-    module's own local vs. shared split), the shell falls through to
-    ``review.internal_reviewers`` whenever the modern nested list is empty.
-    ``review_runner_value``'s present-even-if-empty precedence is correct
-    for the local-override call site above but was wrong here: a present,
-    modern-but-empty shared runner list (or an absent one) alongside a
+    A present, modern-but-null (or absent) shared runner list alongside a
     non-empty ``review.internal_reviewers`` previously reported the runner
     bucket as empty even though Step 7a's own resolver goes on to dispatch
-    the legacy list — the same gap ``review_github_value`` already closes
-    for the GitHub buckets, applied here to the runner bucket's own legacy
-    alias (a single key, not a platforms/phase_after_clean pair, so this is
-    its own function rather than a call to review_github_value).
+    the legacy list — the same gap ``review_github_value`` closes for the
+    GitHub buckets, applied here to the runner bucket's own legacy alias (a
+    single key, not a platforms/phase_after_clean pair, so this is its own
+    function rather than a call to review_github_value). But an *explicit*
+    ``on_draft.runner: []`` is not "no information here, check elsewhere" —
+    it is an operator explicitly overriding the legacy alias to nothing,
+    and resolve-reviewer-availability.sh's own suite (T-48, "explicit
+    modern empty overrides legacy alias") establishes that this must win,
+    not fall through: only null/absent falls through, not `[]` specifically.
     """
     modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
         data, ["review", "on_draft", "runner"]
@@ -1266,6 +1265,9 @@ def review_runner_shared_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
         return modern_raw, modern_present, modern_structure_error
     modern_list, modern_state = review_runner_state(modern_raw, modern_present)
     if modern_state == "malformed" or modern_list:
+        return modern_raw, modern_present, modern_structure_error
+    if modern_present and modern_raw == []:
+        # Explicit empty list: wins outright, does not fall through.
         return modern_raw, modern_present, modern_structure_error
     legacy_raw, legacy_present, legacy_structure_error = review_effective_value_from_path(
         data, ["review", "internal_reviewers"]
