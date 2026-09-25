@@ -715,8 +715,14 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-48 separated comment remains valid policy',d['OUTCOME']=='proceeded' and d['POLICY']=='warn',d)
     reset();cfg.write_text('review:\n  internal_reviewers: [codex-github]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n');gh([]);d=run('codex',1)
     check('T-48 legacy reviewer alias preserves required hosted coverage',d['REVIEWER_1_NAME']=='codex-github' and d['REVIEWER_1_STATUS']=='unreachable' and d['FALLBACK_APPLIED']=='false',d)
-    reset();cfg.write_text('review:\n  internal_reviewers: [codex-github]\n  on_draft:\n    runner: []\n');d=run('codex')
-    check('T-48 explicit modern empty overrides legacy alias',d['FALLBACK_APPLIED']=='true' and d['CONFIG_LIST_STATE']=='empty',d)
+    # #1561 round-7 finding: an explicit on_draft.runner: [] alongside a
+    # non-empty internal_reviewers must fall through to the legacy alias,
+    # matching workflow_config_review_on_draft_runner's real shared-config
+    # behavior in workflow-lib.sh (what Step 7 actually dispatches) — the
+    # same outcome as the no-on_draft-key-at-all "legacy reviewer alias"
+    # fixture just above, not FALLBACK_APPLIED=true/CONFIG_LIST_STATE=empty.
+    reset();cfg.write_text('review:\n  internal_reviewers: [codex-github]\n  on_draft:\n    runner: []\n');gh([]);d=run('codex',1)
+    check('T-48 explicit modern empty falls through to legacy alias',d['REVIEWER_1_NAME']=='codex-github' and d['REVIEWER_1_STATUS']=='unreachable' and d['FALLBACK_APPLIED']=='false' and d['CONFIG_LIST_STATE']=='defined',d)
     reset();local.write_text('review:\n  internal_reviewers: [cursor]\n');d=run('codex',1)
     check('T-48 local legacy alias overrides shipped reviewer',d['OVERRIDE_EXCLUDED']=='codex' and d['REVIEWER_2_NAME']=='cursor' and d['REVIEWER_2_REASON']=='runtime-absent',d)
     reset();local.write_text('product_repos:\n  checkout_root: ../product-checkout\n');d=run('codex')

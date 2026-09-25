@@ -1239,24 +1239,29 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
 
 def review_runner_shared_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
     """Resolve the shared config's on_draft.runner list, falling back to the
-    legacy ``internal_reviewers`` alias when the modern list is absent or
-    null (undeclared) — but NOT when it is an explicit empty list ``[]``,
-    which is a deliberate "no reviewers" declaration that must win outright,
-    the same way a locally *declared* empty list wins outright over its own
-    fallback (review_runner_value above) rather than triggering one.
+    legacy ``internal_reviewers`` alias whenever the modern list emits no
+    entries — absent, null, *or* an explicit empty list ``[]`` alike.
 
-    A present, modern-but-null (or absent) shared runner list alongside a
-    non-empty ``review.internal_reviewers`` previously reported the runner
-    bucket as empty even though Step 7a's own resolver goes on to dispatch
-    the legacy list — the same gap ``review_github_value`` closes for the
-    GitHub buckets, applied here to the runner bucket's own legacy alias (a
-    single key, not a platforms/phase_after_clean pair, so this is its own
-    function rather than a call to review_github_value). But an *explicit*
-    ``on_draft.runner: []`` is not "no information here, check elsewhere" —
-    it is an operator explicitly overriding the legacy alias to nothing,
-    and resolve-reviewer-availability.sh's own suite (T-48, "explicit
-    modern empty overrides legacy alias") establishes that this must win,
-    not fall through: only null/absent falls through, not `[]` specifically.
+    This intentionally does NOT special-case an explicit ``on_draft.runner:
+    []`` the way review_runner_value (above) treats a locally *declared*
+    empty list: that "declared empty wins outright" contract is specific to
+    workflow_config_review_local_list_if_declared's own local-override
+    check in workflow-lib.sh, which never falls back to that same local
+    file's internal_reviewers at all. The SHARED file has no such carve-out:
+    workflow_config_review_on_draft_runner (workflow-lib.sh, what Step 7 /
+    pr-review-loop.sh actually consults for the shared file) only ever
+    inspects whether `workflow_config_review_nested_list ... on_draft
+    runner | grep -q .` produced any output — true for a nonempty modern
+    list, false for absent, null, AND an explicit `[]` alike — falling back
+    to internal_reviewers in every one of those false cases. An earlier
+    version of this function special-cased explicit `[]` to win outright
+    over the legacy alias for the shared config too; that diverged from
+    Step 7's real dispatch (an operator writing an explicit `on_draft.
+    runner: []` alongside a still-populated `internal_reviewers` would see
+    this preflight report "no reviewers configured" while Step 7 goes on to
+    dispatch the legacy list anyway) — precisely the class of silent
+    disagreement between the preflight and Step 7 this module exists to
+    catch (#1561).
     """
     modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
         data, ["review", "on_draft", "runner"]
@@ -1265,9 +1270,6 @@ def review_runner_shared_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
         return modern_raw, modern_present, modern_structure_error
     modern_list, modern_state = review_runner_state(modern_raw, modern_present)
     if modern_state == "malformed" or modern_list:
-        return modern_raw, modern_present, modern_structure_error
-    if modern_present and modern_raw == []:
-        # Explicit empty list: wins outright, does not fall through.
         return modern_raw, modern_present, modern_structure_error
     legacy_raw, legacy_present, legacy_structure_error = review_effective_value_from_path(
         data, ["review", "internal_reviewers"]
