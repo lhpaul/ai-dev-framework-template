@@ -162,13 +162,23 @@ if ! fm_project_items="$(gh project item-list "$fm_project_number" --owner "$fm_
   exit 0
 fi
 
-if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$fm_open_issues" '
+# Join by issue number is only safe within one repository: an
+# organization-owned project can span multiple repositories, and issue
+# numbers are not globally unique across them (codex-github finding,
+# #1583). gh project item-list's content object carries a "repository"
+# field (owner/repo) when the item is an Issue/PR; require it to match this
+# repository's slug when present, and accept the match unfiltered only when
+# the field is absent (older gh CLI output shape) — narrowing false
+# positives without introducing a new false negative on older gh versions.
+if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$fm_open_issues" --arg repoSlug "$fm_repo_slug" '
   def terminal($status):
     ($status // "") as $s
     | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
 
   [ .items[]
     | . as $item
+    | (($item.content.repository // "") | ltrimstr("https://github.com/")) as $item_repo
+    | select($item_repo == "" or $item_repo == $repoSlug)
     | ($open[] | select(.number == $item.content.number)) as $issue
     | select(terminal($item.status) | not)
     | {

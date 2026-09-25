@@ -106,6 +106,15 @@ JSON
 {"items":[{"content":{"number":900},"status":"Backlog","priority":"High","title":"Feature helper issue"}]}
 JSON
         ;;
+      cross_repo_collision)
+        # A different repository's issue #900, sharing this repo's project
+        # board, must not be joined to this repo's open issue #900
+        # (codex-github finding, #1583: issue numbers are not globally
+        # unique across repositories in one org-owned project).
+        cat <<'JSON'
+{"items":[{"content":{"number":900,"repository":"https://github.com/lhpaul/some-other-repo"},"status":"Backlog","priority":"High","type":"Feature","title":"Foreign repo's issue 900"}]}
+JSON
+        ;;
       *)
         cat <<'JSON'
 {"items":[{"content":{"number":900},"status":"Backlog","priority":"High","type":"Feature","title":"Feature helper issue"},{"content":{"number":901},"status":"Done","priority":"High","type":"Bug","title":"Done bug helper issue"}]}
@@ -240,6 +249,15 @@ reset_log
 MOCK_ITEM_LIST_MODE=renamed_type_field run_wrapper_in_repo "$framework_config"
 renamed_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
 run_test "framework_lookup_ignores_type_field_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$renamed_out")"
+
+echo ""
+echo "=== list_open_framework_items.sh: cross-repo issue-number collision is excluded (codex-github finding, #1583) ==="
+
+reset_log
+MOCK_ITEM_LIST_MODE=cross_repo_collision run_wrapper_in_repo "$framework_config"
+cross_repo_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "cross_repo_collision_excluded_status" "empty" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$cross_repo_out")"
+run_test "cross_repo_collision_excluded_json_empty" "FRAMEWORK_ITEMS_JSON=[]" "$(printf '%s\n' "$cross_repo_out" | grep '^FRAMEWORK_ITEMS_JSON=')"
 
 echo ""
 echo "=== list_open_framework_items.sh: nine closed-list unavailable causes ==="
@@ -595,6 +613,21 @@ git -C "$REF_REPO_NONE" config user.name "Test User"
 git -C "$REF_REPO_NONE" commit --allow-empty -m "initial" >/dev/null
 none_ref_evidence="$(cd "$REF_REPO_NONE" && workflow_branch_ref_evidence 9004)"
 run_test "branch_ref_evidence_no_match_is_none" "none" "$none_ref_evidence"
+
+# codex-github finding (#1583): the probe's team-prefix grammar must accept
+# an alphanumeric prefix like "ab2-" (validate-workflow-branch-name.sh's
+# canonical [A-Za-z][A-Za-z0-9]{0,7}-), not only the letters-only prefix
+# workflow-next-action.sh:102 uses. A branch like fix/ab2-9005-slug is a
+# valid team-prefixed branch under the guard and must be recognized here.
+REF_REPO_ALNUM="$TMP_ROOT/ref-repo-alnum-prefix"
+mkdir -p "$REF_REPO_ALNUM"
+git -C "$REF_REPO_ALNUM" init -q
+git -C "$REF_REPO_ALNUM" config user.email test@example.com
+git -C "$REF_REPO_ALNUM" config user.name "Test User"
+git -C "$REF_REPO_ALNUM" commit --allow-empty -m "initial" >/dev/null
+git -C "$REF_REPO_ALNUM" branch fix/ab2-9005-alnum-prefix-slug >/dev/null
+alnum_prefix_evidence="$(cd "$REF_REPO_ALNUM" && workflow_branch_ref_evidence 9005)"
+run_test "branch_ref_evidence_recognizes_alphanumeric_team_prefix" "present" "$alnum_prefix_evidence"
 
 # ===========================================================================
 # End-to-end real scan -> lanes fixture (#1583). Unlike the gate-level

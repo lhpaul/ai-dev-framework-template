@@ -3560,7 +3560,11 @@ _workflow_ere_escape() {
 # Probes LOCAL (refs/heads/) and REMOTE (refs/remotes/origin/) refs for a
 # live feature/fix/refactor/hotfix branch keyed to <issue_number>, using the
 # existing branch-name convention
-# (workflow-next-action.sh:102 — ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-)).
+# (workflow-next-action.sh:102 — ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-))
+# widened to the canonical alphanumeric team-prefix grammar
+# (validate-workflow-branch-name.sh:30 — [A-Za-z][A-Za-z0-9]{0,7}-, e.g.
+# "AB2-"), which workflow-next-action.sh's own letters-only regex does not
+# accept even though the branch guard does (codex-github finding, #1583).
 # A single `git show-ref` invocation already lists both namespaces, so
 # covering both costs nothing (#1583) — unlike workflow-next-action.sh's
 # origin-only probe, which misses a branch that has been cut but not pushed.
@@ -3584,7 +3588,7 @@ workflow_branch_ref_evidence() {
   for prefix in feature fix refactor hotfix; do
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
-      if printf '%s\n' "$ref" | grep -qE "^([A-Za-z]{2,8}-)?${issue_number}(-|\$)"; then
+      if printf '%s\n' "$ref" | grep -qE "^([A-Za-z][A-Za-z0-9]{0,7}-)?${issue_number}(-|\$)"; then
         printf 'present\n'
         return 0
       fi
@@ -3610,7 +3614,7 @@ workflow_branch_pr_evidence_from_json() {
   if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
     ((.open // []) + (.merged // []))
     | map(.headRefName // "")
-    | map(select(test("^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?" + $issue + "(-|$)")))
+    | map(select(test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")))
     | length
   ' 2>/dev/null)"; then
     printf 'unavailable\n'
@@ -3628,6 +3632,15 @@ workflow_branch_pr_evidence_from_json() {
 # Runs `gh pr list --state <state>` and reports whether any PR head matches
 # an implementation branch for <issue_number>. Used by the scan caller,
 # which retains only tracker status (not a pre-fetched PR list) per item.
+#
+# Bounded, not exhaustive: `--limit` caps the number of most-recent PRs
+# fetched (`gh pr list --help`: "Maximum number of items to fetch" — it does
+# not search beyond the cap), so a `merged` PR older than the cap is
+# invisible to this probe and reads as `none` (codex-github finding, #1583).
+# 1000 matches this codebase's other bounded tracker reads
+# (list_open_workflow_type_issues's `issue list --limit 1000`) and is not a
+# full fix — a genuinely exhaustive search would need a head-ref-scoped
+# GitHub search query, which is a larger change out of this item's scope.
 # Prints one of: present | none | unavailable.
 workflow_gh_pr_evidence() {
   local issue_number="$1" state="$2" github_repo="${3:-}"
@@ -3638,18 +3651,18 @@ workflow_gh_pr_evidence() {
     return 0
   fi
   if [ -n "$github_repo" ]; then
-    if ! prs_json="$(gh pr list --repo "$github_repo" --state "$state" --limit 500 --json headRefName 2>/dev/null)"; then
+    if ! prs_json="$(gh pr list --repo "$github_repo" --state "$state" --limit 1000 --json headRefName 2>/dev/null)"; then
       printf 'unavailable\n'
       return 0
     fi
   else
-    if ! prs_json="$(gh pr list --state "$state" --limit 500 --json headRefName 2>/dev/null)"; then
+    if ! prs_json="$(gh pr list --state "$state" --limit 1000 --json headRefName 2>/dev/null)"; then
       printf 'unavailable\n'
       return 0
     fi
   fi
   if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
-    [ .[] | (.headRefName // "") | select(test("^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?" + $issue + "(-|$)")) ] | length
+    [ .[] | (.headRefName // "") | select(test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")) ] | length
   ' 2>/dev/null)"; then
     printf 'unavailable\n'
     return 0
