@@ -9,7 +9,7 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$SCRIPT_DIR/.." <<'PY'
-import json, os, pathlib, shutil, subprocess, sys, tempfile
+import json, os, pathlib, shutil, subprocess, sys, tempfile, time
 
 scripts = pathlib.Path(sys.argv[1]).resolve()
 helper = scripts / 'reviewer-preflight.sh'
@@ -1847,6 +1847,47 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         'lifecycle stages' in data.get('PREREQUISITE_DETAIL', ''),
         data,
     )
+
+    # T-53 (#1561 round-10 finding, P2): the --json report renderer must be
+    # bounded the same way the text-report renderer already is, not run
+    # jq unboundedly after classification has completed. Fake jq to stall
+    # specifically on the `--argjson elapsed` invocation this renderer
+    # uses (identifiable by its own distinct flag, so every OTHER jq call
+    # this script makes still delegates to the real binary), with a tight
+    # budget: the run must still reach a bounded, fail-closed outcome
+    # (exit 3) well within the test's own subprocess timeout, not hang for
+    # the fake's full stall duration.
+    repo53 = root / 'repo53'
+    write_repo(repo53, coherent_shared, coherent_coderabbit)
+    bins53 = root / 'bin53'
+    bins53.mkdir(exist_ok=True)
+    real_jq53 = shutil.which('jq')
+    stalled_jq53 = bins53 / 'jq'
+    stalled_jq53.write_text(
+        '#!/bin/bash\n'
+        'for arg in "$@"; do [ "$arg" = --argjson ] && is_argjson=1; done\n'
+        'if [ "${is_argjson:-0}" = 1 ]; then\n'
+        '  for arg in "$@"; do [ "$arg" = elapsed ] && sleep 10; done\n'
+        'fi\n'
+        f'exec {real_jq53!r} "$@"\n'
+    )
+    stalled_jq53.chmod(0o755)
+    started53 = time.monotonic()
+    rc, data, out, err = run(
+        repo53, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        '--json',
+        env={
+            'PATH': f'{bins53}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+        expected=3,
+    )
+    elapsed53 = time.monotonic() - started53
+    check('T-53 a stalled JSON-report jq is bounded, not left to run its full stall duration', elapsed53 <= 8.0, elapsed53)
+    check('T-53 failure message names the JSON report render failure', 'cannot render the JSON report' in err, err)
 
 print(f'\nPassed: {passed}')
 PY

@@ -956,8 +956,20 @@ if [ "$before_porcelain" != "$after_porcelain" ]; then
 fi
 
 if [ "$json_output" = true ]; then
-  jq --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
-    '. + {elapsed_seconds: $elapsed, budget_seconds: $budget}' "$output_json"
+  # #1561 round-10 finding: this jq call previously ran unbounded, unlike
+  # the equivalent text-report renderer just below (and every other read
+  # in this script) — a large reviewer list or a slow/stalled filesystem
+  # could let the mandatory preflight exceed its advertised whole-
+  # invocation budget after classification had already completed, never
+  # emitting the outcome at all. Render it through the same shared
+  # deadline instead.
+  json_render_rc=0
+  clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+  run_bounded "$bound" "$work_dir/json-report.out" "$work_dir/json-report.err" \
+    jq --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
+    '. + {elapsed_seconds: $elapsed, budget_seconds: $budget}' "$output_json" || json_render_rc=$?
+  [ "$json_render_rc" = 0 ] || fail "cannot render the JSON report (exit $json_render_rc): $(cat "$work_dir/json-report.err" 2>/dev/null)"
+  cat "$work_dir/json-report.out"
   exit "$preflight_rc"
 fi
 
