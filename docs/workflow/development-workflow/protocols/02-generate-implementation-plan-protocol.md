@@ -197,6 +197,31 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
   - Avoid multi-flag grep one-liners that are difficult to verify by reading (e.g., complex exclusion scopes, self-referencing exclusion globs, chained pipes with hard-coded counts).
   - For mass-rename or substitution operations: include an explicit "run the command and confirm the output matches expectations" sanity check rather than prescribing the exact expected count — counts go stale as the repo evolves and breed fix commits when reviewers find mismatches.
   - A verification step is correct if a developer can execute it, read the output, and confidently determine pass/fail without consulting an external reference.
+- **Test-scope proportionality (authoring default)**: when the plan projects
+  test scaffolding (fixture manifests, proof-cycle lists, case tables,
+  scenario enumerations), express **coverage intent** — the classes of
+  behavior and input that must be exercised — rather than only a literal
+  list. When a count is given, say why that number is enough, and mark the
+  enumeration `**Binding enumeration**` (the exact literal, on or
+  immediately above the line that introduces it) only when the implementer
+  must not substitute a coverage-equivalent set; otherwise it is indicative
+  by default. See
+  [`test-scope-proportionality.md`](../test-scope-proportionality.md) for
+  the full rule. This rule and the **Pattern completeness checks** /
+  **Explicit freeze exception** bullets above govern different axes: those
+  two bound what the plan must cover (source to plan — did the plan account
+  for everything the spec or brief implies); this one bounds how literally
+  the plan's own enumeration binds the implementer (plan to
+  implementation — must the delivered set match the plan's list exactly).
+  The two are not in conflict.
+- **Gate B self-check**: before committing the plan, apply the advisory
+  test-scope sanity signal from
+  [`test-scope-proportionality.md`](../test-scope-proportionality.md) (Gate
+  B) to your own plan: does the projected test scaffolding exceed the size
+  of the deliverable it protects, or does a prose-only/documentation-only
+  deliverable propose a custom parser, scanner, or matcher to validate it?
+  If either is true, state why the scaffolding is proportionate or reduce
+  it. This is advisory only; do not add a Document Quality Gate row for it.
 
 ### Executable workflow shell snippets
 
