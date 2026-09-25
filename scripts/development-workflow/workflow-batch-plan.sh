@@ -570,6 +570,19 @@ for development_path in "${development_paths[@]}"; do
       tracker_status=""
       ;;
   esac
+  # #1583: any empty tracker-status read is "unreadable" for the
+  # misclassified-type check, not only the Linear-specific deferral signal
+  # above — get_tracker_status_for_issue also returns empty, silently and
+  # with no TRACKER_ACTION_REQUIRED marker, for a missing project number and
+  # a missing project item under github_projects (workflow-lib.sh's
+  # get_tracker_status_for_issue doc comment). Reusing only
+  # _tracker_status_deferred here would report MISCLASSIFIED_TYPE_CHECK=applied
+  # for those two silent-failure modes when the check never actually ran.
+  if [ -z "$tracker_status" ]; then
+    _fm_tracker_status_deferred=yes
+  else
+    _fm_tracker_status_deferred=no
+  fi
   if is_terminal_tracker_status "$tracker_status"; then
     echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
     continue
@@ -594,7 +607,7 @@ for development_path in "${development_paths[@]}"; do
     # framework-mode-backlog-type-gate.sh wiring (#1583). This is the case
     # the feature exists for: no folder artifacts (next-action just failed),
     # so a genuinely no-work Backlog + Workflow item is caught here.
-    _fm_gate_check "$issue_number" "$tracker_status" "$_tracker_status_deferred" "" ""
+    _fm_gate_check "$issue_number" "$tracker_status" "$_fm_tracker_status_deferred" "" ""
     if [ "$FM_HOLD" -eq 1 ]; then
       print_kv TARGET "development:$development_path"
       print_kv DEVELOPMENT_PATH "$development_path"
@@ -674,7 +687,7 @@ for development_path in "${development_paths[@]}"; do
   # "Spec Ready") passes as stale_backlog_reconciled and this block is
   # emitted unchanged — the gate only replaces the block below when it
   # genuinely holds.
-  _fm_gate_check "$issue_number" "$tracker_status" "$_tracker_status_deferred" "$status" "$action_github_repo"
+  _fm_gate_check "$issue_number" "$tracker_status" "$_fm_tracker_status_deferred" "$status" "$action_github_repo"
   if [ "$FM_HOLD" -eq 1 ]; then
     print_kv TARGET "development:$development_path"
     print_kv DEVELOPMENT_PATH "$development_path"
