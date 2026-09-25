@@ -90,7 +90,11 @@ for mode in ('pre-dispatch', 'branch-resume', 'pr-resume'):
 # stop-condition strings recognized by § 4 Named Stop Conditions, not a
 # generic "stop" description.
 guardrails_text = guardrails_doc.read_text()
-for stop_condition in ('reviewer_preflight_blocked', 'reviewer_preflight_prerequisite_failed'):
+for stop_condition in (
+    'reviewer_preflight_blocked',
+    'reviewer_preflight_prerequisite_failed',
+    'reviewer_preflight_tooling_failed',
+):
     check(
         f'guardrails-enforcement.md defines {stop_condition}',
         f'`{stop_condition}`' in guardrails_text,
@@ -100,6 +104,30 @@ for stop_condition in ('reviewer_preflight_blocked', 'reviewer_preflight_prerequ
         f'Protocol 91 names the {stop_condition} stop condition',
         f'`{stop_condition}`' in gate_section,
         gate_section,
+    )
+
+# #1561 round-22 finding: the tooling-failure (exit 3) row must use its own
+# distinct stop-condition name, not reuse reviewer_preflight_prerequisite_failed
+# (reserved for OUTCOME=prerequisite-failed) — assert the exit-3 row's own
+# text names the tooling-specific string and not the prerequisite-failed one.
+exit3_row_match = re.search(r'\(tooling failure, exit `3`\).*', gate_section)
+check('Protocol 91 has a tooling-failure (exit 3) row', exit3_row_match is not None, gate_section)
+if exit3_row_match:
+    exit3_row = exit3_row_match.group(0)
+    check(
+        'the exit-3 row names reviewer_preflight_tooling_failed',
+        '`reviewer_preflight_tooling_failed`' in exit3_row,
+        exit3_row,
+    )
+    check(
+        'the exit-3 row does not reuse reviewer_preflight_prerequisite_failed as its own stop condition',
+        # A clarifying cross-reference to the other name is fine (and
+        # present, deliberately, to explain the distinction); what must not
+        # recur is the exact "naming the exact stop condition
+        # `reviewer_preflight_prerequisite_failed`" phrase this row used
+        # pre-fix.
+        'naming the exact stop condition `reviewer_preflight_prerequisite_failed`' not in exit3_row,
+        exit3_row,
     )
 
 for agent_path in agents:

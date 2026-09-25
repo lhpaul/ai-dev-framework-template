@@ -1071,5 +1071,58 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
+    # T-34 (#1561 round-22 finding): the branch-resume ancestry-selection
+    # `merge-base --is-ancestor` calls must be bounded too — same class of
+    # unbounded-wall-clock risk as T-33's porcelain checks, on a fixture
+    # where both a local and remote copy resolve so the ancestry-selection
+    # code path is actually reached (T-13's local-ahead fixture shape).
+    repo34 = root / 'repo34'
+    write_repo(repo34, coherent_shared, coherent_coderabbit)
+    remote34 = root / 'remote34.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo34), str(remote34)], check=True)
+    git(repo34, 'remote', 'set-url', 'origin', str(remote34))
+    git(repo34, 'checkout', '-q', '-b', 'feature/ancestry-timeout-test')
+    git(repo34, 'push', '-q', 'origin', 'feature/ancestry-timeout-test')
+    git(repo34, 'fetch', '-q', 'origin', 'feature/ancestry-timeout-test')
+    bins34 = root / 'bin34'
+    bins34.mkdir(exist_ok=True)
+    real_git34 = shutil.which('git')
+    slow_git34 = bins34 / 'git'
+    slow_git34.write_text(
+        '#!/bin/bash\n'
+        'is_merge_base=0\n'
+        'for arg in "$@"; do case "$arg" in merge-base) is_merge_base=1;; esac; done\n'
+        'if [ "$is_merge_base" = 1 ]; then sleep 30; fi\n'
+        f'exec {real_git34!r} "$@"\n'
+    )
+    slow_git34.chmod(0o755)
+    start34 = _time33.monotonic()
+    rc, data, out, err = run(
+        repo34, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/ancestry-timeout-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins34}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+    )
+    wall34 = _time33.monotonic() - start34
+    check(
+        'T-34 a stalled merge-base --is-ancestor does not let the run exceed a small multiple of its budget',
+        wall34 <= 15.0,
+        f'wall={wall34}s rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-34 a bounded ancestry-check timeout fails closed (exit 3), not a divergence or wrong-branch outcome',
+        rc == 3 and 'OUTCOME' not in data,
+        f'rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-34 the failure message names the ancestry check and the time budget',
+        'ancestry check' in err and 'time budget' in err,
+        err,
+    )
+
 print(f'\nPassed: {passed}')
 PY

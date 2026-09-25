@@ -383,14 +383,38 @@ case "$mode" in
     git -C "$repo_root" rev-parse --verify --quiet "${local_branch_ref}^{commit}" >/dev/null 2>&1 && local_resolves=1
     git -C "$repo_root" rev-parse --verify --quiet "${remote_branch_ref}^{commit}" >/dev/null 2>&1 && origin_resolves=1
     if [ "$local_resolves" = 1 ] && [ "$origin_resolves" = 1 ]; then
-      if git -C "$repo_root" merge-base --is-ancestor "$remote_branch_ref" "$local_branch_ref" 2>/dev/null; then
+      # `merge-base --is-ancestor` walks commit history and can be slow on a
+      # large history, slow object store, or stalled filesystem, the same
+      # class of unbounded-wall-clock risk the AC-2 porcelain checks above
+      # had. Bound each call the same way (floor variant: a normal ancestry
+      # check is fast, so it must not be starved to a zero-second bound
+      # purely because earlier reads already consumed the nominal budget)
+      # and fail closed — not silently treat a timeout as "not an
+      # ancestor" — if the check itself cannot complete in time.
+      ancestry_rc_a=0
+      clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+      run_bounded "$bound" "$work_dir/ancestry-a.out" "$work_dir/ancestry-a.err" \
+        git -C "$repo_root" merge-base --is-ancestor "$remote_branch_ref" "$local_branch_ref" || ancestry_rc_a=$?
+      if [ "$ancestry_rc_a" = 124 ]; then
+        fail "cannot determine whether the local and remote copies of branch '$branch' have diverged: the ancestry check did not complete within the time budget"
+      fi
+      if [ "$ancestry_rc_a" = 0 ]; then
         platform_ref="$local_branch_ref"
         checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch; the local copy is at or ahead of the remote)"
-      elif git -C "$repo_root" merge-base --is-ancestor "$local_branch_ref" "$remote_branch_ref" 2>/dev/null; then
-        platform_ref="$remote_branch_ref"
-        checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote; the local copy is behind)"
       else
-        fail "the local and remote copies of branch '$branch' have diverged (neither is an ancestor of the other) — reconcile them (pull/rebase, or push local changes) before re-running; this preflight cannot determine which copy's .coderabbit.yaml is the branch in force"
+        ancestry_rc_b=0
+        clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+        run_bounded "$bound" "$work_dir/ancestry-b.out" "$work_dir/ancestry-b.err" \
+          git -C "$repo_root" merge-base --is-ancestor "$local_branch_ref" "$remote_branch_ref" || ancestry_rc_b=$?
+        if [ "$ancestry_rc_b" = 124 ]; then
+          fail "cannot determine whether the local and remote copies of branch '$branch' have diverged: the ancestry check did not complete within the time budget"
+        fi
+        if [ "$ancestry_rc_b" = 0 ]; then
+          platform_ref="$remote_branch_ref"
+          checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote; the local copy is behind)"
+        else
+          fail "the local and remote copies of branch '$branch' have diverged (neither is an ancestor of the other) — reconcile them (pull/rebase, or push local changes) before re-running; this preflight cannot determine which copy's .coderabbit.yaml is the branch in force"
+        fi
       fi
     elif [ "$origin_resolves" = 1 ]; then
       platform_ref="$remote_branch_ref"
