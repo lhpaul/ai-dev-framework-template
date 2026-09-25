@@ -277,10 +277,13 @@ fetch_ref() {
   return "$rc"
 }
 
+# Derived from review-overrides's own LOCAL_OVERRIDE_FILE/ORIGIN once that
+# runs below — not from a bare $repo_root/.ai-dev-workflow.local.yaml
+# existence check, which misses the linked-worktree -> main-clone fallback
+# (#1560: a linked worktree with no local override of its own but a real
+# override in the main clone would otherwise report "none" here, even
+# though the resolver did find and could apply one).
 local_override_state=none
-if [ -f "$repo_root/.ai-dev-workflow.local.yaml" ]; then
-  local_override_state=present
-fi
 
 shared_ref= platform_ref=
 checked_shared_config_ref= checked_platform_config_ref=
@@ -387,8 +390,16 @@ case "$mode" in
     # before the other reads it. mktemp's own per-invocation directory name
     # (already unique) makes this ref unique too, at no extra cost.
     pr_ref="refs/reviewer-preflight/pr-$pr.$(basename "$work_dir")"
-    fetch_ref "pull/$pr/head:$pr_ref" || fail "cannot fetch pull request #$pr head"
+    # Register for cleanup before the fetch, not after: `git fetch` can
+    # write the destination ref and then still report a failure from
+    # something after that write (a timeout in post-fetch bookkeeping), in
+    # which case `fail` below would otherwise run before created_pr_ref is
+    # ever assigned and the EXIT trap would skip deletion entirely, leaving
+    # refs/reviewer-preflight/... behind. Deleting a ref the fetch never
+    # actually created is harmless (the cleanup trap already tolerates
+    # that).
     created_pr_ref="$pr_ref"
+    fetch_ref "pull/$pr/head:$pr_ref" || fail "cannot fetch pull request #$pr head"
     shared_ref="origin/$pr_base"
     platform_ref="$pr_ref"
     checked_shared_config_ref="origin/$pr_base:.ai-dev-workflow.yaml (PR #$pr's own target base branch, refreshed)"
@@ -421,8 +432,16 @@ run_bounded "$bound" "$overrides_json" "$work_dir/overrides.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-overrides --repo-root "$repo_root" --json || overrides_rc=$?
 [ "$overrides_rc" = 0 ] || fail "review-overrides failed (exit $overrides_rc): $(cat "$work_dir/overrides.err" 2>/dev/null)"
 local_override_file=$(jq -er '.LOCAL_OVERRIDE_FILE // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_FILE from review-overrides output'
+local_override_origin=$(jq -er '.LOCAL_OVERRIDE_ORIGIN // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_ORIGIN from review-overrides output'
 if [ -n "$local_override_file" ] && [ -f "$local_override_file" ]; then
   cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml"
+  # Matches the documented contract's three states (none | applied |
+  # present-unpropagated <details>): a file was found (accounting for the
+  # linked-worktree -> main-clone fallback via LOCAL_OVERRIDE_ORIGIN) but
+  # nothing from it applied to any resolved bucket yet — the block below
+  # upgrades this to "applied" when review-effective / review-github-
+  # effective actually used it.
+  local_override_state="present-unpropagated $local_override_file${local_override_origin:+ (origin: $local_override_origin)}"
 fi
 
 runner_json="$work_dir/runner-effective.json"

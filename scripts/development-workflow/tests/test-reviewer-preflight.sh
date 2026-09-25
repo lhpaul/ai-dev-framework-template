@@ -899,5 +899,75 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-29 undeletable pr-resume temp ref overrides exit status to tooling failure', True, (rc, data, err))
     check('T-29 failure message names the temporary ref', 'refs/reviewer-preflight/pr-29' in err, err)
 
+    # T-30: a partially successful PR-head fetch (the ref gets written, but
+    # `fetch_ref` still reports failure from something after that write)
+    # must still have its temporary ref cleaned up — registering it for
+    # cleanup only after a successful fetch call would otherwise skip
+    # deletion entirely for this case.
+    repo30 = root / 'repo30'
+    write_repo(repo30, coherent_shared, coherent_coderabbit)
+    git(repo30, 'checkout', '-q', '-b', 'feature/pr30-test')
+    git(repo30, 'update-ref', 'refs/pull/30/head', 'refs/heads/feature/pr30-test')
+    git(repo30, 'checkout', '-q', 'develop')
+    bins30 = root / 'bin30'
+    bins30.mkdir(exist_ok=True)
+    fake_gh30 = bins30 / 'gh'
+    fake_gh30.write_text(
+        '#!/bin/bash\n'
+        'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
+        '  printf \'{"baseRefName":"develop","headRefName":"feature/pr30-test"}\\n\'\n'
+        '  exit 0\n'
+        'fi\n'
+        'exit 1\n'
+    )
+    fake_gh30.chmod(0o755)
+    real_git30 = shutil.which('git')
+    partial_git30 = bins30 / 'git'
+    partial_git30.write_text(
+        '#!/bin/bash\n'
+        'is_pr_fetch=0\n'
+        'for arg in "$@"; do case "$arg" in pull/30/head:*) is_pr_fetch=1;; esac; done\n'
+        'if [ "$is_pr_fetch" = 1 ]; then\n'
+        f'  {real_git30!r} "$@"\n'
+        '  echo "error: simulated post-fetch failure" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        f'exec {real_git30!r} "$@"\n'
+    )
+    partial_git30.chmod(0o755)
+    rc, data, out, err = run(
+        repo30, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '30', '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins30}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-30 partial-fetch failure still fails closed', 'OUTCOME' not in data, data)
+    ref_listing30 = git(repo30, 'for-each-ref', 'refs/reviewer-preflight/')
+    check(
+        'T-30 partially-written temp ref is still cleaned up',
+        ref_listing30.stdout.strip() == '',
+        ref_listing30.stdout,
+    )
+
+    # T-31: LOCAL_OVERRIDE_STATE must match the documented contract's
+    # present-unpropagated <details> shape (naming the file), not the bare
+    # undocumented literal "present", when an override file exists but
+    # contains no review keys any resolved bucket used.
+    repo31 = root / 'repo31'
+    write_repo(repo31, coherent_shared, coherent_coderabbit)
+    local31 = repo31 / '.ai-dev-workflow.local.yaml'
+    local31.write_text('unrelated:\n  key: value\n')
+    rc, data, out, err = run(
+        repo31, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=0,
+    )
+    check(
+        'T-31 unpropagated local override reports present-unpropagated with the file path',
+        data.get('LOCAL_OVERRIDE_STATE', '').startswith('present-unpropagated')
+        and str(local31) in data.get('LOCAL_OVERRIDE_STATE', ''),
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY
