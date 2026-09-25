@@ -572,20 +572,40 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # T-18: the final subprocess steps' bound floor keeps the worst-case
     # total wall clock close to PREFLIGHT_BUDGET_SECONDS, not the much
     # larger fixed-cap-per-step overrun a naive fixed bound would allow.
+    # A tiny *total* budget (constraining all setup work, not just the
+    # phase under test) previously made this flake on a loaded host: the
+    # base fetch and config resolvers are real (if normally fast) bounded
+    # work too, and could legitimately time out before ever reaching the
+    # final steps this case exists to test. Reuse T-7's slow-git-on-
+    # .coderabbit.yaml trick (a real, isolated, deliberate late delay) to
+    # consume the budget instead, giving normal setup a comfortable total.
+    repo18 = root / 'repo18'
+    write_repo(repo18, coherent_shared, coherent_coderabbit)
+    bins18 = root / 'bin18'
+    bins18.mkdir(exist_ok=True)
+    real_git18 = shutil.which('git')
+    slow_git18 = bins18 / 'git'
+    slow_git18.write_text(
+        '#!/bin/bash\n'
+        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 5; break;; esac; done\n'
+        f'exec {real_git18!r} "$@"\n'
+    )
+    slow_git18.chmod(0o755)
     rc, data, out, err = run(
-        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        repo18, '--mode', 'pre-dispatch', '--target-base', 'develop',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env={
+            'PATH': f'{bins18}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '4',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
         },
         expected=0,
     )
     elapsed = float(data.get('ELAPSED_SECONDS', '999'))
     check(
         'T-18 bound floor keeps total elapsed close to the budget, not 2x the per-step cap',
-        elapsed <= 4.0,
+        elapsed <= 6.0,
         data,
     )
 

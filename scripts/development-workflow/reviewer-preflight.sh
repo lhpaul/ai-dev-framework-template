@@ -299,7 +299,14 @@ case "$mode" in
     # that case from every other fetch failure (network, auth, timeout);
     # only the former is safe to treat as "no remote copy to prefer" rather
     # than a stop.
-    if ! fetch_ref "$branch"; then
+    # LC_ALL=C: the failure-reason check below parses git's own stderr text
+    # ("couldn't find remote ref") to distinguish a genuinely absent branch
+    # from an operational fetch failure. That message localizes on a host
+    # with a non-English locale configured, which would otherwise
+    # misclassify a legitimate not-yet-pushed branch as an operational
+    # failure and block every such resume. Force a stable, parseable locale
+    # for this one fetch regardless of the host's own locale settings.
+    if ! LC_ALL=C LANGUAGE=C fetch_ref "$branch"; then
       if ! grep -q "couldn't find remote ref" "$work_dir/fetch.err" 2>/dev/null; then
         fail "cannot refresh origin/$branch from the remote: $(cat "$work_dir/fetch.err" 2>/dev/null)"
       fi
@@ -492,10 +499,8 @@ if [ "$before_porcelain" != "$after_porcelain" ]; then
   fail 'reviewer-preflight.sh must not change the working tree (AC-2); the checkout differs after this run'
 fi
 
-elapsed="$SECONDS"
-
 if [ "$json_output" = true ]; then
-  jq --argjson elapsed "$elapsed" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
+  jq --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
     '. + {elapsed_seconds: $elapsed, budget_seconds: $budget}' "$output_json"
   exit "$preflight_rc"
 fi
@@ -525,7 +530,12 @@ while [ "$i" -lt "$platform_count" ]; do
   print_kv_escaped "PLATFORM_${n}_BUCKET_JSON" "$(jq -c ".platforms[$i].bucket_results" "$output_json")"
   i=$((i + 1))
 done
-print_kv_escaped ELAPSED_SECONDS "$elapsed"
+# Captured here, not before this loop: the per-platform report rows above
+# are themselves several unbounded jq reads each, so an earlier capture
+# would under-report ELAPSED_SECONDS by however long rendering the report
+# itself took — exactly the gap this run's own wall-clock guarantee is
+# supposed to be honest about.
+print_kv_escaped ELAPSED_SECONDS "$SECONDS"
 print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
 
 exit "$preflight_rc"
