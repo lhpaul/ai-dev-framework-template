@@ -1132,11 +1132,15 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # already exhausted, eroding Decision 3's total-wall-clock guarantee.
     # A live timing reproduction of this specific regression is impractical
     # to construct hermetically without also perturbing the (separately
-    # unbounded, out of this round's scope) rev-parse resolution calls that
-    # precede the ancestry checks in the same block; assert the source
-    # directly instead, scoped to exactly the two call sites this fix
-    # touches.
-    ancestry_block = helper.read_text().split('local_resolves=0 origin_resolves=0', 1)[1]
+    # bounded via clamp_bound, not clamp_bound_floor, as of the round-24
+    # fix, and out of this round's scope either way) rev-parse resolution
+    # probes that precede the ancestry checks in the same block; assert the
+    # source directly instead, scoped to exactly the two merge-base call
+    # sites this fix touches (the ancestry-selection branch, not the
+    # ref-resolution probes above it).
+    ancestry_block = helper.read_text().split(
+        'if [ "$local_resolves" = 1 ] && [ "$origin_resolves" = 1 ]; then', 1
+    )[1]
     ancestry_block = ancestry_block[: ancestry_block.find("elif [ \"$origin_resolves\" = 1 ]")]
     check(
         'T-35 both ancestry-check clamp calls use clamp_bound, not clamp_bound_floor',
@@ -1146,6 +1150,88 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         # against it; require the actual call form instead.
         and 'clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"' not in ancestry_block,
         ancestry_block,
+    )
+
+    # T-36 (#1561 round-24 finding): "HEAD" must be rejected as a
+    # --target-base / --branch value. `git check-ref-format refs/heads/HEAD`
+    # reports it as a syntactically fine refname (confirmed: it is not
+    # rejected the way a leading-dash or refspec-syntax value is), but HEAD
+    # is git's own reserved symbolic-ref name — passing it through would
+    # fetch/read the remote's symbolic default-branch pointer under the
+    # literal name "HEAD" rather than that branch's own name.
+    check(
+        'T-36 fixture sanity: check-ref-format refs/heads/HEAD alone does not reject it (confirming the gap existed)',
+        subprocess.run(['git', 'check-ref-format', 'refs/heads/HEAD'], capture_output=True).returncode == 0,
+    )
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'HEAD',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=2,
+    )
+    check('T-36 --target-base HEAD is rejected as prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check(
+        'T-36 rejection message names --target-base and HEAD',
+        '--target-base' in data.get('PREREQUISITE_DETAIL', '') and 'HEAD' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
+    )
+    rc, data, out, err = run(
+        repo1, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'HEAD',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-36 --branch HEAD is rejected (not OUTCOME=passed against the wrong ref)', 'OUTCOME' not in data, data)
+    check('T-36 --branch HEAD rejection message names --branch and HEAD', '--branch' in err and 'HEAD' in err, err)
+
+    # T-37 (#1561 round-24 finding): the two `rev-parse --verify --quiet`
+    # branch-existence probes immediately preceding the ancestry checks
+    # must be bounded too — same class of unbounded-wall-clock risk as the
+    # porcelain and ancestry checks.
+    repo37 = root / 'repo37'
+    write_repo(repo37, coherent_shared, coherent_coderabbit)
+    remote37 = root / 'remote37.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo37), str(remote37)], check=True)
+    git(repo37, 'remote', 'set-url', 'origin', str(remote37))
+    git(repo37, 'checkout', '-q', '-b', 'feature/resolve-timeout-test')
+    git(repo37, 'push', '-q', 'origin', 'feature/resolve-timeout-test')
+    git(repo37, 'fetch', '-q', 'origin', 'feature/resolve-timeout-test')
+    bins37 = root / 'bin37'
+    bins37.mkdir(exist_ok=True)
+    real_git37 = shutil.which('git')
+    slow_git37 = bins37 / 'git'
+    slow_git37.write_text(
+        '#!/bin/bash\n'
+        'is_revparse=0\n'
+        'for arg in "$@"; do case "$arg" in --verify) is_revparse=1;; esac; done\n'
+        'if [ "$is_revparse" = 1 ]; then sleep 30; fi\n'
+        f'exec {real_git37!r} "$@"\n'
+    )
+    slow_git37.chmod(0o755)
+    start37 = _time33.monotonic()
+    rc, data, out, err = run(
+        repo37, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/resolve-timeout-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins37}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+    )
+    wall37 = _time33.monotonic() - start37
+    check(
+        'T-37 a stalled rev-parse --verify branch-resolution probe does not let the run exceed a small multiple of its budget',
+        wall37 <= 15.0,
+        f'wall={wall37}s rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-37 a bounded resolution-probe timeout fails closed (exit 3), not a wrong-branch outcome',
+        rc == 3 and 'OUTCOME' not in data,
+        f'rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-37 the failure message names the resolution probe and the time budget',
+        'resolution probe' in err and 'time budget' in err,
+        err,
     )
 
 print(f'\nPassed: {passed}')

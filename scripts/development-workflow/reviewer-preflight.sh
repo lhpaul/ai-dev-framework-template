@@ -109,6 +109,21 @@ prerequisite_failed_report() {
 is_option_or_refspec_like() {
   case "$1" in
     +*|-*) return 0 ;;
+    # `git check-ref-format refs/heads/HEAD` alone reports this shape as
+    # valid (it is a syntactically fine refname), but HEAD is git's own
+    # reserved symbolic-ref name, not an ordinary branch — confirmed:
+    # `git check-ref-format --branch HEAD` (git's own branch-shorthand
+    # validator) rejects it, while the plain refs/heads/ form below does
+    # not. Passing "HEAD" through as --target-base/--branch would fetch
+    # and classify against the remote's symbolic default-branch pointer
+    # (refs/remotes/origin/HEAD) under the literal name "HEAD" instead of
+    # that default branch's own name, producing a verdict against the
+    # wrong ref or an unstructured tooling failure rather than this
+    # prerequisite check. Reject the exact reserved name directly, rather
+    # than switching to --branch mode's shorthand-expansion semantics
+    # (e.g. it silently accepts and expands "@{-1}"), which would trade
+    # this one gap for a different unreviewed one.
+    HEAD) return 0 ;;
   esac
   if git check-ref-format "refs/heads/$1" >/dev/null 2>&1; then
     return 1
@@ -379,9 +394,31 @@ case "$mode" in
     # pushed.
     local_branch_ref="refs/heads/$branch"
     remote_branch_ref="refs/remotes/origin/$branch"
+    # `rev-parse --verify` is normally instant, but on a slow object store
+    # or stalled filesystem it can hang like any other git subprocess this
+    # script reads through — bound it the same way as the ancestry checks
+    # immediately below (plain clamp_bound, not the floor variant, for the
+    # same total-wall-clock reason). A bounded timeout (124) here is a
+    # distinct, fail-closed outcome from "does not resolve" (the resolve
+    # probe's own rc=1): the former means this script could not determine
+    # whether the ref exists at all, not that it confirmed it does not.
     local_resolves=0 origin_resolves=0
-    git -C "$repo_root" rev-parse --verify --quiet "${local_branch_ref}^{commit}" >/dev/null 2>&1 && local_resolves=1
-    git -C "$repo_root" rev-parse --verify --quiet "${remote_branch_ref}^{commit}" >/dev/null 2>&1 && origin_resolves=1
+    local_resolve_rc=0
+    clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+    run_bounded "$bound" "$work_dir/resolve-local.out" "$work_dir/resolve-local.err" \
+      git -C "$repo_root" rev-parse --verify --quiet "${local_branch_ref}^{commit}" || local_resolve_rc=$?
+    if [ "$local_resolve_rc" = 124 ]; then
+      fail "cannot determine whether local branch '$branch' exists: the ref resolution probe did not complete within the time budget"
+    fi
+    [ "$local_resolve_rc" = 0 ] && local_resolves=1
+    origin_resolve_rc=0
+    clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+    run_bounded "$bound" "$work_dir/resolve-origin.out" "$work_dir/resolve-origin.err" \
+      git -C "$repo_root" rev-parse --verify --quiet "${remote_branch_ref}^{commit}" || origin_resolve_rc=$?
+    if [ "$origin_resolve_rc" = 124 ]; then
+      fail "cannot determine whether remote branch '$branch' exists: the ref resolution probe did not complete within the time budget"
+    fi
+    [ "$origin_resolve_rc" = 0 ] && origin_resolves=1
     if [ "$local_resolves" = 1 ] && [ "$origin_resolves" = 1 ]; then
       # `merge-base --is-ancestor` walks commit history and can be slow on a
       # large history, slow object store, or stalled filesystem, the same
