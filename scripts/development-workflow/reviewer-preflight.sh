@@ -353,23 +353,52 @@ read_ref_file() {
     git -C "$repo_root" show "${ref}:${path}" || rc=$?
   [ "$rc" = 0 ] && return 0
   [ "$rc" = 124 ] && return 124
-  # A `git show` failure for a reason other than a bounded timeout is only
-  # safe to read as "this file is absent" when the ref itself resolves — a
-  # ref that does not resolve (bad branch name, unfetched remote, transient
-  # git error) must not be silently read as "file absent," or a caller can
-  # report a coherent verdict on a shared or platform configuration it never
-  # actually read. Bound this verification probe too — same class of
+  # A `git show` failure for a reason other than a bounded timeout is
+  # ambiguous between three cases this function must not conflate:
+  #   (a) the ref itself does not resolve at all;
+  #   (b) the path is genuinely absent from the tree at this ref (the file
+  #       does not exist there) — the only case safe to report as "file
+  #       absent" (rc=1);
+  #   (c) the path IS present in the tree, but its blob object is not
+  #       locally available — a partial clone (a supported Git checkout
+  #       mode) with lazy fetching disabled (GIT_NO_LAZY_FETCH=1, above)
+  #       refusing to fetch it.
+  # Confirmed live: in a partial clone where an older commit's own tree and
+  # commit object are both present (partial clone fetches the full commit
+  # graph, only blobs are filtered) but that commit's own blob for this
+  # path was never individually fetched (a newer commit changed the file,
+  # and only the newer blob was needed for checkout), `git show` fails
+  # with "bad object" while a bare commit-only `rev-parse --verify`
+  # succeeds — the previous version of this function returned rc=1
+  # ("absent") for that case, letting a caller report a coherent verdict
+  # (including OUTCOME=passed) on configuration content it never actually
+  # read. Bound every verification probe here too — same class of
   # unbounded-wall-clock risk as every other git subprocess this script
-  # reads through — and treat a genuine timeout here as this function's own
-  # 124 (inconclusive read), not silently as absent (1) or invalid (2):
-  # neither of those is proven when the check itself could not complete.
+  # reads through — and treat a genuine timeout at any step as this
+  # function's own 124 (inconclusive read), not silently as absent (1) or
+  # invalid (2): neither is proven when a check itself could not complete.
   local verify_rc=0
   clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
   run_bounded "$bound" "$work_dir/read-verify.out" "$work_dir/read-verify.err" \
     git -C "$repo_root" rev-parse --verify --quiet "${ref}^{commit}" || verify_rc=$?
   [ "$verify_rc" = 124 ] && return 124
-  [ "$verify_rc" = 0 ] && return 1
-  return 2
+  [ "$verify_rc" != 0 ] && return 2 # (a): the ref itself does not resolve
+  # The commit resolves; distinguish (b) from (c) by checking the tree
+  # entry directly. `git ls-tree` only needs the tree object(s) along the
+  # path, never the blob's own content, so it stays readable in a
+  # --filter=blob:none partial clone even when the blob itself is not —
+  # confirmed live (object count unchanged after this call in that
+  # scenario).
+  local tree_rc=0
+  clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+  run_bounded "$bound" "$work_dir/read-tree.out" "$work_dir/read-tree.err" \
+    git -C "$repo_root" ls-tree -r --name-only "${ref}" -- "$path" || tree_rc=$?
+  [ "$tree_rc" = 124 ] && return 124
+  [ "$tree_rc" != 0 ] && return 2 # ls-tree itself failed: cannot verify, fail closed
+  if [ -s "$work_dir/read-tree.out" ]; then
+    return 2 # (c): listed in the tree, but the blob could not be read — unknown, not absent
+  fi
+  return 1 # (b): genuinely absent from the tree
 }
 
 resolve_remote_sha() {

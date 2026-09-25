@@ -1582,5 +1582,54 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         f'rc={rc} data={data} err={err}',
     )
 
+    # T-46 (bounded-Codex-pass, P1): read_ref_file must distinguish "path
+    # genuinely absent from the tree" from "path present in the tree but
+    # its blob is not locally available" — a partial clone that never
+    # checked out a file (here: --no-checkout, so no blob is eagerly
+    # fetched at all, not even the tip's own) reproduces the latter case
+    # even for the ref this preflight actually reads (round-27's own T-45
+    # fixture could only reproduce it for a historical, non-tip commit).
+    # `git show` fails ("bad object") but a bare commit-only rev-parse
+    # succeeds; the fix (ls-tree, which needs only the tree object) must
+    # tell these apart and fail closed rather than report "absent."
+    origin46 = root / 'origin46'
+    origin46.mkdir()
+    git(origin46, 'init', '-q')
+    git(origin46, 'checkout', '-q', '-b', 'develop')
+    (origin46 / '.ai-dev-workflow.yaml').write_text(coherent_shared)
+    git(origin46, 'add', '-A')
+    git(origin46, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'commit1: coherent shared config requiring coderabbit')
+    remote46 = root / 'remote46.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(origin46), str(remote46)], check=True)
+    git(remote46, 'config', 'uploadpack.allowFilter', 'true')
+    git(remote46, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
+    repo46 = root / 'repo46'
+    subprocess.run(
+        ['git', 'clone', '-q', '--filter=blob:none', '--no-checkout', f'file://{remote46}', str(repo46)],
+        check=True,
+    )
+    objects_before46 = sorted(p for p in (repo46 / '.git' / 'objects').rglob('*') if p.is_file())
+    rc, data, out, err = run(
+        repo46, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    objects_after46 = sorted(p for p in (repo46 / '.git' / 'objects').rglob('*') if p.is_file())
+    check(
+        'T-46 an unfetched-blob tip (path present in tree, blob missing) fails closed, not OUTCOME=passed',
+        'OUTCOME' not in data,
+        f'rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-46 the failure message distinguishes this from "file absent" (names read_ref_file exit 2, not exit 1)',
+        'read_ref_file exit 2' in err,
+        err,
+    )
+    check(
+        'T-46 no lazy fetch occurred while distinguishing the two cases (object store unchanged)',
+        objects_before46 == objects_after46,
+        f'before={len(objects_before46)} after={len(objects_after46)}',
+    )
+
 print(f'\nPassed: {passed}')
 PY
