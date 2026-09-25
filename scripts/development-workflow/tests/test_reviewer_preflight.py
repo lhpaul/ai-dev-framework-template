@@ -496,5 +496,49 @@ class BaseBranchCoveredTests(unittest.TestCase):
         self.assertLess(elapsed, 2.0)
 
 
+import reviewer_preflight_build_input as rpbi  # noqa: E402
+
+
+class ParsePrStateTests(unittest.TestCase):
+    """#1561 round-26 finding: a repeated --pr-state bucket key must be
+    rejected, not resolved by "last value wins"."""
+
+    def test_single_entries_parse_normally(self):
+        self.assertEqual(
+            rpbi._parse_pr_state("on_draft.runner=draft,on_draft.github=ready"),
+            {"on_draft_runner": "draft", "on_draft_github": "ready"},
+        )
+
+    def test_duplicate_bucket_is_cleared_to_none(self):
+        self.assertEqual(
+            rpbi._parse_pr_state("on_draft.runner=draft,on_draft.runner=ready"),
+            {"on_draft_runner": None},
+        )
+
+    def test_duplicate_bucket_with_identical_values_is_still_rejected(self):
+        # Not only conflicting duplicates: any repeated bucket key is an
+        # ambiguously composed input regardless of whether the repeated
+        # values happen to agree.
+        self.assertEqual(
+            rpbi._parse_pr_state("on_draft.runner=draft,on_draft.runner=draft"),
+            {"on_draft_runner": None},
+        )
+
+    def test_triple_duplicate_stays_cleared(self):
+        self.assertEqual(
+            rpbi._parse_pr_state("on_draft.runner=draft,on_draft.runner=ready,on_draft.runner=draft"),
+            {"on_draft_runner": None},
+        )
+
+    def test_duplicate_bucket_fails_classify_as_prerequisite_failed(self):
+        # End-to-end through classify(): a None pr_state value for a
+        # remaining stage must route through the same prerequisite-failed
+        # check as any other malformed value, not silently pass.
+        payload = base_payload(remaining_stages=["on_draft_github"])
+        payload["pr_state"] = rpbi._parse_pr_state("on_draft.github=draft,on_draft.github=ready")
+        with self.assertRaises(rp.PrerequisiteFailed):
+            rp.classify(payload)
+
+
 if __name__ == "__main__":
     unittest.main()

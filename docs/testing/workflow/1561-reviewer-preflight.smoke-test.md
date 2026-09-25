@@ -45,6 +45,36 @@ test -z "$(git status --porcelain)"
 
 Record: working tree clean before preflight.
 
+### Step 0b: Repository-state baseline — refs/FETCH_HEAD/objects (AC-2, round-26 read-only redesign)
+
+**Maps to**: AC-2 side-effect freedom, extended beyond the working tree
+
+As of #1561's round-26 fix, this script resolves every remote tip with `git
+ls-remote` (never `git fetch`), so it must make **no** repository-state
+change at all — not only the working tree Step 0 already covers, but also
+`refs/remotes/*`, `FETCH_HEAD`, and the object database. Capture a
+fingerprint before Step 1 and compare it after:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+set -euo pipefail
+before_refs="$(git for-each-ref)"
+before_fetch_head="$( [ -f .git/FETCH_HEAD ] && md5sum .git/FETCH_HEAD || echo none )"
+before_objects="$(git count-objects -v)"
+# ... run Step 1 (or any other mode) here ...
+after_refs="$(git for-each-ref)"
+after_fetch_head="$( [ -f .git/FETCH_HEAD ] && md5sum .git/FETCH_HEAD || echo none )"
+after_objects="$(git count-objects -v)"
+test "$before_refs" = "$after_refs"
+test "$before_fetch_head" = "$after_fetch_head"
+test "$before_objects" = "$after_objects"
+```
+
+**Expected**: All three comparisons pass — `refs/remotes/*` (and every other
+ref), `FETCH_HEAD`, and the object database's object/pack counts are
+byte-for-byte identical before and after. Also covered automatically by
+`test-reviewer-preflight.sh` T-39, across all three `--mode` values.
+
 ### Step 1: Pre-dispatch pass on shipped configuration (AC-2)
 
 **Maps to**: AC-2 Passed path on coherent config

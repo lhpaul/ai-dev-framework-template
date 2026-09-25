@@ -8,16 +8,35 @@
 # docs/specs/developments/20260911230501_1561-reviewer-preflight/ for the
 # spec and implementation plan.
 #
-# Read-only: this script runs only git show / git fetch / git rev-parse /
-# git status --porcelain, gh pr view, and python3 reads of temporary copies.
-# It never checks out, commits, pushes, opens a pull request, comments,
-# labels, or writes any tracked file under --repo-root. git fetch updates
-# only remote-tracking refs under .git/, not a tracked file or the working
-# tree, and is required by the spec's "refreshed from the remote before
-# reading" rule for the shared configuration on the pr-resume path. The
-# pr-resume path also fetches the PR head into a temporary ref so it can be
-# read the same way as every other ref this script reads; that ref is
-# deleted again before exit (see the cleanup trap) and never persists.
+# Read-only: this script runs only git show / git ls-remote / git cat-file /
+# git rev-parse / git merge-base / git status --porcelain, gh pr view, and
+# python3 reads of temporary copies. It never checks out, commits, pushes,
+# opens a pull request, comments, labels, or writes any tracked file under
+# --repo-root — and, as of #1561's round-26 fix, it never writes anything
+# inside .git/ either: `git ls-remote` (unlike the `git fetch` this script
+# used to run for the same "refreshed from the remote before reading" rule)
+# only queries the remote and never creates or updates refs/remotes/*,
+# FETCH_HEAD, or the object database. A remote tip resolved this way is read
+# directly by its SHA (`git show <sha>:<path>`), not through a local
+# remote-tracking ref this script would otherwise have to create. When that
+# SHA's commit object is not already present in the local object database
+# (this script never fetches, so nothing guarantees it is), reading it is
+# impossible without a fetch this script will not perform: that surfaces as
+# read_ref_file's own existing rc=2 (ref-invalid-or-read-failed) contract —
+# the same path an unresolvable ref already took before this change — which
+# each caller already resolves to a documented outcome consistent with the
+# spec's outcome matrix: the shared-config caller fails closed (a tooling
+# failure, since dispatch cannot proceed without a shared reviewer list to
+# cross-check against), and the per-platform (coderabbit) caller degrades
+# that one platform to Undetermined/check-inconclusive rather than blocking
+# every platform on one unreadable object. The one case read_ref_file's own
+# git-show/rev-parse-verify combination cannot disambiguate on its own is
+# branch-resume's ancestry SELECTION between a local and a remote copy
+# (`git merge-base --is-ancestor` needs both commit objects present to
+# answer "is X an ancestor of Y" at all, not merely to read file content at
+# one of them) — that path adds its own explicit `git cat-file -e` presence
+# check before attempting the ancestry comparison and fails closed (tooling
+# failure) rather than fetching when the remote object is not present.
 set -euo pipefail
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 3; }
@@ -154,6 +173,14 @@ if [ "$mode" = pr-resume ]; then
   case "$pr" in
     ''|*[!0-9]*) fail "--pr must be a positive integer, not a flag or other value: $pr" ;;
   esac
+  # Digits-only above still accepts "0" (and "00", "000", ...) — zero cannot
+  # identify a pull request, and gh pr view 0 fails as an unstructured
+  # tooling error rather than rejecting the invalid input locally. Reject
+  # any all-zero value by requiring at least one non-zero digit.
+  case "$pr" in
+    *[1-9]*) ;;
+    *) fail "--pr must be a positive integer greater than zero: $pr" ;;
+  esac
   [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
 fi
 
@@ -162,34 +189,22 @@ for dependency in python3 git jq mktemp; do
 done
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
-# pr-resume fetches the PR head into this ref so read_ref_file can address it
-# the same way as every other ref this script reads; the ref is a temporary
-# reading aid, not a change this script is allowed to leave behind (AC-2), so
-# cleanup deletes it whenever it was created, on every exit path.
-created_pr_ref=
+# As of #1561's round-26 read-only redesign, this script resolves every
+# remote tip via `git ls-remote` and reads content directly by the resolved
+# SHA (git show <sha>:<path>) rather than fetching a PR head into a local
+# temporary ref first — there is no longer any repository-state ref this
+# script creates and must remember to discard, so cleanup is just the
+# scratch work_dir.
 cleanup() {
   local rc=$?
-  if [ -n "$created_pr_ref" ]; then
-    git -C "$repo_root" update-ref -d "$created_pr_ref" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - the immediately following verification, not this exit status, is what this script relies on
-    # A cleanup failure here (e.g. another process holds the ref lock) must
-    # not silently preserve whatever exit status the run was otherwise
-    # going to return — that would leave refs/reviewer-preflight/... behind
-    # despite this script's own read-only/no-persistent-side-effect
-    # contract (AC-2), and repeated failures would accumulate persistent
-    # refs. Verify the ref genuinely no longer resolves; override the exit
-    # status to a tooling failure if it still does.
-    if git -C "$repo_root" rev-parse --verify --quiet "$created_pr_ref" >/dev/null 2>&1; then
-      printf 'ERROR: could not discard the temporary PR-head ref (%s) created during this run; resolve manually (e.g. git update-ref -d %s) before trusting this run left no trace (AC-2)\n' "$created_pr_ref" "$created_pr_ref" >&2
-      rc=3
-    fi
-  fi
   [ -z "$work_dir" ] || rm -rf -- "$work_dir"
   # `return "$rc"` from an EXIT trap does not reliably override the
   # process's already-decided exit status outside this script's own
   # set -e context (`trap f EXIT; exit 0` still exits 0 even when f
   # returns 3, in general). Exit explicitly here instead of relying on
-  # that interaction, so the overridden status in the block above is
-  # unambiguously the process's real exit code.
+  # that interaction, so this function's own intent (preserve whatever
+  # exit status the run already decided) is unambiguous rather than
+  # relying on that interaction to happen to hold.
   exit "$rc"
 }
 trap cleanup EXIT
@@ -309,13 +324,59 @@ read_ref_file() {
   return 2
 }
 
-fetch_ref() {
-  # fetch_ref <refspec> -> best-effort; caller decides how to react to failure
-  local refspec=$1 rc=0
+resolve_remote_sha() {
+  # resolve_remote_sha <branch-name> -> on success (0), writes the resolved
+  # 40-character commit SHA to $resolved_remote_sha and returns 0.
+  # Read-only: `git ls-remote` only queries the remote; unlike the `git
+  # fetch` this function replaces, it never creates or updates
+  # refs/remotes/*, FETCH_HEAD, or the object database.
+  # Returns 1 when --exit-code confirms no matching ref exists on the
+  # remote right now (the documented way to distinguish "branch absent" from
+  # an operational failure, replacing the old `git fetch` stderr-text
+  # match on "couldn't find remote ref"), 124 on a bounded timeout, or the
+  # raw git exit code for any other operational failure (network, auth).
+  # A fully-qualified refs/heads/<name> pattern, not a bare branch name:
+  # ls-remote's own pattern matching is otherwise vulnerable to the same
+  # tag-vs-branch ambiguity already fixed for local ref resolution
+  # elsewhere in this script.
+  local branch_name=$1 rc=0
+  resolved_remote_sha=
   clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
-  run_bounded "$bound" "$work_dir/fetch.out" "$work_dir/fetch.err" \
-    git -C "$repo_root" fetch --quiet origin "$refspec" || rc=$?
-  return "$rc"
+  run_bounded "$bound" "$work_dir/lsremote.out" "$work_dir/lsremote.err" \
+    git -C "$repo_root" ls-remote --exit-code origin "refs/heads/${branch_name}" || rc=$?
+  if [ "$rc" = 124 ]; then
+    return 124
+  fi
+  if [ "$rc" = 2 ]; then
+    return 1
+  fi
+  [ "$rc" = 0 ] || return "$rc"
+  resolved_remote_sha=$(awk 'NR==1{print $1}' "$work_dir/lsremote.out")
+  [ -n "$resolved_remote_sha" ] || return 1
+  return 0
+}
+
+resolve_target_base_or_fail() {
+  # resolve_target_base_or_fail <branch-name> <label-for-error-text>
+  # On success, leaves the resolved commit SHA in $resolved_remote_sha and
+  # returns normally. A confirmed-absent branch is a prerequisite-failed
+  # run-input problem (this run's own target base does not currently exist
+  # on the remote, distinct from a reviewer-configuration verdict) — not
+  # merely "a swallowed failure silently reads whatever origin/<name>
+  # happened to already hold from an earlier, possibly stale, fetch" (the
+  # risk this exact confusion used to create when this script still
+  # fetched); this script never fetches now, so there is no stale local
+  # copy to guard against here at all, only the live remote answer. A
+  # timeout or other operational failure is instead this script's own
+  # tooling failure, consistent with every other bounded git operation.
+  local branch_name=$1 label=$2 rc=0
+  resolve_remote_sha "$branch_name" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) prerequisite_failed_report "$label does not exist on the remote: $branch_name" ;;
+    124) fail "cannot resolve $label ('$branch_name') on the remote: the query did not complete within the time budget" ;;
+    *) fail "cannot resolve $label ('$branch_name') on the remote (exit $rc): $(cat "$work_dir/lsremote.err" 2>/dev/null)" ;;
+  esac
 }
 
 # Derived from review-overrides's own LOCAL_OVERRIDE_FILE/ORIGIN once that
@@ -331,24 +392,15 @@ checked_shared_config_ref= checked_platform_config_ref=
 
 case "$mode" in
   pre-dispatch)
-    # A swallowed fetch failure here would silently read whatever
-    # origin/$target_base happened to already hold from an earlier,
-    # possibly stale, fetch and report it as current — mirror pr-resume's
-    # own hard failure on its equivalent base-branch refresh.
-    fetch_ref "$target_base" || fail "cannot refresh origin/$target_base from the remote"
-    # refs/remotes/origin/<name>, not the bare "origin/<name>" git would
-    # otherwise disambiguate against refs/tags/<name> first (same
-    # tag-vs-branch ambiguity as the branch-resume block below).
-    shared_ref="refs/remotes/origin/$target_base"
-    platform_ref="refs/remotes/origin/$target_base"
+    resolve_target_base_or_fail "$target_base" "--target-base"
+    shared_ref="$resolved_remote_sha"
+    platform_ref="$resolved_remote_sha"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, before a branch exists)"
     checked_platform_config_ref="origin/$target_base:.coderabbit.yaml (this item's targeted base, before a branch exists)"
     ;;
   branch-resume)
-    # Same rationale as pre-dispatch above: a swallowed failure here could
-    # silently read a stale origin/$target_base as if it were current.
-    fetch_ref "$target_base" || fail "cannot refresh origin/$target_base from the remote"
-    shared_ref="refs/remotes/origin/$target_base"
+    resolve_target_base_or_fail "$target_base" "--target-base"
+    shared_ref="$resolved_remote_sha"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, not the branch)"
     # The branch in force for Step 7's own hosted reviewers is whichever of
     # the local checkout and the remote copy is actually ahead: GitHub reads
@@ -360,55 +412,21 @@ case "$mode" in
     # True divergence (neither is an ancestor of the other, e.g. an amended
     # or rebased local branch) cannot be resolved by "ahead" comparison at
     # all; fail closed rather than silently guessing which copy is real.
-    # A swallowed failure here is the same risk as the base-branch refresh
-    # above, with one legitimate exception: the branch may genuinely not
-    # exist on the remote yet (not pushed). Git's own message distinguishes
-    # that case from every other fetch failure (network, auth, timeout);
-    # only the former is safe to treat as "no remote copy to prefer" rather
-    # than a stop.
-    # LC_ALL=C: the failure-reason check below parses git's own stderr text
-    # ("couldn't find remote ref") to distinguish a genuinely absent branch
-    # from an operational fetch failure. That message localizes on a host
-    # with a non-English locale configured, which would otherwise
-    # misclassify a legitimate not-yet-pushed branch as an operational
-    # failure and block every such resume. Force a stable, parseable locale
-    # for this one fetch regardless of the host's own locale settings.
-    if ! LC_ALL=C LANGUAGE=C fetch_ref "$branch"; then
-      if ! grep -q "couldn't find remote ref" "$work_dir/fetch.err" 2>/dev/null; then
-        fail "cannot refresh origin/$branch from the remote: $(cat "$work_dir/fetch.err" 2>/dev/null)"
-      fi
-      # Confirmed absent from the remote right now — but a stale
-      # refs/remotes/origin/$branch from an earlier successful fetch (the
-      # branch existed on the remote before, then was deleted there) would
-      # otherwise still resolve below and be read as current. `git fetch`
-      # does not prune remote-tracking refs on its own; discard this one
-      # explicitly so absence is reported honestly rather than stale data.
-      # A deletion failure (e.g. another process holds the ref lock) must
-      # not be swallowed — verify the ref genuinely no longer resolves
-      # rather than trusting the delete command's own exit status alone.
-      git -C "$repo_root" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - the immediately following verification, not this exit status, is what this script relies on
-      if git -C "$repo_root" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null 2>&1; then
-        fail "the remote branch '$branch' is confirmed absent but its stale cached copy (refs/remotes/origin/$branch) could not be discarded — resolve manually (e.g. git update-ref -d refs/remotes/origin/$branch) before re-running; reading it would risk stale configuration"
-      fi
-    fi
-    # Fully qualified refs throughout, not bare "$branch" / "origin/$branch":
-    # git's own refname disambiguation tries refs/tags/<name> before
-    # refs/heads/<name> (and before refs/remotes/<remote>/<name>) for a bare
-    # revision — confirmed live: with both a tag and a branch sharing a
-    # short name, `git show <name>:file` reads the tag's content. A
-    # same-named tag with review enabled could otherwise let this preflight
-    # pass on the tag's .coderabbit.yaml before the actual branch is even
-    # pushed.
+    # The branch may genuinely not exist on the remote yet (not pushed);
+    # resolve_remote_sha's own rc=1 (via ls-remote --exit-code) distinguishes
+    # that confirmed-absent case from an operational query failure — no
+    # stale-local-cache risk to guard against here at all (unlike the `git
+    # fetch` this used to run): ls-remote never writes a local
+    # remote-tracking ref, so there is nothing left behind to go stale.
     local_branch_ref="refs/heads/$branch"
-    remote_branch_ref="refs/remotes/origin/$branch"
     # `rev-parse --verify` is normally instant, but on a slow object store
     # or stalled filesystem it can hang like any other git subprocess this
     # script reads through — bound it the same way as the ancestry checks
-    # immediately below (plain clamp_bound, not the floor variant, for the
-    # same total-wall-clock reason). A bounded timeout (124) here is a
-    # distinct, fail-closed outcome from "does not resolve" (the resolve
-    # probe's own rc=1): the former means this script could not determine
-    # whether the ref exists at all, not that it confirmed it does not.
+    # below (plain clamp_bound, not the floor variant, for the same
+    # total-wall-clock reason). A bounded timeout (124) here is a distinct,
+    # fail-closed outcome from "does not resolve" (the resolve probe's own
+    # rc=1): the former means this script could not determine whether the
+    # ref exists at all, not that it confirmed it does not.
     local_resolves=0 origin_resolves=0
     local_resolve_rc=0
     clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
@@ -419,19 +437,42 @@ case "$mode" in
     fi
     [ "$local_resolve_rc" = 0 ] && local_resolves=1
     origin_resolve_rc=0
-    clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
-    run_bounded "$bound" "$work_dir/resolve-origin.out" "$work_dir/resolve-origin.err" \
-      git -C "$repo_root" rev-parse --verify --quiet "${remote_branch_ref}^{commit}" || origin_resolve_rc=$?
-    if [ "$origin_resolve_rc" = 124 ]; then
-      fail "cannot determine whether remote branch '$branch' exists: the ref resolution probe did not complete within the time budget"
-    fi
-    [ "$origin_resolve_rc" = 0 ] && origin_resolves=1
+    resolve_remote_sha "$branch" || origin_resolve_rc=$?
+    case "$origin_resolve_rc" in
+      0) origin_resolves=1; remote_branch_sha="$resolved_remote_sha" ;;
+      1) origin_resolves=0 ;; # confirmed absent on the remote right now — not pushed yet
+      124) fail "cannot determine whether remote branch '$branch' exists: the ls-remote query did not complete within the time budget" ;;
+      *) fail "cannot query the remote for branch '$branch' (exit $origin_resolve_rc): $(cat "$work_dir/lsremote.err" 2>/dev/null)" ;;
+    esac
     if [ "$local_resolves" = 1 ] && [ "$origin_resolves" = 1 ]; then
+      # This script never fetches (issue #1561 round-26: "Keep preflight
+      # fetches out of repository state"), so the remote's resolved SHA's
+      # commit object is not guaranteed to already be present in the local
+      # object database — and unlike read_ref_file's own git-show/
+      # rev-parse-verify combination (which can already disambiguate
+      # "object missing" from "path missing" for a plain content read),
+      # `merge-base --is-ancestor` needs BOTH commit objects present just to
+      # answer the ancestry question at all. Check presence explicitly
+      # first and fail closed (a tooling failure, matching the sibling
+      # "diverged" case below — this is a run-environment limitation, not a
+      # bad run input, so prerequisite-failed does not apply) rather than
+      # attempt a comparison merge-base cannot answer, or silently treat
+      # "can't tell" as "not an ancestor."
+      remote_object_rc=0
+      clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+      run_bounded "$bound" "$work_dir/remote-object.out" "$work_dir/remote-object.err" \
+        git -C "$repo_root" cat-file -e "${remote_branch_sha}^{commit}" || remote_object_rc=$?
+      if [ "$remote_object_rc" = 124 ]; then
+        fail "cannot determine whether the remote copy of branch '$branch' ($remote_branch_sha) is present locally: the object-presence check did not complete within the time budget"
+      fi
+      if [ "$remote_object_rc" != 0 ]; then
+        fail "the remote copy of branch '$branch' is at commit $remote_branch_sha, which is not present in this local checkout — this preflight does not fetch (it is read-only by design); fetch it locally (e.g. git fetch origin $branch) before re-running so this preflight can determine which copy's .coderabbit.yaml is the branch in force"
+      fi
       # `merge-base --is-ancestor` walks commit history and can be slow on a
-      # large history, slow object store, or stalled filesystem, the same
-      # class of unbounded-wall-clock risk the AC-2 porcelain checks above
-      # had. Bound each call — but with the plain (non-floor) variant, not
-      # the porcelain checks' clamp_bound_floor: those are each a single,
+      # large history or stalled filesystem, the same class of
+      # unbounded-wall-clock risk the AC-2 porcelain checks above had.
+      # Bound each call — but with the plain (non-floor) variant, not the
+      # porcelain checks' clamp_bound_floor: those are each a single,
       # essential, final-mile check, while this is a decision-branching
       # step that can run up to twice per invocation. Granting a fresh
       # per-check floor here would let branch-resume repeatedly re-extend
@@ -444,7 +485,7 @@ case "$mode" in
       ancestry_rc_a=0
       clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
       run_bounded "$bound" "$work_dir/ancestry-a.out" "$work_dir/ancestry-a.err" \
-        git -C "$repo_root" merge-base --is-ancestor "$remote_branch_ref" "$local_branch_ref" || ancestry_rc_a=$?
+        git -C "$repo_root" merge-base --is-ancestor "$remote_branch_sha" "$local_branch_ref" || ancestry_rc_a=$?
       if [ "$ancestry_rc_a" = 124 ]; then
         fail "cannot determine whether the local and remote copies of branch '$branch' have diverged: the ancestry check did not complete within the time budget"
       fi
@@ -455,19 +496,19 @@ case "$mode" in
         ancestry_rc_b=0
         clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
         run_bounded "$bound" "$work_dir/ancestry-b.out" "$work_dir/ancestry-b.err" \
-          git -C "$repo_root" merge-base --is-ancestor "$local_branch_ref" "$remote_branch_ref" || ancestry_rc_b=$?
+          git -C "$repo_root" merge-base --is-ancestor "$local_branch_ref" "$remote_branch_sha" || ancestry_rc_b=$?
         if [ "$ancestry_rc_b" = 124 ]; then
           fail "cannot determine whether the local and remote copies of branch '$branch' have diverged: the ancestry check did not complete within the time budget"
         fi
         if [ "$ancestry_rc_b" = 0 ]; then
-          platform_ref="$remote_branch_ref"
+          platform_ref="$remote_branch_sha"
           checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote; the local copy is behind)"
         else
           fail "the local and remote copies of branch '$branch' have diverged (neither is an ancestor of the other) — reconcile them (pull/rebase, or push local changes) before re-running; this preflight cannot determine which copy's .coderabbit.yaml is the branch in force"
         fi
       fi
     elif [ "$origin_resolves" = 1 ]; then
-      platform_ref="$remote_branch_ref"
+      platform_ref="$remote_branch_sha"
       checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, resolved from the remote; no local copy of it exists in this checkout)"
     else
       platform_ref="$local_branch_ref"
@@ -478,36 +519,34 @@ case "$mode" in
     pr_json_rc=0
     clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
     run_bounded "$bound" "$work_dir/pr.json" "$work_dir/pr.err" \
-      gh pr view "$pr" --repo "$owner/$repo" --json baseRefName,headRefName || pr_json_rc=$?
+      gh pr view "$pr" --repo "$owner/$repo" --json baseRefName,headRefName,headRefOid || pr_json_rc=$?
     [ "$pr_json_rc" = 0 ] || fail "cannot read pull request #$pr metadata (exit $pr_json_rc): $(cat "$work_dir/pr.err" 2>/dev/null)"
     pr_base=$(jq -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
     pr_head=$(jq -er '.headRefName' "$work_dir/pr.json") || fail 'pull request metadata missing headRefName'
+    pr_head_sha=$(jq -er '.headRefOid' "$work_dir/pr.json") || fail 'pull request metadata missing headRefOid'
     # gh-reported baseRefName is a value this script does not control (a PR
-    # can target any ref-format-valid branch name) and reaches fetch_ref the
-    # same unvalidated way the CLI --target-base value used to — the same
-    # option/refspec-injection risk applies here, not only to CLI input.
+    # can target any ref-format-valid branch name) and reaches
+    # resolve_remote_sha the same unvalidated way the CLI --target-base
+    # value used to — the same option/refspec-injection risk applies here,
+    # not only to CLI input.
     if is_option_or_refspec_like "$pr_base"; then
       prerequisite_failed_report "pull request #$pr's base branch is not a valid branch name: $pr_base"
     fi
     target_base="$pr_base"
-    fetch_ref "$pr_base" || fail "cannot refresh origin/$pr_base from the remote"
-    # A fixed ref name would race across two concurrent invocations that
-    # inspect the same PR: one invocation's cleanup could delete the ref
-    # before the other reads it. mktemp's own per-invocation directory name
-    # (already unique) makes this ref unique too, at no extra cost.
-    pr_ref="refs/reviewer-preflight/pr-$pr.$(basename "$work_dir")"
-    # Register for cleanup before the fetch, not after: `git fetch` can
-    # write the destination ref and then still report a failure from
-    # something after that write (a timeout in post-fetch bookkeeping), in
-    # which case `fail` below would otherwise run before created_pr_ref is
-    # ever assigned and the EXIT trap would skip deletion entirely, leaving
-    # refs/reviewer-preflight/... behind. Deleting a ref the fetch never
-    # actually created is harmless (the cleanup trap already tolerates
-    # that).
-    created_pr_ref="$pr_ref"
-    fetch_ref "pull/$pr/head:$pr_ref" || fail "cannot fetch pull request #$pr head"
-    shared_ref="refs/remotes/origin/$pr_base"
-    platform_ref="$pr_ref"
+    resolve_target_base_or_fail "$pr_base" "pull request #$pr's base branch"
+    shared_ref="$resolved_remote_sha"
+    # headRefOid is GitHub's own current head SHA for this PR — read
+    # directly by that SHA, no fetch and no temporary ref needed. The
+    # earlier design fetched the PR head into a uniquely-named
+    # refs/reviewer-preflight/pr-<n>.<work-dir> ref so read_ref_file could
+    # address it the same way as every other ref; reading by raw SHA the
+    # same way this script now reads every remote tip makes that temporary
+    # ref, and its cleanup-trap bookkeeping, unnecessary. If the PR head
+    # object is not already present locally, read_ref_file's own
+    # git-show/rev-parse-verify fallback degrades gracefully
+    # (Undetermined/check-inconclusive for the coderabbit platform read
+    # below), the same as any other unreadable platform surface.
+    platform_ref="$pr_head_sha"
     checked_shared_config_ref="origin/$pr_base:.ai-dev-workflow.yaml (PR #$pr's own target base branch, refreshed)"
     checked_platform_config_ref="PR #$pr's own branch ($pr_head):.coderabbit.yaml"
     ;;

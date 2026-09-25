@@ -44,14 +44,32 @@ def _parse_stage_list(csv: str) -> list[str]:
     return stages
 
 
-def _parse_pr_state(csv: str) -> dict[str, str]:
-    state: dict[str, str] = {}
+def _parse_pr_state(csv: str) -> dict[str, str | None]:
+    """Parse ``--pr-state``'s ``bucket=state,...`` value.
+
+    A repeated bucket key (e.g. ``on_draft.runner=draft,on_draft.runner=
+    ready``) is rejected rather than "last value wins": which pull-request
+    state Step 7's own dispatch actually used for that bucket is unknowable
+    from an ambiguously composed string alone, and silently keeping the
+    last-parsed value let an earlier, differently-classified state (e.g.
+    stage-excluded/blocked) be silently overridden by a later one that
+    happens to pass. classify()'s own existing prerequisite-failed check
+    (``pr_state.get(stage) not in ("draft", "ready")``) already rejects
+    any value that is not exactly ``"draft"`` or ``"ready"`` — clearing a
+    repeated bucket's value to ``None`` routes it through that same,
+    already-established check rather than inventing a new outcome.
+    """
+    state: dict[str, str | None] = {}
     for pair in csv.split(","):
         pair = pair.strip()
         if not pair or "=" not in pair:
             continue
         key, value = pair.split("=", 1)
-        state[BUCKET_MAP.get(key.strip(), key.strip())] = value.strip()
+        bucket = BUCKET_MAP.get(key.strip(), key.strip())
+        if bucket in state:
+            state[bucket] = None
+            continue
+        state[bucket] = value.strip()
     return state
 
 

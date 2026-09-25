@@ -723,12 +723,28 @@ resolve it a second time independently:
 | --- | --- | --- |
 | No branch exists yet (fresh dispatch) | `pre-dispatch` | Each platform's own configuration and the shared reviewer list, both read from `$BASE_BRANCH` — the only copies that exist before a branch does |
 | An existing branch with no pull request yet (`compatible_reuse`, or a branch-only resume) | `branch-resume` | Each platform's own configuration from that existing branch's own copy; the shared reviewer list still from `$BASE_BRANCH` (the single base this item's execution already resolved to target, not the branch itself) |
-| An existing pull request (any resumed PR) | `pr-resume` | Each platform's own configuration from that pull request's own head branch; the shared reviewer list from that pull request's own target base branch, refreshed from the remote — matching `pr-review-loop.sh`'s own `baseRefName` resolution |
+| An existing pull request (any resumed PR) | `pr-resume` | Each platform's own configuration from that pull request's own head commit (GitHub's own reported `headRefOid`); the shared reviewer list from that pull request's own target base branch, resolved live from the remote — matching `pr-review-loop.sh`'s own `baseRefName` resolution |
 
 The `pre-dispatch` path applies only when resuming finds neither a branch nor
 a pull request in place. Once a branch exists, checking `$BASE_BRANCH` alone
 would miss a disabling change already present on the branch the reviewer
 platform will actually read.
+
+This script is fully read-only: it resolves every remote tip with `git
+ls-remote` (never `git fetch`) and reads content directly by the resolved
+commit SHA, so it never creates or updates `refs/remotes/*`, writes
+`FETCH_HEAD`, or downloads objects into the local object database. When a
+resolved remote SHA's commit object is not already present locally (this
+script never fetches to make it so), reading that content is impossible
+without a fetch this script will not perform — that surfaces through the
+same `OUTCOME` values documented below: a per-platform read degrades to
+Undetermined (`passed-unverified`), and a shared-configuration read (or a
+branch-resume ancestry comparison that itself needs both commits present)
+fails closed as a tooling failure (exit `3`). A `--target-base` (or PR base)
+that is syntactically valid but confirmed absent on the remote right now is
+a run-input problem, not a tooling outage: it classifies as
+`prerequisite-failed` (exit `2`), the same as any other malformed or
+unresolved `--target-base`.
 
 Route the script's `OUTCOME` (exit code in parentheses) as follows:
 

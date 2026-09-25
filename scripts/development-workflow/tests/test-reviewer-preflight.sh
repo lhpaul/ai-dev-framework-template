@@ -167,25 +167,27 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     (repo6 / '.coderabbit.yaml').write_text(disabled_coderabbit)
     git(repo6, 'add', '-A')
     git(repo6, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'disable on pr head')
+    pr6_head_sha = git(repo6, 'rev-parse', 'HEAD').stdout.strip()
+    git(repo6, 'checkout', '-q', 'develop')
     bins = root / 'bin'
     bins.mkdir(exist_ok=True)
     fake_gh = bins / 'gh'
+    # #1561 round-26: pr-resume reads the PR head directly by gh's own
+    # reported headRefOid (no fetch, no temporary ref) — report the real
+    # local commit SHA here so the read_ref_file call this exercises finds
+    # the object already present, the same way GitHub's own headRefOid
+    # would be present locally in the common case (an already-checked-out
+    # or already-fetched PR branch).
     fake_gh.write_text(
         '#!/bin/bash\n'
         'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
-        '  printf \'{"baseRefName":"develop","headRefName":"feature/pr-resume-test"}\\n\'\n'
+        f'  printf \'{{"baseRefName":"develop","headRefName":"feature/pr-resume-test","headRefOid":"{pr6_head_sha}"}}\\n\'\n'
         '  exit 0\n'
         'fi\n'
         'exit 1\n'
     )
     fake_gh.chmod(0o755)
     env = {'PATH': f'{bins}:{os.environ.get("PATH", "")}'}
-    # gh cannot fetch the PR head from a bare "pull/<n>/head" ref against a
-    # plain file:// remote with no PR object; simulate it as an ordinary
-    # branch ref instead, which the fetch_ref call still exercises for the
-    # base and the shell's read-only ref resolution still exercises for the
-    # (faked) PR head branch name reported back by fake gh.
-    git(repo6, 'update-ref', 'refs/pull/7/head', 'refs/heads/feature/pr-resume-test')
     rc, data, out, err = run(
         repo6, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '7',
         '--owner', 'example', '--repo', 'test',
@@ -205,16 +207,13 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         ).split('(')[0],
         data,
     )
-    # AC-2: the pr-resume path fetches the PR head into a temporary,
-    # invocation-unique ref (never a fixed name — two concurrent invocations
-    # on the same PR must not race on the same ref) to read it the same way
-    # every other ref is read; that ref must not survive the run — a
-    # porcelain diff cannot see it, since refs live outside the working tree
-    # the porcelain check covers. Match by prefix, since the invocation-unique
-    # suffix is not known in advance.
+    # #1561 round-26: pr-resume no longer fetches the PR head into any
+    # temporary ref at all (it reads gh's own reported headRefOid directly)
+    # — confirm no such ref, or any other ref under refs/reviewer-preflight/,
+    # was ever created.
     ref_listing = git(repo6, 'for-each-ref', 'refs/reviewer-preflight/')
     check(
-        'T-6 pr-resume does not leave a temporary PR-head ref behind',
+        'T-6 pr-resume creates no temporary ref (round-26 read-only redesign)',
         ref_listing.stdout.strip() == '',
         ref_listing.stdout,
     )
@@ -254,26 +253,26 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     parsed = json.loads(out)
     check('T-8 json output mode', parsed.get('outcome') == 'passed', parsed)
 
-    # T-9: a shared-config ref that does not resolve at all (never pushed,
-    # bad branch name) is not the same as ".ai-dev-workflow.yaml is absent at
-    # a ref that does resolve" — treating both alike would let the preflight
-    # report a coherent verdict on a shared configuration it never read.
-    # fetch_ref's own remote-add-to-self loopback means `origin/<name>` never
-    # existing is reachable simply by never having pushed that branch name.
+    # T-9 (#1561 round-26 finding): a --target-base that is syntactically
+    # valid but confirmed absent on the remote (never pushed, bad branch
+    # name) is a run-INPUT problem — the base this run needs to read does
+    # not currently exist — not a tooling outage, so it must classify as
+    # OUTCOME=prerequisite-failed (exit 2) like every other malformed/
+    # unresolved --target-base case, not an unstructured tooling failure
+    # (exit 3). resolve_remote_sha's own `git ls-remote --exit-code`
+    # distinguishes "confirmed absent" (rc=2, mapped to prerequisite-failed)
+    # from any other operational query failure (mapped to a tooling
+    # failure, T-15 below).
     rc, data, out, err = run(
         repo1, '--mode', 'pre-dispatch', '--target-base', 'nonexistent-target-branch',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
-        expected=3,
+        expected=2,
     )
-    check('T-9 unresolved shared ref fails closed, not empty-config', 'OUTCOME' not in data, data)
-    # The base-branch refresh (fetch_ref) now fails closed before ever
-    # reaching read_ref_file for a target-base that does not exist on the
-    # remote at all — an earlier, equally valid "fails closed, names the
-    # ref" failure than read_ref_file's own "did not resolve" message.
+    check('T-9 confirmed-absent target base is prerequisite-failed, not a tooling failure', data.get('OUTCOME') == 'prerequisite-failed', data)
     check(
-        'T-9 unresolved shared ref names the ref, not "absent"',
-        'nonexistent-target-branch' in err and 'cannot refresh' in err,
-        err,
+        'T-9 prerequisite_detail names --target-base and the branch',
+        '--target-base' in data.get('PREREQUISITE_DETAIL', '') and 'nonexistent-target-branch' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
     )
 
     # T-10: branch-resume resolves a branch that exists only as a
@@ -466,22 +465,23 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-14 branch-resume fails closed on true divergence', 'OUTCOME' not in data, data)
     check('T-14 branch-resume divergence message names the branch', 'diverged' in err, err)
 
-    # T-15: a base-branch refresh that fails while a stale origin/<base>
-    # already exists (from an earlier successful fetch) must not silently
-    # read that stale copy as current — the base-branch refresh itself must
-    # fail closed, the same as pr-resume's own equivalent refresh already
-    # does. A `git` wrapper fails only the `fetch` subcommand so the
-    # earlier `write_repo` setup (which already fetched origin/develop once
-    # successfully) leaves a real, pre-existing stale ref behind.
+    # T-15 (#1561 round-26): an operational `git ls-remote` failure (network,
+    # auth — anything other than the documented --exit-code=2 "no such ref"
+    # signal resolve_remote_sha treats as prerequisite-failed, T-9 above)
+    # must fail closed as a tooling failure, not be silently swallowed or
+    # misreported as a run-input problem.
     repo15_bins = root / 'repo15-bin'
     repo15_bins.mkdir(exist_ok=True)
     real_git15 = shutil.which('git')
     failing_git = repo15_bins / 'git'
     failing_git.write_text(
         '#!/bin/bash\n'
-        # reviewer-preflight.sh invokes fetch as `git -C <root> fetch ...`,
-        # so "fetch" is not necessarily $1 — scan every argument.
-        'for arg in "$@"; do if [ "$arg" = fetch ]; then echo "fatal: simulated fetch failure" >&2; exit 1; fi; done\n'
+        # reviewer-preflight.sh invokes ls-remote as `git -C <root>
+        # ls-remote ...`, so "ls-remote" is not necessarily $1 — scan every
+        # argument. Exit 128 (git's own generic fatal-error code), not the
+        # --exit-code=2 "no matching refs" signal this must stay distinct
+        # from.
+        'for arg in "$@"; do if [ "$arg" = ls-remote ]; then echo "fatal: simulated ls-remote failure" >&2; exit 128; fi; done\n'
         f'exec {real_git15!r} "$@"\n'
     )
     failing_git.chmod(0o755)
@@ -491,10 +491,10 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={'PATH': f'{repo15_bins}:{os.environ.get("PATH", "")}'},
         expected=3,
     )
-    check('T-15 fetch failure with a pre-existing stale ref fails closed', 'OUTCOME' not in data, data)
+    check('T-15 operational ls-remote failure fails closed as a tooling failure', 'OUTCOME' not in data, data)
     check(
-        'T-15 fetch failure message names the base branch',
-        'develop' in err and 'cannot refresh' in err,
+        'T-15 ls-remote failure message names the base branch',
+        'develop' in err and 'cannot resolve' in err,
         err,
     )
 
@@ -529,30 +529,30 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-16 force-prefixed --branch is rejected', 'OUTCOME' not in data, data)
     check('T-16 rejection message names --branch', '--branch' in err, err)
 
-    # T-17: branch-resume distinguishes a branch that genuinely does not
-    # exist on the remote (T-10's case — safe to degrade to the local-only
-    # copy) from an operational fetch failure (network/auth/timeout) with a
-    # branch that *does* exist remotely — the latter must fail closed, not
-    # silently read a stale cached origin/<branch> as current.
+    # T-17 (#1561 round-26): branch-resume distinguishes a branch that
+    # genuinely does not exist on the remote (T-10's case — safe to degrade
+    # to the local-only copy, resolve_remote_sha's rc=1 via --exit-code=2)
+    # from an operational `git ls-remote` failure (network/auth/timeout,
+    # any other exit code) with that branch — the latter must fail closed,
+    # not be silently misread as "branch absent."
     repo17 = root / 'repo17'
     write_repo(repo17, coherent_shared, coherent_coderabbit)
     git(repo17, 'checkout', '-q', '-b', 'feature/fetch-failure-test')
-    git(repo17, 'fetch', '-q', 'origin', 'feature/fetch-failure-test')
     repo17_bins = root / 'repo17-bin'
     repo17_bins.mkdir(exist_ok=True)
     real_git17 = shutil.which('git')
     failing_git17 = repo17_bins / 'git'
     failing_git17.write_text(
         '#!/bin/bash\n'
-        # Only fail the branch fetch (not the base-branch fetch, which runs
-        # first in branch-resume and must still succeed for this case to
-        # isolate the branch-fetch failure specifically).
-        'has_fetch=0; has_branch=0\n'
+        # Only fail the branch's own ls-remote query (not the base-branch
+        # one, which runs first in branch-resume and must still succeed for
+        # this case to isolate the branch query failure specifically).
+        'has_lsremote=0; has_branch=0\n'
         'for arg in "$@"; do\n'
-        '  [ "$arg" = fetch ] && has_fetch=1\n'
-        '  [ "$arg" = feature/fetch-failure-test ] && has_branch=1\n'
+        '  [ "$arg" = ls-remote ] && has_lsremote=1\n'
+        '  case "$arg" in *feature/fetch-failure-test*) has_branch=1;; esac\n'
         'done\n'
-        'if [ "$has_fetch" = 1 ] && [ "$has_branch" = 1 ]; then echo "fatal: simulated network failure" >&2; exit 1; fi\n'
+        'if [ "$has_lsremote" = 1 ] && [ "$has_branch" = 1 ]; then echo "fatal: simulated network failure" >&2; exit 128; fi\n'
         f'exec {real_git17!r} "$@"\n'
     )
     failing_git17.chmod(0o755)
@@ -562,10 +562,10 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={'PATH': f'{repo17_bins}:{os.environ.get("PATH", "")}'},
         expected=3,
     )
-    check('T-17 operational branch-fetch failure fails closed', 'OUTCOME' not in data, data)
+    check('T-17 operational branch ls-remote failure fails closed', 'OUTCOME' not in data, data)
     check(
-        'T-17 operational branch-fetch failure message names the branch',
-        'feature/fetch-failure-test' in err and 'cannot refresh' in err,
+        'T-17 operational branch ls-remote failure message names the branch',
+        'feature/fetch-failure-test' in err and 'cannot query the remote' in err,
         err,
     )
 
@@ -665,7 +665,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     fake_gh22.write_text(
         '#!/bin/bash\n'
         'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
-        '  printf \'{"baseRefName":"--upload-pack=./evil","headRefName":"feature/x"}\\n\'\n'
+        '  printf \'{"baseRefName":"--upload-pack=./evil","headRefName":"feature/x","headRefOid":"0000000000000000000000000000000000000000"}\\n\'\n'
         '  exit 0\n'
         'fi\n'
         'exit 1\n'
@@ -764,48 +764,59 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
-    # T-26: if deleting the stale cache entry itself fails (e.g. another
-    # process holds the ref lock), the script must not trust `update-ref
-    # -d`'s own exit status and proceed anyway — it must verify the ref
-    # genuinely no longer resolves and fail closed otherwise, rather than
-    # silently reading the (still-present) stale config as current.
+    # T-26 (#1561 round-26 redesign): the whole "undeletable stale ref"
+    # vulnerability class T-26 used to guard against no longer exists — the
+    # round-26 read-only redesign never writes refs/remotes/origin/<branch>
+    # at all (git ls-remote resolves the live remote tip directly, git
+    # show reads it by SHA), so there is nothing for this script to
+    # discard or fail to discard. In its place, prove the stronger
+    # guarantee that redesign provides directly: a stale local
+    # refs/remotes/origin/<branch> left over from some unrelated, earlier,
+    # real `git fetch` (a human, CI, or another tool — not this script) is
+    # never consulted and never modified, even though it exists and even
+    # though its content actively disagrees with the live remote.
     repo26 = root / 'repo26'
     write_repo(repo26, coherent_shared, coherent_coderabbit)
     remote26 = root / 'remote26.git'
     subprocess.run(['git', 'clone', '-q', '--bare', str(repo26), str(remote26)], check=True)
     git(repo26, 'remote', 'set-url', 'origin', str(remote26))
-    git(repo26, 'checkout', '-q', '-b', 'feature/undeletable-ref-test')
-    git(repo26, 'push', '-q', 'origin', 'feature/undeletable-ref-test')
-    git(repo26, 'fetch', '-q', 'origin', 'feature/undeletable-ref-test')
-    subprocess.run(['git', 'update-ref', '-d', 'refs/heads/feature/undeletable-ref-test'], cwd=remote26, check=True)
+    git(repo26, 'checkout', '-q', '-b', 'feature/stale-cache-untouched-test')
+    (repo26 / '.coderabbit.yaml').write_text(disabled_coderabbit)
+    git(repo26, 'add', '-A')
+    git(repo26, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'disabled at first push')
+    git(repo26, 'push', '-q', 'origin', 'feature/stale-cache-untouched-test')
+    git(repo26, 'fetch', '-q', 'origin', 'feature/stale-cache-untouched-test')
+    stale_ref_sha_before = git(repo26, 'rev-parse', 'refs/remotes/origin/feature/stale-cache-untouched-test').stdout.strip()
+    # Now push a genuinely different (enabled) commit to the remote without
+    # ever re-fetching locally — refs/remotes/origin/... stays exactly as
+    # stale as it would after any real, unrelated earlier fetch.
+    (repo26 / '.coderabbit.yaml').write_text(coherent_coderabbit)
+    git(repo26, 'add', '-A')
+    git(repo26, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'enabled on the remote tip')
+    git(repo26, 'push', '-q', 'origin', 'feature/stale-cache-untouched-test')
     git(repo26, 'checkout', '-q', 'develop')
-    git(repo26, 'branch', '-D', 'feature/undeletable-ref-test')
-    bins26 = root / 'bin26'
-    bins26.mkdir(exist_ok=True)
-    real_git26 = shutil.which('git')
-    blocking_git = bins26 / 'git'
-    blocking_git.write_text(
-        '#!/bin/bash\n'
-        'has_update_ref=0; has_delete=0\n'
-        'for arg in "$@"; do\n'
-        '  [ "$arg" = update-ref ] && has_update_ref=1\n'
-        '  [ "$arg" = -d ] && has_delete=1\n'
-        'done\n'
-        'if [ "$has_update_ref" = 1 ] && [ "$has_delete" = 1 ]; then\n'
-        '  echo "error: cannot lock ref (simulated)" >&2\n'
-        '  exit 1\n'
-        'fi\n'
-        f'exec {real_git26!r} "$@"\n'
-    )
-    blocking_git.chmod(0o755)
+    git(repo26, 'branch', '-D', 'feature/stale-cache-untouched-test')
+    # `git push` above updates its own local remote-tracking ref as a
+    # normal side effect (unrelated to this script) — force it back to the
+    # stale sha so the fixture actually represents "a stale local cache
+    # from some earlier, unrelated fetch," independent of that side effect.
+    git(repo26, 'update-ref', 'refs/remotes/origin/feature/stale-cache-untouched-test', stale_ref_sha_before)
     rc, data, out, err = run(
-        repo26, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/undeletable-ref-test',
+        repo26, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/stale-cache-untouched-test',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
-        env={'PATH': f'{bins26}:{os.environ.get("PATH", "")}'},
-        expected=3,
+        expected=0,
     )
-    check('T-26 undeletable stale ref fails closed instead of reading stale data', 'OUTCOME' not in data, data)
-    check('T-26 failure message names the branch', 'feature/undeletable-ref-test' in err, err)
+    check(
+        'T-26 reads the live remote tip (enabled), not the stale local cache (disabled)',
+        data.get('OUTCOME') == 'passed',
+        data,
+    )
+    stale_ref_sha_after = git(repo26, 'rev-parse', 'refs/remotes/origin/feature/stale-cache-untouched-test').stdout.strip()
+    check(
+        'T-26 the stale local cache ref itself is never modified',
+        stale_ref_sha_after == stale_ref_sha_before,
+        f'before={stale_ref_sha_before} after={stale_ref_sha_after}',
+    )
 
     # T-27: the report-rendering rewrite (one bounded jq pass instead of
     # ~9 per platform) must still render every platform row correctly,
@@ -850,103 +861,74 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-28 non-numeric --pr is rejected', 'OUTCOME' not in data, data)
     check('T-28 rejection message names --pr', '--pr' in err, err)
 
-    # T-29: a pr-resume temporary-ref cleanup failure must override the
-    # exit status to a tooling failure, not silently preserve whatever
-    # status the run was otherwise about to return — the script's own
-    # read-only / no-persistent-side-effect contract (AC-2) depends on the
-    # ref genuinely being gone, not merely on the delete command having
-    # been attempted.
+    # T-29 (#1561 round-26 redesign): pr-resume no longer fetches the PR
+    # head into a temporary ref (the "undeletable temp ref" and "partial
+    # fetch leaves a temp ref behind" vulnerability classes the earlier
+    # versions of T-29/T-30 covered no longer exist, since there is no temp
+    # ref for anything to go wrong with). In their place: a PR head whose
+    # object this local checkout does not have (a fork PR, or any commit
+    # this repo genuinely never saw — this script does not fetch to fix
+    # that) must degrade gracefully to Undetermined/check-inconclusive for
+    # the coderabbit platform read, not hang, not fetch, and not fail
+    # closed the whole run.
     repo29 = root / 'repo29'
     write_repo(repo29, coherent_shared, coherent_coderabbit)
-    git(repo29, 'checkout', '-q', '-b', 'feature/pr29-test')
-    git(repo29, 'add', '-A')
-    git(repo29, 'update-ref', 'refs/pull/29/head', 'refs/heads/feature/pr29-test')
-    git(repo29, 'checkout', '-q', 'develop')
     bins29 = root / 'bin29'
     bins29.mkdir(exist_ok=True)
     fake_gh29 = bins29 / 'gh'
+    unknown_sha29 = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
     fake_gh29.write_text(
         '#!/bin/bash\n'
         'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
-        '  printf \'{"baseRefName":"develop","headRefName":"feature/pr29-test"}\\n\'\n'
+        f'  printf \'{{"baseRefName":"develop","headRefName":"feature/pr29-fork-test","headRefOid":"{unknown_sha29}"}}\\n\'\n'
         '  exit 0\n'
         'fi\n'
         'exit 1\n'
     )
     fake_gh29.chmod(0o755)
-    real_git29 = shutil.which('git')
-    blocking_git29 = bins29 / 'git'
-    blocking_git29.write_text(
-        '#!/bin/bash\n'
-        'has_update_ref=0; has_delete=0\n'
-        'for arg in "$@"; do\n'
-        '  [ "$arg" = update-ref ] && has_update_ref=1\n'
-        '  [ "$arg" = -d ] && has_delete=1\n'
-        'done\n'
-        'if [ "$has_update_ref" = 1 ] && [ "$has_delete" = 1 ]; then\n'
-        '  echo "error: cannot lock ref (simulated)" >&2\n'
-        '  exit 1\n'
-        'fi\n'
-        f'exec {real_git29!r} "$@"\n'
-    )
-    blocking_git29.chmod(0o755)
     rc, data, out, err = run(
         repo29, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '29', '--owner', 'example', '--repo', 'test',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env={'PATH': f'{bins29}:{os.environ.get("PATH", "")}'},
-        expected=3,
+        expected=0,
     )
-    check('T-29 undeletable pr-resume temp ref overrides exit status to tooling failure', True, (rc, data, err))
-    check('T-29 failure message names the temporary ref', 'refs/reviewer-preflight/pr-29' in err, err)
+    check('T-29 an unfetched PR-head object degrades to passed-unverified, not a hang or fetch', data.get('OUTCOME') == 'passed-unverified', data)
+    check('T-29 the affected platform is Undetermined/check-inconclusive', data.get('PLATFORM_1_VERDICT') == 'undetermined' and data.get('PLATFORM_1_REASONS') == 'check-inconclusive', data)
+    ref_listing29 = git(repo29, 'for-each-ref', 'refs/reviewer-preflight/')
+    check('T-29 creates no temporary ref', ref_listing29.stdout.strip() == '', ref_listing29.stdout)
+    unknown29_present = git(repo29, 'cat-file', '-e', f'{unknown_sha29}^{{commit}}', check_call=False)
+    check('T-29 never fetches the unknown PR-head object into the local object DB', unknown29_present.returncode != 0, unknown29_present)
 
-    # T-30: a partially successful PR-head fetch (the ref gets written, but
-    # `fetch_ref` still reports failure from something after that write)
-    # must still have its temporary ref cleaned up — registering it for
-    # cleanup only after a successful fetch call would otherwise skip
-    # deletion entirely for this case.
+    # T-30 (#1561 round-26): pr-resume's own base-branch resolution goes
+    # through the same resolve_target_base_or_fail path pre-dispatch/
+    # branch-resume already exercise (T-9) — a confirmed-absent PR base
+    # must classify as prerequisite-failed here too, not a tooling failure,
+    # for consistency across all three modes.
     repo30 = root / 'repo30'
     write_repo(repo30, coherent_shared, coherent_coderabbit)
-    git(repo30, 'checkout', '-q', '-b', 'feature/pr30-test')
-    git(repo30, 'update-ref', 'refs/pull/30/head', 'refs/heads/feature/pr30-test')
-    git(repo30, 'checkout', '-q', 'develop')
     bins30 = root / 'bin30'
     bins30.mkdir(exist_ok=True)
     fake_gh30 = bins30 / 'gh'
     fake_gh30.write_text(
         '#!/bin/bash\n'
         'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
-        '  printf \'{"baseRefName":"develop","headRefName":"feature/pr30-test"}\\n\'\n'
+        '  printf \'{"baseRefName":"nonexistent-pr-base","headRefName":"feature/pr30-test","headRefOid":"0000000000000000000000000000000000000000"}\\n\'\n'
         '  exit 0\n'
         'fi\n'
         'exit 1\n'
     )
     fake_gh30.chmod(0o755)
-    real_git30 = shutil.which('git')
-    partial_git30 = bins30 / 'git'
-    partial_git30.write_text(
-        '#!/bin/bash\n'
-        'is_pr_fetch=0\n'
-        'for arg in "$@"; do case "$arg" in pull/30/head:*) is_pr_fetch=1;; esac; done\n'
-        'if [ "$is_pr_fetch" = 1 ]; then\n'
-        f'  {real_git30!r} "$@"\n'
-        '  echo "error: simulated post-fetch failure" >&2\n'
-        '  exit 1\n'
-        'fi\n'
-        f'exec {real_git30!r} "$@"\n'
-    )
-    partial_git30.chmod(0o755)
     rc, data, out, err = run(
         repo30, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '30', '--owner', 'example', '--repo', 'test',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env={'PATH': f'{bins30}:{os.environ.get("PATH", "")}'},
-        expected=3,
+        expected=2,
     )
-    check('T-30 partial-fetch failure still fails closed', 'OUTCOME' not in data, data)
-    ref_listing30 = git(repo30, 'for-each-ref', 'refs/reviewer-preflight/')
+    check('T-30 confirmed-absent PR base is prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
     check(
-        'T-30 partially-written temp ref is still cleaned up',
-        ref_listing30.stdout.strip() == '',
-        ref_listing30.stdout,
+        'T-30 prerequisite_detail names the PR base',
+        'nonexistent-pr-base' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
     )
 
     # T-31: LOCAL_OVERRIDE_STATE must match the documented contract's
@@ -1143,8 +1125,13 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     )[1]
     ancestry_block = ancestry_block[: ancestry_block.find("elif [ \"$origin_resolves\" = 1 ]")]
     check(
-        'T-35 both ancestry-check clamp calls use clamp_bound, not clamp_bound_floor',
-        ancestry_block.count('clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"') == 2
+        # 3, not 2, as of the round-26 read-only redesign: the object-
+        # presence `cat-file -e` check that now precedes the two
+        # merge-base calls (guarding against this script never having
+        # fetched the remote's resolved SHA) added its own clamp_bound
+        # call in the same block.
+        'T-35 every ancestry-selection clamp call (presence check + both merge-base calls) uses clamp_bound, not clamp_bound_floor',
+        ancestry_block.count('clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"') == 3
         # Substring match alone would false-positive on this fix's own
         # explanatory comment, which names clamp_bound_floor to contrast
         # against it; require the actual call form instead.
@@ -1288,6 +1275,123 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         and data.get('PLATFORM_1_VERDICT') == 'undetermined'
         and data.get('PLATFORM_1_REASONS') == 'check-inconclusive',
         f'rc={rc} data={data} err={err}',
+    )
+
+    # T-39 (human decision on #1561's round-26 P1 finding): comprehensive
+    # proof that this script makes no repository-state change whatsoever —
+    # not merely "the working tree is unchanged" (AC-2's own porcelain
+    # diff, exercised throughout this suite already) but specifically that
+    # refs/remotes/*, FETCH_HEAD, and the object database are byte-for-byte
+    # identical before and after, across all three modes. `git ls-remote`
+    # (this script's own replacement for the `git fetch` it used to run)
+    # only queries the remote; it must never create or update a local ref,
+    # never write FETCH_HEAD, and never download any object.
+    def repo_fingerprint(repo):
+        refs = git(repo, 'for-each-ref').stdout
+        fetch_head_path = repo / '.git' / 'FETCH_HEAD'
+        fetch_head = fetch_head_path.read_bytes() if fetch_head_path.exists() else None
+        objects = git(repo, 'count-objects', '-v').stdout
+        return (refs, fetch_head, objects)
+
+    repo39 = root / 'repo39'
+    write_repo(repo39, coherent_shared, coherent_coderabbit)
+    remote39 = root / 'remote39.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo39), str(remote39)], check=True)
+    git(repo39, 'remote', 'set-url', 'origin', str(remote39))
+    git(repo39, 'checkout', '-q', '-b', 'feature/fingerprint-test')
+    git(repo39, 'push', '-q', 'origin', 'feature/fingerprint-test')
+    git(repo39, 'fetch', '-q', 'origin', 'feature/fingerprint-test')
+
+    # pre-dispatch: fingerprint immediately before/after.
+    before39a = repo_fingerprint(repo39)
+    run(
+        repo39, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=0,
+    )
+    after39a = repo_fingerprint(repo39)
+    check('T-39 pre-dispatch: refs/for-each-ref unchanged', before39a[0] == after39a[0], (before39a[0], after39a[0]))
+    check('T-39 pre-dispatch: FETCH_HEAD unchanged', before39a[1] == after39a[1], (before39a[1], after39a[1]))
+    check('T-39 pre-dispatch: object database unchanged', before39a[2] == after39a[2], (before39a[2], after39a[2]))
+
+    # branch-resume: exercises both the target-base AND the branch-name
+    # ls-remote resolution paths (local and remote both resolve here, so
+    # the ancestry-selection object-presence check and merge-base calls run
+    # too).
+    before39b = repo_fingerprint(repo39)
+    run(
+        repo39, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/fingerprint-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=0,
+    )
+    after39b = repo_fingerprint(repo39)
+    check('T-39 branch-resume: refs/for-each-ref unchanged', before39b[0] == after39b[0], (before39b[0], after39b[0]))
+    check('T-39 branch-resume: FETCH_HEAD unchanged', before39b[1] == after39b[1], (before39b[1], after39b[1]))
+    check('T-39 branch-resume: object database unchanged', before39b[2] == after39b[2], (before39b[2], after39b[2]))
+
+    # pr-resume: exercises the gh-reported headRefOid direct-SHA read path.
+    bins39 = root / 'bin39'
+    bins39.mkdir(exist_ok=True)
+    fake_gh39 = bins39 / 'gh'
+    pr39_head_sha = git(repo39, 'rev-parse', 'feature/fingerprint-test').stdout.strip()
+    fake_gh39.write_text(
+        '#!/bin/bash\n'
+        'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
+        f'  printf \'{{"baseRefName":"develop","headRefName":"feature/fingerprint-test","headRefOid":"{pr39_head_sha}"}}\\n\'\n'
+        '  exit 0\n'
+        'fi\n'
+        'exit 1\n'
+    )
+    fake_gh39.chmod(0o755)
+    before39c = repo_fingerprint(repo39)
+    run(
+        repo39, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '39', '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins39}:{os.environ.get("PATH", "")}'},
+        expected=0,
+    )
+    after39c = repo_fingerprint(repo39)
+    check('T-39 pr-resume: refs/for-each-ref unchanged', before39c[0] == after39c[0], (before39c[0], after39c[0]))
+    check('T-39 pr-resume: FETCH_HEAD unchanged', before39c[1] == after39c[1], (before39c[1], after39c[1]))
+    check('T-39 pr-resume: object database unchanged', before39c[2] == after39c[2], (before39c[2], after39c[2]))
+
+    # T-40 (#1561 round-26 finding): "0" cannot identify a pull request;
+    # the digits-only --pr check alone still accepted it, reaching
+    # `gh pr view 0` as an unstructured tooling failure instead of
+    # rejecting the invalid input locally.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '0',
+        '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-40 --pr 0 is rejected', 'OUTCOME' not in data, data)
+    check('T-40 --pr 0 rejection message names --pr and zero', '--pr' in err and 'zero' in err, err)
+    # An all-zero value of any length ("00", "000", ...) is the same gap.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '000',
+        '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-40 --pr 000 is rejected', 'OUTCOME' not in data, data)
+
+    # T-41 (#1561 round-26 finding): a repeated --pr-state bucket key is
+    # ambiguously composed input, not "last value wins" — reject it as
+    # prerequisite-failed rather than silently keeping the last-parsed
+    # value (which could bypass a disagreement the first, discarded value
+    # would have produced, e.g. stage-excluded/blocked).
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github',
+        '--pr-state', 'on_draft.github=draft,on_draft.github=ready',
+        expected=2,
+    )
+    check('T-41 duplicate --pr-state bucket is prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check(
+        'T-41 prerequisite_detail names the duplicated stage',
+        'on_draft_github' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
     )
 
 print(f'\nPassed: {passed}')
