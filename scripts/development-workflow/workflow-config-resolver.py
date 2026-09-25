@@ -1380,12 +1380,20 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_value(shared)
     shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
     local_runner_raw, local_runner_present, local_runner_structure_error = review_runner_value(local)
+    # A bare `runner:` with nothing after it (YAML null) is not the same as
+    # a declared, possibly-empty, override: workflow_config_review_
+    # local_list_if_declared (workflow-lib.sh, what Step 7a actually
+    # consults) only treats an inline `[...]` or an actual `- item` line as
+    # declared, so a null local runner key falls through to the shared
+    # list there — mirrors the same fix already applied to the GitHub
+    # buckets in review-github-effective.
+    local_runner_declared = local_runner_present and local_runner_raw is not None
     # A local malformed ancestor is still the source of the effective runner
     # failure. Do not report the shipped list merely because that malformed
     # local tree has no final ``runner`` key.
     runner_raw, runner_present, runner_source = (
         (local_runner_raw, local_runner_present, str(local_path))
-        if local_runner_present or local_runner_structure_error
+        if local_runner_declared or local_runner_structure_error
         else (
             shipped_raw,
             shipped_present,
@@ -1401,7 +1409,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         local, ["review", "internal_reviewers_unavailable_policy"]
     )
     local_review_override_applied = (
-        local_runner_present
+        local_runner_declared
         or local_runner_structure_error
         or local_policy_present
         or local_policy_structure_error
@@ -1412,7 +1420,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     effective_policy, policy_input, effective_policy_state = review_policy_state(policy_raw, policy_present)
 
     runner_structure_error = local_runner_structure_error or (
-        not local_runner_present and shipped_runner_structure_error
+        not local_runner_declared and shipped_runner_structure_error
     )
     # Policy is evaluated first, but its sibling runner tree is independent.
     # A malformed ``review.on_draft`` affects the reviewer list only; a
@@ -1425,7 +1433,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         local_structure_error
         or (not local_policy_present and shipped_policy_structure_error)
         or (
-            not local_runner_present
+            not local_runner_declared
             and shipped_runner_structure_error
             and shipped_policy_structure_error
         )
@@ -1451,7 +1459,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         "effective_runner_state": effective_runner_state,
         "effective_runner_source": runner_source,
         "shipped_runner": shipped_runner,
-        "override_excluded": [entry for entry in shipped_runner if local_runner_present and entry not in effective_runner],
+        "override_excluded": [entry for entry in shipped_runner if local_runner_declared and entry not in effective_runner],
         "effective_policy": effective_policy,
         "policy_input": policy_input,
         "effective_policy_state": effective_policy_state,

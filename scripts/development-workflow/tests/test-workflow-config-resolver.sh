@@ -1328,7 +1328,13 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
     if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
     assert_review_effective_states "canonical null policy $config_name $token" "$expected_runner" empty
     printf '%s\n' 'review:' '  on_draft:' "    runner: $token" > "$review_effective_dir/$config_name"
-    assert_review_effective_states "canonical null runner $config_name $token" empty absent
+    # A null shared runner (no fallback available) is genuinely empty; a
+    # null *local* runner is not a declared override
+    # (workflow_config_review_local_list_if_declared, workflow-lib.sh,
+    # requires an inline [...] or an actual - item line) and falls back to
+    # the shared [codex] fixture set up above.
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_null_runner=empty; else expected_null_runner=defined; fi
+    assert_review_effective_states "canonical null runner $config_name $token" "$expected_null_runner" absent
   done
   for token in True FALSE; do
     write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
@@ -1849,6 +1855,18 @@ run_test "review-github-effective malformed legacy platforms scalar is malformed
 write_review_effective_fixture 'review:' '  platforms: [coderabbit]' '  phase_after_clean: pr-agent'
 g13_json="$(review_github_effective_json)"
 run_test "review-github-effective malformed legacy phase_after_clean scalar is malformed" malformed "$(jq -r '.effective_on_ready_github_state' <<< "$g13_json")"
+
+# review-effective's on_draft.runner bucket needs the same null-vs-declared
+# fix already applied to review-github-effective's buckets: a bare
+# `runner:` local override (YAML null) is not a declared override, and
+# must fall back to the shared list, not narrow to empty.
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner:' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g14_json="$(review_effective_json)"
+run_test "review-effective null local runner falls back to shared" '["codex"]' "$(jq -c '.effective_runner' <<< "$g14_json")"
+run_test "review-effective null local runner state is defined" defined "$(jq -r '.effective_runner_state' <<< "$g14_json")"
+run_test "review-effective null local runner is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g14_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
 echo ""
 echo "Passed: $PASS_COUNT"

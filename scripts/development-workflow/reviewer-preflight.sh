@@ -169,7 +169,13 @@ cleanup() {
     fi
   fi
   [ -z "$work_dir" ] || rm -rf -- "$work_dir"
-  return "$rc"
+  # `return "$rc"` from an EXIT trap does not reliably override the
+  # process's already-decided exit status outside this script's own
+  # set -e context (`trap f EXIT; exit 0` still exits 0 even when f
+  # returns 3, in general). Exit explicitly here instead of relying on
+  # that interaction, so the overridden status in the block above is
+  # unambiguously the process's real exit code.
+  exit "$rc"
 }
 trap cleanup EXIT
 
