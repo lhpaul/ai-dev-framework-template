@@ -1528,5 +1528,59 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         f'marker exists: {marker44.exists()}',
     )
 
+    # T-45 (bounded-Codex-pass round 2, contract violation): in a genuine
+    # partial clone (a supported Git checkout mode, not a hypothetical),
+    # reading an object this checkout does not have locally must fail
+    # closed (the existing read_ref_file rc=2 / undetermined contract),
+    # not transparently lazy-fetch it from the promisor remote and write
+    # new objects under .git — reproduced live with GIT_TRACE=1 showing an
+    # internal `git fetch --filter=blob:none` triggered by a plain `git
+    # show`. Build a real promisor-remote partial clone: commit1 has no
+    # workflow config, commit2 (pushed to the bare remote *after* the
+    # partial clone below, so its blobs are never fetched) adds a coherent
+    # .ai-dev-workflow.yaml + .coderabbit.yaml.
+    origin45 = root / 'origin45'
+    origin45.mkdir()
+    git(origin45, 'init', '-q')
+    git(origin45, 'checkout', '-q', '-b', 'develop')
+    (origin45 / 'placeholder.txt').write_text('no workflow config yet\n')
+    git(origin45, 'add', '-A')
+    git(origin45, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'commit1: no workflow config')
+    remote45 = root / 'remote45.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(origin45), str(remote45)], check=True)
+    git(remote45, 'config', 'uploadpack.allowFilter', 'true')
+    git(remote45, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
+    repo45 = root / 'repo45'
+    subprocess.run(
+        ['git', 'clone', '-q', '--filter=blob:none', f'file://{remote45}', str(repo45)],
+        check=True,
+    )
+    # `develop` is already the checked-out branch (the remote's only/default
+    # branch), so no separate checkout is needed here.
+    objects_before45 = sorted(p for p in (repo45 / '.git' / 'objects').rglob('*') if p.is_file())
+    # Now advance the *origin* checkout (not the partial clone) past what
+    # the partial clone has and push it — the partial clone's own local
+    # object store never sees these new blobs.
+    (origin45 / '.ai-dev-workflow.yaml').write_text(coherent_shared)
+    (origin45 / '.coderabbit.yaml').write_text(coherent_coderabbit)
+    git(origin45, 'add', '-A')
+    git(origin45, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'commit2: add workflow config')
+    git(origin45, 'push', '-q', str(remote45), 'develop:develop')
+    rc, data, out, err = run(
+        repo45, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+    )
+    objects_after45 = sorted(p for p in (repo45 / '.git' / 'objects').rglob('*') if p.is_file())
+    check(
+        'T-45 reading a not-locally-present object in a partial clone does not trigger a lazy fetch (object store unchanged)',
+        objects_before45 == objects_after45,
+        f'before={len(objects_before45)} after={len(objects_after45)} rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-45 the run still reaches a bounded, non-hanging outcome (fails closed rather than fetching)',
+        'OUTCOME' not in data or data.get('OUTCOME') in ('passed', 'passed-unverified', 'blocked'),
+        f'rc={rc} data={data} err={err}',
+    )
+
 print(f'\nPassed: {passed}')
 PY

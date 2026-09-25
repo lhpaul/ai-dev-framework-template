@@ -12,6 +12,7 @@ from __future__ import annotations
 import pathlib
 import sys
 import unittest
+import unittest.mock
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -538,6 +539,67 @@ class ParsePrStateTests(unittest.TestCase):
         payload["pr_state"] = rpbi._parse_pr_state("on_draft.github=draft,on_draft.github=ready")
         with self.assertRaises(rp.PrerequisiteFailed):
             rp.classify(payload)
+
+
+class SharedBaseBranchBudgetTests(unittest.TestCase):
+    """Bounded-Codex-pass round 2: base_branch_covered() must be called once
+    per platform, not once per resolved bucket — otherwise a platform
+    present in N remaining buckets gets N independent fresh aggregate
+    deadlines instead of sharing one."""
+
+    def test_base_branch_covered_called_once_across_three_buckets(self):
+        payload = base_payload(
+            remaining_stages=["on_draft_runner", "on_draft_github", "on_ready_github"],
+            pr_state={"on_draft_runner": "draft", "on_draft_github": "draft", "on_ready_github": "ready"},
+            shared={
+                "on_draft_runner": ["coderabbit"],
+                "on_draft_github": ["coderabbit"],
+                "on_ready_github": ["coderabbit"],
+            },
+            resolved={
+                "on_draft_runner": ["coderabbit"],
+                "on_draft_github": ["coderabbit"],
+                "on_ready_github": ["coderabbit"],
+            },
+        )
+        payload["platform_configs"]["coderabbit"]["base_branches"] = ["develop"]
+        calls = []
+        real = rp.base_branch_covered
+
+        def spy(base_branches, target_base, **kwargs):
+            calls.append((tuple(base_branches), target_base))
+            return real(base_branches, target_base, **kwargs)
+
+        with unittest.mock.patch.object(rp, "base_branch_covered", spy):
+            result = rp.classify(payload)
+        self.assertEqual(len(calls), 1, calls)
+        entry = platform(result, "coderabbit")
+        self.assertEqual(len(entry["bucket_results"]), 3)
+
+    def test_shared_result_still_applies_per_bucket_correctly(self):
+        # The shared result must still be evaluated correctly against each
+        # bucket's own other reasons (e.g. stage-excluded) — sharing the
+        # base-branch computation must not also silently share unrelated
+        # per-bucket verdicts.
+        payload = base_payload(
+            remaining_stages=["on_draft_runner", "on_draft_github"],
+            pr_state={"on_draft_runner": "draft", "on_draft_github": "ready"},
+            shared={"on_draft_runner": ["coderabbit"], "on_draft_github": ["coderabbit"]},
+            resolved={"on_draft_runner": ["coderabbit"], "on_draft_github": ["coderabbit"]},
+        )
+        payload["platform_configs"]["coderabbit"]["base_branches"] = ["not-develop"]
+        payload["platform_configs"]["coderabbit"]["drafts"] = False
+        result = rp.classify(payload)
+        entry = platform(result, "coderabbit")
+        by_bucket = {r["bucket"]: r for r in entry["bucket_results"]}
+        # on_draft_runner is a draft stage with drafts=False: stage-excluded
+        # AND base-branch-unmatched (both reasons apply there).
+        self.assertIn("stage-excluded", by_bucket["on_draft_runner"]["reasons"])
+        self.assertIn("base-branch-unmatched", by_bucket["on_draft_runner"]["reasons"])
+        # on_ready.github's own bucket (mapped from on_draft_github's ready
+        # state here) is not a draft stage: only base-branch-unmatched.
+        self.assertNotIn("stage-excluded", by_bucket["on_draft_github"]["reasons"])
+        self.assertIn("base-branch-unmatched", by_bucket["on_draft_github"]["reasons"])
 
 
 if __name__ == "__main__":

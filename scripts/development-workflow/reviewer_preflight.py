@@ -159,8 +159,25 @@ def classify_platform_in_bucket(
     platform_configs: dict[str, Any],
     shared_config_ref: str,
     override_added: bool = False,
+    base_branch_check: tuple[bool, bool] | None = None,
 ) -> dict[str, Any]:
-    """Classify one platform's ability to review, scoped to one lifecycle bucket."""
+    """Classify one platform's ability to review, scoped to one lifecycle bucket.
+
+    ``base_branch_check``, when given, is ``(timed_out, covered)`` —
+    ``base_branch_covered()``'s already-computed result for this platform's
+    ``base_branches`` against ``target_base``, reused across every bucket
+    this platform appears in rather than recomputed here. A platform can
+    appear in up to three remaining buckets (on_draft.runner, on_draft.github,
+    on_ready.github); without sharing this result, each bucket call
+    recreated its own fresh aggregate regex-matching deadline (round-1 of
+    this bounded pass's own fix), so a platform present in all three buckets
+    could spend up to 3x that aggregate budget in total — exceeding the
+    shell's own outer per-platform deadline and surfacing as an
+    undifferentiated tooling failure instead of the documented
+    Undetermined/check-inconclusive degrade. When ``None`` (direct callers,
+    e.g. unit tests, that classify a single bucket in isolation), this
+    function computes it itself exactly as before.
+    """
     supported = BUCKET_SUPPORTED[bucket]
     dotted = BUCKET_DOTTED[bucket]
     if name not in supported:
@@ -256,7 +273,11 @@ def classify_platform_in_bucket(
         reasons.append("stage-excluded")
     base_branches = cfg.get("base_branches")
     base_branch_timed_out = False
-    if base_branches is not None:
+    if base_branch_check is not None:
+        base_branch_timed_out, base_branch_matched = base_branch_check
+        if base_branches is not None and not base_branch_timed_out and not base_branch_matched:
+            reasons.append("base-branch-unmatched")
+    elif base_branches is not None:
         try:
             if not base_branch_covered(base_branches, target_base):
                 reasons.append("base-branch-unmatched")
@@ -445,6 +466,22 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
             for stage in remaining_stages
             if stage not in resolved_buckets and name in (shared.get(stage, []) or [])
         ]
+        # Compute base_branch_covered() once per platform, not once per
+        # resolved bucket: a platform can appear in up to three remaining
+        # buckets, and each classify_platform_in_bucket call used to
+        # recreate its own fresh aggregate regex-matching deadline —
+        # reproduced live, a platform present in all three buckets could
+        # exhaust up to 3x that aggregate budget in total. base_branches
+        # and target_base are identical across every bucket this platform
+        # appears in, so the match result is too.
+        platform_cfg = platform_configs.get(name) or {}
+        platform_base_branches = platform_cfg.get("base_branches") if platform_cfg.get("read") else None
+        base_branch_check: tuple[bool, bool] | None = None
+        if platform_base_branches is not None:
+            try:
+                base_branch_check = (False, base_branch_covered(platform_base_branches, target_base))
+            except PatternTimeoutError:
+                base_branch_check = (True, False)
         bucket_results = [
             classify_platform_in_bucket(
                 name,
@@ -454,6 +491,7 @@ def classify(payload: dict[str, Any]) -> dict[str, Any]:
                 platform_configs=platform_configs,
                 shared_config_ref=checked_shared_config_ref,
                 override_added=bucket in override_added_buckets,
+                base_branch_check=base_branch_check,
             )
             for bucket in resolved_buckets
         ]

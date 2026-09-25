@@ -39,6 +39,22 @@
 # failure) rather than fetching when the remote object is not present.
 set -euo pipefail
 
+# In a partial clone (a supported Git checkout mode), reading an object this
+# script does not already have locally can transparently trigger a lazy
+# fetch from the promisor remote — confirmed live with GIT_TRACE=1: `git
+# show <sha>:<path>` on a SHA resolved via ls-remote but not locally present
+# ran an internal `git fetch origin --filter=blob:none`, writing new packs
+# under .git while the AC-2 porcelain snapshots (which only cover the
+# working tree and refs, not the object store's own pack files) stayed
+# unchanged and so never detected it. This makes every child git process
+# this script starts treat a missing object as a hard failure instead of
+# lazily fetching it — the same "cannot read without fetching" outcome this
+# script already documents and handles (read_ref_file's rc=2, the
+# branch-resume ancestry cat-file presence check) for the non-partial-clone
+# case, now enforced for partial clones too rather than silently fetching
+# around it.
+export GIT_NO_LAZY_FETCH=1
+
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 3; }
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
