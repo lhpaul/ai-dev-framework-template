@@ -70,31 +70,17 @@ done
 [ -n "$repo_root" ] || fail 'missing --repo-root'
 [ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'
 case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be pre-dispatch, branch-resume, or pr-resume' ;; esac
-[ -n "$target_base" ] || fail 'missing --target-base'
-# --target-base and --branch reach `git fetch origin "<value>"` as a bare
-# refspec, not merely a branch name: `git fetch` accepts full
-# "<src>:<dst>[+]" refspec syntax there, so an unvalidated value such as
-# "develop:refs/heads/injected" (or a leading '+' forcing an overwrite)
-# would create or update an arbitrary local ref — this nominally read-only
-# gate must never be able to do that.
-validate_branch_name() {
-  local value=$1 label=$2
-  case "$value" in
-    +*) fail "$label must not start with '+' (refspec force syntax is not a valid branch name): $value" ;;
-  esac
-  git check-ref-format "refs/heads/$value" >/dev/null 2>&1 || fail "$label is not a valid branch name: $value"
-}
 # The preflight contract classifies an empty, unresolved, or malformed
 # --target-base as OUTCOME=prerequisite-failed (exit 2, with
 # PREREQUISITE_DETAIL) — the same documented outcome reviewer_preflight.py
-# itself raises for other target_base problems (empty/non-string). A bare
-# `fail()` here (exit 3, unstructured stderr) would route this one specific
-# malformed-input case through the wrong documented outcome, even though
-# validation must still happen before git ever sees the value.
-if [ "$target_base" != "${target_base#+}" ] || ! git check-ref-format "refs/heads/$target_base" >/dev/null 2>&1; then
-  target_base_detail="--target-base is not a valid branch name: $target_base"
+# itself raises for other target_base problems. A bare `fail()` (exit 3,
+# unstructured stderr) would route these malformed-input cases through the
+# wrong documented outcome, even though validation must still happen
+# before git ever sees the value.
+prerequisite_failed_report() {
+  local detail=$1
   if [ "$json_output" = true ]; then
-    jq -n --arg detail "$target_base_detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
+    jq -n --arg detail "$detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
       '{outcome:"prerequisite-failed",outcome_label:"Prerequisite not met",checked_shared_config_ref:"",checked_platform_config_ref:"",local_override_state:"none",platforms:[],prerequisite_detail:$detail,elapsed_seconds:$elapsed,budget_seconds:$budget}'
   else
     print_kv_escaped OUTCOME prerequisite-failed
@@ -102,13 +88,42 @@ if [ "$target_base" != "${target_base#+}" ] || ! git check-ref-format "refs/head
     print_kv_escaped CHECKED_SHARED_CONFIG_REF ''
     print_kv_escaped CHECKED_PLATFORM_CONFIG_REF ''
     print_kv_escaped LOCAL_OVERRIDE_STATE none
-    print_kv_escaped PREREQUISITE_DETAIL "$target_base_detail"
+    print_kv_escaped PREREQUISITE_DETAIL "$detail"
     print_kv_escaped PLATFORM_COUNT 0
     print_kv_escaped ELAPSED_SECONDS "$SECONDS"
     print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
   fi
   exit 2
+}
+[ -n "$target_base" ] || prerequisite_failed_report 'missing --target-base'
+# --target-base and --branch reach `git fetch origin "<value>"` as a bare
+# CLI argument that git itself parses, not merely a branch name string:
+# `git fetch` accepts full "<src>:<dst>[+]" refspec syntax there (so
+# "develop:refs/heads/injected", or a leading '+' forcing an overwrite,
+# would create or update an arbitrary local ref), AND git parses a
+# leading-dash value as an OPTION regardless of its position after
+# "origin" — confirmed exploitable: "--upload-pack=./evil" runs an
+# arbitrary repo-root program during the fetch. check-ref-format alone
+# validates ref-name shape but does not reject either risk; both must be
+# rejected explicitly before any value reaches git.
+is_option_or_refspec_like() {
+  case "$1" in
+    +*|-*) return 0 ;;
+  esac
+  if git check-ref-format "refs/heads/$1" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+if is_option_or_refspec_like "$target_base"; then
+  prerequisite_failed_report "--target-base is not a valid branch name: $target_base"
 fi
+validate_branch_name() {
+  local value=$1 label=$2
+  if is_option_or_refspec_like "$value"; then
+    fail "$label is not a valid branch name: $value"
+  fi
+}
 if [ "$mode" = branch-resume ]; then
   [ -n "$branch" ] || fail '--branch is required for --mode branch-resume'
   validate_branch_name "$branch" '--branch'

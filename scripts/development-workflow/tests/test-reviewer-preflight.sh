@@ -591,5 +591,34 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-19 json prerequisite-failed for malformed target-base', parsed.get('outcome') == 'prerequisite-failed', parsed)
     check('T-19 json prerequisite_detail names --target-base', '--target-base' in parsed.get('prerequisite_detail', ''), parsed)
 
+    # T-20: a leading-dash --target-base is not merely an invalid ref name —
+    # git parses it as an option to `git fetch` regardless of its position
+    # after "origin". Prove the confirmed exploit ("--upload-pack=<path>"
+    # runs an arbitrary repo-root program during fetch) never executes: a
+    # marker file the "evil" program would create must not appear.
+    marker = root / 'evil-ran.marker'
+    evil = repo1 / 'evil'
+    evil.write_text(f'#!/bin/bash\ntouch {str(marker)!r}\n')
+    evil.chmod(0o755)
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', '--upload-pack=./evil',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=2,
+    )
+    evil.unlink()
+    check('T-20 leading-dash --target-base is rejected as prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check('T-20 leading-dash --target-base never executes the option payload', not marker.exists(), marker)
+
+    # T-21: an empty --target-base (Protocol 91 invoking with an unresolved
+    # BASE_BRANCH) routes through the same documented prerequisite-failed
+    # shape, not a bare tooling failure.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', '',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=2,
+    )
+    check('T-21 empty --target-base is prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check('T-21 empty --target-base detail names --target-base', '--target-base' in data.get('PREREQUISITE_DETAIL', ''), data)
+
 print(f'\nPassed: {passed}')
 PY
