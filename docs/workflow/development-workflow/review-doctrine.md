@@ -82,3 +82,15 @@ the reason field entirely.
 
 **Detect**: Does the example satisfy every requirement stated in the adjacent
 rule, with no extra steps the rule forbids?
+
+### Enumeration treated as contract
+
+**Shape**: A delta from a previously agreed list is treated as a defect in
+itself, with no statement of what the missing entries were protecting.
+
+**Example**: A revision ships fewer rows than an earlier list enumerated, and
+the review blocks on the count alone, without naming what the removed rows
+exercised or what now goes unverified.
+
+**Detect**: For each entry called missing, can you name the behavior it
+exercised and the failure that now goes unnoticed?
