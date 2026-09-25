@@ -90,9 +90,11 @@ For a worked instance of this rule — a regex-based key-extraction scanner, its
 ## Test-Scope Proportionality
 
 When the test scaffolding you ship (fixture manifests, proof-cycle lists, case
-tables, scenario enumerations) is smaller than what the plan projected, but
-coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
-description before opening the PR: which plan enumeration was reduced, what
+tables, scenario enumerations) removes at least one item the plan projected
+(an addition-only delta does not trigger this; a net-even or net-larger swap
+that drops a projected item does), but is coverage-equivalent, write a
+`## Test-Scope Deviation Record` in the PR description before opening the
+PR: which plan enumeration was reduced, what
 was delivered instead, the coverage classes retained and which tests exercise
 them, the coverage argument, and residual risk accepted (or "None
 identified"). A plan enumeration is indicative by default and binds only when

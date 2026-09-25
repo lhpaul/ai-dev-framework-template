@@ -69,11 +69,12 @@ A delta confined to test scaffolding (fixture manifests, proof-cycle lists,
 case tables, scenario enumerations) is blocking only when the reviewer states
 a **Coverage-Harm Statement**: the specific coverage the removed items
 provided, and the defect class that now escapes. A plan enumeration is
-indicative unless marked with the exact literal `**Binding enumeration**`.
-This never relaxes review of production-code correctness (a delta that
-changes observable behaviour or drops acceptance-criterion coverage stays
-governed by the unchanged Pass 1 rule) or matching of third-party reviewer
-output. See
+indicative unless marked with the exact literal `**Binding enumeration**`,
+in which case a delta that removes a listed item stays blocking regardless
+of any Coverage-Harm Statement. This never relaxes review of production-code
+correctness (a delta that changes observable behaviour or drops
+acceptance-criterion coverage stays governed by the unchanged Pass 1 rule)
+or matching of third-party reviewer output. See
 [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
 for the full rule, the Gate A / Gate B decision matrices, and the worked
 example.
