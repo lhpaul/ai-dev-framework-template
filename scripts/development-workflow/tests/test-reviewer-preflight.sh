@@ -1697,5 +1697,64 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
+    # T-49 (bounded-Codex-pass, P2): an explicit empty --remaining-stages
+    # must short-circuit to no-review-remaining before any ref resolution
+    # or configuration read — confirmed with a --target-base that does not
+    # exist on the remote at all: pre-fix this reached mode dispatch and
+    # failed with prerequisite-failed (exit 2) despite no remaining stage
+    # ever needing that information; post-fix it must report
+    # no-review-remaining, exit 0, without ever attempting to resolve it.
+    repo49 = root / 'repo49'
+    write_repo(repo49, coherent_shared, coherent_coderabbit)
+    rc, data, out, err = run(
+        repo49, '--mode', 'pre-dispatch', '--target-base', 'nonexistent-base-that-would-fail',
+        '--remaining-stages', '',
+        expected=0,
+    )
+    check('T-49 empty remaining-stages short-circuits before target-base resolution (no-review-remaining, not prerequisite-failed)', data.get('OUTCOME') == 'no-review-remaining', data)
+    check('T-49 no platforms computed', data.get('PLATFORM_COUNT') == '0', data)
+
+    # T-50 (bounded-Codex-pass, P2): when review-overrides resolves a
+    # local override path but that path is no longer a readable regular
+    # file by the time this script's own presence check runs (deleted or
+    # replaced in between), this must fail closed as a tooling failure —
+    # not silently fall through to LOCAL_OVERRIDE_STATE=none and resolve
+    # reviewer lists as if no override existed. Fake python3 to replace
+    # the override file with a directory immediately after the real
+    # review-overrides call resolves it (a stable, deterministic
+    # reproduction of this TOCTOU window).
+    repo50 = root / 'repo50'
+    write_repo(repo50, coherent_shared, coherent_coderabbit)
+    local50 = repo50 / '.ai-dev-workflow.local.yaml'
+    local50.write_text('review:\n  on_draft:\n    runner: [claude]\n')
+    bins50 = root / 'bin50'
+    bins50.mkdir(exist_ok=True)
+    real_python50 = shutil.which('python3')
+    racy_python50 = bins50 / 'python3'
+    racy_python50.write_text(
+        '#!/bin/bash\n'
+        'is_review_overrides=0\n'
+        'for arg in "$@"; do [ "$arg" = review-overrides ] && is_review_overrides=1; done\n'
+        f'{real_python50!r} "$@"\n'
+        'rc=$?\n'
+        'if [ "$is_review_overrides" = 1 ] && [ "$rc" = 0 ]; then\n'
+        f'  rm -f {str(local50)!r}\n'
+        'fi\n'
+        'exit "$rc"\n'
+    )
+    racy_python50.chmod(0o755)
+    rc, data, out, err = run(
+        repo50, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins50}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-50 a local override removed between resolution and the presence check fails closed, not LOCAL_OVERRIDE_STATE=none', 'OUTCOME' not in data, data)
+    check(
+        'T-50 failure message names the local override file and that it no longer exists',
+        str(local50) in err and 'no longer exists' in err,
+        err,
+    )
+
 print(f'\nPassed: {passed}')
 PY

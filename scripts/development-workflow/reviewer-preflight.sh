@@ -467,6 +467,33 @@ local_override_state=none
 shared_ref= platform_ref=
 checked_shared_config_ref= checked_platform_config_ref=
 
+# The documented prerequisite order requires no-review-remaining
+# immediately after validating the target base (already done above, at
+# the CLI-syntax level) — before mode dispatch resolves any ref, and
+# before either configuration is ever read. An explicit empty
+# --remaining-stages previously still went through mode dispatch and both
+# config reads first: in a stale or partial clone unable to read
+# configuration no remaining stage would ever consult anyway, that read
+# failure surfaced as a tooling failure the run should never have reached.
+# Short-circuit straight to building the no-review-remaining input (via
+# the same reviewer_preflight_build_input.py this script always uses, so
+# the two paths cannot drift in output shape) instead.
+if [ "$remaining_stages_provided" = 1 ] && [ -z "$remaining_stages_raw" ]; then
+  input_json="$work_dir/input.json"
+  build_input_rc=0
+  clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+  run_bounded "$bound" "$work_dir/build-input.out" "$work_dir/build-input.err" \
+    python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
+    --target-base "$target_base" \
+    --remaining-stages "" \
+    --remaining-stages-provided 1 \
+    --pr-state "$pr_state_raw" \
+    --checked-shared-config-ref "" \
+    --checked-platform-config-ref "" \
+    --local-override-state none \
+    --output "$input_json" || build_input_rc=$?
+  [ "$build_input_rc" = 0 ] || fail "reviewer_preflight_build_input.py failed (exit $build_input_rc): $(cat "$work_dir/build-input.err" 2>/dev/null)"
+else
 case "$mode" in
   pre-dispatch)
     resolve_target_base_or_fail "$target_base" "--target-base"
@@ -672,18 +699,32 @@ run_bounded "$bound" "$overrides_json" "$work_dir/overrides.err" \
 [ "$overrides_rc" = 0 ] || fail "review-overrides failed (exit $overrides_rc): $(cat "$work_dir/overrides.err" 2>/dev/null)"
 local_override_file=$(jq -er '.LOCAL_OVERRIDE_FILE // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_FILE from review-overrides output'
 local_override_origin=$(jq -er '.LOCAL_OVERRIDE_ORIGIN // ""' "$overrides_json") || fail 'cannot read LOCAL_OVERRIDE_ORIGIN from review-overrides output'
-if [ -n "$local_override_file" ] && [ -f "$local_override_file" ]; then
+if [ -n "$local_override_file" ]; then
+  if [ ! -f "$local_override_file" ]; then
+    # review-overrides resolved a local override path (a non-empty
+    # LOCAL_OVERRIDE_FILE), but by the time this script's own [ -f ] test
+    # runs, that path is no longer a regular readable file — it
+    # disappeared, or was replaced by something else, in the window
+    # between review-overrides's own resolution and this check. Silently
+    # falling through here (the previous behavior) leaves
+    # local_override_state="none" and resolves reviewer lists as if no
+    # local override existed at all — a different, unreported outcome
+    # than the one review-overrides itself just proved. This is a tooling
+    # failure, not "no override configured"; fail closed rather than
+    # silently proceed without it.
+    fail "the local override file ($local_override_file) that review-overrides resolved no longer exists as a readable regular file — it may have been deleted or replaced after review-overrides resolved it"
+  fi
   # An unguarded `cp` here is terminated by `set -e` on failure with the
   # command's own exit status (typically 1) — the same exit code this
   # script's own structured `blocked` verdict (OUTCOME=blocked) uses, but
   # with no OUTCOME report at all, since the script never reaches the
   # point that would print one. A caller distinguishing outcomes by exit
   # code alone could misclassify this staging/tooling failure (the file
-  # disappearing or becoming unreadable between review-overrides
-  # resolving it and this copy) as a reviewer-configuration disagreement.
-  # Route it through fail() instead, so it is unambiguously a tooling
-  # failure (exit 3) with diagnostic context.
-  cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml" || fail "cannot copy the local override file ($local_override_file) for reading: it may have disappeared or become unreadable after review-overrides already resolved it"
+  # disappearing or becoming unreadable between the check above and this
+  # copy) as a reviewer-configuration disagreement. Route it through
+  # fail() instead, so it is unambiguously a tooling failure (exit 3)
+  # with diagnostic context.
+  cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml" || fail "cannot copy the local override file ($local_override_file) for reading: it may have disappeared or become unreadable after the presence check just above"
   # Matches the documented contract's three states (none | applied |
   # present-unpropagated <details>): a file was found (accounting for the
   # linked-worktree -> main-clone fallback via LOCAL_OVERRIDE_ORIGIN) but
@@ -776,6 +817,7 @@ malformed_count=$(jq -er '.malformed_buckets | length' "$input_json") || fail 'c
 if [ "$malformed_count" -gt 0 ]; then
   malformed_list=$(jq -er '.malformed_buckets | join(", ")' "$input_json") || malformed_list='(unreadable)'
   fail "the shared reviewer list is malformed for: $malformed_list — repair .ai-dev-workflow.yaml (or the local override) before re-running; this is the pre-existing configuration-loading step's failure, not a preflight verdict"
+fi
 fi
 
 output_json="$work_dir/output.json"
