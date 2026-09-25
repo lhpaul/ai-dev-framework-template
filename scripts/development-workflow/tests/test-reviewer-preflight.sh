@@ -620,5 +620,51 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-21 empty --target-base is prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
     check('T-21 empty --target-base detail names --target-base', '--target-base' in data.get('PREREQUISITE_DETAIL', ''), data)
 
+    # T-22: pr-resume's baseRefName (gh-reported, not CLI input) gets the
+    # same option/refspec-injection validation as --target-base — a PR
+    # whose base is a leading-dash value must not reach `fetch_ref`
+    # unvalidated. Reuses T-6's fake-gh pattern with a malicious base.
+    repo22 = root / 'repo22'
+    write_repo(repo22, coherent_shared, coherent_coderabbit)
+    marker22 = root / 'evil22-ran.marker'
+    evil22 = repo22 / 'evil'
+    evil22.write_text(f'#!/bin/bash\ntouch {str(marker22)!r}\n')
+    evil22.chmod(0o755)
+    bins22 = root / 'bin22'
+    bins22.mkdir(exist_ok=True)
+    fake_gh22 = bins22 / 'gh'
+    fake_gh22.write_text(
+        '#!/bin/bash\n'
+        'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
+        '  printf \'{"baseRefName":"--upload-pack=./evil","headRefName":"feature/x"}\\n\'\n'
+        '  exit 0\n'
+        'fi\n'
+        'exit 1\n'
+    )
+    fake_gh22.chmod(0o755)
+    rc, data, out, err = run(
+        repo22, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '99', '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins22}:{os.environ.get("PATH", "")}'},
+        expected=2,
+    )
+    evil22.unlink()
+    check('T-22 malicious PR base is rejected as prerequisite-failed', data.get('OUTCOME') == 'prerequisite-failed', data)
+    check('T-22 malicious PR base never executes the option payload', not marker22.exists(), marker22)
+
+    # T-23: a duplicate --remaining-stages token must let the engine's own
+    # duplicate-stage prerequisite-failed win, not a same-repo malformed
+    # bucket screened as still "in scope" by this predicate.
+    rc, data, out, err = run(
+        repo12, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.runner,on_draft.runner', '--pr-state', 'on_draft.runner=draft',
+        expected=2,
+    )
+    check(
+        'T-23 duplicate remaining-stages token yields prerequisite-failed, not tooling failure',
+        data.get('OUTCOME') == 'prerequisite-failed',
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY

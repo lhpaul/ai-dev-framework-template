@@ -322,6 +322,13 @@ case "$mode" in
     [ "$pr_json_rc" = 0 ] || fail "cannot read pull request #$pr metadata (exit $pr_json_rc): $(cat "$work_dir/pr.err" 2>/dev/null)"
     pr_base=$(jq -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
     pr_head=$(jq -er '.headRefName' "$work_dir/pr.json") || fail 'pull request metadata missing headRefName'
+    # gh-reported baseRefName is a value this script does not control (a PR
+    # can target any ref-format-valid branch name) and reaches fetch_ref the
+    # same unvalidated way the CLI --target-base value used to — the same
+    # option/refspec-injection risk applies here, not only to CLI input.
+    if is_option_or_refspec_like "$pr_base"; then
+      prerequisite_failed_report "pull request #$pr's base branch is not a valid branch name: $pr_base"
+    fi
     target_base="$pr_base"
     fetch_ref "$pr_base" || fail "cannot refresh origin/$pr_base from the remote"
     # A fixed ref name would race across two concurrent invocations that

@@ -113,8 +113,16 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     # this module's shell-level malformed-list stop preempt the engine's
     # prerequisite-failed verdict for the stage set itself, which the fixed
     # order requires to win first.
-    stage_set_valid = remaining_stages is not None and all(
-        isinstance(stage, str) and stage in ALL_BUCKETS for stage in remaining_stages
+    # A duplicate stage name is malformed input to classify() too (its own
+    # `len(remaining_stages) != len(set(remaining_stages))` check) — this
+    # predicate must reject it the same way, or a duplicate-containing
+    # stage set that also happens to include a genuinely malformed bucket
+    # would still let this module's shell-level malformed-list stop win
+    # over the engine's own prerequisite-failed verdict for the duplicate.
+    stage_set_valid = (
+        remaining_stages is not None
+        and all(isinstance(stage, str) and stage in ALL_BUCKETS for stage in remaining_stages)
+        and len(remaining_stages) == len(set(remaining_stages))
     )
     if not stage_set_valid:
         malformed_buckets = []
