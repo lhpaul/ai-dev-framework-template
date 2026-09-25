@@ -178,8 +178,8 @@ on a stage that should never see it.
 
 **Maps to**: AC-4 through AC-11, and the whole point of the checklist.
 
-1. Run the reviewer against each of the **eleven** fixture plans with the
-   checklist supplied: seven positives, one per check, each carrying exactly one
+1. Run the reviewer against each of the **twelve** fixture plans with the
+   checklist supplied: eight positives, one per check, each carrying exactly one
    planted instance of that check's shape; and four negatives — a step declared
    as an addition with its reason, an irreversible step declared irreversible, a
    plan whose every criterion has a falsifying test, and a Refactor plan
@@ -198,13 +198,13 @@ be to delete the suite. But a check that cannot demonstrate its pair does not
 ship: the repair is to sharpen its question in the checklist until it detects
 its own planted violation. A check that detects nothing produces a permanent
 zero in #1657's data, and a zero reads as *this does not happen* rather than
-*this check does not work*. Proofs P7 through P13.
+*this check does not work*. Proofs P7 through P14.
 
 ## Step 9: The checklist is what caused it
 
 **Maps to**: the same, negatively.
 
-1. Run the same eleven fixtures with the checklist **absent**.
+1. Run the same twelve fixtures with the checklist **absent**.
 
 **Expected result**: `STRICT_PLAN_STATE=unavailable` with
 `STRICT_PLAN_REASON=checklist_unreadable`, and no strict finding on any fixture.
@@ -233,7 +233,7 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
 | P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |
 
-### Detection (P7–P13) — Codex fail/pass pair proof
+### Detection (P7–P14) — Codex fail/pass pair proof
 
 Command per check (fail then pass):
 
