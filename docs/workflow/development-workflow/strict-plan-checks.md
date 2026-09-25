@@ -79,3 +79,16 @@ undone?
 
 **Finding shape:** a migration or contract change with no stated reversal and no
 statement that none exists.
+
+### test_scope_proportionality
+
+Source: not required
+
+**Question:** Does the plan state what coverage each group of projected test
+scaffolding provides, mark any enumeration it intends as binding, and keep
+projected volume proportionate to the deliverable?
+
+**Finding shape:** a fixture manifest, proof-cycle list, case table, or
+scenario enumeration with no stated coverage rationale, no binding marker
+where one is intended, or a volume that is out of proportion to the
+deliverable it protects.
