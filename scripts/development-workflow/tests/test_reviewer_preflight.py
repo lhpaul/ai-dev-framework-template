@@ -223,6 +223,33 @@ class OutcomeMatrixTests(unittest.TestCase):
         self.assertEqual(entry["verdict"], "not-operable")
         self.assertEqual(entry["reasons"], ["review-disabled"])
 
+    def test_base_branch_pattern_timeout_is_undetermined_check_inconclusive(self):
+        # #1561 round-20 finding: a catastrophic-backtracking base_branches
+        # pattern (e.g. "(a+)+$") must degrade this one platform's verdict
+        # to Undetermined/check-inconclusive rather than hanging classify()
+        # itself or propagating an uncaught exception.
+        payload = base_payload(target_base="a" * 30 + "!")
+        payload["platform_configs"]["coderabbit"]["base_branches"] = ["(a+)+$"]
+        result = rp.classify(payload)
+        self.assertEqual(result["outcome"], "passed-unverified")
+        entry = platform(result, "coderabbit")
+        self.assertEqual(entry["verdict"], "undetermined")
+        self.assertEqual(entry["reasons"], ["check-inconclusive"])
+
+    def test_base_branch_pattern_timeout_after_disagreement_stays_not_operable(self):
+        # Same Decision 3 precedent as the file-read timeout case above,
+        # applied to a base_branches pattern timeout: a proven disagreement
+        # (review-disabled) found before the timeout is not weakened by the
+        # inconclusive base-branch check that follows it.
+        payload = base_payload(target_base="a" * 30 + "!")
+        payload["platform_configs"]["coderabbit"]["auto_review_enabled"] = False
+        payload["platform_configs"]["coderabbit"]["base_branches"] = ["(a+)+$"]
+        result = rp.classify(payload)
+        self.assertEqual(result["outcome"], "blocked")
+        entry = platform(result, "coderabbit")
+        self.assertEqual(entry["verdict"], "not-operable")
+        self.assertEqual(entry["reasons"], ["review-disabled"])
+
     def test_undetermined_never_blocks_alone(self):
         payload = base_payload(
             shared={"on_draft_github": ["pr-agent", "coderabbit"]},
@@ -411,6 +438,38 @@ class ExitCodeTests(unittest.TestCase):
         self.assertEqual(rp.exit_code_for_outcome("no-review-remaining"), 0)
         self.assertEqual(rp.exit_code_for_outcome("blocked"), 1)
         self.assertEqual(rp.exit_code_for_outcome("prerequisite-failed"), 2)
+
+
+import reviewer_preflight_coderabbit as rpc  # noqa: E402
+
+
+class BaseBranchCoveredTests(unittest.TestCase):
+    """#1561 round-20 finding: base_branch_covered must bound each pattern
+    match against catastrophic backtracking rather than hanging."""
+
+    def test_normal_patterns_unaffected(self):
+        self.assertTrue(rpc.base_branch_covered(["develop", "main"], "develop"))
+        self.assertFalse(rpc.base_branch_covered(["develop"], "feature/x"))
+        self.assertTrue(rpc.base_branch_covered(None, "anything"))
+
+    def test_invalid_regex_pattern_skipped_not_fatal(self):
+        # An unbalanced group is a re.error, not a timeout; existing
+        # behavior (skip and keep checking) is unchanged by this fix.
+        self.assertFalse(rpc.base_branch_covered(["(unbalanced", "develop"], "main"))
+        self.assertTrue(rpc.base_branch_covered(["(unbalanced", "develop"], "develop"))
+
+    def test_pathological_pattern_raises_timeout_quickly(self):
+        import time
+
+        start = time.time()
+        with self.assertRaises(rpc.PatternTimeoutError):
+            rpc.base_branch_covered(
+                ["(a+)+$"], "a" * 30 + "!", per_pattern_timeout_seconds=0.3
+            )
+        elapsed = time.time() - start
+        # Bounded: must not run anywhere near the ~10s+ this pattern would
+        # otherwise take against this target unbounded.
+        self.assertLess(elapsed, 2.0)
 
 
 if __name__ == "__main__":

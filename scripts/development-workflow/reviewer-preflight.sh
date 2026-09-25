@@ -301,8 +301,11 @@ case "$mode" in
     # possibly stale, fetch and report it as current — mirror pr-resume's
     # own hard failure on its equivalent base-branch refresh.
     fetch_ref "$target_base" || fail "cannot refresh origin/$target_base from the remote"
-    shared_ref="origin/$target_base"
-    platform_ref="origin/$target_base"
+    # refs/remotes/origin/<name>, not the bare "origin/<name>" git would
+    # otherwise disambiguate against refs/tags/<name> first (same
+    # tag-vs-branch ambiguity as the branch-resume block below).
+    shared_ref="refs/remotes/origin/$target_base"
+    platform_ref="refs/remotes/origin/$target_base"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, before a branch exists)"
     checked_platform_config_ref="origin/$target_base:.coderabbit.yaml (this item's targeted base, before a branch exists)"
     ;;
@@ -310,7 +313,7 @@ case "$mode" in
     # Same rationale as pre-dispatch above: a swallowed failure here could
     # silently read a stale origin/$target_base as if it were current.
     fetch_ref "$target_base" || fail "cannot refresh origin/$target_base from the remote"
-    shared_ref="origin/$target_base"
+    shared_ref="refs/remotes/origin/$target_base"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, not the branch)"
     # The branch in force for Step 7's own hosted reviewers is whichever of
     # the local checkout and the remote copy is actually ahead: GitHub reads
@@ -353,24 +356,34 @@ case "$mode" in
         fail "the remote branch '$branch' is confirmed absent but its stale cached copy (refs/remotes/origin/$branch) could not be discarded — resolve manually (e.g. git update-ref -d refs/remotes/origin/$branch) before re-running; reading it would risk stale configuration"
       fi
     fi
+    # Fully qualified refs throughout, not bare "$branch" / "origin/$branch":
+    # git's own refname disambiguation tries refs/tags/<name> before
+    # refs/heads/<name> (and before refs/remotes/<remote>/<name>) for a bare
+    # revision — confirmed live: with both a tag and a branch sharing a
+    # short name, `git show <name>:file` reads the tag's content. A
+    # same-named tag with review enabled could otherwise let this preflight
+    # pass on the tag's .coderabbit.yaml before the actual branch is even
+    # pushed.
+    local_branch_ref="refs/heads/$branch"
+    remote_branch_ref="refs/remotes/origin/$branch"
     local_resolves=0 origin_resolves=0
-    git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1 && local_resolves=1
-    git -C "$repo_root" rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1 && origin_resolves=1
+    git -C "$repo_root" rev-parse --verify --quiet "${local_branch_ref}^{commit}" >/dev/null 2>&1 && local_resolves=1
+    git -C "$repo_root" rev-parse --verify --quiet "${remote_branch_ref}^{commit}" >/dev/null 2>&1 && origin_resolves=1
     if [ "$local_resolves" = 1 ] && [ "$origin_resolves" = 1 ]; then
-      if git -C "$repo_root" merge-base --is-ancestor "origin/$branch" "$branch" 2>/dev/null; then
-        platform_ref="$branch"
+      if git -C "$repo_root" merge-base --is-ancestor "$remote_branch_ref" "$local_branch_ref" 2>/dev/null; then
+        platform_ref="$local_branch_ref"
         checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch; the local copy is at or ahead of the remote)"
-      elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$branch" 2>/dev/null; then
-        platform_ref="origin/$branch"
+      elif git -C "$repo_root" merge-base --is-ancestor "$local_branch_ref" "$remote_branch_ref" 2>/dev/null; then
+        platform_ref="$remote_branch_ref"
         checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, refreshed from the remote; the local copy is behind)"
       else
         fail "the local and remote copies of branch '$branch' have diverged (neither is an ancestor of the other) — reconcile them (pull/rebase, or push local changes) before re-running; this preflight cannot determine which copy's .coderabbit.yaml is the branch in force"
       fi
     elif [ "$origin_resolves" = 1 ]; then
-      platform_ref="origin/$branch"
+      platform_ref="$remote_branch_ref"
       checked_platform_config_ref="origin/$branch:.coderabbit.yaml (this item's existing branch, resolved from the remote; no local copy of it exists in this checkout)"
     else
-      platform_ref="$branch"
+      platform_ref="$local_branch_ref"
       checked_platform_config_ref="$branch:.coderabbit.yaml (this item's existing branch, no pull request yet)"
     fi
     ;;
@@ -406,7 +419,7 @@ case "$mode" in
     # that).
     created_pr_ref="$pr_ref"
     fetch_ref "pull/$pr/head:$pr_ref" || fail "cannot fetch pull request #$pr head"
-    shared_ref="origin/$pr_base"
+    shared_ref="refs/remotes/origin/$pr_base"
     platform_ref="$pr_ref"
     checked_shared_config_ref="origin/$pr_base:.ai-dev-workflow.yaml (PR #$pr's own target base branch, refreshed)"
     checked_platform_config_ref="PR #$pr's own branch ($pr_head):.coderabbit.yaml"

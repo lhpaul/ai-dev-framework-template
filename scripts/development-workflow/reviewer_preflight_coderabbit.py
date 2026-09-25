@@ -15,15 +15,58 @@ on for ``coderabbit-config`` / ``coderabbit-dependency`` classification.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
+import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 class ConfigError(ValueError):
     """Raised for a malformed or unreadable .coderabbit.yaml."""
+
+
+class PatternTimeoutError(RuntimeError):
+    """Raised when a single base_branches regex match exceeds its bounded budget.
+
+    A ``base_branches`` entry is operator-authored regex (documented in
+    .coderabbit.yaml) reused verbatim from the shared or platform config this
+    preflight reads — not sanitized against catastrophic backtracking, e.g.
+    ``(a+)+$``. Confirmed live: a ~30-character crafted target base name kept
+    ``re.fullmatch`` running past 10 seconds against that pattern. Without a
+    bound on the match itself, that one pathological pattern exhausts this
+    whole classifier subprocess's outer time budget (reviewer-preflight.sh's
+    own bounded launcher then kills it and reports a generic tooling
+    failure), rather than degrading only the one platform's verdict to
+    Undetermined/check-inconclusive the way every other bounded read in this
+    preflight already does.
+    """
+
+
+@contextlib.contextmanager
+def _bounded_regex_match(seconds: float) -> Iterator[None]:
+    if not hasattr(signal, "setitimer") or not hasattr(signal, "SIGALRM"):
+        # No POSIX interval timer on this platform (e.g. Windows) — signal-
+        # based bounding is unavailable here. This preflight's shell layer
+        # still bounds the whole classifier subprocess; the per-pattern
+        # bound below is defense in depth on top of that, not the only
+        # bound, so skipping it is a narrowing of protection, not a loss of
+        # it, on the platforms where it is unavailable.
+        yield
+        return
+
+    def _handler(signum: int, frame: Any) -> None:
+        raise PatternTimeoutError("regex match exceeded its bounded time budget")
+
+    previous_handler = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _mapping(value: Any, name: str) -> dict[str, Any]:
@@ -147,14 +190,28 @@ def load_coderabbit_config(path: Path) -> dict[str, Any]:
     return parse_coderabbit_text(text)
 
 
-def base_branch_covered(base_branches: list[str] | None, target_base: str) -> bool:
-    """``base_branches`` entries are regexes (documented in .coderabbit.yaml)."""
+def base_branch_covered(
+    base_branches: list[str] | None,
+    target_base: str,
+    *,
+    per_pattern_timeout_seconds: float = 0.5,
+) -> bool:
+    """``base_branches`` entries are regexes (documented in .coderabbit.yaml).
+
+    Raises ``PatternTimeoutError`` if a single pattern's match against
+    ``target_base`` does not complete within ``per_pattern_timeout_seconds``
+    (see ``PatternTimeoutError``'s docstring). The caller decides how to
+    report that — this function does not itself know whether an earlier or
+    later pattern in the list would have matched, so it cannot silently
+    substitute True or False for a genuinely inconclusive result.
+    """
     if base_branches is None:
         return True
     for pattern in base_branches:
         try:
-            if re.fullmatch(pattern, target_base):
-                return True
+            with _bounded_regex_match(per_pattern_timeout_seconds):
+                if re.fullmatch(pattern, target_base):
+                    return True
         except re.error:
             continue
     return False

@@ -24,7 +24,7 @@ import json
 import sys
 from typing import Any
 
-from reviewer_preflight_coderabbit import base_branch_covered
+from reviewer_preflight_coderabbit import PatternTimeoutError, base_branch_covered
 
 # Per-bucket supported reviewer platform lists (spec: "value-not-supported").
 # A value supported in one bucket is not automatically supported in another —
@@ -237,8 +237,38 @@ def classify_platform_in_bucket(
     if stage_pr_state == "draft" and cfg.get("drafts") is not True:
         reasons.append("stage-excluded")
     base_branches = cfg.get("base_branches")
-    if base_branches is not None and not base_branch_covered(base_branches, target_base):
-        reasons.append("base-branch-unmatched")
+    base_branch_timed_out = False
+    if base_branches is not None:
+        try:
+            if not base_branch_covered(base_branches, target_base):
+                reasons.append("base-branch-unmatched")
+        except PatternTimeoutError:
+            base_branch_timed_out = True
+
+    if base_branch_timed_out and not reasons:
+        # Same precedent as the config-read timeout handled above (Decision
+        # 3): a bounded check that could not complete in time reports
+        # Undetermined/check-inconclusive for this one platform, rather than
+        # this function raising and letting reviewer-preflight.sh's outer
+        # subprocess bound kill the whole classifier — which would turn one
+        # platform's pathological base_branches pattern into a hard tooling
+        # failure for every remaining platform's verdict, not just this
+        # one's. When another reason already proved a disagreement (e.g.
+        # review-disabled) before the timeout, that proof stands on its own
+        # and is not weakened by an inconclusive base-branch check, so it
+        # falls through to the not-operable return below unchanged.
+        return {
+            "bucket": bucket,
+            "verdict": "undetermined",
+            "reasons": ["check-inconclusive"],
+            "surface": "",
+            "setting": "",
+            "detail": (
+                f"{name}'s base_branches pattern could not be evaluated "
+                "within the preflight's bounded time budget."
+            ),
+            "remedy": "",
+        }
 
     if not reasons:
         return {

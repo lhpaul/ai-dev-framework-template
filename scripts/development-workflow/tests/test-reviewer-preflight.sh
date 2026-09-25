@@ -969,5 +969,53 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-32 (#1561 round-20 finding): a local-only resumed branch that shares
+    # its short name with a tag must resolve through refs/heads/<name>, not
+    # let git's own refname disambiguation (which tries refs/tags/<name>
+    # before refs/heads/<name>) silently substitute the tag's
+    # .coderabbit.yaml. Build a same-named tag pointing at a commit with
+    # review DISABLED, then a same-named local branch (no remote copy) with
+    # review ENABLED; branch-resume must report the branch's own (enabled)
+    # config, not fall through to the tag's disabled one.
+    repo32 = root / 'repo32'
+    write_repo(repo32, coherent_shared, coherent_coderabbit)
+    git(repo32, 'checkout', '-q', '-b', 'shared-name-test')
+    (repo32 / '.coderabbit.yaml').write_text(disabled_coderabbit)
+    git(repo32, 'add', '-A')
+    git(repo32, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'tag target: review disabled')
+    git(repo32, 'tag', 'shared-name-test')
+    git(repo32, 'checkout', '-q', 'develop')
+    git(repo32, 'branch', '-D', 'shared-name-test')
+    git(repo32, 'checkout', '-q', '-b', 'shared-name-test-branch-only')
+    git(repo32, 'branch', '-m', 'shared-name-test-branch-only', 'shared-name-test')
+    # shared-name-test is now: a tag (review disabled) AND a local-only
+    # branch of the same short name (review enabled, coherent_coderabbit,
+    # inherited from develop) with no remote copy — the exact ambiguous
+    # shape git's own refname disambiguation resolves against refs/tags/
+    # first for a bare revision.
+    check(
+        'T-32 fixture sanity: bare name resolves the TAG (disabled), confirming the ambiguity exists',
+        git(repo32, 'show', 'shared-name-test:.coderabbit.yaml').stdout == disabled_coderabbit,
+    )
+    rc, data, out, err = run(
+        repo32, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'shared-name-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=0,
+    )
+    check(
+        'T-32 branch-resume resolves the fully-qualified local BRANCH, not the same-named tag',
+        data.get('OUTCOME') == 'passed',
+        data,
+    )
+    # The OUTCOME=passed check above is the primary assertion (a
+    # disabled-tag misread would report OUTCOME=blocked instead, since
+    # coherent_shared lists coderabbit and review-disabled is a not-operable
+    # reason). Cross-check directly against the git ref resolution the fix
+    # targets, independent of the report's rendering shape.
+    check(
+        'T-32 refs/heads/<name> (the branch) is what actually has review enabled',
+        git(repo32, 'show', 'refs/heads/shared-name-test:.coderabbit.yaml').stdout == coherent_coderabbit,
+    )
+
 print(f'\nPassed: {passed}')
 PY
