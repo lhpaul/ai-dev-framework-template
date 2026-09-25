@@ -109,8 +109,12 @@ then `Type`. If your board uses a different name, set
   `Bug` for product work and use `Workflow` for framework/process/tooling
   items. In a **framework-mode repository** (`template.is_template: true` —
   this template repository is one), `Workflow` is refused before creation
-  and an existing Backlog item typed `Workflow` is never routed to a
-  pipeline (#1583); this repository's own framework/process/tooling items
+  and an existing Backlog item typed `Workflow` is stopped or held — not
+  routed to a pipeline — via a single-item run (`/run-item`) or a portfolio
+  scan (`/run-work`); `/run-items` and `/run-epic` are unchanged and do not
+  consult this gate (deferred to #1779), and a stale Backlog item that
+  already has development-folder artifacts or branch/PR evidence continues
+  unaffected (#1583). This repository's own framework/process/tooling items
   are classified `Feature`, `Bug`, or `Refactor` instead.
 
 ### 4. Issue Labels (on the Repository)
