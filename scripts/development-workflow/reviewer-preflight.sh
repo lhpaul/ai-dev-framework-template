@@ -130,6 +130,15 @@ if [ "$mode" = branch-resume ]; then
 fi
 if [ "$mode" = pr-resume ]; then
   [ -n "$pr" ] || fail '--pr is required for --mode pr-resume'
+  # --pr reaches `gh pr view "$pr" ...` as a bare argument gh itself parses:
+  # a leading-dash value such as "--help" is accepted as a gh CLI flag
+  # rather than a PR number (gh pr view --help exits 0 with help text,
+  # misreported as a generic tooling failure here), and other flags like
+  # --web could select unrelated behavior. Require a plain positive integer
+  # before this value ever reaches gh.
+  case "$pr" in
+    ''|*[!0-9]*) fail "--pr must be a positive integer, not a flag or other value: $pr" ;;
+  esac
   [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
 fi
 
@@ -146,7 +155,18 @@ created_pr_ref=
 cleanup() {
   local rc=$?
   if [ -n "$created_pr_ref" ]; then
-    git -C "$repo_root" update-ref -d "$created_pr_ref" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - best-effort cleanup inside the EXIT trap; the process is already exiting and there is no further step that could react to this failure
+    git -C "$repo_root" update-ref -d "$created_pr_ref" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - the immediately following verification, not this exit status, is what this script relies on
+    # A cleanup failure here (e.g. another process holds the ref lock) must
+    # not silently preserve whatever exit status the run was otherwise
+    # going to return — that would leave refs/reviewer-preflight/... behind
+    # despite this script's own read-only/no-persistent-side-effect
+    # contract (AC-2), and repeated failures would accumulate persistent
+    # refs. Verify the ref genuinely no longer resolves; override the exit
+    # status to a tooling failure if it still does.
+    if git -C "$repo_root" rev-parse --verify --quiet "$created_pr_ref" >/dev/null 2>&1; then
+      printf 'ERROR: could not discard the temporary PR-head ref (%s) created during this run; resolve manually (e.g. git update-ref -d %s) before trusting this run left no trace (AC-2)\n' "$created_pr_ref" "$created_pr_ref" >&2
+      rc=3
+    fi
   fi
   [ -z "$work_dir" ] || rm -rf -- "$work_dir"
   return "$rc"
@@ -511,36 +531,53 @@ if [ "$json_output" = true ]; then
   exit "$preflight_rc"
 fi
 
-print_kv_escaped OUTCOME "$(jq -r '.outcome' "$output_json")"
-print_kv_escaped OUTCOME_LABEL "$(jq -r '.outcome_label' "$output_json")"
-print_kv_escaped CHECKED_SHARED_CONFIG_REF "$(jq -r '.checked_shared_config_ref' "$output_json")"
-print_kv_escaped CHECKED_PLATFORM_CONFIG_REF "$(jq -r '.checked_platform_config_ref' "$output_json")"
-print_kv_escaped LOCAL_OVERRIDE_STATE "$(jq -r '.local_override_state' "$output_json")"
-# Only present when OUTCOME=prerequisite-failed; the orchestrator's stop
+# A configuration listing many distinct reviewer values (every one still
+# gets its own platform row, even an unsupported value — value-not-
+# supported is a per-platform verdict, not a filter) previously launched
+# roughly nine unbounded jq subprocesses per platform here, well after all
+# deadline-controlled work had finished; a large-enough list could stall
+# this mandatory dispatch gate past its advertised budget outright, not
+# merely under-report ELAPSED_SECONDS (the earlier, insufficient fix).
+# Render the entire report — the fixed header fields and every platform
+# row — in exactly one bounded jq pass instead, NUL-delimited so no field's
+# own content (detail/remedy free text) can be misread as a separator.
+clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+report_rc=0
+run_bounded "$bound" "$work_dir/report-fields.out" "$work_dir/report-fields.err" \
+  jq -j '
+    (.outcome, .outcome_label, .checked_shared_config_ref, .checked_platform_config_ref, .local_override_state, (.prerequisite_detail // ""), (.platforms | length | tostring)),
+    (.platforms[] | (.name, .verdict, (.reasons | join(",")), .surface, .setting, .detail, .remedy, (.override_added | tostring), (.bucket_results | tojson)))
+    | . + "\u0000"
+  ' "$output_json" || report_rc=$?
+[ "$report_rc" = 0 ] || fail "cannot render the report (exit $report_rc): $(cat "$work_dir/report-fields.err" 2>/dev/null)"
+report_fields=()
+while IFS= read -r -d '' report_field; do report_fields+=("$report_field"); done <"$work_dir/report-fields.out"
+print_kv_escaped OUTCOME "${report_fields[0]}"
+print_kv_escaped OUTCOME_LABEL "${report_fields[1]}"
+print_kv_escaped CHECKED_SHARED_CONFIG_REF "${report_fields[2]}"
+print_kv_escaped CHECKED_PLATFORM_CONFIG_REF "${report_fields[3]}"
+print_kv_escaped LOCAL_OVERRIDE_STATE "${report_fields[4]}"
+# Only meaningful when OUTCOME=prerequisite-failed; the orchestrator's stop
 # message needs this to name the specific failed input (Protocol 91's
 # named-stop contract), not just the outcome label.
-print_kv_escaped PREREQUISITE_DETAIL "$(jq -r '.prerequisite_detail // ""' "$output_json")"
-platform_count=$(jq -er '.platforms | length' "$output_json") || fail 'cannot read platform count from reviewer_preflight.py output'
+print_kv_escaped PREREQUISITE_DETAIL "${report_fields[5]}"
+platform_count="${report_fields[6]}"
 print_kv_escaped PLATFORM_COUNT "$platform_count"
-i=0
-while [ "$i" -lt "$platform_count" ]; do
-  n=$((i + 1))
-  print_kv_escaped "PLATFORM_${n}_NAME" "$(jq -r ".platforms[$i].name" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_VERDICT" "$(jq -r ".platforms[$i].verdict" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_REASONS" "$(jq -r ".platforms[$i].reasons | join(\",\")" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_SURFACE" "$(jq -r ".platforms[$i].surface" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_SETTING" "$(jq -r ".platforms[$i].setting" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_DETAIL" "$(jq -r ".platforms[$i].detail" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_REMEDY" "$(jq -r ".platforms[$i].remedy" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_OVERRIDE_ADDED" "$(jq -r ".platforms[$i].override_added" "$output_json")"
-  print_kv_escaped "PLATFORM_${n}_BUCKET_JSON" "$(jq -c ".platforms[$i].bucket_results" "$output_json")"
-  i=$((i + 1))
+idx=7
+n=0
+while [ "$n" -lt "$platform_count" ]; do
+  n=$((n + 1))
+  print_kv_escaped "PLATFORM_${n}_NAME" "${report_fields[$idx]}"
+  print_kv_escaped "PLATFORM_${n}_VERDICT" "${report_fields[$((idx + 1))]}"
+  print_kv_escaped "PLATFORM_${n}_REASONS" "${report_fields[$((idx + 2))]}"
+  print_kv_escaped "PLATFORM_${n}_SURFACE" "${report_fields[$((idx + 3))]}"
+  print_kv_escaped "PLATFORM_${n}_SETTING" "${report_fields[$((idx + 4))]}"
+  print_kv_escaped "PLATFORM_${n}_DETAIL" "${report_fields[$((idx + 5))]}"
+  print_kv_escaped "PLATFORM_${n}_REMEDY" "${report_fields[$((idx + 6))]}"
+  print_kv_escaped "PLATFORM_${n}_OVERRIDE_ADDED" "${report_fields[$((idx + 7))]}"
+  print_kv_escaped "PLATFORM_${n}_BUCKET_JSON" "${report_fields[$((idx + 8))]}"
+  idx=$((idx + 9))
 done
-# Captured here, not before this loop: the per-platform report rows above
-# are themselves several unbounded jq reads each, so an earlier capture
-# would under-report ELAPSED_SECONDS by however long rendering the report
-# itself took — exactly the gap this run's own wall-clock guarantee is
-# supposed to be honest about.
 print_kv_escaped ELAPSED_SECONDS "$SECONDS"
 print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
 

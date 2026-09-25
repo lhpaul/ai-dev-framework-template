@@ -807,5 +807,97 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-26 undeletable stale ref fails closed instead of reading stale data', 'OUTCOME' not in data, data)
     check('T-26 failure message names the branch', 'feature/undeletable-ref-test' in err, err)
 
+    # T-27: the report-rendering rewrite (one bounded jq pass instead of
+    # ~9 per platform) must still render every platform row correctly,
+    # including an unsupported value (which still gets its own row) mixed
+    # with an operable one — proving field-to-row alignment survives the
+    # single-pass NUL-delimited parse.
+    repo27 = root / 'repo27'
+    write_repo(
+        repo27,
+        (
+            'review:\n'
+            '  on_draft:\n'
+            '    github:\n'
+            '      - coderabbit\n'
+            '      - not-a-real-reviewer\n'
+        ),
+        coherent_coderabbit,
+    )
+    rc, data, out, err = run(
+        repo27, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=1,
+    )
+    check('T-27 multi-platform report renders both rows', data.get('PLATFORM_COUNT') == '2', data)
+    names = {data.get('PLATFORM_1_NAME'), data.get('PLATFORM_2_NAME')}
+    check('T-27 both platform names appear', names == {'coderabbit', 'not-a-real-reviewer'}, data)
+    for n in ('1', '2'):
+        name = data.get(f'PLATFORM_{n}_NAME')
+        verdict = data.get(f'PLATFORM_{n}_VERDICT')
+        expected_verdict = 'operable' if name == 'coderabbit' else 'not-operable'
+        check(f'T-27 platform {n} ({name}) verdict aligns with its own row', verdict == expected_verdict, data)
+
+    # T-28: --pr reaches `gh pr view "$pr" ...` as a bare argument gh
+    # itself parses — a leading-dash value must be rejected before it
+    # could be interpreted as a gh CLI flag instead of a PR number.
+    rc, data, out, err = run(
+        repo1, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '--help',
+        '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=3,
+    )
+    check('T-28 non-numeric --pr is rejected', 'OUTCOME' not in data, data)
+    check('T-28 rejection message names --pr', '--pr' in err, err)
+
+    # T-29: a pr-resume temporary-ref cleanup failure must override the
+    # exit status to a tooling failure, not silently preserve whatever
+    # status the run was otherwise about to return — the script's own
+    # read-only / no-persistent-side-effect contract (AC-2) depends on the
+    # ref genuinely being gone, not merely on the delete command having
+    # been attempted.
+    repo29 = root / 'repo29'
+    write_repo(repo29, coherent_shared, coherent_coderabbit)
+    git(repo29, 'checkout', '-q', '-b', 'feature/pr29-test')
+    git(repo29, 'add', '-A')
+    git(repo29, 'update-ref', 'refs/pull/29/head', 'refs/heads/feature/pr29-test')
+    git(repo29, 'checkout', '-q', 'develop')
+    bins29 = root / 'bin29'
+    bins29.mkdir(exist_ok=True)
+    fake_gh29 = bins29 / 'gh'
+    fake_gh29.write_text(
+        '#!/bin/bash\n'
+        'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
+        '  printf \'{"baseRefName":"develop","headRefName":"feature/pr29-test"}\\n\'\n'
+        '  exit 0\n'
+        'fi\n'
+        'exit 1\n'
+    )
+    fake_gh29.chmod(0o755)
+    real_git29 = shutil.which('git')
+    blocking_git29 = bins29 / 'git'
+    blocking_git29.write_text(
+        '#!/bin/bash\n'
+        'has_update_ref=0; has_delete=0\n'
+        'for arg in "$@"; do\n'
+        '  [ "$arg" = update-ref ] && has_update_ref=1\n'
+        '  [ "$arg" = -d ] && has_delete=1\n'
+        'done\n'
+        'if [ "$has_update_ref" = 1 ] && [ "$has_delete" = 1 ]; then\n'
+        '  echo "error: cannot lock ref (simulated)" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        f'exec {real_git29!r} "$@"\n'
+    )
+    blocking_git29.chmod(0o755)
+    rc, data, out, err = run(
+        repo29, '--mode', 'pr-resume', '--target-base', 'develop', '--pr', '29', '--owner', 'example', '--repo', 'test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins29}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-29 undeletable pr-resume temp ref overrides exit status to tooling failure', True, (rc, data, err))
+    check('T-29 failure message names the temporary ref', 'refs/reviewer-preflight/pr-29' in err, err)
+
 print(f'\nPassed: {passed}')
 PY
