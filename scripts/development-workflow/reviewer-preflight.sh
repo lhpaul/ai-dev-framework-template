@@ -233,20 +233,48 @@ clamp_bound() {
   [ "$bound" -le "$1" ] || bound=$1
 }
 
-# Like clamp_bound, but never shrinks to zero: the input builder and the
-# classifier do no I/O of their own (only in-memory JSON work on fragments
-# every earlier bounded read has already produced), so they must always get
-# a real, if small, chance to run and still produce the graceful-degrade
-# outcome (check-inconclusive per platform) this preflight's time-bound
-# design exists to reach — starving them to zero just because upstream
-# reads consumed the whole budget would turn that intended degrade path
-# into a tooling failure instead. The 1-second floor keeps the worst-case
-# total overrun past PREFLIGHT_BUDGET_SECONDS small and bounded, rather
-# than the unconditional per-step cap this replaces.
+# Like clamp_bound, but never shrinks to zero the FIRST time the deadline is
+# already spent: several final-mile steps (the before/after porcelain
+# snapshots, the input builder, the classifier, and the report renderer) do
+# little or no I/O of their own, so they should still get a real, if small,
+# chance to run rather than being starved to an automatic tooling failure
+# purely because upstream reads already consumed the whole nominal budget.
+#
+# This 1-second floor extends the effective deadline itself by exactly one
+# second, ONE TIME per invocation (floor_extended) — it does not grant a
+# fresh 1-second budget to every call site that happens to run after the
+# original deadline. This script has up to six clamp_bound_floor call
+# sites in a single run (the before-porcelain snapshot, the no-review-
+# remaining short-circuit's own input build, the normal-path input build,
+# the classifier, the after-porcelain snapshot, and the report renderer);
+# an earlier version of this function reset `remaining` to a fresh 1 on
+# every post-deadline call, which could let a slow run overrun
+# PREFLIGHT_BUDGET_SECONDS by several seconds in aggregate, not the single
+# bounded second the design intends. A later version instead granted the
+# floor to only the FIRST post-deadline caller and starved every
+# subsequent one to bound=0 — but that starves the normal, expected
+# T-7-shaped case (one platform read genuinely times out, and two or more
+# fast in-memory steps still need to run afterward) into an outright
+# tooling failure instead of the intended passed-unverified degrade.
+# Extending the deadline itself, once, lets every call after the first
+# floored one share whatever fraction of that single second remains
+# (naturally shrinking as SECONDS advances), rather than each getting its
+# own full fresh second or the later ones getting none at all.
+#
+# floor_deadline_extension (not PREFLIGHT_BUDGET_SECONDS itself) carries
+# the one-time extension, so the nominal budget this run was actually
+# given stays intact for the JSON/report BUDGET_SECONDS field and every
+# other reader of PREFLIGHT_BUDGET_SECONDS — only clamp_bound_floor's own
+# remaining-time arithmetic sees the extended effective deadline.
+floor_deadline_extension=0
 clamp_bound_floor() {
   local remaining
-  remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
-  [ "$remaining" -ge 1 ] || remaining=1
+  remaining=$((PREFLIGHT_BUDGET_SECONDS + floor_deadline_extension - SECONDS))
+  if [ "$remaining" -lt 1 ] && [ "$floor_deadline_extension" = 0 ]; then
+    floor_deadline_extension=1
+    remaining=$((PREFLIGHT_BUDGET_SECONDS + floor_deadline_extension - SECONDS))
+  fi
+  [ "$remaining" -ge 0 ] || remaining=0
   bound=$remaining
   [ "$bound" -le "$1" ] || bound=$1
 }
@@ -268,7 +296,21 @@ fi
 run_bounded() {
   local bound=$1 output=$2 error=$3 rc=0
   shift 3
-  [ "$bound" -gt 0 ] || return 124
+  if [ "$bound" -le 0 ]; then
+    # Every caller reads $output/$error unconditionally after a non-zero
+    # return (several via a bare `cat`, not just `$(... 2>/dev/null)`
+    # substitutions) — this starved-before-launch return must leave both
+    # present, the same as every other exit path below, which always runs
+    # the child with `>"$output" 2>"$error"` redirection even when later
+    # killed for a timeout. Without this, a genuinely zero-second bound
+    # (reachable once clamp_bound_floor's one-time reserve is already
+    # spent) skips creating either file, and an unguarded downstream `cat`
+    # then fails under `set -e` with an unrelated exit status instead of
+    # this function's own documented 124/fail() contract.
+    : >"$output" 2>/dev/null || true
+    : >"$error" 2>/dev/null || true
+    return 124
+  fi
   if [ "$use_gnu_timeout" = 1 ]; then
     timeout --kill-after=1 "$bound" "$@" >"$output" 2>"$error" || rc=$?
     case "$rc" in 124|137) return 124 ;; *) return "$rc" ;; esac

@@ -1777,5 +1777,34 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
+    # T-51 (#1561 round-7 finding, P2): clamp_bound_floor's 1-second floor
+    # must extend the effective deadline exactly ONCE per invocation, not
+    # grant a fresh 1-second budget to every post-deadline call site — an
+    # earlier version of this function reset `remaining` to a fresh 1 on
+    # every call after the deadline, which could let a slow run overrun
+    # PREFLIGHT_BUDGET_SECONDS by several seconds in aggregate across the
+    # up to six clamp_bound_floor call sites in a single invocation (the
+    # before-porcelain snapshot, either input-build path, the classifier,
+    # the after-porcelain snapshot, and the report renderer). Reuse T-7's
+    # own reliable, non-race-prone timing fixture (a real git subprocess
+    # bounded well under its artificial 5-second delay, not a tight
+    # sub-second race against another fake) and assert the reported
+    # BUDGET_SECONDS stays exactly the nominal value passed in (not
+    # inflated by however many post-deadline call sites happened to run)
+    # and ELAPSED_SECONDS stays within budget plus the platform cap plus a
+    # single one-second floor extension — not budget plus the cap plus one
+    # second per post-deadline call site.
+    rc, data, out, err = run(
+        repo7, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env=env2, expected=0,
+    )
+    check('T-51 reported BUDGET_SECONDS is the nominal input, not inflated by the floor extension', data.get('BUDGET_SECONDS') == '2', data)
+    check(
+        'T-51 elapsed stays within budget + per-platform cap + a single one-second floor extension, not one extension per post-deadline call site',
+        float(data.get('ELAPSED_SECONDS', '999')) <= 5.0,
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY
