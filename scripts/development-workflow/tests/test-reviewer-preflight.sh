@@ -266,9 +266,13 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         expected=3,
     )
     check('T-9 unresolved shared ref fails closed, not empty-config', 'OUTCOME' not in data, data)
+    # The base-branch refresh (fetch_ref) now fails closed before ever
+    # reaching read_ref_file for a target-base that does not exist on the
+    # remote at all — an earlier, equally valid "fails closed, names the
+    # ref" failure than read_ref_file's own "did not resolve" message.
     check(
         'T-9 unresolved shared ref names the ref, not "absent"',
-        'nonexistent-target-branch' in err and 'did not resolve' in err,
+        'nonexistent-target-branch' in err and 'cannot refresh' in err,
         err,
     )
 
@@ -452,6 +456,38 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     )
     check('T-14 branch-resume fails closed on true divergence', 'OUTCOME' not in data, data)
     check('T-14 branch-resume divergence message names the branch', 'diverged' in err, err)
+
+    # T-15: a base-branch refresh that fails while a stale origin/<base>
+    # already exists (from an earlier successful fetch) must not silently
+    # read that stale copy as current — the base-branch refresh itself must
+    # fail closed, the same as pr-resume's own equivalent refresh already
+    # does. A `git` wrapper fails only the `fetch` subcommand so the
+    # earlier `write_repo` setup (which already fetched origin/develop once
+    # successfully) leaves a real, pre-existing stale ref behind.
+    repo15_bins = root / 'repo15-bin'
+    repo15_bins.mkdir(exist_ok=True)
+    real_git15 = shutil.which('git')
+    failing_git = repo15_bins / 'git'
+    failing_git.write_text(
+        '#!/bin/bash\n'
+        # reviewer-preflight.sh invokes fetch as `git -C <root> fetch ...`,
+        # so "fetch" is not necessarily $1 — scan every argument.
+        'for arg in "$@"; do if [ "$arg" = fetch ]; then echo "fatal: simulated fetch failure" >&2; exit 1; fi; done\n'
+        f'exec {real_git15!r} "$@"\n'
+    )
+    failing_git.chmod(0o755)
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{repo15_bins}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-15 fetch failure with a pre-existing stale ref fails closed', 'OUTCOME' not in data, data)
+    check(
+        'T-15 fetch failure message names the base branch',
+        'develop' in err and 'cannot refresh' in err,
+        err,
+    )
 
 print(f'\nPassed: {passed}')
 PY

@@ -182,14 +182,20 @@ checked_shared_config_ref= checked_platform_config_ref=
 
 case "$mode" in
   pre-dispatch)
-    fetch_ref "$target_base" || true
+    # A swallowed fetch failure here would silently read whatever
+    # origin/$target_base happened to already hold from an earlier,
+    # possibly stale, fetch and report it as current — mirror pr-resume's
+    # own hard failure on its equivalent base-branch refresh.
+    fetch_ref "$target_base" || fail "cannot refresh origin/$target_base from the remote"
     shared_ref="origin/$target_base"
     platform_ref="origin/$target_base"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, before a branch exists)"
     checked_platform_config_ref="origin/$target_base:.coderabbit.yaml (this item's targeted base, before a branch exists)"
     ;;
   branch-resume)
-    fetch_ref "$target_base" || true
+    # Same rationale as pre-dispatch above: a swallowed failure here could
+    # silently read a stale origin/$target_base as if it were current.
+    fetch_ref "$target_base" || fail "cannot refresh origin/$target_base from the remote"
     shared_ref="origin/$target_base"
     checked_shared_config_ref="origin/$target_base:.ai-dev-workflow.yaml (this item's targeted base, not the branch)"
     # The branch in force for Step 7's own hosted reviewers is whichever of
@@ -333,7 +339,17 @@ else
 fi
 
 input_json="$work_dir/input.json"
-python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
+build_input_rc=0
+# A fixed bound, not clamp_bound's remaining-wall-clock-budget: this step
+# does no I/O (only in-memory JSON assembly from already-read fragments),
+# so it must always get a real chance to run and produce an outcome even
+# when earlier bounded reads consumed the whole overall budget — that is
+# exactly the graceful-degrade path (check-inconclusive per platform) this
+# preflight is supposed to reach, not a reason to starve the one step that
+# still has to assemble that degraded result.
+bound="$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$work_dir/build-input.out" "$work_dir/build-input.err" \
+  python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
   --runner-json "$runner_json" \
   --github-json "$github_json" \
   --coderabbit-json "$coderabbit_json" \
@@ -345,7 +361,8 @@ python3 "$SCRIPT_DIR/reviewer_preflight_build_input.py" \
   --checked-shared-config-ref "$checked_shared_config_ref" \
   --checked-platform-config-ref "$checked_platform_config_ref" \
   --local-override-state "$local_override_state" \
-  --output "$input_json"
+  --output "$input_json" || build_input_rc=$?
+[ "$build_input_rc" = 0 ] || fail "reviewer_preflight_build_input.py failed (exit $build_input_rc): $(cat "$work_dir/build-input.err" 2>/dev/null)"
 
 # Decision 5: a malformed shared reviewer list is the pre-existing
 # configuration-loading step's responsibility, not this preflight's — the run
@@ -360,7 +377,13 @@ fi
 
 output_json="$work_dir/output.json"
 preflight_rc=0
-python3 "$SCRIPT_DIR/reviewer_preflight.py" --input-json "$input_json" >"$output_json" 2>"$work_dir/preflight.err" || preflight_rc=$?
+# Same rationale as build_input_rc above: a fixed bound, not the remaining
+# wall-clock budget, so the classification step that turns a degraded
+# input into a reportable outcome is never itself the thing starved to
+# zero by upstream I/O.
+bound="$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$output_json" "$work_dir/preflight.err" \
+  python3 "$SCRIPT_DIR/reviewer_preflight.py" --input-json "$input_json" || preflight_rc=$?
 if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && ! jq -e . "$output_json" >/dev/null 2>&1; }; then
   cat "$work_dir/preflight.err" >&2
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
