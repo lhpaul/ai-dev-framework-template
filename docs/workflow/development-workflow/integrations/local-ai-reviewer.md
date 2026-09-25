@@ -258,7 +258,7 @@ On `implementation-plan/*` branches, after the ordinary review completes, the
 plan registry entry may run a second `LOCAL_AI_REVIEWER_COMMAND` invocation
 with `LOCAL_AI_REVIEWER_MODE=strict` when the pull request changes at least one
 implementation-plan document. That pass reads
-`docs/workflow/development-workflow/strict-plan-checks.md` (seven closed-set
+`docs/workflow/development-workflow/strict-plan-checks.md` (eight closed-set
 identifiers with per-check `Source:` metadata) and must respond with:
 
 ```json
@@ -284,8 +284,9 @@ diff hunks alone.
 Checks marked `Source: required` apply only when an approved spec is present in
 that plan's development directory (presence alone — not what the plan declares).
 When no spec is present, the applied set is exactly
-`source_declaration`, `phase_ordering`, `dependency_state`, and `reversal_risk`.
-When a spec is present for at least one changed plan, all seven identifiers are
+`source_declaration`, `phase_ordering`, `dependency_state`, `reversal_risk`,
+and `test_scope_proportionality`.
+When a spec is present for at least one changed plan, all eight identifiers are
 admitted at review level; findings on a plan document without a sibling spec for
 source-dependent checks are filtered and counted in `STRICT_PLAN_UNKNOWN_COUNT`.
 
