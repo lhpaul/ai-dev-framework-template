@@ -252,6 +252,7 @@ Parser regression (separate from planted-violation proof): scenarios 20/21 and 1
 | P11 | `phase_ordering/2_…md:7` | `STRICT_2_CHECK=phase_ordering` L7 (180s) | steps reordered | no `phase_ordering` (180s) |
 | P12 | `dependency_state/2_…md:7` | `STRICT_1_CHECK=dependency_state` L7 (180s) | state + start gate | no `dependency_state` (180s pass-only) |
 | P13 | `reversal_risk/2_…md:7` | `STRICT_2_CHECK=reversal_risk` L7 | `**cannot be undone**` | no `reversal_risk` |
+| P14 | `test_scope_proportionality/2_…md:11` | `STRICT_1_CHECK=test_scope_proportionality` L11 | 3-class coverage-intent rewrite | `STRICT_PLAN_COUNT=0` |
 
 **Recorded fail-side excerpts:**
 
@@ -263,6 +264,8 @@ P10: STRICT_1_CHECK=ac_test_coverage STRICT_1_LINE=11 (non-falsifying Scenario 1
 P11: STRICT_2_CHECK=phase_ordering STRICT_2_LINE=7 (step 1 before step 3)
 P12: STRICT_1_CHECK=dependency_state STRICT_1_LINE=7 (no state/consequence)
 P13: STRICT_2_CHECK=reversal_risk STRICT_2_LINE=7 (undeclared irreversibility)
+P14: STRICT_1_CHECK=test_scope_proportionality STRICT_1_LINE=11 (forty fixture
+     files disproportionate to a single renderer behavior)
 ```
 
 **Recorded pass-side excerpts:**
@@ -275,6 +278,7 @@ P10: STRICT_PLAN_COUNT=0; findings (none)
 P11: STRICT_PLAN_CHECKS=ac_test_coverage (phase_ordering absent)
 P12: STRICT_PLAN_CHECKS=ac_test_coverage (dependency_state absent)
 P13: STRICT_PLAN_CHECKS=ac_test_coverage (reversal_risk absent)
+P14: STRICT_PLAN_COUNT=0; findings (none)
 ```
 
 Negative controls (Step 9): `irreversible_declared` → no `reversal_risk`; `declared_addition` → no `unspecified_step` when Codex completes; `all_falsifying_tests` → zero strict findings for planted checks.
