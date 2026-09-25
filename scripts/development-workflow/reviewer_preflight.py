@@ -111,12 +111,28 @@ def _reason_setting(reason: str) -> str:
     }.get(reason, "")
 
 
-def _reason_remedy(reason: str, name: str, file_name: str, bucket: str, target_base: str) -> str:
+def _reason_remedy(
+    reason: str,
+    name: str,
+    file_name: str,
+    bucket: str,
+    target_base: str,
+    *,
+    override_added: bool = False,
+) -> str:
     dotted = BUCKET_DOTTED[bucket]
     if reason == "review-disabled":
+        # When the machine-local override is what added this platform to
+        # this bucket, the shared config (.ai-dev-workflow.yaml) never
+        # listed it — telling the operator to remove it from there sends
+        # them to a file that has nothing to remove, so the remedy cannot
+        # actually unblock the run. Name the local override instead, same
+        # provenance rule the value-not-supported branch above already
+        # applies.
+        list_surface = ".ai-dev-workflow.local.yaml" if override_added else ".ai-dev-workflow.yaml"
         return (
             f"Set reviews.auto_review.enabled: true in {file_name}, or remove "
-            f"{name} from review.{dotted} in .ai-dev-workflow.yaml, and re-run."
+            f"{name} from review.{dotted} in {list_surface}, and re-run."
         )
     if reason == "stage-excluded":
         return (
@@ -195,7 +211,9 @@ def classify_platform_in_bucket(
                 setting = _reason_setting(prior)
                 if setting:
                     settings.append(setting)
-                remedy = _reason_remedy(prior, name, file_name, bucket, target_base)
+                remedy = _reason_remedy(
+                    prior, name, file_name, bucket, target_base, override_added=override_added
+                )
                 if remedy:
                     remedies.append(remedy)
             return {
@@ -285,7 +303,12 @@ def classify_platform_in_bucket(
     details = [_reason_detail_text(reason, name, target_base, cfg) for reason in reasons]
     settings = [s for s in (_reason_setting(reason) for reason in reasons) if s]
     remedies = [
-        r for r in (_reason_remedy(reason, name, file_name, bucket, target_base) for reason in reasons) if r
+        r
+        for r in (
+            _reason_remedy(reason, name, file_name, bucket, target_base, override_added=override_added)
+            for reason in reasons
+        )
+        if r
     ]
     return {
         "bucket": bucket,

@@ -1017,5 +1017,59 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         git(repo32, 'show', 'refs/heads/shared-name-test:.coderabbit.yaml').stdout == coherent_coderabbit,
     )
 
+    # T-33 (#1561 round-21 finding): the AC-2 before/after `git status
+    # --porcelain` snapshots must be bounded the same way every other read in
+    # this script is — a stalled filesystem must not let this run past its
+    # advertised whole-invocation budget. Fake `git status --porcelain` as an
+    # unbounded sleep; the run must still finish within a small multiple of
+    # the (deliberately tight) test budget, not hang for the fake's full
+    # sleep duration.
+    repo33 = root / 'repo33'
+    write_repo(repo33, coherent_shared, coherent_coderabbit)
+    bins33 = root / 'bin33'
+    bins33.mkdir(exist_ok=True)
+    real_git33 = shutil.which('git')
+    slow_git33 = bins33 / 'git'
+    slow_git33.write_text(
+        '#!/bin/bash\n'
+        # "git -C <root> status --porcelain": `status` is not a fixed
+        # positional argument once -C <root> precedes it, so match by
+        # scanning args rather than assuming $1/$2.
+        'is_status=0\n'
+        'for arg in "$@"; do case "$arg" in status) is_status=1;; esac; done\n'
+        'if [ "$is_status" = 1 ]; then sleep 30; fi\n'
+        f'exec {real_git33!r} "$@"\n'
+    )
+    slow_git33.chmod(0o755)
+    import time as _time33
+
+    start33 = _time33.monotonic()
+    rc, data, out, err = run(
+        repo33, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins33}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+    )
+    wall33 = _time33.monotonic() - start33
+    check(
+        'T-33 a stalled git status --porcelain does not let the run exceed a small multiple of its budget',
+        wall33 <= 15.0,
+        f'wall={wall33}s rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-33 a bounded status-check timeout fails closed (exit 3), not OUTCOME=passed built on an unverified working tree',
+        rc == 3 and 'OUTCOME' not in data,
+        f'rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-33 the failure message names AC-2 and the time budget',
+        'AC-2' in err and 'time budget' in err,
+        err,
+    )
+
 print(f'\nPassed: {passed}')
 PY

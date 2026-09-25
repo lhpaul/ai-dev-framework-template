@@ -179,13 +179,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# workflow-shell-guard: allow SH001 - AC-2's before/after porcelain diff only
-# needs the two snapshots to match; a git failure here (e.g. repo-root is not
-# a git repository) surfaces as a comparison against an empty string on both
-# sides, and the real failure is already caught by the earlier --repo-root
-# readable-directory check.
-before_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true) # workflow-shell-guard: allow SH001 - both sides of the AC-2 diff compare equal empty strings on failure; the readable-directory check above already catches a bad --repo-root
-
 clamp_bound() {
   local remaining
   remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
@@ -251,6 +244,26 @@ run_bounded() {
   wait "$pid" || rc=$?
   return "$rc"
 }
+
+# AC-2's before/after porcelain diff only needs the two snapshots to match;
+# a git failure here (e.g. repo-root is not a git repository) surfaces as a
+# comparison against an empty string on both sides, and the real failure is
+# already caught by the earlier --repo-root readable-directory check. A slow
+# or stalled filesystem could otherwise let this run past the whole
+# invocation's advertised budget before producing any outcome, since an
+# unbounded call here is not subject to run_bounded's own deadline the way
+# every other read in this script is; bound it the same way. Use the floor
+# variant, not the plain one: `git status --porcelain` is normally a fast,
+# essential, final-mile check, not one of the earlier reads this budget is
+# meant to constrain — starving it to a zero-second bound purely because
+# upstream (normally fast) reads already consumed the nominal total budget
+# would turn a healthy run into a spurious cannot-verify failure below,
+# exactly like clamp_bound_floor's own no-I/O-step rationale.
+before_porcelain_rc=0
+clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$work_dir/porcelain-before.out" "$work_dir/porcelain-before.err" \
+  git -C "$repo_root" status --porcelain || before_porcelain_rc=$?
+before_porcelain=$(cat "$work_dir/porcelain-before.out" 2>/dev/null || true)
 
 read_ref_file() {
   # read_ref_file <ref> <path-in-repo> <outfile>
@@ -558,7 +571,22 @@ if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && ! jq -e . "$output
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
 
-after_porcelain=$(git -C "$repo_root" status --porcelain 2>/dev/null || true) # workflow-shell-guard: allow SH001 - same rationale as before_porcelain above
+after_porcelain_rc=0
+clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+run_bounded "$bound" "$work_dir/porcelain-after.out" "$work_dir/porcelain-after.err" \
+  git -C "$repo_root" status --porcelain || after_porcelain_rc=$?
+after_porcelain=$(cat "$work_dir/porcelain-after.out" 2>/dev/null || true)
+# A bounded-timeout (124) on either snapshot is not the same as "no
+# changes": both sides could time out and compare equal-empty while the
+# working tree genuinely changed in between, silently defeating AC-2's own
+# no-side-effects contract instead of merely failing to prove it. Any other
+# git status failure (e.g. --repo-root not being a git repository) is
+# already handled by both sides comparing equal-empty, per the existing
+# accepted rationale below; only a timeout gets this separate, explicit
+# check.
+if [ "$before_porcelain_rc" = 124 ] || [ "$after_porcelain_rc" = 124 ]; then
+  fail 'cannot verify reviewer-preflight.sh made no working-tree changes (AC-2): the git status --porcelain check did not complete within the time budget'
+fi
 if [ "$before_porcelain" != "$after_porcelain" ]; then
   fail 'reviewer-preflight.sh must not change the working tree (AC-2); the checkout differs after this run'
 fi

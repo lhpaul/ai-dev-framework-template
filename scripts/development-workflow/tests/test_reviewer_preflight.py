@@ -345,6 +345,30 @@ class OverrideTests(unittest.TestCase):
         excluded = platform(result, "pr-agent")
         self.assertEqual(excluded["verdict"], "override-excluded")
 
+    def test_override_added_platform_review_disabled_remedy_points_at_local_override(self):
+        # #1561 round-21 finding: when the machine-local override is what
+        # added a *supported* platform (not merely an unsupported value, the
+        # case test_value_not_supported_override_added_points_at_local_override
+        # already covers) and that platform's own config disagrees for an
+        # ordinary reason (review-disabled here), the remedy must still name
+        # .ai-dev-workflow.local.yaml, not .ai-dev-workflow.yaml — the
+        # shared file never listed this platform, so a remedy pointing
+        # there cannot actually unblock the run.
+        payload = base_payload(
+            shared={"on_draft_github": ["pr-agent"]},
+            resolved={"on_draft_github": ["coderabbit"]},
+            local_override_state="applied",
+        )
+        payload["platform_configs"]["coderabbit"]["auto_review_enabled"] = False
+        result = rp.classify(payload)
+        entry = platform(result, "coderabbit")
+        self.assertTrue(entry["override_added"])
+        self.assertEqual(entry["reasons"], ["review-disabled"])
+        self.assertIn(".ai-dev-workflow.local.yaml", entry["remedy"])
+        self.assertNotIn(
+            "review.on_draft.github in .ai-dev-workflow.yaml", entry["remedy"]
+        )
+
     def test_override_added_platform_has_provenance(self):
         # LOCAL_OVERRIDE_STATE=applied is a global flag; an operator also
         # needs to know *which* platform the override added, not only that
