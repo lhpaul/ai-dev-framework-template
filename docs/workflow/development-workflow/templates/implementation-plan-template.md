@@ -118,6 +118,15 @@ linked resource, artifact owner, or canonical configuration value].
 1. [Scenario 1 — maps to Acceptance Criterion N]
 2. [Scenario 2]
 
+**Coverage intent**: state the coverage classes each group of projected test
+scaffolding provides, and why the projected volume is proportionate to the
+deliverable. Mark any enumeration with the exact literal
+`**Binding enumeration**` only when the implementer must not substitute a
+coverage-equivalent set at implementation time; an unmarked enumeration is
+indicative by default. See
+[`test-scope-proportionality.md`](../test-scope-proportionality.md)
+for the full rule.
+
 **Smoke test runbook**: `docs/testing/[section]/[slug].smoke-test.md`
 
 **Regression suite**: If the repository has an automated regression test suite, include a checklist item in the relevant layer for a new regression spec that covers the smoke test runbook scenarios above. Omit this if no regression suite exists in the repository.
