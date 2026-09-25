@@ -554,6 +554,8 @@ This gate is additive: cross-layer scope checks architectural spread, while call
 
 ### Pre-dispatch tracker status update (single-item path)
 
+Before this update — a tracker status change is one of the mutations the "Reviewer preflight before child dispatch" section below stops before — run that preflight first whenever this item's resume state (mode, target base, branch/PR, remaining stages) is already resolved at this point, exactly as that section describes. Do not apply the tracker status change below if the preflight returns `blocked`, `prerequisite-failed`, or a tooling failure; stop and report per that section's outcome table instead. If the preflight's own required inputs are not yet resolvable this early (still being determined by an earlier step), run the preflight immediately before the update below once they are, not after.
+
 When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:
 
 | Next action to dispatch                                                                       | Tracker status to set |

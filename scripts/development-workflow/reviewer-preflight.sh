@@ -303,6 +303,13 @@ case "$mode" in
       if ! grep -q "couldn't find remote ref" "$work_dir/fetch.err" 2>/dev/null; then
         fail "cannot refresh origin/$branch from the remote: $(cat "$work_dir/fetch.err" 2>/dev/null)"
       fi
+      # Confirmed absent from the remote right now — but a stale
+      # refs/remotes/origin/$branch from an earlier successful fetch (the
+      # branch existed on the remote before, then was deleted there) would
+      # otherwise still resolve below and be read as current. `git fetch`
+      # does not prune remote-tracking refs on its own; discard this one
+      # explicitly so absence is reported honestly rather than stale data.
+      git -C "$repo_root" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true
     fi
     local_resolves=0 origin_resolves=0
     git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1 && local_resolves=1

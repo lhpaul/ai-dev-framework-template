@@ -278,13 +278,22 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
 
     # T-10: branch-resume resolves a branch that exists only as a
     # remote-tracking ref (a resume on another machine or checkout) instead
-    # of degrading to check-inconclusive.
+    # of degrading to check-inconclusive. Needs an actually separate bare
+    # remote (like T-11/T-13/T-14 below): a self-referencing "origin" would
+    # have the branch-resume path's own re-fetch of "$branch" (added later
+    # in this suite) observe the branch as absent from the "remote" too,
+    # once the local-only copy is deleted — the same self-reference
+    # limitation those later tests' comments describe.
     repo10 = root / 'repo10'
     write_repo(repo10, coherent_shared, coherent_coderabbit)
+    remote10 = root / 'remote10.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo10), str(remote10)], check=True)
+    git(repo10, 'remote', 'set-url', 'origin', str(remote10))
     git(repo10, 'checkout', '-q', '-b', 'feature/remote-only-test')
     (repo10 / '.coderabbit.yaml').write_text(disabled_coderabbit)
     git(repo10, 'add', '-A')
     git(repo10, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'disable on remote-only branch')
+    git(repo10, 'push', '-q', 'origin', 'feature/remote-only-test')
     git(repo10, 'fetch', '-q', 'origin', 'feature/remote-only-test')
     git(repo10, 'checkout', '-q', 'develop')
     git(repo10, 'branch', '-D', 'feature/remote-only-test')
@@ -688,6 +697,52 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         expected=0,
     )
     check('T-24 non-GNU timeout falls back to the manual launcher', data.get('OUTCOME') == 'passed', data)
+
+    # T-25: a branch deleted *on the remote by someone/something else* (not
+    # via this checkout's own `git push --delete`, which git itself
+    # proactively removes the matching local tracking ref for — that would
+    # not reproduce the bug) must not be read from the now-stale cached
+    # refs/remotes/origin/<branch> this suite's own re-fetch (added for
+    # T-11/T-13) would otherwise leave untouched — `git fetch` does not
+    # prune on its own. Delete the ref directly inside the bare remote to
+    # simulate that. The stale cache holds a coherent (enabled) config; if
+    # it were read, this would wrongly pass instead of degrading.
+    repo25 = root / 'repo25'
+    write_repo(repo25, coherent_shared, coherent_coderabbit)
+    remote25 = root / 'remote25.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo25), str(remote25)], check=True)
+    git(repo25, 'remote', 'set-url', 'origin', str(remote25))
+    git(repo25, 'checkout', '-q', '-b', 'feature/deleted-remote-test')
+    git(repo25, 'push', '-q', 'origin', 'feature/deleted-remote-test')
+    git(repo25, 'fetch', '-q', 'origin', 'feature/deleted-remote-test')
+    check(
+        'T-25 fixture: stale cache holds the coherent (enabled) config before deletion',
+        git(repo25, 'show', 'refs/remotes/origin/feature/deleted-remote-test:.coderabbit.yaml').stdout == coherent_coderabbit,
+        None,
+    )
+    subprocess.run(['git', 'update-ref', '-d', 'refs/heads/feature/deleted-remote-test'], cwd=remote25, check=True)
+    git(repo25, 'checkout', '-q', 'develop')
+    git(repo25, 'branch', '-D', 'feature/deleted-remote-test')
+    check(
+        'T-25 fixture: local tracking ref is still stale (not auto-pruned)',
+        git(repo25, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feature/deleted-remote-test', check_call=False).returncode == 0,
+        None,
+    )
+    rc, data, out, err = run(
+        repo25, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/deleted-remote-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        expected=0,
+    )
+    check(
+        'T-25 deleted-remote branch does not read the stale cached config as current',
+        data.get('OUTCOME') != 'passed' or data.get('PLATFORM_1_VERDICT') != 'operable',
+        data,
+    )
+    check(
+        'T-25 stale cache ref is discarded, not named as the checked ref',
+        'origin/feature/deleted-remote-test' not in data.get('CHECKED_PLATFORM_CONFIG_REF', ''),
+        data,
+    )
 
 print(f'\nPassed: {passed}')
 PY
