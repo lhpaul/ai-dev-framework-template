@@ -764,5 +764,48 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-26: if deleting the stale cache entry itself fails (e.g. another
+    # process holds the ref lock), the script must not trust `update-ref
+    # -d`'s own exit status and proceed anyway — it must verify the ref
+    # genuinely no longer resolves and fail closed otherwise, rather than
+    # silently reading the (still-present) stale config as current.
+    repo26 = root / 'repo26'
+    write_repo(repo26, coherent_shared, coherent_coderabbit)
+    remote26 = root / 'remote26.git'
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo26), str(remote26)], check=True)
+    git(repo26, 'remote', 'set-url', 'origin', str(remote26))
+    git(repo26, 'checkout', '-q', '-b', 'feature/undeletable-ref-test')
+    git(repo26, 'push', '-q', 'origin', 'feature/undeletable-ref-test')
+    git(repo26, 'fetch', '-q', 'origin', 'feature/undeletable-ref-test')
+    subprocess.run(['git', 'update-ref', '-d', 'refs/heads/feature/undeletable-ref-test'], cwd=remote26, check=True)
+    git(repo26, 'checkout', '-q', 'develop')
+    git(repo26, 'branch', '-D', 'feature/undeletable-ref-test')
+    bins26 = root / 'bin26'
+    bins26.mkdir(exist_ok=True)
+    real_git26 = shutil.which('git')
+    blocking_git = bins26 / 'git'
+    blocking_git.write_text(
+        '#!/bin/bash\n'
+        'has_update_ref=0; has_delete=0\n'
+        'for arg in "$@"; do\n'
+        '  [ "$arg" = update-ref ] && has_update_ref=1\n'
+        '  [ "$arg" = -d ] && has_delete=1\n'
+        'done\n'
+        'if [ "$has_update_ref" = 1 ] && [ "$has_delete" = 1 ]; then\n'
+        '  echo "error: cannot lock ref (simulated)" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        f'exec {real_git26!r} "$@"\n'
+    )
+    blocking_git.chmod(0o755)
+    rc, data, out, err = run(
+        repo26, '--mode', 'branch-resume', '--target-base', 'develop', '--branch', 'feature/undeletable-ref-test',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={'PATH': f'{bins26}:{os.environ.get("PATH", "")}'},
+        expected=3,
+    )
+    check('T-26 undeletable stale ref fails closed instead of reading stale data', 'OUTCOME' not in data, data)
+    check('T-26 failure message names the branch', 'feature/undeletable-ref-test' in err, err)
+
 print(f'\nPassed: {passed}')
 PY

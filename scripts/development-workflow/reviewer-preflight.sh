@@ -316,7 +316,13 @@ case "$mode" in
       # otherwise still resolve below and be read as current. `git fetch`
       # does not prune remote-tracking refs on its own; discard this one
       # explicitly so absence is reported honestly rather than stale data.
-      git -C "$repo_root" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - best-effort discard of a now-confirmed-stale cache entry; if it does not exist there is nothing to discard, and either way local_resolves/origin_resolves below still correctly resolve the branch in force
+      # A deletion failure (e.g. another process holds the ref lock) must
+      # not be swallowed — verify the ref genuinely no longer resolves
+      # rather than trusting the delete command's own exit status alone.
+      git -C "$repo_root" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - the immediately following verification, not this exit status, is what this script relies on
+      if git -C "$repo_root" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+        fail "the remote branch '$branch' is confirmed absent but its stale cached copy (refs/remotes/origin/$branch) could not be discarded — resolve manually (e.g. git update-ref -d refs/remotes/origin/$branch) before re-running; reading it would risk stale configuration"
+      fi
     fi
     local_resolves=0 origin_resolves=0
     git -C "$repo_root" rev-parse --verify --quiet "${branch}^{commit}" >/dev/null 2>&1 && local_resolves=1

@@ -1247,10 +1247,16 @@ def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tup
     phase_raw, phase_present, phase_error = review_effective_value_from_path(
         data, ["review", "phase_after_clean"]
     )
-    platforms_list, _ = review_runner_state(platforms_raw, platforms_present)
-    phase_list, _ = review_runner_state(phase_raw, phase_present)
+    platforms_list, platforms_state = review_runner_state(platforms_raw, platforms_present)
+    phase_list, phase_state = review_runner_state(phase_raw, phase_present)
     present = platforms_present or phase_present
-    structure_error = platforms_error or phase_error
+    # A malformed leaf value (e.g. `review.platforms: coderabbit`, a scalar)
+    # must propagate the same as a structurally malformed ancestor — both
+    # are Decision 5's "the shared reviewer list is malformed" tooling
+    # failure, not a silently-empty derived list.
+    structure_error = (
+        platforms_error or phase_error or platforms_state == "malformed" or phase_state == "malformed"
+    )
     if bucket == "on_draft_github":
         # workflow_config_review_on_draft_github only emits anything when
         # `phase_after_clean` itself has entries; an empty/absent

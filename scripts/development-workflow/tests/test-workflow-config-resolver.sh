@@ -1838,6 +1838,18 @@ run_test "review-github-effective explicit empty local override still narrows" '
 run_test "review-github-effective explicit empty local override is applied" true "$(jq -r '.local_review_override_applied' <<< "$g11_json")"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# A malformed legacy scalar (e.g. `review.platforms: coderabbit`, not a
+# list) must propagate as malformed, not be silently reclassified as an
+# empty (deliberately-configured) legacy bucket — the same "malformed
+# ancestors must block" rule already applied to the modern key and to
+# review.internal_reviewers.
+write_review_effective_fixture 'review:' '  platforms: coderabbit'
+g12_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed legacy platforms scalar is malformed" malformed "$(jq -r '.effective_on_draft_github_state' <<< "$g12_json")"
+write_review_effective_fixture 'review:' '  platforms: [coderabbit]' '  phase_after_clean: pr-agent'
+g13_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed legacy phase_after_clean scalar is malformed" malformed "$(jq -r '.effective_on_ready_github_state' <<< "$g13_json")"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
