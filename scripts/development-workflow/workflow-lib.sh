@@ -3558,13 +3558,19 @@ _workflow_ere_escape() {
 # workflow_branch_ref_evidence <issue_number>
 #
 # Probes LOCAL (refs/heads/) and REMOTE (refs/remotes/origin/) refs for a
-# live feature/fix/refactor/hotfix branch keyed to <issue_number>, using the
-# existing branch-name convention
+# live spec/implementation-plan/feature/fix/refactor/hotfix branch keyed to
+# <issue_number>, using the existing branch-name convention
 # (workflow-next-action.sh:102 — ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-))
-# widened to the canonical alphanumeric team-prefix grammar
-# (validate-workflow-branch-name.sh:30 — [A-Za-z][A-Za-z0-9]{0,7}-, e.g.
-# "AB2-"), which workflow-next-action.sh's own letters-only regex does not
-# accept even though the branch guard does (codex-github finding, #1583).
+# widened two ways (codex-github findings, #1583):
+#   1. To the canonical alphanumeric team-prefix grammar
+#      (validate-workflow-branch-name.sh:30 — [A-Za-z][A-Za-z0-9]{0,7}-, e.g.
+#      "AB2-"), which workflow-next-action.sh's own letters-only regex does
+#      not accept even though the branch guard does.
+#   2. To include spec/ and implementation-plan/ prefixes, so a Workflow-
+#      typed item whose spec or plan is still an open PR (not yet merged,
+#      so no local development folder exists) is not read as "no evidence"
+#      and incorrectly stopped/held. run-epic-scope-resolver.sh's own PR
+#      selection regex (:397, :411) already matches these two prefixes.
 # A single `git show-ref` invocation already lists both namespaces, so
 # covering both costs nothing (#1583) — unlike workflow-next-action.sh's
 # origin-only probe, which misses a branch that has been cut but not pushed.
@@ -3585,7 +3591,7 @@ workflow_branch_ref_evidence() {
     return 0
   fi
 
-  for prefix in feature fix refactor hotfix; do
+  for prefix in spec implementation-plan feature fix refactor hotfix; do
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
       if printf '%s\n' "$ref" | grep -qE "^([A-Za-z][A-Za-z0-9]{0,7}-)?${issue_number}(-|\$)"; then
@@ -3614,7 +3620,7 @@ workflow_branch_pr_evidence_from_json() {
   if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
     ((.open // []) + (.merged // []))
     | map(.headRefName // "")
-    | map(select(test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")))
+    | map(select(test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")))
     | length
   ' 2>/dev/null)"; then
     printf 'unavailable\n'
@@ -3662,7 +3668,7 @@ workflow_gh_pr_evidence() {
     fi
   fi
   if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
-    [ .[] | (.headRefName // "") | select(test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")) ] | length
+    [ .[] | (.headRefName // "") | select(test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")) ] | length
   ' 2>/dev/null)"; then
     printf 'unavailable\n'
     return 0

@@ -635,6 +635,24 @@ git -C "$REF_REPO_ALNUM" branch fix/ab2-9005-alnum-prefix-slug >/dev/null
 alnum_prefix_evidence="$(cd "$REF_REPO_ALNUM" && workflow_branch_ref_evidence 9005)"
 run_test "branch_ref_evidence_recognizes_alphanumeric_team_prefix" "present" "$alnum_prefix_evidence"
 
+# codex-github finding (#1583): a Workflow-typed item whose spec or plan is
+# still an open PR (no local development folder yet) must not read as "no
+# evidence" — spec/ and implementation-plan/ prefixes are branch/PR-evidence
+# too, matching run-epic-scope-resolver.sh's own PR selection regex.
+REF_REPO_SPEC="$TMP_ROOT/ref-repo-spec-prefix"
+mkdir -p "$REF_REPO_SPEC"
+git -C "$REF_REPO_SPEC" init -q
+git -C "$REF_REPO_SPEC" config user.email test@example.com
+git -C "$REF_REPO_SPEC" config user.name "Test User"
+git -C "$REF_REPO_SPEC" commit --allow-empty -m "initial" >/dev/null
+git -C "$REF_REPO_SPEC" branch spec/9006-open-spec-branch >/dev/null
+spec_ref_evidence="$(cd "$REF_REPO_SPEC" && workflow_branch_ref_evidence 9006)"
+run_test "branch_ref_evidence_recognizes_spec_prefix" "present" "$spec_ref_evidence"
+
+plan_prs_json='{"open":[{"headRefName":"implementation-plan/9007-open-plan-branch"}],"merged":[]}'
+plan_json_evidence="$(workflow_branch_pr_evidence_from_json 9007 "$plan_prs_json")"
+run_test "branch_pr_evidence_from_json_recognizes_plan_prefix" "present" "$plan_json_evidence"
+
 # ===========================================================================
 # End-to-end real scan -> lanes fixture (#1583). Unlike the gate-level
 # scan_backlog_no_artifacts_held cases above (which call
