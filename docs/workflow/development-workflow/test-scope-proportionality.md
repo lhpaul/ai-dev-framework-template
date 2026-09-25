@@ -114,6 +114,11 @@ readiness and never changes a review verdict.
 | B3 | Neither signal present | No finding | None |
 | B4 | Sizes cannot be estimated from the plan | No finding | Do not guess a ratio; optionally ask the plan to state expected test volume |
 
+This gate judges proportionality of projected volume, not the derivation of
+any count the plan states; when a plan does give a test-scaffolding count,
+[`plan-authoring-rigor-rules.md`](plan-authoring-rigor-rules.md) Rule 3
+governs how that count must be derived and recorded.
+
 Gate B's trigger is deliberately marked indicative: it is implemented as one
 advisory row (`test_scope_proportionality`, `Source: not required`) in
 `docs/workflow/development-workflow/strict-plan-checks.md`, whose own
