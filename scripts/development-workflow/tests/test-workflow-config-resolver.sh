@@ -1125,10 +1125,33 @@ assert_review_effective_states "E-21 malformed legacy runner alias" malformed ab
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [claude]' '  internal_reviewers: [codex]'
 assert_review_effective_states "E-21 modern runner wins shared alias" defined absent
 run_test "review-effective E-21 modern runner shared alias entries" '["claude"]' "$(review_effective_json | jq -c '.effective_runner')"
+# #1561 round-25 finding (corrected in round-27, then again in round-7 of
+# the extended bounded pass): a NULL, absent, OR explicit empty modern
+# runner list all fall through to a non-empty legacy alias in the SAME
+# (shared) file, mirroring workflow_config_review_on_draft_runner
+# (workflow-lib.sh) — Step 7 (pr-review-loop.sh) dispatches the legacy list
+# for every one of those cases (it only checks whether the shared file's
+# own nested list produced any output at all), so review-effective must
+# not report the bucket as empty in any of them. Round-27 wrongly
+# special-cased an explicit `[]` to win outright over the legacy alias,
+# reasoning from workflow_config_review_local_list_if_declared's LOCAL
+# override semantics (a different function, a different file) rather than
+# the SHARED file's own resolver, which has no such carve-out — an
+# operator writing `on_draft.runner: []` alongside a still-populated
+# `internal_reviewers` would otherwise see this preflight report no
+# reviewers while Step 7 dispatches the legacy list anyway. (A malformed
+# modern value below still wins outright either way.)
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: []' '  internal_reviewers: [codex]'
-assert_review_effective_states "E-21 empty modern runner wins alias" empty absent
+assert_review_effective_states "E-21 explicit empty modern runner falls through to alias" defined absent
+run_test "review-effective E-21 explicit empty modern runner alias entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: null' '  internal_reviewers: [codex]'
-assert_review_effective_states "E-21 null modern runner wins alias" empty absent
+assert_review_effective_states "E-21 null modern runner falls through to alias" defined absent
+run_test "review-effective E-21 null modern runner alias entries" '["codex"]' "$(review_effective_json | jq -c '.effective_runner')"
+# An empty modern key with no legacy alias present at all keeps reporting
+# its own "empty" state, not the legacy derivation's "absent" (mirrors the
+# equivalent review-github-effective case just below).
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: []'
+assert_review_effective_states "E-21 empty modern runner with no legacy stays empty" empty absent
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: codex' '  internal_reviewers: [codex]'
 assert_review_effective_states "E-21 malformed modern runner wins alias" malformed absent
 write_review_effective_fixture 'review:' '  on_draft: []' '  internal_reviewers: [codex]'
@@ -1328,7 +1351,13 @@ for config_name in .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml; do
     if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_runner=absent; else expected_runner=defined; fi
     assert_review_effective_states "canonical null policy $config_name $token" "$expected_runner" empty
     printf '%s\n' 'review:' '  on_draft:' "    runner: $token" > "$review_effective_dir/$config_name"
-    assert_review_effective_states "canonical null runner $config_name $token" empty absent
+    # A null shared runner (no fallback available) is genuinely empty; a
+    # null *local* runner is not a declared override
+    # (workflow_config_review_local_list_if_declared, workflow-lib.sh,
+    # requires an inline [...] or an actual - item line) and falls back to
+    # the shared [codex] fixture set up above.
+    if [ "$config_name" = .ai-dev-workflow.yaml ]; then expected_null_runner=empty; else expected_null_runner=defined; fi
+    assert_review_effective_states "canonical null runner $config_name $token" "$expected_null_runner" absent
   done
   for token in True FALSE; do
     write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
@@ -1726,6 +1755,158 @@ assert_review_effective_states "duplicate list mapping continuation" malformed u
 run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key 'name'" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
 assert_review_effective_states "same key in separate mappings is valid" defined absent
+
+# review-github-effective (#1561): on_draft.github / on_ready.github mirror
+# review-effective's parse-state handling, generalized to two buckets.
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+review_github_effective_json() {
+  python3 "$RESOLVER" review-github-effective --repo-root "$review_effective_dir"
+}
+write_review_effective_fixture 'review:' '  on_draft:' '    github: [coderabbit]' '  on_ready:' '    github: [bugbot]'
+g1_json="$(review_github_effective_json)"
+run_test "review-github-effective on_draft.github defined" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g1_json")"
+run_test "review-github-effective on_draft.github state" defined "$(jq -r '.effective_on_draft_github_state' <<< "$g1_json")"
+run_test "review-github-effective on_ready.github defined" '["bugbot"]' "$(jq -c '.effective_on_ready_github' <<< "$g1_json")"
+run_test "review-github-effective on_ready.github state" defined "$(jq -r '.effective_on_ready_github_state' <<< "$g1_json")"
+run_test "review-github-effective override not applied" false "$(jq -r '.local_review_override_applied' <<< "$g1_json")"
+
+write_review_effective_fixture 'review:' '  on_draft: {}'
+g2_json="$(review_github_effective_json)"
+run_test "review-github-effective absent on_draft.github" absent "$(jq -r '.effective_on_draft_github_state' <<< "$g2_json")"
+run_test "review-github-effective absent on_ready.github" absent "$(jq -r '.effective_on_ready_github_state' <<< "$g2_json")"
+
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []'
+g3_json="$(review_github_effective_json)"
+run_test "review-github-effective empty on_draft.github" empty "$(jq -r '.effective_on_draft_github_state' <<< "$g3_json")"
+
+write_review_effective_fixture 'review:' '  on_draft:' '    github: pr-agent'
+g4_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed scalar on_draft.github" malformed "$(jq -r '.effective_on_draft_github_state' <<< "$g4_json")"
+
+write_review_effective_fixture 'review:' '  on_draft:' '    github: [coderabbit, pr-agent]' '  on_ready:' '    github: [bugbot]'
+printf '%s\n' 'review:' '  on_draft:' '    github: [coderabbit]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g5_json="$(review_github_effective_json)"
+run_test "review-github-effective local override narrows on_draft.github" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g5_json")"
+run_test "review-github-effective local override exclusions" '["pr-agent"]' "$(jq -c '.override_excluded_on_draft_github' <<< "$g5_json")"
+run_test "review-github-effective local override retains shipped on_draft.github" '["coderabbit","pr-agent"]' "$(jq -c '.shipped_on_draft_github' <<< "$g5_json")"
+run_test "review-github-effective local override does not touch on_ready.github" '["bugbot"]' "$(jq -c '.effective_on_ready_github' <<< "$g5_json")"
+run_test "review-github-effective local override applied" true "$(jq -r '.local_review_override_applied' <<< "$g5_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# review-github-effective legacy fallback (#1802 codex-github finding): a
+# shared config still on the transition-release legacy `review.platforms` /
+# `review.phase_after_clean` keys, with no modern on_draft.github /
+# on_ready.github keys at all, must resolve the same lists
+# workflow_config_review_on_draft_github / _on_ready_github (workflow-lib.sh,
+# consumed by pr-review-loop.sh / Step 7) would dispatch — otherwise the
+# preflight can report `passed` without having cross-checked a reviewer Step
+# 7 goes on to run.
+write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent, bugbot]' '  phase_after_clean: [bugbot]'
+g6_json="$(review_github_effective_json)"
+run_test "review-github-effective legacy on_draft.github derived" '["coderabbit","pr-agent"]' "$(jq -c '.effective_on_draft_github' <<< "$g6_json")"
+run_test "review-github-effective legacy on_draft.github state" defined "$(jq -r '.effective_on_draft_github_state' <<< "$g6_json")"
+run_test "review-github-effective legacy on_ready.github derived" '["bugbot"]' "$(jq -c '.effective_on_ready_github' <<< "$g6_json")"
+run_test "review-github-effective legacy on_ready.github state" defined "$(jq -r '.effective_on_ready_github_state' <<< "$g6_json")"
+
+# Without a phase_after_clean split, legacy on_ready.github falls back to the
+# full platforms list (matching the shell's elif/else chain exactly).
+write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent]'
+g7_json="$(review_github_effective_json)"
+run_test "review-github-effective legacy on_ready.github falls back to platforms" '["coderabbit","pr-agent"]' "$(jq -c '.effective_on_ready_github' <<< "$g7_json")"
+
+# A present but explicitly *empty* modern key, unlike on_draft.runner's
+# review_runner_value precedent, falls through to the legacy alias when one
+# is present — mirroring workflow_config_review_on_draft_github's own
+# `grep -q .` check (empty output falls through, same as absent), because
+# this resolver's purpose is to report what Step 7 actually dispatches.
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []' '  platforms: [coderabbit, pr-agent]' '  phase_after_clean: [pr-agent]'
+g8_json="$(review_github_effective_json)"
+run_test "review-github-effective empty modern key falls through to legacy" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g8_json")"
+
+# A present but *malformed* modern key still wins outright, even when a
+# legacy alias is present — a malformed leaf value must not silently regain
+# legacy coverage, same as a malformed ancestor (review_runner_value's
+# documented precedent, which this deliberately does keep).
+write_review_effective_fixture 'review:' '  on_draft:' '    github: pr-agent' '  platforms: [coderabbit]' '  phase_after_clean: [coderabbit]'
+g8b_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed modern key beats legacy" malformed "$(jq -r '.effective_on_draft_github_state' <<< "$g8b_json")"
+
+# A present but empty modern key with no legacy alias present at all keeps
+# reporting its own "empty" state, not the legacy derivation's "absent".
+write_review_effective_fixture 'review:' '  on_draft:' '    github: []'
+g8c_json="$(review_github_effective_json)"
+run_test "review-github-effective empty modern key with no legacy stays empty" empty "$(jq -r '.effective_on_draft_github_state' <<< "$g8c_json")"
+
+# The local override still never sees the legacy alias (workflow-lib.sh's
+# workflow_config_review_local_list_if_declared reads only the modern local
+# key) — a legacy-only shared config paired with an unrelated local override
+# must still resolve the shared legacy list for the untouched bucket.
+write_review_effective_fixture 'review:' '  platforms: [coderabbit, pr-agent]' '  phase_after_clean: [pr-agent]'
+printf '%s\n' 'review:' '  on_draft:' '    runner: [codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g9_json="$(review_github_effective_json)"
+run_test "review-github-effective legacy fallback survives an unrelated local override" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g9_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# A bare `key:` local override (YAML null, no inline list and no list
+# items) is not the same as a declared empty override:
+# workflow_config_review_local_list_if_declared (workflow-lib.sh, what
+# Step 7 actually consults) only treats an inline `[...]` or an actual
+# `- item` line as declared, so a null local key falls through to the
+# shared list there. This must match, or the preflight can report `passed`
+# without having cross-checked a shared reviewer Step 7 still dispatches.
+write_review_effective_fixture 'review:' '  on_draft:' '    github: [coderabbit]'
+printf '%s\n' 'review:' '  on_draft:' '    github:' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g10_json="$(review_github_effective_json)"
+run_test "review-github-effective null local bucket falls back to shared" '["coderabbit"]' "$(jq -c '.effective_on_draft_github' <<< "$g10_json")"
+run_test "review-github-effective null local bucket is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g10_json")"
+# An *explicit* empty local override ([]) is still a real, declared
+# narrowing — the null case above must not be confused with this one.
+printf '%s\n' 'review:' '  on_draft:' '    github: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g11_json="$(review_github_effective_json)"
+run_test "review-github-effective explicit empty local override still narrows" '[]' "$(jq -c '.effective_on_draft_github' <<< "$g11_json")"
+run_test "review-github-effective explicit empty local override is applied" true "$(jq -r '.local_review_override_applied' <<< "$g11_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# #1561 round-9 finding (P2): the null-parent exemption in
+# review_effective_value_from_path only covered `review:` and
+# `review.on_draft:` being null (a comment-only or bare-key section), not
+# `review.on_ready:` — the same shape workflow_config_review_local_list_
+# if_declared does not treat as a declared override for on_ready either. A
+# local override file with a comment-only `on_ready:` section (parsed as a
+# null value there) must fall back to the shared on_ready.github list, the
+# same as the already-covered on_draft case above, not be reported as a
+# structural error / malformed.
+write_review_effective_fixture 'review:' '  on_ready:' '    github: [coderabbit]'
+printf '%s\n' 'review:' '  on_ready:' '    # local override not yet configured' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g11b_json="$(review_github_effective_json)"
+run_test "review-github-effective null local on_ready section falls back to shared" '["coderabbit"]' "$(jq -c '.effective_on_ready_github' <<< "$g11b_json")"
+run_test "review-github-effective null local on_ready section state" defined "$(jq -r '.effective_on_ready_github_state' <<< "$g11b_json")"
+run_test "review-github-effective null local on_ready section is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g11b_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
+
+# A malformed legacy scalar (e.g. `review.platforms: coderabbit`, not a
+# list) must propagate as malformed, not be silently reclassified as an
+# empty (deliberately-configured) legacy bucket — the same "malformed
+# ancestors must block" rule already applied to the modern key and to
+# review.internal_reviewers.
+write_review_effective_fixture 'review:' '  platforms: coderabbit'
+g12_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed legacy platforms scalar is malformed" malformed "$(jq -r '.effective_on_draft_github_state' <<< "$g12_json")"
+write_review_effective_fixture 'review:' '  platforms: [coderabbit]' '  phase_after_clean: pr-agent'
+g13_json="$(review_github_effective_json)"
+run_test "review-github-effective malformed legacy phase_after_clean scalar is malformed" malformed "$(jq -r '.effective_on_ready_github_state' <<< "$g13_json")"
+
+# review-effective's on_draft.runner bucket needs the same null-vs-declared
+# fix already applied to review-github-effective's buckets: a bare
+# `runner:` local override (YAML null) is not a declared override, and
+# must fall back to the shared list, not narrow to empty.
+write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
+printf '%s\n' 'review:' '  on_draft:' '    runner:' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
+g14_json="$(review_effective_json)"
+run_test "review-effective null local runner falls back to shared" '["codex"]' "$(jq -c '.effective_runner' <<< "$g14_json")"
+run_test "review-effective null local runner state is defined" defined "$(jq -r '.effective_runner_state' <<< "$g14_json")"
+run_test "review-effective null local runner is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g14_json")"
+rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
 echo ""
 echo "Passed: $PASS_COUNT"

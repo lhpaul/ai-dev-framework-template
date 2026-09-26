@@ -555,6 +555,8 @@ This gate is additive: cross-layer scope checks architectural spread, while call
 
 ### Pre-dispatch tracker status update (single-item path)
 
+Before this update — a tracker status change is one of the mutations the "Reviewer preflight before child dispatch" section below stops before — run that preflight first whenever this item's resume state (mode, target base, branch/PR, remaining stages) is already resolved at this point, exactly as that section describes. Do not apply the tracker status change below if the preflight returns `blocked`, `prerequisite-failed`, or a tooling failure; stop and report per that section's outcome table instead. If the preflight's own required inputs are not yet resolvable this early (still being determined by an earlier step), run the preflight immediately before the update below once they are, not after.
+
 When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:
 
 | Next action to dispatch                                                                       | Tracker status to set |
@@ -694,6 +696,87 @@ The guard validates the expected workflow branch name before it scans artifacts.
 Use bare numeric identifiers such as feature/1858-safe-name, never
 feature/#1858-safe-name; it rejects unsafe characters before creation or PR
 readiness can continue.
+
+### Reviewer preflight before child dispatch
+
+Before dispatching any creator-stage or PR-opening child agent — before any
+branch is created, any pull request is opened, or any tracker status changes
+on this item's own account, not merely before the reviewer gates (Step 7a /
+Step 7) run — cross-check the reviewer configuration surfaces with:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/reviewer-preflight.sh \
+  --repo-root "$ARTIFACT_REPO_ROOT" \
+  --mode <pre-dispatch|branch-resume|pr-resume> \
+  --target-base "$BASE_BRANCH" \
+  [--branch "<branch-prefix>/<slug>"] \
+  [--pr <number> --owner <owner> --repo <repo>] \
+  --remaining-stages <csv of on_draft.runner,on_draft.github,on_ready.github still ahead of this item> \
+  --pr-state <bucket=draft|ready,... for each listed stage, after any existing adjustment such as the internal review gate's draft-to-ready conversion>
+```
+
+Choose `--mode` from the same resume-state evidence Step 1/Step 2 and
+Existing-branch reuse validation already resolved for this item — do not
+resolve it a second time independently:
+
+| This item's resolved state | `--mode` | What is cross-checked |
+| --- | --- | --- |
+| No branch exists yet (fresh dispatch) | `pre-dispatch` | Each platform's own configuration and the shared reviewer list, both read from `$BASE_BRANCH` — the only copies that exist before a branch does |
+| An existing branch with no pull request yet (`compatible_reuse`, or a branch-only resume) | `branch-resume` | Each platform's own configuration from that existing branch's own copy; the shared reviewer list still from `$BASE_BRANCH` (the single base this item's execution already resolved to target, not the branch itself) |
+| An existing pull request (any resumed PR) | `pr-resume` | Each platform's own configuration from that pull request's own head commit (GitHub's own reported `headRefOid`); the shared reviewer list from that pull request's own target base branch, resolved live from the remote — matching `pr-review-loop.sh`'s own `baseRefName` resolution |
+
+The `pre-dispatch` path applies only when resuming finds neither a branch nor
+a pull request in place. Once a branch exists, checking `$BASE_BRANCH` alone
+would miss a disabling change already present on the branch the reviewer
+platform will actually read.
+
+This script is fully read-only: it resolves every remote tip with `git
+ls-remote` (never `git fetch`) and reads content directly by the resolved
+commit SHA, so it never creates or updates `refs/remotes/*`, writes
+`FETCH_HEAD`, or downloads objects into the local object database. When a
+resolved remote SHA's commit object is not already present locally (this
+script never fetches to make it so), reading that content is impossible
+without a fetch this script will not perform — that surfaces through the
+same `OUTCOME` values documented below: a per-platform read degrades to
+Undetermined (`passed-unverified`), and a shared-configuration read (or a
+branch-resume ancestry comparison that itself needs both commits present)
+fails closed as a tooling failure (exit `3`). A `--target-base` (or PR base)
+that is syntactically valid but confirmed absent on the remote right now is
+a run-input problem, not a tooling outage: it classifies as
+`prerequisite-failed` (exit `2`), the same as any other malformed or
+unresolved `--target-base`.
+
+Route the script's `OUTCOME` (exit code in parentheses) as follows:
+
+| `OUTCOME` | Display label | Required next action |
+| --- | --- | --- |
+| `passed` (`0`) | Passed | Dispatch proceeds unchanged. No operator confirmation is collected. |
+| `passed-unverified` (`0`) | Passed, some unverified | Dispatch proceeds. Carry the unverified-platform list into the Work Item Runner summary so the operator can see which coverage was assumed rather than checked. |
+| `blocked` (`1`) | Blocked | Stop before this item's first mutation: no branch, no pull request, no tracker status change on this item's own account. Emit a stop message per `guardrails-enforcement.md` § Stop-Message Contract, naming the exact stop condition `reviewer_preflight_blocked` (see § Named Stop Conditions), this item's identifier (issue number, and the branch/PR the preflight was run against when one exists), and the concrete unblock action — the printed report's platform, disagreement reason, surface (file), setting, and remedy for every `Cannot review` platform. Print this before this item's own output, so it is never mistaken for this item's own later failure. |
+| `prerequisite-failed` (`2`) | Prerequisite not met | Stop before mutation. Emit a stop message per `guardrails-enforcement.md` § Stop-Message Contract, naming the exact stop condition `reviewer_preflight_prerequisite_failed`, this item's identifier, and the concrete unblock action — the specific failed input (base branch, remaining-stage set, or per-stage pull-request state) and how to resolve it before re-running; this is a run-input failure, not a reviewer-configuration verdict. |
+| `no-review-remaining` (`0`) | No review remaining | Dispatch proceeds. No per-platform verdict was computed because no lifecycle stage still ahead of this item invokes a reviewer (for example, a resume that only dispatches merge or post-merge cleanup). |
+| (tooling failure, exit `3`) | — | Treat as a stop; the script itself failed rather than reaching a verdict. Emit a stop message per `guardrails-enforcement.md` § Stop-Message Contract, naming the exact stop condition `reviewer_preflight_tooling_failed` (see § Named Stop Conditions — distinct from `reviewer_preflight_prerequisite_failed`, which is reserved for `OUTCOME=prerequisite-failed`), this item's identifier, and the concrete unblock action — fix the reported tooling problem and re-run. |
+
+A `Blocked` or `Prerequisite not met` preflight is a stop, exactly like a
+`blocked_duplicate` or `incompatible_reuse_blocked` guard result above: no
+creator-stage dispatch, no file mutation, no Git mutation, no PR mutation, and
+no tracker mutation follow it for this item. The preflight itself performs no
+write of any kind; folding its outcome into a Work Item Runner summary the run
+already produces is the run's own pre-existing record, not an action the
+preflight requires. Record `preflight_passed`, `preflight_passed_unverified`,
+`preflight_blocked`, `preflight_prerequisite_failed`, or
+`preflight_no_review_remaining` in the Work Item Runner summary alongside the
+other resume-path records above.
+
+This gate changes no reviewer gate's own behaviour after it passes: Step 7a
+and Step 7 run exactly as documented below, with the same reviewers, the same
+verdict semantics, and the same cycle limits. See
+`docs/workflow/development-workflow/integrations/coderabbit.md` for the
+branch-in-force resolution rule this preflight and Step 7's own reviewer
+dispatch both depend on, and
+`docs/specs/developments/20260911230501_1561-reviewer-preflight/` for the
+full cross-check specification and implementation plan.
 
 ### Existing-branch reuse validation
 

@@ -55,6 +55,23 @@ to commit immediately after each completed logical sub-part, avoid batching all
 completed sub-parts into one end-of-run commit, and never commit incomplete,
 failing, or incoherent edits only to satisfy this requirement.
 
+Before dispatching that same creator-stage or PR-opening child agent — before
+this item's own first mutation, not merely before Step 7a/Step 7 — run
+`reviewer-preflight.sh` with `--mode pre-dispatch|branch-resume|pr-resume`
+chosen from this item's already-resolved resume state (fresh, existing branch
+without a PR, or existing PR), `--target-base`, the matching `--branch` or
+`--pr`/`--owner`/`--repo`, `--remaining-stages`, and `--pr-state` for each
+listed stage. Print the full report — outcome, and every platform's verdict —
+before this item's own output. Stop before mutation on `blocked` (exit `1`)
+or `prerequisite-failed` (exit `2`); `passed`, `passed-unverified`, and
+`no-review-remaining` (all exit `0`) proceed, carrying any unverified-platform
+list into the Work Item Runner summary. Also stop before mutation on a
+tooling failure (exit `3`, no `OUTCOME` line) — the script itself failed
+rather than reaching a verdict; report this as a stop with the failure
+detail and re-run once the tooling problem is fixed, not as a `passed`
+proceed. See Protocol 91's "Reviewer preflight before child dispatch"
+section for the full outcome table and per-mode input resolution.
+
 After candidate discovery and a clean nested-artifact guard, run
 `validate-branch-reuse.sh` with the issue, exact expected branch, approved base,
 and artifact repo root. A matching item number alone is insufficient. Only

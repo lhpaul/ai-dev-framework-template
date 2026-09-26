@@ -18,6 +18,10 @@ SKELETON_MANIFESTS = (
 PRODUCT_RELEASE_RUNTIME_PATHS = {
     "scripts/development-workflow/workflow-config-resolver.py",
     "scripts/development-workflow/resolve-reviewer-availability.sh",
+    "scripts/development-workflow/reviewer-preflight.sh",
+    "scripts/development-workflow/reviewer_preflight.py",
+    "scripts/development-workflow/reviewer_preflight_build_input.py",
+    "scripts/development-workflow/reviewer_preflight_coderabbit.py",
     "scripts/development-workflow/validate-workflow-config.sh",
     "scripts/development-workflow/workflow-lib.sh",
     "scripts/development-workflow/codex-github-evidence-lib.sh",

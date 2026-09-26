@@ -431,7 +431,22 @@ reviews:
             check(f'T-31 canonical null policy defaults {source.name} {token}',d['POLICY_STATE']=='empty' and d['POLICY']=='warn',d)
             reset();source.write_text('review:\n  on_draft:\n    runner: '+token+'\n')
             d=run('codex')
-            check(f'T-31 canonical null runner falls back {source.name} {token}',d['CONFIG_LIST_STATE']=='empty' and d['FALLBACK_APPLIED']=='true',d)
+            if source is local:
+                # #1561: a null LOCAL override (`runner:` with nothing, or
+                # an explicit null token, after it) is not "declared" per
+                # workflow_config_review_local_list_if_declared
+                # (workflow-lib.sh) — that function only treats an inline
+                # "[...]" or an actual "- item" line as declared. It falls
+                # through to the SHARED list (reset()'s own default,
+                # [codex]), not to this gate's own internal shipped
+                # fallback list; review-effective's own suite
+                # (test-workflow-config-resolver.sh, "review-effective
+                # null local runner falls back to shared") already
+                # establishes this for the underlying resolver — assert
+                # the same contract through this gate's own report.
+                check(f'T-31 null local runner falls through to shared, not this gate\'s fallback {source.name} {token}',d['CONFIG_LIST_STATE']=='defined' and d['FALLBACK_APPLIED']=='false' and d['REACHABLE']=='codex',d)
+            else:
+                check(f'T-31 canonical null runner falls back {source.name} {token}',d['CONFIG_LIST_STATE']=='empty' and d['FALLBACK_APPLIED']=='true',d)
         for token in ('True','FALSE'):
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
             d=run('codex',1)
@@ -700,8 +715,14 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     check('T-48 separated comment remains valid policy',d['OUTCOME']=='proceeded' and d['POLICY']=='warn',d)
     reset();cfg.write_text('review:\n  internal_reviewers: [codex-github]\n  internal_reviewers_unavailable_policy: fail-if-any-unavailable\n');gh([]);d=run('codex',1)
     check('T-48 legacy reviewer alias preserves required hosted coverage',d['REVIEWER_1_NAME']=='codex-github' and d['REVIEWER_1_STATUS']=='unreachable' and d['FALLBACK_APPLIED']=='false',d)
-    reset();cfg.write_text('review:\n  internal_reviewers: [codex-github]\n  on_draft:\n    runner: []\n');d=run('codex')
-    check('T-48 explicit modern empty overrides legacy alias',d['FALLBACK_APPLIED']=='true' and d['CONFIG_LIST_STATE']=='empty',d)
+    # #1561 round-7 finding: an explicit on_draft.runner: [] alongside a
+    # non-empty internal_reviewers must fall through to the legacy alias,
+    # matching workflow_config_review_on_draft_runner's real shared-config
+    # behavior in workflow-lib.sh (what Step 7 actually dispatches) — the
+    # same outcome as the no-on_draft-key-at-all "legacy reviewer alias"
+    # fixture just above, not FALLBACK_APPLIED=true/CONFIG_LIST_STATE=empty.
+    reset();cfg.write_text('review:\n  internal_reviewers: [codex-github]\n  on_draft:\n    runner: []\n');gh([]);d=run('codex',1)
+    check('T-48 explicit modern empty falls through to legacy alias',d['REVIEWER_1_NAME']=='codex-github' and d['REVIEWER_1_STATUS']=='unreachable' and d['FALLBACK_APPLIED']=='false' and d['CONFIG_LIST_STATE']=='defined',d)
     reset();local.write_text('review:\n  internal_reviewers: [cursor]\n');d=run('codex',1)
     check('T-48 local legacy alias overrides shipped reviewer',d['OVERRIDE_EXCLUDED']=='codex' and d['REVIEWER_2_NAME']=='cursor' and d['REVIEWER_2_REASON']=='runtime-absent',d)
     reset();local.write_text('product_repos:\n  checkout_root: ../product-checkout\n');d=run('codex')

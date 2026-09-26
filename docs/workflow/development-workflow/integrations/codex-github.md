@@ -388,6 +388,30 @@ If Codex GitHub is not available in a downstream repository, remove
 the ready-phase reviewer list locally in `.ai-dev-workflow.local.yaml` until the
 integration is installed.
 
+### Reviewer preflight and branch-in-force configuration (#1561)
+
+Unlike CodeRabbit, Codex GitHub has **no repository-local automatic-review
+configuration file** — it is a hosted GitHub App reviewer controlled entirely
+through the App's own installation and environment settings, not through a
+file this repository tracks. The shared list membership (`review.on_draft.github`
+/ `review.on_ready.github` in `.ai-dev-workflow.yaml`) still follows the same
+branch-in-force rule every reviewer list does: the copy read for an existing
+pull request is that pull request's own target base branch, refreshed from the
+remote (matching `pr-review-loop.sh`'s own `baseRefName` resolution) — see
+[`coderabbit.md`](coderabbit.md#6-branch-in-force-configuration-and-the-reviewer-preflight-1561)
+for the fuller branch-in-force explanation shared across reviewer platforms.
+
+Because `codex-github` has no readable own-configuration file, the reviewer
+preflight (`scripts/development-workflow/reviewer-preflight.sh`) classifies it
+`Undetermined` with reason `no-readable-surface` rather than cross-checking
+`review-disabled` / `stage-excluded` / `base-branch-unmatched` against it — the
+same treatment Step 7a's own reachability probe already gives platforms with no
+in-repo configuration to read. `Undetermined` is reported, never silently
+folded into `Can review`; a run with only `codex-github` undetermined and no
+other platform `Cannot review` produces `Passed, some unverified`, not
+`Passed`. If a future repo-local Codex GitHub configuration file is added,
+this classification should change alongside it.
+
 ## Verification
 
 Use a disposable or already-open PR and run:

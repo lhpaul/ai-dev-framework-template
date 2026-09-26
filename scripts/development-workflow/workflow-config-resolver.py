@@ -1183,13 +1183,26 @@ def review_effective_value_from_path(
     value: Any = data
     for index, key in enumerate(path):
         if not isinstance(value, dict):
-            # Empty optional review/on_draft sections (including sections that
-            # contain only comments) retain the historic absent-field meaning.
-            # A list, scalar, or mapping in the wrong position remains a
-            # structural error and cannot fall through to another file.
+            # Empty optional review/on_draft/on_ready sections (including
+            # sections that contain only comments, which the YAML subset
+            # parser represents as a null value at that key) retain the
+            # historic absent-field meaning. A list, scalar, or mapping in
+            # the wrong position remains a structural error and cannot fall
+            # through to another file.
+            #
+            # #1561 round-9 finding: on_ready was missing from this
+            # null-parent exemption even though on_draft already had it — a
+            # comment-only or null `review.on_ready:` section (a shape
+            # workflow_config_review_local_list_if_declared, workflow-lib.sh,
+            # does not treat as a declared override either) was misclassified
+            # as a structural error, marking on_ready.github malformed and
+            # exiting this preflight as a tooling failure, while Step 7
+            # correctly falls back to the shared ready-stage list for that
+            # exact shape.
             if value is None and (
                 (index == 1 and path[:1] == ["review"])
                 or (index == 2 and path[:2] == ["review", "on_draft"])
+                or (index == 2 and path[:2] == ["review", "on_ready"])
             ):
                 return None, False, False
             return None, False, True
@@ -1216,6 +1229,15 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
 
     A present modern key wins even when empty or malformed. Its malformed
     ancestors must also block rather than letting the alias change coverage.
+
+    This precedence is correct only for resolve_review_effective's *local
+    override* call site: workflow_config_review_local_list_if_declared
+    (workflow-lib.sh, what Step 7a actually consults for the local file)
+    treats a locally *declared* empty runner list as a deliberate opt-out,
+    not a signal to fall back to anything — including that same local
+    file's own internal_reviewers, which Step 7a never even reads for the
+    local-override check. Do not reuse this function for the shared/shipped
+    side of the resolution; see review_runner_shared_value below.
     """
     modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
         data, ["review", "on_draft", "runner"]
@@ -1226,6 +1248,127 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
     if modern_present or modern_structure_error:
         return modern_raw, modern_present, modern_structure_error
     return legacy_raw, legacy_present, legacy_structure_error
+
+
+def review_runner_shared_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
+    """Resolve the shared config's on_draft.runner list, falling back to the
+    legacy ``internal_reviewers`` alias whenever the modern list emits no
+    entries — absent, null, *or* an explicit empty list ``[]`` alike.
+
+    This intentionally does NOT special-case an explicit ``on_draft.runner:
+    []`` the way review_runner_value (above) treats a locally *declared*
+    empty list: that "declared empty wins outright" contract is specific to
+    workflow_config_review_local_list_if_declared's own local-override
+    check in workflow-lib.sh, which never falls back to that same local
+    file's internal_reviewers at all. The SHARED file has no such carve-out:
+    workflow_config_review_on_draft_runner (workflow-lib.sh, what Step 7 /
+    pr-review-loop.sh actually consults for the shared file) only ever
+    inspects whether `workflow_config_review_nested_list ... on_draft
+    runner | grep -q .` produced any output — true for a nonempty modern
+    list, false for absent, null, AND an explicit `[]` alike — falling back
+    to internal_reviewers in every one of those false cases. An earlier
+    version of this function special-cased explicit `[]` to win outright
+    over the legacy alias for the shared config too; that diverged from
+    Step 7's real dispatch (an operator writing an explicit `on_draft.
+    runner: []` alongside a still-populated `internal_reviewers` would see
+    this preflight report "no reviewers configured" while Step 7 goes on to
+    dispatch the legacy list anyway) — precisely the class of silent
+    disagreement between the preflight and Step 7 this module exists to
+    catch (#1561).
+    """
+    modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
+        data, ["review", "on_draft", "runner"]
+    )
+    if modern_structure_error:
+        return modern_raw, modern_present, modern_structure_error
+    modern_list, modern_state = review_runner_state(modern_raw, modern_present)
+    if modern_state == "malformed" or modern_list:
+        return modern_raw, modern_present, modern_structure_error
+    legacy_raw, legacy_present, legacy_structure_error = review_effective_value_from_path(
+        data, ["review", "internal_reviewers"]
+    )
+    if legacy_present or legacy_structure_error:
+        return legacy_raw, legacy_present, legacy_structure_error
+    return modern_raw, modern_present, modern_structure_error
+
+
+def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tuple[Any, bool, bool]:
+    """Derive the legacy ``on_draft.github`` / ``on_ready.github`` list.
+
+    Mirrors ``workflow_config_review_on_draft_github`` /
+    ``workflow_config_review_on_ready_github`` in ``workflow-lib.sh``: the
+    legacy top-level ``review.platforms`` / ``review.phase_after_clean``
+    keys remain accepted for one transition release (AGENTS.md), and
+    ``pr-review-loop.sh`` (Step 7) still dispatches reviewers resolved that
+    way. Without this fallback, a downstream repository still on the legacy
+    keys would see the preflight report ``passed`` while never having
+    cross-checked a reviewer Step 7 goes on to run — exactly the gap this
+    module exists to close (#1561).
+    """
+    platforms_raw, platforms_present, platforms_error = review_effective_value_from_path(
+        data, ["review", "platforms"]
+    )
+    phase_raw, phase_present, phase_error = review_effective_value_from_path(
+        data, ["review", "phase_after_clean"]
+    )
+    platforms_list, platforms_state = review_runner_state(platforms_raw, platforms_present)
+    phase_list, phase_state = review_runner_state(phase_raw, phase_present)
+    present = platforms_present or phase_present
+    # A malformed leaf value (e.g. `review.platforms: coderabbit`, a scalar)
+    # must propagate the same as a structurally malformed ancestor — both
+    # are Decision 5's "the shared reviewer list is malformed" tooling
+    # failure, not a silently-empty derived list.
+    structure_error = (
+        platforms_error or phase_error or platforms_state == "malformed" or phase_state == "malformed"
+    )
+    if bucket == "on_draft_github":
+        # workflow_config_review_on_draft_github only emits anything when
+        # `phase_after_clean` itself has entries; an empty/absent
+        # `phase_after_clean` means the legacy config never split draft from
+        # ready, and the full `platforms` list belongs to on_ready.github
+        # only (the `else` branch below), not to both buckets.
+        derived = [entry for entry in platforms_list if entry not in phase_list] if phase_list else []
+    else:
+        derived = phase_list if phase_list else platforms_list
+    return derived, present, structure_error
+
+
+def review_github_value(data: dict[str, Any], bucket: str, path: list[str]) -> tuple[Any, bool, bool]:
+    """Resolve modern ``on_draft.github`` / ``on_ready.github`` before the
+    supported legacy alias.
+
+    Unlike ``review_runner_value`` (whose present-even-if-empty precedence
+    is deliberate, but only for resolve_review_effective's *local override*
+    call site — see that function's own docstring; the analogous shared-
+    config precedence for the runner bucket lives in
+    ``review_runner_shared_value``, not here), this mirrors
+    ``workflow_config_review_on_draft_github`` / ``_on_ready_github`` in
+    workflow-lib.sh exactly, because *this* resolver's whole purpose is to
+    report the same reviewer list Step 7 (``pr-review-loop.sh``) actually
+    dispatches: those shell functions fall through to the legacy alias
+    whenever the modern list emits no entries (absent **or** explicitly
+    empty), not only when it is absent. A malformed modern value (wrong
+    type) still wins outright — a malformed ancestor must not silently
+    regain legacy coverage.
+    """
+    modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(data, path)
+    if modern_structure_error:
+        return modern_raw, modern_present, modern_structure_error
+    modern_list, modern_state = review_runner_state(modern_raw, modern_present)
+    if modern_state == "malformed" or modern_list:
+        # A malformed leaf value (e.g. a scalar instead of a list) must not
+        # silently regain legacy coverage, same as a structurally malformed
+        # ancestor above. A present, well-formed, non-empty list also wins
+        # outright — only "nothing here" falls through.
+        return modern_raw, modern_present, modern_structure_error
+    legacy_raw, legacy_present, legacy_structure_error = review_github_legacy_derived_value(data, bucket)
+    if legacy_present or legacy_structure_error:
+        return legacy_raw, legacy_present, legacy_structure_error
+    # Neither the modern key nor the legacy alias has anything to offer;
+    # report the modern key's own state (absent vs. explicitly empty) rather
+    # than the legacy derivation's, which is always "absent" once both of
+    # its own source keys are also absent.
+    return modern_raw, modern_present, modern_structure_error
 
 
 def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
@@ -1301,15 +1444,23 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         })
         return base
 
-    shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_value(shared)
+    shipped_raw, shipped_present, shipped_runner_structure_error = review_runner_shared_value(shared)
     shipped_runner, _ = review_runner_state(shipped_raw, shipped_present)
     local_runner_raw, local_runner_present, local_runner_structure_error = review_runner_value(local)
+    # A bare `runner:` with nothing after it (YAML null) is not the same as
+    # a declared, possibly-empty, override: workflow_config_review_
+    # local_list_if_declared (workflow-lib.sh, what Step 7a actually
+    # consults) only treats an inline `[...]` or an actual `- item` line as
+    # declared, so a null local runner key falls through to the shared
+    # list there — mirrors the same fix already applied to the GitHub
+    # buckets in review-github-effective.
+    local_runner_declared = local_runner_present and local_runner_raw is not None
     # A local malformed ancestor is still the source of the effective runner
     # failure. Do not report the shipped list merely because that malformed
     # local tree has no final ``runner`` key.
     runner_raw, runner_present, runner_source = (
         (local_runner_raw, local_runner_present, str(local_path))
-        if local_runner_present or local_runner_structure_error
+        if local_runner_declared or local_runner_structure_error
         else (
             shipped_raw,
             shipped_present,
@@ -1325,7 +1476,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         local, ["review", "internal_reviewers_unavailable_policy"]
     )
     local_review_override_applied = (
-        local_runner_present
+        local_runner_declared
         or local_runner_structure_error
         or local_policy_present
         or local_policy_structure_error
@@ -1336,7 +1487,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     effective_policy, policy_input, effective_policy_state = review_policy_state(policy_raw, policy_present)
 
     runner_structure_error = local_runner_structure_error or (
-        not local_runner_present and shipped_runner_structure_error
+        not local_runner_declared and shipped_runner_structure_error
     )
     # Policy is evaluated first, but its sibling runner tree is independent.
     # A malformed ``review.on_draft`` affects the reviewer list only; a
@@ -1349,7 +1500,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         local_structure_error
         or (not local_policy_present and shipped_policy_structure_error)
         or (
-            not local_runner_present
+            not local_runner_declared
             and shipped_runner_structure_error
             and shipped_policy_structure_error
         )
@@ -1375,13 +1526,125 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         "effective_runner_state": effective_runner_state,
         "effective_runner_source": runner_source,
         "shipped_runner": shipped_runner,
-        "override_excluded": [entry for entry in shipped_runner if local_runner_present and entry not in effective_runner],
+        "override_excluded": [entry for entry in shipped_runner if local_runner_declared and entry not in effective_runner],
         "effective_policy": effective_policy,
         "policy_input": policy_input,
         "effective_policy_state": effective_policy_state,
         "effective_policy_source": policy_source,
         "local_review_override_applied": local_review_override_applied,
     })
+    return base
+
+
+def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve per-bucket effective GitHub reviewer lists for the preflight (#1561).
+
+    Mirrors ``resolve_review_effective``'s parse-state handling
+    (absent/empty/malformed/defined) for ``review.on_draft.github`` and
+    ``review.on_ready.github``, generalizing ``review_runner_value`` /
+    ``review_runner_state`` (previously runner-only) to both GitHub buckets.
+    Also mirrors ``workflow_config_review_on_draft_github`` /
+    ``workflow_config_review_on_ready_github`` in workflow-lib.sh: when the
+    **shared** config's modern nested key is absent or resolves to an empty
+    list, the shared-config legacy ``review.platforms`` /
+    ``review.phase_after_clean`` fallback is applied
+    (``review_github_value``/``review_github_legacy_derived_value``) so a
+    downstream repository still on the legacy keys (AGENTS.md: "remain
+    accepted for one transition release") gets the same reviewer list here
+    that Step 7 (``pr-review-loop.sh``) actually dispatches. As with
+    ``workflow_config_review_local_list_if_declared``, the local override
+    never falls back to legacy — only the modern local key is read.
+    """
+    repo_root = repo_root_from_args(args.repo_root)
+    if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
+        raise ConfigError(f"{repo_root}: repository root is not a readable directory")
+
+    shared_path = repo_root / ".ai-dev-workflow.yaml"
+    local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
+    local_file = str(local_path) if local_path.is_file() else ""
+    if not local_file:
+        local_origin = ""
+
+    buckets = {
+        "on_draft_github": ["review", "on_draft", "github"],
+        "on_ready_github": ["review", "on_ready", "github"],
+    }
+    base: dict[str, Any] = {
+        "unreadable_file": "",
+        "unreadable_detail": "",
+        "local_override_file": local_file,
+        "local_override_origin": local_origin,
+        "local_review_override_applied": False,
+        "main_clone_local_override_file": str(main_clone_file) if main_clone_file else "",
+    }
+    for bucket_key in buckets:
+        base[f"effective_{bucket_key}"] = []
+        base[f"effective_{bucket_key}_state"] = "malformed"
+        base[f"effective_{bucket_key}_source"] = ""
+        base[f"shipped_{bucket_key}"] = []
+        base[f"override_excluded_{bucket_key}"] = []
+
+    try:
+        shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
+    except (ConfigError, UnicodeDecodeError) as exc:
+        base.update({"unreadable_file": str(shared_path), "unreadable_detail": str(exc)})
+        return base
+
+    parse_path = local_path
+    try:
+        local = parse_yaml_subset(local_path, preserve_empty_values=True)
+        if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
+            parse_path = main_clone_file
+            main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
+            if "review" in main_local:
+                local_path, local_origin, local = main_clone_file, "main_clone", main_local
+                local_file = str(local_path)
+                base["local_override_file"] = local_file
+                base["local_override_origin"] = local_origin
+    except (ConfigError, UnicodeDecodeError) as exc:
+        base.update({"unreadable_file": str(parse_path), "unreadable_detail": str(exc)})
+        return base
+
+    local_review_override_applied = False
+    for bucket_key, path in buckets.items():
+        shipped_raw, shipped_present, shipped_structure_error = review_github_value(
+            shared, bucket_key, path
+        )
+        shipped_list, _ = review_runner_state(shipped_raw, shipped_present)
+        local_raw, local_present, local_structure_error = review_effective_value_from_path(local, path)
+        # A bare `key:` with nothing after it (YAML null) is not the same as
+        # a declared, possibly-empty, override: workflow_config_review_
+        # local_list_if_declared (workflow-lib.sh, what Step 7 actually
+        # consults) only treats an inline `[...]` or an actual `- item` line
+        # as declared, so a null local key falls through to the shared list
+        # there. Treating `None` as "present" here would instead let a null
+        # local key silently narrow the effective list to empty, diverging
+        # from what Step 7 dispatches.
+        local_declared = local_present and local_raw is not None
+        raw, present, source = (
+            (local_raw, local_present, str(local_path))
+            if local_declared or local_structure_error
+            else (
+                shipped_raw,
+                shipped_present,
+                str(shared_path) if shipped_present or shipped_structure_error else "",
+            )
+        )
+        effective_list, effective_state = review_runner_state(raw, present)
+        structure_error = local_structure_error or (not local_declared and shipped_structure_error)
+        if structure_error:
+            effective_state = "malformed"
+        if local_declared or local_structure_error:
+            local_review_override_applied = True
+        base[f"effective_{bucket_key}"] = effective_list
+        base[f"effective_{bucket_key}_state"] = effective_state
+        base[f"effective_{bucket_key}_source"] = source
+        base[f"shipped_{bucket_key}"] = shipped_list
+        base[f"override_excluded_{bucket_key}"] = [
+            entry for entry in shipped_list if local_declared and entry not in effective_list
+        ]
+
+    base["local_review_override_applied"] = local_review_override_applied
     return base
 
 
@@ -1542,6 +1805,12 @@ def cmd_review_effective(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review_github_effective(args: argparse.Namespace) -> int:
+    # JSON is the sole form, for the same reason as review-effective above.
+    print(json.dumps(resolve_review_github_effective(args), sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -1600,6 +1869,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     effective.add_argument("--repo-root")
     effective.set_defaults(func=cmd_review_effective)
+
+    github_effective = subcommands.add_parser(
+        "review-github-effective",
+        help="print effective on_draft.github / on_ready.github reviewer configuration as JSON",
+    )
+    github_effective.add_argument("--repo-root")
+    github_effective.set_defaults(func=cmd_review_github_effective)
     return parser
 
 

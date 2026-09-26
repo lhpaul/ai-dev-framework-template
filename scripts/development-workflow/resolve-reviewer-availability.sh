@@ -37,6 +37,7 @@ case "$owner" in */*|.|..) fail 'invalid owner' ;; esac
 case "$repo" in */*|.|..) fail 'invalid repo' ;; esac
 case "$runner_kind" in claude|cursor|codex|unknown) ;; *) fail 'unsupported runner-kind' ;; esac
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 for dependency in python3 jq mktemp rm sleep cat; do
@@ -361,77 +362,15 @@ probe_hosted() {
   if [ "$entry" = coderabbit ]; then
     probe_context=coderabbit-parser
     clamp_bound "$HOSTED_PROBE_CAP_SECONDS"
+    # Invoked as `-B -c <script>` (not a direct script path) so a test-mode
+    # python3 stub that intercepts "$1=-B $2=-c" to plant an ImportError
+    # (T-22 dependency-remedy case) still sees the same argv shape it saw
+    # before this probe was extracted into reviewer_preflight_coderabbit.py.
     run_bounded "$bound" "$work_dir/enabled" "$work_dir/probe.err" python3 -B -c '
-import pathlib, re, sys
-
-path = pathlib.Path(sys.argv[1])
-if not path.exists():
-    print("false")
-    raise SystemExit(0)
-try:
-    import yaml
-except ImportError:
-    print("CodeRabbit configuration validation requires PyYAML; install PyYAML==6.0.2 for the python3 used by this gate", file=sys.stderr)
-    raise SystemExit(4)
-
-class ConfigLoader(yaml.SafeLoader):
-    # Keep YAML core true/false spellings typed; quoted strings and YAML 1.1
-    # yes/no/on/off are not CodeRabbit boolean settings.
-    yaml_implicit_resolvers = {
-        initial: [(tag, pattern) for tag, pattern in rules if tag != "tag:yaml.org,2002:bool"]
-        for initial, rules in yaml.SafeLoader.yaml_implicit_resolvers.items()
-    }
-
-    def flatten_mapping(self, node):
-        # Validate explicit keys before SafeLoader expands merges. Explicit
-        # values may legitimately override merged defaults; duplicates may not.
-        if not hasattr(self, "checked_mappings"):
-            self.checked_mappings = set()
-        if node not in self.checked_mappings:
-            self.checked_mappings.add(node)
-            seen = set()
-            for key_node, _value_node in node.value:
-                key = "<<" if key_node.tag == "tag:yaml.org,2002:merge" else self.construct_object(key_node)
-                try:
-                    duplicate = key in seen
-                    seen.add(key)
-                except TypeError as error:
-                    raise yaml.constructor.ConstructorError(None, None, "unsupported complex mapping key", key_node.start_mark) from error
-                if duplicate:
-                    raise yaml.constructor.ConstructorError(None, None, "duplicate mapping key", key_node.start_mark)
-        super().flatten_mapping(node)
-
-def construct_boolean(loader, node):
-    value = loader.construct_scalar(node)
-    if value not in ("true", "True", "TRUE", "false", "False", "FALSE"):
-        raise yaml.constructor.ConstructorError(None, None, "unsupported boolean spelling", node.start_mark)
-    return value.lower() == "true"
-
-ConfigLoader.add_constructor("tag:yaml.org,2002:bool", construct_boolean)
-ConfigLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF"))
-
-def mapping(value, name):
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError(f"{name} must be a mapping")
-    return value
-
-try:
-    config = mapping(yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader), "document")
-    reviews = mapping(config.get("reviews"), "reviews")
-    auto_review = mapping(reviews.get("auto_review"), "reviews.auto_review")
-    if "enabled" not in auto_review:
-        print("false")
-    else:
-        enabled = auto_review["enabled"]
-        if type(enabled) is not bool:
-            raise ValueError("reviews.auto_review.enabled must be a boolean")
-        print("true" if enabled else "false")
-except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
-    print(str(error), file=sys.stderr)
-    sys.exit(3)
+import os, sys
+sys.path.insert(0, os.environ["REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR"])
+import reviewer_preflight_coderabbit as _rpc
+sys.exit(_rpc.main(["--mode", "enabled-bool", sys.argv[1]]))
 ' "$repo_root/.coderabbit.yaml" || rc=$?
     if [ "$rc" = 4 ]; then
       probe_context=coderabbit-dependency
