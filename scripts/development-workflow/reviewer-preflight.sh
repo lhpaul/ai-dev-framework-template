@@ -119,125 +119,18 @@ for dependency in python3 git jq mktemp; do
   have_cmd "$dependency" || fail "missing dependency: $dependency"
 done
 
-[ -n "$repo_root" ] || fail 'missing --repo-root'
-[ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'
-case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be pre-dispatch, branch-resume, or pr-resume' ;; esac
-# The preflight contract classifies an empty, unresolved, or malformed
-# --target-base as OUTCOME=prerequisite-failed (exit 2, with
-# PREREQUISITE_DETAIL) — the same documented outcome reviewer_preflight.py
-# itself raises for other target_base problems. A bare `fail()` (exit 3,
-# unstructured stderr) would route these malformed-input cases through the
-# wrong documented outcome, even though validation must still happen
-# before git ever sees the value.
-prerequisite_failed_report() {
-  local detail=$1
-  if [ "$json_output" = true ]; then
-    jq -n --arg detail "$detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
-      '{outcome:"prerequisite-failed",outcome_label:"Prerequisite not met",checked_shared_config_ref:"",checked_platform_config_ref:"",local_override_state:"none",platforms:[],prerequisite_detail:$detail,elapsed_seconds:$elapsed,budget_seconds:$budget}'
-  else
-    print_kv_escaped OUTCOME prerequisite-failed
-    print_kv_escaped OUTCOME_LABEL 'Prerequisite not met'
-    print_kv_escaped CHECKED_SHARED_CONFIG_REF ''
-    print_kv_escaped CHECKED_PLATFORM_CONFIG_REF ''
-    print_kv_escaped LOCAL_OVERRIDE_STATE none
-    print_kv_escaped PREREQUISITE_DETAIL "$detail"
-    print_kv_escaped PLATFORM_COUNT 0
-    print_kv_escaped ELAPSED_SECONDS "$SECONDS"
-    print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
-  fi
-  exit 2
-}
-[ -n "$target_base" ] || prerequisite_failed_report 'missing --target-base'
-# --target-base and --branch reach `git fetch origin "<value>"` as a bare
-# CLI argument that git itself parses, not merely a branch name string:
-# `git fetch` accepts full "<src>:<dst>[+]" refspec syntax there (so
-# "develop:refs/heads/injected", or a leading '+' forcing an overwrite,
-# would create or update an arbitrary local ref), AND git parses a
-# leading-dash value as an OPTION regardless of its position after
-# "origin" — confirmed exploitable: "--upload-pack=./evil" runs an
-# arbitrary repo-root program during the fetch. check-ref-format alone
-# validates ref-name shape but does not reject either risk; both must be
-# rejected explicitly before any value reaches git.
-is_option_or_refspec_like() {
-  case "$1" in
-    +*|-*) return 0 ;;
-    # `git check-ref-format refs/heads/HEAD` alone reports this shape as
-    # valid (it is a syntactically fine refname), but HEAD is git's own
-    # reserved symbolic-ref name, not an ordinary branch — confirmed:
-    # `git check-ref-format --branch HEAD` (git's own branch-shorthand
-    # validator) rejects it, while the plain refs/heads/ form below does
-    # not. Passing "HEAD" through as --target-base/--branch would fetch
-    # and classify against the remote's symbolic default-branch pointer
-    # (refs/remotes/origin/HEAD) under the literal name "HEAD" instead of
-    # that default branch's own name, producing a verdict against the
-    # wrong ref or an unstructured tooling failure rather than this
-    # prerequisite check. Reject the exact reserved name directly, rather
-    # than switching to --branch mode's shorthand-expansion semantics
-    # (e.g. it silently accepts and expands "@{-1}"), which would trade
-    # this one gap for a different unreviewed one.
-    HEAD) return 0 ;;
-  esac
-  if git check-ref-format "refs/heads/$1" >/dev/null 2>&1; then
-    return 1
-  fi
-  return 0
-}
-if is_option_or_refspec_like "$target_base"; then
-  prerequisite_failed_report "--target-base is not a valid branch name: $target_base"
-fi
-validate_branch_name() {
-  local value=$1 label=$2
-  if is_option_or_refspec_like "$value"; then
-    fail "$label is not a valid branch name: $value"
-  fi
-}
-if [ "$mode" = branch-resume ]; then
-  [ -n "$branch" ] || fail '--branch is required for --mode branch-resume'
-  validate_branch_name "$branch" '--branch'
-fi
-if [ "$mode" = pr-resume ]; then
-  [ -n "$pr" ] || fail '--pr is required for --mode pr-resume'
-  # --pr reaches `gh pr view "$pr" ...` as a bare argument gh itself parses:
-  # a leading-dash value such as "--help" is accepted as a gh CLI flag
-  # rather than a PR number (gh pr view --help exits 0 with help text,
-  # misreported as a generic tooling failure here), and other flags like
-  # --web could select unrelated behavior. Require a plain positive integer
-  # before this value ever reaches gh.
-  case "$pr" in
-    ''|*[!0-9]*) fail "--pr must be a positive integer, not a flag or other value: $pr" ;;
-  esac
-  # Digits-only above still accepts "0" (and "00", "000", ...) — zero cannot
-  # identify a pull request, and gh pr view 0 fails as an unstructured
-  # tooling error rather than rejecting the invalid input locally. Reject
-  # any all-zero value by requiring at least one non-zero digit.
-  case "$pr" in
-    *[1-9]*) ;;
-    *) fail "--pr must be a positive integer greater than zero: $pr" ;;
-  esac
-  [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
-fi
-
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
-# As of #1561's round-26 read-only redesign, this script resolves every
-# remote tip via `git ls-remote` and reads content directly by the resolved
-# SHA (git show <sha>:<path>) rather than fetching a PR head into a local
-# temporary ref first — there is no longer any repository-state ref this
-# script creates and must remember to discard, so cleanup is just the
-# scratch work_dir.
-cleanup() {
-  local rc=$?
-  [ -z "$work_dir" ] || rm -rf -- "$work_dir"
-  # `return "$rc"` from an EXIT trap does not reliably override the
-  # process's already-decided exit status outside this script's own
-  # set -e context (`trap f EXIT; exit 0` still exits 0 even when f
-  # returns 3, in general). Exit explicitly here instead of relying on
-  # that interaction, so this function's own intent (preserve whatever
-  # exit status the run already decided) is unambiguous rather than
-  # relying on that interaction to happen to hold.
-  exit "$rc"
-}
-trap cleanup EXIT
-
+# #1561 round-13 finding: is_option_or_refspec_like's own `git
+# check-ref-format` call (used starting with --target-base validation just
+# below) is a bootstrap validation subprocess that ran unbounded — even a
+# perfectly normal invocation could hang past Decision 3's whole-preflight
+# deadline if git or its wrapper stalls, with no outcome ever produced.
+# clamp_bound/run_bounded need no work_dir (this script's own scratch
+# directory, created later): they only need SECONDS/PREFLIGHT_BUDGET_
+# SECONDS/PREFLIGHT_PER_PLATFORM_CAP_SECONDS (already set above) and
+# have_cmd (already sourced from workflow-lib.sh) — moved here, ahead of
+# every validation and reporting path that needs a bounded read, rather
+# than defined later alongside the git-show/ls-remote reads that also use
+# them.
 clamp_bound() {
   local remaining
   remaining=$((PREFLIGHT_BUDGET_SECONDS - SECONDS))
@@ -370,6 +263,142 @@ run_bounded() {
   kill -KILL -- "-$pid" 2>/dev/null || true
   return "$rc"
 }
+
+[ -n "$repo_root" ] || fail 'missing --repo-root'
+[ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'
+case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be pre-dispatch, branch-resume, or pr-resume' ;; esac
+# The preflight contract classifies an empty, unresolved, or malformed
+# --target-base as OUTCOME=prerequisite-failed (exit 2, with
+# PREREQUISITE_DETAIL) — the same documented outcome reviewer_preflight.py
+# itself raises for other target_base problems. A bare `fail()` (exit 3,
+# unstructured stderr) would route these malformed-input cases through the
+# wrong documented outcome, even though validation must still happen
+# before git ever sees the value.
+prerequisite_failed_report() {
+  local detail=$1
+  if [ "$json_output" = true ]; then
+    jq -n --arg detail "$detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
+      '{outcome:"prerequisite-failed",outcome_label:"Prerequisite not met",checked_shared_config_ref:"",checked_platform_config_ref:"",local_override_state:"none",platforms:[],prerequisite_detail:$detail,elapsed_seconds:$elapsed,budget_seconds:$budget}'
+  else
+    print_kv_escaped OUTCOME prerequisite-failed
+    print_kv_escaped OUTCOME_LABEL 'Prerequisite not met'
+    print_kv_escaped CHECKED_SHARED_CONFIG_REF ''
+    print_kv_escaped CHECKED_PLATFORM_CONFIG_REF ''
+    print_kv_escaped LOCAL_OVERRIDE_STATE none
+    print_kv_escaped PREREQUISITE_DETAIL "$detail"
+    print_kv_escaped PLATFORM_COUNT 0
+    print_kv_escaped ELAPSED_SECONDS "$SECONDS"
+    print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
+  fi
+  exit 2
+}
+[ -n "$target_base" ] || prerequisite_failed_report 'missing --target-base'
+# --target-base and --branch reach `git fetch origin "<value>"` as a bare
+# CLI argument that git itself parses, not merely a branch name string:
+# `git fetch` accepts full "<src>:<dst>[+]" refspec syntax there (so
+# "develop:refs/heads/injected", or a leading '+' forcing an overwrite,
+# would create or update an arbitrary local ref), AND git parses a
+# leading-dash value as an OPTION regardless of its position after
+# "origin" — confirmed exploitable: "--upload-pack=./evil" runs an
+# arbitrary repo-root program during the fetch. check-ref-format alone
+# validates ref-name shape but does not reject either risk; both must be
+# rejected explicitly before any value reaches git.
+is_option_or_refspec_like() {
+  case "$1" in
+    +*|-*) return 0 ;;
+    # `git check-ref-format refs/heads/HEAD` alone reports this shape as
+    # valid (it is a syntactically fine refname), but HEAD is git's own
+    # reserved symbolic-ref name, not an ordinary branch — confirmed:
+    # `git check-ref-format --branch HEAD` (git's own branch-shorthand
+    # validator) rejects it, while the plain refs/heads/ form below does
+    # not. Passing "HEAD" through as --target-base/--branch would fetch
+    # and classify against the remote's symbolic default-branch pointer
+    # (refs/remotes/origin/HEAD) under the literal name "HEAD" instead of
+    # that default branch's own name, producing a verdict against the
+    # wrong ref or an unstructured tooling failure rather than this
+    # prerequisite check. Reject the exact reserved name directly, rather
+    # than switching to --branch mode's shorthand-expansion semantics
+    # (e.g. it silently accepts and expands "@{-1}"), which would trade
+    # this one gap for a different unreviewed one.
+    HEAD) return 0 ;;
+  esac
+  # #1561 round-13 finding: this git subprocess previously ran unbounded —
+  # a stalled filesystem or malfunctioning git wrapper could hang this
+  # normally-instant, purely local check indefinitely, letting even an
+  # ordinary invocation exceed Decision 3's whole-preflight deadline
+  # without ever producing an outcome. Bound it like every other read in
+  # this script; discard both output streams (the caller only ever needed
+  # the exit status) via /dev/null rather than the scratch work_dir, which
+  # does not exist yet this early. A bounded timeout (124) is neither "this
+  # value parses as an invalid branch name" (a run-input verdict) nor "this
+  # value is a valid branch name" (a definite pass) — fail closed as a
+  # tooling failure, the same as every other bounded read's own rc=124
+  # handling, rather than silently coercing "cannot determine" into either
+  # definite answer.
+  local check_rc=0
+  clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
+  run_bounded "$bound" /dev/null /dev/null git check-ref-format "refs/heads/$1" || check_rc=$?
+  case "$check_rc" in
+    0) return 1 ;;
+    124) fail "cannot validate branch name '$1': the check-ref-format probe did not complete within the time budget" ;;
+    *) return 0 ;;
+  esac
+}
+if is_option_or_refspec_like "$target_base"; then
+  prerequisite_failed_report "--target-base is not a valid branch name: $target_base"
+fi
+validate_branch_name() {
+  local value=$1 label=$2
+  if is_option_or_refspec_like "$value"; then
+    fail "$label is not a valid branch name: $value"
+  fi
+}
+if [ "$mode" = branch-resume ]; then
+  [ -n "$branch" ] || fail '--branch is required for --mode branch-resume'
+  validate_branch_name "$branch" '--branch'
+fi
+if [ "$mode" = pr-resume ]; then
+  [ -n "$pr" ] || fail '--pr is required for --mode pr-resume'
+  # --pr reaches `gh pr view "$pr" ...` as a bare argument gh itself parses:
+  # a leading-dash value such as "--help" is accepted as a gh CLI flag
+  # rather than a PR number (gh pr view --help exits 0 with help text,
+  # misreported as a generic tooling failure here), and other flags like
+  # --web could select unrelated behavior. Require a plain positive integer
+  # before this value ever reaches gh.
+  case "$pr" in
+    ''|*[!0-9]*) fail "--pr must be a positive integer, not a flag or other value: $pr" ;;
+  esac
+  # Digits-only above still accepts "0" (and "00", "000", ...) — zero cannot
+  # identify a pull request, and gh pr view 0 fails as an unstructured
+  # tooling error rather than rejecting the invalid input locally. Reject
+  # any all-zero value by requiring at least one non-zero digit.
+  case "$pr" in
+    *[1-9]*) ;;
+    *) fail "--pr must be a positive integer greater than zero: $pr" ;;
+  esac
+  [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
+fi
+
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
+# As of #1561's round-26 read-only redesign, this script resolves every
+# remote tip via `git ls-remote` and reads content directly by the resolved
+# SHA (git show <sha>:<path>) rather than fetching a PR head into a local
+# temporary ref first — there is no longer any repository-state ref this
+# script creates and must remember to discard, so cleanup is just the
+# scratch work_dir.
+cleanup() {
+  local rc=$?
+  [ -z "$work_dir" ] || rm -rf -- "$work_dir"
+  # `return "$rc"` from an EXIT trap does not reliably override the
+  # process's already-decided exit status outside this script's own
+  # set -e context (`trap f EXIT; exit 0` still exits 0 even when f
+  # returns 3, in general). Exit explicitly here instead of relying on
+  # that interaction, so this function's own intent (preserve whatever
+  # exit status the run already decided) is unambiguous rather than
+  # relying on that interaction to happen to hold.
+  exit "$rc"
+}
+trap cleanup EXIT
 
 # AC-2's before/after porcelain diff only needs the two snapshots to match;
 # a git failure here (e.g. repo-root is not a git repository) surfaces as a

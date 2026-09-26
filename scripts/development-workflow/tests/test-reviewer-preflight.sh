@@ -1983,5 +1983,42 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         data,
     )
 
+    # T-57 (#1561 round-13 finding, P2): is_option_or_refspec_like's own
+    # `git check-ref-format` call — the very first git subprocess this
+    # script runs, ahead of clamp_bound_floor and the mktemp-created
+    # work_dir — must be bounded like every other read. Fake git to stall
+    # specifically on check-ref-format (identifiable by its own distinct
+    # subcommand argv, so ls-remote and every other git call this script
+    # makes still delegates to the real binary), with a tight budget: the
+    # run must reach a bounded, fail-closed outcome well within the test's
+    # own subprocess timeout, not hang for the fake's full stall duration.
+    repo57 = root / 'repo57'
+    write_repo(repo57, coherent_shared, coherent_coderabbit)
+    bins57 = root / 'bin57'
+    bins57.mkdir(exist_ok=True)
+    real_git57 = shutil.which('git')
+    stalled_git57 = bins57 / 'git'
+    stalled_git57.write_text(
+        '#!/bin/bash\n'
+        'for arg in "$@"; do [ "$arg" = check-ref-format ] && sleep 10; done\n'
+        f'exec {real_git57!r} "$@"\n'
+    )
+    stalled_git57.chmod(0o755)
+    started57 = time.monotonic()
+    rc, data, out, err = run(
+        repo57, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
+        env={
+            'PATH': f'{bins57}:{os.environ.get("PATH", "")}',
+            'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        },
+        expected=3,
+    )
+    elapsed57 = time.monotonic() - started57
+    check('T-57 a stalled check-ref-format probe is bounded, not left to run its full stall duration', elapsed57 <= 8.0, elapsed57)
+    check('T-57 failure message names the check-ref-format probe timeout', 'check-ref-format probe did not complete' in err, err)
+
 print(f'\nPassed: {passed}')
 PY
