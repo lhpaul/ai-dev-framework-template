@@ -953,7 +953,7 @@ or `develop-<slug>` for integration-branch items) with:
   - What was implemented
   - Link to spec and plan
   - Test plan (how to validate)
-  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended, rather than recorded)
+  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended -- write the record too if a coverage-equivalent deviation remains after the amendment)
   - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -1327,7 +1327,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - What was refactored and why
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
-      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended, rather than recorded)
+      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended -- write the record too if a coverage-equivalent deviation remains after the amendment)
       - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
