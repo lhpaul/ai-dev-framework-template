@@ -294,7 +294,7 @@ size" passes whatever the comparison operator is.
 **Maps to**: AC-1, AC-2, AC-3, AC-3a, AC-4, AC-16.
 
 1. Read `docs/workflow/development-workflow/review-doctrine.md`.
-2. Confirm five patterns, each with one `**Shape**:`, one `**Example**:` and one
+2. Confirm six patterns, each with one `**Shape**:`, one `**Example**:` and one
    `**Detect**:`.
 3. Confirm the preamble states that the catalogue lists shapes worth looking for
    and is **not** the set of things worth reporting, and that it asks a reviewer
