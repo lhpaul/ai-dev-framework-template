@@ -92,16 +92,20 @@ For a worked instance of this rule — a regex-based key-extraction scanner, its
 When the test scaffolding you ship (fixture manifests, proof-cycle lists, case
 tables, scenario enumerations) removes at least one item the plan projected
 (an addition-only delta does not trigger this; a net-even or net-larger swap
-that drops a projected item does), but is coverage-equivalent, write a
-`## Test-Scope Deviation Record` in the PR description before opening the
-PR: which plan enumeration was reduced, what
-was delivered instead, the coverage classes retained and which tests exercise
-them, the coverage argument, and residual risk accepted (or "None
-identified"). A plan enumeration is indicative by default and binds only when
-the plan marks it with the exact literal `**Binding enumeration**`; a delta
-that changes observable behavior or drops acceptance-criterion coverage is
-unaffected by this rule and stays governed by Pass 1's unchanged spec/plan
-compliance check regardless of test counts.
+that drops a projected item does): if the plan marked that enumeration with
+the exact literal `**Binding enumeration**`, restore the listed item, or
+obtain a human decision to amend the plan, before opening the PR — a
+deviation record cannot authorize removing a binding item, regardless of
+whether the substitution is coverage-equivalent. Otherwise, when the
+deviation is coverage-equivalent, write a `## Test-Scope Deviation Record` in
+the PR description before opening the PR: which plan enumeration was
+reduced, what was delivered instead, the coverage classes retained and which
+tests exercise them, the coverage argument, and residual risk accepted (or
+"None identified"). A plan enumeration is indicative by default and binds
+only when marked with that exact literal; a delta that changes observable
+behavior or drops acceptance-criterion coverage is unaffected by this rule
+and stays governed by Pass 1's unchanged spec/plan compliance check
+regardless of test counts.
 
 See `docs/workflow/development-workflow/test-scope-proportionality.md` for the
 full rule, the Gate A / Gate B decision matrices, and a worked example, and
