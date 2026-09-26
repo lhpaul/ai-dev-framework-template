@@ -542,6 +542,48 @@ class ParsePrStateTests(unittest.TestCase):
             rp.classify(payload)
 
 
+class ParseStageListTests(unittest.TestCase):
+    """#1561 round-12 finding: a non-empty --remaining-stages CSV
+    containing only whitespace/separators must not silently normalize to
+    the same [] the legitimate whole-string-empty case produces."""
+
+    def test_whole_string_empty_stays_empty_list(self):
+        # The explicit-empty-stages short-circuit in reviewer-preflight.sh
+        # always calls this with a genuinely empty string; this remains
+        # the legitimate "no stages remaining" signal.
+        self.assertEqual(rpbi._parse_stage_list(""), [])
+
+    def test_lone_comma_preserves_empty_markers_not_empty_list(self):
+        self.assertEqual(rpbi._parse_stage_list(","), ["", ""])
+
+    def test_double_comma_preserves_all_empty_markers(self):
+        self.assertEqual(rpbi._parse_stage_list(",,"), ["", "", ""])
+
+    def test_whitespace_only_token_preserves_empty_marker(self):
+        self.assertEqual(rpbi._parse_stage_list("   "), [""])
+
+    def test_leading_comma_preserves_empty_marker_alongside_valid_token(self):
+        self.assertEqual(
+            rpbi._parse_stage_list(",on_draft.github"),
+            ["", "on_draft_github"],
+        )
+
+    def test_trailing_comma_preserves_empty_marker_alongside_valid_token(self):
+        self.assertEqual(
+            rpbi._parse_stage_list("on_draft.github,"),
+            ["on_draft_github", ""],
+        )
+
+    def test_malformed_csv_fails_classify_as_prerequisite_failed(self):
+        # End-to-end through classify(): the empty-marker entries this
+        # parser now preserves must route through the same
+        # prerequisite-failed check as any other unsupported bucket
+        # token, not silently collapse to no-review-remaining.
+        payload = base_payload(remaining_stages=rpbi._parse_stage_list(",,"))
+        with self.assertRaises(rp.PrerequisiteFailed):
+            rp.classify(payload)
+
+
 class SharedBaseBranchBudgetTests(unittest.TestCase):
     """Bounded-Codex-pass round 2: base_branch_covered() must be called once
     per platform, not once per resolved bucket — otherwise a platform

@@ -35,12 +35,32 @@ def _load_json(path: str) -> dict[str, Any] | None:
 
 
 def _parse_stage_list(csv: str) -> list[str]:
+    """Parse ``--remaining-stages``'s comma-separated bucket-token value.
+
+    #1561 round-12 finding: a genuinely empty ``csv`` (the CLI's own
+    explicit-empty-stages short-circuit in reviewer-preflight.sh, which
+    always calls this with ``--remaining-stages ""``) is the legitimate
+    "no stages remaining" signal and must still parse to ``[]``. But a
+    NON-empty csv containing only whitespace/separators (e.g. ``",,"``, a
+    lone ``","``, or a leading/trailing comma) previously stripped every
+    resulting empty token and silently normalized to that same ``[]`` —
+    conflating deliberately-empty input with malformed input. That let a
+    malformed ``--remaining-stages`` value reach classify()'s own
+    ``if not remaining_stages: return {"outcome": "no-review-remaining"}``
+    branch (exit 0, no reviewer checks at all) instead of its
+    ``PrerequisiteFailed`` branch (exit 2), which the decision matrix
+    requires for malformed stage input. Only the whole-string-empty case
+    returns ``[]``; any OTHER split producing an empty segment preserves
+    that empty string as an entry, so classify()'s own bucket-membership
+    check (an empty string is never a member of ``BUCKET_SUPPORTED``)
+    rejects it as malformed, the same as any other unsupported token.
+    """
+    if not csv:
+        return []
     stages = []
     for token in csv.split(","):
         token = token.strip()
-        if not token:
-            continue
-        stages.append(BUCKET_MAP.get(token, token))
+        stages.append(BUCKET_MAP.get(token, token) if token else token)
     return stages
 
 

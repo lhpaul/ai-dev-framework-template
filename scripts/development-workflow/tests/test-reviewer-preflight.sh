@@ -1958,5 +1958,30 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-55 a stalled resolver-output jq is bounded, not left to run its full stall duration', elapsed55 <= 8.0, elapsed55)
     check('T-55 failure message names the LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN parse failure', 'cannot read LOCAL_OVERRIDE_FILE' in err, err)
 
+    # T-56 (#1561 round-12 finding, P1): a non-empty but malformed
+    # --remaining-stages CSV (only whitespace/separators, e.g. ",,") does
+    # not match the CLI's own explicit-empty-stages short-circuit (that
+    # requires the raw value to be exactly ""), so it reaches the early
+    # stage-set validation added in round-8 — which must reject it as
+    # prerequisite-failed, not silently normalize it to no-review-remaining
+    # (exit 0, no reviewer checks at all despite malformed input).
+    repo56 = root / 'repo56'
+    write_repo(repo56, coherent_shared, coherent_coderabbit)
+    rc, data, out, err = run(
+        repo56, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', ',,',
+        expected=2,
+    )
+    check(
+        'T-56 a malformed non-empty --remaining-stages CSV is prerequisite-failed, not no-review-remaining',
+        data.get('OUTCOME') == 'prerequisite-failed',
+        f'rc={rc} data={data} err={err}',
+    )
+    check(
+        'T-56 prerequisite_detail names the unresolved/malformed stage set',
+        'lifecycle stages' in data.get('PREREQUISITE_DETAIL', ''),
+        data,
+    )
+
 print(f'\nPassed: {passed}')
 PY
