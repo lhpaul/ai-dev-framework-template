@@ -136,15 +136,18 @@ record explicit out-of-scope rationale.
 ## Test-Scope Deviation Record
 
 When the test scaffolding you ship (fixture manifests, proof-cycle lists,
-case tables, scenario enumerations) removes at least one item the plan
-projected, but is coverage-equivalent, write a `## Test-Scope Deviation
-Record` in the PR description before opening the PR. This is the same
-condition Gate A uses (canonical document, exclusion X2): item count is not
-the trigger — a swap, consolidation, or rewrite that nets even or larger in
-total count but drops a projected item still requires the record, while a
-delta that only adds to, or leaves intact, every projected item does not,
-whatever the totals. The full rule — including when a plan enumeration is
-binding rather than indicative — is
+case tables, scenario enumerations) removes at least one item an
+**indicative** plan enumeration projected, but is coverage-equivalent, write
+a `## Test-Scope Deviation Record` in the PR description before opening the
+PR. This is the same condition Gate A uses (canonical document, exclusion
+X2): item count is not the trigger — a swap, consolidation, or rewrite that
+nets even or larger in total count but drops a projected item still requires
+the record, while a delta that only adds to, or leaves intact, every
+projected item does not, whatever the totals. This record path does not
+apply when the removed item came from an enumeration marked
+`**Binding enumeration**` — a record cannot authorize that removal; restore
+the item, or obtain a human decision to amend the plan, before opening the
+PR (rows A5/A6). The full rule is
 [`test-scope-proportionality.md`](../test-scope-proportionality.md). The
 record does not apply to a delta that changes observable behavior or drops
 acceptance-criterion coverage; that stays governed by the unchanged Pass 1
@@ -950,7 +953,7 @@ or `develop-<slug>` for integration-branch items) with:
   - What was implemented
   - Link to spec and plan
   - Test plan (how to validate)
-  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record, and a harmful removal is restored or narrowed rather than recorded)
+  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended, rather than recorded)
   - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -1324,7 +1327,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - What was refactored and why
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
-      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item the plan's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record, and a harmful removal is restored or narrowed rather than recorded)
+      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended, rather than recorded)
       - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:

@@ -44,12 +44,16 @@ fixes.
 
 ## The Test-Scope Deviation Record
 
-An implementer whose shipped test scaffolding removes at least one item the
-plan projected — the same trigger Gate A's exclusion X2 uses, so a net-even
-or net-larger swap that drops a projected item still qualifies, and an
-addition-only delta never does — but is coverage-equivalent, records a
-**Test-Scope Deviation Record** in the PR. The format and authoring
-obligation live in
+An implementer whose shipped test scaffolding removes at least one item an
+**indicative** enumeration in the plan projected — the same trigger Gate A's
+exclusion X2 uses, so a net-even or net-larger swap that drops a projected
+item still qualifies, and an addition-only delta never does — but is
+coverage-equivalent, records a **Test-Scope Deviation Record** in the PR.
+This path does not apply to a `**Binding enumeration**` removal: a record
+cannot authorize removing a binding item, so that case follows rows A5/A6
+instead (restore the item, or obtain a human decision to amend the plan; a
+record is written only if the plan is amended and a coverage-equivalent
+deviation remains). The record format and authoring obligation live in
 `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 (`## Test-Scope Deviation Record`). This is what Gate A evaluates.
 
