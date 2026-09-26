@@ -1467,7 +1467,7 @@ _1654_independent_version() {
 _1654_install_doctrine "$_1654_doctrine_root" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
 _1654_supplied="$(_1654_run_supply "$_1654_doctrine_root")"
 run_test "1654_s1_supplied_state" "supplied" "$(printf '%s\n' "$_1654_supplied" | jq -r '.state')"
-run_test "1654_s1_supplied_count" "5" "$(printf '%s\n' "$_1654_supplied" | jq -r '.pattern_count')"
+run_test "1654_s1_supplied_count" "6" "$(printf '%s\n' "$_1654_supplied" | jq -r '.pattern_count')"
 run_test "1654_s1_supplied_version_len" "12" "$(printf '%s\n' "$_1654_supplied" | jq -r '.version | length')"
 run_test "1654_s1_supplied_text_nonempty" "true" "$(printf '%s\n' "$_1654_supplied" | jq -r '.text | length > 0')"
 
@@ -1581,7 +1581,7 @@ for _1654_field in schema_version pr_number owner repo base_branch head_branch r
 done
 run_test "1654_s7a_bytes_match" "0" "$(jq -j -r '.review_doctrine' "$BUNDLE_DUMP" > /tmp/1654-doctrine-bytes.tmp && cmp -s "$VALID_REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md" /tmp/1654-doctrine-bytes.tmp && echo 0 || echo 1)"
 run_test "1654_s8_state_kv" "REVIEW_DOCTRINE_STATE=supplied" "$(line_for REVIEW_DOCTRINE_STATE)"
-run_test "1654_s8_count_kv" "REVIEW_DOCTRINE_PATTERN_COUNT=5" "$(line_for REVIEW_DOCTRINE_PATTERN_COUNT)"
+run_test "1654_s8_count_kv" "REVIEW_DOCTRINE_PATTERN_COUNT=6" "$(line_for REVIEW_DOCTRINE_PATTERN_COUNT)"
 run_test "1654_s8_no_text_kv" "0" "$(grep -c '^REVIEW_DOCTRINE=' "$OUTPUT_FILE" 2>/dev/null || true)"
 _1654_emit_out="$(bash -c 'HARNESS_MODE=1 source "$1"; emit_prefixed_platform_output 1 "$(cat "$2")"' bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$OUTPUT_FILE")"
 run_test "1654_s8_platform_state" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_STATE=' || true)"
@@ -1734,7 +1734,7 @@ export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 export LOCAL_AI_REVIEWER_COMMAND
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
-run_test "1655_s7_partial_applied" "STRICT_PLAN_APPLIED=source_declaration,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s7_partial_applied" "STRICT_PLAN_APPLIED=source_declaration,phase_ordering,dependency_state,reversal_risk,test_scope_proportionality" "$(line_for STRICT_PLAN_APPLIED)"
 rm -rf "$PLAN_REPO"
 
 # Scenario 17: mixed plans — source-dependent finding on no-spec plan is dropped
@@ -1785,7 +1785,7 @@ export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 export LOCAL_AI_REVIEWER_COMMAND
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
-run_test "1655_s17_applied_all7" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s17_applied_all8" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk,test_scope_proportionality" "$(line_for STRICT_PLAN_APPLIED)"
 run_test "1655_s17_drop_source_on_nospec" "STRICT_PLAN_COUNT=1" "$(line_for STRICT_PLAN_COUNT)"
 run_test "1655_s17_kept_phase_ordering" "STRICT_PLAN_CHECKS=phase_ordering" "$(line_for STRICT_PLAN_CHECKS)"
 run_test "1655_s17_unknown_from_drop" "STRICT_PLAN_UNKNOWN_COUNT=1" "$(line_for STRICT_PLAN_UNKNOWN_COUNT)"
@@ -1820,7 +1820,7 @@ export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 export LOCAL_AI_REVIEWER_COMMAND
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
-run_test "1655_s7a_all_seven" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s7a_all_eight" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk,test_scope_proportionality" "$(line_for STRICT_PLAN_APPLIED)"
 rm -rf "$PLAN_REPO"
 
 # Scenario 8: plan text comes from reviewed head via git show
@@ -2050,7 +2050,7 @@ run_reviewer "$MOCK_BIN:$PATH" --repo-root "$PLAN_REPO"
 run_test "1655_s15_plan_applied" "STRICT_PLAN_STATE=applied" "$(line_for STRICT_PLAN_STATE)"
 run_test "1655_s15_spec_na" "STRICT_SPEC_STATE=not_applicable" "$(line_for STRICT_SPEC_STATE)"
 run_test "1655_s15_no_spec_reason" "no" "$(key_present STRICT_SPEC_REASON)"
-run_test "1655_s15_plan_applied_set7" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk" "$(line_for STRICT_PLAN_APPLIED)"
+run_test "1655_s15_plan_applied_set8" "STRICT_PLAN_APPLIED=source_declaration,unspecified_step,spec_traceability,ac_test_coverage,phase_ordering,dependency_state,reversal_risk,test_scope_proportionality" "$(line_for STRICT_PLAN_APPLIED)"
 run_test "1655_s15_bundle_has_plan_docs" "true" "$(awk -F= '/^has_strict_plan_documents=/{print $2}' "$MOCK_RECORD_FILE" | tail -1)"
 rm -f "$MOCK_RECORD_FILE"
 rm -rf "$PLAN_REPO"
@@ -2070,7 +2070,7 @@ run_test "1655_s13_one_invocation" "1" "$(grep -c '^mode=' "$MOCK_RECORD_FILE" |
 rm -f "$MOCK_RECORD_FILE"
 
 # Scenario 14b: shipped plan identifiers
-EXPECTED_PLAN_IDS='["source_declaration","unspecified_step","spec_traceability","ac_test_coverage","phase_ordering","dependency_state","reversal_risk"]'
+EXPECTED_PLAN_IDS='["source_declaration","unspecified_step","spec_traceability","ac_test_coverage","phase_ordering","dependency_state","reversal_risk","test_scope_proportionality"]'
 EXTRACTED_PLAN_IDS="$(
   HARNESS_MODE=1 bash -c '
     source "'"$REVIEWER"'"
@@ -2079,7 +2079,7 @@ EXTRACTED_PLAN_IDS="$(
 )"
 run_test "1655_s14b_shipped_ids" "$(printf '%s\n' "$EXPECTED_PLAN_IDS" | jq -c 'sort')" "$EXTRACTED_PLAN_IDS"
 
-EXPECTED_PLAN_SOURCES='[{"id":"ac_test_coverage","source":"required"},{"id":"dependency_state","source":"not_required"},{"id":"phase_ordering","source":"not_required"},{"id":"reversal_risk","source":"not_required"},{"id":"source_declaration","source":"not_required"},{"id":"spec_traceability","source":"required"},{"id":"unspecified_step","source":"required"}]'
+EXPECTED_PLAN_SOURCES='[{"id":"ac_test_coverage","source":"required"},{"id":"dependency_state","source":"not_required"},{"id":"phase_ordering","source":"not_required"},{"id":"reversal_risk","source":"not_required"},{"id":"source_declaration","source":"not_required"},{"id":"spec_traceability","source":"required"},{"id":"test_scope_proportionality","source":"not_required"},{"id":"unspecified_step","source":"required"}]'
 EXTRACTED_PLAN_SOURCES="$(
   HARNESS_MODE=1 bash -c '
     source "'"$REVIEWER"'"
@@ -2203,6 +2203,7 @@ _planted_checks=(
   "phase_ordering:7"
   "dependency_state:7"
   "reversal_risk:7"
+  "test_scope_proportionality:11"
 )
 for _entry in "${_planted_checks[@]}"; do
   _check="${_entry%%:*}"

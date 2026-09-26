@@ -63,6 +63,22 @@ A PR is ready for human review only when all of the following are true:
 
 If any blocking finding remains, the PR must stay out of `ready-for-human-review`.
 
+### Test-scope proportionality
+
+A delta confined to test scaffolding (fixture manifests, proof-cycle lists,
+case tables, scenario enumerations) is blocking only when the reviewer states
+a **Coverage-Harm Statement**: the specific coverage the removed items
+provided, and the defect class that now escapes. A plan enumeration is
+indicative unless marked with the exact literal `**Binding enumeration**`,
+in which case a delta that removes a listed item stays blocking regardless
+of any Coverage-Harm Statement. This never relaxes review of production-code
+correctness (a delta that changes observable behaviour or drops
+acceptance-criterion coverage stays governed by the unchanged Pass 1 rule)
+or matching of third-party reviewer output. See
+[`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
+for the full rule, the Gate A / Gate B decision matrices, and the worked
+example.
+
 ---
 
 ## Spec Review Checklist
@@ -215,6 +231,17 @@ Check:
 
   Do **not** duplicate the full matrix prose here — reference the canonical
   file.
+- Test-scope proportionality (advisory, never blocking — Gate B in
+  [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)):
+  flag as `suggestion` when projected test scaffolding clearly exceeds the
+  size of the deliverable it protects, or when a prose-only or
+  documentation-only deliverable proposes a custom parser, scanner, or
+  matcher to validate it. Do not guess a ratio when sizes cannot be
+  estimated from the plan.
+- Any enumeration the plan intends as binding carries the exact literal
+  `**Binding enumeration**` on, or immediately above, the line that
+  introduces it; an enumeration with no such marker is indicative and may be
+  satisfied by a coverage-equivalent set at implementation time.
 
 Typical `blocking` issues:
 
@@ -254,7 +281,7 @@ Read before reviewing:
 
 Check:
 
-- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours.
+- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours. A delta confined to test scaffolding is evaluated under Gate A of [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md), not under this bullet directly; a behaviour or acceptance-criterion delta stays governed by this bullet regardless of test counts (Gate A exclusion X1).
 - CHANGELOG fragments and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; normal feature/fix/refactor PRs add or update `changelog.d/` fragments; hotfix PRs update `CHANGELOG.md` directly with a versioned section; fixes to unreleased work update existing fragments rather than adding duplicates)
 - For implementation PRs, flag stale debug comments, newly introduced `TODO`/`FIXME` markers, review-marker comments, sibling/caller inconsistencies, or uncovered spec/plan/issue-body requirements that should have been caught by the Protocol 03 Pre-Submission Self-Review Pass.
 - For Full Pipeline and Refactor implementation PRs, verify the
@@ -265,7 +292,7 @@ Check:
 
 Typical `blocking` issues:
 
-- Implementation diverges from the approved spec or plan in a way that changes observable behaviour
+- Implementation diverges from the approved spec or plan in a way that changes observable behaviour, or drops the coverage of an acceptance criterion; a test-scaffolding-only delta is blocking only when the reviewer states a Coverage-Harm Statement (both the specific coverage lost and the defect class it lets through), except when the plan marked the reduced enumeration `**Binding enumeration**` — that delta stays blocking regardless of a harm statement — per [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
 - Missing acceptance criteria coverage
 - Stale markers, caller inconsistencies, or uncovered spec/plan/issue-body requirements remain in the PR after the pre-submission pass
 - Missing implementation-start operational-assumption re-verification for a

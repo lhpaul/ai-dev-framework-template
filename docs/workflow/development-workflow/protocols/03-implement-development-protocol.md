@@ -133,6 +133,40 @@ record explicit out-of-scope rationale.
 
 ---
 
+## Test-Scope Deviation Record
+
+When the test scaffolding you ship (fixture manifests, proof-cycle lists,
+case tables, scenario enumerations) removes at least one item an
+**indicative** plan enumeration projected, but is coverage-equivalent, write
+a `## Test-Scope Deviation Record` in the PR description before opening the
+PR. This is the same condition Gate A uses (canonical document, exclusion
+X2): item count is not the trigger — a swap, consolidation, or rewrite that
+nets even or larger in total count but drops a projected item still requires
+the record, while a delta that only adds to, or leaves intact, every
+projected item does not, whatever the totals. This record path does not
+apply when the removed item came from an enumeration marked
+`**Binding enumeration**` — a record cannot authorize that removal; restore
+the item, or obtain a human decision to amend the plan, before opening the
+PR (rows A5/A6). The full rule is
+[`test-scope-proportionality.md`](../test-scope-proportionality.md). The
+record does not apply to a delta that changes observable behavior or drops
+acceptance-criterion coverage; that stays governed by the unchanged Pass 1
+rule in `REVIEW.md` regardless of test counts.
+
+Required fields:
+
+- **Plan enumeration reduced**: which enumeration, and where it appears in
+  the plan.
+- **Delivered instead**: what the implementation shipped in its place.
+- **Coverage classes retained**: which coverage classes remain, and which
+  tests exercise them.
+- **Coverage argument**: why the delivered set is coverage-equivalent to the
+  plan's projection.
+- **Residual risk accepted**: the residual risk accepted by the reduction, or
+  "None identified".
+
+---
+
 ## GitHub Actions Workflow Security Checklist
 
 When your change creates or materially modifies `.github/workflows/*.yml`, complete this checklist before opening the development PR.
@@ -531,6 +565,18 @@ Complete all applicable checks:
    - Full Pipeline: confirm every spec acceptance criterion is implemented or explicitly documented as an approved deviation.
    - Refactor: confirm every implementation-plan acceptance criterion is addressed.
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
+   - When the delivered test scaffolding removes at least one item the plan
+     projected (an addition-only delta does not trigger this; a net-even or
+     net-larger swap that drops a projected item does): if the plan marked
+     that enumeration `**Binding enumeration**`, restore the listed item, or
+     obtain a human decision to amend the plan, before opening the PR — this
+     is required regardless of whether a Coverage-Harm Statement can be
+     named. Otherwise, when the deviation is coverage-equivalent, write the
+     [Test-Scope Deviation Record](#test-scope-deviation-record) before
+     opening the PR. If a reviewer could instead name lost coverage and the
+     defect class it lets through, restore that coverage or narrow the
+     deviation first — a record is not a substitute for a harmful removal,
+     and is written only once a coverage-equivalent deviation remains.
 4. **Branch-stage discipline check**: implementation files belong on
    implementation branches (`feature/*`, `fix/*`, `refactor/*`, or
    `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
@@ -907,7 +953,7 @@ or `develop-<slug>` for integration-branch items) with:
   - What was implemented
   - Link to spec and plan
   - Test plan (how to validate)
-  - Any deviations from the plan (with justification)
+  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended -- write the record too if a coverage-equivalent deviation remains after the amendment)
   - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -1281,7 +1327,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - What was refactored and why
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
-      - Any deviations from the plan (with justification)
+      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended -- write the record too if a coverage-equivalent deviation remains after the amendment)
       - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:

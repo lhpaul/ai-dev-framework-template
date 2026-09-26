@@ -649,6 +649,11 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Review Contract
 
 - `REVIEW.md`
+- `docs/workflow/development-workflow/test-scope-proportionality.md` — canonical
+  rule for weighing a delta between a plan's projected test scaffolding and
+  what an implementation ships: the Coverage-Harm Statement, the Test-Scope
+  Deviation Record, the indicative-vs-binding default, and the Gate A / Gate B
+  decision matrices
 
 ### Tooling And Configuration
 

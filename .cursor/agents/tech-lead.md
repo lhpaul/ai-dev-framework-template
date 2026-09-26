@@ -70,6 +70,13 @@ For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
 plans, name the residual verification strategy and evidence source the
 implementation must produce before readiness.
 
+Test scaffolding enumerations (fixture manifests, proof-cycle lists, case
+tables, scenario enumerations) are indicative by default — express coverage
+intent, and mark an enumeration `**Binding enumeration**` only when the
+implementer must not substitute a coverage-equivalent set; before committing
+the plan, self-check it against Gate B in
+[`test-scope-proportionality.md`](../../docs/workflow/development-workflow/test-scope-proportionality.md).
+
 Before Document Quality Gate, read
 `docs/workflow/development-workflow/plan-authoring-rigor-rules.md` and follow
 its six plan-authoring rules. Record firing-rule evidence in the plan itself
