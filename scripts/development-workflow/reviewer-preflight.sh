@@ -185,16 +185,11 @@ clamp_bound_floor() {
   [ "$bound" -le "$1" ] || bound=$1
 }
 
-# A binary named `timeout` is not necessarily GNU timeout (e.g. BusyBox),
-# which does not support `--kill-after`; on such a host the branch below
-# would fail every bounded call outright instead of reaching the manual
-# fallback, breaking this mandatory dispatch gate entirely. Probe once
-# (resolve-reviewer-availability.sh's own same-purpose check, condensed
-# for this script's simpler single-launcher shape).
+# Set to 1 by the bounded GNU-timeout probe that follows run_bounded's own
+# definition. Declared here because run_bounded reads it on every call —
+# including the probe's own call, which necessarily happens before the
+# probe can assign the real value — so it must already exist under `set -u`.
 use_gnu_timeout=0
-if have_cmd timeout && timeout --version 2>/dev/null | grep -q 'GNU coreutils'; then
-  use_gnu_timeout=1
-fi
 
 # A lighter-weight bounded launcher than Step 7a's (resolve-reviewer-availability.sh):
 # this script's own children are git/gh/python3 one-shot reads, not long-lived
@@ -263,6 +258,49 @@ run_bounded() {
   kill -KILL -- "-$pid" 2>/dev/null || true
   return "$rc"
 }
+
+# A binary named `timeout` is not necessarily GNU timeout (e.g. BusyBox),
+# which does not support `--kill-after`; on such a host the GNU branch in
+# run_bounded would fail every bounded call outright instead of reaching
+# the manual fallback, breaking this mandatory dispatch gate entirely.
+# resolve-reviewer-availability.sh's own same-purpose check runs its
+# `timeout --version` through a bounded launcher, and so must this one: an
+# unbounded probe would hang this mandatory preflight past Decision 3's
+# whole-invocation deadline (never emitting an outcome) whenever the
+# `timeout` executable — or a PATH wrapper around one — stalls on
+# `--version`. Under `set -euo pipefail` the risk is the hang, not a
+# non-zero exit.
+#
+# Must be resolved HERE, before the first bounded call below (the
+# check-ref-format bootstrap in is_option_or_refspec_like, reached via
+# --target-base validation): every later read consults use_gnu_timeout, and
+# leaving it at its initial 0 across that call sends it down the slower
+# manual perl/setsid launcher, which under a tight budget starves the
+# check-ref-format probe into a spurious tooling failure than a GNU-bounded
+# host would never produce. run_bounded itself defaults to the manual path
+# while use_gnu_timeout is still 0, so this probe bootstraps through
+# exactly the fallback it is deciding whether to replace.
+#
+# Bounded at a fixed 1 second rather than drawn from PREFLIGHT_BUDGET_
+# SECONDS: this is a startup cost paid before any budgeted work, and
+# charging it to the shared budget would perturb the per-call arithmetic
+# T-51 asserts. The version read and the GNU check run inside one bounded
+# child, so a stalled `timeout` (or a wrapper that never returns) is killed
+# with the rest of the child's process group rather than needing output files
+# of its own — this runs before work_dir exists, and needs no scratch space.
+use_gnu_timeout=0
+if have_cmd timeout; then
+  timeout_probe_rc=0
+  run_bounded 1 /dev/null /dev/null \
+    bash -c 'timeout --version 2>/dev/null | grep -q "GNU coreutils"' || timeout_probe_rc=$?
+  # Explicit `if`, not `[ ... ] && use_gnu_timeout=1`: a bare short-circuit
+  # list at top level is the shape that silently aborts this script under
+  # `set -e` whenever the left side's "false" is a valid outcome (the
+  # BusyBox-timeout path T-24 exercises).
+  if [ "$timeout_probe_rc" = 0 ]; then
+    use_gnu_timeout=1
+  fi
+fi
 
 [ -n "$repo_root" ] || fail 'missing --repo-root'
 [ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'

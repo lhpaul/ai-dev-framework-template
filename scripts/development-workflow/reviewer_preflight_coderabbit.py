@@ -243,6 +243,20 @@ def base_branch_covered(
 def _cmd_enabled_bool(path: Path) -> int:
     """Preserve the exact stdout/stderr/exit-code contract of the original
     embedded probe in resolve-reviewer-availability.sh."""
+    # A missing .coderabbit.yaml is the deliberate "not configured" signal
+    # reviewer-preflight.sh sends here (via a nonexistent placeholder path)
+    # when CodeRabbit is not in the resolved reviewer list at all, and
+    # load_coderabbit_config's missing-file branch returns its default
+    # disabled config without needing PyYAML to parse anything. Requiring
+    # PyYAML first classified that case as dependency error 4 — which the
+    # caller degrades to check-inconclusive/passed-unverified with an
+    # irrelevant installation remedy — instead of the documented
+    # prerequisite-missing outcome carrying the actionable enablement
+    # remedy. Same ordering as _cmd_full_json; check existence first, and
+    # only require PyYAML when a real file actually needs parsing.
+    if not path.exists():
+        print("false")
+        return 0
     try:
         import yaml  # noqa: F401
     except ImportError:
