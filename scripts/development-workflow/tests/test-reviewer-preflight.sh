@@ -2020,5 +2020,37 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-57 a stalled check-ref-format probe is bounded, not left to run its full stall duration', elapsed57 <= 8.0, elapsed57)
     check('T-57 failure message names the check-ref-format probe timeout', 'check-ref-format probe did not complete' in err, err)
 
+    # T-58 (#1561 round-14 finding, P2): a TMPDIR pointing inside --repo-root
+    # puts the scratch tree in the working tree this run is inspecting and
+    # writes every intermediate file there. Because work_dir is created
+    # before the first porcelain snapshot and removed by the EXIT trap only
+    # after the second, both snapshots would see the same directory and the
+    # advertised read-only side-effect check would pass on a run that did
+    # write into the repository. That is a check which can no longer fail,
+    # not merely a violated contract, so the layout is rejected outright.
+    repo58 = root / 'repo58'
+    write_repo(repo58, coherent_shared, coherent_coderabbit)
+    scratch58 = repo58 / '.tmp'
+    scratch58.mkdir(exist_ok=True)
+    rc, data, out, err = run(
+        repo58, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        env={'TMPDIR': str(scratch58)},
+        expected=3,
+    )
+    check('T-58 a scratch directory inside --repo-root is refused', 'refusing to run with a scratch directory inside --repo-root' in err, err)
+    check('T-58 no scratch tree is left behind inside the repository', list(scratch58.iterdir()) == [], list(scratch58.iterdir()))
+    # T-58b: the same run with an external TMPDIR still succeeds, so the
+    # guard rejects the layout rather than the invocation.
+    repo58b = root / 'repo58b'
+    write_repo(repo58b, coherent_shared, coherent_coderabbit)
+    scratch58b = root / 'tmp58b'
+    scratch58b.mkdir(exist_ok=True)
+    rc, data, out, err = run(
+        repo58b, '--mode', 'pre-dispatch', '--target-base', 'develop',
+        '--remaining-stages', '', env={'TMPDIR': str(scratch58b)},
+        expected=0,
+    )
+    check('T-58b an external TMPDIR is accepted and still short-circuits to no-review-remaining', data.get('OUTCOME') == 'no-review-remaining', data)
+
 print(f'\nPassed: {passed}')
 PY

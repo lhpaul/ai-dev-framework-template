@@ -259,6 +259,68 @@ run_bounded() {
   return "$rc"
 }
 
+# This script's own scratch directory, created here (rather than alongside
+# the git-show/ls-remote reads further down) so every `jq` read of a
+# classifier or metadata output can be routed through bounded_jq below —
+# including the ones on validation and reporting paths that run before those
+# reads (prerequisite_failed_report's own JSON-mode render, the early
+# stage-set probes, and the pre-resolver `gh pr view` metadata reads). Only
+# `fail` and `mktemp` are needed, both already available above.
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
+# As of #1561's round-26 read-only redesign, this script resolves every
+# remote tip via `git ls-remote` and reads content directly by the resolved
+# SHA (git show <sha>:<path>) rather than fetching a PR head into a local
+# temporary ref first — there is no longer any repository-state ref this
+# script creates and must remember to discard, so cleanup is just the
+# scratch work_dir.
+cleanup() {
+  local rc=$?
+  [ -z "$work_dir" ] || rm -rf -- "$work_dir"
+  # `return "$rc"` from an EXIT trap does not reliably override the
+  # process's already-decided exit status outside this script's own
+  # set -e context (`trap f EXIT; exit 0` still exits 0 even when f
+  # returns 3, in general). Exit explicitly here instead of relying on
+  # that interaction, so this function's own intent (preserve whatever
+  # exit status the run already decided) is unambiguous rather than
+  # relying on that interaction to happen to hold.
+  exit "$rc"
+}
+trap cleanup EXIT
+
+# #1561 round-14 finding: the shell's OWN `jq` reads of classifier and
+# metadata output ran outside run_bounded, unlike the final report renderers
+# (which the round-10 finding already bounded). A stalled `jq` or a slow
+# filesystem on one of those reads could let the mandatory preflight exceed
+# its advertised whole-invocation budget after a bounded subprocess had
+# already returned, never emitting an outcome at all. Every one now goes
+# through this wrapper, which is the same `<var>_rc` -> clamp_bound ->
+# run_bounded -> fail shape the renderers use, so the two cannot drift.
+#
+# `mode` selects the clamp: "floor" is for the final-mile renderers and
+# classification reads where starving the call to a zero-second bound purely
+# because upstream reads consumed the nominal budget would turn a healthy run
+# into a spurious cannot-verify failure (see clamp_bound_floor's rationale);
+# "plain" is for the earlier metadata reads, where a starved call correctly
+# reports the run as out of budget rather than extending it. A "plain" call
+# past the deadline gets bound=0, which run_bounded maps to exit 124 with no
+# deadline extension at all.
+#
+# Output-file argument is the caller's scratch path; the result is echoed on
+# stdout so call sites can keep their existing `$( ... ) || fallback` shape.
+bounded_jq() {
+  local mode=$1 out=$2 err=$3
+  shift 3
+  local rc=0
+  case "$mode" in
+    floor) clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS" ;;
+    plain) clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS" ;;
+    *) fail "bounded_jq: unknown clamp mode: $mode" ;;
+  esac
+  run_bounded "$bound" "$out" "$err" jq "$@" || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  cat "$out"
+}
+
 # A binary named `timeout` is not necessarily GNU timeout (e.g. BusyBox),
 # which does not support `--kill-after`; on such a host the GNU branch in
 # run_bounded would fail every bounded call outright instead of reaching
@@ -305,6 +367,24 @@ fi
 [ -n "$repo_root" ] || fail 'missing --repo-root'
 [ -d "$repo_root" ] && [ -r "$repo_root" ] && [ -x "$repo_root" ] || fail '--repo-root must be a readable directory'
 case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be pre-dispatch, branch-resume, or pr-resume' ;; esac
+# #1561 round-14 finding: TMPDIR can point inside --repo-root — a project-local
+# `.tmp`, say — which puts this script's scratch tree inside the very working
+# tree it is inspecting and then writes every intermediate file there. Because
+# work_dir is created before the first porcelain snapshot and removed by the
+# EXIT trap only after the second, both snapshots would observe the same
+# directory and the AC-2 side-effect check would pass on a run that did in fact
+# write into the repository; an interruption before the trap fires would also
+# leave the tree behind. That defeats the read-only contract this script
+# advertises rather than merely violating it, so reject the layout outright
+# instead of proceeding with a check that can no longer fail. Both paths are
+# resolved with `pwd -P` first so a symlinked TMPDIR (e.g. macOS's
+# /var -> /private/var) cannot hide the containment. The EXIT trap already
+# removes work_dir on this path, so the rejected scratch tree does not leak.
+repo_root_physical=$(cd -- "$repo_root" && pwd -P) || fail 'cannot resolve --repo-root to a physical path'
+work_dir_physical=$(cd -- "$work_dir" && pwd -P) || fail 'cannot resolve the scratch directory to a physical path'
+case "$work_dir_physical/" in
+  "$repo_root_physical"/*) fail "refusing to run with a scratch directory inside --repo-root ($work_dir_physical); set TMPDIR to a location outside the repository so the read-only side-effect check stays meaningful" ;;
+esac
 # The preflight contract classifies an empty, unresolved, or malformed
 # --target-base as OUTCOME=prerequisite-failed (exit 2, with
 # PREREQUISITE_DETAIL) — the same documented outcome reviewer_preflight.py
@@ -315,8 +395,10 @@ case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be
 prerequisite_failed_report() {
   local detail=$1
   if [ "$json_output" = true ]; then
-    jq -n --arg detail "$detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
-      '{outcome:"prerequisite-failed",outcome_label:"Prerequisite not met",checked_shared_config_ref:"",checked_platform_config_ref:"",local_override_state:"none",platforms:[],prerequisite_detail:$detail,elapsed_seconds:$elapsed,budget_seconds:$budget}'
+    bounded_jq floor "$work_dir/prereq-report.out" "$work_dir/prereq-report.err" \
+      -n --arg detail "$detail" --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
+      '{outcome:"prerequisite-failed",outcome_label:"Prerequisite not met",checked_shared_config_ref:"",checked_platform_config_ref:"",local_override_state:"none",platforms:[],prerequisite_detail:$detail,elapsed_seconds:$elapsed,budget_seconds:$budget}' \
+      || fail 'cannot render the prerequisite-failed report'
   else
     print_kv_escaped OUTCOME prerequisite-failed
     print_kv_escaped OUTCOME_LABEL 'Prerequisite not met'
@@ -416,27 +498,6 @@ if [ "$mode" = pr-resume ]; then
   esac
   [ -n "$owner" ] && [ -n "$repo" ] || fail '--owner and --repo are required for --mode pr-resume'
 fi
-
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-preflight.XXXXXX") || fail 'cannot create temporary directory'
-# As of #1561's round-26 read-only redesign, this script resolves every
-# remote tip via `git ls-remote` and reads content directly by the resolved
-# SHA (git show <sha>:<path>) rather than fetching a PR head into a local
-# temporary ref first — there is no longer any repository-state ref this
-# script creates and must remember to discard, so cleanup is just the
-# scratch work_dir.
-cleanup() {
-  local rc=$?
-  [ -z "$work_dir" ] || rm -rf -- "$work_dir"
-  # `return "$rc"` from an EXIT trap does not reliably override the
-  # process's already-decided exit status outside this script's own
-  # set -e context (`trap f EXIT; exit 0` still exits 0 even when f
-  # returns 3, in general). Exit explicitly here instead of relying on
-  # that interaction, so this function's own intent (preserve whatever
-  # exit status the run already decided) is unambiguous rather than
-  # relying on that interaction to happen to hold.
-  exit "$rc"
-}
-trap cleanup EXIT
 
 # AC-2's before/after porcelain diff only needs the two snapshots to match;
 # a git failure here (e.g. repo-root is not a git repository) surfaces as a
@@ -615,7 +676,7 @@ if [ "$remaining_stages_provided" = 1 ] && [ -z "$remaining_stages_raw" ]; then
     run_bounded "$bound" "$work_dir/pr.json" "$work_dir/pr.err" \
       gh pr view "$pr" --repo "$owner/$repo" --json baseRefName || pr_json_rc=$?
     [ "$pr_json_rc" = 0 ] || fail "cannot read pull request #$pr metadata (exit $pr_json_rc): $(cat "$work_dir/pr.err" 2>/dev/null)"
-    pr_base=$(jq -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
+    pr_base=$(bounded_jq plain "$work_dir/pr-base.out" "$work_dir/pr-base.err" -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
     if is_option_or_refspec_like "$pr_base"; then
       prerequisite_failed_report "pull request #$pr's base branch is not a valid branch name: $pr_base"
     fi
@@ -785,9 +846,9 @@ case "$mode" in
     run_bounded "$bound" "$work_dir/pr.json" "$work_dir/pr.err" \
       gh pr view "$pr" --repo "$owner/$repo" --json baseRefName,headRefName,headRefOid || pr_json_rc=$?
     [ "$pr_json_rc" = 0 ] || fail "cannot read pull request #$pr metadata (exit $pr_json_rc): $(cat "$work_dir/pr.err" 2>/dev/null)"
-    pr_base=$(jq -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
-    pr_head=$(jq -er '.headRefName' "$work_dir/pr.json") || fail 'pull request metadata missing headRefName'
-    pr_head_sha=$(jq -er '.headRefOid' "$work_dir/pr.json") || fail 'pull request metadata missing headRefOid'
+    pr_base=$(bounded_jq plain "$work_dir/pr-base.out" "$work_dir/pr-base.err" -er '.baseRefName' "$work_dir/pr.json") || fail 'pull request metadata missing baseRefName'
+    pr_head=$(bounded_jq plain "$work_dir/pr-head.out" "$work_dir/pr-head.err" -er '.headRefName' "$work_dir/pr.json") || fail 'pull request metadata missing headRefName'
+    pr_head_sha=$(bounded_jq plain "$work_dir/pr-head-sha.out" "$work_dir/pr-head-sha.err" -er '.headRefOid' "$work_dir/pr.json") || fail 'pull request metadata missing headRefOid'
     # gh-reported baseRefName is a value this script does not control (a PR
     # can target any ref-format-valid branch name) and reaches
     # resolve_remote_sha the same unvalidated way the CLI --target-base
@@ -848,13 +909,15 @@ early_classify_rc=0
 clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$early_output_json" "$work_dir/early-classify.err" \
   python3 "$SCRIPT_DIR/reviewer_preflight.py" --input-json "$early_input_json" || early_classify_rc=$?
-if [ "$early_classify_rc" -gt 3 ] || { [ "$early_classify_rc" != 0 ] && ! jq -e . "$early_output_json" >/dev/null 2>&1; }; then
+early_valid_rc=0
+bounded_jq plain "$work_dir/early-valid.out" "$work_dir/early-valid.err" -e . "$early_output_json" >/dev/null 2>&1 || early_valid_rc=$?
+if [ "$early_classify_rc" -gt 3 ] || { [ "$early_classify_rc" != 0 ] && [ "$early_valid_rc" != 0 ]; }; then
   cat "$work_dir/early-classify.err" >&2
   fail "reviewer_preflight.py failed (exit $early_classify_rc)"
 fi
-early_outcome=$(jq -er '.outcome' "$early_output_json") || fail 'cannot inspect early stage-set validation output'
+early_outcome=$(bounded_jq plain "$work_dir/early-outcome.out" "$work_dir/early-outcome.err" -er '.outcome' "$early_output_json") || fail 'cannot inspect early stage-set validation output'
 if [ "$early_outcome" = prerequisite-failed ]; then
-  early_detail=$(jq -er '.prerequisite_detail' "$early_output_json") || early_detail='the set of lifecycle stages this run will exercise is unresolved or malformed'
+  early_detail=$(bounded_jq plain "$work_dir/early-detail.out" "$work_dir/early-detail.err" -er '.prerequisite_detail' "$early_output_json") || early_detail='the set of lifecycle stages this run will exercise is unresolved or malformed'
   prerequisite_failed_report "$early_detail"
 fi
 
@@ -1012,16 +1075,26 @@ run_bounded "$bound" "$work_dir/build-input.out" "$work_dir/build-input.err" \
   --output "$input_json" || build_input_rc=$?
 [ "$build_input_rc" = 0 ] || fail "reviewer_preflight_build_input.py failed (exit $build_input_rc): $(cat "$work_dir/build-input.err" 2>/dev/null)"
 
-# Decision 5: a malformed shared reviewer list is the pre-existing
-# configuration-loading step's responsibility, not this preflight's — the run
-# should already have failed before ever reaching this script. If it did not,
-# surface that as a tooling failure rather than silently treating a malformed
-# list as an empty (deliberately-configured) one.
-malformed_count=$(jq -er '.malformed_buckets | length' "$input_json") || fail 'cannot inspect resolved reviewer-list state'
-if [ "$malformed_count" -gt 0 ]; then
-  malformed_list=$(jq -er '.malformed_buckets | join(", ")' "$input_json") || malformed_list='(unreadable)'
-  fail "the shared reviewer list is malformed for: $malformed_list — repair .ai-dev-workflow.yaml (or the local override) before re-running; this is the pre-existing configuration-loading step's failure, not a preflight verdict"
-fi
+# Decision 5 says preflight adds no *independent* malformed-scalar detector,
+# because a malformed shared list "fails before preflight as today". That
+# premise is empirically false, so this screen (which predates that framing
+# and consumes the resolver's own verdict rather than re-deriving one) is
+# retained — see the plan's Decision 5 body for the falsification and the
+# live `workflow_config_review_nested_list` evidence. In short: the shipped
+# loader's awk emits list entries only for the inline and block-list forms,
+# so a scalar leaf such as `github: coderabbit` yields no output, the
+# loader's own `grep -q .` misses, and Step 7 proceeds with an EMPTY
+# reviewer list and exit 0 rather than failing. Deleting this screen would
+# therefore restore a silent gate-skip, not honor a documented contract:
+# nothing else in the run fails closed on the resolver's malformed state.
+# Scope is already correct — it runs only after the remaining-stages
+# short-circuit has been ruled out, so a bucket malformed in an
+# already-completed stage cannot block a resume (T-12, T-56).
+  malformed_count=$(bounded_jq floor "$work_dir/malformed-count.out" "$work_dir/malformed-count.err" -er '.malformed_buckets | length' "$input_json") || fail 'cannot inspect resolved reviewer-list state'
+  if [ "$malformed_count" -gt 0 ]; then
+    malformed_list=$(bounded_jq floor "$work_dir/malformed-list.out" "$work_dir/malformed-list.err" -er '.malformed_buckets | join(", ")' "$input_json") || malformed_list='(unreadable)'
+    fail "the shared reviewer list is malformed for: $malformed_list — repair .ai-dev-workflow.yaml (or the local override) before re-running; this is the pre-existing configuration-loading step's failure, not a preflight verdict"
+  fi
 fi
 
 output_json="$work_dir/output.json"
@@ -1029,7 +1102,9 @@ preflight_rc=0
 clamp_bound_floor "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$output_json" "$work_dir/preflight.err" \
   python3 "$SCRIPT_DIR/reviewer_preflight.py" --input-json "$input_json" || preflight_rc=$?
-if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && ! jq -e . "$output_json" >/dev/null 2>&1; }; then
+final_valid_rc=0
+bounded_jq plain "$work_dir/final-valid.out" "$work_dir/final-valid.err" -e . "$output_json" >/dev/null 2>&1 || final_valid_rc=$?
+if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && [ "$final_valid_rc" != 0 ]; }; then
   cat "$work_dir/preflight.err" >&2
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
