@@ -272,6 +272,30 @@ If the first comment CodeRabbit posts is a "Review skipped" banner rather than a
 
 CodeRabbit's quota resets on an **hourly** boundary. The loop waits `CODERABBIT_RATE_LIMIT_WAIT` seconds (default `900`) and retries up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times (default `4`), so the shipped defaults cover a full 60-minute reset window before escalating. Lower them only if you would rather escalate quickly than wait; raising them past an hour buys nothing, since a quota that has not reset in an hour indicates a spending cap rather than a rate limit.
 
+### 6. Branch-in-force configuration, and the reviewer preflight (#1561)
+
+**The configuration CodeRabbit actually reads for a pull request is the copy of `.coderabbit.yaml` on that pull request's own branch (its head), not the copy on the branch the pull request targets.** This is CodeRabbit's own resolution behavior, not something this workflow chooses — the same rule `pr-review-loop.sh` already assumes when it fetches the pull request's `baseRefName` before reading `.ai-dev-workflow.yaml` from `origin/<that base>`, so the *shared* reviewer list and each platform's *own* configuration can read from different refs by design.
+
+Two consequences follow directly:
+
+- **A fix takes effect on the very pull request that carries it.** If `.coderabbit.yaml` is broken or misconfigured on a branch, editing it on that same branch repairs that pull request's own review immediately — no merge to the integration branch is required first.
+- **A branch can silently carry a configuration that diverges from the repository's intended review policy.** Nothing else notices this on its own; a branch that edits `.coderabbit.yaml` (deliberately or by accident) gets that edited behavior for its own pull request, and only its own pull request, until it merges.
+
+This was confirmed live: PR #1532 edited `.coderabbit.yaml` on its own branch and observed CodeRabbit's review behavior change on that same PR before merge, establishing the branch-in-force rule empirically rather than by assumption.
+
+The **reviewer preflight** (`scripts/development-workflow/reviewer-preflight.sh`, invoked by Protocol 91 before an item's first mutation) cross-checks this configuration before dispatch rather than after a review silently declines. A preflight run before any branch exists is checked only against the base branch the run targets, and cannot see a divergence a not-yet-created branch will introduce; a preflight run against an existing branch or pull request reads CodeRabbit's own configuration from that branch's or pull request's own copy, exactly as CodeRabbit itself will. The preflight decides whether CodeRabbit *can* review — a configuration-coherence verdict — not whether its GitHub App installation is still live; see [`pr-review-platform.md`](pr-review-platform.md) for how that distinction relates to Step 7a's own reachability check.
+
+The preflight reports four distinct disagreement cases for CodeRabbit, each with its own remedy:
+
+| Case | `reviews.auto_review.*` setting | Remedy |
+| --- | --- | --- |
+| Automatic review turned off | `enabled: false` (or the key absent) | Set `enabled: true` in `.coderabbit.yaml`, or remove `coderabbit` from `review.on_draft.github` / `review.on_ready.github` in `.ai-dev-workflow.yaml`, and re-run. |
+| Stage not covered | `drafts: false` while `coderabbit` is listed as a draft-stage reviewer | Set `drafts: true` in `.coderabbit.yaml`, or move `coderabbit` to a stage its own configuration covers, and re-run. This case does not fire when an existing workflow adjustment (for example the internal review gate's draft-to-ready conversion) already resolves the mismatch before CodeRabbit is dispatched. |
+| Base branch not covered | The item's targeted base is not in `base_branches` | Add the targeted base to `base_branches` in `.coderabbit.yaml`, or narrow this machine's reviewer list through `.ai-dev-workflow.local.yaml` to exclude `coderabbit` for this item, and re-run. |
+| Not a supported reviewer | `coderabbit` misspelled or listed in a bucket that does not support it | Correct the value, or remove it from the bucket that names it, and re-run. |
+
+The preflight reports a disagreement; it never edits `.coderabbit.yaml` on the operator's behalf.
+
 ---
 
 ## Step 7 — CodeRabbit-Specific Implementation

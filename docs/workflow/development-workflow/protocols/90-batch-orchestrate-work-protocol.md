@@ -658,6 +658,8 @@ After building the initial candidate list from the eligibility table above and a
 
 Before building parallel batches, update the tracker to reflect that eligible items are now actively being worked on. This step runs after Step 2 (eligibility determination) and before Step 3 (batch building).
 
+**Known limitation — this step runs before each item's own reviewer preflight**: this step's tracker status update happens before the dispatched Work Item Runner reaches Protocol 91's "Reviewer preflight before child dispatch" gate for that item. If that gate later returns `blocked` or `prerequisite-failed`, the item's tracker status already advanced here and needs the runner's own stop-and-report handling to surface the resulting stale state — a batch-level preflight that could run before this step is explicitly out of scope for issue #1561 (Decision 1: batch dispatch aggregation is tracked separately under #1743). Each item's own Protocol 91 execution still runs the preflight before its own branch/PR/tracker mutations.
+
 ### Purpose
 
 Without this step, items remain in a stale tracker status (e.g., `Backlog`, `Spec Ready`, `Plan Ready`) while agents are already working on them. The Batch 3 retro identified this as a source of confusion for humans monitoring portfolio progress and for Work Item Runners that check tracker status when resuming.

@@ -125,6 +125,36 @@ still adds value.
 Legacy `review.platforms` and `review.phase_after_clean` config remains accepted
 for one transition release and maps into the lifecycle buckets above.
 
+### Reviewer preflight vs. Step 7a reachability (#1561)
+
+Two distinct checks read this configuration for two distinct purposes, and
+neither substitutes for the other:
+
+- **The reviewer preflight** (`scripts/development-workflow/reviewer-preflight.sh`)
+  runs once, **before** Protocol 91 dispatches an item — before any branch is
+  created or pull request is opened. It cross-checks the shared reviewer list
+  above, any machine-local override, and each platform's own configuration
+  (where one exists in-repo) against each other, and reports a **configuration
+  disagreement** — a platform listed for a stage or base its own configuration
+  will decline. It answers "does the configuration agree that this platform
+  can review?", not whether the platform's installation or service is
+  currently live.
+- **Step 7a's reachability check** (`scripts/development-workflow/resolve-reviewer-availability.sh`,
+  documented per-platform in each platform's own integration doc) runs
+  immediately before Step 7a dispatches a *local-runtime* draft reviewer. It
+  probes runtime/service availability — is the CLI on `PATH`, does the hosted
+  service show recent activity — which the preflight's configuration-only
+  cross-check cannot see. Its own activity-proxy probe can itself report a
+  false `Reachable` after a platform's GitHub App has been removed; the
+  preflight has the identical limitation for the platforms whose own
+  configuration it can read (see the "Can review" verdict definition in the
+  reviewer preflight spec).
+
+A platform can pass the preflight's configuration cross-check and still fail,
+error, or decline at actual dispatch — that is a review failure reported when
+it happens, not a preflight problem. Live GitHub App/service-availability
+detection remains deferred (reviewer preflight spec, Out of Scope entry 11).
+
 ---
 
 ## Script Interface

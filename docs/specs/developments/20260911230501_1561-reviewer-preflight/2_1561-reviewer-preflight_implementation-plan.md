@@ -88,6 +88,16 @@ When the same platform name appears in multiple lifecycle buckets with different
 
 When the pre-existing configuration loader resolves a malformed scalar to an empty list, the run fails before preflight as today. The preflight does not add independent detection for that case (spec default). Document in troubleshooting only.
 
+**Correction (round 14, 2026-09-27) — the premise above is false; the preflight retains a fail-closed malformed-state screen.** The claim "the run fails before preflight as today" does not hold for the shipped loader. `workflow_config_review_nested_list` (`scripts/development-workflow/workflow-lib.sh`) extracts a nested reviewer list with an awk program that emits an entry on exactly three shapes: `    bucket: [` (inline list), `    bucket:` (bare line → block-list mode), and `      - item` (list item). Any other shape — notably a **scalar leaf** such as `    github: coderabbit` — matches no emit rule and additionally resets the block-list mode flag. It therefore produces **no output**, so the caller's `grep -q .` test fails, `workflow_config_review_on_draft_github` returns an empty list with **exit 0**, and Step 7 proceeds with zero reviewers rather than failing. A malformed scalar is thus a silently-skipped gate, not a pre-existing failure.
+
+Consequences, and why this plan's Decision 5 is corrected rather than merely annotated:
+
+1. The preflight's malformed-state screen (`malformed_buckets` → `fail`) consumes the **resolver's own** verdict; it does not re-derive one by parsing YAML a second way, so it does not violate this decision's actual intent (avoid a second, independently-drifting malformed-scalar detector).
+2. The screen is the **only** fail-closed consumer of the resolver's malformed state in the run (exhaustive scan of `scripts/development-workflow/*.sh`, tests excluded). Deleting it would restore the silent gate-skip described above.
+3. Scope is already correct: the screen runs only after the remaining-stages short-circuit has been ruled out, so a bucket malformed in an already-completed stage cannot block a legitimate resume. T-12 (`--remaining-stages 'on_draft.runner,not-a-real-bucket'` → `prerequisite-failed`) and T-56 (malformed non-empty `--remaining-stages` CSV) cover both directions.
+
+The failure is reported as a **tooling failure** (`fail`, exit 3), not `prerequisite-failed` (exit 2): the run reached a state its own loader should have caught, and the remedy is repairing the configuration, not supplying a missing run input. "Document in troubleshooting only" still stands for the *scalar-leaf* guidance — operators who hit this should be told the exact file and setting to repair.
+
 ### Decision 6 — Reuse CodeRabbit interpretation from Step 7a
 
 Extract the bounded `.coderabbit.yaml` read from `resolve-reviewer-availability.sh` into a shared Python helper imported by both Step 7a probes and preflight (single source for `reviews.auto_review.enabled`, drafts, and `base_branches`). Step 7a behavior must not change except via shared helper refactor with existing tests still passing.

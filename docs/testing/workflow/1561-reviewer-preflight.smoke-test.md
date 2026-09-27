@@ -45,6 +45,36 @@ test -z "$(git status --porcelain)"
 
 Record: working tree clean before preflight.
 
+### Step 0b: Repository-state baseline — refs/FETCH_HEAD/objects (AC-2, round-26 read-only redesign)
+
+**Maps to**: AC-2 side-effect freedom, extended beyond the working tree
+
+As of #1561's round-26 fix, this script resolves every remote tip with `git
+ls-remote` (never `git fetch`), so it must make **no** repository-state
+change at all — not only the working tree Step 0 already covers, but also
+`refs/remotes/*`, `FETCH_HEAD`, and the object database. Capture a
+fingerprint before Step 1 and compare it after:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+set -euo pipefail
+before_refs="$(git for-each-ref)"
+before_fetch_head="$( [ -f .git/FETCH_HEAD ] && md5sum .git/FETCH_HEAD || echo none )"
+before_objects="$(git count-objects -v)"
+# ... run Step 1 (or any other mode) here ...
+after_refs="$(git for-each-ref)"
+after_fetch_head="$( [ -f .git/FETCH_HEAD ] && md5sum .git/FETCH_HEAD || echo none )"
+after_objects="$(git count-objects -v)"
+test "$before_refs" = "$after_refs"
+test "$before_fetch_head" = "$after_fetch_head"
+test "$before_objects" = "$after_objects"
+```
+
+**Expected**: All three comparisons pass — `refs/remotes/*` (and every other
+ref), `FETCH_HEAD`, and the object database's object/pack counts are
+byte-for-byte identical before and after. Also covered automatically by
+`test-reviewer-preflight.sh` T-39, across all three `--mode` values.
+
 ### Step 1: Pre-dispatch pass on shipped configuration (AC-2)
 
 **Maps to**: AC-2 Passed path on coherent config
@@ -129,3 +159,20 @@ Invoke with `--remaining-stages` empty (or flag meaning no reviewer stages left)
 ## Known Limitations
 
 Configuration coherence only — removed GitHub Apps still read as Can review until dispatch fails (spec Out of Scope item 11).
+
+---
+
+## Results
+
+| Step | Pass / Fail | Notes |
+| --- | --- | --- |
+| 0 | Pass | `git status --porcelain` empty before the run |
+| 1 | Pass | `OUTCOME=passed-unverified` against this repository's own shipped `.ai-dev-workflow.yaml` (`claude`, `pr-agent`, `bugbot` all `Undetermined`/`no-readable-surface` — no in-repo own-configuration to cross-check; matches Decision 8). Exit `0`. Tree clean after. |
+| 2 | Pass | Reproduced with a hermetic fixture repo (`.coderabbit.yaml` with `reviews.auto_review.enabled: false`, `.ai-dev-workflow.yaml` listing `coderabbit` in `review.on_draft.github`): `OUTCOME=blocked`, exit `1`, `PLATFORM_1_REASONS=review-disabled`, `PLATFORM_1_SURFACE=.coderabbit.yaml`, `PLATFORM_1_SETTING=reviews.auto_review.enabled`, remedy names both the config edit and the shared-list edit. Matches the spec's "Automatic review turned off" worked example verbatim. Also covered automatically by `test-reviewer-preflight.sh` T-2. |
+| 3 | Pass | `coderabbit.md` states the branch-in-force rule (§6), both consequences, PR #1532 traceability, and all four disagreement cases with remedies in a table; `codex-github.md` and `pr-review-platform.md` cross-link it. Verified automatically by `test-reviewer-preflight-surfaces.sh`. |
+| 4 | Partial | No open PR existed on this repository at implementation time (`gh pr list` returned empty), so the live-PR variant of this step could not be executed against a real GitHub pull request. The `pr-resume` mode's ref-distinguishing behavior (`CHECKED_SHARED_CONFIG_REF` names the PR's target base; `CHECKED_PLATFORM_CONFIG_REF` names the PR's own head branch, not the base) is instead verified by `test-reviewer-preflight.sh` T-6 against a hermetic git fixture with a faked `gh pr view` response, and manually confirmed `--remaining-stages`/`--pr-state` omission produces `prerequisite-failed` (exit `2`) via T-3/T-5 in the same suite. |
+| 5 | Pass | `--remaining-stages ""` (explicit empty): `OUTCOME=no-review-remaining`, exit `0`, `PLATFORM_COUNT=0`. Omitting `--remaining-stages` entirely instead produces `OUTCOME=prerequisite-failed`, exit `2` (distinguishing unresolved from resolved-empty, per the spec's Triggers section). |
+
+**Platform tested**: macOS (Darwin 25.6.0), bash, git, python3 (PyYAML 6.0.2), jq, gh.
+
+**Tester**: developer agent (issue #1561 implementation).
