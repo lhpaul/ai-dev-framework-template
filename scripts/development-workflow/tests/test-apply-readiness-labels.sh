@@ -85,6 +85,28 @@ case "$*" in
     fi
     exit "${MOCK_GH_EDIT_EXIT:-0}"
     ;;
+  *"pr view"*"--json headRefOid --jq"*)
+    # Pre-apply head revalidation. MOCK_REVALIDATE_HEAD simulates a push
+    # landing between the state read and the label mutation.
+    if [ -n "${MOCK_REVALIDATE_HEAD:-}" ]; then
+      printf '%s\n' "$MOCK_REVALIDATE_HEAD"
+    else
+      emit "${MOCK_PR_JSON:-$pr_default}"
+    fi
+    exit 0
+    ;;
+  *"pr view"*"--json labels,headRefOid"*)
+    # Post-apply verification. MOCK_POST_APPLY_HEAD simulates a push landing
+    # during the mutation itself.
+    if [ -n "${MOCK_LABEL_STATE:-}" ] && [ -s "$MOCK_LABEL_STATE" ]; then
+      labels_json="$(jq -R -s '{labels: [split("\n")[] | select(. != "") | {name: .}]}' <"$MOCK_LABEL_STATE")"
+    else
+      labels_json="${MOCK_LABELS:-$labels_default}"
+    fi
+    head_ref="${MOCK_POST_APPLY_HEAD:-$(printf '%s\n' "${MOCK_PR_JSON:-$pr_default}" | jq -r '.headRefOid // ""')}"
+    printf '%s\n' "$labels_json" | jq --arg h "$head_ref" '. + {headRefOid: $h}'
+    exit 0
+    ;;
   *"pr view"*"--json labels"*)
     if [ -n "${MOCK_LABEL_STATE:-}" ] && [ -s "$MOCK_LABEL_STATE" ]; then
       emit "$(jq -R -s '{labels: [split("\n")[] | select(. != "") | {name: .}]}' <"$MOCK_LABEL_STATE")"
@@ -99,19 +121,21 @@ case "$*" in
     ;;
   *"/check-runs"*)
     [ "${MOCK_CHECK_RUNS_EXIT:-0}" = "0" ] || exit 1
-    emit "${MOCK_CHECK_RUNS:-$check_runs_default}"
+    # The helper fetches with `--paginate --slurp`, so gh returns an array of
+    # pages. MOCK_CHECK_RUNS may carry several comma-separated page objects.
+    emit "[${MOCK_CHECK_RUNS:-$check_runs_default}]"
     exit 0
     ;;
   *"/pulls/"*"/comments"*)
-    emit "${MOCK_COMMENTS:-$empty_array}"
+    emit "[${MOCK_COMMENTS:-$empty_array}]"
     exit 0
     ;;
   *"/pulls/"*"/reviews"*)
-    emit "${MOCK_REVIEWS:-$empty_array}"
+    emit "[${MOCK_REVIEWS:-$empty_array}]"
     exit 0
     ;;
   *"/issues/"*"/comments"*)
-    emit "${MOCK_ISSUE_COMMENTS:-$empty_array}"
+    emit "[${MOCK_ISSUE_COMMENTS:-$empty_array}]"
     exit 0
     ;;
   *"repo view"*)
@@ -157,6 +181,8 @@ run_helper() {
     MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
     MOCK_LABELS="${MOCK_LABELS:-$default_labels}" \
     MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
+    MOCK_REVALIDATE_HEAD="${MOCK_REVALIDATE_HEAD:-}" \
+    MOCK_POST_APPLY_HEAD="${MOCK_POST_APPLY_HEAD:-}" \
     MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -403,6 +429,88 @@ MOCK_PR_JSON="$(_with_ci FAILURE)"
 result="$(run_helper)"
 run_test "regression_label_still_refuses_failing_ci" "ci-failing" "$(field "$result" REASON)"
 MOCK_LABEL=''
+
+echo ""
+echo "=== Area 6: PR #1818 Codex findings ==="
+
+# Finding 1 (P1): a ready-phase platform with no check-name mapping must be
+# refused, not silently skipped — the documented default ready reviewer in this
+# repo (codex-github) is exactly such a platform.
+mkdir -p "$TMP_ROOT/codex-config"
+cat > "$TMP_ROOT/codex-config/workflow.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - codex-github
+YAML
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+set +e
+out="$(
+  PATH="$_BIN:$PATH" \
+  AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/codex-config/workflow.yaml" \
+  MOCK_GH_LOG="$_LABEL_LOG" MOCK_LABEL_STATE="$_LABEL_STATE" \
+  MOCK_CHECK_RUNS='{"check_runs":[]}' MOCK_COMMENTS='[]' MOCK_REVIEWS='[]' \
+  "$HELPER" --pr 42 --repo acme/widgets --label ready-for-human-review 2>/dev/null
+)"
+code=$?
+set -e
+run_test "unresolved_platform_exit" "1" "$code"
+run_test "unresolved_platform_reason" "reviewer-check-name-unresolved" "$(printf '%s\n' "$out" | sed -n 's/^REASON=//p' | tail -1)"
+run_test "unresolved_platform_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "unresolved_platform_names_platform" "codex-github" "$(printf '%s\n' "$out" | sed -n 's/^REVIEWER_REPORT=//p' | tail -1)"
+
+# Finding 2 (P1): the head must be revalidated immediately before the label
+# mutation; a push landing between the state read and the apply must refuse.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_REVALIDATE_HEAD='bbbb222000000000000'
+result="$(run_helper)"
+MOCK_REVALIDATE_HEAD=''
+run_test "head_changed_before_apply_exit" "1" "${result%%|*}"
+run_test "head_changed_before_apply_reason" "head-changed-before-apply" "$(field "$result" REASON)"
+run_test "head_changed_before_apply_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+
+# Same guard after the apply: the label must not certify an undrifting head.
+MOCK_REVALIDATE_HEAD=''
+MOCK_POST_APPLY_HEAD='cccc333000000000000'
+result="$(run_helper)"
+MOCK_POST_APPLY_HEAD=''
+run_test "head_changed_after_apply_exit" "2" "${result%%|*}"
+run_test "head_changed_after_apply_reason" "head-changed-after-apply" "$(field "$result" REASON)"
+
+# Finding 3 (P2): `gh api --paginate` emits one JSON object per page; the
+# check-run read must flatten all pages. First page carries a `failure` run for
+# the reviewer; a per-page jq pipeline would corrupt the conclusion (e.g.
+# "failure\n ") and miss the blocking case. (The stub emits MOCK_CHECK_RUNS as
+# pages of a `--slurp` array.)
+MOCK_PR_JSON="$(_with_ci SUCCESS)"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"}]},{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-02-01T00:00:00Z"}]}'
+result="$(run_helper)"
+run_test "paginated_check_runs_keep_latest_exit" "0" "${result%%|*}"
+run_test "paginated_check_runs_keep_latest_result" "labeled" "$(field "$result" RESULT)"
+# Same defect class on the finding surfaces: a blocking review found on a later
+# page must still refuse.
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_REVIEWS='[],[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":""}]'
+result="$(run_helper)"
+run_test "paginated_reviews_later_page_still_blocks_exit" "1" "${result%%|*}"
+run_test "paginated_reviews_later_page_still_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+# and a later-page inline finding likewise.
+MOCK_REVIEWS='[]'
+MOCK_COMMENTS='[],[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"body":"**High Severity** leak"}]'
+result="$(run_helper)"
+run_test "paginated_comments_later_page_still_blocks_exit" "1" "${result%%|*}"
+run_test "paginated_comments_later_page_still_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_COMMENTS='[]'
 
 echo ""
 echo "$pass passed, $fail failed"

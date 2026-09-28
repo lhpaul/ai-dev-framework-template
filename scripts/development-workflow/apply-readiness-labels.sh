@@ -61,7 +61,9 @@ the reviewer never reviewed.
 Prints RESULT=<labeled|refused|escalate> and REASON=<slug>.
 Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
-reviewer-unavailable, blocking-findings, ci-pending, ci-failing.
+reviewer-unavailable, reviewer-check-name-unresolved, blocking-findings,
+ci-pending, ci-failing, head-changed-before-apply. Escalation reasons:
+head-revalidate-failed, head-changed-after-apply.
 USAGE
 }
 
@@ -204,19 +206,33 @@ fi
 while IFS= read -r platform; do
   [ -n "$platform" ] || continue
   check_name="$(reviewer_check_name_for_platform "$platform")"
-  [ -n "$check_name" ] || continue
+  # Fail closed: a configured ready-phase reviewer with no check-name mapping
+  # (e.g. codex-github, this repo's documented default) must not be silently
+  # skipped — that would gate the label on zero reviewer verdicts. Refuse so a
+  # human extends the mapping instead of the label going out unreviewed.
+  if [ -z "$check_name" ]; then
+    result="refused"
+    reason="reviewer-check-name-unresolved"
+    reviewer_report="$platform"
+    emit_verdict
+    exit 1
+  fi
   bot_login="$(bot_login_for_platform "$platform")"
   reviewer_names_seen="${reviewer_names_seen}${reviewer_names_seen:+,}${check_name}"
   # Set here, not after the loop: the in-loop refusal paths below still emit a
   # verdict, and an empty REVIEWER_REPORT there would read as "no reviewer".
   reviewer_report="$reviewer_names_seen"
 
+  # `--slurp` merges the paginated responses into one array; without it `gh`
+  # emits one JSON object per page and the jq below runs once per page, making
+  # `check_state` multiline (a first-page "completed failure" then reads
+  # conclusion "failure\n " and misses the blocking case).
   check_runs_json=""
-  if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null)" || [ -z "$check_runs_json" ]; then
+  if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate --slurp 2>/dev/null)" || [ -z "$check_runs_json" ]; then
     escalate check-run-fetch-failed
   fi
   if ! check_state="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
-        [ .check_runs[]? | select(.name == $name) ]
+        [ .[].check_runs[]? | select(.name == $name) ]
         | sort_by(.started_at // .completed_at // "")
         | last
         | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
@@ -262,18 +278,18 @@ while IFS= read -r platform; do
     neutral|cancelled|skipped)
       if [ "$platform" = "bugbot" ] && [ -n "$bot_login" ]; then
         reviewer_started_at="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
-              [ .check_runs[]? | select(.name == $name) ]
+              [ .[].check_runs[]? | select(.name == $name) ]
               | sort_by(.started_at // .completed_at // "")
               | last
               | (.started_at // .completed_at // .created_at // "")
             ' 2>/dev/null)" || escalate check-run-parse-failed
         issue_comments_json=""
-        if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)"; then
+        if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
           escalate issue-comment-fetch-failed
         fi
         unavailable_bodies=""
         if ! unavailable_bodies="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -r --arg bot "$bot_login" --arg since "$reviewer_started_at" '
-              [ .[]?
+              [ .[]?[]
                 | select(
                     ((.user.login // "") == $bot or (.user.login // "") == ($bot + "[bot]"))
                     and (($since == "") or ((.created_at // "") > $since))
@@ -312,21 +328,26 @@ while IFS= read -r platform; do
   [ -n "$bot_login" ] || continue
   comments_json=""
   reviews_json=""
-  if ! comments_json="$(gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null)"; then
+  # Findings/comment fetches use `--paginate --slurp` and flatten in jq: an
+  # unslurped paginated response is one JSON document per page, so a jq
+  # pipeline runs per page and a downstream consumer sees a multiline
+  # concatenation instead of one array (same defect class as the check-runs
+  # read above).
+  if ! comments_json="$(gh api "repos/$repo/pulls/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
     escalate review-comment-fetch-failed
   fi
-  if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null)"; then
+  if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate --slurp 2>/dev/null)"; then
     escalate review-fetch-failed
   fi
 
   # Inline comments on this SHA, posted top-level by the reviewer bot.
   inline_json=""
   if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" '
-        [ .[]?
+        [ .[]?[]
           | select(
-              (.user.login == $bot or (.user.login // "") == ($bot | sub("\\[bot\\]$"; "")) or (.user.login // "") == ($bot + "[bot]"))
-              and .commit_id == $sha
-              and (.in_reply_to_id // null) == null
+              ((.user.login // "") == $bot or (.user.login // "") == ($bot | sub("\\[bot\\]$"; "")) or (.user.login // "") == ($bot + "[bot]"))
+              and ((.commit_id // "") == $sha)
+              and ((.in_reply_to_id // null) == null)
             )
           | { body: (.body // "") }
         ]
@@ -340,9 +361,9 @@ while IFS= read -r platform; do
   # (the umbrella review Bugbot posts) or Bugbot's own finding markers.
   review_json=""
   if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" --argjson inline "$inline_count" '
-        [ .[]?
+        [ .[]?[]
           | select(
-              ((.user.login == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
+              (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               and ((.commit_id // .commitId // "") == $sha)
             )
           | { state: (.state // ""), body: (.body // ""), inline: $inline }
@@ -447,14 +468,36 @@ if [ "$failing_count" -gt 0 ]; then
 fi
 
 # --- 4. Apply ---------------------------------------------------------------
+# `--add-label` binds nothing to a commit: a push landing between the state
+# read at the top and this mutation would leave every reviewer/CI verdict
+# describing the old head while the label certifies the new one. Re-fetch the
+# head immediately before the mutation and refuse on any drift.
+current_head="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || escalate head-revalidate-failed
+if [ -z "$current_head" ]; then
+  escalate head-revalidate-failed
+fi
+if [ "$current_head" != "$head_sha" ]; then
+  result="refused"
+  reason="head-changed-before-apply"
+  emit_verdict
+  exit 1
+fi
+
 if ! gh pr edit "$pr_number" --repo "$repo" --add-label "$label" >/dev/null 2>&1; then
   escalate label-apply-failed
 fi
 
-# Re-read so a silently-dropped label is not reported as applied.
-applied_labels="$(gh pr view "$pr_number" --repo "$repo" --json labels --jq '.labels[].name' 2>/dev/null)" || escalate label-verify-failed
+# Re-read so a silently-dropped label is not reported as applied, and so a
+# push that landed during the mutation is still caught: the label then
+# certifies a head no verdict describes.
+post_apply_json="$(gh pr view "$pr_number" --repo "$repo" --json labels,headRefOid 2>/dev/null)" || escalate label-verify-failed
+applied_labels="$(printf '%s\n' "$post_apply_json" | jq -r '.labels[].name' 2>/dev/null)" || escalate label-verify-failed
 if ! printf '%s\n' "$applied_labels" | grep -qx "$label"; then
   escalate label-not-applied
+fi
+applied_head="$(printf '%s\n' "$post_apply_json" | jq -r '.headRefOid // ""' 2>/dev/null)" || escalate label-verify-failed
+if [ "$applied_head" != "$head_sha" ]; then
+  escalate head-changed-after-apply
 fi
 
 result="labeled"
