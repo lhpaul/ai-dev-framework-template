@@ -641,17 +641,6 @@ while IFS= read -r platform; do
       ;;
   esac
 
-  # The reviewer already flagged this SHA. Read the PR's existing labels so the
-  # verdict can name the still-owed work without a second fetch below. Must run
-  # before any exit-1 path, hence its position ahead of the finding reads.
-  if [ "$verdict_blocking" -gt 0 ] && [ "$applied_notified" -eq 0 ]; then
-    applied_notified=1
-    applied_labels="$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name' 2>/dev/null)" || applied_labels=""
-    if ! printf '%s\n' "$applied_labels" | grep -qx 'needs-fixes'; then
-      gh pr edit "$pr_number" --repo "$repo" --add-label 'needs-fixes' >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - best-effort annotation; a failure here must not mask the blocking verdict about to be emitted.
-    fi
-  fi
-
   # Read findings only where a login exists (haystack reviews through its own
   # CLI and publishes no GitHub review surface). The scan itself is shared
   # (count_reviewer_blocking_findings) with the pre-apply revalidation. The
@@ -671,6 +660,23 @@ done < <(printf '%s\n' "$ready_platforms")
 reviewer_report="${reviewer_names_seen:-none}"
 
 if [ "$reviewer_blocking" -gt 0 ] || [ "$verdict_blocking" -gt 0 ]; then
+  # The reviewer already flagged this SHA — annotate the PR `needs-fixes`
+  # before refusing. Read the PR's existing labels so the annotation is
+  # idempotent (no duplicate add when `needs-fixes` is already present).
+  # Runs here, AFTER `count_reviewer_blocking_findings` accumulates, so the
+  # comment-only shape is covered too: a check run concluding `success`
+  # while the reviewer posted blocking inline comments refuses as
+  # `blocking-findings` with the annotation applied (PR #1818 F2, round 11)
+  # — the per-platform verdict block alone fired only on non-`success`
+  # conclusions and missed it. Best-effort: a failure here must not mask
+  # the blocking verdict about to be emitted.
+  if [ "$applied_notified" -eq 0 ]; then
+    applied_notified=1
+    applied_labels="$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name' 2>/dev/null)" || applied_labels=""
+    if ! printf '%s\n' "$applied_labels" | grep -qx 'needs-fixes'; then
+      gh pr edit "$pr_number" --repo "$repo" --add-label 'needs-fixes' >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - best-effort annotation; a failure here must not mask the blocking verdict about to be emitted.
+    fi
+  fi
   result="refused"
   reason="blocking-findings"
   blocking_count="$reviewer_blocking"

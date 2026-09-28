@@ -414,6 +414,23 @@ result="$(run_helper)"
 run_test "changes_requested_exit" "1" "${result%%|*}"
 run_test "changes_requested_reason" "blocking-findings" "$(field "$result" REASON)"
 
+# PR #1818 F2 round 11 (thread PRRT_kwDORWAxaM6mzC5k): a check run that
+# concludes `success` while the reviewer posted blocking inline comments
+# (comment-only findings) must still mark the PR `needs-fixes`. The
+# per-platform verdict block (~line 647) runs BEFORE
+# count_reviewer_blocking_findings accumulates, so the aggregate
+# blocking-findings refusal fired with no needs-fixes annotation.
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"body":"**High Severity** leak in the reject path","created_at":"2026-01-02T00:00:00Z"}]'
+MOCK_REVIEWS='[]'
+result="$(run_helper)"
+run_test "comment_only_findings_exit" "1" "${result%%|*}"
+run_test "comment_only_findings_reason" "blocking-findings" "$(field "$result" REASON)"
+run_test "comment_only_findings_count" "1" "$(field "$result" BLOCKING_FINDING_COUNT)"
+run_test "comment_only_findings_marked_needs_fixes" "1" "$(grep -c 'add-label needs-fixes' "$_LABEL_LOG" || true)"
+run_test "comment_only_findings_no_readiness_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+MOCK_COMMENTS='[]'
+
 echo ""
 echo "=== Area 2: refuse on unresolved CI ==="
 
@@ -558,6 +575,26 @@ run_test "05 routes the regression label through the helper" "1" \
   "$([ "$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/$release_surface" || true)" -ge 1 ] && echo 1 || echo 0)"
 run_test "05 release exemption removed" "0" \
   "$(grep -c 'documented exemption from helper-gated readiness labels' "$REPO_ROOT/$release_surface" || true)"
+
+# PR #1818 F1 round 11 (thread PRRT_kwDORWAxaM6mzC5e): §7.4's CI-loop `green`
+# row must route the release `ready-for-human-review` through the helper, not
+# point at protocol 92's direct apply — a direct apply bypasses the helper's
+# live CI/head revalidation exactly the way the §7.3 direct apply did before
+# round 10.
+_p05_green="$(awk '/^### 7.4 CI loop/{f=1} f && /^### 7.5 /{exit} f{print}' "$REPO_ROOT/$release_surface")"
+run_test "05_ci_green_row_uses_readiness_helper" "1" \
+  "$(printf '%s\n' "$_p05_green" | grep -c 'apply-readiness-labels.sh --pr <pr_number> --label ready-for-human-review' || true)"
+run_test "05_ci_green_row_no_direct_apply_instruction" "0" \
+  "$(printf '%s\n' "$_p05_green" | grep -c 'Apply `ready-for-human-review` per' || true)"
+run_test "05_ci_green_row_no_direct_gh_edit" "0" \
+  "$(printf '%s\n' "$_p05_green" | grep -c 'gh pr edit --add-label ready-for-human-review' || true)"
+# The red row's `needs-fixes` apply is a plain annotation (not a readiness
+# label the merge gates consume), so it keeps its direct form — the
+# consistency assertion locks that it stays an annotation, never a
+# ready-* label.
+run_test "05_ci_red_row_never_applies_ready_label" "0" \
+  "$(printf '%s\n' "$_p05_green" | grep -c 'Apply `ready-for' || true)"
+unset _p05_green
 
 echo ""
 echo "=== Area 5: branch-type scope for the reviewer leg ==="

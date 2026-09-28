@@ -359,7 +359,7 @@ Apply only to the **release PR that targets `main`**. Do **not** apply the regre
 
 **No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into the resolved release base. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
 
-Note: release PRs use a simplified readiness flow (the CI loop step applies `ready-for-human-review` after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
+Note: release PRs use a simplified readiness flow (the CI loop step routes `ready-for-human-review` through `apply-readiness-labels.sh` after CI is green, revalidating live CI and the current head SHA like every other readiness surface) and do not run Protocol 91's Step 8a/8b label checklist.
 
 ### 7.1 Resolve the production PR number
 
@@ -445,9 +445,9 @@ Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/reg
 ./scripts/development-workflow/pr-ci-loop.sh <pr_number>
 ```
 
-| Result    | Action                                                                                                                                                            |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `green`   | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
+| Result    | Action                                                                                                                                                                                                                             |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `green`   | Route `ready-for-human-review` through the readiness helper — never a direct label edit (see [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the helper revalidates live CI and the current head SHA immediately before applying the label): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-human-review`. The production PR is then ready for human merge review. |
 | `red`     | Apply `needs-fixes`, fix, push, then return to the artifact validation step (§7.2) and repeat through the CI loop step (§7.4).                                                        |
 | `timeout` | Escalate to a human; do not apply `ready-for-human-review`.                                                                                                       |
 
