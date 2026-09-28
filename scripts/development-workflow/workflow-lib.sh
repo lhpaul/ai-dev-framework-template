@@ -593,7 +593,7 @@ bot_login_for_platform() {
     local-ai-reviewer) printf '\n' ;;
     devin) printf 'devin-ai-integration\n' ;;
     greptile) printf 'greptile-apps\n' ;;
-    pr-agent) printf '\n' ;;
+    pr-agent) printf '%s\n' "${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" ;;
     haystack) printf '\n' ;;
     codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;

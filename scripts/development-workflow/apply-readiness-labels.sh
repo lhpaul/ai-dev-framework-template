@@ -68,6 +68,7 @@ Prints RESULT=<labeled|refused|escalate> and REASON=<slug>.
 Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
 reviewer-unavailable, reviewer-check-name-unresolved,
+reviewer-evidence-unreadable,
 reviewer-check-unknown-conclusion, reviewer-policy-empty, blocking-findings,
 reviewer-state-changed, ci-pending, ci-failing, head-changed-before-apply.
 Escalation reasons:
@@ -265,9 +266,22 @@ comment_only_reviewer_verdict() {
     escalate review-parse-failed
   fi
   if [ -z "$latest_review" ] || [ "$latest_review" = "null" ]; then
-    if comment_only_completion_evidence "$platform_arg" "$bot_login_arg"; then
+    # Round 16: the completion adapters return 0 (clean evidence — findings
+    # are then counted through the shared scan), 1 (no readable evidence —
+    # fail closed below), or 2 (blocking evidence on the current head —
+    # refuse blocking-findings with the needs-fixes annotation).
+    _adapter_rc=0
+    comment_only_completion_evidence "$platform_arg" "$bot_login_arg" || _adapter_rc=$?
+    if [ "$_adapter_rc" -eq 0 ]; then
       count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg"
       return
+    fi
+    if [ "$_adapter_rc" -eq 2 ]; then
+      annotate_needs_fixes_best_effort
+      result="refused"
+      reason="blocking-findings"
+      blocking_count=1
+      refuse "blocking-findings"
     fi
     result="refused"
     reason="reviewer-check-absent"
@@ -301,28 +315,56 @@ comment_only_reviewer_verdict() {
 # comment_only_completion_evidence <platform> <bot_login> — round 15 (PR
 # #1818 thread PRRT_kwDORWAxaM6m1pF_): non-review completion evidence for
 # hosted comment-only reviewers, mirroring exactly what the loop's own
-# platform readers accept:
+# platform readers accept. Round 16 (threads PRRT_kwDORWAxaM6m2Os_,
+# PRRT_kwDORWAxaM6m2OtD, PRRT_kwDORWAxaM6m2OtK) tightened the codex-github
+# adapter and added three more:
 #   - codex-github: a root PR comment (issue comment) by the bot whose body
-#     carries the clean sentence ("Didn't find any major issues", the
-#     approved-template verdict sentence codex-github-reviewer.sh matches)
-#     AND a "Reviewed commit" marker whose backticked token pins the current
-#     head (offset-zero prefix in either direction — the same prefix
-#     classification codex_marker_classify accepts; abbreviated and full
-#     forms both name the head).
+#     is SHA-pinned terminal evidence — a backticked "Reviewed commit"
+#     marker whose token pins the current head (offset-zero prefix in
+#     either direction, the same prefix classification codex_marker_classify
+#     accepts) AND the approved clean sentence ("Didn't find any major
+#     issues", the approved-template verdict sentence
+#     codex-github-reviewer.sh matches). A SHA-pinned body WITHOUT the clean
+#     sentence is the loop classifier's unrecognized/needs-fixes verdict
+#     (every other terminal body safe-fails) — returned as rc 2, never a
+#     pass (round-15's OR over the two markers let a "Codex Review: Needs
+#     fixes ... Reviewed commit: <HEAD>" body pass clean).
 #   - greptile: a `+1` reaction by the bot on the latest "@greptile review"
 #     trigger comment — run_greptile_review's completion signal.
-# On a match: sets reviewer_started_at (the evidence's timestamp — the
-# comment's created_at / the trigger comment's created_at, the same window
-# start the loop scans findings from) and returns 0. Returns 1 when the
-# platform has no such evidence (caller refuses reviewer-check-absent —
-# fail closed for genuinely absent evidence). The issue-comment fetch
-# escalates fail-closed; a reactions read failure returns 1 (refusal), never
-# a pass.
+#   - claude-code-action: the loop's claude-code-action-reviewer.sh accepts
+#     a successful GitHub Actions run (workflow_dispatch, the configured
+#     workflow file, run-name "PR #<n>"-scoped when any candidate carries
+#     one, newest by created_at) with no CHANGES_REQUESTED review from the
+#     bot — the findings leg is the shared review scan the caller runs.
+#   - pr-agent: run_pr_agent_review's completion surface — the latest issue
+#     comment by the bot whose body contains "PR Reviewer Guide" and the
+#     head SHA, classified by the same label rules _pr_agent_classify
+#     applies ("No major issues detected" clean; hard-blocker focus-area
+#     labels needs-fixes; unreadable section needs-fixes).
+#   - coderabbit-cli / local-ai-reviewer: NO adapter, deliberately. Both
+#     reviewer scripts are pure-CLI readers (coderabbit-cli-reviewer.sh and
+#     local-ai-reviewer.sh make no `gh api` write call — only `gh pr view`
+#     / `gh pr diff`), so neither leaves a readable GitHub surface a label
+#     gate could verify: their verdicts exist only in the loop's key=value
+#     stdout and its reviewer_loop_history.v1 ledger comment, neither of
+#     which is a per-head reviewer verdict this helper trusts. They refuse
+#     reviewer-evidence-unreadable (a named refusal, not the generic
+#     unresolved-name reason), preserving fail-closed semantics for
+#     genuinely absent evidence.
+# On a clean match: sets reviewer_started_at (the evidence's timestamp —
+# the comment's created_at / the trigger comment's created_at / the run's
+# created_at, the same window start the loop scans findings from) and
+# returns 0. Returns 1 when the platform has no readable evidence (caller
+# refuses reviewer-check-absent — fail closed for genuinely absent
+# evidence). Returns 2 when the platform's own readable evidence is a
+# BLOCKING verdict for the current head (caller refuses blocking-findings
+# with the needs-fixes annotation). Fetch/parse failures escalate
+# fail-closed; a reactions read failure returns 1 (refusal), never a pass.
 comment_only_completion_evidence() {
   local platform_arg="$1" bot_login_arg="$2"
   local issue_comments_json entries entry body created token trigger reactions_json
   case "$platform_arg" in
-    codex-github|greptile) ;;
+    codex-github|greptile|claude-code-action|pr-agent) ;;
     *) return 1 ;;
   esac
   if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
@@ -347,19 +389,116 @@ comment_only_completion_evidence() {
         [ -n "$entry" ] || continue
         body="$(printf '%s\n' "$entry" | jq -r '.body // ""' 2>/dev/null)"
         created="$(printf '%s\n' "$entry" | jq -r '.created_at // ""' 2>/dev/null)"
+        # Only SHA-pinned terminal evidence ("Reviewed commit" + backticked
+        # token naming the current head) participates; offset-zero prefix in
+        # either direction, the same prefix classification
+        # codex_marker_classify accepts.
         case "$body" in
-          *"Didn't find any major issues"*|*"Reviewed commit"*) ;;
+          *"Reviewed commit"*) ;;
           *) continue ;;
         esac
         # shellcheck disable=SC2016  # single quotes deliberate: the sed program must not expand
         token="$(printf '%s\n' "$body" | sed -n 's/.*Reviewed commit:\{0,1\}[^`]*`\([^`]*\)`.*/\1/p' | tail -n1)"
         [ -n "$token" ] || continue
-        # Offset-zero prefix in either direction: the token names the head.
         if [ "${head_sha#"$token"}" != "$head_sha" ] || [ "${token#"$head_sha"}" != "$token" ]; then
-          reviewer_started_at="$created"
-          return 0
+          # SHA-pinned terminal evidence — the verdict sentence decides:
+          # the approved clean sentence passes; any other SHA-pinned body
+          # is the classifier's needs-fixes / unrecognized safe-fail
+          # (codex-github-reviewer.sh checks blocking markers FIRST, then
+          # requires the whole approved template).
+          case "$body" in
+            *"Didn't find any major issues"*)
+              reviewer_started_at="$created"
+              return 0
+              ;;
+          esac
+          return 2
         fi
       done <<< "$entries"
+      return 1
+      ;;
+    claude-code-action)
+      # claude-code-action-reviewer.sh's Phase 2/3 completion signal: a
+      # workflow_dispatch run of the configured workflow file, PR-scoped by
+      # run-name when any candidate carries one (concurrent dispatch — the
+      # #808 run-name mechanism), newest by created_at, status=completed
+      # AND conclusion=success. Fail closed: absent, in-progress, or
+      # failed runs return 1 (reviewer-check-absent), never a pass.
+      local runs_json selected run_created
+      runs_json="$(gh api "repos/$repo/actions/runs?event=workflow_dispatch&per_page=100" --paginate --slurp 2>/dev/null)" \
+        || escalate workflow-run-fetch-failed
+      selected="$(printf '%s\n' "${runs_json:-[]}" | jq -c --arg wf "${CLAUDE_CODE_ACTION_WORKFLOW_FILE:-claude-code-review.yml}" --arg pr "$pr_number" '
+          [ .[]?[]?[]? | objects ]
+          | [ .[] | select(((.path // "")) | endswith($wf)) ] as $candidates
+          | ([ $candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?) ] | length > 0) as $name_scoped
+          | ($candidates | if $name_scoped then
+              [ .[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr) ]
+            else . end)
+          | sort_by(.created_at)
+          | reverse
+          | first
+        ' 2>/dev/null)" || escalate workflow-run-parse-failed
+      [ -n "$selected" ] && [ "$selected" != "null" ] || return 1
+      if [ "$(printf '%s\n' "$selected" | jq -r '.status // ""')" != "completed" ] \
+          || [ "$(printf '%s\n' "$selected" | jq -r '.conclusion // ""')" != "success" ]; then
+        return 1
+      fi
+      run_created="$(printf '%s\n' "$selected" | jq -r '.created_at // ""')"
+      reviewer_started_at="$run_created"
+      return 0
+      ;;
+    pr-agent)
+      # run_pr_agent_review's strict_sha completion surface: the bot's
+      # latest issue comment carrying the head SHA and "PR Reviewer Guide",
+      # classified with _pr_agent_classify's rules. A hard-blocker
+      # focus-area label (Critical / Must Fix / Breaking Change / Security
+      # Concern / API Change / Backward Compatibility) or an unreadable
+      # focus section is needs_fixes → rc 2 (blocking). "No major issues
+      # detected" is clean.
+      local pragent_entry
+      pragent_entry="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" '
+          [ .[]?[]
+            | select(
+                (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
+              )
+            | select(((.body // "") | contains($sha)) and (((.body // "") | test("PR Reviewer Guide"; "i"))))
+          ]
+          | sort_by(.created_at)
+          | last // empty
+        ' 2>/dev/null)" || escalate issue-comment-parse-failed
+      [ -n "$pragent_entry" ] || return 1
+      body="$(printf '%s\n' "$pragent_entry" | jq -r '.body // ""')"
+      created="$(printf '%s\n' "$pragent_entry" | jq -r '.created_at // ""')"
+      if printf '%s\n' "$body" | grep -q "No major issues detected"; then
+        reviewer_started_at="$created"
+        return 0
+      fi
+      if printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
+        # Extract <strong>LABEL</strong> tokens from the focus section and
+        # apply the same hard-blocker label set _pr_agent_classify uses.
+        local focus_labels label label_lower
+        focus_labels="$(printf '%s\n' "$body" \
+          | awk '/Recommended focus areas for review/{found=1; next}
+                 found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
+                 found{print}' \
+          | grep -oE '<strong>[^<]+</strong>' \
+          | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
+          || true)"
+        [ -n "$focus_labels" ] || return 2
+        while IFS= read -r label; do
+          [ -n "$label" ] || continue
+          label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+          case "$label_lower" in
+            critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
+              return 2
+              ;;
+          esac
+        done <<< "$focus_labels"
+        reviewer_started_at="$created"
+        return 0
+      fi
+      # No verdict markers at all: not this cycle's terminal comment shape —
+      # fail closed rather than guessing.
       return 1
       ;;
     greptile)
@@ -495,6 +634,22 @@ escalate() {
 # delegated/batch merge gates cannot consume a stale readiness label on the
 # strength of a refusal. WARN-and-refuse on removal failure. No removal when
 # the label was not already present.
+# annotate_needs_fixes_best_effort — idempotent `needs-fixes` annotation on a
+# blocking verdict (PR #1818 F2, round 11; reused by the comment-only
+# completion-adapter rc=2 path in round 16). Best-effort: a failure here must
+# not mask the blocking verdict about to be emitted.
+annotate_needs_fixes_best_effort() {
+  if [ "$applied_notified" -eq 0 ]; then
+    applied_notified=1
+    applied_labels="$(printf '%s
+' "$pr_json" | jq -r '.labels[]?.name' 2>/dev/null)" || applied_labels=""
+    if ! printf '%s
+' "$applied_labels" | grep -qx 'needs-fixes'; then
+      gh pr edit "$pr_number" --repo "$repo" --add-label 'needs-fixes' >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - best-effort annotation; a failure here must not mask the blocking verdict about to be emitted.
+    fi
+  fi
+}
+
 refuse() {
   reason="$1"
   if [ "$label_initially_present" = "1" ]; then
@@ -734,14 +889,18 @@ esac
 # is a DOCUMENTED ready-phase reviewer that publishes its verdict through PR
 # reviews/comments instead of a check run. The list is the documented
 # pr-review-loop.sh platform set (.ai-dev-workflow.yaml's on_ready comment)
-# minus the check-run-bearing three (haystack/bugbot/ronda) and the pure-CLI
-# no-GitHub-surface ones (coderabbit-cli, local-ai-reviewer, pr-agent —
-# bot_login_for_platform returns no login for those, so a verdict would never
-# be readable; an unknown string still refuses
-# reviewer-check-name-unresolved above, which is the typo guard).
+# minus the check-run-bearing three (haystack/bugbot/ronda) and the two
+# pure-CLI no-GitHub-surface ones (coderabbit-cli, local-ai-reviewer — both
+# reviewer scripts are read-only against GitHub, so no adapter can exist;
+# they refuse reviewer-evidence-unreadable, a named refusal for the
+# platform's unreadable surface, not the generic unresolved-name reason —
+# round 16, thread PRRT_kwDORWAxaM6m2OtK). pr-agent posts its verdict as a
+# bot issue comment, so its completion adapter reads that surface (the same
+# one run_pr_agent_review reads). An unknown string still refuses
+# reviewer-check-name-unresolved above, which is the typo guard.
 supported_comment_only_reviewer_platform() {
   case "$1" in
-    codex-github|coderabbit|claude-code-action|copilot|devin|greptile) return 0 ;;
+    codex-github|coderabbit|claude-code-action|copilot|devin|greptile|pr-agent) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -830,6 +989,29 @@ while IFS= read -r platform; do
   # through this helper, so the fail-closed default became a permanent refusal
   # even though pr-review-loop.sh fully supports those platforms (PR #1818
   # thread PRRT_kwDORWAxaM6m1Dec).
+  # Round 16 (thread PRRT_kwDORWAxaM6m2OtK): coderabbit-cli and
+  # local-ai-reviewer are documented, dispatchable ready-phase platforms
+  # whose reviewer scripts leave NO readable GitHub evidence surface
+  # (pure-CLI readers; no check run, no review, no issue comment), so no
+  # verdict can be read. Refuse with a reason that names that unreadable
+  # surface instead of the generic unresolved-name reason — and never a
+  # silent pass (fail closed, same as absent evidence).
+  case "$platform" in
+    coderabbit-cli|local-ai-reviewer)
+      result="refused"
+      reason="reviewer-evidence-unreadable"
+      reviewer_report="$platform"
+      refuse "reviewer-evidence-unreadable"
+      ;;
+  esac
+  # Fail closed for an unsupported/unknown platform string (a typo or an
+  # undocumented value): every DOCUMENTED ready-phase platform is either
+  # check-run-bearing (haystack/bugbot/ronda) or comment-only (the list in
+  # supported_comment_only_reviewer_platform above). Before round 14 any
+  # non-mapped platform refused here, which deadlocked every documented
+  # comment-only platform (PR #1818 thread PRRT_kwDORWAxaM6m1Dec). The
+  # two documented pure-CLI platforms (coderabbit-cli, local-ai-reviewer)
+  # are handled just above with their named refusal.
   if [ -z "$check_name" ] && ! supported_comment_only_reviewer_platform "$platform"; then
     result="refused"
     reason="reviewer-check-name-unresolved"
@@ -989,13 +1171,7 @@ if [ "$reviewer_blocking" -gt 0 ] || [ "$verdict_blocking" -gt 0 ]; then
   # — the per-platform verdict block alone fired only on non-`success`
   # conclusions and missed it. Best-effort: a failure here must not mask
   # the blocking verdict about to be emitted.
-  if [ "$applied_notified" -eq 0 ]; then
-    applied_notified=1
-    applied_labels="$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name' 2>/dev/null)" || applied_labels=""
-    if ! printf '%s\n' "$applied_labels" | grep -qx 'needs-fixes'; then
-      gh pr edit "$pr_number" --repo "$repo" --add-label 'needs-fixes' >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - best-effort annotation; a failure here must not mask the blocking verdict about to be emitted.
-    fi
-  fi
+  annotate_needs_fixes_best_effort
   result="refused"
   reason="blocking-findings"
   blocking_count="$reviewer_blocking"
@@ -1086,6 +1262,16 @@ revalidate_reviewer_state() {
     # verdict still stands; a new review or a new finding refuses (fail
     # closed, never a silent pass).
     if [ -z "$check_name_arg" ]; then
+      if [ "$platform_arg" = "coderabbit-cli" ] || [ "$platform_arg" = "local-ai-reviewer" ]; then
+        # Round 16 (thread PRRT_kwDORWAxaM6m2OtK): the main gate already
+        # refused these (reviewer-evidence-unreadable); the revalidation
+        # loop only reaches them when the platform list changed mid-run.
+        # Same named refusal, fail closed.
+        result="refused"
+        reason="reviewer-evidence-unreadable"
+        reviewer_report="$platform_arg"
+        refuse "reviewer-evidence-unreadable"
+      fi
       if ! supported_comment_only_reviewer_platform "$platform_arg"; then
         continue
       fi
