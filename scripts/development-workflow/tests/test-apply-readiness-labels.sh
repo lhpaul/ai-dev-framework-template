@@ -196,21 +196,25 @@ case "$*" in
   *"/contents/.ai-dev-workflow.yaml?ref=$MOCK_BASE_SHA"*)
     # Base-branch configuration fetch (PR #1818 finding 1, round 4). A distinct
     # variable so head and base payloads differ in one invocation.
+    # `tr -d '\n'`: GNU coreutils base64 wraps at 76 columns by default, which
+    # would embed literal newlines in the JSON content string and fail the
+    # suite on Linux with base-config-unreadable (PR #1818 finding 3, round 7).
     [ "${MOCK_BASE_CONFIG_EXIT:-0}" = "0" ] || exit 1
     content="$(printf '%s\n' "${MOCK_BASE_CONFIG:-review:
   on_ready:
-    github: []}" | base64)"
+    github: []}" | base64 | tr -d '\n')"
     emit "{\"content\":\"$content\"}"
     exit 0
     ;;
   *"/contents/.ai-dev-workflow.yaml"*)
     # PR-head configuration fetch (#1408 finding 1). MOCK_HEAD_CONFIG carries
     # the raw YAML body; MOCK_HEAD_CONFIG_EXIT simulates the API failure.
+    # Same `tr -d '\n'` wrap guard as the base-config arm above.
     [ "${MOCK_HEAD_CONFIG_EXIT:-0}" = "0" ] || exit 1
     content="$(printf '%s\n' "${MOCK_HEAD_CONFIG:-review:
   on_ready:
     github:
-      - bugbot}" | base64)"
+      - bugbot}" | base64 | tr -d '\n')"
     emit "{\"content\":\"$content\"}"
     exit 0
     ;;
@@ -616,6 +620,7 @@ run_helper_no_local_config() {
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="${MOCK_LOCAL_OVERRIDE_ROOT:-}" \
     MOCK_GH_LOG="$_LABEL_LOG" \
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
@@ -1024,6 +1029,104 @@ MOCK_DROP_LABEL=0
 run_test "label_not_applied_attempts_removal" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
 run_test "label_not_applied_still_escalates_exit" "2" "${result%%|*}"
 run_test "label_not_applied_reason" "label-not-applied" "$(field "$result" REASON)"
+
+echo ""
+echo "=== Area 12: PR #1818 Codex findings, round 7 ==="
+
+# Reset to the clean default before the planted cases.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+MOCK_LOCAL_OVERRIDE_ROOT=''
+
+# Finding 1 (P1): pr-review-loop.sh's _check_release_pr_guard skips the
+# reviewer loop for hotfix/* head branches exactly as it does for release/*,
+# so no ready-phase reviewer check run can ever exist on a hotfix. Requiring
+# one permanently refused both readiness labels reviewer-check-absent.
+# Planted failing case: a hotfix branch with the empty check-run set must NOT
+# refuse on the reviewer leg (it still runs the CI leg, so a failing check
+# still refuses — asserted right after).
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+result="$(run_helper)"
+run_test "hotfix_branch_not_reviewer_gated_exit" "0" "${result%%|*}"
+run_test "hotfix_branch_not_reviewer_gated_result" "labeled" "$(field "$result" RESULT)"
+run_test "hotfix_branch_not_reviewer_gated_report" "none" "$(field "$result" REVIEWER_REPORT)"
+# The CI leg still applies on hotfix branches (the same handling release
+# branches get): a failing non-reviewer check refuses.
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
+result="$(run_helper)"
+run_test "hotfix_branch_ci_leg_still_applies_reason" "ci-failing" "$(field "$result" REASON)"
+# backport/hotfix/* is an implementation branch and stays reviewer-gated.
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"backport/hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "backport_hotfix_still_reviewer_gated_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+
+# Finding 2 (P1): the loop resolves the base snapshot's review policy with
+# WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 (pr-review-loop.sh ~12423-12449), so
+# a local .ai-dev-workflow.local.yaml declaring review.on_ready.github
+# REPLACES the shared list. This helper previously parsed the base snapshot
+# without overrides, so a local ronda-over-bugbot override made it wait for a
+# Bugbot check the loop never dispatched. Planted failing case: the override
+# root declares ronda; the shared base config declares bugbot; the check-run
+# payload has a clean Ronda run and NO Bugbot run. Pre-fix, the helper
+# resolved bugbot and refused reviewer-check-absent; the fixed helper must
+# resolve the overridden ronda policy and label.
+mkdir -p "$TMP_ROOT/override-root"
+cat > "$TMP_ROOT/override-root/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - ronda
+YAML
+MOCK_LOCAL_OVERRIDE_ROOT="$TMP_ROOT/override-root"
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github:
+      - bugbot'
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper_no_local_config)"
+run_test "local_override_replaces_base_policy_exit" "0" "${result%%|*}"
+run_test "local_override_replaces_base_policy_result" "labeled" "$(field "$result" RESULT)"
+run_test "local_override_replaces_base_policy_names" "Ronda review" "$(field "$result" REVIEWER_REPORT)"
+# Override ABSENT (the worktree case, #1817): fall back to the shared base
+# policy, never fail — the loop's own behavior in a worktree.
+MOCK_LOCAL_OVERRIDE_ROOT=""
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper_no_local_config)"
+run_test "absent_override_falls_back_to_shared_base_exit" "0" "${result%%|*}"
+run_test "absent_override_falls_back_to_shared_base_names" "Cursor Bugbot" "$(field "$result" REVIEWER_REPORT)"
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+MOCK_CHECK_RUNS="$_bugbot_ok"
+rm -rf "$TMP_ROOT/override-root"
+
+# Finding 3 (P1): GNU coreutils base64 wraps at 76 columns by default; the
+# fixture encoders embed the result in a JSON `content` string, so wrapping
+# yields invalid JSON and fails 4 cases on Linux with
+# ready-config-unreadable / base-config-unreadable. Cannot reproduce GNU
+# locally (BSD base64 does not wrap); verify by reasoning + the one-line
+# invariant the encoders now guarantee: base64 | tr -d '\n' emits exactly one
+# line (wc -l == 1), and the longer MOCK_HEAD_CONFIG default survives a
+# round-trip decode.
+_enc="$(printf '%s\n' "review:
+  on_ready:
+    github:
+      - bugbot" | base64 | tr -d '\n')"
+run_test "base64_encoder_single_line" "1" "$(printf '%s\n' "$_enc" | wc -l | tr -d ' ')"
+_dec="$(printf '%s\n' "$_enc" | base64 -d 2>/dev/null || true)"
+run_test "base64_encoder_round_trips" "1" "$(printf '%s\n' "$_dec" | grep -c 'bugbot' || true)"
+unset _enc _dec
 
 echo ""
 echo "$pass passed, $fail failed"

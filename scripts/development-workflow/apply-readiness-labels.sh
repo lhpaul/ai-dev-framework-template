@@ -17,12 +17,18 @@
 # Bugbot usage/spend-limit notice: the reviewer never actually reviewed.
 #
 # The reviewer leg applies to implementation branches only (`feature/*`,
-# `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`) — the same boundary
-# Protocol 91 draws for `IS_IMPLEMENTATION_PR` and for its Step 7b label
-# derivation table. Ready-phase reviewers are not dispatched on `spec/*`,
-# `implementation-plan/*`, graduation (`develop-<slug>`), or `release/*` PRs, so
-# no check run can exist for them; gating on one would refuse every doc-stage and
-# release PR. The CI leg still applies on those branches.
+# `fix/*`, `refactor/*`, `backport/hotfix/*`) — the same boundary Protocol 91
+# draws for `IS_IMPLEMENTATION_PR` and for its Step 7b label derivation table.
+# Ready-phase reviewers are not dispatched on `spec/*`,
+# `implementation-plan/*`, graduation (`develop-<slug>`), `release/*`, or
+# `hotfix/*` PRs, so no check run can exist for them; gating on one would
+# refuse every doc-stage, release, and hotfix PR. `hotfix/*` is exempt the
+# same way `release/*` is because pr-review-loop.sh's `_check_release_pr_guard`
+# skips the reviewer loop for `release/*` AND `hotfix/*` head branches — no
+# reviewer check is ever dispatched on a hotfix, so requiring one would
+# permanently refuse both readiness labels `reviewer-check-absent`. Hotfix PRs
+# still get what release PRs get: the CI leg applies unchanged (PR #1818
+# finding 1, round 7). The CI leg still applies on those branches.
 #
 # `ready-for-regression` blocks on failing non-reviewer checks but permits
 # pending ones: that label is what *starts* the configured regression workflow,
@@ -72,7 +78,12 @@ The ready-phase reviewer list is read from the PR head's own
 rather than falling back to this checkout's configuration. The required
 reviewer set is the BASE branch policy — the loop dispatches ready-phase
 platforms from the base configuration, so head-only additions are never
-required, but a head cannot waive a base-configured reviewer.
+required, but a head cannot waive a base-configured reviewer. The base policy
+is resolved with local review overrides applied (the same effective policy
+the loop dispatches); an absent .ai-dev-workflow.local.yaml falls back to the
+shared policy. hotfix/* branches are exempt from the reviewer leg exactly as
+release/* branches are — the reviewer loop is never dispatched on them — but
+the CI leg still applies.
 USAGE
 }
 
@@ -152,9 +163,22 @@ configured_ready_reviewer_platforms() {
 # configuration no longer declares. Fail closed: a fetch/parse failure
 # escalates rather than falling back to the local checkout silently — the
 # reviewer set is the gate, so an unreadable one is an unreadable gate.
+# When called for the BASE sha (loop_dispatched_base=1), the effective policy
+# is resolved the same way pr-review-loop.sh resolves its base snapshot
+# (WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 on workflow_config_review_platforms,
+# pr-review-loop.sh ~12423-12449): a local `.ai-dev-workflow.local.yaml` that
+# declares `review.on_ready.github` REPLACES the shared list, and the loop
+# dispatches that replaced list — so this helper must gate on it too, or a
+# local ronda-over-bugbot override would have the helper wait forever for a
+# Bugbot check the loop never runs (PR #1818 finding 2, round 7). The override
+# file is gitignored and absent from agent worktrees; an absent file falls
+# back to the shared policy exactly as the loop itself does in a worktree
+# (workflow_config_review_local_list_if_declared returns 1 when the local
+# file is absent) — never fail, never resolve a different policy than the
+# loop dispatched.
 pr_head_config_ready_platforms() {
   local repo_arg="$1" sha_arg="$2"
-  local content_b64 config_body head_config_file
+  local content_b64 config_body head_config_file rc
   content_b64="$(gh api "repos/$repo_arg/contents/.ai-dev-workflow.yaml?ref=$sha_arg" \
       --jq '.content // ""' 2>/dev/null)" || return 1
   [ -n "$content_b64" ] || return 1
@@ -162,8 +186,12 @@ pr_head_config_ready_platforms() {
   [ -n "$config_body" ] || return 1
   head_config_file="$(mktemp)" || return 1
   printf '%s\n' "$config_body" >"$head_config_file"
-  workflow_config_review_on_ready_github "$head_config_file"
-  local rc=$?
+  if [ "${loop_dispatched_base:-0}" = "1" ]; then
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file"
+  else
+    workflow_config_review_on_ready_github "$head_config_file"
+  fi
+  rc=$?
   rm -f "$head_config_file"
   return "$rc"
 }
@@ -371,8 +399,15 @@ base_ref_oid="$(printf '%s\n' "$pr_json" | jq -r '.baseRefOid // ""' 2>/dev/null
 # Implementation branches are the ones that carry a ready-phase reviewer check
 # run and a required `ready-for-regression` label (Protocol 91's label derivation
 # table). Doc-stage, graduation, and release PRs are not reviewer-gated.
+# `hotfix/*` is exempt from the reviewer leg — same handling as `release/*`
+# (PR #1818 finding 1, round 7): `_check_release_pr_guard` in
+# pr-review-loop.sh skips the reviewer loop for `release/*` AND `hotfix/*`
+# head branches, so no ready-phase reviewer check run can ever exist on a
+# hotfix and requiring one would permanently refuse both readiness labels
+# `reviewer-check-absent`. The CI leg below still applies unchanged — that is
+# the release-branch handling this mirrors.
 case "$head_ref_name" in
-  feature/*|fix/*|refactor/*|hotfix/*|backport/hotfix/*) is_implementation_pr="true" ;;
+  feature/*|fix/*|refactor/*|backport/hotfix/*) is_implementation_pr="true" ;;
   *) is_implementation_pr="false" ;;
 esac
 
@@ -423,7 +458,11 @@ if [ "$is_implementation_pr" = "true" ]; then
   # trusted as resolved; no base policy is fetched there.)
   if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
     _base_ready_platforms=""
-    if ! _base_ready_platforms="$(pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
+    # loop_dispatched_base=1: apply the local review override when resolving the
+    # BASE policy, the same effective-policy resolution pr-review-loop.sh uses
+    # when it dispatches ready-phase platforms from the base configuration
+    # (PR #1818 finding 2, round 7).
+    if ! _base_ready_platforms="$(loop_dispatched_base=1 pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
       escalate base-config-unreadable
     fi
     if [ -z "$(printf '%s\n' "$ready_platforms" | tr -d '[:space:]')" ]; then
