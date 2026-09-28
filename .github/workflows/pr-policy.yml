@@ -292,6 +292,15 @@ jobs:
               fi
             fi
 
+            # Readiness labels are merge-gate inputs (#1408): never applied by a
+            # direct `gh pr edit --add-label`. This job runs on pull_request_target
+            # and issue_comment events WITHOUT a checkout, so the helper script is
+            # not on disk — fetch it at the exact PR head SHA already validated by
+            # refresh_pr_metadata above, through the same authenticated gh API the
+            # rest of this job uses (raw.githubusercontent.com would 404 on a
+            # private repository). A failure to fetch or to run the helper keeps
+            # the documented WARN-and-continue posture: the guard status below is
+            # never masked by label-policy trouble.
             if [ "$should_apply_regression_label" != "true" ]; then
               :
             elif ! ensure_regression_label_exists; then
@@ -299,13 +308,19 @@ jobs:
               LABEL_POLICY_FAILED=true
             elif ! refreshed_metadata_matches_current_head; then
               echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
-            elif ! gh pr edit "$PR_NUMBER" \
-              --repo "$REPO" \
-              --add-label "$LABEL_NAME"; then
-              echo "WARN: Failed to apply ${LABEL_NAME} to PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
-              LABEL_POLICY_FAILED=true
+            elif ! helper_body="$(gh api "repos/$REPO/contents/scripts/development-workflow/apply-readiness-labels.sh?ref=$HEAD_SHA" --jq '.content // ""' | tr -d '\n' | base64 -d)" || [ -z "$helper_body" ]; then
+              echo "WARN: Failed to fetch apply-readiness-labels.sh at ${HEAD_SHA}; skipping ${LABEL_NAME} (no direct apply fallback). Continuing to reviewer-loop guard status." >&2
+            elif ! printf '%s\n' "$helper_body" >"$RUNNER_TEMP/apply-readiness-labels.sh" ||
+              ! ( cd "$RUNNER_TEMP" && WORKFLOW_TARGET_GITHUB_REPO="$REPO" \
+                bash ./apply-readiness-labels.sh --pr "$PR_NUMBER" --repo "$REPO" --label "$LABEL_NAME" ); then
+              # Exit 1 is the helper refusing (RESULT=refused): live
+              # reviewer/CI/head validation did not pass, so the label must not
+              # land. Exit 2 escalates (unreadable state). Either way this
+              # workflow never hard-fails on label policy; the guard status
+              # below still runs.
+              echo "WARN: apply-readiness-labels.sh refused to apply ${LABEL_NAME} to PR #${PR_NUMBER} (RESULT=refused) or its state read escalated. Continuing to reviewer-loop guard status." >&2
             else
-              echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
+              echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER} via apply-readiness-labels.sh."
             fi
           }
 

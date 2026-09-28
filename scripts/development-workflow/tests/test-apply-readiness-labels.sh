@@ -571,6 +571,7 @@ do
 done
 
 release_surface="docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md"
+readiness92_surface="docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md"
 run_test "05 routes the regression label through the helper" "1" \
   "$([ "$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/$release_surface" || true)" -ge 1 ] && echo 1 || echo 0)"
 run_test "05 release exemption removed" "0" \
@@ -582,12 +583,10 @@ run_test "05 release exemption removed" "0" \
 # live CI/head revalidation exactly the way the §7.3 direct apply did before
 # round 10.
 _p05_green="$(awk '/^### 7.4 CI loop/{f=1} f && /^### 7.5 /{exit} f{print}' "$REPO_ROOT/$release_surface")"
-run_test "05_ci_green_row_uses_readiness_helper" "1" \
-  "$(printf '%s\n' "$_p05_green" | grep -c 'apply-readiness-labels.sh --pr <pr_number> --label ready-for-human-review' || true)"
+run_test "05_ci_green_row_uses_readiness_helper" "1" "$(printf '%s\n' "$_p05_green" | grep -c 'apply-readiness-labels.sh --pr <pr_number> --label ready-for-human-review' || true)"  # workflow-shell-guard: allow SH001 - grep -c exits 1 on zero matches; the assertion on this line decides pass/fail.
 run_test "05_ci_green_row_no_direct_apply_instruction" "0" \
   "$(printf '%s\n' "$_p05_green" | grep -c 'Apply `ready-for-human-review` per' || true)"
-run_test "05_ci_green_row_no_direct_gh_edit" "0" \
-  "$(printf '%s\n' "$_p05_green" | grep -c 'gh pr edit --add-label ready-for-human-review' || true)"
+run_test "05_ci_green_row_no_direct_gh_edit" "0" "$(printf '%s\n' "$_p05_green" | grep -c 'gh pr edit --add-label ready-for-human-review' || true)"  # workflow-shell-guard: allow SH001 - grep -c exits 1 on zero matches; the assertion on this line decides pass/fail.
 # The red row's `needs-fixes` apply is a plain annotation (not a readiness
 # label the merge gates consume), so it keeps its direct form — the
 # consistency assertion locks that it stays an annotation, never a
@@ -595,6 +594,47 @@ run_test "05_ci_green_row_no_direct_gh_edit" "0" \
 run_test "05_ci_red_row_never_applies_ready_label" "0" \
   "$(printf '%s\n' "$_p05_green" | grep -c 'Apply `ready-for' || true)"
 unset _p05_green
+
+# PR #1818 codex-github round 12 (thread PRRT_kwDORWAxaM6mzsYm): the two
+# remaining readiness producers must route through the helper too.
+# (a) pr-policy.yml's apply_regression_policy_after_clean_summary applied
+#     ready-for-regression via a direct `gh pr edit --add-label "$LABEL_NAME"`,
+#     bypassing the live reviewer/CI/head validation the helper enforces —
+#     the comment-echoed summary evidence is exactly the spoofable surface
+#     the gate exists for.
+# (b) Protocol 92's "Work Item Runner advances a draft PR" steps 6/8 and the
+#     "Human requests changes" re-add step instructed standalone loop
+#     agents/skills to hand-apply both readiness labels.
+readiness_policy_surface=".github/workflows/pr-policy.yml"
+_p_policy="$(awk '/apply_regression_policy_after_clean_summary\(\) \{/{f=1} f{print} f && /^[[:space:]]*}$/{exit}' "$REPO_ROOT/$readiness_policy_surface")"
+run_test "pr_policy_applies_regression_label_via_helper" "1" \
+  "$([ "$(printf '%s\n' "$_p_policy" | grep -c 'apply-readiness-labels.sh' || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "pr_policy_no_direct_regression_label_add" "0" \
+  "$(printf '%s\n' "$_p_policy" | grep -- '--add-label "\$LABEL_NAME"' | grep -cv '^[[:space:]]*#' || true)"
+run_test "pr_policy_apply_block_only_label_remove_is_direct" "0" \
+  "$(printf '%s\n' "$_p_policy" | grep -- '--remove-label "\$LABEL_NAME"' | grep -cv '^[[:space:]]*#' || true)"
+run_test "pr_policy_helper_present_repo_route" "1" \
+  "$([ "$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/$readiness_policy_surface" || true)" -ge 2 ] && echo 1 || echo 0)"
+unset _p_policy
+
+# Protocol 92 standard-workflow steps 6 and 8: both readiness labels go
+# through the helper; a direct apply instruction is forbidden. The
+# `needs-fixes` annotation stays a plain label edit (not a readiness label),
+# so those steps keep their direct form.
+_p92_std="$(awk '/^### Work Item Runner advances a draft PR/{f=1} f{print} f && /^### Human requests changes/{exit}' "$REPO_ROOT/$readiness92_surface")"
+run_test "protocol92_step6_uses_readiness_helper" "1" \
+  "$([ "$(printf '%s\n' "$_p92_std" | grep -c 'apply-readiness-labels.sh --pr <pr-number> --label ready-for-regression' || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "protocol92_step8_uses_readiness_helper" "1" \
+  "$([ "$(printf '%s\n' "$_p92_std" | grep -c 'apply-readiness-labels.sh --pr <pr-number> --label ready-for-human-review' || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "protocol92_standard_workflow_no_direct_apply_instruction" "0" \
+  "$(printf '%s\n' "$_p92_std" | grep -c 'apply `ready-for-\(regression\|human-review\)` label' || true)"
+# Protocol 92 human-changes re-add step (step 6 of that list).
+_p92_human="$(awk '/^### Human requests changes/{f=1} f{print} f && /^## Recommended Automation/{exit}' "$REPO_ROOT/$readiness92_surface")"
+run_test "protocol92_human_changes_readd_uses_helper" "1" \
+  "$([ "$(printf '%s\n' "$_p92_human" | grep -c 'apply-readiness-labels.sh --pr <pr-number> --label ready-for-human-review' || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "protocol92_human_changes_no_direct_readd" "0" \
+  "$(printf '%s\n' "$_p92_human" | grep -c '[^e-]add `ready-for-human-review`' || true)"
+unset _p92_std _p92_human
 
 echo ""
 echo "=== Area 5: branch-type scope for the reviewer leg ==="
