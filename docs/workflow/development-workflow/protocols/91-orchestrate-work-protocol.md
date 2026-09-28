@@ -3288,7 +3288,8 @@ if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
   gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "needs-fixes"
 fi
 
-# Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
+# Check 4: apply (or revalidate) the ready-for-human-review label through the
+# helper — even when the label is already present, so a stale one is removed.
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 # Last look before the label (issue #1574): several API-backed gates ran since
 # Check 0.6, and a push during any of them leaves the settled verdict
@@ -3302,20 +3303,21 @@ if [ "${SETTLE_APPLIES:-1}" -eq 1 ] && ! settle_head_ok; then
   fi
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
-if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
-  echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
-else
-  echo "Applying 'ready-for-human-review' label through the helper gate..."
-  # Agents must not call `gh pr edit --add-label ready-*` directly (issue #1408).
-  # The helper re-verifies, for the live head SHA, that every configured
-  # ready-phase reviewer check run is `completed`, that the reviewer posted no
-  # blocking findings, and that no non-reviewer check is pending or failing. A
-  # `refused` verdict here is a stop, not a warning: return to Step 7 or Step 8
-  # per the printed REASON.
-  if ! ./scripts/development-workflow/apply-readiness-labels.sh \
-        --pr "$PR_NUMBER" --repo "$TARGET_REPO" --label ready-for-human-review; then
-    exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
-  fi
+# Run the helper for BOTH label-present and label-absent PRs (issue #1408):
+# a label that is already present is NOT proof it is still current. The helper
+# revalidates it against the live head SHA and removes it on refusal, so a
+# same-SHA reviewer rerun that fails after the label went on pulls the stale
+# label back off instead of leaving it for the merge gates.
+echo "Applying/revalidating 'ready-for-human-review' label through the helper gate..."
+# Agents must not call `gh pr edit --add-label ready-*` directly (issue #1408).
+# The helper re-verifies, for the live head SHA, that every configured
+# ready-phase reviewer check run is `completed`, that the reviewer posted no
+# blocking findings, and that no non-reviewer check is pending or failing. A
+# `refused` verdict here is a stop, not a warning: return to Step 7 or Step 8
+# per the printed REASON.
+if ! ./scripts/development-workflow/apply-readiness-labels.sh \
+      --pr "$PR_NUMBER" --repo "$TARGET_REPO" --label ready-for-human-review; then
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
 
 echo "✅ Label readiness checklist passed. PR is ready for human review."

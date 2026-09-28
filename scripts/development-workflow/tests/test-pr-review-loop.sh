@@ -3756,19 +3756,25 @@ run_test "restore_label_absent_current_head_clean_summary_calls_gh_edit" "1" "$_
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA
 
-# Test 11.2: label already present on an implementation branch → NO gh pr edit.
-# MOCK_GH_OUTPUT is "true" (label present); summary-comment gate is not reached.
+# Test 11.2: label already present on an implementation branch → the helper is
+# still invoked (revalidate-or-remove, PR #1818 F1 round 10): an already-present
+# label is not proof it is current, so the restore path routes it through
+# apply-readiness-labels.sh. The stub helper reaches the post-apply verification
+# with stub JSON and escalates (label-verify-failed); the WARN-and-proceed
+# branch keeps the function returning 0.
 if ! _call_log_11="$(mktemp)"; then
   echo "ERROR: failed to allocate regression-label test temp file" >&2
   exit 1
 fi
 export MOCK_GH_OUTPUT="true"
 export MOCK_GH_CALL_LOG="$_call_log_11"
-restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null
+_rfr_present_exit=0
+restore_regression_label_if_missing "42" "feature/42-my-feature" 2>/dev/null || _rfr_present_exit=$?
+run_test "restore_label_already_present_returns_0" "0" "$_rfr_present_exit"
 _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_already_present_no_gh_edit" "0" "$_edit_calls"
 rm -f "$_call_log_11"
-unset MOCK_GH_CALL_LOG
+unset MOCK_GH_CALL_LOG _rfr_present_exit
 
 # Test 11.3: non-implementation branch (spec/) → NO gh pr edit regardless of
 # label state or summary-comment presence.
@@ -3946,7 +3952,36 @@ _summary_uses_helper="$(sed -n '/Step 7b regression-label assertion/,/^  fi$/p' 
   | grep -c 'apply-readiness-labels.sh' 2>/dev/null)" || _summary_uses_helper="0"
 run_test "step7b_summary_uses_readiness_helper" "1" \
   "$([ "$_summary_uses_helper" -ge 1 ] && echo 1 || echo 0)"
-unset _loop_src _helper_calls _direct_applies _summary_uses_helper
+# Test 11.14 (PR #1818 F1 round 10): Protocol 91 Step 8a Check 4 must invoke
+# the helper for BOTH label-present and label-absent PRs — the previous
+# label-present skip left a stale 'ready-for-human-review' on the PR after a
+# same-SHA reviewer rerun failed without adding a thread, exactly the case the
+# helper's label_initially_present revalidate-or-remove was built for. The
+# checklist is a fenced bash block, so this is a source-level assertion.
+_p91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
+_check4="$(awk '/^# Check 4:/{f=1} f{print} f && /^echo "✅ Label readiness checklist passed/{exit}' "$_p91")"
+run_test "step8a_check4_has_no_label_present_skip" "0" \
+  "$(printf '%s\n' "$_check4" | grep -c 'Skipping re-application' || true)"
+run_test "step8a_check4_runs_helper_unconditionally" "1" \
+  "$([ "$(printf '%s\n' "$_check4" | grep -c 'apply-readiness-labels.sh' || true)" -ge 1 ] \
+      && printf '%s\n' "$_check4" | grep -q 'if ! \./scripts/development-workflow/apply-readiness-labels.sh' \
+      && echo 1 || echo 0)"
+# Test 11.15 (PR #1818 F1 round 10): the restore path's label-present branch
+# must also invoke the helper (no skip when 'ready-for-regression' is already
+# present) — the same stale-label hazard as Check 4.
+run_test "restore_path_revalidates_present_label_via_helper" "1" \
+  "$(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src" | grep -c 'revalidating through apply-readiness-labels.sh' || true)"
+# Test 11.16 (PR #1818 F2 round 10): Protocol 05 §7.3 must route the release
+# PR's 'ready-for-regression' label through the helper — the previous direct
+# `gh pr edit <pr_number> --add-label "ready-for-regression"` exemption
+# bypassed the CI-leg gate even though the helper classifies release/* heads
+# as non-implementation (no reviewer leg) and never refuses for that reason.
+_p05="$REPO_ROOT/docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md"
+run_test "protocol05_regression_label_uses_helper" "1" \
+  "$([ "$(grep -c 'apply-readiness-labels.sh' "$_p05" || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "protocol05_has_no_direct_ready_for_regression_apply" "0" \
+  "$(grep -c -- '--add-label "ready-for-regression"' "$_p05" || true)"
+unset _loop_src _helper_calls _direct_applies _summary_uses_helper _p91 _check4 _p05
 
 # ---------------------------------------------------------------------------
 # Area 12: reviewer-failed label sync (issue #804)
@@ -18265,10 +18300,11 @@ run_test "ledger_excludes_head_moved_reruns" "1 1 available" \
   "$(reviewer_loop_history_entries_count "$_1574_ledger_body" r1)"
 run_test "cap_skipped_for_head_moved" "yes" \
   "$(grep -q 'if \[ "\$aggregate_reason" = "head_moved_during_run" \]; then' "$_1574_loop" && echo yes || echo no)"
-# The head is re-validated in Check 4 on BOTH paths — before the
-# label-present/absent branch — and a stale existing label is pulled back.
+# The head is re-validated in Check 4 BEFORE the helper invocation (there is
+# no label-present/absent branch any more — the helper runs unconditionally,
+# PR #1818 F1 round 10) and a stale existing label is pulled back.
 run_test "p91_revalidates_head_before_label" "yes" \
-  "$(awk '/^# Check 4:/{p=1} p && /SETTLE_APPLIES:-1}" -eq 1 \] && ! settle_head_ok/{found=1} p && /^if \[ "\$HAS_HUMAN_REVIEW_LABEL" -gt 0 \]; then/{ if (found) ok=1 } END{exit !ok}' "$_1574_p91" && echo yes || echo no)"
+  "$(awk '/^# Check 4:/{p=1} p && /SETTLE_APPLIES:-1}" -eq 1 \] && ! settle_head_ok/{found=1} p && /if ! \.\/scripts\/development-workflow\/apply-readiness-labels\.sh/{ if (found) ok=1 } END{exit !ok}' "$_1574_p91" && echo yes || echo no)"
 run_test "p91_pulls_stale_label_back" "yes" \
   "$(grep -q 'it covers a head that is no longer the PR head' "$_1574_p91" && echo yes || echo no)"
 # A head-move rerun never escalates on a failed ledger persist: no fixer is

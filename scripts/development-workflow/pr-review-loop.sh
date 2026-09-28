@@ -8267,7 +8267,6 @@ restore_regression_label_if_missing() {
         # Gate the restore on current-head clean-loop evidence. A historical
         # clean summary on an older head must not resurrect a stale label after
         # a push that introduced reviewer findings.
-        local _rfr_repo=""
         # repo_slug failure is handled explicitly below: an empty slug falls
         # into the else branch (fail-open WARN + restore). Do not use || true
         # here — capture the exit code and let the if-condition detect the
@@ -8334,6 +8333,18 @@ restore_regression_label_if_missing() {
           fi
         else
           echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
+        fi
+      else
+        # Label already present (PR #1818 F1 round 10): do NOT skip the helper.
+        # Run it so it revalidates the label against the live head SHA and
+        # removes it on refusal — an already-present label is not proof it is
+        # still current. Helper failure keeps WARN-and-proceed (the label
+        # simply stays for the helper's own WARN output to address). Do NOT
+        # redirect stderr here: surface errors so failures are observable.
+        echo "INFO: ready-for-regression label already present on PR #${pr_number} (${branch_name}); revalidating through apply-readiness-labels.sh." >&2
+        if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
+            --pr "$pr_number" --label "ready-for-regression"; then
+          echo "WARN: apply-readiness-labels.sh refused or failed to revalidate the existing ready-for-regression on PR #${pr_number}; proceeding without change" >&2
         fi
       fi
       ;;

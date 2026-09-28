@@ -536,11 +536,14 @@ do
 done
 
 # Residual check: no normative surface still instructs a bare
-# `gh pr edit ... --add-label "ready-for-*"`. The release protocol is the one
-# documented exemption (release PRs have no reviewer check run), so it must
-# carry the exemption note instead.
+# `gh pr edit ... --add-label "ready-for-*"`. The release protocol was the one
+# documented exemption (release PRs have no reviewer check run), but PR #1818
+# round 10 removed it: the helper classifies release/* heads as
+# non-implementation and skips the reviewer leg on its own, so §7.3 routes
+# through the helper like every other surface.
 for surface in \
   docs/workflow/development-workflow/protocols/03-implement-development-protocol.md \
+  docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md \
   docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md \
   .claude/commands/sync-template.md \
   .claude/skills/sync-template.md \
@@ -551,8 +554,10 @@ do
 done
 
 release_surface="docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md"
-run_test "05 documents the release exemption" "1" \
-  "$([ "$(grep -c 'documented exemption from helper-gated readiness labels' "$REPO_ROOT/$release_surface" || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "05 routes the regression label through the helper" "1" \
+  "$([ "$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/$release_surface" || true)" -ge 1 ] && echo 1 || echo 0)"
+run_test "05 release exemption removed" "0" \
+  "$(grep -c 'documented exemption from helper-gated readiness labels' "$REPO_ROOT/$release_surface" || true)"
 
 echo ""
 echo "=== Area 5: branch-type scope for the reviewer leg ==="
