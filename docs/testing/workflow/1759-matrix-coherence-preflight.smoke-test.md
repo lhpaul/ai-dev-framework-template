@@ -32,9 +32,9 @@ Before running this smoke test:
 1. Open `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`
 2. Locate the pre-PR "Before the PR is opened, verify" list
 3. Confirm a "Matrix coherence preflight" bullet follows the "Complex workflow decision-gate matrix" bullet
-4. Confirm the bullet names the trigger (stateful contract), the six checks, the pre-first-push timing, and the Document Quality Gate row requirement
+4. Confirm the bullet names the trigger (stateful contract), the six checks inlined verbatim (canonical shipped definition), the pre-first-push timing, and the Document Quality Gate row requirement
 
-**Expected result**: All four elements present; the bullet cross-references `review-doctrine.md` patterns rather than restating them.
+**Expected result**: All four elements present; the bullet inlines the six checks (canonical definition) and cross-references `review-doctrine.md` patterns for their detection guidance.
 
 ### Step 2: Plan-stage gate is present
 
@@ -74,7 +74,7 @@ Before running this smoke test:
 1. Open `REVIEW.md`'s Spec Review Checklist
 2. Confirm the bullet requiring the `Matrix coherence preflight` row on matrix-bearing spec PRs, with audit summary or reasoned `Not applicable`
 3. Repeat for the Plan Review Checklist
-4. Open the `#1757` spec's decision-gate matrix and walk one check (e.g. check 2, missing states) as a dry run: confirm the six-check definition in the plan's successor text is answerable against that real matrix
+4. Open the `#1757` spec's decision-gate matrix and walk one check (e.g. check 2, missing states) as a dry run: confirm the six-check definition inlined in Protocol 01's preflight bullet is answerable against that real matrix
 
 **Expected result**: Reviewer-side checks present; the six checks are answerable against the real #1757 matrix.
 
