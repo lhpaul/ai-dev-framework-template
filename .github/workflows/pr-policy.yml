@@ -18,7 +18,9 @@
 #     - all canonical summary comments: refresh the PR-scoped guard status
 #
 # Fork-head PRs are skipped before any label or status mutation. This workflow
-# does not checkout PR code and does not execute untrusted fork content.
+# checks out the repository's default branch only — trusted, reviewed code — to
+# load the readiness-label helper; PR head code is never checked out and never
+# executed.
 name: PR policy
 
 on:
@@ -53,8 +55,21 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
+      # Trusted default-branch checkout of the readiness helper (#1408 round
+      # 13): contents: read is least privilege for it.
+      contents: read
 
     steps:
+      # Trusted default-branch checkout: load apply-readiness-labels.sh (and
+      # everything it sources) from reviewed code only. PR head code is never
+      # checked out, never executed (PR #1818 round 13, thread
+      # PRRT_kwDORWAxaM6m0pQc/Ql).
+      - name: Check out trusted default branch for readiness helper
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Apply PR policy
         env:
           GH_TOKEN: ${{ github.token }}
@@ -293,14 +308,14 @@ jobs:
             fi
 
             # Readiness labels are merge-gate inputs (#1408): never applied by a
-            # direct `gh pr edit --add-label`. This job runs on pull_request_target
-            # and issue_comment events WITHOUT a checkout, so the helper script is
-            # not on disk — fetch it at the exact PR head SHA already validated by
-            # refresh_pr_metadata above, through the same authenticated gh API the
-            # rest of this job uses (raw.githubusercontent.com would 404 on a
-            # private repository). A failure to fetch or to run the helper keeps
-            # the documented WARN-and-continue posture: the guard status below is
-            # never masked by label-policy trouble.
+            # direct `gh pr edit --add-label`. The helper runs from the trusted
+            # default-branch checkout above, so both it and workflow-lib.sh
+            # (which it sources) are on disk — loaded from reviewed code, never
+            # from the PR head revision, which this job must not execute. A
+            # failure to run the helper keeps the documented WARN-and-continue
+            # posture: the guard status below is never masked by label-policy
+            # trouble. WORKFLOW_TARGET_GITHUB_REPO points its repo-root
+            # resolution at the target repository.
             if [ "$should_apply_regression_label" != "true" ]; then
               :
             elif ! ensure_regression_label_exists; then
@@ -308,11 +323,8 @@ jobs:
               LABEL_POLICY_FAILED=true
             elif ! refreshed_metadata_matches_current_head; then
               echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
-            elif ! helper_body="$(gh api "repos/$REPO/contents/scripts/development-workflow/apply-readiness-labels.sh?ref=$HEAD_SHA" --jq '.content // ""' | tr -d '\n' | base64 -d)" || [ -z "$helper_body" ]; then
-              echo "WARN: Failed to fetch apply-readiness-labels.sh at ${HEAD_SHA}; skipping ${LABEL_NAME} (no direct apply fallback). Continuing to reviewer-loop guard status." >&2
-            elif ! printf '%s\n' "$helper_body" >"$RUNNER_TEMP/apply-readiness-labels.sh" ||
-              ! ( cd "$RUNNER_TEMP" && WORKFLOW_TARGET_GITHUB_REPO="$REPO" \
-                bash ./apply-readiness-labels.sh --pr "$PR_NUMBER" --repo "$REPO" --label "$LABEL_NAME" ); then
+            elif ! ( cd "$GITHUB_WORKSPACE" && WORKFLOW_TARGET_GITHUB_REPO="$REPO" \
+                bash "$GITHUB_WORKSPACE/scripts/development-workflow/apply-readiness-labels.sh" --pr "$PR_NUMBER" --repo "$REPO" --label "$LABEL_NAME" ); then
               # Exit 1 is the helper refusing (RESULT=refused): live
               # reviewer/CI/head validation did not pass, so the label must not
               # land. Exit 2 escalates (unreadable state). Either way this

@@ -80,7 +80,20 @@ run_test "guard_path_cancels_stale_runs" "yes" "$(contains "cancel-in-progress: 
 run_test "no_default_max_wait" "yes" "$(not_contains "GUARD_MAX_WAIT")"
 run_test "no_poll_interval" "yes" "$(not_contains "GUARD_POLL_INTERVAL")"
 run_test "no_sleep_polling" "yes" "$(not_contains "sleep ")"
-run_test "no_checkout" "yes" "$(not_contains "actions/checkout")"
+# PR #1818 codex-github round 13: the privileged job loads the readiness
+# helper from the repository's TRUSTED default branch, never from the PR head
+# revision (thread PRRT_kwDORWAxaM6m0pQc: a same-repo author could plant
+# shell in the head revision and have it executed with this job's write
+# token; the fork guard does not cover same-repo branches).
+run_test "helper_checkout_pinned" "yes" "$(contains 'uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd')"
+run_test "helper_checkout_targets_default_branch" "yes" "$(contains 'ref: ${{ github.event.repository.default_branch }}')"
+run_test "helper_checkout_persists_no_credentials" "yes" "$(contains 'persist-credentials: false')"
+# Thread PRRT_kwDORWAxaM6m0pQl: the helper sources workflow-lib.sh from its
+# own SCRIPT_DIR, so an API fetch of the single file died with "workflow-lib.sh:
+# No such file or directory"; the default-branch checkout ships the closure.
+run_test "helper_runs_from_trusted_workspace" "yes" "$(contains 'bash "$GITHUB_WORKSPACE/scripts/development-workflow/apply-readiness-labels.sh"')"
+run_test "no_contents_api_fetch_of_helper" "yes" "$(not_contains 'contents/scripts/development-workflow/apply-readiness-labels.sh')"
+run_test "no_pr_head_ref_fetch_of_helper" "yes" "$(not_contains '?ref=$HEAD_SHA')"
 run_test "missing_summary_fails_without_elapsed_wait" "yes" "$(contains "No reviewer-loop summary found. Run the automated reviewer loop before merging.")"
 
 run_test "summary_marker_one_checked" "yes" "$(contains "MARKER1=\"### Automated Reviewer Loop Summary\"")"
@@ -112,9 +125,8 @@ run_test "label_waits_on_open_reopen_ready" "yes" "$(contains "regression waits 
 run_test "label_add_failure_continues_to_guard" "yes" "$(contains "Continuing to reviewer-loop guard status.")"
 run_test "label_add_routes_through_readiness_helper" "yes" "$(contains "apply-readiness-labels.sh")"
 run_test "no_direct_regression_label_apply" "yes" "$(not_contains '--add-label "$LABEL_NAME"')"
-run_test "helper_invoked_with_pr_and_label" "yes" "$(contains 'apply-readiness-labels.sh --pr "$PR_NUMBER"')"
-run_test "helper_invoked_with_repo" "yes" "$(contains 'apply-readiness-labels.sh --pr "$PR_NUMBER" --repo "$REPO"')"
-run_test "helper_fetched_at_pr_head_via_contents_api" "yes" "$(contains 'gh api "repos/$REPO/contents/scripts/development-workflow/apply-readiness-labels.sh?ref=$HEAD_SHA"')"
+run_test "helper_invoked_with_pr_and_label" "yes" "$(contains 'apply-readiness-labels.sh" --pr "$PR_NUMBER"')"
+run_test "helper_invoked_with_repo" "yes" "$(contains 'apply-readiness-labels.sh" --pr "$PR_NUMBER" --repo "$REPO"')"
 run_test "helper_refused_does_not_hard_fail" "yes" "$(contains "refused to apply \${LABEL_NAME}")"
 run_test "regression_workflow_default_present" "yes" "$(contains "vars.PR_POLICY_REGRESSION_WORKFLOW || 'e2e-regression.yml'")"
 run_test "regression_dispatch_disable_var_present" "yes" "$(contains "vars.PR_POLICY_REGRESSION_DISPATCH_ENABLED || 'true'")"
@@ -152,6 +164,10 @@ run_test "permissions_include_issues_write" "yes" "$(contains "issues: write")"
 run_test "permissions_include_pull_requests_write" "yes" "$(contains "pull-requests: write")"
 run_test "permissions_include_statuses_write" "yes" "$(contains "statuses: write")"
 run_test "permissions_include_actions_write" "yes" "$(contains "actions: write")"
+# Thread PRRT_kwDORWAxaM6m0pQq: the job now checks out repository contents
+# (trusted default branch), which needs contents: read — least privilege —
+# or the checkout fails in private downstream repos.
+run_test "permissions_include_contents_read" "yes" "$(contains "contents: read")"
 
 echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
