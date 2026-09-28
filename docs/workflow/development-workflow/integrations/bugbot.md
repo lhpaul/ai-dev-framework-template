@@ -97,8 +97,8 @@ review:
       - bugbot
 ```
 
-> **Note**: Declaring `bugbot` in `.ai-dev-workflow.yaml` records the intent but
-> does not cause `pr-review-loop.sh` to actively run a Bugbot review cycle — see
+> **Note**: Declaring `bugbot` in `.ai-dev-workflow.yaml` is what makes
+> `pr-review-loop.sh` run a Bugbot review cycle. See
 > [Reviewer-loop status](#reviewer-loop-status) below.
 
 ---
@@ -118,11 +118,20 @@ Bugbot check conclusions include:
 | ----------- | ------------------------------------------------------------ |
 | `success`   | No blocking issues found                                     |
 | `failure`   | Blocking issues found; review the inline annotations         |
-| `neutral`   | Review ran but produced no definitive pass/fail verdict      |
+| `neutral`   | **Not a verdict.** The review may have found nothing or may have found blocking issues |
 
-The **neutral** conclusion is a known Bugbot behavior. See
-[Branch protection implications](#branch-protection-implications) for how to
-handle it.
+A `neutral` conclusion is ambiguous: Cursor reports it both for a review that
+found no issues and for one that found several. The reviewer loop therefore reads
+two further signals before deciding — the check run's `output.summary` (which
+carries a `found N potential issues` line, or an explicit no-issues line) and the
+`cursor[bot]` review comments themselves, whose bodies carry
+`**High Severity**` / `**Medium Severity**` / `**Low Severity**` headers and
+`<!-- BUGBOT_BUG_ID: … -->` markers.
+
+An unrecognised `output.summary` shape is treated as unknown, not clean: the loop
+escalates rather than passing the PR. See
+[Reviewer-loop status](#reviewer-loop-status) and
+[Branch protection implications](#branch-protection-implications).
 
 ### Manual trigger
 
@@ -161,10 +170,15 @@ PR is converted to non-draft.
 ### Neutral check behavior
 
 Bugbot occasionally reports a `neutral` check conclusion rather than `success` or
-`failure`. In GitHub branch protection, a `neutral` check is treated as a
-**passing** check if the check is marked as required — it does not block a merge.
-However, a `neutral` conclusion means Bugbot did not complete a normal analysis
-pass, so it should not be treated as an equivalent of `success`.
+`failure`. GitHub branch protection treats a `neutral` check as a **passing**
+check when it is required — it does not block a merge. Since `neutral` is also
+what Bugbot reports for a run that found blocking issues, a required Bugbot check
+can pass in branch protection while real findings are outstanding.
+
+`pr-review-loop.sh` does not rely on the conclusion for this reason: it reads
+`output.summary` and the `cursor[bot]` comments, and escalates rather than
+reporting clean when the verdict cannot be established. That protection lives in
+the loop, not in branch protection.
 
 **Recommendation before making Bugbot a required check:**
 
@@ -216,15 +230,42 @@ findings with severity and location context in the loop summary.
 Supported outcome values emitted by the loop:
 
 ```
-RESULT=clean          # Bugbot check passed with no blocking findings
-RESULT=needs_fixes    # Bugbot reported blocking findings
-RESULT=timeout        # Check run did not complete within the poll window
-RESULT=unavailable    # Check run was not found or could not be fetched
+RESULT=clean          # Verdict affirmatively no-issues, no blocking cursor[bot] findings
+RESULT=needs_fixes    # Bugbot reported blocking findings (any conclusion)
+RESULT=escalate       # Verdict not established — never a clean pass
 ```
 
+`RESULT=unavailable` and `RESULT=timeout` are reported through
+`REASON=` values on `RESULT=escalate` (`REASON=unavailable`,
+`REASON=timeout`), not as standalone `RESULT=` values.
+
+How the loop decides, per conclusion:
+
+- **`success`** — the check run's own no-issues verdict. `cursor[bot]` comments
+  are still read, so a blocking finding posted under a `success` run is surfaced
+  (`RESULT=needs_fixes`, `REASON=blocking_comments`).
+- **`failure` / `action_required`** — always blocking. The `cursor[bot]` inline
+  comments and reviews are fetched and printed as `BLOCKING_<i>_PATH` /
+  `BLOCKING_<i>_LINE` / `BLOCKING_<i>_BODY` (`REASON=blocking_findings`).
+- **`neutral` / `cancelled` / `skipped`** — not a pass. The loop parses
+  `output.summary` for a finding count and fetches the `cursor[bot]` comments:
+  - findings retrievable → `RESULT=needs_fixes`, `REASON=blocking_findings`
+  - summary reports findings that are not retrievable →
+    `RESULT=escalate`, `REASON=bugbot-findings-not-retrievable`
+  - summary unparseable or absent → `RESULT=escalate`,
+    `REASON=bugbot-unverified-verdict`
+  - summary affirmatively reports no issues and no findings were posted →
+    `RESULT=clean`
+
+  A usage/spend-limit or unavailable issue comment posted for the head takes
+  precedence and escalates instead (`REASON=bugbot-usage-limit`, …).
+- **`timed_out`** and any unrecognised conclusion → `RESULT=escalate`.
+
 Timeout and unavailable states are surfaced explicitly and are never treated as a
-clean pass. Bugbot's review threads are included in the standard platform thread
-auditing pass.
+clean pass. Before declaring a timeout, the loop re-posts the trigger comment
+once: an unfinished Bugbot run is a timeout, not a finding, and re-triggering has
+been observed to recover it. Bugbot's review threads are included in the standard
+platform thread auditing pass.
 
 See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the full
 multi-platform loop contract and aggregation rules.
@@ -336,10 +377,8 @@ pre-PR gate.
 2. **Add `.cursor/BUGBOT.md`** using the [minimal template](#minimal-cursorbugbotmd-template).
    Reference `REVIEW.md` and add one or two project-specific focus areas.
 3. **Declare `bugbot` in `.ai-dev-workflow.yaml`** so orchestration agents know
-   it is in use. Until the reviewer-loop adapter lands, this is informational —
-   Bugbot findings appear in the GitHub UI but are not reflected in the
-   `pr-review-loop.sh` aggregate result.
-4. **Observe neutral-check behavior** on a few PRs before deciding whether to add
+   it is in use and the reviewer loop runs a Bugbot cycle on the PR.
+4. **Watch for neutral checks** on a few PRs before deciding whether to add
    Bugbot as a required branch-protection check. See
    [Branch protection implications](#branch-protection-implications).
 5. **Decide on Autofix** after the team has reviewed several Autofix commits and
@@ -361,19 +400,23 @@ anti-pattern that weakens the quality signal reaching human reviewers.
 If your team decides to make Bugbot a required check in GitHub branch protection,
 monitor for the `neutral` conclusion over the first two weeks. If `neutral` checks
 appear on more than 10–20% of PRs, consider leaving Bugbot as advisory rather
-than required to avoid a false sense of security from a branch-protection check
-that silently passes without running.
+than required: a required check that passes on `neutral` gives a false sense of
+security, since `neutral` is also posted for runs that found blocking issues.
 
 ---
 
 ## Known Limitations
 
-- **No reviewer-loop adapter**: `pr-review-loop.sh` does not yet poll for or
-  surface Bugbot findings programmatically. Bugbot is reported as
-  `skipped` (`REASON=unsupported-platform`) by the loop until an adapter exists.
 - **Neutral check conclusions**: Bugbot sometimes reports `neutral` rather than
-  `success` or `failure`. This is treated as passing by GitHub branch protection,
-  which can give a false signal if the check is required.
+  `success` or `failure`, including on runs that found blocking issues. A
+  required Bugbot check in branch protection passes on `neutral`, so the
+  assurance comes from `pr-review-loop.sh` reading `output.summary` and the
+  `cursor[bot]` comments — see [Reviewer-loop status](#reviewer-loop-status).
+- **Summary shape is vendor-controlled**: the loop recognises the
+  `found N potential issues` and no-issues phrasings in `output.summary`. If
+  Cursor changes that copy, a `neutral` run escalates
+  (`REASON=bugbot-unverified-verdict`) rather than passing — noise, not a silent
+  miss, but worth watching if it starts recurring.
 - **Vendor-maintained details**: check names, trigger phrases, Autofix settings,
   and draft-PR behavior are controlled by Cursor and subject to change. The
   [Cursor Bugbot documentation](https://docs.cursor.com/bugbot) is the
