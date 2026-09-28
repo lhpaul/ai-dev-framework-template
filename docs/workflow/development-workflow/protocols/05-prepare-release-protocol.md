@@ -435,6 +435,10 @@ gh pr edit <pr_number> --add-label "ready-for-regression"
 
 This mirrors Step 7b in `91` for implementation PRs, but scoped here to the release PR targeting `main`.
 
+**Release PRs are the documented exemption from helper-gated readiness labels (issue #1408).** The helper (`apply-readiness-labels.sh`) refuses when no ready-phase reviewer check run exists for the head SHA, and a release PR never has one: `pr-review-loop.sh` exits `RESULT=skipped` on a release PR by design (see above), so no reviewer check run is ever published. Routing Step 7.3 through the helper would refuse every release. Apply the label directly here, and note that the release PR's content was already reviewer-gated on each constituent implementation PR.
+
+If a repo configures a ready-phase reviewer that *does* publish a check run for `release/*` heads, route Step 7.3 through `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-regression` instead and treat `RESULT=refused` as a stop.
+
 ### 7.4 CI loop
 
 Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/regression check when configured):
