@@ -91,7 +91,7 @@ No `Conflict` evidence. The plan's design decision (build no tool; compose with 
   `.claude/agents/developer.md`, `.cursor/agents/developer.md`, `.codex/skills/workflow-implementer/SKILL.md` (pointer only: implementation PRs are out of the preflight's scope — keep these edits to one sentence so implementation guidance gains no ceremony);
   `.claude/agents/automated-reviewer-loop.md`, `.cursor/agents/automated-reviewer-loop.md`, `.codex/skills/workflow-reviewer-loop/SKILL.md` (loop role: apply Protocol 93's re-run rule).
 
-  The plan-stage protocol's own cross-cutting checklist rule requires the enumeration to cover the developer implementation protocol and both tech-lead/developer role files; those are covered by `03-implement-development-protocol.md` (one pointer sentence under its doc-PR guidance: implementation PRs are not in preflight scope) and the developer/implementer files above. Codex plan-reviewer skill (`workflow-plan-reviewer`) and `implementation-plan-reviewer` agent files route through `REVIEW.md`, which this plan already updates; they need no separate edit (verified: `.claude/agents/spec-reviewer.md` and the Codex skill bodies contain no matrix-check content to drift from).
+  Total: 22 files — 5 protocols (01, 02, 03, 91, 93) + `review-doctrine.md` + `REVIEW.md` + 15 agent/skill mirrors enumerated in the role groups above. The plan-stage protocol's own cross-cutting checklist rule requires the enumeration to cover the developer implementation protocol and both tech-lead/developer role files; those are covered by `03-implement-development-protocol.md` (one pointer sentence under its doc-PR guidance: implementation PRs are not in preflight scope) and the developer/implementer files above. Codex plan-reviewer skill (`workflow-plan-reviewer`) and `implementation-plan-reviewer` agent files route through `REVIEW.md`, which this plan already updates; they need no separate edit (verified: `.claude/agents/spec-reviewer.md` and the Codex skill bodies contain no matrix-check content to drift from).
 
 ### Database / Backend / Shared Packages / Frontend / Infrastructure
 
@@ -140,7 +140,7 @@ Defined once here; every file above cross-references this list or `review-doctri
 1. Matrix-bearing spec PR carries the audit row — maps to brief scope bullet 3 ("Document where the pass belongs … and what evidence it should produce").
 2. Simple spec PR records a reasoned `Not applicable` — maps to brief scope bullet 2 ("ordinary simple specs do not gain unnecessary ceremony").
 3. Re-run trigger after two same-matrix cycles — maps to the brief's desired-outcome sentence ("run … again after repeated meaningful reviewer findings on the same matrix").
-4. Mirror surfaces cross-reference, do not restate — maps to Decision 2/Rule 2 (no drift between the 19 enumerated files and the canonical six-check definition).
+4. Mirror surfaces cross-reference, do not restate — maps to Decision 2/Rule 2 (no drift between the 22 enumerated files and the canonical six-check definition).
 
 **Coverage intent**: the runbook walks the document changes as a reviewer would; each scenario is a read-and-confirm step. Enumeration is indicative.
 
@@ -160,7 +160,7 @@ None — documentation-only.
 
 Executed by the implementer (this PR's own file list — the change *is* documentation):
 
-- [ ] All 19 files enumerated in Layer-by-Layer Changes (4 protocols, `review-doctrine.md`, `REVIEW.md`, 14 agent/skill mirrors — see the live-search rows in the Verification Log for the exact derivation)
+- [ ] All 22 files enumerated in Layer-by-Layer Changes (5 protocols, `review-doctrine.md`, `REVIEW.md`, 15 agent/skill mirrors — see the live-search rows in the Verification Log for the exact derivation)
 - [ ] `AGENTS.md` — no update needed: its workflow table already points at the protocols changed here, and it carries no matrix-guidance text of its own (verified by the `grep -rin "coherence"` search above returning no AGENTS.md hit)
 - [ ] Project docs (`docs/project/`, `docs/best-practices/`) — None: the change is workflow-process guidance, not product or stack guidance
 
@@ -170,7 +170,7 @@ Executed by the implementer (this PR's own file list — the change *is* documen
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Mirror-surface drift: 19 files restate the six checks differently | Medium | Medium | Files carry pointer sentences only; canonical definition lives in this plan's successor text (Protocol 01/02 + doctrine); REVIEW.md gate row catches drift |
+| Mirror-surface drift: 22 files restate the six checks differently | Medium | Medium | Files carry pointer sentences only; canonical definition lives in this plan's successor text (Protocol 01/02 + doctrine); REVIEW.md gate row catches drift |
 | Audit becomes ceremony on borderline docs (a simple two-row table) | Medium | Low | Trigger wording requires a *stateful contract*; the `Not applicable` row with rationale is the escape valve; doctrine Detect questions keep the audit meaningful |
 | Re-run rule misread as a new escalation path | Low | Medium | Protocol 93 edit explicitly states the existing stuck-loop escalation is unchanged and still applies |
 | Doctrine 12,000-byte budget exceeded | Low | Low | Current 4,104 bytes + one compact pattern (~700 bytes) stays far under; if the entry grows, merge patterns per the file's own rule, never raise the bound |
@@ -185,7 +185,7 @@ Executed by the implementer (this PR's own file list — the change *is* documen
 4. Update `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` — re-run rule in "Long spec/plan review-cycle guidance".
 5. Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — one cross-reference sentence near the reviewer dispatch map.
 6. Update `REVIEW.md` — Spec Review Checklist, Plan Review Checklist, and documentation-PR additional-check bullets.
-7. Update the 14 agent/skill mirror files (pointer sentences only, per the role groups in Layer-by-Layer Changes).
+7. Update the 15 agent/skill mirror files (pointer sentences only, per the role groups in Layer-by-Layer Changes).
 8. Confirm no drift: run `grep -rn "Matrix coherence preflight" docs/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md` and confirm every hit is either the canonical definition, a pointer to it, or the gate-row name — no restated variant of the audit checks defined in "The six audit checks" section.
 9. Verify the smoke runbook: `docs/testing/workflow/1759-matrix-coherence-preflight.smoke-test.md`.
 10. Update project docs per the Documentation Updates section (none beyond this PR's own files).
