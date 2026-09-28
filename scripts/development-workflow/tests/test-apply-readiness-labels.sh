@@ -110,6 +110,10 @@ case "$*" in
     emit "${MOCK_REVIEWS:-$empty_array}"
     exit 0
     ;;
+  *"/issues/"*"/comments"*)
+    emit "${MOCK_ISSUE_COMMENTS:-$empty_array}"
+    exit 0
+    ;;
   *"repo view"*)
     emit '{"nameWithOwner":"acme/widgets"}'
     exit 0
@@ -152,6 +156,7 @@ run_helper() {
     MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
     MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
     MOCK_LABELS="${MOCK_LABELS:-$default_labels}" \
+    MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
     MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -175,6 +180,10 @@ _bugbot_failed='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","con
 # A duplicate historical run must not shadow the latest one (#1408 reuses the
 # rollup dedupe; this asserts the check-run read picks the newest by started_at).
 _bugbot_dup='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"},{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-02-01T00:00:00Z"}]}'
+# Bugbot's quota refusal: a `neutral` check run plus a usage-limit issue comment.
+# Observed on PR #1818; a bare `neutral` previously read as clean.
+_bugbot_neutral='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"neutral","started_at":"2026-01-01T00:00:00Z"}]}'
+_usage_limit_comment='[{"user":{"login":"cursor[bot]"},"created_at":"2026-01-02T00:00:00Z","body":"<h3>Bugbot couldn'\''t run - usage limit reached</h3>"}]'
 _with_ci() {
   printf '{"headRefOid":"%s","headRefName":"%s","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"%s"}]}' "$HEAD" "$_BRANCH" "$1"
 }
@@ -259,6 +268,26 @@ MOCK_CHECK_RUNS="$_bugbot_dup"
 MOCK_PR_JSON="$(_with_ci SUCCESS)"
 result="$(run_helper)"
 run_test "duplicate_check_run_keeps_latest_exit" "0" "${result%%|*}"
+
+# A `neutral` Bugbot check is clean ONLY when no unavailable notice exists for
+# the head. These two assertions are the planted failing case for PR #1818,
+# where a bare `neutral` was read as a clean reviewer verdict.
+MOCK_CHECK_RUNS="$_bugbot_neutral"
+MOCK_ISSUE_COMMENTS="$_usage_limit_comment"
+MOCK_PR_JSON="$(_with_ci SUCCESS)"
+result="$(run_helper)"
+run_test "neutral_with_usage_limit_exit" "1" "${result%%|*}"
+run_test "neutral_with_usage_limit_reason" "reviewer-unavailable" "$(field "$result" REASON)"
+run_test "neutral_with_usage_limit_no_label" "0" "$(edit_count)"
+MOCK_ISSUE_COMMENTS='[]'
+result="$(run_helper)"
+run_test "neutral_without_notice_exit" "0" "${result%%|*}"
+run_test "neutral_without_notice_result" "labeled" "$(field "$result" RESULT)"
+# A notice older than the check run must not refuse a genuine neutral verdict.
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:00Z","body":"Bugbot couldn'\''t run - usage limit reached"}]'
+result="$(run_helper)"
+run_test "stale_notice_does_not_refuse" "labeled" "$(field "$result" RESULT)"
+MOCK_ISSUE_COMMENTS='[]'
 
 echo ""
 echo "=== Area 3: argument validation ==="

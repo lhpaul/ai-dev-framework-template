@@ -13,7 +13,8 @@
 #
 # An absent reviewer check run is treated as NOT clean — Cursor "Restrict
 # Access" can make Bugbot refuse to run, and "no check run" must never read as
-# "reviewer clean".
+# "reviewer clean". The same applies to a `neutral` check run that accompanies a
+# Bugbot usage/spend-limit notice: the reviewer never actually reviewed.
 #
 # The reviewer leg applies to implementation branches only (`feature/*`,
 # `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`) — the same boundary
@@ -33,6 +34,13 @@
 # `pulls/N/reviews`, never from issue comments: Bugbot reports through a
 # `COMMENTED` PR review with inline comments, the same surface
 # `run_bugbot_review()` in pr-review-loop.sh reads.
+#
+# Issue comments are read for exactly one purpose: when a reviewer check run
+# finishes `neutral`, `cancelled`, or `skipped`, Bugbot's own usage/spend-limit
+# and restricted-access notices arrive as a `cursor[bot]` issue comment for that
+# head. A bare `neutral` therefore reads as clean only when no such notice
+# exists — otherwise the verdict is `refused` / `reviewer-unavailable`. Same
+# rule as `run_bugbot_review()` (pr-review-loop.sh ~3838).
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
@@ -46,10 +54,14 @@ Usage: apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
 
 Refuses to apply the label unless every configured ready-phase reviewer check
 run is `completed` for the current head SHA, the reviewer posted no blocking
-findings on that SHA, and no other check is pending or failing.
+findings on that SHA, and no other check is pending or failing. A `neutral`
+reviewer check run with a Bugbot usage/spend-limit notice is refused as well:
+the reviewer never reviewed.
 
 Prints RESULT=<labeled|refused|escalate> and REASON=<slug>.
 Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
+Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
+reviewer-unavailable, blocking-findings, ci-pending, ci-failing.
 USAGE
 }
 
@@ -195,6 +207,9 @@ while IFS= read -r platform; do
   [ -n "$check_name" ] || continue
   bot_login="$(bot_login_for_platform "$platform")"
   reviewer_names_seen="${reviewer_names_seen}${reviewer_names_seen:+,}${check_name}"
+  # Set here, not after the loop: the in-loop refusal paths below still emit a
+  # verdict, and an empty REVIEWER_REPORT there would read as "no reviewer".
+  reviewer_report="$reviewer_names_seen"
 
   check_runs_json=""
   if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null)" || [ -z "$check_runs_json" ]; then
@@ -225,11 +240,59 @@ while IFS= read -r platform; do
     exit 1
   fi
   # A non-success conclusion is itself a blocking verdict, even when no inline
-# finding survives classification — the loop applies the same rule. `neutral`,
-# `cancelled`, `skipped` and `success` are informational.
-case "$conclusion" in
+  # finding survives classification — the loop applies the same rule.
+  case "$conclusion" in
     failure|action_required|timed_out|startup_failure)
       verdict_blocking=$((verdict_blocking + 1))
+      ;;
+  esac
+
+  # `neutral` / `cancelled` / `skipped` are informational ONLY when the reviewer
+  # did not also post an unavailable notice for this head. Bugbot reports a
+  # usage/spend limit and a restricted-access refusal through a `neutral` check
+  # run plus an issue comment, so a bare `neutral` must never read as clean —
+  # that is the exact shape of "reviewer did not actually run" this gate exists
+  # to catch. `run_bugbot_review()` applies the same rule (pr-review-loop.sh
+  # ~3838). This is the only issue-comment read in this helper, and it is an
+  # availability probe, not a finding source: findings come from
+  # `pulls/N/comments` and `pulls/N/reviews`.
+  # Only Bugbot reports unavailability this way, and only through an issue
+  # comment authored by its own bot login, so the probe is scoped to both.
+  case "$conclusion" in
+    neutral|cancelled|skipped)
+      if [ "$platform" = "bugbot" ] && [ -n "$bot_login" ]; then
+        reviewer_started_at="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
+              [ .check_runs[]? | select(.name == $name) ]
+              | sort_by(.started_at // .completed_at // "")
+              | last
+              | (.started_at // .completed_at // .created_at // "")
+            ' 2>/dev/null)" || escalate check-run-parse-failed
+        issue_comments_json=""
+        if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)"; then
+          escalate issue-comment-fetch-failed
+        fi
+        unavailable_bodies=""
+        if ! unavailable_bodies="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -r --arg bot "$bot_login" --arg since "$reviewer_started_at" '
+              [ .[]?
+                | select(
+                    ((.user.login // "") == $bot or (.user.login // "") == ($bot + "[bot]"))
+                    and (($since == "") or ((.created_at // "") > $since))
+                  )
+                | .body // ""
+              ] | .[]
+            ' 2>/dev/null)"; then
+          escalate issue-comment-parse-failed
+        fi
+        while IFS= read -r notice; do
+          [ -n "$notice" ] || continue
+          if is_bugbot_disabled_message "$notice" || is_bugbot_usage_limit_message "$notice"; then
+            result="refused"
+            reason="reviewer-unavailable"
+            emit_verdict
+            exit 1
+          fi
+        done <<< "$unavailable_bodies"
+      fi
       ;;
   esac
 

@@ -668,7 +668,8 @@ For each in-scope item:
    the helper re-verifies, for the live head SHA, that every configured
    ready-phase reviewer check run is `completed`, that no blocking reviewer
    findings are posted on that SHA; an absent reviewer check run counts as
-   **not** clean. Doc-stage, graduation, and release PRs are not reviewer-gated
+   **not** clean, and so does a `neutral` Bugbot check run paired with a
+   usage/spend-limit notice (`RESULT=refused`, `REASON=reviewer-unavailable`). Doc-stage, graduation, and release PRs are not reviewer-gated
    and skip that leg. `ready-for-human-review` also refuses on a pending
    non-reviewer check; `ready-for-regression` does not (Step 7b runs before the
    Step 8 CI loop, and that label starts the regression workflow). A

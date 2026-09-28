@@ -2582,7 +2582,7 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
   --pr <pr_number> --label ready-for-regression
 ```
 
-`RESULT=labeled` (exit 0) means the gate passed and the label is on the PR. `RESULT=refused` (exit 1) carries the reason — `reviewer-check-absent`, `reviewer-check-not-completed`, `blocking-findings`, or `ci-failing` — and is a stop: return to Step 7 rather than labelling. `RESULT=escalate` (exit 2) means the PR state could not be read; do not label, and report the `REASON`. A **pending** check does not refuse this label — Step 7b runs before the Step 8 CI loop, and this label is what starts the configured regression workflow.
+`RESULT=labeled` (exit 0) means the gate passed and the label is on the PR. `RESULT=refused` (exit 1) carries the reason — `reviewer-check-absent`, `reviewer-check-not-completed`, `reviewer-unavailable`, `blocking-findings`, or `ci-failing` — and is a stop: return to Step 7 rather than labelling. `reviewer-unavailable` covers a `neutral` Bugbot check run paired with a usage/spend-limit notice, where the reviewer never actually reviewed. `RESULT=escalate` (exit 2) means the PR state could not be read; do not label, and report the `REASON`. A **pending** check does not refuse this label — Step 7b runs before the Step 8 CI loop, and this label is what starts the configured regression workflow.
 
 This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). The template placeholder remains inactive unless explicitly enabled; downstream real regression suites should keep this label gate when they replace the placeholder. Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up configured e2e checks as part of its green/red polling via `statusCheckRollup`.
 
