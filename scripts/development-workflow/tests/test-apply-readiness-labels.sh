@@ -86,15 +86,25 @@ case "$*" in
     if [ "${MOCK_DROP_LABEL:-0}" != "1" ] && [ -n "${MOCK_LABEL_STATE:-}" ] && [ -n "$added" ]; then
       printf '%s\n' "$added" >>"$MOCK_LABEL_STATE"
     fi
+    if printf '%s\n' "$*" | grep -q -- "--remove-label"; then
+      exit "${MOCK_REMOVE_LABEL_EXIT:-0}"
+    fi
     exit "${MOCK_GH_EDIT_EXIT:-0}"
     ;;
   *"pr view"*"--json headRefOid --jq"*)
     # Pre-apply head revalidation. MOCK_REVALIDATE_HEAD simulates a push
-    # landing between the state read and the label mutation. Logged to a
-    # separate call log (not MOCK_GH_LOG, which counts `pr edit` calls only)
-    # so the later arms can tell the revalidation fetches from the first.
+    # landing between the state read and the label mutation; the SECOND
+    # revalidate call (the post-revalidation head recheck, PR #1818 finding 2
+    # round 8) serves MOCK_FINAL_REVALIDATE_HEAD so a push landing during the
+    # revalidation API calls is distinguishable from one landing before them.
+    # Logged to a separate call log (not MOCK_GH_LOG, which counts `pr edit`
+    # calls only) so the later arms can tell the revalidation fetches from the
+    # first. The count is taken AFTER appending, so call 1 sees 1, call 2 sees 2.
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    if [ -n "${MOCK_REVALIDATE_HEAD:-}" ]; then
+    _head_calls="$(grep -c -- '--json headRefOid --jq' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
+    if [ "${_head_calls:-1}" -ge 2 ] && [ -n "${MOCK_FINAL_REVALIDATE_HEAD:-}" ]; then
+      printf '%s\n' "$MOCK_FINAL_REVALIDATE_HEAD"
+    elif [ -n "${MOCK_REVALIDATE_HEAD:-}" ]; then
       printf '%s\n' "$MOCK_REVALIDATE_HEAD"
     else
       emit "${MOCK_PR_JSON:-$pr_default}"
@@ -171,10 +181,23 @@ case "$*" in
     # MOCK_REVALIDATE_COMMENTS (if set) replaces the payload from the second
     # fetch on — the revalidation finding rescan must be able to see findings
     # that did not exist (or were not yet posted) at the first scan (PR #1818
-    # finding 2, round 6). Decide BEFORE appending to the call log.
+    # finding 2, round 6). MOCK_RERUN_COMMENTS additionally simulates a
+    # blocking comment posted by a same-SHA rerun between the revalidation
+    # rescan and the final head recheck (PR #1818 finding 2, round 8): from the
+    # SECOND comments fetch on (the rescan) the payload gains the rerun's
+    # comments, so the final guard's own rescan still sees them. Decide BEFORE
+    # appending to the call log.
+    _c_calls="$(grep -c -- 'pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
     if [ -n "${MOCK_REVALIDATE_COMMENTS:-}" ] \
         && grep -q '/pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
       emit "[${MOCK_REVALIDATE_COMMENTS}]"
+    elif [ "${_c_calls:-0}" -ge 2 ] && [ -n "${MOCK_RERUN_COMMENTS:-}" ]; then
+      _base="${MOCK_COMMENTS:-$empty_array}"
+      if [ "$_base" = "[]" ]; then
+        emit "[[${MOCK_RERUN_COMMENTS}]]"
+      else
+        emit "[${_base%,}]},${MOCK_RERUN_COMMENTS}]"
+      fi
     else
       emit "[${MOCK_COMMENTS:-$empty_array}]"
     fi
@@ -274,6 +297,9 @@ run_helper() {
     MOCK_REVALIDATE_COMMENTS="${MOCK_REVALIDATE_COMMENTS:-}" \
     MOCK_REVALIDATE_CHECK_RUNS_EXIT="${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" \
     MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
+    MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
+    MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
+    MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -643,6 +669,9 @@ run_helper_no_local_config() {
     MOCK_REVALIDATE_COMMENTS="${MOCK_REVALIDATE_COMMENTS:-}" \
     MOCK_REVALIDATE_CHECK_RUNS_EXIT="${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" \
     MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
+    MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
+    MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
+    MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -1127,6 +1156,142 @@ run_test "base64_encoder_single_line" "1" "$(printf '%s\n' "$_enc" | wc -l | tr 
 _dec="$(printf '%s\n' "$_enc" | base64 -d 2>/dev/null || true)"
 run_test "base64_encoder_round_trips" "1" "$(printf '%s\n' "$_dec" | grep -c 'bugbot' || true)"
 unset _enc _dec
+
+echo ""
+echo "=== Area 13: PR #1818 Codex findings, round 8 ==="
+
+# Reset to the clean default before the planted cases.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+MOCK_LOCAL_OVERRIDE_ROOT=''
+MOCK_FINAL_REVALIDATE_HEAD=''
+MOCK_RERUN_COMMENTS=''
+MOCK_REVALIDATE_CHECK_RUNS=''
+MOCK_REVALIDATE_PR_JSON=''
+MOCK_REVALIDATE_COMMENTS=''
+MOCK_POST_VIEW_EXIT=0
+MOCK_POST_APPLY_HEAD=''
+MOCK_REVALIDATE_HEAD=''
+MOCK_DROP_LABEL=0
+
+# Finding 1 (P1): the helper rerun on a PR that ALREADY carries the requested
+# label must remove that label on any pre-apply refusal — a refusal verdict
+# while a stale readiness label stays attached is exactly what the delegated
+# and batch merge gates consume as an all-clear. Planted failing case: the PR
+# already has the label and the reviewer check run is absent.
+_label_present_pr='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","baseRefOid":"'"$BASE_SHA"'","labels":[{"name":"ready-for-human-review"}],"statusCheckRollup":[]}'
+MOCK_PR_JSON="$_label_present_pr"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+result="$(run_helper)"
+run_test "preapply_refusal_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "preapply_refusal_still_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "preapply_refusal_exit" "1" "${result%%|*}"
+run_test "preapply_refusal_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Removal applies to every pre-apply refusal path, not only the reviewer leg:
+# a pre-existing label plus a failing CI check removes it as well.
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","baseRefOid":"'"$BASE_SHA"'","labels":[{"name":"ready-for-human-review"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
+MOCK_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper)"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+run_test "ci_refusal_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "ci_refusal_reason" "ci-failing" "$(field "$result" REASON)"
+# The head-drift refusal (label already present, head moved) removes too.
+MOCK_PR_JSON="$_label_present_pr"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_REVALIDATE_HEAD='bbbb222000000000000'
+result="$(run_helper)"
+MOCK_REVALIDATE_HEAD=''
+run_test "head_drift_refusal_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "head_drift_refusal_reason" "head-changed-before-apply" "$(field "$result" REASON)"
+# And the revalidation-state refusal.
+MOCK_REVALIDATE_CHECK_RUNS="$_bugbot_running"
+result="$(run_helper)"
+MOCK_REVALIDATE_CHECK_RUNS=''
+run_test "revalidation_refusal_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "revalidation_refusal_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+# NO removal when the label was NOT already present (the pre-fix contract, and
+# the negative guard for the fix: refusal on a label-less PR stays label-less).
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+result="$(run_helper)"
+run_test "refusal_without_existing_label_no_removal" "0" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "refusal_without_existing_label_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# Clean run on a PR that already carries the label: labels, does NOT remove.
+MOCK_PR_JSON="$_label_present_pr"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper)"
+run_test "clean_run_existing_label_no_removal" "0" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "clean_run_existing_label_labeled" "labeled" "$(field "$result" RESULT)"
+# Removal failure (API rejects --remove-label) still refuses, and still adds
+# nothing: WARN-and-refuse, the best-effort contract.
+_pre_remove_fail_pr='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","baseRefOid":"'"$BASE_SHA"'","labels":[{"name":"ready-for-human-review"}],"statusCheckRollup":[]}'
+MOCK_PR_JSON="$_pre_remove_fail_pr"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_REMOVE_LABEL_EXIT=1
+result="$(run_helper)"
+MOCK_REMOVE_LABEL_EXIT=0
+run_test "removal_failure_still_refuses" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "removal_failure_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+
+# Finding 2 (P1): the head must be re-checked immediately BEFORE the label
+# mutation — AFTER the revalidation rescan/CI revalidation, whose API calls
+# are exactly the window a push can land in. Planted failing case: the first
+# revalidate call (before revalidation) reports the same head, the second
+# (post-revalidation, pre-mutation) reports a NEW head. Pre-fix code had only
+# the first check and applied the label on the new unreviewed head.
+MOCK_FINAL_REVALIDATE_HEAD='eeee555000000000000'
+result="$(run_helper)"
+MOCK_FINAL_REVALIDATE_HEAD=''
+run_test "head_drift_after_revalidation_refuses_reason" "head-changed-before-apply" "$(field "$result" REASON)"
+run_test "head_drift_after_revalidation_exit" "1" "${result%%|*}"
+run_test "head_drift_after_revalidation_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Same head on both revalidate calls: labels (regression guard).
+result="$(run_helper)"
+run_test "stable_head_still_labels" "labeled" "$(field "$result" RESULT)"
+
+# Finding 3 (P2): notice and finding time-boundary filters must be INCLUSIVE
+# (>=). A notice or finding created in the SAME second as the check run's
+# started_at is part of that run's output; a strict > drops it and reads the
+# non-review as clean. Planted failing case: the usage-limit issue comment's
+# created_at EQUALS the neutral check run's started_at.
+MOCK_CHECK_RUNS="$_bugbot_neutral"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"cursor[bot]"},"created_at":"2026-01-01T00:00:00Z","body":"<h3>Bugbot couldn'\''t run - usage limit reached</h3>"}]'
+result="$(run_helper)"
+run_test "same_second_notice_refuses_reason" "reviewer-unavailable" "$(field "$result" REASON)"
+run_test "same_second_notice_exit" "1" "${result%%|*}"
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_CHECK_RUNS="$_bugbot_ok"
+# Same boundary on the inline-comment finding surface: a blocking comment
+# created exactly at started_at blocks.
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-03-01T00:00:00Z"}]}'
+MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-03-01T00:00:00Z","body":"**High Severity** same-second finding"}]'
+result="$(run_helper)"
+run_test "same_second_comment_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_COMMENTS='[]'
+# Same boundary on the review surface: a CHANGES_REQUESTED review submitted
+# exactly at started_at blocks.
+MOCK_REVIEWS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-03-01T00:00:00Z"}]'
+result="$(run_helper)"
+run_test "same_second_review_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_REVIEWS='[]'
+MOCK_CHECK_RUNS="$_bugbot_ok"
+
+# The recheck-before-mutation is the LAST guard before `gh pr edit`: a same-SHA
+# rerun that posts a blocking comment AFTER the revalidation rescan (during the
+# final head recheck's own API calls) must still refuse — the final guard
+# rescans the finding surfaces against the same window it just validated.
+MOCK_RERUN_COMMENTS='{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-01-03T00:00:00Z","body":"**High Severity** posted after the revalidation rescan"}'
+result="$(run_helper)"
+MOCK_RERUN_COMMENTS=''
+run_test "late_comment_before_mutation_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+run_test "late_comment_before_mutation_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 
 echo ""
 echo "$pass passed, $fail failed"

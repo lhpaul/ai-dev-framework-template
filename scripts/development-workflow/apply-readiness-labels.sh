@@ -233,6 +233,23 @@ escalate() {
   exit 2
 }
 
+# refuse <reason> — the single pre-apply refusal exit (PR #1818 finding 1,
+# round 8). When the PR ALREADY carried the requested label when this run
+# started (label_initially_present=1), the refusal verdict means that label
+# no longer certifies a verified state — remove it best-effort so the
+# delegated/batch merge gates cannot consume a stale readiness label on the
+# strength of a refusal. WARN-and-refuse on removal failure. No removal when
+# the label was not already present.
+refuse() {
+  reason="$1"
+  if [ "$label_initially_present" = "1" ]; then
+    remove_readiness_label_best_effort "$label"
+  fi
+  result="refused"
+  emit_verdict
+  exit 1
+}
+
 # remove_readiness_label_best_effort <label> — after a post-apply escalation,
 # the label no longer certifies a verified state, so strip it before
 # escalating so no unreviewed/undrifting head carries it between the refusal
@@ -261,10 +278,12 @@ reviewer_check_conclusion_is_clean() {
 
 # bugbot_unavailable_notice_present <bot_login> <since> — returns 0 (true)
 # when a Bugbot usage/spend-limit or restricted-access notice was posted by
-# the bot at/after <since>. Shared by the main gate's unavailable handling
-# and the pre-apply revalidation (PR #1818 finding 2, round 6), so a rerun's
-# quota refusal is caught at revalidation too. Escalates fail-closed on a
-# fetch or parse failure.
+# the bot at/after <since> (inclusive, PR #1818 finding 3, round 8: a notice
+# created in the SAME second as the check run's start belongs to that run;
+# a strict > dropped it and read the non-review as clean). Shared by the main
+# gate's unavailable handling and the pre-apply revalidation (PR #1818
+# finding 2, round 6), so a rerun's quota refusal is caught at revalidation
+# too. Escalates fail-closed on a fetch or parse failure.
 bugbot_unavailable_notice_present() {
   local bot_login_arg="$1" since_arg="$2"
   local issue_comments_json unavailable_bodies notice
@@ -277,7 +296,7 @@ bugbot_unavailable_notice_present() {
         [ .[]?[]
           | select(
               ((.user.login // "") == $bot or (.user.login // "") == ($bot + "[bot]"))
-              and (($since == "") or ((.created_at // "") > $since))
+              and (($since == "") or ((.created_at // "") >= $since))
             )
           | .body // ""
         ] | .[]
@@ -395,6 +414,15 @@ if [ -z "$head_sha" ]; then
 fi
 head_ref_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName // ""' 2>/dev/null)" || escalate pr-state-parse-failed
 base_ref_oid="$(printf '%s\n' "$pr_json" | jq -r '.baseRefOid // ""' 2>/dev/null)" || escalate pr-state-parse-failed
+# Whether the requested label is already on the PR at the START of this run
+# (PR #1818 finding 1, round 8): a rerun (same-SHA reviewer rerun, new push)
+# can hit a refusal path while the PR still carries the label from an earlier
+# successful gate — that stale label is a merge-gate input, so every refusal
+# below removes it (refuse()); a clean rerun re-adds it.
+label_initially_present="0"
+if printf '%s\n' "$pr_json" | jq -e --arg l "$label" '[.labels[]?.name | select(. == $l)] | length > 0' >/dev/null 2>&1; then
+  label_initially_present="1"
+fi
 
 # Implementation branches are the ones that carry a ready-phase reviewer check
 # run and a required `ready-for-regression` label (Protocol 91's label derivation
@@ -472,8 +500,7 @@ if [ "$is_implementation_pr" = "true" ]; then
         result="refused"
         reason="reviewer-policy-empty"
         reviewer_report="base-declares:$(printf '%s\n' "$_base_ready_platforms" | paste -sd, -)"
-        emit_verdict
-        exit 1
+        refuse "reviewer-policy-empty"
       fi
     else
       # Nonempty head list: gate on the base policy alone (see the comment
@@ -495,8 +522,7 @@ while IFS= read -r platform; do
     result="refused"
     reason="reviewer-check-name-unresolved"
     reviewer_report="$platform"
-    emit_verdict
-    exit 1
+    refuse "reviewer-check-name-unresolved"
   fi
   bot_login="$(bot_login_for_platform "$platform")"
   reviewer_names_seen="${reviewer_names_seen}${reviewer_names_seen:+,}${check_name}"
@@ -538,14 +564,12 @@ while IFS= read -r platform; do
   if [ -z "$status_val" ] || [ "$status_val" = "null" ] || [ "$status_val" = " " ]; then
     result="refused"
     reason="reviewer-check-absent"
-    emit_verdict
-    exit 1
+    refuse "reviewer-check-absent"
   fi
   if [ "$status_val" != "completed" ]; then
     result="refused"
     reason="reviewer-check-not-completed"
-    emit_verdict
-    exit 1
+    refuse "reviewer-check-not-completed"
   fi
   # A non-success conclusion is itself a blocking verdict, even when no inline
   # finding survives classification — the loop applies the same rule. The
@@ -565,8 +589,7 @@ while IFS= read -r platform; do
         result="refused"
         reason="reviewer-check-unknown-conclusion"
         reviewer_report="$check_name conclusion:$conclusion"
-        emit_verdict
-        exit 1
+        refuse "reviewer-check-unknown-conclusion"
         ;;
     esac
   fi
@@ -591,8 +614,7 @@ while IFS= read -r platform; do
         if bugbot_unavailable_notice_present "$bot_login" "$reviewer_started_at"; then
           result="refused"
           reason="reviewer-unavailable"
-          emit_verdict
-          exit 1
+          refuse "reviewer-unavailable"
         fi
       else
         # Non-Bugbot platforms report nothing through issue comments, so a
@@ -603,8 +625,7 @@ while IFS= read -r platform; do
         # (pr-review-loop.sh ~2894-2905).
         result="refused"
         reason="reviewer-unavailable"
-        emit_verdict
-        exit 1
+        refuse "reviewer-unavailable"
       fi
       ;;
   esac
@@ -643,8 +664,7 @@ if [ "$reviewer_blocking" -gt 0 ] || [ "$verdict_blocking" -gt 0 ]; then
   reason="blocking-findings"
   blocking_count="$reviewer_blocking"
   [ "$blocking_count" -ge 1 ] || blocking_count=1
-  emit_verdict
-  exit 1
+  refuse "blocking-findings"
 fi
 
 # --- 3. Non-reviewer checks must not be pending or failing ------------------
@@ -691,14 +711,12 @@ failing_count="$(printf '%s\n' "$baseline_json" | jq '
 if [ "$pending_count" -gt 0 ] && [ "$label" != "ready-for-regression" ]; then
   result="refused"
   reason="ci-pending"
-  emit_verdict
-  exit 1
+  refuse "ci-pending"
 fi
 if [ "$failing_count" -gt 0 ]; then
   result="refused"
   reason="ci-failing"
-  emit_verdict
-  exit 1
+  refuse "ci-failing"
 fi
 
 # --- 4. Apply ---------------------------------------------------------------
@@ -838,22 +856,34 @@ if [ -z "$current_head" ]; then
   escalate head-revalidate-failed
 fi
 if [ "$current_head" != "$head_sha" ]; then
-  result="refused"
-  reason="head-changed-before-apply"
-  emit_verdict
-  exit 1
+  refuse "head-changed-before-apply"
 fi
 if [ "$is_implementation_pr" = "true" ] && ! revalidate_reviewer_state; then
-  result="refused"
-  reason="reviewer-state-changed"
-  emit_verdict
-  exit 1
+  refuse "reviewer-state-changed"
 fi
 if ! revalidate_ci_state; then
-  result="refused"
-  reason="reviewer-state-changed"
-  emit_verdict
-  exit 1
+  refuse "reviewer-state-changed"
+fi
+
+# Final pre-mutation guard (PR #1818 finding 2, round 8): the two
+# revalidation functions above make several API calls before the mutation,
+# and a push landing DURING those calls leaves every verdict describing the
+# old head while the label would certify the new one. Re-fetch headRefOid
+# immediately before `gh pr edit` — after revalidation, not before — and
+# refuse on any drift (removal of the label is already handled by refuse():
+# the mutation has not happened). The revalidation rescan itself is repeated
+# here against the same window it just validated: a same-SHA rerun that posts
+# a blocking comment after the revalidation rescan (during these very calls)
+# must not slip through to the mutation.
+current_head="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || escalate head-revalidate-failed
+if [ -z "$current_head" ]; then
+  escalate head-revalidate-failed
+fi
+if [ "$current_head" != "$head_sha" ]; then
+  refuse "head-changed-before-apply"
+fi
+if [ "$is_implementation_pr" = "true" ] && ! revalidate_reviewer_state; then
+  refuse "reviewer-state-changed"
 fi
 
 if ! gh pr edit "$pr_number" --repo "$repo" --add-label "$label" >/dev/null 2>&1; then
