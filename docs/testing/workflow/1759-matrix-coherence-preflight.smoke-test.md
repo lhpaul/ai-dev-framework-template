@@ -118,7 +118,7 @@ None — documentation-only feature.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| A mirror file restates the six checks with different wording | Step 7 of Implementation Order skipped drift review | Replace the restatement with a pointer sentence; re-run the Step 6 grep |
+| A mirror file restates the audit checks with different wording | Step 8 of Implementation Order (drift review) skipped, or this runbook's Step 6 drift checks skipped | Replace the restatement with a pointer sentence; re-run the Step 6 greps |
 | Doctrine file exceeds 12,000 bytes | New pattern written too large | Merge or trim the pattern per `review-doctrine.md`'s own bound rule — never raise the bound in the same change |
 | `REVIEW.md` row missing on a matrix-bearing spec PR | Implementer skipped the checklist bullet | Add the row with audit summary; treat as blocking per the checklist |
 
