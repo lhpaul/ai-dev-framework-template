@@ -63,7 +63,10 @@ Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
 reviewer-unavailable, reviewer-check-name-unresolved, blocking-findings,
 ci-pending, ci-failing, head-changed-before-apply. Escalation reasons:
-head-revalidate-failed, head-changed-after-apply.
+head-revalidate-failed, head-changed-after-apply, ready-config-unreadable.
+The ready-phase reviewer list is read from the PR head's own
+.ai-dev-workflow.yaml; an unreadable head configuration escalates (fail-closed)
+rather than falling back to this checkout's configuration.
 USAGE
 }
 
@@ -136,6 +139,29 @@ configured_ready_reviewer_platforms() {
   fi
 }
 
+# pr_head_config_ready_platforms <repo> <sha> — `review.on_ready.github` read
+# from the PR's own head commit, not this checkout. The target PR may itself
+# modify `.ai-dev-workflow.yaml` (drop the configured ready reviewer, add
+# one); reading the local file would gate the label on a list the PR's own
+# configuration no longer declares. Fail closed: a fetch/parse failure
+# escalates rather than falling back to the local checkout silently — the
+# reviewer set is the gate, so an unreadable one is an unreadable gate.
+pr_head_config_ready_platforms() {
+  local repo_arg="$1" sha_arg="$2"
+  local content_b64 config_body head_config_file
+  content_b64="$(gh api "repos/$repo_arg/contents/.ai-dev-workflow.yaml?ref=$sha_arg" \
+      --jq '.content // ""' 2>/dev/null)" || return 1
+  [ -n "$content_b64" ] || return 1
+  config_body="$(printf '%s\n' "$content_b64" | tr -d '\n' | base64 -d 2>/dev/null)" || return 1
+  [ -n "$config_body" ] || return 1
+  head_config_file="$(mktemp)" || return 1
+  printf '%s\n' "$config_body" >"$head_config_file"
+  workflow_config_review_on_ready_github "$head_config_file"
+  local rc=$?
+  rm -f "$head_config_file"
+  return "$rc"
+}
+
 # reviewer_check_name_for_platform <platform> — the check-run name a ready-phase
 # reviewer publishes. Same mapping configured_reviewer_check_names_json applies
 # (workflow-lib.sh), narrowed to the ready-phase list and kept separate so that
@@ -199,7 +225,16 @@ applied_notified=0
 reviewer_names_seen=""
 platform=""
 if [ "$is_implementation_pr" = "true" ]; then
-  ready_platforms="$(configured_ready_reviewer_platforms)"
+  # The PR's own head configuration is the source of truth (see
+  # pr_head_config_ready_platforms). An explicit AI_DEV_WORKFLOW_CONFIG_FILE
+  # (test harness or deliberate override) short-circuits the head fetch; a
+  # head fetch/parse failure escalates — fail closed — instead of silently
+  # gating on this checkout's configuration, which the PR may have changed.
+  if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
+    ready_platforms="$(configured_ready_reviewer_platforms)"
+  elif ! ready_platforms="$(pr_head_config_ready_platforms "$repo" "$head_sha" 2>/dev/null)"; then
+    escalate ready-config-unreadable
+  fi
 else
   ready_platforms=""
 fi
@@ -241,6 +276,17 @@ while IFS= read -r platform; do
   fi
   status_val="${check_state%% *}"
   conclusion="${check_state#* }"
+
+  # started_at of the selected (latest) check run. Findings are time-bounded
+  # to it: a stale same-SHA review comment from an *earlier* reviewer run must
+  # not block forever — same rule pr-review-loop.sh applies (~3704-3729),
+  # where `.created_at > $since` scopes the verdict read.
+  reviewer_started_at="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
+        [ .[].check_runs[]? | select(.name == $name) ]
+        | sort_by(.started_at // .completed_at // "")
+        | last
+        | (.started_at // .completed_at // .created_at // "")
+      ' 2>/dev/null)" || escalate check-run-parse-failed
 
   # Absent check run is not clean: the reviewer may have refused to run.
   if [ -z "$status_val" ] || [ "$status_val" = "null" ] || [ "$status_val" = " " ]; then
@@ -342,12 +388,13 @@ while IFS= read -r platform; do
 
   # Inline comments on this SHA, posted top-level by the reviewer bot.
   inline_json=""
-  if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" '
+  if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$reviewer_started_at" '
         [ .[]?[]
           | select(
               ((.user.login // "") == $bot or (.user.login // "") == ($bot | sub("\\[bot\\]$"; "")) or (.user.login // "") == ($bot + "[bot]"))
               and ((.commit_id // "") == $sha)
               and ((.in_reply_to_id // null) == null)
+              and ((.created_at // "") >= $since)
             )
           | { body: (.body // "") }
         ]
@@ -360,11 +407,12 @@ while IFS= read -r platform; do
   # a `COMMENTED` review is blocking when it carries inline findings on this SHA
   # (the umbrella review Bugbot posts) or Bugbot's own finding markers.
   review_json=""
-  if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" --argjson inline "$inline_count" '
+  if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$reviewer_started_at" --argjson inline "$inline_count" '
         [ .[]?[]
           | select(
               (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               and ((.commit_id // .commitId // "") == $sha)
+              and (((.submitted_at // "") >= $since))
             )
           | { state: (.state // ""), body: (.body // ""), inline: $inline }
         ]
@@ -497,6 +545,14 @@ if ! printf '%s\n' "$applied_labels" | grep -qx "$label"; then
 fi
 applied_head="$(printf '%s\n' "$post_apply_json" | jq -r '.headRefOid // ""' 2>/dev/null)" || escalate label-verify-failed
 if [ "$applied_head" != "$head_sha" ]; then
+  # The label now certifies a head no verdict describes. Remove it before
+  # escalating so the new, unreviewed head does not carry a readiness label
+  # between this refusal and whatever re-runs the gate. Best-effort only: a
+  # failed removal logs a WARN and still escalates, so the human sees the
+  # drift either way.
+  if ! gh pr edit "$pr_number" --repo "$repo" --remove-label "$label" >/dev/null 2>&1; then
+    printf 'WARN: %s\n' "failed to remove $label after head drift on PR #$pr_number — remove it manually" >&2
+  fi
   escalate head-changed-after-apply
 fi
 

@@ -90,6 +90,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: verifies product branch and PR cleanup evidence after product-owned release work
+  - group: readiness label gate
+    path: scripts/development-workflow/apply-readiness-labels.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: gates readiness-label application on reviewer and CI verdicts (#1408)
   - group: general best practices
     path: docs/best-practices/1-general.md
     mode_scope: product_repo_injection

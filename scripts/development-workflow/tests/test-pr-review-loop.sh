@@ -3913,6 +3913,23 @@ unset MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT MOCK_GH_HEAD_SH
 unset _SUMMARY_COMMENT_JSON _SUMMARY_STALE_COMMENT_JSON _SUMMARY_NEEDS_FIXES_COMMENT_JSON
 unset _SUMMARY_CURRENT_HEAD_SHA _SUMMARY_OLD_HEAD_SHA
 
+# Test 11.11 (PR #1818 finding, #1408 round 2): the restore path must route the
+# label mutation through apply-readiness-labels.sh, not a bare
+# `gh pr edit --add-label ready-for-regression` — the direct apply bypassed the
+# reviewer/CI verdict gate this helper exists to enforce. The gh stub cannot
+# exercise the helper's own gating (it is covered by
+# test-apply-readiness-labels.sh), so this is a source-level check: the restore
+# function invokes the helper, and no direct `--add-label "ready-for-regression"`
+# remains anywhere in pr-review-loop.sh.
+_loop_src="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+_helper_calls="$(grep -c 'apply-readiness-labels.sh' "$_loop_src" 2>/dev/null)" || _helper_calls="0"
+run_test "restore_path_invokes_readiness_helper" "yes" \
+  "$([ "$_helper_calls" -ge 1 ] && grep -q 'apply-readiness-labels.sh' \
+      <(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src") && echo yes || echo no)"
+_direct_applies="$(grep -c -- '--add-label "ready-for-regression"' "$_loop_src" 2>/dev/null)" || _direct_applies="0"
+run_test "no_direct_ready_for_regression_apply_in_loop" "0" "$_direct_applies"
+unset _loop_src _helper_calls _direct_applies
+
 # ---------------------------------------------------------------------------
 # Area 12: reviewer-failed label sync (issue #804)
 #

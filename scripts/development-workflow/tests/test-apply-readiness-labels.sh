@@ -142,6 +142,17 @@ case "$*" in
     emit '{"nameWithOwner":"acme/widgets"}'
     exit 0
     ;;
+  *"/contents/.ai-dev-workflow.yaml"*)
+    # PR-head configuration fetch (#1408 finding 1). MOCK_HEAD_CONFIG carries
+    # the raw YAML body; MOCK_HEAD_CONFIG_EXIT simulates the API failure.
+    [ "${MOCK_HEAD_CONFIG_EXIT:-0}" = "0" ] || exit 1
+    content="$(printf '%s\n' "${MOCK_HEAD_CONFIG:-review:
+  on_ready:
+    github:
+      - bugbot}" | base64)"
+    emit "{\"content\":\"$content\"}"
+    exit 0
+    ;;
 esac
 exit 0
 GH
@@ -184,6 +195,8 @@ run_helper() {
     MOCK_REVALIDATE_HEAD="${MOCK_REVALIDATE_HEAD:-}" \
     MOCK_POST_APPLY_HEAD="${MOCK_POST_APPLY_HEAD:-}" \
     MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
+    MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
+    MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -245,7 +258,7 @@ run_test "blocking_findings_no_readiness_label" "0" "$(grep -c 'add-label ready-
 # A CHANGES_REQUESTED review is blocking regardless of body text.
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_COMMENTS='[]'
-MOCK_REVIEWS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":""}]'
+MOCK_REVIEWS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-01-02T00:00:00Z"}]'
 result="$(run_helper)"
 run_test "changes_requested_exit" "1" "${result%%|*}"
 run_test "changes_requested_reason" "blocking-findings" "$(field "$result" REASON)"
@@ -500,17 +513,120 @@ run_test "paginated_check_runs_keep_latest_result" "labeled" "$(field "$result" 
 # Same defect class on the finding surfaces: a blocking review found on a later
 # page must still refuse.
 MOCK_CHECK_RUNS="$_bugbot_ok"
-MOCK_REVIEWS='[],[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":""}]'
+MOCK_REVIEWS='[],[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-01-02T00:00:00Z"}]'
 result="$(run_helper)"
 run_test "paginated_reviews_later_page_still_blocks_exit" "1" "${result%%|*}"
 run_test "paginated_reviews_later_page_still_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
 # and a later-page inline finding likewise.
 MOCK_REVIEWS='[]'
-MOCK_COMMENTS='[],[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"body":"**High Severity** leak"}]'
+MOCK_COMMENTS='[],[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"body":"**High Severity** leak","created_at":"2026-01-02T00:00:00Z"}]'
 result="$(run_helper)"
 run_test "paginated_comments_later_page_still_blocks_exit" "1" "${result%%|*}"
 run_test "paginated_comments_later_page_still_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
 MOCK_COMMENTS='[]'
+
+echo ""
+echo "=== Area 7: PR #1818 Codex findings, round 2 ==="
+
+# Finding 1 (P1): the ready-phase platform list must be read from the PR head's
+# own .ai-dev-workflow.yaml, not this checkout. The test's local config file
+# declares bugbot; the PR head config declares ronda. A local-config read gates
+# on "Cursor Bugbot" (absent → refuse); a head-config read gates on "Ronda
+# review" (present and clean → labeled). run_helper keeps
+# AI_DEV_WORKFLOW_CONFIG_FILE set for the other areas; here it is unset so the
+# head-config path runs.
+run_helper_no_local_config() {
+  local label="${MOCK_LABEL:-ready-for-human-review}"
+  : >"$_LABEL_LOG"
+  : >"$_LABEL_STATE"
+  set +e
+  out="$(
+    PATH="$_BIN:$PATH" \
+    MOCK_GH_LOG="$_LABEL_LOG" \
+    MOCK_LABEL_STATE="$_LABEL_STATE" \
+    MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
+    MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
+    MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
+    MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
+    MOCK_LABELS='{"labels":[]}' \
+    MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
+    MOCK_REVALIDATE_HEAD="${MOCK_REVALIDATE_HEAD:-}" \
+    MOCK_POST_APPLY_HEAD="${MOCK_POST_APPLY_HEAD:-}" \
+    MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
+    MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
+    MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
+    "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
+  )"
+  code=$?
+  set -e
+  printf '%s|%s\n' "$code" "$out"
+}
+
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
+result="$(run_helper_no_local_config)"
+run_test "pr_head_config_platforms_exit" "0" "${result%%|*}"
+run_test "pr_head_config_platforms_result" "labeled" "$(field "$result" RESULT)"
+# ...and a head-config fetch failure must not silently fall back to the local
+# checkout's platform list (the local file here still declares bugbot and its
+# check run is present-and-clean, so a fallback would label): it escalates
+# fail-closed. This is the planted failing case for finding 1.
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_HEAD_CONFIG_EXIT=1
+result="$(run_helper_no_local_config)"
+MOCK_HEAD_CONFIG_EXIT=0
+run_test "head_config_unreadable_escalates_exit" "2" "${result%%|*}"
+run_test "head_config_unreadable_reason" "ready-config-unreadable" "$(field "$result" REASON)"
+run_test "head_config_unreadable_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+
+# Finding 2 (P1): post-apply head drift must remove the label it can no longer
+# certify, not just escalate and leave it on the unreviewed head.
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_POST_APPLY_HEAD='cccc333000000000000'
+result="$(run_helper)"
+MOCK_POST_APPLY_HEAD=''
+run_test "head_drift_removes_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "head_drift_still_escalates_exit" "2" "${result%%|*}"
+run_test "head_drift_still_escalates_reason" "head-changed-after-apply" "$(field "$result" REASON)"
+
+# Finding 5 (P2): findings are time-bounded to the selected check run's
+# started_at. A stale same-SHA comment from BEFORE the reviewer run must not
+# block forever; a fresh one still does.
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-03-01T00:00:00Z"}]}'
+MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-02-01T00:00:00Z","body":"**High Severity** stale finding from an earlier run"}]'
+result="$(run_helper)"
+run_test "stale_same_sha_comment_ignored_exit" "0" "${result%%|*}"
+run_test "stale_same_sha_comment_ignored_result" "labeled" "$(field "$result" RESULT)"
+MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-03-02T00:00:00Z","body":"**High Severity** fresh finding"}]'
+result="$(run_helper)"
+run_test "fresh_same_sha_comment_blocks_exit" "1" "${result%%|*}"
+run_test "fresh_same_sha_comment_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_COMMENTS='[]'
+# Same boundary on the review surface: a CHANGES_REQUESTED review submitted
+# before the check run started is stale; one submitted after still blocks.
+MOCK_REVIEWS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-02-01T00:00:00Z"}]'
+result="$(run_helper)"
+run_test "stale_same_sha_review_ignored_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEWS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-03-02T00:00:00Z"}]'
+result="$(run_helper)"
+run_test "fresh_same_sha_review_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_REVIEWS='[]'
+
+# Finding 4 (P2): the helper must be declared as a product-repo injection
+# entry in both sync manifests, or product repos routed implementation work
+# will not receive it and their readiness labels fall back to hand-applies.
+_sync_entry="$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/sync-manifest.yaml" || true)"
+run_test "sync_manifest_declares_helper" "1" "$([ "$_sync_entry" -ge 1 ] && echo 1 || echo 0)"
+_skeleton_entry="$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/template/product-repo-injection/skeleton-manifest.yaml" || true)"
+run_test "skeleton_manifest_declares_helper" "1" "$([ "$_skeleton_entry" -ge 1 ] && echo 1 || echo 0)"
+unset _sync_entry _skeleton_entry
 
 echo ""
 echo "$pass passed, $fail failed"

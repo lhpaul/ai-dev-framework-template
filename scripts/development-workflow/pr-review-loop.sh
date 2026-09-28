@@ -8321,10 +8321,16 @@ restore_regression_label_if_missing() {
         fi
         if [ "${_rfr_restore_allowed:-0}" -eq 1 ]; then
           echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
-          # Do NOT redirect stderr here: surface gh errors so failures are observable
-          # rather than silently swallowed. The || branch handles the non-zero exit.
-          if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
-            echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+          # Route the mutation through apply-readiness-labels.sh (#1408) so the
+          # reviewer/CI verdict gate runs on the label this path restores; a
+          # direct `gh pr edit --add-label` would bypass it. Helper failure
+          # keeps the pre-existing WARN-and-proceed behaviour (fail-open is the
+          # documented semantics of this summary-comment gate, #805).
+          # Do NOT redirect stderr here: surface errors so failures are
+          # observable rather than silently swallowed.
+          if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
+              --pr "$pr_number" --label "ready-for-regression" 2>/dev/null; then
+            echo "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
           fi
         else
           echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
