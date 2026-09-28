@@ -48,7 +48,7 @@ All commands run at repo revision `361a7972` (branch `develop`, `2026-09-27`).
 
 **Rule 1 — sampling or enumeration record.** Not applicable. The design binds to no external free-text output distribution: it adds review guidance over documents this repository authors. No third-party output is matched, parsed, classified, or enumerated. (Trigger absent: no producer, no population, no occurrence set.)
 
-### Per-rule outcome record (plan revision `d0d22063`)
+### Per-rule outcome record (this plan revision — the PR head that contains this section; same-head label)
 
 Outcome labels per `plan-authoring-rigor-rules.md`:
 
