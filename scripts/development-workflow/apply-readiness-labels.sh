@@ -482,18 +482,48 @@ coderabbit_cli_local_ai_ledger_verdict() {
   _adapter_refusal_reason="reviewer-evidence-unreadable"
   _adapter_ledger_started_at=""
   local summary_record ledger_body ledger_started_at payload verdict outcome verdict_head
-  if ! summary_record="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null | jq -c '
+  local invoker_login
+  # Round 18 (thread PRRT_kwDORWAxaM6m36Wn): the marker strings are public,
+  # so body-marker selection alone lets ANY PR participant forge a
+  # reviewer_loop_history.v1 payload recording `clean` for the current head
+  # and gate a merge-label with no reviewer run. The accepted ledger
+  # comment must come from a TRUSTED actor: the login pr-review-loop.sh
+  # itself posts the summary under (gh pr comment / the comments PATCH run
+  # with this same gh token — `gh api user` is that login) OR a comment
+  # whose author_association GitHub reports as OWNER / MEMBER /
+  # COLLABORATOR (the repo's write-trust domain; the loop can be run by any
+  # collaborator, so the trust check must not pin only THIS invoker's
+  # login). The author filter lives in THIS caller's jq, not in
+  # workflow-lib.sh's shared reviewer_loop_history_select_latest_summary_
+  # record — that helper's other callers (pr-review-loop.sh's own cycle
+  # counting and label restore) operate inside the loop's own trust domain
+  # where the comment was posted by the loop itself, so their semantics
+  # stay unchanged. Fail closed: an unreadable invoker lookup or a fetch/
+  # parse failure with no trusted comment refuses (absent), never passes.
+  if ! invoker_login="$(gh api user --jq '.login // ""' 2>/dev/null)"; then
+    invoker_login=""
+  fi
+  if ! summary_record="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null | jq -c --arg invoker "$invoker_login" '
         [ .[]?[]
           | select(
               (.body // "" | contains("### Automated Reviewer Loop Summary")) and
               (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
             )
+          | select(
+              (((.user.login // "") != "") and ((.user.login // "") == $invoker))
+              or (((.author_association // "") == "OWNER")
+                  or ((.author_association // "") == "MEMBER")
+                  or ((.author_association // "") == "COLLABORATOR"))
+            )
         ]
         | sort_by(.created_at)
         | last
       ' 2>/dev/null)" || [ -z "$summary_record" ] || [ "$summary_record" = "null" ] || [ "$summary_record" = "false" ]; then
-    # No summary comment, or a fetch/parse failure: absent evidence — the
-    # generic absent refusal, matching the comment-only verdict path.
+    # No TRUSTED summary comment (only forged/untrusted bodies, or none at
+    # all), or a fetch/parse failure: absent evidence — the generic absent
+    # refusal, matching the comment-only verdict path. An untrusted
+    # author's ledger is never read, so a forged newer comment cannot
+    # shadow or spoof a verdict either.
     _adapter_refusal_reason="reviewer-check-absent"
     return
   fi
@@ -758,28 +788,46 @@ comment_only_completion_evidence() {
       return 1
       ;;
     greptile)
-      # Round 17 (PRRT_kwDORWAxaM6m2607): the trigger must belong to the
-      # CURRENT review cycle — run_greptile_review clears an already-reacted
-      # recent trigger and posts a new one, so a `+1` on a trigger that
-      # PREDATES the current head's push certifies the prior head's already-
-      # consumed cycle, not this head. The binding is the trigger's
-      # created_at vs the head's push time: the head commit's committer
-      # date is read from the commits API (the same field
-      # run_greptile_review itself reads as its findings-window bound,
-      # `commits/$head_sha` `.commit.committer.date`). A trigger older
-      # than that timestamp cannot certify the new head — fail closed.
-      local head_push_time
-      head_push_time="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)" \
-        || escalate head-commit-fetch-failed
-      [ -n "$head_push_time" ] || escalate head-commit-parse-failed
-      trigger="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --arg since "$head_push_time" '
-        [ .[]?[]
-          | select(((.body // "") == "@greptile review"))
-          | {id: (.id // 0), created_at: (.created_at // "")}
-        ]
-        | sort_by(.created_at)
-        | last // empty
-        | select(((.created_at // "") >= $since))
+      # Round 18 (thread PRRT_kwDORWAxaM6m36Wu): the trigger must belong to
+      # the CURRENT review cycle — run_greptile_review clears an
+      # already-reacted recent trigger and posts a new one, so a `+1` on a
+      # trigger from a PRIOR cycle certifies the prior head's already-
+      # consumed cycle, not this head. Round 17 bound this to the head
+      # commit's `.commit.committer.date`, but that is AUTHOR-CONTROLLED
+      # metadata: a commit created (or backdated via GIT_COMMITTER_DATE)
+      # before an already-reacted trigger and pushed afterwards satisfies
+      # the round-17 comparison while the push was never observed. The
+      # binding is now GitHub's SERVER-RECORDED timeline: the GraphQL PR
+      # timelineItems list, where GitHub appends a PullRequestCommit node
+      # for the head SHA only when it OBSERVES the push. The trigger's
+      # IssueComment node must appear AFTER the head commit's
+      # PullRequestCommit node in that server-ordered list — an ordering
+      # no committer-date forgery can move (pushedDate itself is null on
+      # this repository's commits, so node order is the only server-side
+      # push observation available). A timeline fetch/parse failure
+      # escalates fail-closed; a trigger the server ordered before the
+      # head commit refuses (absent evidence).
+      local _greptile_owner="${repo%%/*}" _greptile_name="${repo#*/}"
+      local _greptile_timeline
+      if ! _greptile_timeline="$(gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(last:100){nodes{__typename ...on PullRequestCommit{commit{oid}} ...on IssueComment{databaseId createdAt body}}}}}}' \
+            -f owner="$_greptile_owner" \
+            -f repo="$_greptile_name" \
+            -F pr="$pr_number" \
+            --jq '.data.repository.pullRequest.timelineItems.nodes' 2>/dev/null)" \
+          || [ -z "$_greptile_timeline" ] || [ "$_greptile_timeline" = "null" ]; then
+        escalate greptile-timeline-fetch-failed
+      fi
+      trigger="$(printf '%s\n' "$_greptile_timeline" | jq -c --arg sha "$head_sha" '
+        ( index( [ .[] | select(.__typename == "PullRequestCommit" and ((.commit.oid // "" | ascii_downcase) == ($sha | ascii_downcase)) ) ][0] ) ) as $head_commit_idx
+        | if $head_commit_idx == null then empty else
+            [ .[ $head_commit_idx: ][]
+              | select(.__typename == "IssueComment" and ((.body // "") == "@greptile review"))
+              | {id: (.databaseId // 0), created_at: (.createdAt // "")}
+            ]
+            | sort_by(.created_at)
+            | last // empty
+          end
       ' 2>/dev/null)"
       [ -n "$trigger" ] || return 1
       local trigger_id

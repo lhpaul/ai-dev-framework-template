@@ -72,6 +72,20 @@ emit() {
 }
 case "$*" in
   *"auth status"*) exit 0 ;;
+  *"api user"*)
+    # Round 18 (PRRT_kwDORWAxaM6m36Wn): the invoker's own login — the login
+    # pr-review-loop.sh posts the summary comment under (gh pr comment /
+    # gh api --method PATCH via the same token). The ledger trust filter
+    # accepts a comment authored by this login. Cached per run so several
+    # `gh api user` calls do not consume awk's global state; MOCK_GH_USER
+    # overrides it (default: the test's operator fixture login).
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    _uc="${TMP_ROOT:-/tmp}/gh-user.cache"
+    [ -s "$_uc" ] && { cat "$_uc"; exit 0; }
+    printf '%s\n' "{\"login\":\"${MOCK_GH_USER:-loop-runner}\"}" >"$_uc" 2>/dev/null || true
+    cat "$_uc" 2>/dev/null || printf '%s\n' '{"login":"loop-runner"}'
+    exit 0
+    ;;
   *"pr edit"*)
     printf '%s\n' "$*" >>"${MOCK_GH_LOG:?}"
     # Also logged to the shared call log so ordering assertions can prove the
@@ -190,6 +204,18 @@ case "$*" in
     emit "${MOCK_HEAD_COMMIT_JSON:-{\"commit\":{\"committer\":{\"date\":\"2026-01-05T00:00:00Z\"}}}}"
     exit 0
     ;;
+  *"api graphql"*)
+    # Round 18 (PRRT_kwDORWAxaM6m36Wu): greptile's push-observation binding —
+    # the PR timeline (PullRequestCommit / IssueComment nodes in server
+    # order). MOCK_PR_TIMELINE carries the timelineItems nodes array; the
+    # stub applies the caller's --jq filter itself (emit would re-apply it
+    # to the already-filtered nodes).
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    [ "${MOCK_PR_TIMELINE_EXIT:-0}" = "0" ] || exit 1
+    printf '%s\n' "{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE:-[]}}}}}}" \
+      | jq -r "${jq_filter:-.}"
+    exit 0
+    ;;
   *"run view"*)
     # Round 17 (PRRT_kwDORWAxaM6m260z): the claude-action run log fetch.
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
@@ -268,6 +294,12 @@ case "$*" in
     exit 0
     ;;
   *"/issues/"*"/comments"*)
+    # Round 18 (threads PRRT_kwDORWAxaM6m36Wn/Wu): the issue-comments read
+    # itself is paginated+slurped by the helper, so the stub emits a page
+    # array. MOCK_ISSUE_COMMENTS carries ONE page's array; each comment may
+    # additionally carry an author_association (the real REST payload does)
+    # for the ledger trust filter, and MOCK_LEDGER_ASSEDGE_* fixtures append
+    # it here when the raw fixture lacks it.
     emit "[${MOCK_ISSUE_COMMENTS:-$empty_array}]"
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     exit 0
@@ -380,6 +412,9 @@ run_helper() {
     MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
     MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
     MOCK_WORKFLOW_RUNS="${MOCK_WORKFLOW_RUNS:-}" \
+    MOCK_GH_USER="${MOCK_GH_USER:-}" \
+    MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
+    MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -1609,6 +1644,7 @@ run_helper_platform() {
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
   : >"$_CALL_LOG"
+  : >"${TMP_ROOT:-/tmp}/gh-user.cache"
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
@@ -1646,6 +1682,9 @@ run_helper_platform() {
     MOCK_RUN_LOG="${MOCK_RUN_LOG:-}" \
     MOCK_RUN_LOG_EXIT="${MOCK_RUN_LOG_EXIT:-0}" \
     MOCK_HEAD_COMMIT_JSON="${MOCK_HEAD_COMMIT_JSON:-}" \
+    MOCK_GH_USER="${MOCK_GH_USER:-}" \
+    MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
+    MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -1830,7 +1869,13 @@ _greptile_platform_yaml='review:
       - greptile'
 MOCK_HEAD_CONFIG="$_greptile_platform_yaml"
 MOCK_BASE_CONFIG="$_greptile_platform_yaml"
+# Round 18 (thread PRRT_kwDORWAxaM6m36Wu): the trigger's cycle binding is the
+# GraphQL PR timeline's SERVER-RECORDED order — the head commit's
+# PullRequestCommit node must precede the trigger's IssueComment node. The
+# fixture below is the normal shape: head commit first, trigger after.
+_greptile_timeline_after_push='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}},{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","author":{"login":"agent"},"body":"@greptile review"}]'
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"agent"},"created_at":"2026-01-05T00:00:00Z","id":901,"body":"@greptile review"}]'
+MOCK_PR_TIMELINE="$_greptile_timeline_after_push"
 result="$(MOCK_GREPTILE_REACTION="$_greptile_reaction_json" run_helper_platform "$_codex_config")"
 run_test "greptile_reaction_completion_labels_exit" "0" "${result%%|*}"
 run_test "greptile_reaction_completion_result" "labeled" "$(field "$result" RESULT)"
@@ -1838,16 +1883,28 @@ run_test "greptile_reaction_completion_result" "labeled" "$(field "$result" RESU
 MOCK_GREPTILE_REACTION=''
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_no_reaction_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
-# Round 17 (PRRT_kwDORWAxaM6m2607): a +1 on a trigger that PREDATES the
-# current head's push certifies the prior head's already-consumed cycle —
-# must refuse. The head committer date (MOCK_HEAD_COMMIT_JSON) is pushed
-# AFTER the trigger's created_at (2026-01-05).
+# Round 18 (PRRT_kwDORWAxaM6m36Wu): a trigger IssueComment node that the
+# server ordered BEFORE the current head's PullRequestCommit node is a
+# trigger from a prior cycle — GitHub only appends a commit node when it
+# OBSERVES the push, so the ordering cannot be forged by backdating commit
+# metadata (GIT_COMMITTER_DATE). Planted failing case: the backdated commit
+# (committer date 2026-01-04, BEFORE the 2026-01-05 trigger) whose timeline
+# node still comes after the trigger — the round-17 committer-date binding
+# would accept this; the timeline binding must refuse.
 MOCK_GREPTILE_REACTION="$_greptile_reaction_json"
-MOCK_HEAD_COMMIT_JSON='{"commit":{"committer":{"date":"2026-01-06T00:00:00Z"}}}'
+MOCK_HEAD_COMMIT_JSON='{"commit":{"committer":{"date":"2026-01-04T00:00:00Z"}}}'
+MOCK_PR_TIMELINE='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","author":{"login":"agent"},"body":"@greptile review"},{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
 result="$(run_helper_platform "$_codex_config")"
-run_test "greptile_pre_push_trigger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
-run_test "greptile_pre_push_trigger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "greptile_backdated_commit_pre_push_trigger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "greptile_backdated_commit_pre_push_trigger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# The normal post-push trigger (timeline above) still labels with the same
+# backdated committer date — proving the binding is the server timeline,
+# not commit metadata.
+MOCK_PR_TIMELINE="$_greptile_timeline_after_push"
+result="$(run_helper_platform "$_codex_config")"
+run_test "greptile_post_push_trigger_labels_result" "labeled" "$(field "$result" RESULT)"
 MOCK_HEAD_COMMIT_JSON=''
+MOCK_PR_TIMELINE=""
 MOCK_ISSUE_COMMENTS='[]'
 
 # Thread PRRT_kwDORWAxaM6m1pGF: the inline-comment scan must be bounded by
@@ -2006,21 +2063,68 @@ MOCK_BASE_CONFIG='review:
   on_ready:
     github:
       - coderabbit-cli'
+# Round 18 (thread PRRT_kwDORWAxaM6m36Wn): the ledger summary comment must
+# be authenticated — the marker strings are public, so ANY participant can
+# forge a body. The trusted-actor definition: the comment's author is the
+# login the loop itself posts under (the invoker's own `gh api user` login
+# — gh pr comment / gh api PATCH carry that token) OR GitHub reports
+# author_association OWNER / MEMBER / COLLABORATOR. _ledger_comment wraps a
+# ledger body with a chosen author login + association.
+_ledger_comment() {
+  # _ledger_comment <login> <association> <id> <body>
+  printf '%s' "$4" | jq -Rs --arg login "$1" --arg assoc "$2" --argjson cid "$3" \
+    '[{user:{login:$login},author_association:$assoc,created_at:"2026-01-09T00:00:00Z",id:$cid,body:.}]'
+}
+# The loop's trusted poster: the invoker login the gh stub reports
+# (MOCK_GH_USER default loop-runner), OWNER association as GitHub reports it.
+MOCK_GH_USER='loop-runner'
 # Planted failing case 1 (old code: blanket refusal — clean current-head
-# evidence must label): a clean ledger verdict pinned to the current head.
-MOCK_ISSUE_COMMENTS="$(_ledger_entry clean "$HEAD" 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:930,body:.}]')" 
+# evidence must label): a clean ledger verdict pinned to the current head,
+# posted by the loop's trusted actor (invoker login, OWNER).
+MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 930 "$(_ledger_entry clean "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "coderabbit_cli_current_head_ledger_labels_exit" "0" "${result%%|*}"
 run_test "coderabbit_cli_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
+# Round 18 (PRRT_kwDORWAxaM6m36Wn) planted failing case: a FORGED ledger —
+# the exact same marker strings + current-head clean payload, but posted by
+# a regular participant (CONTRIBUTOR association, not the invoker's login).
+# Old code (body-markers-only selection) labelled this; the authenticated
+# selection must refuse.
+MOCK_ISSUE_COMMENTS="$(_ledger_comment mallory CONTRIBUTOR 934 "$(_ledger_entry clean "$HEAD" 3)")"
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_forged_untrusted_author_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "coderabbit_cli_forged_untrusted_author_ledger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# A NON-COLLABORATOR participant (NONE association, not the invoker login)
+# is equally untrusted — refused even with a perfect body.
+MOCK_ISSUE_COMMENTS="$(_ledger_comment random-drive-by NONE 935 "$(_ledger_entry clean "$HEAD" 3)")"
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_none_association_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# A trusted association the invoker does NOT own (a repo COLLABORATOR) is
+# still the loop's trust domain — the loop can be run by any collaborator.
+MOCK_ISSUE_COMMENTS="$(_ledger_comment trusted-collaborator COLLABORATOR 936 "$(_ledger_entry clean "$HEAD" 3)")"
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_collaborator_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
+# A forged NEWER comment by an untrusted author must not shadow a trusted
+# one: the newest TRUSTED record is selected, and the forged entry is
+# ignored — labels (the forged entry claims needs_fixes, older trusted one
+# is clean; clean labels, proving the forged newer comment was skipped).
+MOCK_ISSUE_COMMENTS="$(
+  {
+    _ledger_comment loop-runner OWNER 930 "$(_ledger_entry clean "$HEAD" 2)"
+    _ledger_comment mallory CONTRIBUTOR 937 "$(_ledger_entry needs_fixes "$HEAD" 4)"
+  } | jq -s 'add'
+)"
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_forged_newer_comment_shadowed_result" "labeled" "$(field "$result" RESULT)"
 # Planted failing case 2: a clean verdict pinned to a DIFFERENT head is
-# stale — must refuse, never label.
-MOCK_ISSUE_COMMENTS="$(_ledger_entry clean bbbb222000000000000 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:931,body:.}]')" 
+# stale — must refuse, never label (posted by the trusted actor).
+MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 931 "$(_ledger_entry clean bbbb222000000000000 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "coderabbit_cli_stale_head_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 run_test "coderabbit_cli_stale_head_ledger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 # Planted failing case 3: a needs_fixes verdict on the current head blocks
 # / refuses.
-MOCK_ISSUE_COMMENTS="$(_ledger_entry needs_fixes "$HEAD" 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:932,body:.}]')" 
+MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 932 "$(_ledger_entry needs_fixes "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "coderabbit_cli_needs_fixes_ledger_refuses_reason" "reviewer-evidence-unreadable" "$(field "$result" REASON)"
 # No summary comment at all → absent evidence, fail closed.
@@ -2028,7 +2132,8 @@ MOCK_ISSUE_COMMENTS='[]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "coderabbit_cli_no_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # local-ai-reviewer: the same ledger mechanism (one representative case:
-# current-head clean labels; the round-16 blanket refusal is gone).
+# current-head clean labels; the round-16 blanket refusal is gone), posted
+# by the trusted actor.
 _ledger_platform='local-ai-reviewer'
 MOCK_HEAD_CONFIG='review:
   on_ready:
@@ -2038,10 +2143,11 @@ MOCK_BASE_CONFIG='review:
   on_ready:
     github:
       - local-ai-reviewer'
-MOCK_ISSUE_COMMENTS="$(_ledger_entry clean "$HEAD" 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:933,body:.}]')" 
+MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 933 "$(_ledger_entry clean "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "local_ai_reviewer_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
 MOCK_ISSUE_COMMENTS='[]'
+MOCK_GH_USER=''
 
 echo ""
 echo "$pass passed, $fail failed"
