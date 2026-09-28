@@ -166,6 +166,14 @@ case "$*" in
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     exit 0
     ;;
+  *"issues/comments/"*"/reactions"*)
+    # Round 15 (thread PRRT_kwDORWAxaM6m1pF_): Greptile completion evidence —
+    # a bot +1 on the trigger comment. MOCK_GREPTILE_REACTION carries the
+    # reaction list payload (bot login + content "+1").
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    emit "${MOCK_GREPTILE_REACTION:-[]}"
+    exit 0
+    ;;
   *"pr view"*)
     emit "${MOCK_PR_JSON:-$pr_default}"
     exit 0
@@ -1600,6 +1608,7 @@ run_helper_platform() {
     MOCK_FINAL_REVALIDATE_HEAD="" \
     MOCK_RERUN_COMMENTS="" \
     MOCK_REMOVE_LABEL_EXIT="0" \
+    MOCK_GREPTILE_REACTION="${MOCK_GREPTILE_REACTION:-}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -1611,6 +1620,9 @@ _codex_platform_yaml='review:
   on_ready:
     github:
       - codex-github'
+# A Greptile +1 reaction payload by the bot on the trigger comment —
+# run_greptile_review's completion signal.
+_greptile_reaction_json='[{"user":{"login":"greptile-apps[bot]"},"content":"+1"}]'
 MOCK_HEAD_CONFIG="$_codex_platform_yaml"
 MOCK_BASE_CONFIG="$_codex_platform_yaml"
 MOCK_CHECK_RUNS='{"check_runs":[]}'
@@ -1703,6 +1715,109 @@ MOCK_REVIEWS='[]'
 MOCK_ISSUE_COMMENTS='[]'
 MOCK_HEAD_CONFIG=''
 MOCK_BASE_CONFIG=''
+
+echo ""
+echo "=== Area 16: PR #1818 codex-github findings, round 15 ==="
+
+# Thread PRRT_kwDORWAxaM6m1pF4: the round-14 COMMENTED umbrella exemption
+# only recognised Bugbot markers, so other comment-only reviewers' BLOCKING
+# bodies skipped classification: run_devin_review() treats a COMMENTED body
+# starting "**Devin Review**" as Devin's findings summary (blocking), and
+# codex-github-reviewer.sh safe-fails every terminal "Codex Review:" body
+# that is not the approved clean template. Planted failing case 1: a
+# devin-style **Devin Review** COMMENTED body must block.
+_devin_platform_yaml='review:
+  on_ready:
+    github:
+      - devin'
+MOCK_HEAD_CONFIG="$_devin_platform_yaml"
+MOCK_BASE_CONFIG="$_devin_platform_yaml"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[{"user":{"login":"devin-ai-integration"},"id":500,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"**Devin Review**\n\nFound blocking issues: secrets committed.","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "devin_commented_body_blocks_exit" "1" "${result%%|*}"
+run_test "devin_commented_body_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+run_test "devin_commented_body_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Clean completion body (Devin's "No Issues Found") does not block.
+MOCK_REVIEWS='[{"user":{"login":"devin-ai-integration"},"id":500,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"No Issues Found","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "devin_clean_body_labels_result" "labeled" "$(field "$result" RESULT)"
+# Codex terminal body that is NOT the approved clean template blocks (the
+# companion safe-fails unrecognized terminal bodies).
+MOCK_HEAD_CONFIG="$_codex_platform_yaml"
+MOCK_BASE_CONFIG="$_codex_platform_yaml"
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":501,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"Codex Review: Needs fixes","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_unrecognized_terminal_body_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+# The approved clean sentence in a terminal body stays non-blocking.
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":501,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'`","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_approved_terminal_body_labels_result" "labeled" "$(field "$result" RESULT)"
+
+# Thread PRRT_kwDORWAxaM6m1pF_: non-review completion evidence for hosted
+# comment-only reviewers. codex-github publishes its clean result as a
+# SHA-pinned root PR comment (issue comment) — run_codex_github_review reads
+# exactly that surface — so with no PR review the verdict must come from
+# there, not refuse reviewer-check-absent forever. Planted failing case 2.
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":900,"body":"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'` <details> <summary>ℹ️ About Codex in GitHub</summary> ... </details>"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_root_comment_completion_labels_exit" "0" "${result%%|*}"
+run_test "codex_root_comment_completion_result" "labeled" "$(field "$result" RESULT)"
+# The adapter still counts blocking findings the platform posted.
+MOCK_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"commit_id":"'"$HEAD"'","pull_request_review_id":501,"in_reply_to_id":null,"created_at":"2026-01-04T00:00:00Z","body":"Rename the unsafe function."}]'
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":501,"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-01-04T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_root_comment_with_findings_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+# A root comment pinned to a DIFFERENT SHA is not completion evidence for
+# this head → fail closed.
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":900,"body":"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `bbbb222000000000000` <details> ... </details>"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_root_comment_other_sha_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# Greptile completes by reacting to its trigger comment — run_greptile_review
+# treats a bot +1 on the latest "@greptile review" comment as done. Planted
+# failing case 3.
+_greptile_platform_yaml='review:
+  on_ready:
+    github:
+      - greptile'
+MOCK_HEAD_CONFIG="$_greptile_platform_yaml"
+MOCK_BASE_CONFIG="$_greptile_platform_yaml"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"agent"},"created_at":"2026-01-05T00:00:00Z","id":901,"body":"@greptile review"}]'
+result="$(MOCK_GREPTILE_REACTION="$_greptile_reaction_json" run_helper_platform "$_codex_config")"
+run_test "greptile_reaction_completion_labels_exit" "0" "${result%%|*}"
+run_test "greptile_reaction_completion_result" "labeled" "$(field "$result" RESULT)"
+# No reaction on the trigger comment → fail closed.
+MOCK_GREPTILE_REACTION=''
+result="$(run_helper_platform "$_codex_config")"
+run_test "greptile_no_reaction_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_ISSUE_COMMENTS='[]'
+
+# Thread PRRT_kwDORWAxaM6m1pGF: the inline-comment scan must be bounded by
+# the selected review's START, not its submission — inline comments created
+# while the review was pending have created_at < submitted_at, so the old
+# `>= submitted_at` bound excluded the review's own inline findings. Planted
+# failing case 4: an inline comment created BEFORE submitted_at still counts.
+MOCK_HEAD_CONFIG="$_codex_platform_yaml"
+MOCK_BASE_CONFIG="$_codex_platform_yaml"
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"commit_id":"'"$HEAD"'","pull_request_review_id":502,"in_reply_to_id":null,"created_at":"2026-01-02T00:00:00Z","body":"Rename the unsafe function."}]'
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":502,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"REVIEWED_COMMIT: '"$HEAD"'","submitted_at":"2026-01-03T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "inline_comment_before_submitted_at_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+run_test "inline_comment_before_submitted_at_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Time-bounding still required: an inline comment from a PREVIOUS run on the
+# same SHA (created before the selected review AND its own review's window)
+# must not block forever.
+MOCK_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"commit_id":"'"$HEAD"'","pull_request_review_id":402,"in_reply_to_id":null,"created_at":"2026-01-01T00:00:00Z","body":"Rename the unsafe function."}]'
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":402,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"REVIEWED_COMMIT: '"$HEAD"'","submitted_at":"2026-01-01T00:30:00Z"},{"user":{"login":"chatgpt-codex-connector[bot]"},"id":502,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"REVIEWED_COMMIT: '"$HEAD"'","submitted_at":"2026-01-03T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "previous_run_inline_comment_excluded_result" "labeled" "$(field "$result" RESULT)"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
 
 echo ""
 echo "$pass passed, $fail failed"

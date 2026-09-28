@@ -228,6 +228,24 @@ reviewer_check_name_for_platform() {
 # to that review's submitted_at (the comment-only analogue of the check run's
 # started_at). Sets reviewer_started_at and scan_blocking_count; refuses or
 # escalates directly on failure.
+#
+# Round 15 (PR #1818 thread PRRT_kwDORWAxaM6m1pF_): when no review exists,
+# platform completion adapters run first — codex-github publishes its clean
+# result as a SHA-pinned root PR comment (issue comment) and Greptile
+# completes by reacting to its trigger comment, so a `pulls/N/reviews`-only
+# read stayed `reviewer-check-absent` forever even after the loop returned
+# clean. The adapters accept exactly the evidence surfaces those loop
+# implementations accept (see comment_only_completion_evidence below); fail
+# closed still applies when none is present.
+#
+# Round 15 (PR #1818 thread PRRT_kwDORWAxaM6m1pGF): the inline-comment scan
+# bound is the EARLIEST of the review's submitted_at and the earliest
+# created_at of that review's OWN inline comments (matched by
+# pull_request_review_id) — inline comments created while the review was
+# pending have created_at < submitted_at, so a submitted_at-only bound
+# excluded the review's own findings. The review-body scan keeps the
+# submitted_at bound, and inline comments from PREVIOUS reviews carry the
+# previous review's id, so earlier-run findings stay excluded.
 comment_only_reviewer_verdict() {
   local platform_arg="$1" bot_login_arg="$2"
   local reviews_json latest_review
@@ -247,13 +265,192 @@ comment_only_reviewer_verdict() {
     escalate review-parse-failed
   fi
   if [ -z "$latest_review" ] || [ "$latest_review" = "null" ]; then
+    if comment_only_completion_evidence "$platform_arg" "$bot_login_arg"; then
+      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg"
+      return
+    fi
     result="refused"
     reason="reviewer-check-absent"
     reviewer_report="${platform_arg}:review"
     refuse "reviewer-check-absent"
   fi
   reviewer_started_at="$(printf '%s\n' "$latest_review" | jq -r '.submitted_at // ""' 2>/dev/null)" || escalate review-parse-failed
-  count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at"
+  # Inline bound (thread PRRT_kwDORWAxaM6m1pGF): earliest of submitted_at and
+  # the review's own inline comments' earliest created_at. Comments fetch
+  # failures escalate fail-closed — an unreadable finding surface is an
+  # unreadable verdict.
+  local review_id comments_json inline_earliest inline_bound
+  review_id="$(printf '%s\n' "$latest_review" | jq -r '.id // 0' 2>/dev/null)" || escalate review-parse-failed
+  if ! comments_json="$(gh api "repos/$repo/pulls/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
+    escalate review-comment-fetch-failed
+  fi
+  inline_earliest="$(printf '%s\n' "${comments_json:-[]}" | jq -r --argjson rid "$review_id" '
+        [ .[]?[]
+          | select(((.pull_request_review_id // 0) == $rid))
+          | (.created_at // "")
+        ]
+        | min // empty
+      ' 2>/dev/null)" || inline_earliest=""
+  inline_bound="$reviewer_started_at"
+  if [ -n "$inline_earliest" ] && [ "$inline_earliest" \< "$reviewer_started_at" ]; then
+    inline_bound="$inline_earliest"
+  fi
+  count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$inline_bound" "$platform_arg"
+}
+
+# comment_only_completion_evidence <platform> <bot_login> — round 15 (PR
+# #1818 thread PRRT_kwDORWAxaM6m1pF_): non-review completion evidence for
+# hosted comment-only reviewers, mirroring exactly what the loop's own
+# platform readers accept:
+#   - codex-github: a root PR comment (issue comment) by the bot whose body
+#     carries the clean sentence ("Didn't find any major issues", the
+#     approved-template verdict sentence codex-github-reviewer.sh matches)
+#     AND a "Reviewed commit" marker whose backticked token pins the current
+#     head (offset-zero prefix in either direction — the same prefix
+#     classification codex_marker_classify accepts; abbreviated and full
+#     forms both name the head).
+#   - greptile: a `+1` reaction by the bot on the latest "@greptile review"
+#     trigger comment — run_greptile_review's completion signal.
+# On a match: sets reviewer_started_at (the evidence's timestamp — the
+# comment's created_at / the trigger comment's created_at, the same window
+# start the loop scans findings from) and returns 0. Returns 1 when the
+# platform has no such evidence (caller refuses reviewer-check-absent —
+# fail closed for genuinely absent evidence). The issue-comment fetch
+# escalates fail-closed; a reactions read failure returns 1 (refusal), never
+# a pass.
+comment_only_completion_evidence() {
+  local platform_arg="$1" bot_login_arg="$2"
+  local issue_comments_json entries entry body created token trigger reactions_json
+  case "$platform_arg" in
+    codex-github|greptile) ;;
+    *) return 1 ;;
+  esac
+  if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
+    escalate issue-comment-fetch-failed
+  fi
+  case "$platform_arg" in
+    codex-github)
+      if ! entries="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" '
+            [ .[]?[]
+              | select(
+                  (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
+                )
+              | {created_at: (.created_at // ""), body: (.body // "")}
+            ]
+            | sort_by(.created_at)
+            | reverse
+            | .[]
+          ' 2>/dev/null)"; then
+        escalate issue-comment-parse-failed
+      fi
+      while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        body="$(printf '%s\n' "$entry" | jq -r '.body // ""' 2>/dev/null)"
+        created="$(printf '%s\n' "$entry" | jq -r '.created_at // ""' 2>/dev/null)"
+        case "$body" in
+          *"Didn't find any major issues"*|*"Reviewed commit"*) ;;
+          *) continue ;;
+        esac
+        # shellcheck disable=SC2016  # single quotes deliberate: the sed program must not expand
+        token="$(printf '%s\n' "$body" | sed -n 's/.*Reviewed commit:\{0,1\}[^`]*`\([^`]*\)`.*/\1/p' | tail -n1)"
+        [ -n "$token" ] || continue
+        # Offset-zero prefix in either direction: the token names the head.
+        if [ "${head_sha#"$token"}" != "$head_sha" ] || [ "${token#"$head_sha"}" != "$token" ]; then
+          reviewer_started_at="$created"
+          return 0
+        fi
+      done <<< "$entries"
+      return 1
+      ;;
+    greptile)
+      trigger="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c '
+        [ .[]?[]
+          | select(((.body // "") == "@greptile review"))
+          | {id: (.id // 0), created_at: (.created_at // "")}
+        ]
+        | sort_by(.created_at)
+        | last // empty
+      ' 2>/dev/null)"
+      [ -n "$trigger" ] || return 1
+      local trigger_id
+      trigger_id="$(printf '%s\n' "$trigger" | jq -r '.id // 0' 2>/dev/null)"
+      [ "$trigger_id" != "0" ] || return 1
+      if ! reactions_json="$(gh api "repos/$repo/issues/comments/$trigger_id/reactions" 2>/dev/null)" || [ -z "$reactions_json" ]; then
+        return 1
+      fi
+      if printf '%s\n' "$reactions_json" | jq -e --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" '
+        [ .[]
+          | select(
+              (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
+              and ((.content // "") == "+1")
+            )
+        ] | length > 0
+      ' >/dev/null 2>&1; then
+        reviewer_started_at="$(printf '%s\n' "$trigger" | jq -r '.created_at // ""' 2>/dev/null)"
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+  return 1
+}
+
+# commented_review_body_blocks <body> <platform> — round 15 (PR #1818 thread
+# PRRT_kwDORWAxaM6m1pF4): per-platform classification of a COMMENTED review
+# body, mirroring the platform's own loop reader. The pre-round-15 rule
+# exempted ANY COMMENTED body without Bugbot markers, so Devin's
+# "**Devin Review**" findings summary (run_devin_review treats exactly that
+# body shape as blocking, pr-review-loop.sh ~4620) and a codex terminal
+# verdict body (codex-github-reviewer.sh safe-fails every unrecognized
+# terminal body) never blocked. A body a platform's own classifier treats as
+# blocking blocks here; a genuinely informational/umbrella body (completion
+# summary, soft suggestion, ancillary comment) stays non-blocking.
+commented_review_body_blocks() {
+  local body_arg="$1" platform_arg="$2"
+  case "$platform_arg" in
+    devin)
+      # run_devin_review: a COMMENTED body starting "**Devin Review**" is
+      # Devin's findings summary — blocking regardless of severity (Devin
+      # uses COMMENTED instead of CHANGES_REQUESTED). Any other COMMENTED
+      # body (completion text, "No Issues Found") is informational.
+      if printf '%s\n' "$body_arg" | grep -qi '^\*\*Devin Review\*\*'; then
+        return 0
+      fi
+      return 1
+      ;;
+    codex-github)
+      # codex-github-reviewer.sh classifies the whole terminal body: the
+      # approved clean template ("Didn't find any major issues") is clean;
+      # every other "Codex Review:" verdict body safe-fails (unrecognized is
+      # never clean). Bodies without the verdict prefix are ancillary
+      # (acknowledgement/trigger text) — informational.
+      case "$body_arg" in
+        "Codex Review:"*)
+          if printf '%s\n' "$body_arg" | grep -q "Didn't find any major issues"; then
+            return 1
+          fi
+          return 0
+          ;;
+      esac
+      return 1
+      ;;
+    bugbot|haystack|ronda|"")
+      # Bugbot's umbrella COMMENTED review carries its own finding markers
+      # (the pre-round-15 rule, unchanged for the check-run-bearing
+      # platforms); haystack/ronda publish findings inline, counted by the
+      # inline loop.
+      if printf '%s\n' "$body_arg" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      # greptile / coderabbit / copilot / claude-code-action loop readers
+      # block only on CHANGES_REQUESTED reviews or inline findings; a
+      # COMMENTED body is the informational umbrella.
+      return 1
+      ;;
+  esac
 }
 
 emit_verdict() {
@@ -370,19 +567,28 @@ bugbot_unavailable_notice_present() {
   return 1
 }
 
-# count_reviewer_blocking_findings <bot_login> <since> — fetches the PR review
-# surfaces (inline comments + reviews) and classifies the reviewer bot's
-# findings on the current head at/after <since>, setting the global
-# scan_blocking_count. A body carrying "✅ Addressed" (the reviewer's own
-# resolved marker) never blocks — the same resolution signal
-# check_unresolved_threads and codex_review_thread_evidence_counts read. Shared by the main gate and the pre-apply revalidation
-# (PR #1818 finding 2, round 6): a same-SHA rerun that completes between the
-# initial scan and the label mutation can post findings the first scan never
-# saw, so the revalidation rescans the same surfaces with the same filters
-# against the reselected run's timestamp instead of trusting the earlier
-# pass. Escalates fail-closed on a fetch or parse failure.
+# count_reviewer_blocking_findings <bot_login> <since_body> [<since_inline>]
+# [<platform>] — fetches the PR review surfaces (inline comments + reviews)
+# and classifies the reviewer bot's findings on the current head, setting the
+# global scan_blocking_count. Review bodies count at/after <since_body>;
+# inline comments at/after <since_inline> (round 15, thread
+# PRRT_kwDORWAxaM6m1pGF: the comment-only path passes the selected review's
+# own start — the earliest of its submitted_at and its inline comments' min
+# created_at — so a pending-review inline comment is counted; the check-run
+# path passes the run's started_at for both, unchanged). <platform> routes
+# the COMMENTED-body classifier (round 15, thread PRRT_kwDORWAxaM6m1pF4).
+# A body carrying "✅ Addressed" (the reviewer's own resolved marker) never
+# blocks — the same resolution signal check_unresolved_threads and
+# codex_review_thread_evidence_counts read. Shared by the main gate and the
+# pre-apply revalidation (PR #1818 finding 2, round 6): a same-SHA rerun that
+# completes between the initial scan and the label mutation can post findings
+# the first scan never saw, so the revalidation rescans the same surfaces
+# with the same filters against the reselected run's timestamp instead of
+# trusting the earlier pass. Escalates fail-closed on a fetch or parse
+# failure.
 count_reviewer_blocking_findings() {
   local bot_login_arg="$1" since_arg="$2"
+  local inline_since_arg="${3:-$2}" review_platform="${4:-}"
   local comments_json reviews_json inline_json review_json inline_count entry body state inline
   scan_blocking_count=0
   comments_json=""
@@ -401,7 +607,7 @@ count_reviewer_blocking_findings() {
 
   # Inline comments on this SHA, posted top-level by the reviewer bot.
   inline_json=""
-  if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$since_arg" '
+  if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$inline_since_arg" '
         [ .[]?[]
           | select(
               ((.user.login // "") == $bot or (.user.login // "") == ($bot | sub("\\[bot\\]$"; "")) or (.user.login // "") == ($bot + "[bot]"))
@@ -417,8 +623,9 @@ count_reviewer_blocking_findings() {
   inline_count="$(printf '%s\n' "$inline_json" | jq 'length' 2>/dev/null)" || escalate review-comment-parse-failed
 
   # Reviews submitted against this SHA. `CHANGES_REQUESTED` is always blocking;
-  # a `COMMENTED` review is blocking when it carries inline findings on this SHA
-  # (the umbrella review Bugbot posts) or Bugbot's own finding markers.
+  # a `COMMENTED` review is blocking when its body carries the platform's
+  # blocking content (commented_review_body_blocks) — Bugbot's finding
+  # markers, Devin's "**Devin Review**" summary, a codex terminal verdict.
   review_json=""
   if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$since_arg" --argjson inline "$inline_count" '
         [ .[]?[]
@@ -453,12 +660,19 @@ count_reviewer_blocking_findings() {
     if printf '%s\n' "$body" | grep -q "✅ Addressed"; then
       continue
     fi
-    if [ "$state" = "COMMENTED" ] && ! printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
-      # A COMMENTED review whose body carries no finding markers is the
-      # informational umbrella (a summary like "Ready for review" / Devin's
-      # completion text) — its inline findings are counted in the inline loop
-      # below, so the umbrella itself must not double-count or, worse, block
-      # alone after its inline finding was resolved ("✅ Addressed").
+    if [ "$state" = "COMMENTED" ]; then
+      # Round 15 (thread PRRT_kwDORWAxaM6m1pF4): per-platform body
+      # classification. Pre-round-15 this exempted ANY body without Bugbot
+      # markers, so Devin's "**Devin Review**" findings summary and a codex
+      # terminal verdict body (bodies the platforms' own loop classifiers
+      # treat as blocking) never blocked. A genuinely informational umbrella
+      # (completion summary, soft suggestion, ancillary comment) stays
+      # non-blocking — its inline findings are counted in the inline loop
+      # below, so the umbrella itself must not double-count or block alone
+      # after its inline finding was resolved ("✅ Addressed").
+      if commented_review_body_blocks "$body" "$review_platform"; then
+        scan_blocking_count=$((scan_blocking_count + 1))
+      fi
       continue
     fi
     scan_blocking_count=$((scan_blocking_count + 1))
@@ -754,7 +968,7 @@ while IFS= read -r platform; do
   # run — one whose findings the first scan never saw (PR #1818 finding 2,
   # round 6).
   [ -n "$bot_login" ] || continue
-  count_reviewer_blocking_findings "$bot_login" "$reviewer_started_at"
+  count_reviewer_blocking_findings "$bot_login" "$reviewer_started_at" "$reviewer_started_at" "$platform"
   reviewer_blocking=$((reviewer_blocking + scan_blocking_count))
   first_scan_started_at="${first_scan_started_at}${first_scan_started_at:+
 }${platform}:${reviewer_started_at}"
@@ -933,7 +1147,7 @@ revalidate_reviewer_state() {
     # and refuse when anything blocks.
     first_scan_login="$(printf '%s\n' "$first_scan_bot_logins" | sed -n "s/^${platform_arg}://p" | head -1)"
     if [ -n "$first_scan_login" ]; then
-      count_reviewer_blocking_findings "$first_scan_login" "$started_at_arg"
+      count_reviewer_blocking_findings "$first_scan_login" "$started_at_arg" "$started_at_arg" "$platform_arg"
       [ "$scan_blocking_count" -eq 0 ] || return 1
     fi
   done <<<"$ready_platforms"
