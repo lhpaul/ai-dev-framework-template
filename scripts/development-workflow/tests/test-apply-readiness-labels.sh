@@ -174,6 +174,29 @@ case "$*" in
     emit "[{\"total_count\":1,\"workflow_runs\":[${MOCK_WORKFLOW_RUNS:-}]}]"
     exit 0
     ;;
+  *"runs/"*"/logs"*)
+    # Round 17 (PRRT_kwDORWAxaM6m260z): run-log positive-execution check —
+    # MOCK_RUN_LOG_EXIT=1 fails the fetch (no positive evidence); an empty
+    # MOCK_RUN_LOG is a no-op log (grep matches nothing → refuse).
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    [ "${MOCK_RUN_LOG_EXIT:-0}" = "0" ] || exit 1
+    printf '%s\n' "${MOCK_RUN_LOG:-}"
+    exit 0
+    ;;
+  *"commits/"*"--jq"*)
+    # Round 17 (PRRT_kwDORWAxaM6m2607): head push time for the greptile
+    # cycle binding — `gh api repos/<r>/commits/<sha> --jq .commit.committer.date`.
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    emit "${MOCK_HEAD_COMMIT_JSON:-{\"commit\":{\"committer\":{\"date\":\"2026-01-05T00:00:00Z\"}}}}"
+    exit 0
+    ;;
+  *"run view"*)
+    # Round 17 (PRRT_kwDORWAxaM6m260z): the claude-action run log fetch.
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    [ "${MOCK_RUN_LOG_EXIT:-0}" = "0" ] || exit 1
+    printf '%s\n' "${MOCK_RUN_LOG:-}"
+    exit 0
+    ;;
   *"issues/comments/"*"/reactions"*)
     # Round 15 (thread PRRT_kwDORWAxaM6m1pF_): Greptile completion evidence —
     # a bot +1 on the trigger comment. MOCK_GREPTILE_REACTION carries the
@@ -1620,6 +1643,9 @@ run_helper_platform() {
     MOCK_REMOVE_LABEL_EXIT="0" \
     MOCK_GREPTILE_REACTION="${MOCK_GREPTILE_REACTION:-}" \
     MOCK_WORKFLOW_RUNS="${MOCK_WORKFLOW_RUNS:-}" \
+    MOCK_RUN_LOG="${MOCK_RUN_LOG:-}" \
+    MOCK_RUN_LOG_EXIT="${MOCK_RUN_LOG_EXIT:-0}" \
+    MOCK_HEAD_COMMIT_JSON="${MOCK_HEAD_COMMIT_JSON:-}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -1731,6 +1757,12 @@ MOCK_BASE_CONFIG=''
 echo ""
 echo "=== Area 16: PR #1818 codex-github findings, round 15 ==="
 
+# The canonical Codex approved root-comment body, shared by the Area 16 and
+# Area 17 fixtures: verdict sentence + the complete "About Codex in GitHub"
+# details footer, exactly the shape CODEX_APPROVED_TEMPLATES whole-body
+# matches (round 17, PRRT_kwDORWAxaM6m2604).
+_codex_canonical_clean_body='Codex Review: Didn'"'"'t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting "@codex address that feedback". </details>'
+
 # Thread PRRT_kwDORWAxaM6m1pF4: the round-14 COMMENTED umbrella exemption
 # only recognised Bugbot markers, so other comment-only reviewers' BLOCKING
 # bodies skipped classification: run_devin_review() treats a COMMENTED body
@@ -1773,7 +1805,7 @@ run_test "codex_approved_terminal_body_labels_result" "labeled" "$(field "$resul
 # exactly that surface — so with no PR review the verdict must come from
 # there, not refuse reviewer-check-absent forever. Planted failing case 2.
 MOCK_REVIEWS='[]'
-MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":900,"body":"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'` <details> <summary>ℹ️ About Codex in GitHub</summary> ... </details>"}]'
+MOCK_ISSUE_COMMENTS="$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs --arg login 'chatgpt-codex-connector[bot]' '[{user:{login:$login},created_at:"2026-01-03T00:00:00Z",id:900,body:.}]')"
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_root_comment_completion_labels_exit" "0" "${result%%|*}"
 run_test "codex_root_comment_completion_result" "labeled" "$(field "$result" RESULT)"
@@ -1806,6 +1838,16 @@ run_test "greptile_reaction_completion_result" "labeled" "$(field "$result" RESU
 MOCK_GREPTILE_REACTION=''
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_no_reaction_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# Round 17 (PRRT_kwDORWAxaM6m2607): a +1 on a trigger that PREDATES the
+# current head's push certifies the prior head's already-consumed cycle —
+# must refuse. The head committer date (MOCK_HEAD_COMMIT_JSON) is pushed
+# AFTER the trigger's created_at (2026-01-05).
+MOCK_GREPTILE_REACTION="$_greptile_reaction_json"
+MOCK_HEAD_COMMIT_JSON='{"commit":{"committer":{"date":"2026-01-06T00:00:00Z"}}}'
+result="$(run_helper_platform "$_codex_config")"
+run_test "greptile_pre_push_trigger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "greptile_pre_push_trigger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+MOCK_HEAD_COMMIT_JSON=''
 MOCK_ISSUE_COMMENTS='[]'
 
 # Thread PRRT_kwDORWAxaM6m1pGF: the inline-comment scan must be bounded by
@@ -1851,10 +1893,23 @@ run_test "codex_root_comment_blocking_verdict_refuses_exit" "1" "${result%%|*}"
 run_test "codex_root_comment_blocking_verdict_reason" "blocking-findings" "$(field "$result" REASON)"
 run_test "codex_root_comment_blocking_verdict_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 run_test "codex_root_comment_blocking_verdict_annotated" "1" "$(grep -c 'add-label needs-fixes' "$_LABEL_LOG" || true)"
-# The clean sentence AND the head pin together still pass (unchanged behavior).
-MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":911,"body":"Codex Review: Didn'"'"'t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'` <details> ... </details>"}]'
+# The clean sentence AND the head pin together still pass (unchanged
+# behavior) — but round 17 (PRRT_kwDORWAxaM6m2604) requires the body to
+# match the canonical CODEX_APPROVED_TEMPLATES whole-body exact template,
+# not the clean sentence alone. The fixture is the full canonical approved
+# body (verdict sentence + complete "About Codex in GitHub" details
+# footer), defined once in Area 16 (_codex_canonical_clean_body).'Codex Review: Didn'"'"'t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting "@codex address that feedback". </details>'
+MOCK_ISSUE_COMMENTS="$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs --arg login 'chatgpt-codex-connector[bot]' '[{user:{login:$login},created_at:"2026-01-03T00:00:00Z",id:911,body:.}]')"
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_root_comment_clean_verdict_labels_result" "labeled" "$(field "$result" RESULT)"
+# Planted failing case (PRRT_kwDORWAxaM6m2604): the clean sentence PLUS
+# injected blocking text ("Must fix ...") satisfies the round-16 substring
+# match but never the canonical whole-body template — must refuse/block,
+# never label.
+MOCK_ISSUE_COMMENTS="$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs --arg login 'chatgpt-codex-connector[bot]' '[{user:{login:$login},created_at:"2026-01-03T00:00:00Z",id:912,body:(. + " Must fix the guard before merge.")}]')"
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_root_comment_clean_plus_injected_must_fix_reason" "blocking-findings" "$(field "$result" REASON)"
+run_test "codex_root_comment_clean_plus_injected_must_fix_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 
 # Thread PRRT_kwDORWAxaM6m2OtD: claude-code-action passes the allow-list but
 # had no completion adapter, so a successful run read as a permanent
@@ -1867,19 +1922,33 @@ _claude_action_platform_yaml='review:
 MOCK_HEAD_CONFIG="$_claude_action_platform_yaml"
 MOCK_BASE_CONFIG="$_claude_action_platform_yaml"
 MOCK_ISSUE_COMMENTS='[]'
-_claude_run_success='{"id":700,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"success","created_at":"2026-01-06T00:00:00Z"}'
-result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" run_helper_platform "$_codex_config")"
+_claude_run_success='{"id":700,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"success","created_at":"2026-01-06T00:00:00Z","head_sha":"'"$HEAD"'"}'
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
 run_test "claude_action_run_success_labels_exit" "0" "${result%%|*}"
 run_test "claude_action_run_success_result" "labeled" "$(field "$result" RESULT)"
+# Planted failing case (PRRT_kwDORWAxaM6m260w): a successful run bound to a
+# DIFFERENT head certifies that prior head, never the current one — must
+# refuse.
+_claude_run_stale_head='{"id":703,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"success","created_at":"2026-01-06T00:00:00Z","head_sha":"bbbb222000000000000"}'
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_stale_head" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
+run_test "claude_action_run_stale_head_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "claude_action_run_stale_head_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Planted failing case (PRRT_kwDORWAxaM6m260z): conclusion=success alone is
+# not execution proof — a run whose log shows the no-op marker must refuse.
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Context prompt: NO PROMPT' run_helper_platform "$_codex_config")"
+run_test "claude_action_run_noop_success_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# And a run whose log cannot be fetched fails closed too.
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG_EXIT=1 run_helper_platform "$_codex_config")"
+run_test "claude_action_run_unreadable_log_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # Planted failing case 2: a FAILED run must refuse (fail closed).
-_claude_run_failure='{"id":701,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"failure","created_at":"2026-01-06T00:00:00Z"}'
+_claude_run_failure='{"id":701,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"failure","created_at":"2026-01-06T00:00:00Z","head_sha":"'"$HEAD"'"}'
 result="$(MOCK_WORKFLOW_RUNS="$_claude_run_failure" run_helper_platform "$_codex_config")"
 run_test "claude_action_run_failure_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # Planted failing case 3: no run at all must refuse.
 result="$(MOCK_WORKFLOW_RUNS="" run_helper_platform "$_codex_config")"
 run_test "claude_action_no_run_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # An in-progress run is not completion evidence either.
-_claude_run_inprogress='{"id":702,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"in_progress","conclusion":null,"created_at":"2026-01-06T00:00:00Z"}'
+_claude_run_inprogress='{"id":702,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"in_progress","conclusion":null,"created_at":"2026-01-06T00:00:00Z","head_sha":"'"$HEAD"'"}'
 result="$(MOCK_WORKFLOW_RUNS="$_claude_run_inprogress" run_helper_platform "$_codex_config")"
 run_test "claude_action_run_inprogress_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # Blocking review state posted by the bot still blocks a successful run.
@@ -1916,11 +1985,19 @@ MOCK_ISSUE_COMMENTS='[]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_no_comment_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 
-# coderabbit-cli / local-ai-reviewer: deliberately no adapter — their
-# reviewer scripts are read-only against GitHub (no check run, no review, no
-# issue comment), so no verdict is readable. They must refuse with the
-# reviewer-evidence-unreadable reason that NAMES the unreadable surface,
-# not the generic reviewer-check-name-unresolved.
+# coderabbit-cli / local-ai-reviewer (PRRT_kwDORWAxaM6m260s): these
+# reviewers are pure CLI (no check run, no review, no issue comment), so
+# the loop's DURABLE current-head evidence is the reviewer_loop_history.v1
+# ledger posted inside the "Automated Reviewer Loop Summary" issue
+# comment. A current-head clean verdict there labels; anything else —
+# absent summary, stale head, needs_fixes — refuses. The summary comment
+# fixture below carries the marker + json fence the shared extract
+# helpers read.
+_ledger_platform='coderabbit-cli'
+_ledger_entry() {
+  # _ledger_entry <result> <reviewed_head> <iteration>
+  printf '### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\nIteration %s\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{"schema":"reviewer_loop_history.v1","entries":[{"iteration":%s,"updated_at":"2026-01-09T00:00:00Z","platform_results":[{"platform":"%s","result":"%s"}],"reviewed_heads":[{"platform":"%s","reviewed_head":"%s","state":"complete"}]}]}\n```\n' "$3" "$3" "$_ledger_platform" "$1" "$_ledger_platform" "$2"
+}
 MOCK_HEAD_CONFIG='review:
   on_ready:
     github:
@@ -1929,9 +2006,30 @@ MOCK_BASE_CONFIG='review:
   on_ready:
     github:
       - coderabbit-cli'
+# Planted failing case 1 (old code: blanket refusal — clean current-head
+# evidence must label): a clean ledger verdict pinned to the current head.
+MOCK_ISSUE_COMMENTS="$(_ledger_entry clean "$HEAD" 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:930,body:.}]')" 
 result="$(run_helper_platform "$_codex_config")"
-run_test "coderabbit_cli_refuses_reason" "reviewer-evidence-unreadable" "$(field "$result" REASON)"
-run_test "coderabbit_cli_refuses_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "coderabbit_cli_current_head_ledger_labels_exit" "0" "${result%%|*}"
+run_test "coderabbit_cli_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
+# Planted failing case 2: a clean verdict pinned to a DIFFERENT head is
+# stale — must refuse, never label.
+MOCK_ISSUE_COMMENTS="$(_ledger_entry clean bbbb222000000000000 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:931,body:.}]')" 
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_stale_head_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "coderabbit_cli_stale_head_ledger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Planted failing case 3: a needs_fixes verdict on the current head blocks
+# / refuses.
+MOCK_ISSUE_COMMENTS="$(_ledger_entry needs_fixes "$HEAD" 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:932,body:.}]')" 
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_needs_fixes_ledger_refuses_reason" "reviewer-evidence-unreadable" "$(field "$result" REASON)"
+# No summary comment at all → absent evidence, fail closed.
+MOCK_ISSUE_COMMENTS='[]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_no_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# local-ai-reviewer: the same ledger mechanism (one representative case:
+# current-head clean labels; the round-16 blanket refusal is gone).
+_ledger_platform='local-ai-reviewer'
 MOCK_HEAD_CONFIG='review:
   on_ready:
     github:
@@ -1940,8 +2038,9 @@ MOCK_BASE_CONFIG='review:
   on_ready:
     github:
       - local-ai-reviewer'
+MOCK_ISSUE_COMMENTS="$(_ledger_entry clean "$HEAD" 3 | jq -Rs '[{user:{login:"acme-bot"},created_at:"2026-01-09T00:00:00Z",id:933,body:.}]')" 
 result="$(run_helper_platform "$_codex_config")"
-run_test "local_ai_reviewer_refuses_reason" "reviewer-evidence-unreadable" "$(field "$result" REASON)"
+run_test "local_ai_reviewer_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
 MOCK_ISSUE_COMMENTS='[]'
 
 echo ""

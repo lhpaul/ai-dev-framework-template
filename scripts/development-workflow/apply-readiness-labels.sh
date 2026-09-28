@@ -250,6 +250,22 @@ reviewer_check_name_for_platform() {
 comment_only_reviewer_verdict() {
   local platform_arg="$1" bot_login_arg="$2"
   local reviews_json latest_review
+  # Round 17 (PRRT_kwDORWAxaM6m260s): the coderabbit-cli / local-ai-reviewer
+  # ledger adapter may have ALREADY resolved this platform's verdict before
+  # this function was entered (the loop's persisted reviewer_loop_history.v1
+  # ledger is the platform's one current-head-pinned durable evidence
+  # surface). Its outcomes short-circuit the review fetch entirely.
+  if [ "${_adapter_run_head_sha:-}" = "$head_sha" ] && [ "${_adapter_run_platform:-}" = "$platform_arg" ]; then
+    if [ "${_adapter_ledger_clean:-0}" = "1" ]; then
+      reviewer_started_at="${_adapter_ledger_started_at:-}"
+      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg"
+      return
+    fi
+    result="refused"
+    reason="${_adapter_refusal_reason:-reviewer-evidence-unreadable}"
+    reviewer_report="$platform_arg"
+    refuse "$reason"
+  fi
   if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate --slurp 2>/dev/null)"; then
     escalate review-fetch-failed
   fi
@@ -312,6 +328,223 @@ comment_only_reviewer_verdict() {
   count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$inline_bound" "$platform_arg"
 }
 
+# codex_root_comment_body_is_approved <body> — round 17 (PRRT_kwDORWAxaM6m2604).
+# The canonical Codex clean classifier, replicated EXACTLY (with provenance)
+# from codex-github-reviewer.sh rather than invented here: the loop script
+# sources codex-github-evidence-lib.sh at line 93 with no library-mode gate
+# (its $0 argv parsing would break under a `source`), so the
+# CODEX_APPROVED_TEMPLATES / codex_response_is_approved definitions are
+# reproduced byte-for-byte below. Provenance: codex-github-reviewer.sh
+# CODEX_APPROVED_TEMPLATES (~line 823), codex_response_is_approved (~line
+# 842), CODEX_BLOCKING_PATTERN (~lines 475-521),
+# codex_normalize_whitespace (~line 725), codex_strip_quoted_spans /
+# codex_strip_not_only_idiom / codex_response_is_blocking (~lines 640-685).
+# DO NOT simplify this into a substring test: the classifier's guarantee is
+# that the ENTIRE body, whitespace-normalized, reproduces the approved
+# template exactly — a clean sentence plus injected blocking text
+# ("Must fix ...") matches the sentence but never the whole-body template,
+# and blocking markers are checked FIRST so a disguised rejection always
+# loses.
+CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
+CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|was[[:space:]]+not|wasn.t|were[[:space:]]+not|weren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|would[[:space:]]+not|wouldn.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|has[[:space:]]+not|hasn.t|have[[:space:]]+not|haven.t|had[[:space:]]+not|hadn.t|should[[:space:]]+not|shouldn.t|must[[:space:]]+not|mustn.t|never|unable[[:space:]]+to)'
+CODEX_MERGE_REFUSAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*(be[[:space:]]+)?merged?"
+CODEX_BLOCKING_PATTERN="${CODEX_BLOCKING_PATTERN%)}|${CODEX_MERGE_REFUSAL_PATTERN})"
+
+codex_normalize_whitespace() {
+  local text
+  text=$(tr '\n\t\r' '   ' <<< "$1" | tr -s ' ')
+  sed -E 's/^ //; s/ $//' <<< "$text"
+}
+
+codex_strip_not_only_idiom() {
+  local body="$1"
+  sed -E 's/[Nn][Oo][Tt][[:space:]]+[Oo][Nn][Ll][Yy]//g' <<< "$body"
+}
+
+# Strip quoted spans (straight double-quotes, single-quotes, and backtick
+# pairs; blockquote lines deleted first), replicated EXACTLY from
+# codex-github-reviewer.sh's codex_strip_quoted_spans — the blocking
+# classifier runs on the stripped body so quoted example text does not
+# produce a blocking false positive. Provenance: codex-github-reviewer.sh
+# ~lines 594-640.
+codex_strip_quoted_spans() {
+  local body="$1"
+  local sq="'"
+  local no_blockquotes
+  no_blockquotes=$(sed -E '/^[[:space:]]*>/d' <<< "$body")
+  local nl_placeholder=$'\x01'
+  local flattened stripped
+  flattened=$(printf '%s' "$no_blockquotes" | tr '\n' "$nl_placeholder")
+  stripped=$(sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; s/(^|[[:space:]]|${nl_placeholder})${sq}[^${sq}]*${sq}([[:space:].,;:!?]|${nl_placeholder}|\$)/\\1\\2/g" <<< "$flattened")
+  printf '%s' "$stripped" | tr "$nl_placeholder" '\n'
+}
+
+codex_response_is_blocking() {
+  local body="$1" normalized_body
+  normalized_body=$(codex_strip_not_only_idiom "$(codex_strip_quoted_spans "$body")")
+  grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$normalized_body"
+}
+
+CODEX_APPROVED_TEMPLATES=(
+  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,40} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+)
+
+codex_response_is_approved() {
+  local body="$1" normalized template
+  normalized=$(codex_normalize_whitespace "$body")
+  for template in "${CODEX_APPROVED_TEMPLATES[@]}"; do
+    if grep -qE "$template" <<< "$normalized"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Blocking-first canonical order (codex-github-reviewer.sh's tiering): a
+# blocking marker always wins over an approval, and approval requires the
+# whole-body exact-template match.
+codex_root_comment_body_is_approved() {
+  local body="$1"
+  [ -n "$body" ] || return 1
+  if codex_response_is_blocking "$body"; then
+    return 1
+  fi
+  codex_response_is_approved "$body"
+}
+
+# claude_action_run_log_shows_execution <run_id> — round 17
+# (PRRT_kwDORWAxaM6m260z). Mirrors claude-code-action-reviewer.sh's
+# verify_claude_code_action_run_log + classify_claude_code_action_log
+# acceptance (the call at its line ~413-417): a successful Actions run is
+# not proof Claude actually reviewed — claude-code-action exits
+# successfully on a no-op (no prompt/trigger). The run log is fetched and
+# classified with the same patterns: "noop" (1) and "unknown" (2) both
+# fail closed here (return 1); only an explicit execution marker
+# ("Trigger result: true" / a context prompt, with no NO PROMPT marker)
+# passes. A log-fetch failure also returns 1 (no positive evidence — fail
+# closed, never a pass), mirroring verify_claude_code_action_run_log's
+# UNAVAILABLE verdict.
+claude_action_run_log_shows_execution() {
+  local run_id_arg="$1"
+  local run_log run_log_status
+  run_log="$(mktemp)" || return 1
+  run_log_status=0
+  # Same fetch as verify_claude_code_action_run_log (claude-code-action-
+  # reviewer.sh): `gh run view --log`, not the raw logs-download API (which
+  # returns a zip). A fetch failure means no positive execution evidence —
+  # fail closed (its UNAVAILABLE verdict), never a pass.
+  gh run view "$run_id_arg" --repo "$repo" --log >"$run_log" 2>/dev/null || run_log_status=$?
+  if [ "$run_log_status" -ne 0 ]; then
+    rm -f "$run_log"
+    return 1
+  fi
+  # classify_claude_code_action_log, verbatim patterns.
+  if grep -Eqi 'Context prompt: NO PROMPT|Trigger result: false|No trigger found, skipping remaining steps|"prompt": ""' "$run_log"; then
+    rm -f "$run_log"
+    return 1
+  fi
+  if grep -Eqi 'Trigger result: true|Context prompt: .+' "$run_log" \
+      && ! grep -Eqi 'Context prompt: NO PROMPT' "$run_log"; then
+    rm -f "$run_log"
+    return 0
+  fi
+  rm -f "$run_log"
+  return 1
+}
+
+# coderabbit_cli_local_ai_ledger_verdict <platform> — round 17
+# (PRRT_kwDORWAxaM6m260s). The loop's DURABLE current-head evidence for the
+# two pure-CLI ready-phase reviewers (coderabbit-cli, local-ai-reviewer):
+# their verdicts persist in the reviewer_loop_history.v1 ledger the loop
+# posts as (part of) the "### Automated Reviewer Loop Summary" issue
+# comment (workflow-lib.sh's shared render/extract helpers —
+# REVIEWER_LOOP_HISTORY_MARKER "<!-- reviewer-loop-history:v1 -->",
+# reviewer_loop_history_extract_latest_json,
+# reviewer_loop_history_select_latest_summary_record). Each entry's
+# platform_results[] carries {platform, result} and the SAME entry's
+# reviewed_heads[] carries that platform's reviewed_head — exactly the
+# head-pinned per-platform verdict pr-review-loop.sh's own
+# reviewer_loop_platform_clean_for_head (#1692) replays clean verdicts
+# from, so this is the loop's canonical current-head-pinned surface, not
+# a new one. A current-head clean entry (newest for the platform, result
+# "clean", reviewed_head == current head) sets _adapter_ledger_clean=1 and
+# the entry's updated_at as the findings-window start; anything else —
+# absent evidence, a verdict on another head, a not-clean verdict, or an
+# unreadable ledger — refuses. Never a silent pass. The bot_login for both
+# platforms is empty (workflow-lib.sh bot_login_for_platform), so the
+# findings scan for a clean ledger verdict finds nothing (that is the
+# round-16 semantics: these reviewers post no GitHub findings surface).
+coderabbit_cli_local_ai_ledger_verdict() {
+  local platform_arg="$1"
+  _adapter_run_head_sha="$head_sha"
+  _adapter_run_platform="$platform_arg"
+  _adapter_ledger_clean=0
+  _adapter_refusal_reason="reviewer-evidence-unreadable"
+  _adapter_ledger_started_at=""
+  local summary_record ledger_body ledger_started_at payload verdict outcome verdict_head
+  if ! summary_record="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null | jq -c '
+        [ .[]?[]
+          | select(
+              (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+              (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+            )
+        ]
+        | sort_by(.created_at)
+        | last
+      ' 2>/dev/null)" || [ -z "$summary_record" ] || [ "$summary_record" = "null" ] || [ "$summary_record" = "false" ]; then
+    # No summary comment, or a fetch/parse failure: absent evidence — the
+    # generic absent refusal, matching the comment-only verdict path.
+    _adapter_refusal_reason="reviewer-check-absent"
+    return
+  fi
+  ledger_started_at="$(printf '%s\n' "$summary_record" | jq -r '.created_at // ""' 2>/dev/null)"
+  ledger_body="$(printf '%s\n' "$summary_record" | jq -r '.body // ""' 2>/dev/null)"
+  payload="$(printf '%s\n' "$ledger_body" | reviewer_loop_history_extract_latest_json 2>/dev/null)"
+  [ -n "$payload" ] || { _adapter_refusal_reason="reviewer-check-absent"; return; }
+  if ! printf '%s\n' "$payload" | jq -e --arg schema "reviewer_loop_history.v1" \
+        '.schema == $schema and ((.entries | type) == "array")' >/dev/null 2>&1; then
+    _adapter_refusal_reason="reviewer-evidence-unreadable"
+    return
+  fi
+  verdict="$(printf '%s\n' "$payload" | jq -c --arg platform "$platform_arg" '
+      . as $root
+      | (.entries // []) as $entries
+      | [ $entries[]
+          | . as $entry
+          | ((.platform_results // [])[]
+             | select(.platform == $platform)
+             | {outcome: (.result // "unknown"),
+                head_sha: (
+                  ($entry.reviewed_heads // [])
+                  | map(select(.platform == $platform))
+                  | last
+                  | .reviewed_head // ""
+                ),
+                iteration: ($entry.iteration // 0)})
+        ] as $verdicts
+      | if ($verdicts | length) > 0 then
+          ($verdicts | sort_by(.iteration) | last)
+        else
+          {outcome: "not_yet_run", head_sha: "", iteration: 0}
+        end
+      ' 2>/dev/null)" || verdict=""
+  [ -n "$verdict" ] && [ "$verdict" != "null" ] || { _adapter_refusal_reason="reviewer-evidence-unreadable"; return; }
+  outcome="$(printf '%s\n' "$verdict" | jq -r '.outcome // "unknown"' 2>/dev/null)"
+  verdict_head="$(printf '%s\n' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)"
+  case "$outcome" in
+    clean) ;;
+    not_yet_run|unknown) _adapter_refusal_reason="reviewer-check-absent"; return ;;
+    *) _adapter_refusal_reason="reviewer-evidence-unreadable"; return ;;
+  esac
+  if [ -z "$verdict_head" ] || [ "$verdict_head" != "$head_sha" ]; then
+    # Clean, but on another head (or no head recorded) — stale evidence.
+    _adapter_refusal_reason="reviewer-check-absent"
+    return
+  fi
+  _adapter_ledger_started_at="${ledger_started_at:-}"
+  _adapter_ledger_clean=1
+}
+
 # comment_only_completion_evidence <platform> <bot_login> — round 15 (PR
 # #1818 thread PRRT_kwDORWAxaM6m1pF_): non-review completion evidence for
 # hosted comment-only reviewers, mirroring exactly what the loop's own
@@ -341,16 +574,16 @@ comment_only_reviewer_verdict() {
 #     head SHA, classified by the same label rules _pr_agent_classify
 #     applies ("No major issues detected" clean; hard-blocker focus-area
 #     labels needs-fixes; unreadable section needs-fixes).
-#   - coderabbit-cli / local-ai-reviewer: NO adapter, deliberately. Both
-#     reviewer scripts are pure-CLI readers (coderabbit-cli-reviewer.sh and
-#     local-ai-reviewer.sh make no `gh api` write call — only `gh pr view`
-#     / `gh pr diff`), so neither leaves a readable GitHub surface a label
-#     gate could verify: their verdicts exist only in the loop's key=value
-#     stdout and its reviewer_loop_history.v1 ledger comment, neither of
-#     which is a per-head reviewer verdict this helper trusts. They refuse
-#     reviewer-evidence-unreadable (a named refusal, not the generic
-#     unresolved-name reason), preserving fail-closed semantics for
-#     genuinely absent evidence.
+#   - coderabbit-cli / local-ai-reviewer: both reviewer scripts are pure-CLI
+#     readers (coderabbit-cli-reviewer.sh and local-ai-reviewer.sh make no
+#     `gh api` write call — only `gh pr view` / `gh pr diff`), so neither
+#     leaves a review/comment/issue-comment surface of its own; since round
+#     17 (PRRT_kwDORWAxaM6m260s) their ONE readable durable surface — the
+#     loop's reviewer_loop_history.v1 ledger — IS consumed: a
+#     current-head-pinned clean verdict from that ledger (the same
+#     #1692-per-head replay evidence pr-review-loop.sh trusts) passes,
+#     and absent/stale/not-clean/unreadable ledger evidence still refuses
+#     fail-closed (reviewer-check-absent / reviewer-evidence-unreadable).
 # On a clean match: sets reviewer_started_at (the evidence's timestamp —
 # the comment's created_at / the trigger comment's created_at / the run's
 # created_at, the same window start the loop scans findings from) and
@@ -401,17 +634,17 @@ comment_only_completion_evidence() {
         token="$(printf '%s\n' "$body" | sed -n 's/.*Reviewed commit:\{0,1\}[^`]*`\([^`]*\)`.*/\1/p' | tail -n1)"
         [ -n "$token" ] || continue
         if [ "${head_sha#"$token"}" != "$head_sha" ] || [ "${token#"$head_sha"}" != "$token" ]; then
-          # SHA-pinned terminal evidence — the verdict sentence decides:
-          # the approved clean sentence passes; any other SHA-pinned body
-          # is the classifier's needs-fixes / unrecognized safe-fail
-          # (codex-github-reviewer.sh checks blocking markers FIRST, then
-          # requires the whole approved template).
-          case "$body" in
-            *"Didn't find any major issues"*)
-              reviewer_started_at="$created"
-              return 0
-              ;;
-          esac
+          # SHA-pinned terminal evidence — the verdict is classified with
+          # codex-github-reviewer.sh's CANONICAL classifier, not a substring
+          # test (PRRT_kwDORWAxaM6m2604): a body carrying the clean sentence
+          # PLUS injected/later blocking text ("Must fix ...") passes the
+          # sentence but never the canonical whole-body exact-template match.
+          # codex_root_comment_body_is_approved below mirrors the canonical
+          # blocking-first, approved-template-exact order.
+          if codex_root_comment_body_is_approved "$body"; then
+            reviewer_started_at="$created"
+            return 0
+          fi
           return 2
         fi
       done <<< "$entries"
@@ -422,16 +655,24 @@ comment_only_completion_evidence() {
       # workflow_dispatch run of the configured workflow file, PR-scoped by
       # run-name when any candidate carries one (concurrent dispatch — the
       # #808 run-name mechanism), newest by created_at, status=completed
-      # AND conclusion=success. Fail closed: absent, in-progress, or
-      # failed runs return 1 (reviewer-check-absent), never a pass.
-      local runs_json selected run_created
+      # AND conclusion=success — AND, since round 17, bound to the current
+      # head and verified to have actually run (PRRT_kwDORWAxaM6m260w /
+      # PRRT_kwDORWAxaM6m260z): the run's head_sha (the Actions runs API
+      # carries it — the field claude-code-action-reviewer.sh's Phase 1
+      # selection has always dispatched against) must equal the current
+      # head, and the run log must carry a positive execution marker, the
+      # same classify_claude_code_action_log acceptance
+      # claude-code-action-reviewer.sh:413-417 applies through
+      # verify_claude_code_action_run_log (no-op successes are real).
+      # Fail closed: absent, in-progress, failed, stale-head, or no-op
+      # runs return 1 (reviewer-check-absent), never a pass.
+      local runs_json selected run_created run_head run_id
       runs_json="$(gh api "repos/$repo/actions/runs?event=workflow_dispatch&per_page=100" --paginate --slurp 2>/dev/null)" \
         || escalate workflow-run-fetch-failed
       selected="$(printf '%s\n' "${runs_json:-[]}" | jq -c --arg wf "${CLAUDE_CODE_ACTION_WORKFLOW_FILE:-claude-code-review.yml}" --arg pr "$pr_number" '
           [ .[]?[]?[]? | objects ]
           | [ .[] | select(((.path // "")) | endswith($wf)) ] as $candidates
-          | ([ $candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?) ] | length > 0) as $name_scoped
-          | ($candidates | if $name_scoped then
+          | ($candidates | if ([ $candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?) ] | length > 0) then
               [ .[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr) ]
             else . end)
           | sort_by(.created_at)
@@ -443,6 +684,21 @@ comment_only_completion_evidence() {
           || [ "$(printf '%s\n' "$selected" | jq -r '.conclusion // ""')" != "success" ]; then
         return 1
       fi
+      # Round 17 (PRRT_kwDORWAxaM6m260w): a successful run whose head_sha is
+      # not the current head is STALE — it certifies a prior (already
+      # superseded) head, never the unreviewed new one.
+      run_head="$(printf '%s\n' "$selected" | jq -r '.head_sha // ""')"
+      [ -n "$run_head" ] || return 1
+      [ "$run_head" = "$head_sha" ] || return 1
+      # Round 17 (PRRT_kwDORWAxaM6m260z): conclusion=success alone is not
+      # proof the reviewer actually ran — claude-code-action exits
+      # successfully on a no-op (no prompt/trigger). Fetch the run log and
+      # apply the SAME acceptance verify_claude_code_action_run_log applies
+      # (classify_claude_code_action_log): fail closed on a no-op, an
+      # unreadable, or an execution-marker-less log.
+      run_id="$(printf '%s\n' "$selected" | jq -r '.id // ""')"
+      [ -n "$run_id" ] || return 1
+      claude_action_run_log_shows_execution "$run_id" || return 1
       run_created="$(printf '%s\n' "$selected" | jq -r '.created_at // ""')"
       reviewer_started_at="$run_created"
       return 0
@@ -502,13 +758,28 @@ comment_only_completion_evidence() {
       return 1
       ;;
     greptile)
-      trigger="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c '
+      # Round 17 (PRRT_kwDORWAxaM6m2607): the trigger must belong to the
+      # CURRENT review cycle — run_greptile_review clears an already-reacted
+      # recent trigger and posts a new one, so a `+1` on a trigger that
+      # PREDATES the current head's push certifies the prior head's already-
+      # consumed cycle, not this head. The binding is the trigger's
+      # created_at vs the head's push time: the head commit's committer
+      # date is read from the commits API (the same field
+      # run_greptile_review itself reads as its findings-window bound,
+      # `commits/$head_sha` `.commit.committer.date`). A trigger older
+      # than that timestamp cannot certify the new head — fail closed.
+      local head_push_time
+      head_push_time="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)" \
+        || escalate head-commit-fetch-failed
+      [ -n "$head_push_time" ] || escalate head-commit-parse-failed
+      trigger="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --arg since "$head_push_time" '
         [ .[]?[]
           | select(((.body // "") == "@greptile review"))
           | {id: (.id // 0), created_at: (.created_at // "")}
         ]
         | sort_by(.created_at)
         | last // empty
+        | select(((.created_at // "") >= $since))
       ' 2>/dev/null)"
       [ -n "$trigger" ] || return 1
       local trigger_id
@@ -891,15 +1162,23 @@ esac
 # pr-review-loop.sh platform set (.ai-dev-workflow.yaml's on_ready comment)
 # minus the check-run-bearing three (haystack/bugbot/ronda) and the two
 # pure-CLI no-GitHub-surface ones (coderabbit-cli, local-ai-reviewer — both
-# reviewer scripts are read-only against GitHub, so no adapter can exist;
-# they refuse reviewer-evidence-unreadable, a named refusal for the
-# platform's unreadable surface, not the generic unresolved-name reason —
-# round 16, thread PRRT_kwDORWAxaM6m2OtK). pr-agent posts its verdict as a
+# reviewer scripts are read-only against GitHub, so the verdict comes from
+# the loop's reviewer_loop_history.v1 ledger, the surface their own loop
+# persists; since round 17 a current-head-pinned clean ledger entry passes
+# and anything else refuses — see
+# coderabbit_cli_local_ai_ledger_verdict). pr-agent posts its verdict as a
 # bot issue comment, so its completion adapter reads that surface (the same
 # one run_pr_agent_review reads). An unknown string still refuses
 # reviewer-check-name-unresolved above, which is the typo guard.
 supported_comment_only_reviewer_platform() {
   case "$1" in
+    # Round 17: coderabbit-cli / local-ai-reviewer are LEDGER-read platforms
+    # — the main gate's verdict comes from the loop's
+    # reviewer_loop_history.v1 ledger
+    # (coderabbit_cli_local_ai_ledger_verdict), not from a bot review or a
+    # completion adapter — but they are documented supported platforms, so
+    # the typo guard must not fire for them.
+    coderabbit-cli|local-ai-reviewer) return 0 ;;
     codex-github|coderabbit|claude-code-action|copilot|devin|greptile|pr-agent) return 0 ;;
     *) return 1 ;;
   esac
@@ -989,19 +1268,17 @@ while IFS= read -r platform; do
   # through this helper, so the fail-closed default became a permanent refusal
   # even though pr-review-loop.sh fully supports those platforms (PR #1818
   # thread PRRT_kwDORWAxaM6m1Dec).
-  # Round 16 (thread PRRT_kwDORWAxaM6m2OtK): coderabbit-cli and
-  # local-ai-reviewer are documented, dispatchable ready-phase platforms
-  # whose reviewer scripts leave NO readable GitHub evidence surface
-  # (pure-CLI readers; no check run, no review, no issue comment), so no
-  # verdict can be read. Refuse with a reason that names that unreadable
-  # surface instead of the generic unresolved-name reason — and never a
-  # silent pass (fail closed, same as absent evidence).
+  # Round 16 named this surface; round 17 (thread PRRT_kwDORWAxaM6m260s)
+  # consumes it: coderabbit-cli and local-ai-reviewer are documented,
+  # dispatchable ready-phase platforms whose reviewer scripts leave no
+  # review/comment surface of their own (pure-CLI readers), so their
+  # verdict is read from the loop's persisted reviewer_loop_history.v1
+  # ledger — a current-head-pinned clean entry passes, and absent/stale/
+  # not-clean/unreadable ledger evidence refuses fail-closed. Never a
+  # silent pass.
   case "$platform" in
     coderabbit-cli|local-ai-reviewer)
-      result="refused"
-      reason="reviewer-evidence-unreadable"
-      reviewer_report="$platform"
-      refuse "reviewer-evidence-unreadable"
+      coderabbit_cli_local_ai_ledger_verdict "$platform"
       ;;
   esac
   # Fail closed for an unsupported/unknown platform string (a typo or an
@@ -1263,14 +1540,19 @@ revalidate_reviewer_state() {
     # closed, never a silent pass).
     if [ -z "$check_name_arg" ]; then
       if [ "$platform_arg" = "coderabbit-cli" ] || [ "$platform_arg" = "local-ai-reviewer" ]; then
-        # Round 16 (thread PRRT_kwDORWAxaM6m2OtK): the main gate already
-        # refused these (reviewer-evidence-unreadable); the revalidation
-        # loop only reaches them when the platform list changed mid-run.
-        # Same named refusal, fail closed.
-        result="refused"
-        reason="reviewer-evidence-unreadable"
-        reviewer_report="$platform_arg"
-        refuse "reviewer-evidence-unreadable"
+        # Round 17 (thread PRRT_kwDORWAxaM6m260s): re-run the ledger adapter
+        # on the same durable surface the main gate gated on — the ledger
+        # comment body is mutable, so the current-head clean verdict is
+        # re-read, not remembered. A changed/stale ledger refuses here
+        # (reviewer-state-changed at the caller).
+        coderabbit_cli_local_ai_ledger_verdict "$platform_arg"
+        if [ "$_adapter_ledger_clean" != "1" ]; then
+          result="refused"
+          reason="${_adapter_refusal_reason:-reviewer-evidence-unreadable}"
+          reviewer_report="$platform_arg"
+          refuse "${_adapter_refusal_reason:-reviewer-evidence-unreadable}"
+        fi
+        continue
       fi
       if ! supported_comment_only_reviewer_platform "$platform_arg"; then
         continue
