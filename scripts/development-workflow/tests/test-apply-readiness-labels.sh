@@ -90,7 +90,10 @@ case "$*" in
     ;;
   *"pr view"*"--json headRefOid --jq"*)
     # Pre-apply head revalidation. MOCK_REVALIDATE_HEAD simulates a push
-    # landing between the state read and the label mutation.
+    # landing between the state read and the label mutation. Logged to a
+    # separate call log (not MOCK_GH_LOG, which counts `pr edit` calls only)
+    # so the later arms can tell the revalidation fetches from the first.
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     if [ -n "${MOCK_REVALIDATE_HEAD:-}" ]; then
       printf '%s\n' "$MOCK_REVALIDATE_HEAD"
     else
@@ -100,7 +103,10 @@ case "$*" in
     ;;
   *"pr view"*"--json labels,headRefOid"*)
     # Post-apply verification. MOCK_POST_APPLY_HEAD simulates a push landing
-    # during the mutation itself.
+    # during the mutation itself; MOCK_POST_VIEW_EXIT simulates the read
+    # failing after `--add-label` already succeeded (PR #1818 finding 3,
+    # round 5).
+    [ "${MOCK_POST_VIEW_EXIT:-0}" = "0" ] || exit 1
     if [ -n "${MOCK_LABEL_STATE:-}" ] && [ -s "$MOCK_LABEL_STATE" ]; then
       labels_json="$(jq -R -s '{labels: [split("\n")[] | select(. != "") | {name: .}]}' <"$MOCK_LABEL_STATE")"
     else
@@ -119,7 +125,16 @@ case "$*" in
     exit 0
     ;;
   *"pr view"*"--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup"*)
-    emit "${MOCK_PR_JSON:-$pr_default}"
+    # First fetch (state read) vs the pre-apply revalidation fetch: once the
+    # head-revalidate call has run, MOCK_REVALIDATE_PR_JSON (if set) replaces
+    # the payload — it simulates a CI check re-triggered on the same head
+    # after the verdicts were read (PR #1818 finding 2, round 5).
+    if [ -n "${MOCK_REVALIDATE_PR_JSON:-}" ] \
+        && grep -q 'pr view 42 --repo acme/widgets --json headRefOid --jq' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
+      emit "$MOCK_REVALIDATE_PR_JSON"
+    else
+      emit "${MOCK_PR_JSON:-$pr_default}"
+    fi
     exit 0
     ;;
   *"pr view"*)
@@ -130,7 +145,19 @@ case "$*" in
     [ "${MOCK_CHECK_RUNS_EXIT:-0}" = "0" ] || exit 1
     # The helper fetches with `--paginate --slurp`, so gh returns an array of
     # pages. MOCK_CHECK_RUNS may carry several comma-separated page objects.
-    emit "[${MOCK_CHECK_RUNS:-$check_runs_default}]"
+    # MOCK_REVALIDATE_CHECK_RUNS (if set) replaces the payload from the second
+    # fetch on: it simulates a check run re-triggered on the same head after
+    # the verdicts were read (PR #1818 finding 2, round 5).
+    # Decide BEFORE appending this call to the log, so the first fetch always
+    # sees a log with no prior /check-runs call and gets MOCK_CHECK_RUNS.
+    if [ -n "${MOCK_REVALIDATE_CHECK_RUNS:-}" ] \
+        && grep -q '/check-runs' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
+      payload="[${MOCK_REVALIDATE_CHECK_RUNS}]"
+    else
+      payload="[${MOCK_CHECK_RUNS:-$check_runs_default}]"
+    fi
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    emit "$payload"
     exit 0
     ;;
   *"/pulls/"*"/comments"*)
@@ -155,8 +182,7 @@ case "$*" in
     [ "${MOCK_BASE_CONFIG_EXIT:-0}" = "0" ] || exit 1
     content="$(printf '%s\n' "${MOCK_BASE_CONFIG:-review:
   on_ready:
-    github:
-      - bugbot}" | base64)"
+    github: []}" | base64)"
     emit "{\"content\":\"$content\"}"
     exit 0
     ;;
@@ -189,6 +215,7 @@ HEAD='aaaa111000000000000'
 BASE_SHA='dddd444000000000000'
 _BRANCH='fix/1408-demo'
 _LABEL_LOG="$TMP_ROOT/gh-calls.log"
+_CALL_LOG="$TMP_ROOT/gh-all-calls.log"
 _LABEL_STATE="$TMP_ROOT/label-state"
 
 # run_helper — prints "<exit_code>|<stdout>". Payloads come from the MOCK_*
@@ -199,11 +226,13 @@ run_helper() {
   local label="${MOCK_LABEL:-ready-for-human-review}"
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
+  : >"$_CALL_LOG"
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
     AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/workflow.yaml" \
     MOCK_GH_LOG="$_LABEL_LOG" \
+    MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
     MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
     MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
@@ -219,6 +248,9 @@ run_helper() {
     MOCK_BASE_SHA="$BASE_SHA" \
     MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
     MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
+    MOCK_REVALIDATE_CHECK_RUNS="${MOCK_REVALIDATE_CHECK_RUNS:-}" \
+    MOCK_REVALIDATE_PR_JSON="${MOCK_REVALIDATE_PR_JSON:-}" \
+    MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -561,10 +593,12 @@ run_helper_no_local_config() {
   local label="${MOCK_LABEL:-ready-for-human-review}"
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
+  : >"$_CALL_LOG"
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
     MOCK_GH_LOG="$_LABEL_LOG" \
+    MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
     MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
     MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
@@ -580,6 +614,9 @@ run_helper_no_local_config() {
     MOCK_BASE_SHA="$BASE_SHA" \
     MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
     MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
+    MOCK_REVALIDATE_CHECK_RUNS="${MOCK_REVALIDATE_CHECK_RUNS:-}" \
+    MOCK_REVALIDATE_PR_JSON="${MOCK_REVALIDATE_PR_JSON:-}" \
+    MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -747,6 +784,115 @@ MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","co
 result="$(run_helper)"
 run_test "unexpected_conclusion_reason" "reviewer-check-unknown-conclusion" "$(field "$result" REASON)"
 MOCK_CHECK_RUNS="$_bugbot_ok"
+
+echo ""
+echo "=== Area 10: PR #1818 Codex findings, round 5 ==="
+
+# Reset to the clean default before the planted cases.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+
+# Finding 1 (P1): the base-and-head reviewer union. The round-4 fix only
+# fetched the base policy when the head list was empty, so a PR that
+# *replaced* a base-configured reviewer (base `ronda` -> head `bugbot`)
+# never fetched the base config and silently waived the base-configured
+# reviewer. The union must gate BOTH: the "Ronda review" check run is absent
+# here, so the label must refuse as reviewer-check-absent, not apply after a
+# clean Bugbot verdict alone. Planted failing case for the round-5 fix.
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - bugbot'
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
+MOCK_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper_no_local_config)"
+run_test "base_head_union_missing_base_reviewer_exit" "1" "${result%%|*}"
+run_test "base_head_union_missing_base_reviewer_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "base_head_union_missing_base_reviewer_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Both union members clean: the base reviewer's check run is present and
+# clean alongside the head reviewer's, so the label applies. Union gating
+# must not over-refuse a legitimate multi-reviewer policy.
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"},{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper_no_local_config)"
+run_test "base_head_union_both_clean_exit" "0" "${result%%|*}"
+run_test "base_head_union_both_clean_result" "labeled" "$(field "$result" RESULT)"
+run_test "base_head_union_names_both" "Ronda review,Cursor Bugbot" "$(field "$result" REVIEWER_REPORT)"
+# The base-config fetch now runs on EVERY implementation-PR invocation (not
+# only when the head list is empty), so a failed base fetch must escalate
+# even though the head policy is nonempty.
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_BASE_CONFIG_EXIT=1
+result="$(run_helper_no_local_config)"
+MOCK_BASE_CONFIG_EXIT=0
+run_test "nonempty_head_base_fetch_failure_escalates_exit" "2" "${result%%|*}"
+run_test "nonempty_head_base_fetch_failure_reason" "base-config-unreadable" "$(field "$result" REASON)"
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+MOCK_CHECK_RUNS="$_bugbot_ok"
+
+# Finding 2 (P1): stale check state at apply time. A reviewer check run
+# re-triggered on the SAME head after the verdicts were read (success ->
+# in_progress) must refuse: re-checking only `headRefOid` applied the label
+# from stale success data. The stub serves MOCK_CHECK_RUNS for the verdict
+# fetch and MOCK_REVALIDATE_CHECK_RUNS for the pre-apply revalidation fetch.
+MOCK_REVALIDATE_CHECK_RUNS="$_bugbot_running"
+result="$(run_helper)"
+run_test "reviewer_rerun_stale_success_exit" "1" "${result%%|*}"
+run_test "reviewer_rerun_stale_success_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+run_test "reviewer_rerun_stale_success_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+MOCK_REVALIDATE_CHECK_RUNS="$_bugbot_failed"
+result="$(run_helper)"
+run_test "reviewer_rerun_failure_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+MOCK_REVALIDATE_CHECK_RUNS=''
+# A clean revalidation payload must keep labelling (regression guard: the
+# re-fetch must not refuse a still-clean state).
+MOCK_REVALIDATE_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper)"
+run_test "clean_revalidation_still_labels" "labeled" "$(field "$result" RESULT)"
+MOCK_REVALIDATE_CHECK_RUNS=''
+# CI rerun mid-run: the pre-apply statusCheckRollup re-read must still
+# satisfy the same pending/failing rule the main gate applied.
+MOCK_REVALIDATE_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
+result="$(run_helper)"
+run_test "ci_rerun_pending_refuses_exit" "1" "${result%%|*}"
+run_test "ci_rerun_pending_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+run_test "ci_rerun_pending_refuses_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# A reviewer check run that has DISAPPEARED by revalidation time (re-run
+# deleted, or the re-fetch returns no runs) is no longer a completed clean
+# run, so the label must refuse rather than trust the earlier verdict.
+MOCK_REVALIDATE_PR_JSON=''
+MOCK_REVALIDATE_CHECK_RUNS='{"check_runs":[]}'
+result="$(run_helper)"
+run_test "unreadable_revalidation_refuses_exit" "1" "${result%%|*}"
+run_test "unreadable_revalidation_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+MOCK_REVALIDATE_CHECK_RUNS=""
+MOCK_CHECK_RUNS="$_bugbot_ok"
+
+# Finding 3 (P2): no label removal on post-apply escalation. Only the
+# head-mismatch path removed the label after applying; every other
+# post-mutation escalation path left an unverified readiness label attached.
+# Case 1: the post-apply `pr view` itself fails after `--add-label`
+# succeeded.
+MOCK_POST_VIEW_EXIT=1
+result="$(run_helper)"
+MOCK_POST_VIEW_EXIT=0
+run_test "post_view_failure_removes_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "post_view_failure_still_escalates_exit" "2" "${result%%|*}"
+run_test "post_view_failure_reason" "label-verify-failed" "$(field "$result" REASON)"
+# Case 2: a label the API silently discards (`label-not-applied`) must also
+# attempt removal, not escalate leaving whatever partial state exists.
+MOCK_DROP_LABEL=1
+result="$(run_helper)"
+MOCK_DROP_LABEL=0
+run_test "label_not_applied_attempts_removal" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "label_not_applied_still_escalates_exit" "2" "${result%%|*}"
+run_test "label_not_applied_reason" "label-not-applied" "$(field "$result" REASON)"
 
 echo ""
 echo "$pass passed, $fail failed"

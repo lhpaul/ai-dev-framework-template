@@ -63,7 +63,8 @@ Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
 reviewer-unavailable, reviewer-check-name-unresolved,
 reviewer-check-unknown-conclusion, reviewer-policy-empty, blocking-findings,
-ci-pending, ci-failing, head-changed-before-apply. Escalation reasons:
+reviewer-state-changed, ci-pending, ci-failing, head-changed-before-apply.
+Escalation reasons:
 head-revalidate-failed, head-changed-after-apply, ready-config-unreadable,
 base-config-unreadable.
 The ready-phase reviewer list is read from the PR head's own
@@ -201,6 +202,32 @@ escalate() {
   exit 2
 }
 
+# remove_readiness_label_best_effort <label> — after a post-apply escalation,
+# the label no longer certifies a verified state, so strip it before
+# escalating so no unreviewed/undrifting head carries it between the refusal
+# and whatever re-runs the gate. Best-effort only: a failed removal logs a
+# WARN and the caller still escalates, so a human sees the problem either way.
+remove_readiness_label_best_effort() {
+  local label_to_remove="$1"
+  if ! gh pr edit "$pr_number" --repo "$repo" --remove-label "$label_to_remove" >/dev/null 2>&1; then
+    printf 'WARN: %s\n' "failed to remove $label_to_remove on PR #$pr_number — remove it manually" >&2
+  fi
+}
+
+# reviewer_check_conclusion_is_clean <conclusion> — shared conclusion→verdict
+# logic for the main reviewer gate and the pre-apply revalidation (PR #1818
+# finding 2, round 5). The allow-list is explicit: `success` is clean; the
+# four blocking conclusions are not; `neutral`/`cancelled`/`skipped` are not
+# (they carry the unavailable handling in the main loop and are simply "no
+# longer a clean completed run" at revalidation); ANY other non-empty
+# conclusion is not (mirrors run_ronda_review()'s fail-closed default arm).
+reviewer_check_conclusion_is_clean() {
+  case "$1" in
+    success) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # --- 1. PR state -----------------------------------------------------------
 pr_json=""
 if ! pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup 2>/dev/null)" || [ -z "$pr_json" ]; then
@@ -240,26 +267,40 @@ if [ "$is_implementation_pr" = "true" ]; then
   fi
   # An empty resolved platform list would waive every reviewer gate: the
   # while loop below would run zero times and the label would apply with
-  # REVIEWER_REPORT=none (PR #1818 Codex finding 1). A PR that drops the
-  # ready-phase reviewer from its own `.ai-dev-workflow.yaml` must not be
-  # able to un-gate its own readiness label. Fail closed unless the PR's
-  # *base* branch declares no ready-phase reviewers either — gate on the
-  # union of base and head policies, so an empty head list is only clean
-  # when the base policy is empty too. (An explicit
-  # AI_DEV_WORKFLOW_CONFIG_FILE is a deliberate override surface and is
-  # trusted as resolved.)
-  if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ] \
-      && [ -z "$(printf '%s\n' "$ready_platforms" | tr -d '[:space:]')" ]; then
+  # REVIEWER_REPORT=none (PR #1818 Codex finding 1, round 4). A PR that drops
+  # the ready-phase reviewer from its own `.ai-dev-workflow.yaml` must not be
+  # able to un-gate its own readiness label: an empty head list is only
+  # legitimate when the base branch declares no ready-phase reviewers either.
+  # For implementation PRs the base-branch policy is ALWAYS fetched (an
+  # unreadable one escalates `base-config-unreadable`) and the gate validates
+  # the deduplicated UNION of base and head platforms (PR #1818 finding 1,
+  # round 5): the round-4 gate only consulted the base policy when the head
+  # list was empty, so a PR that *replaced* a base-configured reviewer (base
+  # `bugbot` -> head `ronda`) never fetched the base config and silently
+  # waived the base-configured reviewer. The union loop runs every platform
+  # either base or head declares, so each must carry a completed clean check
+  # run. (An explicit AI_DEV_WORKFLOW_CONFIG_FILE is a deliberate override
+  # surface and is trusted as resolved; no union is computed there.)
+  if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
     _base_ready_platforms=""
     if ! _base_ready_platforms="$(pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
       escalate base-config-unreadable
     fi
-    if [ -n "$(printf '%s\n' "$_base_ready_platforms" | tr -d '[:space:]')" ]; then
-      result="refused"
-      reason="reviewer-policy-empty"
-      reviewer_report="base-declares:$(printf '%s\n' "$_base_ready_platforms" | paste -sd, -)"
-      emit_verdict
-      exit 1
+    if [ -z "$(printf '%s\n' "$ready_platforms" | tr -d '[:space:]')" ]; then
+      # Round-4 semantics: an empty head list is a dropped reviewer, refused
+      # unless the base policy is empty too (CI-only gate then applies).
+      if [ -n "$(printf '%s\n' "$_base_ready_platforms" | tr -d '[:space:]')" ]; then
+        result="refused"
+        reason="reviewer-policy-empty"
+        reviewer_report="base-declares:$(printf '%s\n' "$_base_ready_platforms" | paste -sd, -)"
+        emit_verdict
+        exit 1
+      fi
+    else
+      # Nonempty head list: gate on the deduplicated union, newline-separated
+      # so each platform is read as its own loop iteration.
+      ready_platforms="$(printf '%s\n%s\n' "$_base_ready_platforms" "$ready_platforms" \
+        | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++')"
     fi
   fi
 else
@@ -330,25 +371,27 @@ while IFS= read -r platform; do
   fi
   # A non-success conclusion is itself a blocking verdict, even when no inline
   # finding survives classification — the loop applies the same rule. The
-  # allow-list is explicit: `success` is clean, the four blocking conclusions
+  # allow-list lives in reviewer_check_conclusion_is_clean (shared with the
+  # pre-apply revalidation): `success` is clean, the four blocking conclusions
   # and neutral/cancelled/skipped are handled below, and ANY other non-empty
   # conclusion (e.g. `stale`) refuses fail-closed instead of falling through
   # as clean — mirrors run_ronda_review()'s default arm
   # (pr-review-loop.sh ~2894-2905).
-  case "$conclusion" in
-    success) ;;
-    failure|action_required|timed_out|startup_failure)
-      verdict_blocking=$((verdict_blocking + 1))
-      ;;
-    neutral|cancelled|skipped) ;;
-    *)
-      result="refused"
-      reason="reviewer-check-unknown-conclusion"
-      reviewer_report="$check_name conclusion:$conclusion"
-      emit_verdict
-      exit 1
-      ;;
-  esac
+  if ! reviewer_check_conclusion_is_clean "$conclusion"; then
+    case "$conclusion" in
+      failure|action_required|timed_out|startup_failure)
+        verdict_blocking=$((verdict_blocking + 1))
+        ;;
+      neutral|cancelled|skipped) ;;
+      *)
+        result="refused"
+        reason="reviewer-check-unknown-conclusion"
+        reviewer_report="$check_name conclusion:$conclusion"
+        emit_verdict
+        exit 1
+        ;;
+    esac
+  fi
 
   # `neutral` / `cancelled` / `skipped` are informational ONLY when the reviewer
   # did not also post an unavailable notice for this head. Bugbot reports a
@@ -571,7 +614,98 @@ fi
 # `--add-label` binds nothing to a commit: a push landing between the state
 # read at the top and this mutation would leave every reviewer/CI verdict
 # describing the old head while the label certifies the new one. Re-fetch the
-# head immediately before the mutation and refuse on any drift.
+# head immediately before the mutation and refuse on any drift. A *rerun*
+# check is equally stale: if the reviewer check run was re-triggered on this
+# same head (success → pending/failure) after the verdicts above were read,
+# the verdicts describe a superseded run, and re-checking only `headRefOid`
+# would apply the label from stale success data (PR #1818 finding 2, round 5).
+# The same applies to CI: a statusCheckRollup re-read must still satisfy the
+# pending/failing rules applied at the main gate. The same conclusion→verdict
+# logic is reused (reviewer_check_conclusion_is_clean) so the two gates cannot
+# drift apart.
+revalidate_reviewer_state() {
+  local platform_arg check_name_arg check_runs_arg status_arg conclusion_arg
+  while IFS= read -r platform_arg; do
+    [ -n "$platform_arg" ] || continue
+    check_name_arg="$(reviewer_check_name_for_platform "$platform_arg")"
+    [ -n "$check_name_arg" ] || return 0
+    if ! check_runs_arg="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate --slurp 2>/dev/null)" || [ -z "$check_runs_arg" ]; then
+      return 0
+    fi
+    check_state_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
+          [ .[].check_runs[]? | select(.name == $name) ]
+          | sort_by(.started_at // .completed_at // "")
+          | last
+          | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
+        ' 2>/dev/null)" || return 0
+    status_arg="${check_state_arg%% *}"
+    conclusion_arg="${check_state_arg#* }"
+    # Same conclusion classes the main gate treats as a live verdict: `success`
+    # plus Bugbot's `neutral`/`cancelled`/`skipped` (Bugbot reports those bare
+    # with no notice; the notice probe itself is not repeated here — the
+    # revalidation catches a *rerun*, not a first-run quota refusal, which the
+    # main gate has already classified). Non-Bugbot neutral/cancelled/skipped
+    # and every other non-success conclusion mean the verdict no longer reads
+    # clean, so the state is stale.
+    if [ "$status_arg" != "completed" ]; then
+      return 1
+    fi
+    case "$conclusion_arg:$platform_arg" in
+      success:*) ;;
+      neutral:bugbot|cancelled:bugbot|skipped:bugbot) ;;
+      *) return 1 ;;
+    esac
+  done <<<"$ready_platforms"
+  return 0
+}
+
+revalidate_ci_state() {
+  local revalidate_pr_json normalized_arg baseline_arg pending_arg failing_arg
+  if ! revalidate_pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup 2>/dev/null)" || [ -z "$revalidate_pr_json" ]; then
+    return 1
+  fi
+  normalized_arg=""
+  if ! normalized_arg="$(printf '%s\n' "$revalidate_pr_json" | normalize_status_check_rollup 2>/dev/null)" || [ -z "$normalized_arg" ]; then
+    return 1
+  fi
+  baseline_arg=""
+  if ! baseline_arg="$(printf '%s\n' "$normalized_arg" | jq -c --argjson names "$(printf '%s\n' "$reviewer_names_seen" | tr ',' '\n' | jq -R . | jq -s '.')" '
+        [ .[]
+          | (.name // .context // .workflowName // "unknown") as $n
+          | select(($names | index($n)) | not)
+        ]
+      ' 2>/dev/null)"; then
+    return 1
+  fi
+  pending_arg="$(printf '%s\n' "$baseline_arg" | jq '
+    [ .[] | select(
+        (((.status // "") != "") and ((.status // "") != "COMPLETED"))
+        or (((.state // "") | ascii_upcase) == "EXPECTED")
+        or (((.state // "") | ascii_upcase) == "PENDING")
+        or (((.state // "") | ascii_upcase) == "IN_PROGRESS")
+        or (((.state // "") | ascii_upcase) == "QUEUED")
+      ) ] | length
+  ' 2>/dev/null)" || return 1
+  failing_arg="$(printf '%s\n' "$baseline_arg" | jq '
+    [ .[] | select(
+        (((.conclusion // "") | ascii_upcase) == "FAILURE")
+        or (((.conclusion // "") | ascii_upcase) == "CANCELLED")
+        or (((.conclusion // "") | ascii_upcase) == "TIMED_OUT")
+        or (((.conclusion // "") | ascii_upcase) == "ACTION_REQUIRED")
+        or (((.conclusion // "") | ascii_upcase) == "STARTUP_FAILURE")
+        or (((.state // "") | ascii_upcase) == "FAILURE")
+        or (((.state // "") | ascii_upcase) == "ERROR")
+      ) ] | length
+  ' 2>/dev/null)" || return 1
+  if [ "$failing_arg" -gt 0 ]; then
+    return 1
+  fi
+  if [ "$pending_arg" -gt 0 ] && [ "$label" != "ready-for-regression" ]; then
+    return 1
+  fi
+  return 0
+}
+
 current_head="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || escalate head-revalidate-failed
 if [ -z "$current_head" ]; then
   escalate head-revalidate-failed
@@ -579,6 +713,18 @@ fi
 if [ "$current_head" != "$head_sha" ]; then
   result="refused"
   reason="head-changed-before-apply"
+  emit_verdict
+  exit 1
+fi
+if [ "$is_implementation_pr" = "true" ] && ! revalidate_reviewer_state; then
+  result="refused"
+  reason="reviewer-state-changed"
+  emit_verdict
+  exit 1
+fi
+if ! revalidate_ci_state; then
+  result="refused"
+  reason="reviewer-state-changed"
   emit_verdict
   exit 1
 fi
@@ -590,21 +736,32 @@ fi
 # Re-read so a silently-dropped label is not reported as applied, and so a
 # push that landed during the mutation is still caught: the label then
 # certifies a head no verdict describes.
-post_apply_json="$(gh pr view "$pr_number" --repo "$repo" --json labels,headRefOid 2>/dev/null)" || escalate label-verify-failed
-applied_labels="$(printf '%s\n' "$post_apply_json" | jq -r '.labels[].name' 2>/dev/null)" || escalate label-verify-failed
+post_apply_json="$(gh pr view "$pr_number" --repo "$repo" --json labels,headRefOid 2>/dev/null)" || {
+  # `--add-label` may have succeeded while this read failed: the label is on
+  # the PR but unverified, so strip it before escalating (PR #1818 finding 3,
+  # round 5) — never leave an unverified readiness label attached.
+  remove_readiness_label_best_effort "$label"
+  escalate label-verify-failed
+}
+applied_labels="$(printf '%s\n' "$post_apply_json" | jq -r '.labels[].name' 2>/dev/null)" || {
+  remove_readiness_label_best_effort "$label"
+  escalate label-verify-failed
+}
 if ! printf '%s\n' "$applied_labels" | grep -qx "$label"; then
+  remove_readiness_label_best_effort "$label"
   escalate label-not-applied
 fi
-applied_head="$(printf '%s\n' "$post_apply_json" | jq -r '.headRefOid // ""' 2>/dev/null)" || escalate label-verify-failed
+applied_head="$(printf '%s\n' "$post_apply_json" | jq -r '.headRefOid // ""' 2>/dev/null)" || {
+  remove_readiness_label_best_effort "$label"
+  escalate label-verify-failed
+}
 if [ "$applied_head" != "$head_sha" ]; then
   # The label now certifies a head no verdict describes. Remove it before
   # escalating so the new, unreviewed head does not carry a readiness label
   # between this refusal and whatever re-runs the gate. Best-effort only: a
   # failed removal logs a WARN and still escalates, so the human sees the
   # drift either way.
-  if ! gh pr edit "$pr_number" --repo "$repo" --remove-label "$label" >/dev/null 2>&1; then
-    printf 'WARN: %s\n' "failed to remove $label after head drift on PR #$pr_number — remove it manually" >&2
-  fi
+  remove_readiness_label_best_effort "$label"
   escalate head-changed-after-apply
 fi
 
