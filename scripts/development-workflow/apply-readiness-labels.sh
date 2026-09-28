@@ -66,10 +66,13 @@ reviewer-check-unknown-conclusion, reviewer-policy-empty, blocking-findings,
 reviewer-state-changed, ci-pending, ci-failing, head-changed-before-apply.
 Escalation reasons:
 head-revalidate-failed, head-changed-after-apply, ready-config-unreadable,
-base-config-unreadable.
+base-config-unreadable, revalidation-unreadable.
 The ready-phase reviewer list is read from the PR head's own
 .ai-dev-workflow.yaml; an unreadable head configuration escalates (fail-closed)
-rather than falling back to this checkout's configuration.
+rather than falling back to this checkout's configuration. The required
+reviewer set is the BASE branch policy — the loop dispatches ready-phase
+platforms from the base configuration, so head-only additions are never
+required, but a head cannot waive a base-configured reviewer.
 USAGE
 }
 
@@ -228,6 +231,131 @@ reviewer_check_conclusion_is_clean() {
   esac
 }
 
+# bugbot_unavailable_notice_present <bot_login> <since> — returns 0 (true)
+# when a Bugbot usage/spend-limit or restricted-access notice was posted by
+# the bot at/after <since>. Shared by the main gate's unavailable handling
+# and the pre-apply revalidation (PR #1818 finding 2, round 6), so a rerun's
+# quota refusal is caught at revalidation too. Escalates fail-closed on a
+# fetch or parse failure.
+bugbot_unavailable_notice_present() {
+  local bot_login_arg="$1" since_arg="$2"
+  local issue_comments_json unavailable_bodies notice
+  issue_comments_json=""
+  if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
+    escalate issue-comment-fetch-failed
+  fi
+  unavailable_bodies=""
+  if ! unavailable_bodies="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -r --arg bot "$bot_login_arg" --arg since "$since_arg" '
+        [ .[]?[]
+          | select(
+              ((.user.login // "") == $bot or (.user.login // "") == ($bot + "[bot]"))
+              and (($since == "") or ((.created_at // "") > $since))
+            )
+          | .body // ""
+        ] | .[]
+      ' 2>/dev/null)"; then
+    escalate issue-comment-parse-failed
+  fi
+  while IFS= read -r notice; do
+    [ -n "$notice" ] || continue
+    if is_bugbot_disabled_message "$notice" || is_bugbot_usage_limit_message "$notice"; then
+      return 0
+    fi
+  done <<< "$unavailable_bodies"
+  return 1
+}
+
+# count_reviewer_blocking_findings <bot_login> <since> — fetches the PR review
+# surfaces (inline comments + reviews) and classifies the reviewer bot's
+# findings on the current head at/after <since>, setting the global
+# scan_blocking_count. Shared by the main gate and the pre-apply revalidation
+# (PR #1818 finding 2, round 6): a same-SHA rerun that completes between the
+# initial scan and the label mutation can post findings the first scan never
+# saw, so the revalidation rescans the same surfaces with the same filters
+# against the reselected run's timestamp instead of trusting the earlier
+# pass. Escalates fail-closed on a fetch or parse failure.
+count_reviewer_blocking_findings() {
+  local bot_login_arg="$1" since_arg="$2"
+  local comments_json reviews_json inline_json review_json inline_count entry body state inline
+  scan_blocking_count=0
+  comments_json=""
+  reviews_json=""
+  # Findings/comment fetches use `--paginate --slurp` and flatten in jq: an
+  # unslurped paginated response is one JSON document per page, so a jq
+  # pipeline runs per page and a downstream consumer sees a multiline
+  # concatenation instead of one array (same defect class as the check-runs
+  # read in the main loop).
+  if ! comments_json="$(gh api "repos/$repo/pulls/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
+    escalate review-comment-fetch-failed
+  fi
+  if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate --slurp 2>/dev/null)"; then
+    escalate review-fetch-failed
+  fi
+
+  # Inline comments on this SHA, posted top-level by the reviewer bot.
+  inline_json=""
+  if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$since_arg" '
+        [ .[]?[]
+          | select(
+              ((.user.login // "") == $bot or (.user.login // "") == ($bot | sub("\\[bot\\]$"; "")) or (.user.login // "") == ($bot + "[bot]"))
+              and ((.commit_id // "") == $sha)
+              and ((.in_reply_to_id // null) == null)
+              and ((.created_at // "") >= $since)
+            )
+          | { body: (.body // "") }
+        ]
+      ' 2>/dev/null)"; then
+    escalate review-comment-parse-failed
+  fi
+  inline_count="$(printf '%s\n' "$inline_json" | jq 'length' 2>/dev/null)" || escalate review-comment-parse-failed
+
+  # Reviews submitted against this SHA. `CHANGES_REQUESTED` is always blocking;
+  # a `COMMENTED` review is blocking when it carries inline findings on this SHA
+  # (the umbrella review Bugbot posts) or Bugbot's own finding markers.
+  review_json=""
+  if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$since_arg" --argjson inline "$inline_count" '
+        [ .[]?[]
+          | select(
+              (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
+              and ((.commit_id // .commitId // "") == $sha)
+              and (((.submitted_at // "") >= $since))
+            )
+          | { state: (.state // ""), body: (.body // ""), inline: $inline }
+        ]
+      ' 2>/dev/null)"; then
+    escalate review-parse-failed
+  fi
+
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    body="$(printf '%s\n' "$entry" | jq -r '.body')"
+    state="$(printf '%s\n' "$entry" | jq -r '.state')"
+    inline="$(printf '%s\n' "$entry" | jq -r '.inline')"
+    if [ "$state" = "CHANGES_REQUESTED" ]; then
+      scan_blocking_count=$((scan_blocking_count + 1))
+      continue
+    fi
+    [ -n "$body" ] || continue
+    if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
+      continue
+    fi
+    if [ "$state" = "COMMENTED" ] && [ "$inline" -eq 0 ] && ! printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+      continue
+    fi
+    scan_blocking_count=$((scan_blocking_count + 1))
+  done < <(printf '%s\n' "$review_json" | jq -c '.[]' 2>/dev/null)
+
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    body="$(printf '%s\n' "$entry" | jq -r '.body')"
+    [ -n "$body" ] || continue
+    if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
+      continue
+    fi
+    scan_blocking_count=$((scan_blocking_count + 1))
+  done < <(printf '%s\n' "$inline_json" | jq -c '.[]' 2>/dev/null)
+}
+
 # --- 1. PR state -----------------------------------------------------------
 pr_json=""
 if ! pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup 2>/dev/null)" || [ -z "$pr_json" ]; then
@@ -254,6 +382,13 @@ verdict_blocking=0
 applied_notified=0
 reviewer_names_seen=""
 platform=""
+# Per-platform record of the first finding scan: "platform:started_at" and
+# "platform:bot_login" lines, newline-separated. The pre-apply revalidation
+# compares the reselected check run's timestamp against these (PR #1818
+# finding 2, round 6).
+first_scan_started_at=""
+first_scan_bot_logins=""
+scan_blocking_count=0
 if [ "$is_implementation_pr" = "true" ]; then
   # The PR's own head configuration is the source of truth (see
   # pr_head_config_ready_platforms). An explicit AI_DEV_WORKFLOW_CONFIG_FILE
@@ -273,14 +408,19 @@ if [ "$is_implementation_pr" = "true" ]; then
   # legitimate when the base branch declares no ready-phase reviewers either.
   # For implementation PRs the base-branch policy is ALWAYS fetched (an
   # unreadable one escalates `base-config-unreadable`) and the gate validates
-  # the deduplicated UNION of base and head platforms (PR #1818 finding 1,
-  # round 5): the round-4 gate only consulted the base policy when the head
-  # list was empty, so a PR that *replaced* a base-configured reviewer (base
-  # `bugbot` -> head `ronda`) never fetched the base config and silently
-  # waived the base-configured reviewer. The union loop runs every platform
-  # either base or head declares, so each must carry a completed clean check
-  # run. (An explicit AI_DEV_WORKFLOW_CONFIG_FILE is a deliberate override
-  # surface and is trusted as resolved; no union is computed there.)
+  # the BASE policy (PR #1818 finding 3, round 6): the required reviewer set
+  # is exactly what the base branch declares — pr-review-loop.sh dispatches
+  # ready-phase platforms from the BASE configuration, so a head-only ADDED
+  # reviewer never runs and requiring its check run would permanently refuse
+  # `reviewer-check-absent`. The head cannot waive what the base requires:
+  # a head that removes or replaces a base reviewer still has every base
+  # platform gated (a base platform absent from the head list is required
+  # regardless), so `reviewer-policy-empty` / `reviewer-check-absent` fire
+  # instead of the base reviewer being dropped. Head-only additions are
+  # validated only when they happen to carry a completed clean check run
+  # alongside the base set; they are never required. (An explicit
+  # AI_DEV_WORKFLOW_CONFIG_FILE is a deliberate override surface and is
+  # trusted as resolved; no base policy is fetched there.)
   if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
     _base_ready_platforms=""
     if ! _base_ready_platforms="$(pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
@@ -297,10 +437,9 @@ if [ "$is_implementation_pr" = "true" ]; then
         exit 1
       fi
     else
-      # Nonempty head list: gate on the deduplicated union, newline-separated
-      # so each platform is read as its own loop iteration.
-      ready_platforms="$(printf '%s\n%s\n' "$_base_ready_platforms" "$ready_platforms" \
-        | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++')"
+      # Nonempty head list: gate on the base policy alone (see the comment
+      # block above). Head-only additions are not required.
+      ready_platforms="$_base_ready_platforms"
     fi
   fi
 else
@@ -404,40 +543,18 @@ while IFS= read -r platform; do
   # `pulls/N/comments` and `pulls/N/reviews`.
   # Only Bugbot reports unavailability this way, and only through an issue
   # comment authored by its own bot login, so the probe is scoped to both.
+  # The probe itself is shared (bugbot_unavailable_notice_present) with the
+  # pre-apply revalidation, so a rerun that concluded `neutral` with a quota
+  # notice is caught at revalidation too.
   case "$conclusion" in
     neutral|cancelled|skipped)
       if [ "$platform" = "bugbot" ] && [ -n "$bot_login" ]; then
-        reviewer_started_at="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
-              [ .[].check_runs[]? | select(.name == $name) ]
-              | sort_by(.started_at // .completed_at // "")
-              | last
-              | (.started_at // .completed_at // .created_at // "")
-            ' 2>/dev/null)" || escalate check-run-parse-failed
-        issue_comments_json=""
-        if ! issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
-          escalate issue-comment-fetch-failed
+        if bugbot_unavailable_notice_present "$bot_login" "$reviewer_started_at"; then
+          result="refused"
+          reason="reviewer-unavailable"
+          emit_verdict
+          exit 1
         fi
-        unavailable_bodies=""
-        if ! unavailable_bodies="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -r --arg bot "$bot_login" --arg since "$reviewer_started_at" '
-              [ .[]?[]
-                | select(
-                    ((.user.login // "") == $bot or (.user.login // "") == ($bot + "[bot]"))
-                    and (($since == "") or ((.created_at // "") > $since))
-                  )
-                | .body // ""
-              ] | .[]
-            ' 2>/dev/null)"; then
-          escalate issue-comment-parse-failed
-        fi
-        while IFS= read -r notice; do
-          [ -n "$notice" ] || continue
-          if is_bugbot_disabled_message "$notice" || is_bugbot_usage_limit_message "$notice"; then
-            result="refused"
-            reason="reviewer-unavailable"
-            emit_verdict
-            exit 1
-          fi
-        done <<< "$unavailable_bodies"
       else
         # Non-Bugbot platforms report nothing through issue comments, so a
         # `neutral`/`cancelled`/`skipped` completed run cannot be cleared by
@@ -465,84 +582,19 @@ while IFS= read -r platform; do
   fi
 
   # Read findings only where a login exists (haystack reviews through its own
-  # CLI and publishes no GitHub review surface).
+  # CLI and publishes no GitHub review surface). The scan itself is shared
+  # (count_reviewer_blocking_findings) with the pre-apply revalidation. The
+  # per-platform timestamp the first scan ran against is recorded
+  # (first_scan_started_at) so the revalidation can detect a *newer* selected
+  # run — one whose findings the first scan never saw (PR #1818 finding 2,
+  # round 6).
   [ -n "$bot_login" ] || continue
-  comments_json=""
-  reviews_json=""
-  # Findings/comment fetches use `--paginate --slurp` and flatten in jq: an
-  # unslurped paginated response is one JSON document per page, so a jq
-  # pipeline runs per page and a downstream consumer sees a multiline
-  # concatenation instead of one array (same defect class as the check-runs
-  # read above).
-  if ! comments_json="$(gh api "repos/$repo/pulls/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
-    escalate review-comment-fetch-failed
-  fi
-  if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate --slurp 2>/dev/null)"; then
-    escalate review-fetch-failed
-  fi
-
-  # Inline comments on this SHA, posted top-level by the reviewer bot.
-  inline_json=""
-  if ! inline_json="$(printf '%s\n' "${comments_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$reviewer_started_at" '
-        [ .[]?[]
-          | select(
-              ((.user.login // "") == $bot or (.user.login // "") == ($bot | sub("\\[bot\\]$"; "")) or (.user.login // "") == ($bot + "[bot]"))
-              and ((.commit_id // "") == $sha)
-              and ((.in_reply_to_id // null) == null)
-              and ((.created_at // "") >= $since)
-            )
-          | { body: (.body // "") }
-        ]
-      ' 2>/dev/null)"; then
-    escalate review-comment-parse-failed
-  fi
-  inline_count="$(printf '%s\n' "$inline_json" | jq 'length' 2>/dev/null)" || escalate review-comment-parse-failed
-
-  # Reviews submitted against this SHA. `CHANGES_REQUESTED` is always blocking;
-  # a `COMMENTED` review is blocking when it carries inline findings on this SHA
-  # (the umbrella review Bugbot posts) or Bugbot's own finding markers.
-  review_json=""
-  if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$reviewer_started_at" --argjson inline "$inline_count" '
-        [ .[]?[]
-          | select(
-              (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
-              and ((.commit_id // .commitId // "") == $sha)
-              and (((.submitted_at // "") >= $since))
-            )
-          | { state: (.state // ""), body: (.body // ""), inline: $inline }
-        ]
-      ' 2>/dev/null)"; then
-    escalate review-parse-failed
-  fi
-
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    body="$(printf '%s\n' "$entry" | jq -r '.body')"
-    state="$(printf '%s\n' "$entry" | jq -r '.state')"
-    inline="$(printf '%s\n' "$entry" | jq -r '.inline')"
-    if [ "$state" = "CHANGES_REQUESTED" ]; then
-      reviewer_blocking=$((reviewer_blocking + 1))
-      continue
-    fi
-    [ -n "$body" ] || continue
-    if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
-      continue
-    fi
-    if [ "$state" = "COMMENTED" ] && [ "$inline" -eq 0 ] && ! printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
-      continue
-    fi
-    reviewer_blocking=$((reviewer_blocking + 1))
-  done < <(printf '%s\n' "$review_json" | jq -c '.[]' 2>/dev/null)
-
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    body="$(printf '%s\n' "$entry" | jq -r '.body')"
-    [ -n "$body" ] || continue
-    if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
-      continue
-    fi
-    reviewer_blocking=$((reviewer_blocking + 1))
-  done < <(printf '%s\n' "$inline_json" | jq -c '.[]' 2>/dev/null)
+  count_reviewer_blocking_findings "$bot_login" "$reviewer_started_at"
+  reviewer_blocking=$((reviewer_blocking + scan_blocking_count))
+  first_scan_started_at="${first_scan_started_at}${first_scan_started_at:+
+}${platform}:${reviewer_started_at}"
+  first_scan_bot_logins="${first_scan_bot_logins}${first_scan_bot_logins:+
+}${platform}:${bot_login}"
 done < <(printf '%s\n' "$ready_platforms")
 
 reviewer_report="${reviewer_names_seen:-none}"
@@ -619,42 +671,78 @@ fi
 # same head (success → pending/failure) after the verdicts above were read,
 # the verdicts describe a superseded run, and re-checking only `headRefOid`
 # would apply the label from stale success data (PR #1818 finding 2, round 5).
-# The same applies to CI: a statusCheckRollup re-read must still satisfy the
-# pending/failing rules applied at the main gate. The same conclusion→verdict
-# logic is reused (reviewer_check_conclusion_is_clean) so the two gates cannot
-# drift apart.
+# A failed or empty revalidation fetch escalates fail-closed as
+# `revalidation-unreadable` — never success (PR #1818 finding 1, round 6) —
+# and a rerun that completes between the first scan and the revalidation is
+# rescanned for findings and availability notices against the newly selected
+# run's timestamp, because a same-SHA rerun can conclude `success` while
+# posting blocking comments (PR #1818 finding 2, round 6). The same applies
+# to CI: a statusCheckRollup re-read must still satisfy the pending/failing
+# rules applied at the main gate. The same conclusion→verdict logic is
+# reused (reviewer_check_conclusion_is_clean) so the two gates cannot drift
+# apart.
 revalidate_reviewer_state() {
   local platform_arg check_name_arg check_runs_arg status_arg conclusion_arg
+  local started_at_arg first_scan_login
   while IFS= read -r platform_arg; do
     [ -n "$platform_arg" ] || continue
     check_name_arg="$(reviewer_check_name_for_platform "$platform_arg")"
-    [ -n "$check_name_arg" ] || return 0
+    [ -n "$check_name_arg" ] || continue
+    # Fail closed (PR #1818 finding 1, round 6): a failed or EMPTY re-fetch of
+    # the check runs cannot confirm the earlier verdict still describes this
+    # head — treat it as an unreadable state, never as "unchanged" success.
     if ! check_runs_arg="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate --slurp 2>/dev/null)" || [ -z "$check_runs_arg" ]; then
-      return 0
+      escalate revalidation-unreadable
     fi
-    check_state_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
+    if ! check_state_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
           [ .[].check_runs[]? | select(.name == $name) ]
           | sort_by(.started_at // .completed_at // "")
           | last
           | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
-        ' 2>/dev/null)" || return 0
+        ' 2>/dev/null)" || [ -z "$check_state_arg" ]; then
+      escalate revalidation-unreadable
+    fi
     status_arg="${check_state_arg%% *}"
     conclusion_arg="${check_state_arg#* }"
+    # started_at of the reselected (latest) check run — the notice probe and
+    # the finding rescan below are both time-bounded to it.
+    started_at_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
+          [ .[].check_runs[]? | select(.name == $name) ]
+          | sort_by(.started_at // .completed_at // "")
+          | last
+          | (.started_at // .completed_at // .created_at // "")
+        ' 2>/dev/null)" || escalate revalidation-unreadable
     # Same conclusion classes the main gate treats as a live verdict: `success`
-    # plus Bugbot's `neutral`/`cancelled`/`skipped` (Bugbot reports those bare
-    # with no notice; the notice probe itself is not repeated here — the
-    # revalidation catches a *rerun*, not a first-run quota refusal, which the
-    # main gate has already classified). Non-Bugbot neutral/cancelled/skipped
-    # and every other non-success conclusion mean the verdict no longer reads
-    # clean, so the state is stale.
+    # plus Bugbot's `neutral`/`cancelled`/`skipped` — for those, a Bugbot
+    # availability notice at/after the run timestamp must ALSO be absent (the
+    # notice probe is the same one the main gate uses, so a rerun that hit a
+    # quota limit mid-window is caught here too). Non-Bugbot
+    # neutral/cancelled/skipped and every other non-success conclusion mean the
+    # verdict no longer reads clean, so the state is stale.
     if [ "$status_arg" != "completed" ]; then
       return 1
     fi
     case "$conclusion_arg:$platform_arg" in
       success:*) ;;
-      neutral:bugbot|cancelled:bugbot|skipped:bugbot) ;;
+      neutral:bugbot|cancelled:bugbot|skipped:bugbot)
+        if bugbot_unavailable_notice_present "$(bot_login_for_platform bugbot)" "$started_at_arg"; then
+          return 1
+        fi
+        ;;
       *) return 1 ;;
     esac
+    # Rescan guard (PR #1818 finding 2, round 6): the first scan's findings
+    # may belong to a superseded run — a same-SHA rerun can conclude success
+    # while posting blocking comments, and the earlier scan never saw them.
+    # Even when the reselected run is the same one, comment bodies are
+    # mutable, so rescan unconditionally against the selected run's
+    # timestamp, reusing the same fetch + filter functions as the main gate,
+    # and refuse when anything blocks.
+    first_scan_login="$(printf '%s\n' "$first_scan_bot_logins" | sed -n "s/^${platform_arg}://p" | head -1)"
+    if [ -n "$first_scan_login" ]; then
+      count_reviewer_blocking_findings "$first_scan_login" "$started_at_arg"
+      [ "$scan_blocking_count" -eq 0 ] || return 1
+    fi
   done <<<"$ready_platforms"
   return 0
 }
