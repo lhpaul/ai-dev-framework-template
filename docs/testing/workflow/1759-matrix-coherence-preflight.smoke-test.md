@@ -85,6 +85,7 @@ Before running this smoke test:
 1. Run: `grep -rn "Matrix coherence preflight" docs/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md`
 2. Read each hit
 3. Confirm every hit is the canonical definition, a pointer to it, or the gate-row name — no restated variant of the six checks
+4. Drift catch beyond the phrase: diff the six-check list inlined in Protocol 01's preflight bullet against each other surface's text. Run `grep -rn "overlapping rows\|missing states\|precedence" docs/workflow/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md` and read each hit: a surface naming check classes in its own words (rather than pointing to Protocol 01 or `review-doctrine.md`) is a restatement
 
 **Expected result**: No file redefines the checks; agent/skill mirrors carry pointer sentences only.
 
