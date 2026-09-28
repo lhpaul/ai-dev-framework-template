@@ -176,7 +176,7 @@ No seed data is required (documentation-only feature).
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `markdownlint-cli2` reports broken relative link | Wrong `../` depth from the file's location | Recount `../` segments from the file path; the lint step is authoritative |
-| Guide implies the reviewer loop runs Bugbot | AC-9 language not aligned with `pr-review-platform.md` | Use the "planned but unsupported" / `skipped` wording from the generic platform guide |
+| Guide contradicts the reviewer-loop contract | AC-9 wording not aligned with `integrations/bugbot.md` "Reviewer-Loop Status" | Restore the supported-platform wording: Bugbot is a first-class `pr-review-loop.sh` platform; a `neutral` conclusion is not a verdict and an unestablishable verdict escalates |
 | Guide not discoverable | Cross-reference omitted | Confirm both the `pr-review-platform.md` "See:" list and README "Integration Guides" list include `bugbot.md` |
 
 ---
