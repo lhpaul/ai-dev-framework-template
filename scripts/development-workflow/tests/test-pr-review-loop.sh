@@ -3928,6 +3928,16 @@ run_test "restore_path_invokes_readiness_helper" "yes" \
       <(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src") && echo yes || echo no)"
 _direct_applies="$(grep -c -- '--add-label "ready-for-regression"' "$_loop_src" 2>/dev/null)" || _direct_applies="0"
 run_test "no_direct_ready_for_regression_apply_in_loop" "0" "$_direct_applies"
+# Test 11.13 (PR #1818 finding 3, round 4): the restore path must not
+# discard the helper's stderr — its WARN output (e.g. the head-drift
+# "label remains attached, remove manually" warning) is the actionable
+# signal for whoever is watching the loop. The helper invocation spans
+# two source lines, so flatten the restore function body to one line
+# before checking for a stderr redirection on it.
+_restore_flat="$(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src" | tr '\n' ' ' | tr -s ' ')"
+_helper_stderr_redirs="$(printf '%s\n' "$_restore_flat" | grep -c 'apply-readiness-labels\.sh[^;]*2>/dev/null' || true)"
+run_test "restore_path_does_not_discard_helper_stderr" "0" "$_helper_stderr_redirs"
+unset _restore_flat _helper_stderr_redirs
 # Test 11.12 (PR #1818 finding, #1408 round 3): the clean-path Step 7b summary
 # must instruct agents to route the label through the helper too, not hand
 # them a copy-paste `gh pr edit --add-label` command that bypasses the gate

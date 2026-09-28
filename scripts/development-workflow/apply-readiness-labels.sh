@@ -61,9 +61,11 @@ the reviewer never reviewed.
 Prints RESULT=<labeled|refused|escalate> and REASON=<slug>.
 Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
-reviewer-unavailable, reviewer-check-name-unresolved, blocking-findings,
+reviewer-unavailable, reviewer-check-name-unresolved,
+reviewer-check-unknown-conclusion, reviewer-policy-empty, blocking-findings,
 ci-pending, ci-failing, head-changed-before-apply. Escalation reasons:
-head-revalidate-failed, head-changed-after-apply, ready-config-unreadable.
+head-revalidate-failed, head-changed-after-apply, ready-config-unreadable,
+base-config-unreadable.
 The ready-phase reviewer list is read from the PR head's own
 .ai-dev-workflow.yaml; an unreadable head configuration escalates (fail-closed)
 rather than falling back to this checkout's configuration.
@@ -201,7 +203,7 @@ escalate() {
 
 # --- 1. PR state -----------------------------------------------------------
 pr_json=""
-if ! pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,headRefName,labels,statusCheckRollup 2>/dev/null)" || [ -z "$pr_json" ]; then
+if ! pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup 2>/dev/null)" || [ -z "$pr_json" ]; then
   escalate pr-state-unavailable
 fi
 head_sha="$(printf '%s\n' "$pr_json" | jq -r '.headRefOid // ""' 2>/dev/null)" || escalate pr-state-parse-failed
@@ -209,6 +211,7 @@ if [ -z "$head_sha" ]; then
   escalate head-sha-unavailable
 fi
 head_ref_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName // ""' 2>/dev/null)" || escalate pr-state-parse-failed
+base_ref_oid="$(printf '%s\n' "$pr_json" | jq -r '.baseRefOid // ""' 2>/dev/null)" || escalate pr-state-parse-failed
 
 # Implementation branches are the ones that carry a ready-phase reviewer check
 # run and a required `ready-for-regression` label (Protocol 91's label derivation
@@ -234,6 +237,30 @@ if [ "$is_implementation_pr" = "true" ]; then
     ready_platforms="$(configured_ready_reviewer_platforms)"
   elif ! ready_platforms="$(pr_head_config_ready_platforms "$repo" "$head_sha" 2>/dev/null)"; then
     escalate ready-config-unreadable
+  fi
+  # An empty resolved platform list would waive every reviewer gate: the
+  # while loop below would run zero times and the label would apply with
+  # REVIEWER_REPORT=none (PR #1818 Codex finding 1). A PR that drops the
+  # ready-phase reviewer from its own `.ai-dev-workflow.yaml` must not be
+  # able to un-gate its own readiness label. Fail closed unless the PR's
+  # *base* branch declares no ready-phase reviewers either — gate on the
+  # union of base and head policies, so an empty head list is only clean
+  # when the base policy is empty too. (An explicit
+  # AI_DEV_WORKFLOW_CONFIG_FILE is a deliberate override surface and is
+  # trusted as resolved.)
+  if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ] \
+      && [ -z "$(printf '%s\n' "$ready_platforms" | tr -d '[:space:]')" ]; then
+    _base_ready_platforms=""
+    if ! _base_ready_platforms="$(pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
+      escalate base-config-unreadable
+    fi
+    if [ -n "$(printf '%s\n' "$_base_ready_platforms" | tr -d '[:space:]')" ]; then
+      result="refused"
+      reason="reviewer-policy-empty"
+      reviewer_report="base-declares:$(printf '%s\n' "$_base_ready_platforms" | paste -sd, -)"
+      emit_verdict
+      exit 1
+    fi
   fi
 else
   ready_platforms=""
@@ -302,10 +329,24 @@ while IFS= read -r platform; do
     exit 1
   fi
   # A non-success conclusion is itself a blocking verdict, even when no inline
-  # finding survives classification — the loop applies the same rule.
+  # finding survives classification — the loop applies the same rule. The
+  # allow-list is explicit: `success` is clean, the four blocking conclusions
+  # and neutral/cancelled/skipped are handled below, and ANY other non-empty
+  # conclusion (e.g. `stale`) refuses fail-closed instead of falling through
+  # as clean — mirrors run_ronda_review()'s default arm
+  # (pr-review-loop.sh ~2894-2905).
   case "$conclusion" in
+    success) ;;
     failure|action_required|timed_out|startup_failure)
       verdict_blocking=$((verdict_blocking + 1))
+      ;;
+    neutral|cancelled|skipped) ;;
+    *)
+      result="refused"
+      reason="reviewer-check-unknown-conclusion"
+      reviewer_report="$check_name conclusion:$conclusion"
+      emit_verdict
+      exit 1
       ;;
   esac
 

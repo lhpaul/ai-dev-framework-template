@@ -51,7 +51,10 @@ cat > "$_BIN/gh" <<'GH'
 # Defaults are plain variables: a ${VAR:-{...}} default containing braces does
 # not survive bash parameter expansion and silently yields invalid JSON.
 labels_default='{"labels":[]}'
-pr_default='{"headRefOid":"aaaa111000000000000","headRefName":"fix/1408-demo","labels":[],"statusCheckRollup":[]}'
+# Same SHA as the test-scope BASE_SHA; duplicated here because the quoted
+# heredoc does not expand the test script's variables.
+_BASE_SHA_STUB='dddd444000000000000'
+pr_default='{"headRefOid":"aaaa111000000000000","headRefName":"fix/1408-demo","baseRefOid":"'"$_BASE_SHA_STUB"'","labels":[],"statusCheckRollup":[]}'
 check_runs_default='{"check_runs":[]}'
 empty_array='[]'
 jq_filter=""
@@ -115,6 +118,10 @@ case "$*" in
     fi
     exit 0
     ;;
+  *"pr view"*"--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup"*)
+    emit "${MOCK_PR_JSON:-$pr_default}"
+    exit 0
+    ;;
   *"pr view"*)
     emit "${MOCK_PR_JSON:-$pr_default}"
     exit 0
@@ -140,6 +147,17 @@ case "$*" in
     ;;
   *"repo view"*)
     emit '{"nameWithOwner":"acme/widgets"}'
+    exit 0
+    ;;
+  *"/contents/.ai-dev-workflow.yaml?ref=$MOCK_BASE_SHA"*)
+    # Base-branch configuration fetch (PR #1818 finding 1, round 4). A distinct
+    # variable so head and base payloads differ in one invocation.
+    [ "${MOCK_BASE_CONFIG_EXIT:-0}" = "0" ] || exit 1
+    content="$(printf '%s\n' "${MOCK_BASE_CONFIG:-review:
+  on_ready:
+    github:
+      - bugbot}" | base64)"
+    emit "{\"content\":\"$content\"}"
     exit 0
     ;;
   *"/contents/.ai-dev-workflow.yaml"*)
@@ -168,6 +186,7 @@ review:
 YAML
 
 HEAD='aaaa111000000000000'
+BASE_SHA='dddd444000000000000'
 _BRANCH='fix/1408-demo'
 _LABEL_LOG="$TMP_ROOT/gh-calls.log"
 _LABEL_STATE="$TMP_ROOT/label-state"
@@ -197,6 +216,9 @@ run_helper() {
     MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
     MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
     MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
+    MOCK_BASE_SHA="$BASE_SHA" \
+    MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
+    MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -212,7 +234,7 @@ edit_count() {
   if [ -s "$_LABEL_LOG" ]; then wc -l <"$_LABEL_LOG" | tr -d ' '; else printf '0'; fi
 }
 
-_empty_rollup='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[]}'
+_empty_rollup='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
 _bugbot_ok='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
 _bugbot_running='{"check_runs":[{"name":"Cursor Bugbot","status":"in_progress","conclusion":null,"started_at":"2026-01-01T00:00:00Z"}]}'
 _bugbot_failed='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"}]}'
@@ -555,6 +577,9 @@ run_helper_no_local_config() {
     MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
     MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
     MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
+    MOCK_BASE_SHA="$BASE_SHA" \
+    MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
+    MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
@@ -663,6 +688,65 @@ MOCK_CHECK_RUNS="$_bugbot_neutral"
 MOCK_ISSUE_COMMENTS='[]'
 result="$(run_helper)"
 run_test "bugbot_neutral_no_notice_still_clean" "labeled" "$(field "$result" RESULT)"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_ISSUE_COMMENTS='[]'
+
+echo ""
+echo "=== Area 9: PR #1818 Codex findings, round 4 ==="
+
+# Finding 1 (P1): an implementation PR whose head resolves an EMPTY ready
+# platform list (e.g. the PR removes `review.on_ready.github`) previously
+# ran the reviewer while-loop zero times and applied the label with
+# REVIEWER_REPORT=none — zero reviewer gates. The head-config fetch (local
+# config unset) is followed by a base-branch fetch: when the base still
+# declares a ready reviewer, the label must refuse as
+# reviewer-policy-empty. Planted failing case.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github: []'
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
+result="$(run_helper_no_local_config)"
+run_test "empty_head_platform_list_exit" "1" "${result%%|*}"
+run_test "empty_head_platform_list_reason" "reviewer-policy-empty" "$(field "$result" REASON)"
+run_test "empty_head_platform_list_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "empty_head_platform_list_names_base" "base-declares:ronda" "$(field "$result" REVIEWER_REPORT)"
+# Both head and base empty: base branch has no ready-phase reviewers, so no
+# reviewer gate is being waived — CI-only gate applies and the label is clean.
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github: []'
+result="$(run_helper_no_local_config)"
+run_test "both_policies_empty_exit" "0" "${result%%|*}"
+run_test "both_policies_empty_result" "labeled" "$(field "$result" RESULT)"
+# Base-config fetch failure must escalate fail-closed, not waive the gate.
+MOCK_BASE_CONFIG_EXIT=1
+result="$(run_helper_no_local_config)"
+MOCK_BASE_CONFIG_EXIT=0
+run_test "base_config_unreadable_escalates_exit" "2" "${result%%|*}"
+run_test "base_config_unreadable_reason" "base-config-unreadable" "$(field "$result" REASON)"
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+
+# Finding 2 (P1): only `success` is a clean reviewer conclusion. `stale` and
+# any other unrecognized non-empty conclusion previously matched neither the
+# blocking case arm nor the neutral/cancelled/skipped arm and fell through as
+# clean. Planted failing case: conclusion `stale`.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"stale","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper)"
+run_test "stale_conclusion_exit" "1" "${result%%|*}"
+run_test "stale_conclusion_reason" "reviewer-check-unknown-conclusion" "$(field "$result" REASON)"
+run_test "stale_conclusion_no_label" "0" "$(edit_count)"
+run_test "stale_conclusion_reported" "Cursor Bugbot conclusion:stale" "$(field "$result" REVIEWER_REPORT)"
+# Any other unrecognized conclusion refuses the same way.
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"robotaborted","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper)"
+run_test "unexpected_conclusion_reason" "reviewer-check-unknown-conclusion" "$(field "$result" REASON)"
+MOCK_CHECK_RUNS="$_bugbot_ok"
 
 echo ""
 echo "$pass passed, $fail failed"

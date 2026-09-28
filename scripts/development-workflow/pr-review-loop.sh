@@ -8329,7 +8329,7 @@ restore_regression_label_if_missing() {
           # Do NOT redirect stderr here: surface errors so failures are
           # observable rather than silently swallowed.
           if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-              --pr "$pr_number" --label "ready-for-regression" 2>/dev/null; then
+              --pr "$pr_number" --label "ready-for-regression"; then
             echo "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
           fi
         else
