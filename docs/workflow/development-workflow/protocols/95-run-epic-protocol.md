@@ -661,7 +661,15 @@ For each in-scope item:
      of this requirement (BR8, AC8) does not depend on the invocation
      surface
 6. Restore readiness labels only after reviewer-loop, CI-loop, unresolved
-   threads, and final readiness checks are clean.
+   threads, and final readiness checks are clean. Apply them through
+   `./scripts/development-workflow/apply-readiness-labels.sh --pr <n> --label
+   ready-for-human-review` (or `ready-for-regression`). Agents must not call `gh pr edit --add-label ready-*` directly (issue #1408). The helper re-verifies,
+   for the live head SHA, that every configured ready-phase reviewer check run is
+   `completed`, that no blocking reviewer findings are posted on that SHA, and
+   that no non-reviewer check is pending or failing; an absent reviewer check run
+   counts as **not** clean. A `RESULT=refused` verdict is a stop — fix the
+   reason, then return to Step 8; a `RESULT=escalate` verdict means the state
+   could not be read and the label must not be applied.
 
 ---
 
