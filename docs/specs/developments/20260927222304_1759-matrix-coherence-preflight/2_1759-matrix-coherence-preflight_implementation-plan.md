@@ -48,6 +48,23 @@ All commands run at repo revision `361a7972` (branch `develop`, `2026-09-27`).
 
 **Rule 1 — sampling or enumeration record.** Not applicable. The design binds to no external free-text output distribution: it adds review guidance over documents this repository authors. No third-party output is matched, parsed, classified, or enumerated. (Trigger absent: no producer, no population, no occurrence set.)
 
+### Per-rule outcome record (plan revision `d0d22063`)
+
+Outcome labels per `plan-authoring-rigor-rules.md`:
+
+| Rule | Outcome | Evidence pointer |
+| --- | --- | --- |
+| Rule 1 — Sampling an external output distribution | `Not applicable` — no external free-text producer, population, or occurrence set; guidance targets this repository's own documents | "Factual claim evidence" → Rule 1 paragraph above |
+| Rule 2 — One normative statement per fact | `Satisfied` — the six-check definition and the 22-file enumeration each appear once as normative; all other mentions are cross-references | "The six audit checks" section; Layer-by-Layer total line |
+| Rule 3 — Counts of codebase artifacts | `Satisfied` — 22-file count derived from the recorded live-search rows (Verification Log) at `361a7972` | Verification Log rows: protocol grep (9 files) + mirror-surface grep (6 role-groups); Layer-by-Layer "Total: 22 files" |
+| Rule 4 — Independent verification of existence claims | `Satisfied` — the plan-reviewer exemption cites the direct grep command run against the exempted files | Layer-by-Layer total line: `grep -ci "matrix" ...` evidence |
+| Rule 5 — Consumer enumeration at composed call sites | `Satisfied` — consumers of the changed review contract enumerated (spec/plan reviewers route through REVIEW.md; the live-search row records the read) | Verification Log row "Both dispatch-stage surfaces consume `REVIEW.md`" |
+| Rule 6 — Conditional obligations name scope + discharge point | `Satisfied` — all three conditionals carry scope + discharge point in the same statement | "Factual claim evidence" → Rule 6 list |
+
+### Reversal note (published workflow contract changes)
+
+This plan changes published workflow-contract text (protocols 01/02/03/91/93, `review-doctrine.md`, `REVIEW.md`, and the 15 agent/skill mirrors). Reversal path: each change is an additive bullet, row, or pointer sentence in versioned markdown on `develop` — reverting the implementing PR's commits (or a follow-up `git revert`) restores the prior text with no data migration, no config keys to remove, and no runtime state. No script, schema, or generated surface is touched, so there is no tooling rollback to sequence. The new doctrine pattern `Stateful-contract outcome gaps` reverts with the rest of `review-doctrine.md`'s diff.
+
 ---
 
 ## Cross-Cutting Operational Assumption Check
