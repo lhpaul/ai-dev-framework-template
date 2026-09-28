@@ -209,6 +209,53 @@ reviewer_check_name_for_platform() {
   esac
 }
 
+# comment_only_reviewer_verdict <platform> <bot_login> — the verdict path for
+# ready-phase reviewers that publish NO check run (codex-github, coderabbit,
+# claude-code-action, copilot, devin, greptile — every documented platform
+# besides haystack/bugbot/ronda). Rounds 11-13 routed every readiness-label
+# producer through this helper, so refusing those platforms
+# `reviewer-check-name-unresolved` was a permanent deadlock: a repository
+# configured with codex-github (this PR's own ready-phase reviewer) could
+# never reach either readiness label even though pr-review-loop.sh fully
+# supports the platform (PR #1818 thread PRRT_kwDORWAxaM6m1Dec, round 14).
+#
+# Evidence semantics mirror the loop's comment-only readers
+# (run_codex_github_review / run_devin_review / run_coderabbit_review): the
+# "reviewer ran and was clean" verdict is the latest PR review the platform
+# bot submitted against the CURRENT head SHA. Fail closed — no bot review on
+# the head refuses `reviewer-check-absent`, never a silent pass. Findings are
+# then counted by the shared count_reviewer_blocking_findings, time-bounded
+# to that review's submitted_at (the comment-only analogue of the check run's
+# started_at). Sets reviewer_started_at and scan_blocking_count; refuses or
+# escalates directly on failure.
+comment_only_reviewer_verdict() {
+  local platform_arg="$1" bot_login_arg="$2"
+  local reviews_json latest_review
+  if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate --slurp 2>/dev/null)"; then
+    escalate review-fetch-failed
+  fi
+  if ! latest_review="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" '
+        [ .[]?[]
+          | select(
+              (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
+              and ((.commit_id // .commitId // "") == $sha)
+            )
+        ]
+        | sort_by(.submitted_at // "")
+        | last
+      ' 2>/dev/null)"; then
+    escalate review-parse-failed
+  fi
+  if [ -z "$latest_review" ] || [ "$latest_review" = "null" ]; then
+    result="refused"
+    reason="reviewer-check-absent"
+    reviewer_report="${platform_arg}:review"
+    refuse "reviewer-check-absent"
+  fi
+  reviewer_started_at="$(printf '%s\n' "$latest_review" | jq -r '.submitted_at // ""' 2>/dev/null)" || escalate review-parse-failed
+  count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at"
+}
+
 emit_verdict() {
   print_kv RESULT "$result"
   print_kv REASON "$reason"
@@ -326,7 +373,9 @@ bugbot_unavailable_notice_present() {
 # count_reviewer_blocking_findings <bot_login> <since> — fetches the PR review
 # surfaces (inline comments + reviews) and classifies the reviewer bot's
 # findings on the current head at/after <since>, setting the global
-# scan_blocking_count. Shared by the main gate and the pre-apply revalidation
+# scan_blocking_count. A body carrying "✅ Addressed" (the reviewer's own
+# resolved marker) never blocks — the same resolution signal
+# check_unresolved_threads and codex_review_thread_evidence_counts read. Shared by the main gate and the pre-apply revalidation
 # (PR #1818 finding 2, round 6): a same-SHA rerun that completes between the
 # initial scan and the label mutation can post findings the first scan never
 # saw, so the revalidation rescans the same surfaces with the same filters
@@ -388,6 +437,10 @@ count_reviewer_blocking_findings() {
     [ -n "$entry" ] || continue
     body="$(printf '%s\n' "$entry" | jq -r '.body')"
     state="$(printf '%s\n' "$entry" | jq -r '.state')"
+    # `inline` was consumed by the pre-round-14 "COMMENTED with inline" arm;
+    # the informational-umbrella rule no longer reads it (the inline loop
+    # below counts inline findings on its own).
+    # shellcheck disable=SC2034
     inline="$(printf '%s\n' "$entry" | jq -r '.inline')"
     if [ "$state" = "CHANGES_REQUESTED" ]; then
       scan_blocking_count=$((scan_blocking_count + 1))
@@ -397,7 +450,15 @@ count_reviewer_blocking_findings() {
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
       continue
     fi
-    if [ "$state" = "COMMENTED" ] && [ "$inline" -eq 0 ] && ! printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+    if printf '%s\n' "$body" | grep -q "✅ Addressed"; then
+      continue
+    fi
+    if [ "$state" = "COMMENTED" ] && ! printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+      # A COMMENTED review whose body carries no finding markers is the
+      # informational umbrella (a summary like "Ready for review" / Devin's
+      # completion text) — its inline findings are counted in the inline loop
+      # below, so the umbrella itself must not double-count or, worse, block
+      # alone after its inline finding was resolved ("✅ Addressed").
       continue
     fi
     scan_blocking_count=$((scan_blocking_count + 1))
@@ -408,6 +469,9 @@ count_reviewer_blocking_findings() {
     body="$(printf '%s\n' "$entry" | jq -r '.body')"
     [ -n "$body" ] || continue
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
+      continue
+    fi
+    if printf '%s\n' "$body" | grep -q "✅ Addressed"; then
       continue
     fi
     scan_blocking_count=$((scan_blocking_count + 1))
@@ -451,6 +515,23 @@ case "$head_ref_name" in
 esac
 
 # --- 2. Ready-phase reviewer check runs for the current head ----------------
+
+# supported_comment_only_reviewer_platform <platform> — true when the platform
+# is a DOCUMENTED ready-phase reviewer that publishes its verdict through PR
+# reviews/comments instead of a check run. The list is the documented
+# pr-review-loop.sh platform set (.ai-dev-workflow.yaml's on_ready comment)
+# minus the check-run-bearing three (haystack/bugbot/ronda) and the pure-CLI
+# no-GitHub-surface ones (coderabbit-cli, local-ai-reviewer, pr-agent —
+# bot_login_for_platform returns no login for those, so a verdict would never
+# be readable; an unknown string still refuses
+# reviewer-check-name-unresolved above, which is the typo guard).
+supported_comment_only_reviewer_platform() {
+  case "$1" in
+    codex-github|coderabbit|claude-code-action|copilot|devin|greptile) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 reviewer_blocking=0
 verdict_blocking=0
 applied_notified=0
@@ -525,17 +606,41 @@ fi
 while IFS= read -r platform; do
   [ -n "$platform" ] || continue
   check_name="$(reviewer_check_name_for_platform "$platform")"
-  # Fail closed: a configured ready-phase reviewer with no check-name mapping
-  # (e.g. codex-github, this repo's documented default) must not be silently
-  # skipped — that would gate the label on zero reviewer verdicts. Refuse so a
-  # human extends the mapping instead of the label going out unreviewed.
-  if [ -z "$check_name" ]; then
+  # Fail closed for an unsupported/unknown platform string only (a typo or an
+  # undocumented value): every DOCUMENTED ready-phase platform is either
+  # check-run-bearing (haystack/bugbot/ronda — reviewer_check_name_for_platform
+  # above) or comment-only (the list in supported_comment_only_reviewer_platform
+  # below). Before round 14 any non-mapped platform refused here, which
+  # deadlocked every documented comment-only platform (codex-github,
+  # coderabbit, ...) — rounds 11-13 routed every readiness-label producer
+  # through this helper, so the fail-closed default became a permanent refusal
+  # even though pr-review-loop.sh fully supports those platforms (PR #1818
+  # thread PRRT_kwDORWAxaM6m1Dec).
+  if [ -z "$check_name" ] && ! supported_comment_only_reviewer_platform "$platform"; then
     result="refused"
     reason="reviewer-check-name-unresolved"
     reviewer_report="$platform"
     refuse "reviewer-check-name-unresolved"
   fi
   bot_login="$(bot_login_for_platform "$platform")"
+  # Comment-only reviewer: no check run exists, so the verdict comes from the
+  # bot's latest review against the head SHA (same evidence surface the loop's
+  # comment-only platform readers use). comment_only_reviewer_verdict refuses
+  # (reviewer-check-absent) or escalates itself, and sets
+  # reviewer_started_at/scan_blocking_count for the shared machinery below.
+  if [ -z "$check_name" ]; then
+    comment_only_reviewer_verdict "$platform" "$bot_login"
+    reviewer_blocking=$((reviewer_blocking + scan_blocking_count))
+    first_scan_started_at="${first_scan_started_at}${first_scan_started_at:+
+}${platform}:${reviewer_started_at}"
+    first_scan_bot_logins="${first_scan_bot_logins}${first_scan_bot_logins:+
+}${platform}:${bot_login}"
+    reviewer_names_seen="${reviewer_names_seen}${reviewer_names_seen:+,}${platform}:review"
+    # Set here, not after the loop: the in-loop refusal paths below still emit
+    # a verdict, and an empty REVIEWER_REPORT there would read as "no reviewer".
+    reviewer_report="$reviewer_names_seen"
+    continue
+  fi
   reviewer_names_seen="${reviewer_names_seen}${reviewer_names_seen:+,}${check_name}"
   # Set here, not after the loop: the in-loop refusal paths below still emit a
   # verdict, and an empty REVIEWER_REPORT there would read as "no reviewer".
@@ -761,7 +866,21 @@ revalidate_reviewer_state() {
   while IFS= read -r platform_arg; do
     [ -n "$platform_arg" ] || continue
     check_name_arg="$(reviewer_check_name_for_platform "$platform_arg")"
-    [ -n "$check_name_arg" ] || continue
+    # Comment-only platforms revalidate on the same review surface the main
+    # gate gated on (comment_only_reviewer_verdict): if the bot's latest
+    # head review is unchanged and still carries zero blocking findings, the
+    # verdict still stands; a new review or a new finding refuses (fail
+    # closed, never a silent pass).
+    if [ -z "$check_name_arg" ]; then
+      if ! supported_comment_only_reviewer_platform "$platform_arg"; then
+        continue
+      fi
+      _revalidate_login="$(printf '%s\n' "$first_scan_bot_logins" | sed -n "s/^${platform_arg}://p" | head -1)"
+      [ -n "$_revalidate_login" ] || return 1
+      comment_only_reviewer_verdict "$platform_arg" "$_revalidate_login"
+      [ "$scan_blocking_count" -eq 0 ] || return 1
+      continue
+    fi
     # Fail closed (PR #1818 finding 1, round 6): a failed or EMPTY re-fetch of
     # the check runs cannot confirm the earlier verdict still describes this
     # head — treat it as an unreadable state, never as "unchanged" success.

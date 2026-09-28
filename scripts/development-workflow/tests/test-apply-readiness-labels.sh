@@ -679,9 +679,12 @@ MOCK_LABEL=''
 echo ""
 echo "=== Area 6: PR #1818 Codex findings ==="
 
-# Finding 1 (P1): a ready-phase platform with no check-name mapping must be
-# refused, not silently skipped — the documented default ready reviewer in this
-# repo (codex-github) is exactly such a platform.
+# Finding 1 (P1), superseded semantics (round 14, thread
+# PRRT_kwDORWAxaM6m1Dec): codex-github is a DOCUMENTED comment-only
+# ready-phase platform, so the round-era reviewer-check-name-unresolved
+# refusal became a permanent deadlock. It now gates on the bot's PR review
+# for the head: with no review posted the helper still refuses fail-closed —
+# reviewer-check-absent, never a silent pass.
 mkdir -p "$TMP_ROOT/codex-config"
 cat > "$TMP_ROOT/codex-config/workflow.yaml" <<'YAML'
 review:
@@ -704,9 +707,9 @@ out="$(
 code=$?
 set -e
 run_test "unresolved_platform_exit" "1" "$code"
-run_test "unresolved_platform_reason" "reviewer-check-name-unresolved" "$(printf '%s\n' "$out" | sed -n 's/^REASON=//p' | tail -1)"
+run_test "unresolved_platform_reason" "reviewer-check-absent" "$(printf '%s\n' "$out" | sed -n 's/^REASON=//p' | tail -1)"
 run_test "unresolved_platform_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
-run_test "unresolved_platform_names_platform" "codex-github" "$(printf '%s\n' "$out" | sed -n 's/^REVIEWER_REPORT=//p' | tail -1)"
+run_test "unresolved_platform_names_platform" "codex-github:review" "$(printf '%s\n' "$out" | sed -n 's/^REVIEWER_REPORT=//p' | tail -1)"
 
 # Finding 2 (P1): the head must be revalidated immediately before the label
 # mutation; a push landing between the state read and the apply must refuse.
@@ -1515,6 +1518,191 @@ MOCK_LATE_CI_PR_JSON=''
 run_test "ci_rerun_during_rescan_window_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
 run_test "ci_rerun_during_rescan_window_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 MOCK_PR_JSON="$_empty_rollup"
+
+echo ""
+echo "=== Area 15: PR #1818 codex-github finding, round 14 ==="
+
+# Thread PRRT_kwDORWAxaM6m1Dec: the helper mapped only haystack/bugbot/ronda
+# to check-run names and refused every other documented ready-phase platform
+# as reviewer-check-name-unresolved. Since rounds 11-13 routed EVERY
+# readiness-label producer through this helper, a repository configured with
+# e.g. codex-github (this PR's own live case) or coderabbit could never reach
+# either readiness label even though pr-review-loop.sh fully supports those
+# platforms — the round-era fail-closed default became a permanent deadlock.
+# Comment-only platforms (codex-github, coderabbit, ...) publish no check run:
+# their "reviewer ran and was clean" verdict is the latest PR review by the
+# platform bot for the head SHA. An unknown platform string must still refuse
+# reviewer-check-name-unresolved (typo guard).
+
+# Reset to the clean default before the planted cases.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+MOCK_REVALIDATE_PR_JSON=''
+MOCK_REVALIDATE_COMMENTS=''
+MOCK_REVALIDATE_CHECK_RUNS=''
+MOCK_FINAL_REVALIDATE_HEAD=''
+MOCK_RERUN_COMMENTS=''
+MOCK_DROP_LABEL=0
+MOCK_LOCAL_OVERRIDE_ROOT=''
+
+_codex_config="$TMP_ROOT/codex-github-config"
+mkdir -p "$_codex_config"
+cat > "$_codex_config/workflow.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - codex-github
+YAML
+# A head/base pair both declaring codex-github. Planted failing case 1: a
+# clean COMMENTED review by chatgpt-codex-connector[bot] on the head SHA —
+# pre-fix the helper refused reviewer-check-name-unresolved before ever
+# reading the review surface.
+run_helper_platform() {
+  local config_file="$1"
+  local label="${MOCK_LABEL:-ready-for-human-review}"
+  : >"$_LABEL_LOG"
+  : >"$_LABEL_STATE"
+  : >"$_CALL_LOG"
+  set +e
+  out="$(
+    PATH="$_BIN:$PATH" \
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="" \
+    MOCK_GH_LOG="$_LABEL_LOG" \
+    MOCK_CALL_LOG="$_CALL_LOG" \
+    MOCK_LABEL_STATE="$_LABEL_STATE" \
+    MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
+    MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
+    MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
+    MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
+    MOCK_LABELS='{"labels":[]}' \
+    MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
+    MOCK_REVALIDATE_HEAD="" \
+    MOCK_POST_APPLY_HEAD="" \
+    MOCK_DROP_LABEL="0" \
+    MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
+    MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
+    MOCK_BASE_SHA="$BASE_SHA" \
+    MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
+    MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
+    MOCK_REVALIDATE_CHECK_RUNS="" \
+    MOCK_REVALIDATE_PR_JSON="" \
+    MOCK_REVALIDATE_COMMENTS="" \
+    MOCK_REVALIDATE_CHECK_RUNS_EXIT="0" \
+    MOCK_POST_VIEW_EXIT="0" \
+    MOCK_CHECK_RUNS_EXIT="0" \
+    MOCK_PR_JSON_EXIT="0" \
+    MOCK_LATE_CI_PR_JSON="" \
+    MOCK_FINAL_REVALIDATE_HEAD="" \
+    MOCK_RERUN_COMMENTS="" \
+    MOCK_REMOVE_LABEL_EXIT="0" \
+    "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
+  )"
+  code=$?
+  set -e
+  printf '%s|%s\n' "$code" "$out"
+}
+
+_codex_platform_yaml='review:
+  on_ready:
+    github:
+      - codex-github'
+MOCK_HEAD_CONFIG="$_codex_platform_yaml"
+MOCK_BASE_CONFIG="$_codex_platform_yaml"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_PR_JSON="$_empty_rollup"
+
+# Planted failing case 1: clean bot review on the head → label applies.
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"REVIEWED_COMMIT: '"$HEAD"'","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_clean_review_labels_exit" "0" "${result%%|*}"
+run_test "codex_clean_review_labels_result" "labeled" "$(field "$result" RESULT)"
+run_test "codex_clean_review_labels_reason" "gate-passed" "$(field "$result" REASON)"
+run_test "codex_clean_review_applies_label" "1" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Planted failing case 2: zero reviews by the bot on the head → fail closed
+# (reviewer-check-absent), never a silent pass.
+MOCK_REVIEWS='[]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_no_review_refuses_exit" "1" "${result%%|*}"
+run_test "codex_no_review_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "codex_no_review_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# A CHANGES_REQUESTED review on the head is a blocking verdict.
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_changes_requested_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+# A bot review for a DIFFERENT SHA is not evidence the current head was
+# reviewed → refuse.
+MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"commit_id":"bbbb222000000000000","state":"COMMENTED","body":"REVIEWED_COMMIT: bbbb222000000000000","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_other_sha_review_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_REVIEWS='[]'
+
+# coderabbit: same comment-only shape, plus its body classifier — a body with
+# a blocking severity marker (🟠 Major) blocks; "No Issues Found" is clean;
+# "✅ Addressed" findings do not block.
+_rabbit_platform_yaml='review:
+  on_ready:
+    github:
+      - coderabbit'
+MOCK_HEAD_CONFIG="$_rabbit_platform_yaml"
+MOCK_BASE_CONFIG="$_rabbit_platform_yaml"
+MOCK_REVIEWS='[{"user":{"login":"coderabbitai"},"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"Ready for review","submitted_at":"2026-01-02T00:00:00Z"}]'
+MOCK_COMMENTS='[]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_clean_review_labels_result" "labeled" "$(field "$result" RESULT)"
+# Blocking severity marker in an inline comment on the head.
+MOCK_COMMENTS='[{"user":{"login":"coderabbitai"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-01-02T00:00:00Z","body":"🟠 Major: off-by-one in the guard"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_major_finding_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+run_test "coderabbit_major_finding_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# An Addressed finding is not blocking.
+MOCK_COMMENTS='[{"user":{"login":"coderabbitai"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-01-02T00:00:00Z","body":"🟠 Major: off-by-one\n\n✅ Addressed in commit abc123"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_addressed_finding_not_blocking_result" "labeled" "$(field "$result" RESULT)"
+# No coderabbit review at all → refuse.
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_no_review_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+
+# A platform that is NOT documented (typo / unsupported) must still refuse
+# reviewer-check-name-unresolved — the fail-closed typo guard survives.
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - totally-unknown-platform'
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github:
+      - totally-unknown-platform'
+result="$(run_helper_platform "$_codex_config")"
+run_test "unknown_platform_refuses_exit" "1" "${result%%|*}"
+run_test "unknown_platform_refuses_reason" "reviewer-check-name-unresolved" "$(field "$result" REASON)"
+run_test "unknown_platform_refuses_report" "totally-unknown-platform" "$(field "$result" REVIEWER_REPORT)"
+run_test "unknown_platform_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+
+# Check-run platforms keep resolving names: ronda (already covered) and the
+# extended mapping — a codex-github run is NOT one, but claude-code-action
+# (also comment-only) resolves to empty check name too. The named-platform
+# regression guard: haystack/bugbot/ronda names are unchanged.
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
+MOCK_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper)"
+run_test "check_name_platforms_unchanged_result" "labeled" "$(field "$result" RESULT)"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_HEAD_CONFIG=''
+MOCK_BASE_CONFIG=''
 
 echo ""
 echo "$pass passed, $fail failed"
