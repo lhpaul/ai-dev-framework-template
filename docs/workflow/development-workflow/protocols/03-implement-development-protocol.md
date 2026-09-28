@@ -1059,6 +1059,7 @@ Pass condition: empty output. If non-empty: resolve or address each reported thr
 
 Step 1.3 — Apply `ready-for-regression`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
 # (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
@@ -1081,6 +1082,7 @@ Pass condition: script exits with `RESULT=green`. If `RESULT=red`: fix the faili
 
 Step 2.2 — Apply `ready-for-human-review`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Only after Step 2.1 passes. Helper-applied only (issue #1408): a `refused`
 # verdict means the reviewer verdict or CI is not settled for the live head SHA.
@@ -1735,6 +1737,7 @@ Pass condition: empty output. If non-empty: resolve or address each reported thr
 
 Step 1.3 — Apply `ready-for-regression`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
 # (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
@@ -2107,6 +2110,7 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
 3. **Apply `ready-for-regression`** after the reviewer loop is clean:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/apply-readiness-labels.sh \
      --pr <backport_pr_number> --label ready-for-regression
@@ -2116,6 +2120,7 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
 5. **Apply `ready-for-human-review`** after CI is green and all reviewer loop threads are resolved:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/apply-readiness-labels.sh \
      --pr <backport_pr_number> --label ready-for-human-review
