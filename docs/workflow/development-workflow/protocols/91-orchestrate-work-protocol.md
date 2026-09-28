@@ -2571,16 +2571,18 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 
 > **Readiness labels are helper-applied only (issue #1408).** Agents **must not call `gh pr edit --add-label ready-*`** directly, and **must not call `apply-readiness-labels.sh` for a `ready-*` label** unless the helper's own gate runs first. Readiness labels are input to the merge gates (`run-epic-delegated-gate.sh`, `batch-merge.sh`, `workflow-next-action.sh`), so a label applied on an agent's judgement asserts readiness no reviewer verdict supports. An agent that applies one by hand has not completed this step — it has skipped it.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only for implementation PRs. The helper refuses unless every configured
-# ready-phase reviewer check run is `completed` for the current head SHA, the
-# reviewer posted no blocking findings on that SHA, and no non-reviewer check is
-# pending or failing. It emits RESULT= and REASON= for the run summary.
+# Only for implementation PRs (feature/*, fix/*, refactor/*, hotfix/*,
+# backport/hotfix/*). The helper refuses unless every configured ready-phase
+# reviewer check run is `completed` for the current head SHA and the reviewer
+# posted no blocking findings on that SHA. It emits RESULT= and REASON= for the
+# run summary.
 ./scripts/development-workflow/apply-readiness-labels.sh \
   --pr <pr_number> --label ready-for-regression
 ```
 
-`RESULT=labeled` (exit 0) means the gate passed and the label is on the PR. `RESULT=refused` (exit 1) carries the reason — `reviewer-check-absent`, `reviewer-check-not-completed`, `blocking-findings`, `ci-pending`, or `ci-failing` — and is a stop: return to Step 7 (reviewer `refused` on a reviewer reason) or Step 8 (CI reason) rather than labelling. `RESULT=escalate` (exit 2) means the PR state could not be read; do not label, and report the `REASON`.
+`RESULT=labeled` (exit 0) means the gate passed and the label is on the PR. `RESULT=refused` (exit 1) carries the reason — `reviewer-check-absent`, `reviewer-check-not-completed`, `blocking-findings`, or `ci-failing` — and is a stop: return to Step 7 rather than labelling. `RESULT=escalate` (exit 2) means the PR state could not be read; do not label, and report the `REASON`. A **pending** check does not refuse this label — Step 7b runs before the Step 8 CI loop, and this label is what starts the configured regression workflow.
 
 This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). The template placeholder remains inactive unless explicitly enabled; downstream real regression suites should keep this label gate when they replace the placeholder. Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up configured e2e checks as part of its green/red polling via `statusCheckRollup`.
 
@@ -2597,7 +2599,7 @@ After applying the label, **verify it was applied successfully** before proceedi
 gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -q "^ready-for-regression$" && echo "✅ Step 7b complete: ready-for-regression label verified"
 ```
 
-If the verification fails (label not present), do not proceed to Step 8. Re-run the `gh pr edit --add-label` command and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
+If the verification fails (label not present), do not proceed to Step 8. Re-run `apply-readiness-labels.sh` (never `gh pr edit --add-label` directly — issue #1408) and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
 
 See [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) for the full integration guide, including downstream customization.
 
