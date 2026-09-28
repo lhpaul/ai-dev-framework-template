@@ -629,6 +629,42 @@ run_test "skeleton_manifest_declares_helper" "1" "$([ "$_skeleton_entry" -ge 1 ]
 unset _sync_entry _skeleton_entry
 
 echo ""
+echo "=== Area 8: PR #1818 Codex findings, round 3 ==="
+
+# Finding 1 (P1): only Bugbot reports reviewer unavailability through an issue
+# comment. For any other configured platform (ronda, haystack), a completed
+# check run concluding neutral/cancelled/skipped means the reviewer never
+# finished a successful review, and must be refused fail-closed — previously
+# the code only probed issue comments when platform=bugbot and fell through
+# clean otherwise. Planted failing case for the round-3 fix.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"neutral","started_at":"2026-01-01T00:00:00Z"}]}'
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
+result="$(run_helper_no_local_config)"
+run_test "ronda_neutral_refused_exit" "1" "${result%%|*}"
+run_test "ronda_neutral_refused_reason" "reviewer-unavailable" "$(field "$result" REASON)"
+run_test "ronda_neutral_refused_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# Same rule for cancelled and skipped conclusions.
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"cancelled","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper_no_local_config)"
+run_test "ronda_cancelled_refused_reason" "reviewer-unavailable" "$(field "$result" REASON)"
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"skipped","started_at":"2026-01-01T00:00:00Z"}]}'
+result="$(run_helper_no_local_config)"
+run_test "ronda_skipped_refused_reason" "reviewer-unavailable" "$(field "$result" REASON)"
+# Bugbot keeps its notice-probe semantics: a bare neutral with no notice is
+# still clean (covered in Area 1); the fail-closed branch is non-bugbot only.
+MOCK_CHECK_RUNS="$_bugbot_neutral"
+MOCK_ISSUE_COMMENTS='[]'
+result="$(run_helper)"
+run_test "bugbot_neutral_no_notice_still_clean" "labeled" "$(field "$result" RESULT)"
+
+echo ""
 echo "$pass passed, $fail failed"
 
 if [ "$fail" -ne 0 ]; then

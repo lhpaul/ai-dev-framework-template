@@ -13007,9 +13007,9 @@ _ADVISORY_ENTRY_LINES_
         if [ "${_has_regression_label:-}" = "false" ]; then
           regression_label_section="
 
-**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
+**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop) — routed through the readiness-label gate, never a direct \`gh pr edit\` (which would bypass the reviewer/CI verdict gate; see #1408):
 \`\`\`
-gh pr edit ${pr_number} --add-label \"ready-for-regression\"
+bash scripts/development-workflow/apply-readiness-labels.sh --pr ${pr_number} --label \"ready-for-regression\"
 \`\`\`
 Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
         fi

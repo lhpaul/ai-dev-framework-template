@@ -3928,7 +3928,15 @@ run_test "restore_path_invokes_readiness_helper" "yes" \
       <(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src") && echo yes || echo no)"
 _direct_applies="$(grep -c -- '--add-label "ready-for-regression"' "$_loop_src" 2>/dev/null)" || _direct_applies="0"
 run_test "no_direct_ready_for_regression_apply_in_loop" "0" "$_direct_applies"
-unset _loop_src _helper_calls _direct_applies
+# Test 11.12 (PR #1818 finding, #1408 round 3): the clean-path Step 7b summary
+# must instruct agents to route the label through the helper too, not hand
+# them a copy-paste `gh pr edit --add-label` command that bypasses the gate
+# (the second emission site, in the summary-comment section).
+_summary_uses_helper="$(sed -n '/Step 7b regression-label assertion/,/^  fi$/p' "$_loop_src" \
+  | grep -c 'apply-readiness-labels.sh' 2>/dev/null)" || _summary_uses_helper="0"
+run_test "step7b_summary_uses_readiness_helper" "1" \
+  "$([ "$_summary_uses_helper" -ge 1 ] && echo 1 || echo 0)"
+unset _loop_src _helper_calls _direct_applies _summary_uses_helper
 
 # ---------------------------------------------------------------------------
 # Area 12: reviewer-failed label sync (issue #804)

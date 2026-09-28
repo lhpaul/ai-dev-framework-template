@@ -354,6 +354,17 @@ while IFS= read -r platform; do
             exit 1
           fi
         done <<< "$unavailable_bodies"
+      else
+        # Non-Bugbot platforms report nothing through issue comments, so a
+        # `neutral`/`cancelled`/`skipped` completed run cannot be cleared by
+        # any notice: the reviewer never finished a successful review. Fail
+        # closed — same refusal shape as the notice path above. Mirrors
+        # `run_ronda_review()`'s escalation of these conclusions
+        # (pr-review-loop.sh ~2894-2905).
+        result="refused"
+        reason="reviewer-unavailable"
+        emit_verdict
+        exit 1
       fi
       ;;
   esac
