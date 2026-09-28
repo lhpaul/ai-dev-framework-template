@@ -4,6 +4,12 @@
 # covers: scripts/development-workflow/workflow-lib.sh
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 # covers: docs/workflow/development-workflow/protocols/95-run-epic-protocol.md
+# covers: docs/workflow/development-workflow/protocols/03-implement-development-protocol.md
+# covers: docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md
+# covers: docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md
+# covers: .claude/commands/sync-template.md
+# covers: .claude/skills/sync-template.md
+# covers: .cursor/commands/sync-template.md
 #
 # Readiness labels are input to the merge gates, so the gate must refuse on
 # every state that does not prove a finished, clean reviewer verdict. The
@@ -45,7 +51,7 @@ cat > "$_BIN/gh" <<'GH'
 # Defaults are plain variables: a ${VAR:-{...}} default containing braces does
 # not survive bash parameter expansion and silently yields invalid JSON.
 labels_default='{"labels":[]}'
-pr_default='{"headRefOid":"aaaa111000000000000","labels":[],"statusCheckRollup":[]}'
+pr_default='{"headRefOid":"aaaa111000000000000","headRefName":"fix/1408-demo","labels":[],"statusCheckRollup":[]}'
 check_runs_default='{"check_runs":[]}'
 empty_array='[]'
 jq_filter=""
@@ -123,6 +129,7 @@ review:
 YAML
 
 HEAD='aaaa111000000000000'
+_BRANCH='fix/1408-demo'
 _LABEL_LOG="$TMP_ROOT/gh-calls.log"
 _LABEL_STATE="$TMP_ROOT/label-state"
 
@@ -131,6 +138,7 @@ _LABEL_STATE="$TMP_ROOT/label-state"
 # parameter expansion, so the fallbacks are plain names.
 run_helper() {
   local default_labels='{"labels":[]}'
+  local label="${MOCK_LABEL:-ready-for-human-review}"
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
   set +e
@@ -145,7 +153,7 @@ run_helper() {
     MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
     MOCK_LABELS="${MOCK_LABELS:-$default_labels}" \
     MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
-    "$HELPER" --pr 42 --repo acme/widgets --label ready-for-human-review 2>/dev/null
+    "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
   code=$?
   set -e
@@ -160,7 +168,7 @@ edit_count() {
   if [ -s "$_LABEL_LOG" ]; then wc -l <"$_LABEL_LOG" | tr -d ' '; else printf '0'; fi
 }
 
-_empty_rollup='{"headRefOid":"'"$HEAD"'","labels":[],"statusCheckRollup":[]}'
+_empty_rollup='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[]}'
 _bugbot_ok='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
 _bugbot_running='{"check_runs":[{"name":"Cursor Bugbot","status":"in_progress","conclusion":null,"started_at":"2026-01-01T00:00:00Z"}]}'
 _bugbot_failed='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"}]}'
@@ -168,7 +176,7 @@ _bugbot_failed='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","con
 # rollup dedupe; this asserts the check-run read picks the newest by started_at).
 _bugbot_dup='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"},{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-02-01T00:00:00Z"}]}'
 _with_ci() {
-  printf '{"headRefOid":"%s","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"%s"}]}' "$HEAD" "$1"
+  printf '{"headRefOid":"%s","headRefName":"%s","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"%s"}]}' "$HEAD" "$_BRANCH" "$1"
 }
 
 echo "=== Area 1: refuse on incomplete reviewer verdict ==="
@@ -225,7 +233,7 @@ MOCK_PR_JSON="$_empty_rollup"
 result="$(run_helper)"
 run_test "empty_rollup_exit" "0" "${result%%|*}"
 
-MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
 result="$(run_helper)"
 run_test "ci_pending_exit" "1" "${result%%|*}"
 run_test "ci_pending_reason" "ci-pending" "$(field "$result" REASON)"
@@ -239,7 +247,7 @@ run_test "ci_failing_reason" "ci-failing" "$(field "$result" REASON)"
 # The reviewer's own check run is excluded from the CI classification, so a
 # `success` (or a `failure`) Bugbot run never counts as a failing CI check.
 MOCK_CHECK_RUNS="$_bugbot_failed"
-MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"Cursor Bugbot","workflowName":"Cursor","status":"COMPLETED","conclusion":"FAILURE"}]}'
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"Cursor Bugbot","workflowName":"Cursor","status":"COMPLETED","conclusion":"FAILURE"}]}'
 MOCK_COMMENTS='[]'
 MOCK_REVIEWS='[]'
 result="$(run_helper)"
@@ -304,9 +312,68 @@ do
   base="$(basename "$protocol")"
   count="$(grep -c -- 'apply-readiness-labels.sh' "$REPO_ROOT/$protocol" || true)"
   run_test "$base references the helper" "1" "$([ "$count" -ge 1 ] && echo 1 || echo 0)"
-  hand="$(grep -c 'must not call `gh pr edit --add-label' "$REPO_ROOT/$protocol" || true)"
+  hand="$(grep -c 'must not call `gh pr edit --add-label' "$REPO_ROOT/$protocol" || true)"  # workflow-shell-guard: allow SH001 - grep -c exits 1 on zero matches; the assertion on the next line decides pass/fail.
   run_test "$base forbids direct label application" "1" "$([ "$hand" -ge 1 ] && echo 1 || echo 0)"
 done
+
+# Residual check: no normative surface still instructs a bare
+# `gh pr edit ... --add-label "ready-for-*"`. The release protocol is the one
+# documented exemption (release PRs have no reviewer check run), so it must
+# carry the exemption note instead.
+for surface in \
+  docs/workflow/development-workflow/protocols/03-implement-development-protocol.md \
+  docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md \
+  .claude/commands/sync-template.md \
+  .claude/skills/sync-template.md \
+  .cursor/commands/sync-template.md
+do
+  bare="$(grep -c 'add-label "ready-for-' "$REPO_ROOT/$surface" || true)"
+  run_test "$surface has no bare ready-* apply" "0" "$bare"
+done
+
+release_surface="docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md"
+run_test "05 documents the release exemption" "1" \
+  "$([ "$(grep -c 'documented exemption from helper-gated readiness labels' "$REPO_ROOT/$release_surface" || true)" -ge 1 ] && echo 1 || echo 0)"
+
+echo ""
+echo "=== Area 5: branch-type scope for the reviewer leg ==="
+
+# Ready-phase reviewers are not dispatched on doc-stage branches, so no check run
+# can exist for them. Gating on one would refuse every spec/plan PR — the exact
+# behaviour this assertion locks out.
+MOCK_LABEL='ready-for-human-review'
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"spec/1408-demo","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "spec_branch_not_reviewer_gated_exit" "0" "${result%%|*}"
+run_test "spec_branch_not_reviewer_gated_result" "labeled" "$(field "$result" RESULT)"
+
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"implementation-plan/1408-demo","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "plan_branch_not_reviewer_gated_exit" "0" "${result%%|*}"
+run_test "plan_branch_reviewer_report" "none" "$(field "$result" REVIEWER_REPORT)"
+
+# An implementation branch with the same empty check-run set still refuses: the
+# exemption must be scoped to branch type, not to "check run missing".
+MOCK_PR_JSON="$_empty_rollup"
+result="$(run_helper)"
+run_test "impl_branch_still_reviewer_gated_exit" "1" "${result%%|*}"
+run_test "impl_branch_still_reviewer_gated_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+
+# `ready-for-regression` is applied at Step 7b, before the Step 8 CI loop, so a
+# pending check is normal there. Refusing on it would deadlock Step 7b against
+# the very checks the label starts.
+MOCK_LABEL='ready-for-regression'
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
+result="$(run_helper)"
+run_test "regression_label_allows_pending_ci_exit" "0" "${result%%|*}"
+run_test "regression_label_allows_pending_ci_result" "labeled" "$(field "$result" RESULT)"
+# A failing check still refuses under either label.
+MOCK_PR_JSON="$(_with_ci FAILURE)"
+result="$(run_helper)"
+run_test "regression_label_still_refuses_failing_ci" "ci-failing" "$(field "$result" REASON)"
+MOCK_LABEL=''
 
 echo ""
 echo "$pass passed, $fail failed"

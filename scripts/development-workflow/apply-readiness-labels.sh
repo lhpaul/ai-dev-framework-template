@@ -15,6 +15,20 @@
 # Access" can make Bugbot refuse to run, and "no check run" must never read as
 # "reviewer clean".
 #
+# The reviewer leg applies to implementation branches only (`feature/*`,
+# `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`) — the same boundary
+# Protocol 91 draws for `IS_IMPLEMENTATION_PR` and for its Step 7b label
+# derivation table. Ready-phase reviewers are not dispatched on `spec/*`,
+# `implementation-plan/*`, graduation (`develop-<slug>`), or `release/*` PRs, so
+# no check run can exist for them; gating on one would refuse every doc-stage and
+# release PR. The CI leg still applies on those branches.
+#
+# `ready-for-regression` blocks on failing non-reviewer checks but permits
+# pending ones: that label is what *starts* the configured regression workflow,
+# so requiring green CI before it is applied would make Step 7b depend on checks
+# the label itself triggers. `ready-for-human-review` — the merge-gate input —
+# blocks on pending as well.
+#
 # Findings are read from `pulls/N/comments` (inline review comments) and
 # `pulls/N/reviews`, never from issue comments: Bugbot reports through a
 # `COMMENTED` PR review with inline comments, the same surface
@@ -147,13 +161,22 @@ escalate() {
 
 # --- 1. PR state -----------------------------------------------------------
 pr_json=""
-if ! pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,labels,statusCheckRollup 2>/dev/null)" || [ -z "$pr_json" ]; then
+if ! pr_json="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,headRefName,labels,statusCheckRollup 2>/dev/null)" || [ -z "$pr_json" ]; then
   escalate pr-state-unavailable
 fi
 head_sha="$(printf '%s\n' "$pr_json" | jq -r '.headRefOid // ""' 2>/dev/null)" || escalate pr-state-parse-failed
 if [ -z "$head_sha" ]; then
   escalate head-sha-unavailable
 fi
+head_ref_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName // ""' 2>/dev/null)" || escalate pr-state-parse-failed
+
+# Implementation branches are the ones that carry a ready-phase reviewer check
+# run and a required `ready-for-regression` label (Protocol 91's label derivation
+# table). Doc-stage, graduation, and release PRs are not reviewer-gated.
+case "$head_ref_name" in
+  feature/*|fix/*|refactor/*|hotfix/*|backport/hotfix/*) is_implementation_pr="true" ;;
+  *) is_implementation_pr="false" ;;
+esac
 
 # --- 2. Ready-phase reviewer check runs for the current head ----------------
 reviewer_blocking=0
@@ -161,6 +184,11 @@ verdict_blocking=0
 applied_notified=0
 reviewer_names_seen=""
 platform=""
+if [ "$is_implementation_pr" = "true" ]; then
+  ready_platforms="$(configured_ready_reviewer_platforms)"
+else
+  ready_platforms=""
+fi
 while IFS= read -r platform; do
   [ -n "$platform" ] || continue
   check_name="$(reviewer_check_name_for_platform "$platform")"
@@ -212,7 +240,7 @@ case "$conclusion" in
     applied_notified=1
     applied_labels="$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name' 2>/dev/null)" || applied_labels=""
     if ! printf '%s\n' "$applied_labels" | grep -qx 'needs-fixes'; then
-      gh pr edit "$pr_number" --repo "$repo" --add-label 'needs-fixes' >/dev/null 2>&1 || true
+      gh pr edit "$pr_number" --repo "$repo" --add-label 'needs-fixes' >/dev/null 2>&1 || true  # workflow-shell-guard: allow SH001 - best-effort annotation; a failure here must not mask the blocking verdict about to be emitted.
     fi
   fi
 
@@ -288,7 +316,7 @@ case "$conclusion" in
     fi
     reviewer_blocking=$((reviewer_blocking + 1))
   done < <(printf '%s\n' "$inline_json" | jq -c '.[]' 2>/dev/null)
-done < <(configured_ready_reviewer_platforms)
+done < <(printf '%s\n' "$ready_platforms")
 
 reviewer_report="${reviewer_names_seen:-none}"
 
@@ -339,7 +367,10 @@ failing_count="$(printf '%s\n' "$baseline_json" | jq '
     ) ] | length
 ' 2>/dev/null)" || escalate check-rollup-parse-failed
 
-if [ "$pending_count" -gt 0 ]; then
+# `ready-for-regression` is applied at Step 7b — *before* the Step 8 CI loop — so
+# a pending check is normal there and must not block. `ready-for-human-review` is
+# the merge-gate input and has no such excuse: pending refuses.
+if [ "$pending_count" -gt 0 ] && [ "$label" != "ready-for-regression" ]; then
   result="refused"
   reason="ci-pending"
   emit_verdict
