@@ -4113,38 +4113,38 @@ run_bugbot_review() {
     elapsed=$(( elapsed + poll_interval ))
   done
 
-  # Poll budget exhausted for this attempt. Retry once with the trigger comment
-  # before declaring the reviewer failed (issue #1390): an unfinished Bugbot run
-  # is a timeout, not a finding, and the stale reviewer-failed label it produces
-  # reads like one.
-  if [ "$bugbot_retry_attempted" -eq 0 ]; then
-    bugbot_retry_attempted=1
-    echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${max_wait}s for PR #$pr_number — re-triggering once" >&2
-    set +e
-    gh api "repos/$repo/issues/$pr_number/comments" --method POST \
-      --raw-field body="$trigger_comment" > /dev/null 2>&1
-    local _bb_retry_rc=$?
-    set -e
-    if [ "$_bb_retry_rc" -ne 0 ]; then
-      echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
-      print_kv RESULT escalate
-      print_kv REASON trigger-failed
-      print_kv PLATFORM "$platform"
-      print_kv PR_NUMBER "$pr_number"
-      print_kv BRANCH "$branch_name"
-      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-      print_kv COMMENT_COUNT 0
-      print_kv BLOCKING_COUNT 0
-      print_kv SUGGESTION_COUNT 0
-      return 2
+    # Poll budget exhausted for this attempt. Retry once with the trigger comment
+    # before declaring the reviewer failed (issue #1390): an unfinished Bugbot run
+    # is a timeout, not a finding, and the stale reviewer-failed label it produces
+    # reads like one.
+    if [ "$bugbot_retry_attempted" -eq 0 ]; then
+      bugbot_retry_attempted=1
+      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${max_wait}s for PR #$pr_number — re-triggering once" >&2
+      set +e
+      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" > /dev/null 2>&1
+      local _bb_retry_rc=$?
+      set -e
+      if [ "$_bb_retry_rc" -ne 0 ]; then
+        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON trigger-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      elapsed=0
+      check_appeared=0
+      status_val=""
+      conclusion=""
+      continue
     fi
-    elapsed=0
-    check_appeared=0
-    status_val=""
-    conclusion=""
-    continue
-  fi
-  break
+    break
   done
 
   # Poll budget exhausted across both attempts.  Distinguish timeout (run
