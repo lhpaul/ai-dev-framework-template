@@ -1,0 +1,194 @@
+# Matrix Coherence Preflight — Implementation Plan
+
+**Work item brief**: GitHub issue #1759 (Refactor — the brief replaces the spec)
+**Smoke test runbook**: [`docs/testing/workflow/1759-matrix-coherence-preflight.smoke-test.md`](../../../testing/workflow/1759-matrix-coherence-preflight.smoke-test.md)
+
+---
+
+## Summary
+
+**Approach**: Add a documentation-only **matrix-coherence preflight** to the spec/plan workflow. When a spec (or, for Refactor items, the work item brief) contains a stateful contract — a decision matrix, state table, lifecycle, precedence rules, or similar — the creator-stage agent must run a six-check coherence audit over that matrix **before** pushing the PR and entering the reviewer loop, and the loop-side guidance must require re-running the same audit **after two consecutive review cycles whose findings implicate the same matrix**. The audit is an existing-doctrine consolidation: the six checks are the `Criteria/matrix mismatch` and `Trigger ambiguity` patterns already canonised in [`review-doctrine.md`](../../../workflow/development-workflow/review-doctrine.md), plus the phase-ordering and evidence-freshness disciplines already stated in Protocol 01/02. No new script, parser, or configuration surface is added.
+
+**Estimated complexity**: S
+
+**Rationale**: The change is confined to protocol/guidance markdown plus the review contract's checklist bullets. The nearest prior art, #1561's reviewer preflight, is a shell/Python tool for reviewer-*configuration* coherence; this item audits spec *content* coherence and deliberately builds no tool (see Decision 1).
+
+**Dependencies**: None. #1561's surfaces are already merged at `361a7972` (verified in the Cross-Cutting Operational Assumption Check); this change composes with — never duplicates — them.
+
+---
+
+## Verification Log
+
+All commands run at repo revision `361a7972` (branch `develop`, `2026-09-27`).
+
+| Check | Command / query | Result |
+| --- | --- | --- |
+| Repo revision | `git rev-parse --short HEAD` | `361a7972` |
+| No existing matrix-coherence preflight guidance (Rule 4 non-existence) | `grep -rin "coherence" docs/workflow/ scripts/ REVIEW.md AGENTS.md` excluding `docs/specs/developments/` | 1 hit, unrelated: `docs/workflow/development-workflow/integrations/coderabbit.md:286` describes #1561's reviewer preflight as "a configuration-coherence verdict" — different surface (reviewer config, not spec content) |
+| #1561 prior-art files exist (Rule 4 existence) | `ls scripts/development-workflow/ \| grep preflight` | `reviewer-preflight.sh`, `reviewer_preflight.py`, `reviewer_preflight_build_input.py`, `reviewer_preflight_coderabbit.py` exist |
+| #1561 preflight is config-scoped, not spec-content-scoped (Rule 4 "already covered" check) | Read `scripts/development-workflow/reviewer-preflight.sh` lines 1-120 | Header: "cross-check reviewer configuration before dispatch … shared workflow reviewer configuration, the machine-local override, and each reviewer platform's own configuration". No spec-content reading anywhere |
+| Triggering-example matrix exists (Rule 4 existence) | `ls docs/specs/developments/20260915075927_1757-resolved-codex-findings/` | `1_1757-resolved-codex-findings_specs.md` present; its `## Complex Workflow Decision-Gate Matrix` section (lines 197-247) is the dense precedence matrix the brief cites |
+| Doctrine already carries the core patterns (Rule 4 existence; avoids duplicating #1561-style tooling) | `grep -n "^### " docs/workflow/development-workflow/review-doctrine.md` | 6 patterns: `Criteria/matrix mismatch`, `Opt-out ambiguity`, `Parser-surface conflict`, `Trigger ambiguity`, `Example contradicting rule`, `Enumeration treated as contract`; file is 4,104 bytes against the 12,000-byte `REVIEW_DOCTRINE_MAX_BYTES` bound |
+| Reviewer-loop re-run hook location (Rule 4 existence) | `grep -n "Long spec/plan review-cycle guidance" docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | Section exists at line 1022 ("Long spec/plan review-cycle guidance") — the natural anchor for the re-run requirement |
+| Protocol 01 spec-side gate location (Rule 4 existence) | `grep -n "Complex workflow decision-gate matrix" docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` | Guidance exists at lines 190-199 within the Document Quality Gate pre-PR verification list |
+| Protocol 91 reviewer dispatch routing (Rule 4 existence) | `sed -n 1955,1990p docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | "Reviewer dispatch map" table routes `spec/*` PRs to `spec-reviewer` / `workflow-spec-reviewer` / CodeRabbit / `codex-github-reviewer.sh` — the surfaces the preflight feeds |
+| Live search: all agent/skill files that reference the affected stage protocols (cross-cutting checklist enumeration, Rule 5) | `grep -rln "01-generate-spec-protocol\|93-automated-reviewer-loop-protocol\|01-review-spec-protocol" .claude/agents/ .cursor/agents/ .codex/skills/ .agents/skills/` | 9 files: `.claude/agents/{product-manager,spec-reviewer,automated-reviewer-loop}.md`, `.cursor/agents/{product-manager,spec-reviewer,automated-reviewer-loop}.md`, `.codex/skills/{workflow-spec-writer,workflow-spec-reviewer,workflow-reviewer-loop}/SKILL.md` |
+| Live search: plan-stage mirror surfaces (cross-cutting checklist enumeration) | `grep -rln "02-generate-implementation-plan-protocol\|03-implement-development-protocol" .claude/agents/ .cursor/agents/ .codex/skills/ .agents/skills/` | 6 files: `.claude/agents/{developer,tech-lead}.md`, `.cursor/agents/{developer,tech-lead}.md`, `.codex/skills/{workflow-plan-writer,workflow-implementer}/SKILL.md` |
+| Both dispatch-stage surfaces consume `REVIEW.md` (Rule 5 consumer check) | Read `.claude/agents/spec-reviewer.md`, `.codex/skills/workflow-spec-reviewer/SKILL.md` | Both route their whole review through `01-review-spec-protocol.md` → `REVIEW.md`'s Spec Review Checklist; no independent matrix check in either |
+
+---
+
+## Factual claim evidence
+
+**Rule 6 — scoped obligations.** Every conditional this plan introduces is stated with its governed scope and discharge point in the same statement:
+
+1. "The matrix-coherence preflight is required when the spec or work item brief contains a decision matrix, state table, lifecycle, precedence rules, or similarly stateful contract" — governed scope: `spec/*` and `implementation-plan/*` PRs' primary artifact (the spec file or plan document), and for Refactor items the work item brief as recorded in the plan's header; discharge point: Protocol 01 Step "pre-PR verification" for specs, Protocol 02 Step 5 (cross-section consistency self-check) for plans — both before the first push.
+2. "The preflight re-runs after two consecutive review cycles whose findings implicate the same matrix" — governed scope: reviewer-loop cycles on `spec/*` / `implementation-plan/*` PRs only (implementation PRs are out of scope; their Pass 1 spec-compliance check is unchanged); discharge point: Protocol 93's "Long spec/plan review-cycle guidance" section, checked by the loop runner before dispatching the next fixer.
+3. "Simple specs gain no ceremony" — governed scope: artifacts whose prose defines no stateful contract (no matrix, state table, lifecycle, or precedence rules); discharge point: the classification signal recorded in the Document Quality Gate log as `Matrix coherence preflight: Not applicable — no stateful contract` (rationale required, same shape as every other `Not applicable` row).
+
+**Rule 1 — sampling or enumeration record.** Not applicable. The design binds to no external free-text output distribution: it adds review guidance over documents this repository authors. No third-party output is matched, parsed, classified, or enumerated. (Trigger absent: no producer, no population, no occurrence set.)
+
+---
+
+## Cross-Cutting Operational Assumption Check
+
+### Applicable
+
+| Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
+| --- | --- | --- | --- | --- | --- |
+| Approved base branch for this plan PR | `develop` (tip `361a7972`) | Batch handoff + `git rev-parse origin/develop` | 2026-09-27, `361a7972` | Current invocation item list: `1759, 1445, 1444, 1408, 1390, 1386, 1378, 1538, 1559, 1564`; zero open PRs in this repository at dispatch (`gh pr list --state open` → empty) | `Verified` |
+| Nearest prior art surface — #1561 reviewer preflight | `scripts/development-workflow/reviewer-preflight.sh` + `reviewer_preflight*.py`, merged in `361a7972 Merge PR #1802 (feature/1561-reviewer-preflight)` | Git history + file headers | 2026-09-27, `361a7972` | Same item list; no open PR touches these files (zero open PRs) | `Verified` |
+| Batch foundational fix on the shared reviewer-loop script | Item `1390` repairs `scripts/development-workflow/pr-review-loop.sh`; other batch items hold until it merges | Batch handoff (parent orchestrator) | 2026-09-27 | This plan's changes touch no script, so #1390's outcome cannot invalidate any plan statement | `Verified` (no conflict surface) |
+
+No `Conflict` evidence. The plan's design decision (build no tool; compose with #1561 rather than duplicate it) is an architecture choice, not an operational assumption. #1561's preflight checks reviewer *configuration* coherence; this plan adds spec *content* coherence guidance — different assumption surfaces, so shared "preflight" terminology alone is not conflict evidence.
+
+---
+
+## Decisions
+
+- **Decision 1 — documentation-only audit, no new script.** The brief says "detect or require the reviewer/spec workflow to audit matrices." Building a matrix parser would (a) duplicate the doctrine catalogue's existing human-checkable patterns, (b) violate Gate B proportionality (a prose-only deliverable proposing a custom parser is the exact anti-pattern), and (c) sit awkwardly next to #1561's config preflight, which solves a different problem. The audit is therefore a required, evidenced *checklist pass*, not a tool. Upgrade path: if a future item wants mechanical matrix analysis, the six audit checks in the "The six audit checks" section are its requirement list.
+- **Decision 2 — extend doctrine, don't fork it.** The six audit checks map onto `review-doctrine.md`'s `Criteria/matrix mismatch` and `Trigger ambiguity` patterns. The doctrine file gets one new pattern (`Stateful-contract outcome gaps`) only for the checks doctrine does not yet name (terminal/waiting/escalation coverage, stale-vs-current evidence, precedence-order ambiguity); the rest cross-reference the existing patterns. The doctrine file is 4,104 bytes of a 12,000-byte budget, so one compact pattern fits without touching the bound.
+- **Decision 3 — two places in the workflow, one definition.** The preflight's first run belongs at creator stage, pre-push (Protocol 01 for specs; Protocol 02 Step 5 for plans, where it extends the existing cross-section consistency self-check). The re-run belongs in Protocol 93's "Long spec/plan review-cycle guidance" — the section that already governs what to inspect when a document PR loops repeatedly. Protocol 91 needs no new step: its reviewer dispatch already routes through the protocols changed here; its only edit is one cross-reference sentence in the existing dispatch-map area so a runner following P91 can find the requirement.
+- **Decision 4 — scope gate is the Document Quality Gate log.** "Targeted to matrix/state-machine specs only" is enforced by the same mechanism as every other conditional gate in this workflow: a `Matrix coherence preflight` row in the Document Quality Gate log that must read `Checked` (with evidence summary) or `Not applicable — no stateful contract` (rationale). A missing row is a reviewer finding, exactly like the existing matrix and checklist rows. No new config key, no `MATRIX_*` environment variable, no branch-type special-casing.
+
+---
+
+## Layer-by-Layer Changes
+
+### Documentation / Workflow Layer (only layer affected)
+
+- [ ] **`docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`** — in the pre-PR "Before the PR is opened, verify" list, directly after the existing "Complex workflow decision-gate matrix" bullet: add a "Matrix coherence preflight" bullet defining the trigger (spec contains a decision matrix, state table, lifecycle, precedence rules, or similarly stateful contract), the six checks (see below), the timing (before first push, i.e. before Step 7/Step 7's reviewer loop is ever entered), and the evidence requirement (a `Matrix coherence preflight` row in the Document Quality Gate log: `Checked` with a one-line audit summary naming each check and its pass/fail, or `Not applicable` with the no-stateful-contract rationale).
+- [ ] **`docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`** — Step 5 (cross-section consistency self-check): add a sub-bullet extending the check to the plan's own decision tables and to the work item brief for Refactor items; and in the Document Quality Gate template block, add the `Matrix coherence preflight` row example (`Checked` / `Not applicable - no stateful contract in the plan or brief`).
+- [ ] **`docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`** — in "Long spec/plan review-cycle guidance" (line 1022): add the re-run rule — when **two consecutive cycles' blocking findings implicate the same decision matrix, state table, or precedence rule set** of the spec/plan under review, the loop runner (or the dispatched `spec-reviewer` / `implementation-plan-reviewer` fixer) must re-run the full six-check coherence audit on that matrix before the next fix push, and record the audit result in the fix commit comment. The existing no-progress/stuck-loop escalation path stays unchanged and still applies when the audit itself does not clear the loop.
+- [ ] **`docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`** — one cross-reference sentence in the "Reviewer dispatch map" area: spec/plan fixer dispatches inherit the matrix-coherence re-run requirement from Protocol 93's long-cycle guidance. No new step, no new gate, no change to reviewer routing.
+- [ ] **`docs/workflow/development-workflow/review-doctrine.md`** — add one pattern, `### Stateful-contract outcome gaps` (Shape / Example / Detect), covering the checks the existing `Criteria/matrix mismatch` and `Trigger ambiguity` patterns do not name: outcome classes absent (terminal vs waiting vs escalation), evidence-currency rules (stale vs current), and precedence/order ambiguity among rules that fire together. Cross-reference the existing two patterns from the new entry's Detect line rather than restating them. Keep incident traces out per the file's own rules.
+- [ ] **`REVIEW.md`** — `Spec Review Checklist`: one check bullet — "When the spec contains a stateful contract, the PR's Document Quality Gate log carries a `Matrix coherence preflight` row with the six-check audit summary or a reasoned `Not applicable`"; `Plan Review Checklist`: the mirror bullet for plan decision tables and Refactor briefs; both under the existing blocking-class framing for missing/unreasoned gate rows. `Code Review Checklist` (documentation PRs additional checks): one bullet — on `spec/*` / `implementation-plan/*` PRs, verify a matrix-bearing document carries the row.
+- [ ] **Agent / skill mirror surfaces (cross-cutting checklist enumeration — all updated so no required target is missing; each change is a pointer sentence, not restated rules):**
+
+  `.claude/agents/product-manager.md`, `.cursor/agents/product-manager.md`, `.codex/skills/workflow-spec-writer/SKILL.md` (spec-writing role: run the preflight before first push);
+  `.claude/agents/spec-reviewer.md`, `.cursor/agents/spec-reviewer.md`, `.codex/skills/workflow-spec-reviewer/SKILL.md` (spec-review role: check the row; on loop re-entry after two same-matrix cycles, re-run the audit);
+  `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`, `.codex/skills/workflow-plan-writer/SKILL.md` (plan-writing role: extend the Step 5 self-check);
+  `.claude/agents/developer.md`, `.cursor/agents/developer.md`, `.codex/skills/workflow-implementer/SKILL.md` (pointer only: implementation PRs are out of the preflight's scope — keep these edits to one sentence so implementation guidance gains no ceremony);
+  `.claude/agents/automated-reviewer-loop.md`, `.cursor/agents/automated-reviewer-loop.md`, `.codex/skills/workflow-reviewer-loop/SKILL.md` (loop role: apply Protocol 93's re-run rule).
+
+  The plan-stage protocol's own cross-cutting checklist rule requires the enumeration to cover the developer implementation protocol and both tech-lead/developer role files; those are covered by `03-implement-development-protocol.md` (one pointer sentence under its doc-PR guidance: implementation PRs are not in preflight scope) and the developer/implementer files above. Codex plan-reviewer skill (`workflow-plan-reviewer`) and `implementation-plan-reviewer` agent files route through `REVIEW.md`, which this plan already updates; they need no separate edit (verified: `.claude/agents/spec-reviewer.md` and the Codex skill bodies contain no matrix-check content to drift from).
+
+### Database / Backend / Shared Packages / Frontend / Infrastructure
+
+Not applicable — documentation-only change. No schema, script, service, package, UI, or configuration surface changes.
+
+### Complex workflow decision-gate matrix (this plan's own changed surface)
+
+This plan modifies workflow decision-gate behavior (a new conditional gate with inputs, outcomes, and mirror surfaces), so it carries its own consistency matrix:
+
+| Gate input | Allowed outcomes | Required next action | Mirror surfaces | Examples |
+| --- | --- | --- | --- | --- |
+| Spec/plan/brief contains a stateful contract (matrix, state table, lifecycle, precedence rules) | `Checked` (six-check audit passed) | Proceed to push / reviewer loop unchanged | Protocol 01 + 02 gate lists, REVIEW.md spec/plan checklists, PM/tech-lead/spec-reviewer agents and Codex skills, doctrine pattern | Spec #1757's decision-gate matrix: audit must pass all six checks before its PR's reviewer loop |
+| Spec/plan/brief contains a stateful contract, audit finds a gap | `Checked — gaps found` (blocking) | Fix the matrix before push; re-audit; log lists each failed check | Same as above | A matrix with rows only for the resolved-conversation case and none for dismissed (overlapping/missing-state class) |
+| Spec/plan/brief contains no stateful contract | `Not applicable — no stateful contract` | Proceed; no ceremony added | Same as above | A UI-feature spec with no decision table or lifecycle |
+| Log row missing or unreasoned | Reviewer finding (blocking, same class as other missing gate rows) | Fixer adds the row with audit or rationale | REVIEW.md checklists, spec/plan reviewer protocols | Matrix-bearing spec PR whose Document Quality Gate log omits the row |
+| Reviewer loop: two consecutive cycles' blocking findings implicate the same matrix | Re-run required | Loop runner/fixer re-runs the six checks before next fix push; result recorded in fix commit comment | Protocol 93 long-cycle guidance, reviewer-loop agents/skills | #1757/#1758-style repeated adjacent ambiguity in Codex evidence classification |
+| Two consecutive cycles, findings do not share a matrix | No re-run (existing long-cycle guidance still applies) | Continue normal fix/escalate path | Protocol 93 long-cycle guidance | Two cycles of unrelated wording findings |
+
+Not-applicable rows: none — every input has an outcome.
+
+### Parser-risk / concurrent-event-source classification
+
+Not applicable — no files under `scripts/lint/`, `scripts/parse/`, no parser/scanner/tokenizer modules, no regex-over-text behavior, no event listeners or shared mutable state. The deliverable is protocol prose. (Gate B note: this documentation-only plan proposes no parser, scanner, or matcher — the deliberate choice recorded in Decision 1.)
+
+---
+
+## The six audit checks (single normative definition)
+
+Defined once here; every file above cross-references this list or `review-doctrine.md`'s patterns rather than restating it (Rule 2). For a decision matrix, state table, lifecycle, or precedence-rule set:
+
+1. **Overlapping rows** — can two rows match the same input combination, and if so, does the document state which wins? (doctrine: `Criteria/matrix mismatch`)
+2. **Missing states** — for every input combination the surrounding prose admits, is there a row/branch, including malformed or unknown input handling? (doctrine: `Criteria/matrix mismatch` + `Trigger ambiguity`)
+3. **Precedence / order ambiguity** — when rules or rows fire together, is the ordering stated? (new doctrine pattern)
+4. **Malformed / unknown input handling** — is the outcome defined for missing, empty, invalid, or unrecognized inputs? (doctrine: `Trigger ambiguity`)
+5. **Stale vs current evidence** — do the rules say which evidence revision/currency governs, when recency decides? (new doctrine pattern)
+6. **Terminal vs waiting vs escalation outcomes** — does every path end in one of the stated outcome classes, with no gap where the loop could neither proceed, wait, nor escalate? (new doctrine pattern)
+
+---
+
+## Testing Strategy
+
+**Test types**: Smoke (documentation runbook). No unit tests — no executable behavior is added (the planted-violation proof rule applies to automated checks; this adds none).
+
+**Key scenarios to test**:
+
+1. Matrix-bearing spec PR carries the audit row — maps to brief scope bullet 3 ("Document where the pass belongs … and what evidence it should produce").
+2. Simple spec PR records a reasoned `Not applicable` — maps to brief scope bullet 2 ("ordinary simple specs do not gain unnecessary ceremony").
+3. Re-run trigger after two same-matrix cycles — maps to the brief's desired-outcome sentence ("run … again after repeated meaningful reviewer findings on the same matrix").
+4. Mirror surfaces cross-reference, do not restate — maps to Decision 2/Rule 2 (no drift between the 19 enumerated files and the canonical six-check definition).
+
+**Coverage intent**: the runbook walks the document changes as a reviewer would; each scenario is a read-and-confirm step. Enumeration is indicative.
+
+**Smoke test runbook**: `docs/testing/workflow/1759-matrix-coherence-preflight.smoke-test.md`
+
+**Regression suite**: no automated regression suite covers protocol markdown; none is added.
+
+---
+
+## Seed Data
+
+None — documentation-only.
+
+---
+
+## Documentation Updates
+
+Executed by the implementer (this PR's own file list — the change *is* documentation):
+
+- [ ] All 19 files enumerated in Layer-by-Layer Changes (4 protocols, `review-doctrine.md`, `REVIEW.md`, 14 agent/skill mirrors — see the live-search rows in the Verification Log for the exact derivation)
+- [ ] `AGENTS.md` — no update needed: its workflow table already points at the protocols changed here, and it carries no matrix-guidance text of its own (verified by the `grep -rin "coherence"` search above returning no AGENTS.md hit)
+- [ ] Project docs (`docs/project/`, `docs/best-practices/`) — None: the change is workflow-process guidance, not product or stack guidance
+
+---
+
+## Risks & Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Mirror-surface drift: 19 files restate the six checks differently | Medium | Medium | Files carry pointer sentences only; canonical definition lives in this plan's successor text (Protocol 01/02 + doctrine); REVIEW.md gate row catches drift |
+| Audit becomes ceremony on borderline docs (a simple two-row table) | Medium | Low | Trigger wording requires a *stateful contract*; the `Not applicable` row with rationale is the escape valve; doctrine Detect questions keep the audit meaningful |
+| Re-run rule misread as a new escalation path | Low | Medium | Protocol 93 edit explicitly states the existing stuck-loop escalation is unchanged and still applies |
+| Doctrine 12,000-byte budget exceeded | Low | Low | Current 4,104 bytes + one compact pattern (~700 bytes) stays far under; if the entry grows, merge patterns per the file's own rule, never raise the bound |
+
+---
+
+## Implementation Order
+
+1. Add the `### Stateful-contract outcome gaps` pattern to `docs/workflow/development-workflow/review-doctrine.md` (checks 3, 5, 6; cross-references the two existing patterns for the rest).
+2. Update `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` — pre-PR verification bullet + Document Quality Gate example row, cross-referencing doctrine.
+3. Update `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` — Step 5 sub-bullet + Document Quality Gate template row.
+4. Update `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` — re-run rule in "Long spec/plan review-cycle guidance".
+5. Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — one cross-reference sentence near the reviewer dispatch map.
+6. Update `REVIEW.md` — Spec Review Checklist, Plan Review Checklist, and documentation-PR additional-check bullets.
+7. Update the 14 agent/skill mirror files (pointer sentences only, per the role groups in Layer-by-Layer Changes).
+8. Confirm no drift: run `grep -rn "Matrix coherence preflight" docs/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md` and confirm every hit is either the canonical definition, a pointer to it, or the gate-row name — no restated variant of the audit checks defined in "The six audit checks" section.
+9. Verify the smoke runbook: `docs/testing/workflow/1759-matrix-coherence-preflight.smoke-test.md`.
+10. Update project docs per the Documentation Updates section (none beyond this PR's own files).
+11. Add a `changelog.d/1759.changed.matrix-coherence-preflight.md` fragment using the project's format: `- **Add matrix coherence preflight for spec reviewer loops** (#1759): <description>`. (Refactor implementation PR merged to `develop` — fragment required; not conventional-commit format.)
+
+> Skipped: mechanical matrix analysis tooling — add when repeated audits show the human checklist pass is the bottleneck, not the reviewer cycles.
