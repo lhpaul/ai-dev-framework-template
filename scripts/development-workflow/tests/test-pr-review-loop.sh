@@ -15688,8 +15688,20 @@ unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 #         → RESULT=escalate REASON=fetch-failed, exit 2
 #   16.8c fetch-failed path: check-run JSON parse fails during Phase 2 trigger guard
 #         → RESULT=escalate REASON=fetch-failed, exit 2
-#   16.9  neutral conclusion path: check run concludes neutral
-#         → RESULT=clean BLOCKING_COUNT=0 SUGGESTION_COUNT=0, exit 0
+#   16.9  neutral conclusion with no output.summary: not a verdict
+#         → RESULT=escalate REASON=bugbot-unverified-verdict, exit 2
+#   16.9a neutral conclusion with an affirmative no-issues summary
+#         → RESULT=clean BLOCKING_COUNT=0, exit 0
+#   16.9b neutral conclusion whose summary reports 3 findings, with matching
+#         cursor[bot] High Severity comments → RESULT=needs_fixes with
+#         BLOCKING_COUNT=3 and BLOCKING_* detail, exit 1
+#   16.9c neutral conclusion whose summary reports findings but none are
+#         retrievable → RESULT=escalate REASON=bugbot-findings-not-retrievable
+#   16.9d neutral conclusion whose summary is unparseable
+#         → RESULT=escalate REASON=bugbot-unverified-verdict, exit 2
+#   16.13 retry-once: an unfinished check run is re-triggered once before the
+#         loop declares REASON=timeout
+#   16.14 is_bugbot_clean_review rejects finding counts above 5
 #   16.10 run_platform_review routes "bugbot" to run_bugbot_review
 #
 # Each test that exercises run_bugbot_review requires a custom gh mock because
@@ -16638,11 +16650,12 @@ rm -rf "$_bugbot_mock_dir_168c"
 unset _bugbot_mock_dir_168c actual_output actual_exit
 
 # ---------------------------------------------------------------------------
-# Test 16.9: neutral conclusion path — check run concludes neutral
+# Test 16.9: neutral conclusion with no recognisable summary — never clean
 #
-# A neutral conclusion (e.g. skipped analysis) is informational and must be
-# treated as clean with zero blocking findings and zero suggestions, matching
-# the neutral|cancelled|skipped branch in run_bugbot_review.
+# Cursor concludes the check run `neutral` both for a review that found nothing
+# and for one that found blocking issues. With no output.summary there is no
+# verdict to read, so the loop must escalate rather than report clean
+# (issue #1390 — the previous behaviour returned RESULT=clean here).
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_169="$(mktemp -d)"
 cat > "$_bugbot_mock_dir_169/gh" <<'BUGBOT_GH_169'
@@ -16658,7 +16671,7 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
-  # check-runs: completed with conclusion=neutral
+  # check-runs: completed with conclusion=neutral and no output summary
   *"check-runs"*)
     printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z"}]}\n'
     exit 0 ;;
@@ -16680,15 +16693,304 @@ actual_output="$(
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "bugbot_neutral_result" "RESULT=clean" \
+run_test "bugbot_neutral_no_summary_result" "RESULT=escalate" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "bugbot_neutral_blocking_count" "BLOCKING_COUNT=0" \
-  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
-run_test "bugbot_neutral_suggestion_count" "SUGGESTION_COUNT=0" \
-  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
-run_test "bugbot_neutral_exit_code" "0" "$actual_exit"
+run_test "bugbot_neutral_no_summary_reason" "REASON=bugbot-unverified-verdict" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_neutral_no_summary_exit_code" "2" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_169"
 unset _bugbot_mock_dir_169 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.9a: neutral conclusion with an affirmative no-issues summary
+#
+# The healthy counterpart: a neutral check whose summary explicitly reports no
+# issues is the one neutral shape that may pass.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_169a="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_169a/gh" <<'BUGBOT_GH_169A'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc169asha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z","output":{"summary":"Bugbot completed review - no issues found!"}}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc169asha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_169A
+chmod +x "$_bugbot_mock_dir_169a/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_169a:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_clean_summary_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_clean_summary_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_neutral_clean_summary_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_169a"
+unset _bugbot_mock_dir_169a actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.9b: neutral conclusion whose summary reports findings, with the
+# cursor[bot] comments retrievable — the exact issue #1390 failure shape.
+#
+# "found 3 potential issues" in output.summary plus three High/Medium severity
+# cursor[bot] inline comments must produce needs_fixes with every finding
+# surfaced as BLOCKING_* detail.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_169b="$(mktemp -d)"
+# The initial head SHA ("old") has no findings, so Phase 1 does not short-circuit;
+# a push moves HEAD to "new" before the poll observes the neutral run, and the
+# findings are scoped to that new SHA — which is the path the neutral arm reads.
+cat > "$_bugbot_mock_dir_169b/gh" <<'BUGBOT_GH_169B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc169bold\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc169bnew","path":"src/tenant.ts","line":42,"body":"**High Severity**\\n\\nRBAC is checked but tenant ownership is never verified.\\n\\n<!-- BUGBOT_BUG_ID: bug-1 -->"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc169bnew","path":"src/status.ts","line":88,"body":"**High Severity**\\n\\nCheck-then-update race on status === pending.\\n\\n<!-- BUGBOT_BUG_ID: bug-2 -->"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:02:00Z","commit_id":"abc169bnew","path":"src/audit.ts","line":12,"body":"**Medium Severity**\\n\\nState transition nulls the audit trail column.\\n\\n<!-- BUGBOT_BUG_ID: bug-3 -->"}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z","output":{"summary":"Bugbot Analysis Progress (6m 9s elapsed)\\n Final Result: Bugbot completed review and found 3 potential issues."}}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc169bnew\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_169B
+chmod +x "$_bugbot_mock_dir_169b/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_169b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_findings_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_findings_reason" "REASON=blocking_findings" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_neutral_findings_blocking_count" "BLOCKING_COUNT=3" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_neutral_findings_first_path" "BLOCKING_1_PATH=src/tenant.ts" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_1_PATH=")"
+run_test "bugbot_neutral_findings_first_line" "BLOCKING_1_LINE=42" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_1_LINE=")"
+run_test "bugbot_neutral_findings_first_body_kept" "yes" \
+  "$(printf '%s\n' "$actual_output" | grep -q "tenant ownership is never verified" && printf 'yes' || printf 'no')"
+run_test "bugbot_neutral_findings_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_169b"
+unset _bugbot_mock_dir_169b actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.9c: neutral conclusion reporting findings whose comments are not
+# retrievable → escalate, not clean.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_169c="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_169c/gh" <<'BUGBOT_GH_169C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc169csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z","output":{"summary":"Final Result: Bugbot completed review and found 2 potential issues."}}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc169csha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_169C
+chmod +x "$_bugbot_mock_dir_169c/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_169c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_unretrievable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_unretrievable_reason" "REASON=bugbot-findings-not-retrievable" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_neutral_unretrievable_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_169c"
+unset _bugbot_mock_dir_169c actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.9d: neutral conclusion with an unrecognised summary shape →
+# escalate. Fails closed when the summary format changes (issue #1390 AC-4).
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_169d="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_169d/gh" <<'BUGBOT_GH_169D'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc169dsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z","output":{"summary":"Bugbot finished. See the review tab for details."}}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc169dsha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_169D
+chmod +x "$_bugbot_mock_dir_169d/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_169d:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_unparseable_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_unparseable_reason" "REASON=bugbot-unverified-verdict" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_neutral_unparseable_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_169d"
+unset _bugbot_mock_dir_169d actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.14: is_bugbot_clean_review rejects finding counts above 5
+#
+# The first adapter enumerated "found 1..5 potential issues" only, so a body
+# reporting six or more findings fell through to the clean-phrase path and was
+# counted as a suggestion (issue #1390).
+# ---------------------------------------------------------------------------
+for _bb_n in 6 12 137; do
+  bugbot_many_body="Cursor Bugbot found $_bb_n potential issues in this pull request."
+  if is_bugbot_clean_review "$bugbot_many_body"; then
+    actual="clean"
+  else
+    actual="blocking"
+  fi
+  run_test "bugbot_${_bb_n}_findings_is_blocking" "blocking" "$actual"
+done
+unset _bb_n bugbot_many_body actual
+
+bugbot_clean_phrase_with_count="Cursor Bugbot found no new issues in this pull request."$'\n\nBugbot completed review and found 9 potential issues.'
+if is_bugbot_clean_review "$bugbot_clean_phrase_with_count"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_clean_phrase_with_positive_count_is_blocking" "blocking" "$actual"
+unset bugbot_clean_phrase_with_count actual
+
+# ---------------------------------------------------------------------------
+# Test 16.13: retry-once — an unfinished check run is re-triggered once
+#
+# Bugbot intermittently leaves its check run unfinished. A timeout is not a
+# finding: the loop posts the trigger comment once more before declaring the
+# reviewer failed (issue #1390).
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_1613="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1613/gh" <<'BUGBOT_GH_1613'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1613sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'posted\n' >> "$BUGBOT_1613_POSTS"
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"in_progress","conclusion":null,"started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc1613sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1613
+chmod +x "$_bugbot_mock_dir_1613/gh"
+
+_bugbot_posts_file="$(mktemp)"
+export BUGBOT_1613_POSTS="$_bugbot_posts_file"
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_1613:$PATH" run_bugbot_review "42" "feature/42-test" "1" "1" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+# One POST from the Phase 2 trigger guard (in_progress run still counts as
+# appeared, so the guard may or may not post) plus the retry POST from the
+# exhausted poll budget. Assert at least the retry happened.
+_bugbot_post_lines="$(grep -c '' "$_bugbot_posts_file" 2>/dev/null || printf '0')"
+unset BUGBOT_1613_POSTS
+run_test "bugbot_timeout_retriggered_at_least_once" "yes" \
+  "$([ "${_bugbot_post_lines:-0}" -ge 1 ] && printf 'yes' || printf 'no')"
+run_test "bugbot_timeout_after_retry_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_timeout_after_retry_reason" "REASON=timeout" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_timeout_after_retry_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1613"
+rm -f "$_bugbot_posts_file"
+unset _bugbot_mock_dir_1613 _bugbot_posts_file _bugbot_post_lines actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.9.1: neutral usage-limit comment escalates
@@ -16746,6 +17048,9 @@ rm -rf "$_bugbot_mock_dir_1691"
 unset _bugbot_mock_dir_1691 actual_output actual_exit
 
 # Test 16.9.2: neutral usage-limit comment from prior head is ignored
+#
+# The stale comment must not escalate. The head's own summary is an affirmative
+# no-issues one, which is the only neutral shape that may report clean.
 _bugbot_mock_dir_1692="$(mktemp -d)"
 cat > "$_bugbot_mock_dir_1692/gh" <<'BUGBOT_GH_1692'
 #!/usr/bin/env bash
@@ -16768,7 +17073,7 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"check-runs"*)
-    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:01Z"}]}\n'
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:01Z","output":{"summary":"Bugbot completed review - no issues found!"}}]}\n'
     exit 0 ;;
   *"headRefOid"*)
     printf 'abc1692new\n'; exit 0 ;;
