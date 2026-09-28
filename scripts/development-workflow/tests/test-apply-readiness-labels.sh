@@ -74,6 +74,10 @@ case "$*" in
   *"auth status"*) exit 0 ;;
   *"pr edit"*)
     printf '%s\n' "$*" >>"${MOCK_GH_LOG:?}"
+    # Also logged to the shared call log so ordering assertions can prove the
+    # mutation's position relative to every other API call (PR #1818 finding
+    # 2, round 9).
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     # Record the applied label so the helper's own post-apply verification reads
     # back what this stub stored, not a canned response. MOCK_DROP_LABEL=1
     # simulates a label the API accepts and then quietly discards.
@@ -92,17 +96,16 @@ case "$*" in
     exit "${MOCK_GH_EDIT_EXIT:-0}"
     ;;
   *"pr view"*"--json headRefOid --jq"*)
-    # Pre-apply head revalidation. MOCK_REVALIDATE_HEAD simulates a push
-    # landing between the state read and the label mutation; the SECOND
-    # revalidate call (the post-revalidation head recheck, PR #1818 finding 2
-    # round 8) serves MOCK_FINAL_REVALIDATE_HEAD so a push landing during the
-    # revalidation API calls is distinguishable from one landing before them.
+    # Pre-apply head revalidation — after round 9 there is exactly ONE
+    # re-fetch, the final pre-mutation head check (the last API call before
+    # `pr edit`). MOCK_FINAL_REVALIDATE_HEAD simulates a push landing during
+    # the final-block revalidations/rescans; MOCK_REVALIDATE_HEAD serves on
+    # the same call (kept as an alias for the older tests).
     # Logged to a separate call log (not MOCK_GH_LOG, which counts `pr edit`
     # calls only) so the later arms can tell the revalidation fetches from the
-    # first. The count is taken AFTER appending, so call 1 sees 1, call 2 sees 2.
+    # first.
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    _head_calls="$(grep -c -- '--json headRefOid --jq' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
-    if [ "${_head_calls:-1}" -ge 2 ] && [ -n "${MOCK_FINAL_REVALIDATE_HEAD:-}" ]; then
+    if [ -n "${MOCK_FINAL_REVALIDATE_HEAD:-}" ]; then
       printf '%s\n' "$MOCK_FINAL_REVALIDATE_HEAD"
     elif [ -n "${MOCK_REVALIDATE_HEAD:-}" ]; then
       printf '%s\n' "$MOCK_REVALIDATE_HEAD"
@@ -135,16 +138,32 @@ case "$*" in
     exit 0
     ;;
   *"pr view"*"--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup"*)
-    # First fetch (state read) vs the pre-apply revalidation fetch: once the
-    # head-revalidate call has run, MOCK_REVALIDATE_PR_JSON (if set) replaces
-    # the payload — it simulates a CI check re-triggered on the same head
-    # after the verdicts were read (PR #1818 finding 2, round 5).
-    if [ -n "${MOCK_REVALIDATE_PR_JSON:-}" ] \
-        && grep -q 'pr view 42 --repo acme/widgets --json headRefOid --jq' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
+    # MOCK_PR_JSON_EXIT fails the initial state read itself (PR #1818
+    # finding 1, round 9): an unavailable PR read escalates
+    # pr-state-unavailable BEFORE the label-presence capture, so no removal
+    # must be attempted on that path.
+    [ "${MOCK_PR_JSON_EXIT:-0}" = "0" ] || exit 1
+    # First fetch (state read) vs the final-block CI re-read: from the SECOND
+    # full-state fetch on, MOCK_REVALIDATE_PR_JSON (if set) replaces the
+    # payload — it simulates a CI check re-triggered on the same head after
+    # the verdicts were read (PR #1818 findings 2 and 3, rounds 5 and 9: the
+    # switch is keyed on the fetch count, not on the head-revalidate call
+    # having run, because the reviewer rescan now precedes the CI re-read).
+    # MOCK_LATE_CI_PR_JSON (PR #1818 finding 3, round 9) additionally replaces
+    # the payload only once the reviewer finding rescan has run (the SECOND
+    # comments fetch: main-gate scan, final-block revalidation rescan) — it
+    # simulates a CI rerun to pending/failure DURING the rescan window,
+    # which a CI read taken before the rescan never sees.
+    _s_calls="$(grep -c -- '--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
+    _c2="$(grep -c -- 'pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
+    if [ -n "${MOCK_LATE_CI_PR_JSON:-}" ] && [ "${_c2:-0}" -ge 2 ]; then
+      emit "$MOCK_LATE_CI_PR_JSON"
+    elif [ "${_s_calls:-0}" -ge 1 ] && [ -n "${MOCK_REVALIDATE_PR_JSON:-}" ]; then
       emit "$MOCK_REVALIDATE_PR_JSON"
     else
       emit "${MOCK_PR_JSON:-$pr_default}"
     fi
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     exit 0
     ;;
   *"pr view"*)
@@ -179,19 +198,19 @@ case "$*" in
     ;;
   *"/pulls/"*"/comments"*)
     # MOCK_REVALIDATE_COMMENTS (if set) replaces the payload from the second
-    # fetch on — the revalidation finding rescan must be able to see findings
+    # fetch on — the final-block finding rescan must be able to see findings
     # that did not exist (or were not yet posted) at the first scan (PR #1818
     # finding 2, round 6). MOCK_RERUN_COMMENTS additionally simulates a
-    # blocking comment posted by a same-SHA rerun between the revalidation
-    # rescan and the final head recheck (PR #1818 finding 2, round 8): from the
-    # SECOND comments fetch on (the rescan) the payload gains the rerun's
-    # comments, so the final guard's own rescan still sees them. Decide BEFORE
-    # appending to the call log.
+    # blocking comment posted by a same-SHA rerun after the first scan (PR
+    # #1818 finding 2, rounds 8-9): from the SECOND comments fetch on (the
+    # final-block rescan, the last reviewer read before the mutation) the
+    # payload gains the rerun's comments, so the rescan still sees them.
+    # Decide BEFORE appending to the call log.
     _c_calls="$(grep -c -- 'pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
     if [ -n "${MOCK_REVALIDATE_COMMENTS:-}" ] \
         && grep -q '/pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
       emit "[${MOCK_REVALIDATE_COMMENTS}]"
-    elif [ "${_c_calls:-0}" -ge 2 ] && [ -n "${MOCK_RERUN_COMMENTS:-}" ]; then
+    elif [ "${_c_calls:-0}" -ge 1 ] && [ -n "${MOCK_RERUN_COMMENTS:-}" ]; then
       _base="${MOCK_COMMENTS:-$empty_array}"
       if [ "$_base" = "[]" ]; then
         emit "[[${MOCK_RERUN_COMMENTS}]]"
@@ -206,10 +225,12 @@ case "$*" in
     ;;
   *"/pulls/"*"/reviews"*)
     emit "[${MOCK_REVIEWS:-$empty_array}]"
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     exit 0
     ;;
   *"/issues/"*"/comments"*)
     emit "[${MOCK_ISSUE_COMMENTS:-$empty_array}]"
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     exit 0
     ;;
   *"repo view"*)
@@ -265,6 +286,22 @@ _LABEL_STATE="$TMP_ROOT/label-state"
 # run_helper — prints "<exit_code>|<stdout>". Payloads come from the MOCK_*
 # variables the caller set; a `${VAR:-{...}}` default here would not survive
 # parameter expansion, so the fallbacks are plain names.
+# order_log — after a run_helper call, prints one line per API call with the
+# call class substituted (head / check-runs / comments / reviews / issue-comments /
+# rollup-pr / edit), in call order. Ordering invariants (PR #1818 findings 2
+# and 3, round 9) are asserted against this: every revalidation/rescan call
+# must precede the final headRefOid re-fetch, which must precede `pr edit`.
+order_log() {
+  sed -e 's|.*--json headRefOid --jq.*|head|' \
+      -e 's|.*commits/[^ ]*/check-runs.*|check-runs|' \
+      -e 's|.*pulls/42/comments.*|comments|' \
+      -e 's|.*pulls/42/reviews.*|reviews|' \
+      -e 's|.*issues/42/comments.*|issue-comments|' \
+      -e 's|.*--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup.*|rollup-pr|' \
+      -e 's|.*pr edit.*|edit|' \
+      "$_CALL_LOG"
+}
+
 run_helper() {
   local default_labels='{"labels":[]}'
   local label="${MOCK_LABEL:-ready-for-human-review}"
@@ -297,6 +334,9 @@ run_helper() {
     MOCK_REVALIDATE_COMMENTS="${MOCK_REVALIDATE_COMMENTS:-}" \
     MOCK_REVALIDATE_CHECK_RUNS_EXIT="${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" \
     MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
+    MOCK_CHECK_RUNS_EXIT="${MOCK_CHECK_RUNS_EXIT:-0}" \
+    MOCK_PR_JSON_EXIT="${MOCK_PR_JSON_EXIT:-0}" \
+    MOCK_LATE_CI_PR_JSON="${MOCK_LATE_CI_PR_JSON:-}" \
     MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
     MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
     MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
@@ -313,6 +353,14 @@ field() {
 
 edit_count() {
   if [ -s "$_LABEL_LOG" ]; then wc -l <"$_LABEL_LOG" | tr -d ' '; else printf '0'; fi
+}
+
+# call_count <pattern> — number of calls in the shared call log matching the
+# pattern (pattern must not start with a dash). Used for the round-9
+# CI-revalidation repeat and escalate-cleanup assertions (PR #1818 findings 1
+# and 3, round 9).
+call_count() {
+  grep -c "$1" "$_CALL_LOG" 2>/dev/null || printf '0'
 }
 
 _empty_rollup='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
@@ -669,6 +717,9 @@ run_helper_no_local_config() {
     MOCK_REVALIDATE_COMMENTS="${MOCK_REVALIDATE_COMMENTS:-}" \
     MOCK_REVALIDATE_CHECK_RUNS_EXIT="${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" \
     MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
+    MOCK_CHECK_RUNS_EXIT="${MOCK_CHECK_RUNS_EXIT:-0}" \
+    MOCK_PR_JSON_EXIT="${MOCK_PR_JSON_EXIT:-0}" \
+    MOCK_LATE_CI_PR_JSON="${MOCK_LATE_CI_PR_JSON:-}" \
     MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
     MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
     MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
@@ -1283,15 +1334,105 @@ run_test "same_second_review_blocks_reason" "blocking-findings" "$(field "$resul
 MOCK_REVIEWS='[]'
 MOCK_CHECK_RUNS="$_bugbot_ok"
 
-# The recheck-before-mutation is the LAST guard before `gh pr edit`: a same-SHA
-# rerun that posts a blocking comment AFTER the revalidation rescan (during the
-# final head recheck's own API calls) must still refuse — the final guard
-# rescans the finding surfaces against the same window it just validated.
-MOCK_RERUN_COMMENTS='{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-01-03T00:00:00Z","body":"**High Severity** posted after the revalidation rescan"}'
+# The rescan-before-head-check is the last reviewer read before `gh pr
+# edit`: a same-SHA rerun that posts a blocking comment after the FIRST scan
+# (round 9 keeps exactly one rescan, then the head check, then the mutation)
+# must still refuse.
+MOCK_RERUN_COMMENTS='{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-01-03T00:00:00Z","body":"**High Severity** posted after the first scan"}'
 result="$(run_helper)"
 MOCK_RERUN_COMMENTS=''
 run_test "late_comment_before_mutation_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
 run_test "late_comment_before_mutation_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+
+echo ""
+echo "=== Area 14: PR #1818 Codex findings, round 9 ==="
+
+# Reset to the clean default before the planted cases.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_COMMENTS='[]'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_REVALIDATE_PR_JSON=''
+MOCK_REVALIDATE_COMMENTS=''
+MOCK_REVALIDATE_CHECK_RUNS=''
+MOCK_FINAL_REVALIDATE_HEAD=''
+MOCK_RERUN_COMMENTS=''
+MOCK_DROP_LABEL=0
+
+# Finding 1 (P1): escalate() paths left the stale label. A rerun on a PR that
+# already carries the requested label and then hits an API/parse failure
+# (check-run fetch fails, revalidation-unreadable, config-unreadable, ...)
+# exits 2 while the label stays attached — exactly the stale-label
+# the merge gates consume. Planted failing case: the label is already present
+# and the revalidation check-run fetch fails (revalidation-unreadable).
+MOCK_PR_JSON="$_label_present_pr"
+MOCK_REVALIDATE_CHECK_RUNS_EXIT=1
+result="$(run_helper)"
+MOCK_REVALIDATE_CHECK_RUNS_EXIT=0
+run_test "escalate_unreadable_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "escalate_unreadable_reason" "revalidation-unreadable" "$(field "$result" REASON)"
+run_test "escalate_unreadable_exit" "2" "${result%%|*}"
+# Escalate AFTER the initial state read (check-run fetch failure at round 9's
+# final block would be too late to plant; a main-gate fetch failure is the
+# same exit path) also removes: the label is present, the first check-runs
+# fetch fails.
+MOCK_CHECK_RUNS_EXIT=1
+result="$(run_helper)"
+MOCK_CHECK_RUNS_EXIT=0
+run_test "escalate_main_gate_fetch_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "escalate_main_gate_fetch_reason" "check-run-fetch-failed" "$(field "$result" REASON)"
+# Escalate BEFORE the initial presence is captured must NOT attempt removal:
+# pr-state-unavailable fires before label_initially_present is computed.
+# Planted failing case for the over-removal direction: an unavailable PR read
+# with a label-bearing MOCK_LABELS must never remove the label (it was never
+# read as present).
+MOCK_PR_JSON=''
+MOCK_PR_JSON_EXIT=1
+result="$(run_helper)"
+MOCK_PR_JSON_EXIT=0
+MOCK_PR_JSON="$_empty_rollup"
+run_test "escalate_before_presence_no_removal" "0" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "escalate_before_presence_reason" "pr-state-unavailable" "$(field "$result" REASON)"
+
+# Finding 3 (P1): CI must be re-read AFTER the reviewer rescan, immediately
+# before the mutation — a CI rerun to pending/failure during the rescan
+# window is missed otherwise, and unlike head drift, post-apply verification
+# cannot catch it. The order_log assertions prove the shape: at least two
+# rollup reads (main gate + final block), every rescan/comment/review/read
+# class's LAST call before the FINAL head call, and the final head call
+# immediately before the edit (PR #1818 finding 2, round 9 invariant).
+result="$(run_helper)"
+run_test "clean_run_ci_revalidation_count" "2" "$(call_count 'json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup')"
+run_test "order_final_head_is_last_call_before_edit" "1" "$(
+  order_log | awk '
+    { lines[NR] = $0 }
+    END {
+      edit_line = 0; head_line = 0; rollup_last = 0; comments_last = 0; reviews_last = 0
+      for (i = NR; i >= 1; i--) {
+        if (lines[i] == "edit" && edit_line == 0) edit_line = i
+        if (lines[i] == "head" && head_line == 0) head_line = i
+        if (lines[i] == "rollup-pr" && rollup_last == 0) rollup_last = i
+        if (lines[i] == "comments" && comments_last == 0) comments_last = i
+        if (lines[i] == "reviews" && reviews_last == 0) reviews_last = i
+      }
+      ok = (edit_line == NR) && (head_line == NR - 1) \
+           && (rollup_last < head_line) && (comments_last < head_line) \
+           && (reviews_last < head_line)
+      print ok ? 1 : 0
+    }')"
+# A CI rerun to pending DURING the rescan window must refuse: the reviewer
+# rescan (comments/reviews fetches) runs first, the CI re-read after it sees
+# the pending check. MOCK_LATE_CI_PR_JSON surfaces the pending rollup only
+# once the final-block rescan has run (third comments fetch), so pre-fix code
+# — which read CI before the rescan and never again — labels from the clean
+# first read. Planted failing case for PR #1818 finding 3, round 9.
+MOCK_LATE_CI_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
+result="$(run_helper)"
+MOCK_LATE_CI_PR_JSON=''
+run_test "ci_rerun_during_rescan_window_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
+run_test "ci_rerun_during_rescan_window_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+MOCK_PR_JSON="$_empty_rollup"
 
 echo ""
 echo "$pass passed, $fail failed"

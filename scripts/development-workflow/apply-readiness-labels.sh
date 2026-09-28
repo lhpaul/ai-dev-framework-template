@@ -229,6 +229,17 @@ emit_verdict() {
 escalate() {
   result="escalate"
   reason="$1"
+  # Same stale-label contract as refuse() (PR #1818 finding 1, round 9): an
+  # escalation after the initial state read means a label the PR already
+  # carried at run start has no readable verdict behind it — an
+  # API/parse failure mid-rerun must not leave that stale label for the
+  # delegated/batch merge gates to consume. Guarded on the flag being
+  # explicitly 1: several escalations fire BEFORE the initial label-presence
+  # capture (pr-state-unavailable, ready-config-unreadable, ...), and an
+  # unset/empty flag must never trigger removal.
+  if [ "${label_initially_present:-0}" = "1" ]; then
+    remove_readiness_label_best_effort "$label"
+  fi
   emit_verdict
   exit 2
 }
@@ -851,39 +862,32 @@ revalidate_ci_state() {
   return 0
 }
 
-current_head="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || escalate head-revalidate-failed
-if [ -z "$current_head" ]; then
-  escalate head-revalidate-failed
-fi
-if [ "$current_head" != "$head_sha" ]; then
-  refuse "head-changed-before-apply"
-fi
+# --- Final pre-apply block (PR #1818 findings 2 and 3, round 9) --------------
+# ONE ordered sequence, run once, immediately before the mutation. The
+# invariant: every API-touching revalidation (reviewer revalidation, its
+# finding rescan, the CI re-read) runs BEFORE the final headRefOid
+# comparison, and that comparison is the LAST API call before `gh pr edit`
+# — nothing may sit between the head check and the mutation.
+# [reviewer revalidation + finding rescan] → [CI re-read] → [final head
+# check] → [mutation].
+# Rationale for the CI re-read's position: a CI rerun to pending/failure
+# during the reviewer rescan window is missed by an earlier CI read, and
+# unlike head drift it cannot be caught by the post-apply verification —
+# the label already certified a red build. A failed/empty revalidation
+# fetch escalates fail-closed inside revalidate_reviewer_state
+# (`revalidation-unreadable`, round 6), never success.
 if [ "$is_implementation_pr" = "true" ] && ! revalidate_reviewer_state; then
   refuse "reviewer-state-changed"
 fi
 if ! revalidate_ci_state; then
   refuse "reviewer-state-changed"
 fi
-
-# Final pre-mutation guard (PR #1818 finding 2, round 8): the two
-# revalidation functions above make several API calls before the mutation,
-# and a push landing DURING those calls leaves every verdict describing the
-# old head while the label would certify the new one. Re-fetch headRefOid
-# immediately before `gh pr edit` — after revalidation, not before — and
-# refuse on any drift (removal of the label is already handled by refuse():
-# the mutation has not happened). The revalidation rescan itself is repeated
-# here against the same window it just validated: a same-SHA rerun that posts
-# a blocking comment after the revalidation rescan (during these very calls)
-# must not slip through to the mutation.
 current_head="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)" || escalate head-revalidate-failed
 if [ -z "$current_head" ]; then
   escalate head-revalidate-failed
 fi
 if [ "$current_head" != "$head_sha" ]; then
   refuse "head-changed-before-apply"
-fi
-if [ "$is_implementation_pr" = "true" ] && ! revalidate_reviewer_state; then
-  refuse "reviewer-state-changed"
 fi
 
 if ! gh pr edit "$pr_number" --repo "$repo" --add-label "$label" >/dev/null 2>&1; then
