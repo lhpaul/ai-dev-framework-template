@@ -151,9 +151,24 @@ if ! commit_list="$(git rev-list "${resolved_gate_sha}..${resolved_head_sha}" 2>
     "$resolved_gate_sha" "$resolved_head_sha" "$lines_changed" "$resolved_gate_sha" "$resolved_head_sha"
   exit 2
 fi
+if [ -z "$commit_list" ]; then
+  # SHAs differ and gate_sha is a strict ancestor of head_sha (checked
+  # above), so this range must contain at least one commit. An empty
+  # result here means git returned something we cannot interpret rather
+  # than "no delta" — treat it as a hard error instead of silently
+  # defaulting marker_present=true into an unearned pass.
+  printf 'RESULT=refused\nREASON=git_error\nGATE_SHA=%s\nHEAD_SHA=%s\nLINES_CHANGED=%s\nMARKER_PRESENT=false\nHUMAN_ACTION=commit range %s..%s resolved as non-empty (SHAs differ, ancestor confirmed) but git rev-list returned no commits; this is unexpected and should be investigated rather than treated as a pass.\n' \
+    "$resolved_gate_sha" "$resolved_head_sha" "$lines_changed" "$resolved_gate_sha" "$resolved_head_sha"
+  exit 2
+fi
 while IFS= read -r commit_sha; do
   [ -n "$commit_sha" ] || continue
-  commit_message="$(git log -1 --format=%B "$commit_sha" 2>/dev/null || true)"
+  # commit_sha is a verified member of a resolved rev-list range, so a
+  # failure here is not expected; on the rare chance it happens, falling back
+  # to an empty commit_message fails closed (the grep -F below reports no
+  # marker, so marker_present becomes "false" and the caller refuses
+  # readiness) rather than silently passing.
+  commit_message="$(git log -1 --format=%B "$commit_sha" 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - empty fallback fails closed to marker_present=false, see comment above
   if ! grep -Fq 'MECHANICAL_DELTA:' <<< "$commit_message"; then
     marker_present="false"
     break
