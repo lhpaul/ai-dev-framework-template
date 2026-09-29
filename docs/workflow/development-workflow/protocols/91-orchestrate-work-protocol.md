@@ -2569,14 +2569,24 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 
 **`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception for **all** implementation branch types (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`). The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
 
+> **Readiness labels are helper-applied only (issue #1408).** Agents **must not call `gh pr edit --add-label ready-*`** directly, and **must not call `apply-readiness-labels.sh` for a `ready-*` label** unless the helper's own gate runs first. Readiness labels are input to the merge gates (`run-epic-delegated-gate.sh`, `batch-merge.sh`, `workflow-next-action.sh`), so a label applied on an agent's judgement asserts readiness no reviewer verdict supports. An agent that applies one by hand has not completed this step — it has skipped it.
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only for implementation PRs:
-gh pr edit <pr_number> --add-label "ready-for-regression"
+# Only for implementation PRs (feature/*, fix/*, refactor/*, hotfix/*,
+# backport/hotfix/*). The helper refuses unless every configured ready-phase
+# reviewer check run is `completed` for the current head SHA and the reviewer
+# posted no blocking findings on that SHA. It emits RESULT= and REASON= for the
+# run summary.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
+
+`RESULT=labeled` (exit 0) means the gate passed and the label is on the PR. `RESULT=refused` (exit 1) carries the reason — `reviewer-check-absent`, `reviewer-check-not-completed`, `reviewer-unavailable`, `blocking-findings`, or `ci-failing` — and is a stop: return to Step 7 rather than labelling. `reviewer-unavailable` covers a `neutral` Bugbot check run paired with a usage/spend-limit notice, where the reviewer never actually reviewed. `RESULT=escalate` (exit 2) means the PR state could not be read; do not label, and report the `REASON`. A **pending** check does not refuse this label — Step 7b runs before the Step 8 CI loop, and this label is what starts the configured regression workflow.
 
 This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). The template placeholder remains inactive unless explicitly enabled; downstream real regression suites should keep this label gate when they replace the placeholder. Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up configured e2e checks as part of its green/red polling via `statusCheckRollup`.
 
-The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
+Applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
 
 Skip this step entirely for spec and plan PRs, and for graduation PRs (`develop-<slug>` → `develop`).
 
@@ -2589,7 +2599,7 @@ After applying the label, **verify it was applied successfully** before proceedi
 gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -q "^ready-for-regression$" && echo "✅ Step 7b complete: ready-for-regression label verified"
 ```
 
-If the verification fails (label not present), do not proceed to Step 8. Re-run the `gh pr edit --add-label` command and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
+If the verification fails (label not present), do not proceed to Step 8. Re-run `apply-readiness-labels.sh` (never `gh pr edit --add-label` directly — issue #1408) and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
 
 See [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) for the full integration guide, including downstream customization.
 
@@ -3083,7 +3093,9 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   if [ "$HAS_REGRESSION_LABEL" -eq 0 ]; then
     echo "WARNING: Implementation PR is missing 'ready-for-regression' label — Step 7b was not completed before Step 8."
     echo "Applying 'ready-for-regression' label now and logging as protocol deviation."
-    gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+    # Helper-gated (issue #1408): never `gh pr edit --add-label ready-*` directly.
+    ./scripts/development-workflow/apply-readiness-labels.sh \
+      --pr "$PR_NUMBER" --repo "$TARGET_REPO" --label ready-for-regression || exit 12
     echo "PROTOCOL_DEVIATION: ready-for-regression was missing on PR #${PR_NUMBER} at Step 8a — applied by agent. Step 7b must be run before Step 8 in future cycles."
     echo "Re-running Step 8 CI loop to wait for the e2e/regression workflow triggered by the label..."
     # EXIT this checklist script and re-run Step 8 before returning here.
@@ -3276,7 +3288,8 @@ if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
   gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "needs-fixes"
 fi
 
-# Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
+# Check 4: apply (or revalidate) the ready-for-human-review label through the
+# helper — even when the label is already present, so a stale one is removed.
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 # Last look before the label (issue #1574): several API-backed gates ran since
 # Check 0.6, and a push during any of them leaves the settled verdict
@@ -3290,11 +3303,21 @@ if [ "${SETTLE_APPLIES:-1}" -eq 1 ] && ! settle_head_ok; then
   fi
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
-if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
-  echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
-else
-  echo "Applying 'ready-for-human-review' label..."
-  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "ready-for-human-review"
+# Run the helper for BOTH label-present and label-absent PRs (issue #1408):
+# a label that is already present is NOT proof it is still current. The helper
+# revalidates it against the live head SHA and removes it on refusal, so a
+# same-SHA reviewer rerun that fails after the label went on pulls the stale
+# label back off instead of leaving it for the merge gates.
+echo "Applying/revalidating 'ready-for-human-review' label through the helper gate..."
+# Agents must not call `gh pr edit --add-label ready-*` directly (issue #1408).
+# The helper re-verifies, for the live head SHA, that every configured
+# ready-phase reviewer check run is `completed`, that the reviewer posted no
+# blocking findings, and that no non-reviewer check is pending or failing. A
+# `refused` verdict here is a stop, not a warning: return to Step 7 or Step 8
+# per the printed REASON.
+if ! ./scripts/development-workflow/apply-readiness-labels.sh \
+      --pr "$PR_NUMBER" --repo "$TARGET_REPO" --label ready-for-human-review; then
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
 
 echo "✅ Label readiness checklist passed. PR is ready for human review."

@@ -544,6 +544,66 @@ configured_reviewer_check_names_json() {
   printf '%s\n' "${names[@]}" | jq -R . | jq -s .
 }
 
+# normalize_status_check_rollup
+#
+# Reads a `gh pr view --json statusCheckRollup` payload on stdin and prints one
+# JSON array with historical duplicates collapsed to the latest entry per check
+# key. The key prefers `.context` (status contexts), then
+# `.workflowName`/`.name` (check runs), then `.name`; the timestamp prefers
+# `.startedAt`, then `.completedAt`, then `.createdAt`.
+#
+# Factored out of pr-review-loop.sh / pr-ci-loop.sh, which already carried
+# byte-identical copies of this normalization (issue #1408). Both scripts keep
+# their inline copies for now — #1559 audits the remaining `statusCheckRollup`
+# consumers — so this helper is additive and no caller is regressed by it.
+normalize_status_check_rollup() {
+  jq '
+    (.statusCheckRollup // [])
+    | map(
+        . + {
+          __check_key: (
+            if (.context // "") != "" then
+              "status:" + .context
+            elif (.workflowName // "") != "" and (.name // "") != "" then
+              "check:" + .workflowName + "/" + .name
+            elif (.name // "") != "" then
+              "check:" + .name
+            else
+              "unknown"
+            end
+          ),
+          __check_ts: (.startedAt // .completedAt // .createdAt // "")
+        }
+      )
+    | sort_by(.__check_key, .__check_ts)
+    | group_by(.__check_key)
+    | map(last | del(.__check_key, .__check_ts))
+  '
+}
+
+# bot_login_for_platform <platform>
+#
+# Prints the GitHub login a review platform posts as, or nothing for a platform
+# that has no GitHub review surface (haystack). Kept here so readiness-label
+# gating and the completion self-check resolve the same logins from one place.
+bot_login_for_platform() {
+  case "$1" in
+    coderabbit) printf 'coderabbitai\n' ;;
+    coderabbit-cli) printf '\n' ;;
+    local-ai-reviewer) printf '\n' ;;
+    devin) printf 'devin-ai-integration\n' ;;
+    greptile) printf 'greptile-apps\n' ;;
+    pr-agent) printf '%s\n' "${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" ;;
+    haystack) printf '\n' ;;
+    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
+    claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
+    copilot) printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
+    bugbot) printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
+    ronda) printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
+    *) printf '\n' ;;
+  esac
+}
+
 print_kv_escaped() {
   local value="$2" control escaped code octal
   local LC_ALL=C

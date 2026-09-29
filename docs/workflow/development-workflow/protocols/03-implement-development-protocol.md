@@ -1059,9 +1059,14 @@ Pass condition: empty output. If non-empty: resolve or address each reported thr
 
 Step 1.3 — Apply `ready-for-regression`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only after Steps 1.1 and 1.2 pass:
-gh pr edit <pr_number> --add-label "ready-for-regression"
+# Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
+# (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
+# re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
+# verdict is a stop.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
 
 **Phase 2 checklist — run ALL of these before applying `ready-for-human-review`**:
@@ -1077,9 +1082,12 @@ Pass condition: script exits with `RESULT=green`. If `RESULT=red`: fix the faili
 
 Step 2.2 — Apply `ready-for-human-review`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only after Step 2.1 passes:
-gh pr edit <pr_number> --add-label "ready-for-human-review"
+# Only after Step 2.1 passes. Helper-applied only (issue #1408): a `refused`
+# verdict means the reviewer verdict or CI is not settled for the live head SHA.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-human-review
 ```
 
 This two-phase sequence aligns with `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, execute each numbered step above explicitly and verify its pass condition before proceeding to the next.
@@ -1729,9 +1737,14 @@ Pass condition: empty output. If non-empty: resolve or address each reported thr
 
 Step 1.3 — Apply `ready-for-regression`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only after Steps 1.1 and 1.2 pass:
-gh pr edit <pr_number> --add-label "ready-for-regression"
+# Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
+# (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
+# re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
+# verdict is a stop.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
 
 For Phase 2 (`ready-for-human-review` gate) and the full pre-label ordering contract, follow Path 1 `### Step 9: Handoff to Work Item Runner`. When invoked through the Work Item Runner, `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c enforce this gate automatically. When invoked standalone, execute each numbered step explicitly and verify its pass condition before proceeding to the next.
@@ -2097,16 +2110,20 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
 3. **Apply `ready-for-regression`** after the reviewer loop is clean:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   gh pr edit <backport_pr_number> --add-label "ready-for-regression"
+   ./scripts/development-workflow/apply-readiness-labels.sh \
+     --pr <backport_pr_number> --label ready-for-regression
    ```
 
 4. **Verify CI is green** using `pr-ci-loop.sh` or by checking the PR's status checks.
 
 5. **Apply `ready-for-human-review`** after CI is green and all reviewer loop threads are resolved:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   gh pr edit <backport_pr_number> --add-label "ready-for-human-review"
+   ./scripts/development-workflow/apply-readiness-labels.sh \
+     --pr <backport_pr_number> --label ready-for-human-review
    ```
 
 Both `ready-for-regression` and `ready-for-human-review` are required on the backport PR before the human merges it. The orchestrator's Step 5.1 verification (Protocol 91) checks for these labels on `backport/hotfix/*` branches and will flag missing labels as a protocol deviation. The backport PR can be merged by the human alongside or after the main hotfix review.

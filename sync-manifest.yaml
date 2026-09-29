@@ -145,6 +145,9 @@ categories:
     - path: scripts/development-workflow/post-merge-cleanup.sh
       mode_scope: product_repo_injection
       note: product-repo cleanup helper for product-owned branch and PR evidence
+    - path: scripts/development-workflow/apply-readiness-labels.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper gating readiness-label application on reviewer/CI verdicts (#1408)
     - path: scripts/lint/
       glob: "**/*"
       mode_scope: shared

@@ -29,6 +29,7 @@ PRODUCT_RELEASE_RUNTIME_PATHS = {
     "scripts/development-workflow/pr-ci-loop.sh",
     "scripts/development-workflow/changelog-fragments.sh",
     "scripts/development-workflow/post-merge-cleanup.sh",
+    "scripts/development-workflow/apply-readiness-labels.sh",
 }
 
 

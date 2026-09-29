@@ -29,8 +29,9 @@ The workflow handles these events:
   `synchronize`
 - `issue_comment`: `created`, `edited`
 
-The workflow does not use `actions/checkout`, does not execute PR head code, and
-does not read files from untrusted fork heads.
+The workflow checks out the repository **default branch** (pinned `actions/checkout`,
+`persist-credentials: false`) to run the readiness-label helper; it never checks
+out or executes PR head code, and never reads files from untrusted fork heads.
 
 ---
 

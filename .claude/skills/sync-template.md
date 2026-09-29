@@ -915,7 +915,11 @@ Once the reviewer loop exits clean, apply the regression label and wait for CI:
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
-gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+# Readiness labels are helper-applied only (issue #1408). The helper refuses
+# unless the ready-phase reviewer check run is completed for the live head SHA
+# and no non-reviewer check is pending or failing; a `refused` verdict is a stop.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr "$PR_NUMBER" --label ready-for-regression
 ./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
 ```
 
@@ -930,7 +934,8 @@ Once CI is green:
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
-gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr "$PR_NUMBER" --label ready-for-human-review
 ```
 
 Update the tracker status to `Development in Review` if an issue tracker is configured.
