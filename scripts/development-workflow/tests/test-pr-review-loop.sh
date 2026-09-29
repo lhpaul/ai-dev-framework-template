@@ -15718,7 +15718,10 @@ rm -f "$_integ_gh_log"
 unset INTEG_MOCK_GH_LOG
 unset INTEG_MOCK_HEAD_JSON
 
-# Test 15.3: --branch release/v9.9.9 flag → guard fires without a gh call, exits 0
+# Test 15.3: --branch release/v9.9.9 flag → the PR ownership guard (#1444)
+# confirms PR 997 is that branch's PR, then the release guard fires on the
+# given branch without its own head lookup, exits 0
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9","headRepositoryOwner":{"login":"example"},"headRepository":{"name":"repo"},"isCrossRepository":false}'
 _integ_out=""
 _integ_exit=0
 set +e
@@ -15728,6 +15731,63 @@ set -e
 run_test "mainloop_branch_flag_release_result_skipped" "RESULT=skipped" \
   "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
 run_test "mainloop_branch_flag_release_exit0" "0" "$_integ_exit"
+run_test "mainloop_branch_flag_ownership_owned" "PR_OWNERSHIP_RESULT=owned" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+unset INTEG_MOCK_HEAD_JSON
+
+# Test 15.4: --branch names this item's branch but the PR number is a
+# sibling's (#1444) → RESULT=escalate REASON=pr_ownership_mismatch, exit 2, and
+# the only gh call is the ownership read: nothing posted, readied, or labelled.
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"spec/10-sibling-item","headRepositoryOwner":{"login":"example"},"headRepository":{"name":"repo"},"isCrossRepository":false}'
+_integ_gh_log="$(mktemp)"
+export INTEG_MOCK_GH_LOG="$_integ_gh_log"
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 52 --branch spec/13-own-item)"
+_integ_exit=$?
+set -e
+run_test "mainloop_ownership_mismatch_result_escalate" "RESULT=escalate" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
+run_test "mainloop_ownership_mismatch_reason" "REASON=pr_ownership_mismatch" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_ownership_mismatch_exit2" "2" "$_integ_exit"
+run_test "mainloop_ownership_mismatch_head_reported" "PR_OWNERSHIP_PR_HEAD_BRANCH=spec/10-sibling-item" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_PR_HEAD_BRANCH=')"
+run_test "mainloop_ownership_mismatch_only_read_call" \
+  "pr view 52 --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" \
+  "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+unset INTEG_MOCK_GH_LOG
+
+# Test 15.5: fork PR carrying the same branch name → mismatch on head repository
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"spec/13-own-item","headRepositoryOwner":{"login":"forker"},"headRepository":{"name":"repo-fork"},"isCrossRepository":true}'
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 54 --branch spec/13-own-item)"
+_integ_exit=$?
+set -e
+run_test "mainloop_ownership_fork_reason" "REASON=pr_ownership_mismatch" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_ownership_fork_kind" "PR_OWNERSHIP_MISMATCH=head_repository" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_MISMATCH=')"
+run_test "mainloop_ownership_fork_exit2" "2" "$_integ_exit"
+
+# Test 15.6: PR head cannot be resolved (mock returns an empty head) → fail
+# closed with REASON=pr_ownership_unverified, exit 2
+unset INTEG_MOCK_HEAD_JSON
+_integ_out=""
+_integ_exit=0
+set +e
+_integ_out="$(_run_loop_integration 53 --branch spec/13-own-item)"
+_integ_exit=$?
+set -e
+run_test "mainloop_ownership_unresolved_result_escalate" "RESULT=escalate" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
+run_test "mainloop_ownership_unresolved_reason" "REASON=pr_ownership_unverified" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_ownership_unresolved_exit2" "2" "$_integ_exit"
 
 _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON

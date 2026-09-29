@@ -148,6 +148,11 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   `mktemp -d` — named with the item and process, for example
   `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
   sibling's content reach this PR with a correct PR number.
+- `pr-review-loop.sh <pr> --branch <branch>` runs this guard itself before any
+  side effect and stops with `RESULT=escalate` and
+  `REASON=pr_ownership_mismatch` (wrong branch or head repository) or
+  `REASON=pr_ownership_unverified` (PR not resolved), exit `2`. Always pass
+  `--branch` so that check runs.
 - Mirror review-gate evidence recorded in the PR description (for example the
   Pre-Submission Self-Review log) as a PR comment after the PR exists: a
   description can be silently overwritten; a comment cannot.

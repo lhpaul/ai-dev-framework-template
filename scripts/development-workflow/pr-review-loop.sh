@@ -690,6 +690,14 @@ Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  REASON=pr_ownership_mismatch (exit 2, with RESULT=escalate: --branch was given
+    and the PR's head branch or head repository differs; nothing was posted,
+    readied, or labelled)
+  REASON=pr_ownership_unverified (exit 2, with RESULT=escalate: --branch was
+    given but pr-ownership-guard.sh could not resolve the PR; fail closed)
+  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown (only when
+    --branch is given; with PR_OWNERSHIP_PR_HEAD_BRANCH, _PR_HEAD_REPO,
+    _MISMATCH, and _REQUIRED_ACTION on refusal)
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
@@ -12501,6 +12509,41 @@ if [ -n "$repo_selector" ]; then
   export WORKFLOW_TARGET_GITHUB_REPO="$target_github_repo"
   export GH_REPO="$target_github_repo"
   print_kv REPO "$target_github_repo"
+fi
+
+# --- PR ownership guard (issue #1444) ---
+# This loop comments on, readies, and labels the PR by number. Under parallel
+# waves a transposed number would make it mutate a sibling's PR. When the
+# caller names the item branch with --branch, prove the PR's head branch and
+# head repository belong to it before any side effect, and fail closed
+# otherwise. Without --branch the loop derives the head branch from the PR
+# itself, so there is no independent expectation to check.
+if [ -n "$branch_name" ]; then
+  _ownership_args=(--pr "$pr_number" --expected-branch "$branch_name" --repo-root "$repo_root")
+  if [ -n "${target_github_repo:-}" ]; then
+    _ownership_args+=(--repo "$target_github_repo")
+  fi
+  _ownership_output=""
+  _ownership_status=0
+  _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" "${_ownership_args[@]}" 2>&1)" \
+    || _ownership_status=$?
+  if [ "$_ownership_status" -ne 0 ]; then
+    _ownership_reason="pr_ownership_unverified"
+    if [ "$_ownership_status" -eq 1 ]; then
+      _ownership_reason="pr_ownership_mismatch"
+    fi
+    print_kv RESULT escalate
+    print_kv REASON "$_ownership_reason"
+    print_kv PR_OWNERSHIP_GUARD_EXIT "$_ownership_status"
+    # awk, not grep: a guard usage error has no key lines, and a no-match
+    # grep would abort this block under `set -e` before the exit 2 below.
+    printf '%s\n' "$_ownership_output" \
+      | awk '/^(RESULT|PR_HEAD_BRANCH|PR_HEAD_REPO|MISMATCH|REQUIRED_ACTION)=/ { print "PR_OWNERSHIP_" $0 }'
+    echo "STOP: PR #${pr_number} was not verified as the PR of branch '${branch_name}'; no reviewer ran and the PR was not modified." >&2
+    printf '%s\n' "$_ownership_output" | awk '/^(REFUSED|ERROR):/' >&2
+    exit 2
+  fi
+  print_kv PR_OWNERSHIP_RESULT owned
 fi
 
 # --- Reviewer-loop run identifier (#1502 follow-up: dual cap) ---
