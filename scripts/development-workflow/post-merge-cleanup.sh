@@ -679,9 +679,17 @@ fi
 
 if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
   echo "Fast-forwarding $DEVELOP_BRANCH without checking it out in the calling worktree..."
-  # A '<src>:<dst>' refspec fetch refuses non-fast-forward updates, matching
-  # the --ff-only pull used on the other path.
-  git fetch origin "refs/heads/$DEVELOP_BRANCH:refs/heads/$DEVELOP_BRANCH"
+  # Same outcomes as the --ff-only pull on the other path: create the branch
+  # when it is missing, do nothing when it already contains origin's tip
+  # (including when it is ahead), fast-forward otherwise, and fail when the two
+  # have diverged. The '<src>:<dst>' fetch refuses non-fast-forward updates.
+  if ! git show-ref --verify --quiet "refs/heads/$DEVELOP_BRANCH"; then
+    git branch --quiet --track "$DEVELOP_BRANCH" "refs/remotes/origin/$DEVELOP_BRANCH"
+  elif git merge-base --is-ancestor "refs/remotes/origin/$DEVELOP_BRANCH" "refs/heads/$DEVELOP_BRANCH"; then
+    echo "$DEVELOP_BRANCH already contains origin/$DEVELOP_BRANCH."
+  else
+    git fetch origin "refs/heads/$DEVELOP_BRANCH:refs/heads/$DEVELOP_BRANCH"
+  fi
 else
 echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
@@ -1178,12 +1186,12 @@ if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
     FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
   fi
 fi
-if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
+elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; the calling worktree $CLEANUP_REPO_ROOT is detached at it; local branch '$TO_DELETE' has been removed locally."
 elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; local branch '$TO_DELETE' was KEPT and the calling worktree $CLEANUP_REPO_ROOT stays on it because it could not be detached (see LOCAL_DELETE_REASON)."
-elif [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
-  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
 elif [ "$SKIP_LOCAL_DELETE" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 else

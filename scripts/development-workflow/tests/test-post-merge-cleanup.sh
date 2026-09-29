@@ -503,6 +503,35 @@ run_contains "dirty_no_base_tracker_processing_still_runs" \
   "Issue #1391 is already CLOSED, skipping close." \
   "$dirty_nobase_output"
 
+# Step 7a review: a local base that is ahead of origin (unpushed commits) must
+# not stop cleanup, just as `git pull --ff-only` does not.
+ahead_branch="feature/1392-base-ahead"
+ahead_repo="$(make_repo base-ahead "$ahead_branch" yes)"
+install_cleanup_helper "$ahead_repo"
+"$REAL_GIT" -C "$ahead_repo" commit -q --allow-empty -m "local-only base commit"
+ahead_local_tip="$("$REAL_GIT" -C "$ahead_repo" rev-parse develop)"
+"$REAL_GIT" -C "$ahead_repo" checkout -q -b ops/current
+ahead_worktree="$TMP_ROOT/base-ahead-worktree"
+"$REAL_GIT" -C "$ahead_repo" worktree add -q "$ahead_worktree" "$ahead_branch"
+set +e
+ahead_output="$(
+  cd "$ahead_worktree" &&
+    GH_MERGED_HEAD="$ahead_branch" \
+    GH_MERGED_PR=1392 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$ahead_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1392 \
+      "$ahead_branch" 2>&1
+)"
+ahead_status=$?
+set -e
+run_test "base_ahead_exit_status" "0" "$ahead_status"
+run_test "base_ahead_local_commits_kept" "$ahead_local_tip" "$("$REAL_GIT" -C "$ahead_repo" rev-parse develop)"
+run_contains "base_ahead_caller_detached" "CALLER_WORKTREE_ACTION=detached" "$ahead_output"
+run_contains "base_ahead_tracker_processing_runs" "Issue #1392 is already CLOSED, skipping close." "$ahead_output"
+
 # A worktree that is NOT the caller's keeps the existing behavior: it is
 # removed so the merged branch can be deleted.
 other_wt_branch="feature/noissue-other-worktree"
