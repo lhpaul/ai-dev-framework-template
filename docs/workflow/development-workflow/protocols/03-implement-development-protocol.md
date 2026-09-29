@@ -152,9 +152,10 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   Pre-Submission Self-Review log) as a PR comment after the PR exists: a
   description can be silently overwritten; a comment cannot.
 - A mutation that uses a number resolved moments earlier by `gh pr create` or
-  `gh pr view --json number` on the item branch itself (for example the
-  post-create base-branch assertion) already has ownership evidence; every
-  other number — from a handoff, a summary, a log, or memory — needs the guard.
+  `gh pr view --json number` on the item branch itself already has ownership
+  evidence — for example the `gh pr close` in each path's post-create
+  base-branch assertion. Every other number — from a handoff, a summary, a log,
+  or memory — needs the guard.
 
 ## Scope-Residual Evidence Gate
 
@@ -306,7 +307,8 @@ When ordering or comparing events (e.g., determining which comment came first, w
 # Wrong — local clock may not match server time:
 TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Correct — capture the timestamp from the API response:
+# Correct — capture the timestamp from the API response (run the PR Ownership
+# Guard for "$PR_NUMBER" first):
 RESPONSE=$(gh pr comment "$PR_NUMBER" --body "$TRIGGER_BODY")
 TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
 ```

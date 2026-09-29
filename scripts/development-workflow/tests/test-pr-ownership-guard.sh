@@ -28,7 +28,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$MOCK_BIN" "$EMPTY_BIN"
+NON_GIT_DIR="$TMP_ROOT/not-a-checkout"
+mkdir -p "$MOCK_BIN" "$EMPTY_BIN" "$NON_GIT_DIR"
 : > "$GH_LOG"
 
 # Mock gh: records every invocation, answers `pr view` from MOCK_GH_MODE and
@@ -209,7 +210,7 @@ run_test "detached_head_fails_closed_exit_4" "4" "$(status_code "$out")"
 run_contains "detached_head_reports_branch_unknown" "RESULT=branch_unknown" "$(body "$out")"
 run_test "detached_head_no_gh_call" "" "$(cat "$GH_LOG")"
 
-out="$(guard_output --pr 53 --repo-root "$TMP_ROOT/empty-bin")"
+out="$(guard_output --pr 53 --repo-root "$NON_GIT_DIR")"
 run_test "non_git_root_fails_closed_exit_4" "4" "$(status_code "$out")"
 
 # An explicit expected branch still works from a detached checkout.

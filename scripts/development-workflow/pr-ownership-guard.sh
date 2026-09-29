@@ -170,6 +170,8 @@ DEADLINE_TENTHS=$((TIMEOUT_SECONDS * 10))
 ELAPSED_TENTHS=0
 while kill -0 "$GH_PID" 2>/dev/null; do
   if [ "$ELAPSED_TENTHS" -ge "$DEADLINE_TENTHS" ]; then
+    # Only gh itself is signalled; a child it spawned may outlive the guard,
+    # but its output goes to the private scratch files, not to the caller.
     kill "$GH_PID" 2>/dev/null || true
     wait "$GH_PID" 2>/dev/null || true
     refuse 3 pr_unresolved "gh pr view timed out after ${TIMEOUT_SECONDS}s" \
