@@ -65,7 +65,7 @@ script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 source "$script_dir/workflow-lib.sh"
 
 if [ "$list" = "true" ]; then
-  if [ -n "$event" ] || [ -n "$branch" ] || [ -n "$stage" ] || [ "$apply" = "true" ]; then
+  if [ -n "$event" ] || [ -n "$branch" ] || [ -n "$stage" ] || [ -n "$issue" ] || [ "$apply" = "true" ]; then
     fail_usage "--list takes no other options"
   fi
   workflow_canonical_tracker_statuses

@@ -142,7 +142,7 @@ run_test "cli_list_matches_vocabulary" "$(workflow_canonical_tracker_statuses)" 
 
 for bad in "--event merged --branch release/v1.0.0" "--event bogus --stage spec" "--event merged" \
            "--event merged --stage spec --branch spec/1-x" "--event merged --stage spec --issue 5" \
-           "--event merged --stage spec --apply"; do
+           "--event merged --stage spec --apply" "--list --issue 5" "--list --stage spec" "--list --apply"; do
   rc=0
   # shellcheck disable=SC2086 # intentional word splitting of the argument list
   bash "$CLI" $bad >/dev/null 2>&1 || rc=$?
