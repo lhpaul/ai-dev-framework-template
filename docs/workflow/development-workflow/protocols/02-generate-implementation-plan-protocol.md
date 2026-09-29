@@ -660,7 +660,7 @@ If no blocking human decision remains:
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- Run the internal plan review gate (`implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`) on the draft PR
+- Run the internal plan review gate (`implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
 - Apply `ready-for-human-review` and move the tracker to **Plan in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated

@@ -61,6 +61,15 @@ A PR is ready for human review only when all of the following are true:
   coherent checkpoint commits after completed logical sub-parts, or the PR notes
   why the work had no meaningful intermediate checkpoint before the final commit
 
+The internal review gate's verdict binds to the commit it reviewed, not to the
+branch. Any subsequent non-mechanical commit invalidates that verdict for the
+new HEAD and requires re-running the gate before readiness — a clean
+automated-reviewer-loop result at the new HEAD is evidence for Step 7, not a
+substitute for re-running the internal review gate. See
+[`91-orchestrate-work-protocol.md`](docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md)
+Step 7a and Step 8a for the summary-comment commit-SHA requirement and the
+`internal-review-gate-freshness-guard.sh` check that enforces it.
+
 If any blocking finding remains, the PR must stay out of `ready-for-human-review`.
 
 ### Test-scope proportionality
