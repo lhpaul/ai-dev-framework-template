@@ -3309,6 +3309,10 @@ if [ "$GATE_VERDICT" != "APPROVED" ] || [ -z "$GATE_SHA" ] || \
         --gate-sha "$GATE_SHA" --head-sha "$LIVE_HEAD_OID" --repo-root "$(git rev-parse --show-toplevel)"; then
   echo "ERROR: Cannot proceed to Check 4 — internal review gate evidence is missing, not APPROVED, or stale for head $LIVE_HEAD_OID."
   echo "Re-run Step 7a at the current HEAD, then re-run this checklist from the beginning."
+  # A readiness label already on the PR describes a head the gate never approved:
+  # pull it back and keep the PR out of readiness before exiting.
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review" || true  # workflow-shell-guard: allow SH001 - label may be absent
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
   exit 13  # Exit code 13 = "internal review gate evidence missing or stale at pre-Check-4 gate"
 fi
 
