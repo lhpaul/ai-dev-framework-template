@@ -738,7 +738,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
 codex_current_occupancy_comment_ids() {
   local _o_owner="${repo%%/*}" _o_name="${repo#*/}" _o_json
   if ! _o_json="$(gh api graphql --paginate --slurp \
-        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on HeadRefForcePushedEvent{afterCommit{oid}} ...on IssueComment{databaseId} ...on PullRequestReview{databaseId}}}}}}}' \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on HeadRefForcePushedEvent{afterCommit{oid}} ...on IssueComment{databaseId} ...on PullRequestReview{databaseId}}}}}}' \
         -f owner="$_o_owner" -f repo="$_o_name" -F pr="$pr_number" 2>/dev/null)" \
       || [ -z "$_o_json" ]; then
     escalate codex-occupancy-timeline-fetch-failed
