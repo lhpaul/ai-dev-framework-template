@@ -220,7 +220,7 @@ The CI workflow complements, not replaces, the agent-side checklist:
 | --- | --- | --- |
 | `ready-for-regression` label applied to implementation PRs | Protocol 91 Step 5.1 checklist | `pr-policy.yml` |
 | Stale `ready-for-regression` removed before reviewer-loop readiness exists | Protocol 91 review and CI ordering | `pr-policy.yml` |
-| Reviewer-loop summary present before PR is ready | Protocol 91 Step 7 / Step 5.1 checklist | `pr-policy.yml` |
+| Reviewer loop clean (or skipped) for the current head before PR is ready | Protocol 91 Step 7 / Step 5.1 checklist | `pr-policy.yml` |
 
 The agent Step 5.1 check in Protocol 91 remains the authoritative gate for the
 agent runner. `pr-policy.yml` provides a structural backstop that catches cases
