@@ -210,6 +210,41 @@ reviewer_check_name_for_platform() {
   esac
 }
 
+# codex_unavailability_notice_present <bot> <since> <clean_created> — round 22
+# (PRRT_kwDORWAxaM6m6led, PRRT_kwDORWAxaM6m6vDx): a same-head rerun that later
+# posts an unavailability notice (usage limit, no environment, account not
+# connected) carries no "Reviewed commit" marker, so the terminal-evidence
+# adapter ignores it — yet the reviewer is CURRENTLY unavailable and an older
+# review OR an older clean SHA-pinned root comment must not certify the head.
+# Mirrors the canonical evidence selection (codex_combine_terminal_evidence
+# counts these ancillary outcomes): any unmarked bot root comment created at
+# or after <since> AND at or after <clean_created> (the newest clean
+# SHA-pinned root verdict, empty when none) matching the canonical
+# unavailability wording counts. Deliberately broader than the canonical
+# classifier (no fence guard): a false refusal is recoverable, a false clean
+# is not. Returns 0 when such a notice exists; an unreadable comment surface
+# escalates (fail closed).
+codex_unavailability_notice_present() {
+  local bot_arg="$1" since_arg="$2" clean_arg="${3:-}" comments_json count
+  if ! comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
+    escalate issue-comment-fetch-failed
+  fi
+  if ! count="$(printf '%s\n' "${comments_json:-[]}" | jq -r --arg bot "$bot_arg" --arg plain "${bot_arg%\[bot\]}" --arg since "$since_arg" --arg clean "$clean_arg" '
+        [ .[]?[]
+          | select(
+              (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
+              and ((.created_at // "") >= $since)
+              and (($clean == "") or ((.created_at // "") >= $clean))
+              and ((.body // "") | contains("Reviewed commit") | not)
+              and ((.body // "") | test("usage[[:space:]]+limits?|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+a[[:space:]]+codex[[:space:]]+account"; "i"))
+            )
+        ] | length
+      ' 2>/dev/null)"; then
+    escalate issue-comment-parse-failed
+  fi
+  [ "${count:-0}" -gt 0 ]
+}
+
 # comment_only_reviewer_verdict <platform> <bot_login> — the verdict path for
 # ready-phase reviewers that publish NO check run (codex-github, coderabbit,
 # claude-code-action, copilot, devin, greptile — every documented platform
@@ -288,6 +323,13 @@ comment_only_reviewer_verdict() {
     # refuse blocking-findings with the needs-fixes annotation).
     _adapter_rc=0
     comment_only_completion_evidence "$platform_arg" "$bot_login_arg" || _adapter_rc=$?
+    if [ "$_adapter_rc" -eq 0 ] && [ "$platform_arg" = "codex-github" ] \
+        && codex_unavailability_notice_present "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at"; then
+      result="refused"
+      reason="reviewer-unavailable"
+      reviewer_report="${platform_arg}:review"
+      refuse "reviewer-unavailable"
+    fi
     if [ "$_adapter_rc" -eq 0 ]; then
       count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg" 1
       return
@@ -330,34 +372,8 @@ comment_only_reviewer_verdict() {
       blocking_count=1
       refuse "blocking-findings"
     fi
-    # Round 22 (PRRT_kwDORWAxaM6m6led): a same-head rerun that later posts an
-    # unavailability notice (usage limit, no environment, account not
-    # connected) carries no "Reviewed commit" marker, so the terminal-evidence
-    # adapter ignores it — yet the reviewer is CURRENTLY unavailable and the
-    # older review must not certify the head. Mirror the canonical evidence
-    # selection (codex_combine_terminal_evidence counts these ancillary
-    # outcomes): any unmarked bot root comment at/after this review matching
-    # the canonical unavailability wording refuses. Deliberately broader than
-    # the canonical classifier (no fence guard): a false refusal is
-    # recoverable, a false clean is not.
-    local _unavail_json _unavail_count
-    if ! _unavail_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
-      escalate issue-comment-fetch-failed
-    fi
-    if ! _unavail_count="$(printf '%s\n' "${_unavail_json:-[]}" | jq -r --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" --arg since "$reviewer_started_at" --arg clean "$_root_clean_created" '
-          [ .[]?[]
-            | select(
-                (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
-                and ((.created_at // "") >= $since)
-                and (($clean == "") or ((.created_at // "") > $clean))
-                and ((.body // "") | contains("Reviewed commit") | not)
-                and ((.body // "") | test("usage[[:space:]]+limits?|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+a[[:space:]]+codex[[:space:]]+account"; "i"))
-              )
-          ] | length
-        ' 2>/dev/null)"; then
-      escalate issue-comment-parse-failed
-    fi
-    if [ "${_unavail_count:-0}" -gt 0 ]; then
+    # Round 22 (PRRT_kwDORWAxaM6m6led): see codex_unavailability_notice_present.
+    if codex_unavailability_notice_present "$bot_login_arg" "$reviewer_started_at" "$_root_clean_created"; then
       result="refused"
       reason="reviewer-unavailable"
       reviewer_report="${platform_arg}:review"
