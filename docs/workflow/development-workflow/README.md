@@ -355,7 +355,7 @@ docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 
 ### Tracker Status Model
 
-If an issue tracker is configured, the work item status usually maps to the workflow like this:
+If an issue tracker is configured, the work item status usually maps to the workflow like this. The vocabulary and the event-to-Status mapping are defined once in [`tracker-status-mapping.md`](tracker-status-mapping.md).
 
 `Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Development in Review -> Merged -> Released`
 
@@ -661,6 +661,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - `docs/workflow/development-workflow/agent-model-config.md`
 - `docs/workflow/development-workflow/guardrails.md` — plain-language reference for the guardrails configuration model: autonomy modes, per-stage permissions, risk scale, stop conditions, audit requirements, safe defaults, and worked examples
 - `docs/workflow/development-workflow/guardrails-enforcement.md` — single source of truth for how orchestration resolves effective guardrails (three-layer precedence), the config-field→run-epic-policy mapping table, the six enforcement gates (load+report, backlog-start, PR-open, delegated review, delegated merge, completion), named stop conditions and the stop-message contract, conservative defaults, and audit-evidence rules
+- `docs/workflow/development-workflow/tracker-status-mapping.md` — canonical tracker Status vocabulary and the single event-to-Status mapping (`dispatch`, `ready-for-human-review`, `merged`, `released`, and the readiness labels that leave Status unchanged), resolved by `tracker-status-for.sh`
 - `docs/workflow/development-workflow/architecture-decision-escalation.md` — canonical requirement for well-formed `architecture_decision` escalation content: axis decomposition, coverage verdicts, per-citation conformance declarations, and the requested decision scoped to genuinely open axes only
 - `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`, `guardrails`)
 - `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides

@@ -1060,7 +1060,7 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 - Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
-- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md))
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
 **Label derivation rule**: The `ready-for-regression` label requirement is determined by the **branch prefix**, not by the content of the PR. `feature/*` branches always require `ready-for-regression` regardless of whether the changes are code, documentation, or configuration. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
@@ -1740,7 +1740,7 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 
 - Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
-- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md))
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
 **Label derivation rule**: `fix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.

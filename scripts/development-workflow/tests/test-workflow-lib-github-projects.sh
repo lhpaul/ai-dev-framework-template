@@ -9,6 +9,8 @@
 #   5. list_open_workflow_type_issues resolves the real gh item-list key
 #      ("custom Type"/configured field), not a hardcoded ".type", and
 #      distinguishes an unreadable Type field from a clean [] (issue #1400)
+#   6. update_tracker_status_best_effort names the board's valid options for
+#      an unknown Status and fails only in strict mode (issue #1564)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 # covers: scripts/development-workflow/workflow-lib.sh
@@ -1263,6 +1265,95 @@ case "$gh_backward_out" in
   *) gh_backward_result="$gh_backward_out" ;;
 esac
 run_test "github_update_backward_guard_unchanged" "rollback-skipped" "$gh_backward_result"
+
+# --- Issue #1564: an unknown Status names the board's valid options ---
+reset_log
+unknown_rc=0
+unknown_out="$(update_tracker_status_best_effort 824 "In Progress" 2>&1)" || unknown_rc=$?
+run_test "unknown_status_best_effort_returns_zero" "0" "$unknown_rc"
+case "$unknown_out" in
+  *"'In Progress' is not an option of the Status field"*"Valid options: Spec Ready, In Development, Merged, Released."*) unknown_result="named" ;;
+  *) unknown_result="$unknown_out" ;;
+esac
+run_test "unknown_status_warning_names_valid_options" "named" "$unknown_result"
+case "$unknown_out" in
+  *"TRACKER_STATUS_UNRESOLVED issue=824 requested='In Progress' reason=unknown_status_option valid_options='Spec Ready, In Development, Merged, Released'"*) unknown_result="machine-line" ;;
+  *) unknown_result="$unknown_out" ;;
+esac
+run_test "unknown_status_emits_machine_readable_line" "machine-line" "$unknown_result"
+run_test "unknown_status_does_not_mutate" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+strict_rc=0
+strict_out="$(WORKFLOW_TRACKER_STATUS_STRICT=true update_tracker_status_best_effort 824 "In Progress" 2>&1)" || strict_rc=$?
+run_test "unknown_status_strict_returns_two" "2" "$strict_rc"
+case "$strict_out" in
+  *"Valid options: Spec Ready, In Development, Merged, Released."*) strict_result="named" ;;
+  *) strict_result="$strict_out" ;;
+esac
+run_test "unknown_status_strict_still_names_options" "named" "$strict_result"
+run_test "unknown_status_strict_does_not_mutate" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+strict_known_rc=0
+strict_known_out="$(WORKFLOW_TRACKER_STATUS_STRICT=true update_tracker_status_best_effort 824 "In Development" 2>&1)" || strict_known_rc=$?
+run_test "known_status_strict_returns_zero" "0" "$strict_known_rc"
+case "$strict_known_out" in
+  *"Updating tracker status for issue #824 to 'In Development'"*) strict_known_result="updated" ;;
+  *) strict_known_result="$strict_known_out" ;;
+esac
+run_test "known_status_strict_updates" "updated" "$strict_known_result"
+case "$strict_known_out" in
+  *"TRACKER_STATUS_APPLIED issue=824 status='In Development'"*) strict_known_result="marker" ;;
+  *) strict_known_result="$strict_known_out" ;;
+esac
+run_test "known_status_emits_applied_marker" "marker" "$strict_known_result"
+
+# An unreadable Status field can be transient, so it stays best-effort even in
+# strict mode — only a definite vocabulary mismatch fails.
+reset_log
+__workflow_project_status_field_cache_project_id=""
+__workflow_project_status_field_cache_json=""
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+field_rc=0
+field_out="$(WORKFLOW_TRACKER_STATUS_STRICT=true update_tracker_status_best_effort 824 "In Development" 2>&1)" || field_rc=$?
+unset MOCK_STATUS_FIELD_MODE
+__workflow_project_status_field_cache_project_id=""
+__workflow_project_status_field_cache_json=""
+run_test "status_field_unavailable_strict_returns_zero" "0" "$field_rc"
+case "$field_out" in
+  *"TRACKER_STATUS_UNRESOLVED issue=824 requested='In Development' reason=status_field_unavailable"*) field_result="field-unavailable" ;;
+  *) field_result="$field_out" ;;
+esac
+run_test "status_field_unavailable_reason_reported" "field-unavailable" "$field_result"
+run_test "status_field_unavailable_does_not_mutate" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+# A complete field scan with no field named "Status" is a permanent board
+# misconfiguration (PR #1833 review): distinct reason, and it fails in strict
+# mode like an unknown option. The priority_configured fixture has only a
+# Priority field and no next page.
+for strict_value in "" "true"; do
+  reset_log
+  __workflow_project_status_field_cache_project_id=""
+  __workflow_project_status_field_cache_json=""
+  export MOCK_STATUS_FIELD_MODE=priority_configured
+  missing_rc=0
+  missing_out="$(WORKFLOW_TRACKER_STATUS_STRICT="$strict_value" update_tracker_status_best_effort 824 "In Development" 2>&1)" || missing_rc=$?
+  unset MOCK_STATUS_FIELD_MODE
+  __workflow_project_status_field_cache_project_id=""
+  __workflow_project_status_field_cache_json=""
+  if [ -n "$strict_value" ]; then
+    run_test "status_field_missing_strict_returns_two" "2" "$missing_rc"
+  else
+    run_test "status_field_missing_best_effort_returns_zero" "0" "$missing_rc"
+  fi
+  case "$missing_out" in
+    *"has no field named 'Status'"*"TRACKER_STATUS_UNRESOLVED issue=824 requested='In Development' reason=status_field_missing"*) missing_result="missing" ;;
+    *) missing_result="$missing_out" ;;
+  esac
+  run_test "status_field_missing_reason_reported_strict_${strict_value:-off}" "missing" "$missing_result"
+  run_test "status_field_missing_does_not_mutate_strict_${strict_value:-off}" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+done
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

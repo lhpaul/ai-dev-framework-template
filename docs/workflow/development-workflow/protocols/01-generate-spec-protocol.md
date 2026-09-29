@@ -32,7 +32,7 @@ Before starting, read:
 - `docs/project/3-software-architecture.md` — architecture constraints
 - The feature brief. If you have an issue tracker configured, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` to get the current brief.
 
-**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
+**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md)). If you invoke this protocol standalone, mirror the same status progression with `scripts/development-workflow/tracker-status-for.sh`.
 
 **Spec-dispatch context**: When the Work Item Runner or Portfolio Orchestrator
 provides output from `scripts/development-workflow/spec-dispatch-context.sh`,
