@@ -153,15 +153,18 @@ if ! git merge-base --is-ancestor "$resolved_gate_sha" "$resolved_head_sha" 2>/d
 fi
 
 shortstat=""
-if ! shortstat="$(git diff --shortstat "${resolved_gate_sha}..${resolved_head_sha}" -- . 2>/dev/null)"; then
+if ! shortstat="$(git diff --numstat "${resolved_gate_sha}..${resolved_head_sha}" -- . 2>/dev/null)"; then
   printf 'RESULT=refused\nREASON=git_error\nGATE_SHA=%s\nHEAD_SHA=%s\nLINES_CHANGED=\nMARKER_PRESENT=false\nHUMAN_ACTION=could not compute diff stat between %s and %s.\n' \
     "$resolved_gate_sha" "$resolved_head_sha" "$resolved_gate_sha" "$resolved_head_sha"
   exit 2
 fi
-# Empty shortstat (no net diff) must yield 0, not abort: awk always exits 0,
-# unlike a grep pipeline that returns 1 on no match under pipefail/set -e.
+# --numstat is the machine-readable, locale-independent diffstat (one
+# "<added>\t<deleted>\t<path>" row per file; "-" for binary files, which
+# count as unbounded so a marked binary change never passes). Empty output
+# (no net diff) must yield 0, not abort: awk always exits 0, unlike a grep
+# pipeline that returns 1 on no match under pipefail/set -e.
 parse_shortstat_lines() {
-  awk '{ for (i = 2; i <= NF; i++) if ($i ~ /^(insertion|deletion)/) s += $(i-1) } END { print s + 0 }'
+  awk -F'\t' 'NF >= 3 { a = ($1 == "-") ? 1000000 : $1; d = ($2 == "-") ? 1000000 : $2; s += a + d } END { print s + 0 }'
 }
 lines_changed="$(printf '%s\n' "$shortstat" | parse_shortstat_lines)"
 lines_changed="${lines_changed:-0}"
@@ -198,7 +201,7 @@ while IFS= read -r commit_sha; do
   fi
   # Count each marked commit's own delta so a commit that adds and a later
   # commit that reverts cannot hide churn behind a small net diff.
-  commit_stat="$(git diff --shortstat "${commit_sha}^" "$commit_sha" -- . 2>/dev/null || printf 'ERR')" # workflow-shell-guard: allow SH001 - ERR sentinel fails closed below
+  commit_stat="$(git diff --numstat "${commit_sha}^" "$commit_sha" -- . 2>/dev/null || printf 'ERR')" # workflow-shell-guard: allow SH001 - ERR sentinel fails closed below
   if [ "$commit_stat" = "ERR" ]; then
     marker_present="false"
     break
