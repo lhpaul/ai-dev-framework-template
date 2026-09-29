@@ -627,6 +627,48 @@ is_soft_suggestion() {
   [ "$saw_content" -eq 1 ]
 }
 
+bugbot_summary_finding_count() {
+  # Parses a Bugbot check-run `output.summary` (or a Bugbot review body) for its
+  # verdict line and prints the number of findings it reports.
+  #
+  # Prints "0" for an affirmative no-issues verdict and "N" for a
+  # "... found N potential issues." verdict. Exits 1, printing nothing, when the
+  # text carries no recognisable verdict — callers must treat that as unknown
+  # and blocking, never as clean (issue #1390: Cursor concludes the check run
+  # `neutral` both for a review that found nothing and for a review that found
+  # blocking issues, so the conclusion alone is not a verdict).
+  if [ "$#" -ne 1 ]; then
+    echo "ERROR: bugbot_summary_finding_count requires exactly 1 argument." >&2
+    return 1
+  fi
+
+  local summary="$1"
+  local line
+  local lower
+
+  # Pass 1: an explicit finding count wins over anything else in the text.
+  while IFS= read -r line; do
+    lower="$(printf '%s' "${line%$'\r'}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$lower" =~ found[[:space:]]+([0-9]+)[[:space:]]+potential[[:space:]]+issue ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done <<< "$summary"
+
+  # Pass 2: affirmative no-issues phrasings.
+  while IFS= read -r line; do
+    lower="$(printf '%s' "${line%$'\r'}" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+      *"no issues found"*|*"found no issues"*|*"found no new issues"*|*"no new issues"*|*"no potential issues"*)
+        printf '0\n'
+        return 0
+        ;;
+    esac
+  done <<< "$summary"
+
+  return 1
+}
+
 is_bugbot_clean_review() {
   local body="$1"
   local line
@@ -635,17 +677,25 @@ is_bugbot_clean_review() {
   local review_footer_prefix='<sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit '
   local review_footer_suffix='. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>'
   local saw_clean_phrase=0
+  local _bb_body_count=""
 
   case "$body" in
     *BUGBOT_BUG_ID*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*'**High Severity**'*|*'**Medium Severity**'*|*'**Low Severity**'*)
       return 1
       ;;
   esac
-  case "$body" in
-    *"found 1 potential issue"*|*"found 2 potential issue"*|*"found 3 potential issue"*|*"found 4 potential issue"*|*"found 5 potential issue"*)
-      return 1
-      ;;
-  esac
+  # Any positive finding count, not just the 1–5 the first adapter enumerated
+  # (issue #1390) — a Bugbot body reporting 6+ findings is not a clean review.
+  if _bb_body_count="$(bugbot_summary_finding_count "$body")"; then
+    case "$_bb_body_count" in
+      ''|*[!0-9]*) : ;;
+      *)
+        if [ "$_bb_body_count" -gt 0 ]; then
+          return 1
+        fi
+        ;;
+    esac
+  fi
   while IFS= read -r line; do
     normalized_line="${line%$'\r'}"
     normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"

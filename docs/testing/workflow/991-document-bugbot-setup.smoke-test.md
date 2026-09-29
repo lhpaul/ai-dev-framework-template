@@ -120,9 +120,11 @@ complementary post-push validation.
 
 1. Read the reviewer-loop status / known-limitations section.
 
-**Expected result**: The guide states Bugbot is currently planned-but-unsupported
-by `scripts/development-workflow/pr-review-loop.sh` and is reported as `skipped` by
-that loop until an adapter exists, consistent with the generic platform guidance.
+**Expected result**: The guide states Bugbot is a supported platform in
+`scripts/development-workflow/pr-review-loop.sh`, enumerates the loop's
+`RESULT=` outcome values, and explains that a `neutral` check conclusion is not a
+verdict — the loop reads `output.summary` and the `cursor[bot]` comments, and
+escalates rather than reporting clean when the verdict cannot be established.
 
 ### Last Step: Validate & Lint
 
@@ -151,8 +153,9 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC-7: Guide explains aligning Bugbot rules with `REVIEW.md` by reference, not
       duplication.
 - [ ] AC-8: Guide includes rollout guidance for Cursor-primary teams.
-- [ ] AC-9: Guide states Bugbot is planned-but-unsupported by `pr-review-loop.sh`
-      and reported as `skipped`.
+- [ ] AC-9: Guide describes Bugbot as a supported `pr-review-loop.sh` platform and
+      explains its `RESULT=` outcomes, including why a `neutral` conclusion is not
+      treated as a clean pass.
 - [ ] AC-10: Generic platform guide cross-references the new guide, and the
       integration index lists it.
 
@@ -173,7 +176,7 @@ No seed data is required (documentation-only feature).
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `markdownlint-cli2` reports broken relative link | Wrong `../` depth from the file's location | Recount `../` segments from the file path; the lint step is authoritative |
-| Guide implies the reviewer loop runs Bugbot | AC-9 language not aligned with `pr-review-platform.md` | Use the "planned but unsupported" / `skipped` wording from the generic platform guide |
+| Guide contradicts the reviewer-loop contract | AC-9 wording not aligned with `integrations/bugbot.md` "Reviewer-Loop Status" | Restore the supported-platform wording: Bugbot is a first-class `pr-review-loop.sh` platform; a `neutral` conclusion is not a verdict and an unestablishable verdict escalates |
 | Guide not discoverable | Cross-reference omitted | Confirm both the `pr-review-platform.md` "See:" list and README "Integration Guides" list include `bugbot.md` |
 
 ---

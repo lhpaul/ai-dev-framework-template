@@ -3195,10 +3195,16 @@ run_bugbot_review() {
   #
   # Exit code mapping:
   #   0 → RESULT=clean      (conclusion=success with no blocking comments, or
-  #                           neutral/cancelled/skipped informational)
-  #   1 → RESULT=needs_fixes (conclusion=failure/action_required, or existing
-  #                           blocking cursor[bot] findings on current head)
-  #   2 → RESULT=escalate   (timeout, unavailable, or head-sha-unavailable)
+  #                           neutral/cancelled/skipped with an affirmative
+  #                           no-issues output.summary and no cursor[bot]
+  #                           findings)
+  #   1 → RESULT=needs_fixes (conclusion=failure/action_required, neutral with
+  #                           retrievable findings, or existing blocking
+  #                           cursor[bot] findings on current head)
+  #   2 → RESULT=escalate   (timeout, unavailable, head-sha-unavailable, or a
+  #                           neutral conclusion whose verdict could not be
+  #                           established — see REASON=bugbot-unverified-verdict
+  #                           and REASON=bugbot-findings-not-retrievable)
   #
   # Env var overrides:
   #   BUGBOT_BOT_LOGIN        — override bot login (default: "cursor[bot]")
@@ -3521,6 +3527,12 @@ run_bugbot_review() {
   fi
 
   # --- Phase 3: Poll the "Cursor Bugbot" check run on the current head SHA ---
+  # Wrapped in a one-shot retry (issue #1390): Bugbot intermittently leaves its
+  # check run unfinished, and a single re-trigger with the trigger comment has
+  # been observed to recover it every time. A timeout is not a finding, so
+  # retry once before declaring the reviewer unavailable.
+  local bugbot_retry_attempted=0
+  while :; do
   while [ "$elapsed" -lt "$max_wait" ]; do
     # Re-resolve head SHA each iteration so a mid-review push retargets the filter.
     set +e
@@ -3554,14 +3566,15 @@ run_bugbot_review() {
     _fetch_output="$(
       gh api "repos/$repo/commits/$_current_sha/check-runs" --paginate 2>/dev/null \
         | jq -se -r --arg name "$check_name" '
-            [ .[].check_runs[]
-              | select(
-                  ((.app.slug // "") | test("cursor"; "i")) or
-                  (.name == $name)
-                )
-            ]
-            | sort_by(.started_at) | last
-            | ((.status // "") + " " + (.conclusion // "") + " " + (.started_at // ""))
+            ([ .[].check_runs[]
+               | select(
+                   ((.app.slug // "") | test("cursor"; "i")) or
+                   (.name == $name)
+                 )
+             ]
+             | sort_by(.started_at) | last) as $run
+            | (($run.status // "") + " " + ($run.conclusion // "") + " " + ($run.started_at // "")),
+              ($run.output.summary // "")
           ' 2>/dev/null
     )"
     _fetch_rc=$?
@@ -3580,10 +3593,16 @@ run_bugbot_review() {
       return 2
     fi
     local check_started_at=""
-    read -r status_val conclusion check_started_at <<< "$_fetch_output"
+    local _check_summary=""
+    read -r status_val conclusion check_started_at <<< "${_fetch_output%%$'\n'*}"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
     check_started_at="${check_started_at:-}"
+    # Line 2 of the jq output is the check run's output.summary (may be empty).
+    case "$_fetch_output" in
+      *$'\n'*) _check_summary="${_fetch_output#*$'\n'}" ;;
+      *) _check_summary="" ;;
+    esac
 
     if [ "$status_val" != "completed" ]; then
       set +e
@@ -3836,8 +3855,13 @@ run_bugbot_review() {
           ;;
 
         neutral|cancelled|skipped)
-          # A neutral check is clean only when Cursor did not also post an
-          # unavailable/quota issue comment for this head.
+          # A neutral conclusion is NOT a pass (issue #1390). Cursor concludes
+          # the check run `neutral` both for a review that found nothing and for
+          # one that found blocking issues, so the verdict has to come from
+          # output.summary and from the cursor[bot] findings themselves.
+          #
+          # A neutral check is only reachable at all when Cursor did not also
+          # post an unavailable/quota issue comment for this head.
           local _unavailable_since_iso="$_current_since_iso"
           if [ -n "$check_started_at" ] && [ "$check_started_at" \> "$_unavailable_since_iso" ]; then
             _unavailable_since_iso="$check_started_at"
@@ -3854,16 +3878,194 @@ run_bugbot_review() {
             return 0
           fi
 
-          # Non-blocking informational outcome — clean, no real findings.
+          # Parse the check-run summary for an explicit finding count. An empty
+          # result means the summary shape was not recognised — unknown, never
+          # clean.
+          local _bb_summary_count=""
+          set +e
+          _bb_summary_count="$(bugbot_summary_finding_count "$_check_summary")"
+          local _bb_summary_rc=$?
+          set -e
+          if [ "$_bb_summary_rc" -ne 0 ]; then
+            _bb_summary_count=""
+          fi
+
+          # Fetch the findings Cursor posted against this head — the summary is
+          # a count, not a location, so the comments are what a fix agent needs.
+          blocking_lines_file="$(mktemp)"
+          local neutral_explicit_skip_seen=0
+          local _neutral_comments_rc=0
+          local _neutral_reviews_rc=0
+          local _neutral_comments _neutral_reviews
+          set +e
+          _neutral_comments="$(
+            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+                  .[]
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
+                  | @json
+                ' 2>/dev/null
+          )"
+          _neutral_comments_rc=$?
+          _neutral_reviews="$(
+            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+                  .[]
+                  | select(
+                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+                      .submitted_at > $since and
+                      .commit_id == $sha and
+                      (
+                        .state == "CHANGES_REQUESTED" or
+                        .state == "COMMENTED"
+                      )
+                    )
+                  | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
+                  | @json
+                ' 2>/dev/null
+          )"
+          _neutral_reviews_rc=$?
+          set -e
+          if [ "$_neutral_comments_rc" -ne 0 ] || [ "$_neutral_reviews_rc" -ne 0 ]; then
+            echo "WARN: run_bugbot_review: neutral-conclusion finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            print_kv RESULT escalate
+            print_kv REASON fetch-failed
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            rm -f "$blocking_lines_file"
+            return 2
+          fi
+
+          local neutral_inline_count=0
+          while IFS= read -r comment_json; do
+            [ -z "${comment_json:-}" ] && continue
+            body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+            [ -z "$body" ] && continue
+            comment_count=$((comment_count + 1))
+            if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+            elif is_bugbot_explicit_skip_message "$body"; then
+              neutral_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
+            else
+              blocking_count=$((blocking_count + 1))
+              neutral_inline_count=$((neutral_inline_count + 1))
+              printf '%s\n' "$comment_json" >> "$blocking_lines_file"
+            fi
+          done <<< "${_neutral_comments:-}"
+
+          while IFS= read -r review_json; do
+            [ -z "${review_json:-}" ] && continue
+            body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+            local _nrv_state
+            _nrv_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
+            if [ "$_nrv_state" = "CHANGES_REQUESTED" ]; then
+              : # requested changes are always blocking regardless of body text
+            elif [ -z "$body" ]; then
+              continue
+            elif is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
+            elif is_bugbot_explicit_skip_message "$body"; then
+              neutral_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
+            fi
+            if [ "$_nrv_state" = "COMMENTED" ]; then
+              if [ "$neutral_inline_count" -gt 0 ]; then
+                : # umbrella COMMENTED for inline findings — blocking
+              elif printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+                : # body carries Bugbot finding markers — blocking
+              else
+                suggestion_count=$((suggestion_count + 1))
+                comment_count=$((comment_count + 1))
+                continue
+              fi
+            fi
+            comment_count=$((comment_count + 1))
+            blocking_count=$((blocking_count + 1))
+            printf '%s\n' "$review_json" >> "$blocking_lines_file"
+          done <<< "${_neutral_reviews:-}"
+
+          if [ "$neutral_explicit_skip_seen" -eq 1 ] && [ "$blocking_count" -eq 0 ]; then
+            rm -f "$blocking_lines_file"
+            bugbot_return_explicit_skip "$pr_number" "$branch_name"
+            return 0
+          fi
+
+          if [ "$blocking_count" -gt 0 ]; then
+            print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv REASON blocking_findings
+            print_kv COMMENT_COUNT "$comment_count"
+            print_kv BLOCKING_COUNT "$blocking_count"
+            print_kv SUGGESTION_COUNT "$suggestion_count"
+            while IFS= read -r blocking_json; do
+              [ -z "${blocking_json:-}" ] && continue
+              print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+              print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              index=$((index + 1))
+            done < "$blocking_lines_file"
+            rm -f "$blocking_lines_file"
+            return 1
+          fi
+
+          rm -f "$blocking_lines_file"
+
+          # No blocking finding was retrievable. The summary now has to vouch
+          # for the head: an explicit zero is a pass, a positive count whose
+          # findings did not surface, and anything unparseable, are not.
+          if [ -n "$_bb_summary_count" ] && [ "$_bb_summary_count" -gt 0 ]; then
+            echo "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number reporting $_bb_summary_count finding(s), but none were retrievable — escalating" >&2
+            print_kv RESULT escalate
+            print_kv REASON bugbot-findings-not-retrievable
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 2
+          fi
+
+          if [ "$_bb_summary_count" != "0" ]; then
+            echo "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number with no recognisable no-issues summary — escalating rather than reporting clean" >&2
+            print_kv RESULT escalate
+            print_kv REASON bugbot-unverified-verdict
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 2
+          fi
+
+          # Explicit no-issues summary and no findings posted — clean.
           print_kv RESULT clean
       [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
           print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-          print_kv COMMENT_COUNT 0
+          print_kv COMMENT_COUNT "$comment_count"
           print_kv BLOCKING_COUNT 0
-          print_kv SUGGESTION_COUNT 0
+          print_kv SUGGESTION_COUNT "$suggestion_count"
           return 0
           ;;
 
@@ -3911,9 +4113,43 @@ run_bugbot_review() {
     elapsed=$(( elapsed + poll_interval ))
   done
 
-  # Poll budget exhausted.  Distinguish timeout (run appeared) from unavailable
-  # (no Cursor Bugbot check run ever appeared — Cursor app likely not installed).
-  # Either way, never report as clean (AC-5).
+    # Poll budget exhausted for this attempt. Retry once with the trigger comment
+    # before declaring the reviewer failed (issue #1390): an unfinished Bugbot run
+    # is a timeout, not a finding, and the stale reviewer-failed label it produces
+    # reads like one.
+    if [ "$bugbot_retry_attempted" -eq 0 ]; then
+      bugbot_retry_attempted=1
+      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${max_wait}s for PR #$pr_number — re-triggering once" >&2
+      set +e
+      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" > /dev/null 2>&1
+      local _bb_retry_rc=$?
+      set -e
+      if [ "$_bb_retry_rc" -ne 0 ]; then
+        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON trigger-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      elapsed=0
+      check_appeared=0
+      status_val=""
+      conclusion=""
+      continue
+    fi
+    break
+  done
+
+  # Poll budget exhausted across both attempts.  Distinguish timeout (run
+  # appeared) from unavailable (no Cursor Bugbot check run ever appeared —
+  # Cursor app likely not installed). Either way, never report as clean (AC-5).
   if [ "$check_appeared" -eq 0 ]; then
     print_kv RESULT escalate
     print_kv REASON unavailable
