@@ -574,8 +574,8 @@ the runner directly.
 If the tracker is unavailable (`TRACKER_STATUS_RESULT=failed` or `skipped`),
 log a warning and proceed. Do not block advancement. Exit `3`
 (`TRACKER_STATUS_RESULT=unresolved`) means the board has no option for the
-canonical Status. That is a `missing_tracker_context` stop, handled as the
-mapping page describes.
+canonical Status, or no Status field at all. That is a
+`missing_tracker_context` stop, handled as the mapping page describes.
 
 ### Stale `In Development` pre-dispatch check (AC-6, AC-7, AC-8, AC-10)
 
@@ -3514,7 +3514,7 @@ For issue tracker providers that have no supported `gh`-equivalent CLI, MCP serv
 
 - **The orchestrator** (or the human invoking the Work Item Runner directly) is responsible for performing the MCP-based status update after the subagent returns.
 
-If neither the CLI path nor MCP is available, log a warning and continue. Do not block labeling or PR readiness on a transient tracker update failure. A board that lacks the canonical Status is not transient. It is the `missing_tracker_context` stop described above.
+If neither the CLI path nor MCP is available, log a warning and continue. Do not block labeling or PR readiness on a transient tracker update failure. A board that lacks the canonical Status, or has no Status field, is not transient. It is the `missing_tracker_context` stop described above.
 
 ---
 

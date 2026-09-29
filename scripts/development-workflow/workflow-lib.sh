@@ -2301,9 +2301,11 @@ for field in fields:
 page_info = field_connection.get('pageInfo') or {}
 has_next = 'true' if page_info.get('hasNextPage') else 'false'
 end_cursor = page_info.get('endCursor') or ''
+fields_present = 'true' if isinstance(((data.get('data') or {}).get('node') or {}).get('fields'), dict) else 'false'
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
+print('FIELDS_PRESENT=' + fields_present)
 " 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Status field response for project '${project_id}'." >&2
         printf ''
@@ -2313,17 +2315,25 @@ print('END_CURSOR=' + end_cursor)
       field_json=""
       has_next="false"
       end_cursor=""
+      fields_present="false"
       while IFS= read -r line; do
         case "$line" in
           FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
           HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
           END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+          FIELDS_PRESENT=*) fields_present="${line#FIELDS_PRESENT=}" ;;
         esac
       done <<EOF
 $page_state
 EOF
       if [ -n "$field_json" ]; then
         __workflow_project_status_field_cache_json="$field_json"
+        break
+      fi
+      if [ "$has_next" != "true" ] && [ "$fields_present" = "true" ]; then
+        # Every page was read and none has a field named "Status": a
+        # permanent board-configuration error, not a failed lookup (#1564).
+        __workflow_project_status_field_cache_json='{"field_id":"","options":{},"status_field_missing":true}'
         break
       fi
       if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
@@ -2641,8 +2651,10 @@ ensure_on_project_board() {
 # Supports GitHub Projects (provider: github_projects) and emits actionable
 # guidance for Linear (provider: linear), which requires MCP/API access.
 # - Returns 0 in all warning/failure cases to avoid blocking caller flows,
-#   except one: when WORKFLOW_TRACKER_STATUS_STRICT is enabled and the board's
-#   Status field has no option named <status_label>, it returns 2 (issue #1564).
+#   except the vocabulary errors: when WORKFLOW_TRACKER_STATUS_STRICT is
+#   enabled and the board has no Status field (reason=status_field_missing) or
+#   its Status field has no option named <status_label>
+#   (reason=unknown_status_option), it returns 2 (issue #1564).
 # - When the field or option cannot be resolved it prints a
 #   "TRACKER_STATUS_UNRESOLVED issue=... requested='...' reason=...
 #   valid_options='...'" line; for an unknown option the warning names the
@@ -2719,10 +2731,27 @@ data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$status_label" 2>/dev/null || true)
   if [ -z "$field_id" ]; then
-    # The Status field itself could not be read (lookup failure, pagination
-    # limit, or no field named "Status"). This can be transient, so it stays
+    local status_field_missing
+    status_field_missing=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print('true' if data.get('status_field_missing') is True else 'false', end='')
+" 2>/dev/null || true)
+    if [ "$status_field_missing" = "true" ]; then
+      # Every field page was read and the board has no field named "Status":
+      # a permanent configuration error, like an unknown option, so it fails
+      # in strict (orchestrated) mode.
+      echo "Warning: project #${project_number} has no field named 'Status'; cannot set '${status_label}'. Add a single-select 'Status' field with the canonical options (docs/workflow/development-workflow/tracker-status-mapping.md). Skipping tracker status update."
+      echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=status_field_missing valid_options=''"
+      if workflow_tracker_status_strict_enabled; then
+        return 2
+      fi
+      return 0
+    fi
+    # The Status field could not be read (lookup failure, unparsable
+    # response, or pagination limit). This can be transient, so it stays
     # best-effort even in strict mode.
-    echo "Warning: could not resolve the Status field of project #${project_number}; cannot set '${status_label}'. Skipping tracker status update."
+    echo "Warning: could not read the Status field of project #${project_number}; cannot set '${status_label}'. Skipping tracker status update."
     echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=status_field_unavailable valid_options=''"
     return 0
   fi

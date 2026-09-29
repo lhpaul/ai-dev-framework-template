@@ -174,6 +174,10 @@ case "$*" in
           printf 'GraphQL failure\n' >&2
           exit 42
         fi
+        if [ "${MOCK_FIELDS_MODE:-ok}" = "no_status" ]; then
+          printf '%s\n' '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_high","name":"High"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+          exit 0
+        fi
         printf '%s\n' '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_plan_ready","name":"Plan Ready"},{"id":"OPT_dev","name":"In Development"},{"id":"OPT_merged","name":"Merged"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
         ;;
       *"updateProjectV2ItemFieldValue"*)
@@ -224,6 +228,14 @@ rc=0; apply_out="$(run_cli_mocked --event needs-fixes --branch fix/9-x --apply -
 run_test "apply_no_change_exit_zero" "0" "$rc"
 run_test "apply_no_change_result" "none" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
 run_test "apply_no_change_makes_no_gh_call" "0" "$(grep -c . "$CALL_LOG" || true)"
+
+# A board with no Status field at all is a permanent misconfiguration: exit 3,
+# like an unknown option, never a best-effort "failed".
+: > "$CALL_LOG"
+rc=0; apply_out="$(MOCK_FIELDS_MODE=no_status run_cli_mocked --event merged --branch fix/9-x --apply --issue 9 2>&1)" || rc=$?
+run_test "apply_status_field_missing_exit_three" "3" "$rc"
+run_test "apply_status_field_missing_result_unresolved" "unresolved" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
+run_test "apply_status_field_missing_does_not_mutate" "0" "$(mutations)"
 
 # A transient failure is reported as "failed" (exit 0, best-effort), never
 # folded into "skipped", so the runner can record it.

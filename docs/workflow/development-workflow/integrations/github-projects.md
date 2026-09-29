@@ -188,13 +188,14 @@ The function is **fail-open**: if the issue is already on the board it returns 0
 
 Use the shared helper when a stage completes and the tracker status must advance. It performs a targeted `repository.issue(...).projectItems` lookup for the single issue and avoids `gh project item-list`, which paginates the whole board and can drain the GraphQL rate-limit bucket.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Source workflow-lib.sh to get the targeted GitHub Projects helpers.
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
 
-ISSUE_NUMBER=<ISSUE>                         # GitHub issue number to update
-BRANCH=<BRANCH>                              # the stage PR's head branch
+ISSUE_NUMBER="${ISSUE_NUMBER:?set ISSUE_NUMBER to the GitHub issue number}"
+BRANCH="${BRANCH:?set BRANCH to the stage PR head branch}"
 # Resolve the Status from the canonical mapping (tracker-status-mapping.md)
 # rather than typing it; see "Status values by workflow stage" below.
 TARGET_STATUS="$(workflow_tracker_status_for_event ready-for-human-review \

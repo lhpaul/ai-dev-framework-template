@@ -130,8 +130,8 @@ update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 
 ## When the Board Does Not Offer the Status
 
-`update_tracker_status_best_effort` treats the two kinds of resolution failure
-differently.
+`update_tracker_status_best_effort` treats permanent configuration errors
+differently from failures that can be transient.
 
 ### The board has no option with that name
 
@@ -147,12 +147,18 @@ working. When `WORKFLOW_TRACKER_STATUS_STRICT=true`, it returns `2`.
 `tracker-status-for.sh --apply` always runs in strict mode and exits `3` with
 `TRACKER_STATUS_RESULT=unresolved`.
 
+### The board has no Status field
+
+The lookup read every page of the board's fields and found none named
+`Status`. This is also a permanent configuration error. The helper prints the
+same line with `reason=status_field_missing` and handles it like an unknown
+option: it returns `2` in strict mode, and `--apply` exits `3`.
+
 ### The Status field cannot be read
 
-This covers a failed lookup, the pagination limit, or a board with no field
-named `Status`. Any of these can be transient, so the helper prints the same
-line with `reason=status_field_unavailable` and stays best-effort, even in
-strict mode.
+This covers a failed lookup, an unparsable response, or the pagination limit.
+Any of these can be transient, so the helper prints the same line with
+`reason=status_field_unavailable` and stays best-effort, even in strict mode.
 
 ### What orchestrated runs do
 
@@ -163,8 +169,8 @@ Orchestrated runs are Protocol 90 and Protocol 91. They apply transitions with
 - the item
 - the canonical Status the board is missing
 - the valid options from the `TRACKER_STATUS_UNRESOLVED` line
-- the unblock action: add the canonical option to the board's Status field, or
-  correct the caller
+- the unblock action: add the canonical option (or the `Status` field itself)
+  to the board, or correct the caller
 
 In an orchestrated run, silent drift costs more than a stop. Drift leaves the
 board unusable as evidence of how the run went.

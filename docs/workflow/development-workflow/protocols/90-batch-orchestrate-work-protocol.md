@@ -694,8 +694,9 @@ For each item that passed the Step 2 eligibility check:
 
    Resume items already have the correct in-flight Status, so do not reset
    them. The helper never moves Status backward, which keeps the update
-   idempotent. Exit `3` means the board lacks the canonical Status. That is a
-   `missing_tracker_context` stop for the item, as the mapping page describes.
+   idempotent. Exit `3` means the board lacks the canonical Status, or has no
+   Status field. That is a `missing_tracker_context` stop for the item, as the
+   mapping page describes.
 
 3. **Log each result** for transparency:
 

@@ -27,14 +27,16 @@ Output (key=value lines):
   TRACKER_STATUS_RESULT=applied|skipped|deferred|unresolved|failed|none
 
 --apply runs update_tracker_status_best_effort with
-WORKFLOW_TRACKER_STATUS_STRICT=true: a Status the board does not offer is a
-failure (exit 3) that names the board's valid options, not a silent no-op.
+WORKFLOW_TRACKER_STATUS_STRICT=true: a Status the board does not offer, or a
+board with no Status field, is a failure (exit 3) instead of a silent no-op;
+the output names the board's valid options.
 
 Exit codes:
   0  resolved (and, with --apply: applied, skipped, deferred, none, or a
      best-effort 'failed' for a transient API error)
   2  usage error, unknown event/stage, or a branch that owns no item stage
-  3  --apply: the board's Status field has no option for the canonical Status
+  3  --apply: the board has no Status field, or its Status field has no
+     option for the canonical Status
 USAGE
 }
 
@@ -125,7 +127,7 @@ fi
 # update_tracker_status_best_effort header in workflow-lib.sh), never on its
 # human-readable warnings.
 case "$apply_output" in
-  *"TRACKER_STATUS_UNRESOLVED "*"reason=unknown_status_option"*)
+  *"TRACKER_STATUS_UNRESOLVED "*"reason=unknown_status_option"*|*"TRACKER_STATUS_UNRESOLVED "*"reason=status_field_missing"*)
     printf 'TRACKER_STATUS_RESULT=unresolved\n'
     exit 3
     ;;

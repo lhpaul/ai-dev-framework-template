@@ -1328,6 +1328,33 @@ esac
 run_test "status_field_unavailable_reason_reported" "field-unavailable" "$field_result"
 run_test "status_field_unavailable_does_not_mutate" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
+# A complete field scan with no field named "Status" is a permanent board
+# misconfiguration (PR #1833 review): distinct reason, and it fails in strict
+# mode like an unknown option. The priority_configured fixture has only a
+# Priority field and no next page.
+for strict_value in "" "true"; do
+  reset_log
+  __workflow_project_status_field_cache_project_id=""
+  __workflow_project_status_field_cache_json=""
+  export MOCK_STATUS_FIELD_MODE=priority_configured
+  missing_rc=0
+  missing_out="$(WORKFLOW_TRACKER_STATUS_STRICT="$strict_value" update_tracker_status_best_effort 824 "In Development" 2>&1)" || missing_rc=$?
+  unset MOCK_STATUS_FIELD_MODE
+  __workflow_project_status_field_cache_project_id=""
+  __workflow_project_status_field_cache_json=""
+  if [ -n "$strict_value" ]; then
+    run_test "status_field_missing_strict_returns_two" "2" "$missing_rc"
+  else
+    run_test "status_field_missing_best_effort_returns_zero" "0" "$missing_rc"
+  fi
+  case "$missing_out" in
+    *"has no field named 'Status'"*"TRACKER_STATUS_UNRESOLVED issue=824 requested='In Development' reason=status_field_missing"*) missing_result="missing" ;;
+    *) missing_result="$missing_out" ;;
+  esac
+  run_test "status_field_missing_reason_reported_strict_${strict_value:-off}" "missing" "$missing_result"
+  run_test "status_field_missing_does_not_mutate_strict_${strict_value:-off}" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+done
+
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 if [ "$FAIL_COUNT" -ne 0 ]; then
