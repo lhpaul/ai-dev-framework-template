@@ -44,7 +44,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code.
+- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Once set, those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
@@ -68,7 +68,33 @@ Codex skills intentionally store recommended tiers rather than concrete model ID
 | `balanced` | `gpt-5.6-terra` | Implementation, review, setup, QA, item orchestration, and retrospectives |
 | `premium` | `gpt-5.6-sol` | Spec writing and technical planning |
 
+### Cursor model source of truth
+
+For Cursor runs, the `model:` field in each checked-in `.cursor/agents/<agent>.md`
+file is authoritative. The "Cursor model defaults (template)" table below is
+the template's starting point and an example of the tier split. It does not
+override a repository's local pins, and it does not describe what a downstream
+repository actually runs.
+
+Downstream repositories may pin other model families, such as Grok, Composer,
+or a provider-specific ID the template never ships. Those pins must be honored
+as written. The same applies to the Claude Code defaults table: in Cursor, a
+Claude model ID from that table is never a substitute for the Cursor pin.
+
+Before dispatching a Cursor stage subagent, an orchestrating role (`/run-item`,
+`/run-items`, `/run-epic`, the item or portfolio orchestrator, or a parent
+running inline) reads the target agent's `model:` value from
+`.cursor/agents/<agent>.md` in the checkout being run and uses that value. It
+does not choose or announce a model from the tables in this document. When
+`.cursor/agents/<agent>.md` is missing, Cursor resolves the agent through the
+location precedence described after "Cursor model field values" below. When
+the file or its `model:` field is missing, report that gap in the run summary
+instead of filling it from this document.
+
 ### Cursor model defaults (template)
+
+These are the values this template ships in `.cursor/agents/*.md`. Read the
+local files for the values in force; see "Cursor model source of truth" above.
 
 Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `fast` for economy coordination agents, `auto` for lower-risk balanced agents, and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
 
