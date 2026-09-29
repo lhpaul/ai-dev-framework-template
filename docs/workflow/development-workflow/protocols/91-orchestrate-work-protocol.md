@@ -3524,6 +3524,7 @@ If neither the CLI path nor MCP is available, log a warning and continue — do 
 
 After Steps 8a and 8b complete, perform one final independent verification of the actual PR state via `gh pr view` before reporting the PR as ready for human review. **Do not rely on prior step outputs or agent self-reports** — query GitHub directly.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments,headRefOid
 ```
