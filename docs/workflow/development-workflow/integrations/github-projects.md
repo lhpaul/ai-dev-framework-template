@@ -43,7 +43,7 @@ Note the **project number** returned — you will use it in all `gh project` com
 
 ### 2. Configure the Status Field
 
-GitHub Projects v2 creates a default **Status** single-select field. Configure it with the following options to match workflow stages:
+GitHub Projects v2 creates a default **Status** single-select field. Configure it with the following options to match workflow stages. Option names must match the canonical vocabulary in [`tracker-status-mapping.md`](../tracker-status-mapping.md) exactly. Add a `Cancelled` option as well for abandoned items.
 
 | Status Option         | Workflow Stage                                               |
 | --------------------- | ------------------------------------------------------------ |
@@ -194,7 +194,11 @@ Use the shared helper when a stage completes and the tracker status must advance
 source scripts/development-workflow/workflow-lib.sh
 
 ISSUE_NUMBER=<ISSUE>                         # GitHub issue number to update
-TARGET_STATUS="Development in Review"        # Use a value from the table below
+BRANCH=<BRANCH>                              # the stage PR's head branch
+# Resolve the Status from the canonical mapping (tracker-status-mapping.md)
+# rather than typing it; see "Status values by workflow stage" below.
+TARGET_STATUS="$(workflow_tracker_status_for_event ready-for-human-review \
+  "$(workflow_tracker_stage_for_branch "$BRANCH")")"
 
 update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 ```
@@ -236,11 +240,20 @@ repository (see `05-prepare-release-protocol.md` and
 
 ### Status values by workflow stage (Step 8b targets)
 
-| PR type                                                                  | Target status string    |
-| ------------------------------------------------------------------------ | ----------------------- |
-| `spec/*` PR ready for human review                                       | `Spec in Review`        |
-| `implementation-plan/*` PR ready for human review                        | `Plan in Review`        |
-| `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PR ready for human review | `Development in Review` |
+Do not type a target Status by hand. The canonical mapping in
+[`tracker-status-mapping.md`](../tracker-status-mapping.md) defines it for every
+workflow event. `tracker-status-for.sh` resolves it, and with `--apply` it also
+performs the update above in strict mode:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tracker-status-for.sh \
+  --event ready-for-human-review --branch "$BRANCH" --apply --issue "$ISSUE_NUMBER"
+```
+
+When a requested Status is not one of the board's options, the helper prints
+the board's valid options and a
+`TRACKER_STATUS_UNRESOLVED ... reason=unknown_status_option` line.
 
 ### Caching field and option IDs
 
@@ -408,10 +421,14 @@ The `<slug>` is a short kebab-case description derived from the issue title.
 
 ## Workflow: Advancing Statuses
 
-The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the project item Status at each stage transition:
+The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
+project item Status at each stage transition. The transitions are defined once
+in [`tracker-status-mapping.md`](../tracker-status-mapping.md): `dispatch`,
+`ready-for-human-review`, `merged`, and `released`, each mapped per stage.
+Resolve them with `scripts/development-workflow/tracker-status-for.sh`. Refactor
+items have no spec, so they move from Backlog straight to Writing Plan.
 
-| Action                                                                                          | Status transition                                                |
-| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | -> Writing Spec                                                  |
 | Spec PR is human-ready (automation clean; ready for humans)                                     | -> Spec in Review                                                |
 | Spec PR merged                                                                                  | -> Spec Ready                                                    |

@@ -19,7 +19,7 @@ Before starting, read:
 - **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
 - If an issue tracker exists for this item, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for expectations while the work item is entering **Writing Plan** (Full Pipeline: after spec is merged; Refactor: directly from Backlog).
 
-**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
+**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md)). If you invoke this protocol standalone, mirror the same status progression with `scripts/development-workflow/tracker-status-for.sh`.
 
 **Repository mode ownership**: Resolve repository mode before writing or
 reviewing plan artifacts. Missing mode or explicit `single_repo` means the
