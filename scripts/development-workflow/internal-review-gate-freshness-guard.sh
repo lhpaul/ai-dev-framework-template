@@ -172,7 +172,7 @@ lines_changed="${lines_changed:-0}"
 marker_present="true"
 per_commit_total=0
 commit_list=""
-if ! commit_list="$(git rev-list "${resolved_gate_sha}..${resolved_head_sha}" 2>/dev/null)"; then
+if ! commit_list="$(git rev-list --no-merges "${resolved_gate_sha}..${resolved_head_sha}" 2>/dev/null)"; then
   printf 'RESULT=refused\nREASON=git_error\nGATE_SHA=%s\nHEAD_SHA=%s\nLINES_CHANGED=%s\nMARKER_PRESENT=false\nHUMAN_ACTION=could not list commits between %s and %s.\n' \
     "$resolved_gate_sha" "$resolved_head_sha" "$lines_changed" "$resolved_gate_sha" "$resolved_head_sha"
   exit 2
@@ -199,6 +199,9 @@ while IFS= read -r commit_sha; do
     marker_present="false"
     break
   fi
+  # Merge commits are excluded from the range above (--no-merges): the commits
+  # they bring in are counted individually, and merge-resolution-only edits are
+  # still bounded by the net range diff, so nothing is charged twice.
   # Count each marked commit's own delta so a commit that adds and a later
   # commit that reverts cannot hide churn behind a small net diff.
   commit_stat="$(git diff --numstat "${commit_sha}^" "$commit_sha" -- . 2>/dev/null || printf 'ERR')" # workflow-shell-guard: allow SH001 - ERR sentinel fails closed below
