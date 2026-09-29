@@ -203,6 +203,15 @@ TARGET_STATUS="$(workflow_tracker_status_for_event ready-for-human-review \
 update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 ```
 
+Called this way, the helper stays best-effort. It still names the board's
+valid options when the Status is not one of them, but it returns `0`.
+Orchestrated runners (Protocols 90 and 91) should use
+`tracker-status-for.sh --apply` instead, or export
+`WORKFLOW_TRACKER_STATUS_STRICT=true`. Then an option the board lacks is a
+failure, which the run reports as a `missing_tracker_context` stop instead of
+silent drift. See
+[`tracker-status-mapping.md`](../tracker-status-mapping.md).
+
 For manual debugging, call `workflow_github_project_item_for_issue <issue> <project-number>` after sourcing `workflow-lib.sh`; it returns the project item ID, project ID, current Status, and current Type for exactly one issue.
 
 ### One-shot Type update and discovery
@@ -427,18 +436,6 @@ in [`tracker-status-mapping.md`](../tracker-status-mapping.md): `dispatch`,
 `ready-for-human-review`, `merged`, and `released`, each mapped per stage.
 Resolve them with `scripts/development-workflow/tracker-status-for.sh`. Refactor
 items have no spec, so they move from Backlog straight to Writing Plan.
-
------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | -> Writing Spec                                                  |
-| Spec PR is human-ready (automation clean; ready for humans)                                     | -> Spec in Review                                                |
-| Spec PR merged                                                                                  | -> Spec Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead`       | -> Writing Plan (Refactor items skip directly here from Backlog) |
-| Plan PR is human-ready (automation clean)                                                       | -> Plan in Review                                                |
-| Plan PR merged                                                                                  | -> Plan Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer`       | -> In Development                                                |
-| Feature/fix PR is human-ready (automation clean)                                                | -> Development in Review                                         |
-| Feature/fix PR merged to develop                                                                | -> Merged                                                        |
-| Release deployed to production                                                                  | -> Released                                                      |
 
 ---
 

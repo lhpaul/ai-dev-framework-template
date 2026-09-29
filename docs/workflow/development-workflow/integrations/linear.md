@@ -263,18 +263,6 @@ status vocabulary are defined once in
 with `scripts/development-workflow/tracker-status-for.sh`, then apply it through
 the Linear MCP handoff described above.
 
------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | → Writing Spec                                                  |
-| Spec PR is human-ready (automation clean; ready for humans)                                     | → Spec in Review                                                |
-| Spec PR merged                                                                                  | → Spec Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead`       | → Writing Plan (Refactor items skip directly here from Backlog) |
-| Plan PR is human-ready (automation clean)                                                       | → Plan in Review                                                |
-| Plan PR merged                                                                                  | → Plan Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer`       | → In Development                                                |
-| Feature/fix PR is human-ready (automation clean)                                                | → Development in Review                                         |
-| Feature/fix PR merged to develop                                                                | → Merged                                                        |
-| Release deployed to production                                                                  | → Released                                                      |
-
 ---
 
 ## Linear MCP Server (for Claude Code / Cursor)
