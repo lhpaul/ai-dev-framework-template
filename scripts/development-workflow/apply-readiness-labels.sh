@@ -324,6 +324,38 @@ comment_only_reviewer_verdict() {
       blocking_count=1
       refuse "blocking-findings"
     fi
+    # Round 22 (PRRT_kwDORWAxaM6m6led): a same-head rerun that later posts an
+    # unavailability notice (usage limit, no environment, account not
+    # connected) carries no "Reviewed commit" marker, so the terminal-evidence
+    # adapter ignores it — yet the reviewer is CURRENTLY unavailable and the
+    # older review must not certify the head. Mirror the canonical evidence
+    # selection (codex_combine_terminal_evidence counts these ancillary
+    # outcomes): any unmarked bot root comment at/after this review matching
+    # the canonical unavailability wording refuses. Deliberately broader than
+    # the canonical classifier (no fence guard): a false refusal is
+    # recoverable, a false clean is not.
+    local _unavail_json _unavail_count
+    if ! _unavail_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
+      escalate issue-comment-fetch-failed
+    fi
+    if ! _unavail_count="$(printf '%s\n' "${_unavail_json:-[]}" | jq -r --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" --arg since "$reviewer_started_at" '
+          [ .[]?[]
+            | select(
+                (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
+                and ((.created_at // "") >= $since)
+                and ((.body // "") | contains("Reviewed commit") | not)
+                and ((.body // "") | test("usage[[:space:]]+limits?|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+a[[:space:]]+codex[[:space:]]+account"; "i"))
+              )
+          ] | length
+        ' 2>/dev/null)"; then
+      escalate issue-comment-parse-failed
+    fi
+    if [ "${_unavail_count:-0}" -gt 0 ]; then
+      result="refused"
+      reason="reviewer-unavailable"
+      reviewer_report="${platform_arg}:review"
+      refuse "reviewer-unavailable"
+    fi
   fi
   # Inline bound (thread PRRT_kwDORWAxaM6m1pGF): earliest of submitted_at and
   # the review's own inline comments' earliest created_at. Comments fetch
