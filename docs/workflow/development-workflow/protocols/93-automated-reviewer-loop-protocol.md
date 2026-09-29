@@ -458,7 +458,7 @@ preflight does.
 | --- | --- |
 | `STAGE_SKIP_ENABLED=0\|1` | Whether staging skips were possible this run |
 | `STAGE_SKIP_DISABLED_REASON=<reason>` | Why not, when disabled: `disabled_by_env`, `compare_mode`, `explicit_platform_selection`, `head_unknown`, `history_unavailable` |
-| `STAGE_SKIPPED_PLATFORMS=<platforms>` | Comma-separated platforms replayed instead of dispatched; emitted alongside every `RESULT=` that follows the platform loop, empty when none. Guard exits that never reach the loop (`lock_contention`, `release_pr`, `truncated_run`, `pr_ownership_mismatch`, `pr_ownership_unverified`) emit none of these keys |
+| `STAGE_SKIPPED_PLATFORMS=<platforms>` | Comma-separated platforms replayed instead of dispatched; emitted alongside every `RESULT=` that follows the platform loop, empty when none. Guard exits that never reach the loop (`lock_contention`, `release_pr`, `truncated_run`, `pr_ownership_mismatch`, `pr_ownership_unverified`) emit none of these keys. The PR ownership check (`pr_ownership_*`, issue #1444) runs only when `--branch` is given; a run without `--branch` takes its branch from the PR itself and gets no ownership protection |
 
 Staging stands down when the caller names platforms with `--platform` (an
 explicit selection is an instruction to run those reviewers), in `--compare`
