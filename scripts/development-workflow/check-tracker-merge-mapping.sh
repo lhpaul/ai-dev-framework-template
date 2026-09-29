@@ -70,7 +70,8 @@ get_target_status() {
 }
 
 # ---------------------------------------------------------------------------
-# Expected mappings (BR-1, BR-2, BR-3, BR-9)
+# Expected mappings (BR-1, BR-2, BR-3, BR-9), resolved from the canonical
+# tracker-status mapping (docs/workflow/development-workflow/tracker-status-mapping.md)
 # ---------------------------------------------------------------------------
 check_mapping() {
   local prefix="$1"
@@ -90,12 +91,23 @@ echo "Checking branch-type → tracker-status mappings in:"
 echo "  $WORKFLOW_FILE"
 echo ""
 
-check_mapping "spec"                "Spec Ready"
-check_mapping "implementation-plan" "Plan Ready"
-check_mapping "feature"             "Merged"
-check_mapping "fix"                 "Merged"
-check_mapping "refactor"            "Merged"
-check_mapping "hotfix"              "Merged"
+# Expected values come from the canonical mapping in workflow-lib.sh
+# (workflow_tracker_status_for_event merged <stage>, issue #1564) so this
+# check cannot drift from the mapping every other surface resolves through.
+expected_merge_status() {
+  local prefix="$1" stage
+  stage="$(workflow_tracker_stage_for_branch "${prefix}/0-probe")" || return 1
+  workflow_tracker_status_for_event merged "$stage"
+}
+
+for prefix in spec implementation-plan feature fix refactor hotfix; do
+  if ! expected="$(expected_merge_status "$prefix")" || [ -z "$expected" ]; then
+    echo "ERROR: canonical mapping has no merged status for branch '$prefix/*'"
+    ERRORS=$((ERRORS + 1))
+    continue
+  fi
+  check_mapping "$prefix" "$expected"
+done
 
 echo ""
 # Graduation heads must invoke closeout fallback rather than silent untracked skip.

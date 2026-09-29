@@ -1756,6 +1756,123 @@ is_terminal_tracker_status() {
   esac
 }
 
+# --- Canonical tracker status vocabulary and signal mapping (issue #1564) ---
+#
+# These three functions are the single machine-readable definition behind
+# docs/workflow/development-workflow/tracker-status-mapping.md. Protocols and
+# runners resolve a target Status through them (or through the
+# tracker-status-for.sh CLI wrapper) instead of re-deriving it from prose, so
+# two runners given the same instruction set the same Status.
+
+# workflow_canonical_tracker_statuses
+#
+# Prints the canonical Status vocabulary, one value per line: the workflow
+# progression in order (matching workflow_status_order), then the out-of-band
+# Cancelled status.
+workflow_canonical_tracker_statuses() {
+  printf '%s\n' \
+    "Backlog" \
+    "Writing Spec" \
+    "Spec in Review" \
+    "Spec Ready" \
+    "Writing Plan" \
+    "Plan in Review" \
+    "Plan Ready" \
+    "In Development" \
+    "Development in Review" \
+    "Merged" \
+    "Released" \
+    "Cancelled"
+}
+
+# workflow_tracker_stage_for_branch <branch>
+#
+# Prints the workflow stage (spec | plan | implementation) that owns a workflow
+# branch. Returns 1 with no output for any other branch (release/*,
+# backport/*, develop-<slug>, ...), which never drives an item's Status here.
+workflow_tracker_stage_for_branch() {
+  case "$1" in
+    spec/?*) printf 'spec\n' ;;
+    implementation-plan/?*) printf 'plan\n' ;;
+    feature/?*|fix/?*|refactor/?*|hotfix/?*) printf 'implementation\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# workflow_tracker_status_for_event <event> <stage>
+#
+# Prints the canonical target Status for a workflow event on a stage.
+#   event: dispatch | ready-for-human-review | merged | released, or one of the
+#          readiness labels that deliberately leave Status unchanged
+#          (needs-fixes, ready-for-regression, needs-setup,
+#          human-checkpoint-required) — those print nothing and return 0.
+#   stage: spec | plan | implementation
+# Returns 2 with an "Error:" line on stderr that names the valid values when
+# the event or stage is unknown, or the event does not apply to the stage.
+workflow_tracker_status_for_event() {
+  local event="${1:-}"
+  local stage="${2:-}"
+
+  case "$stage" in
+    spec|plan|implementation) ;;
+    *)
+      echo "Error: unknown workflow stage '${stage}'. Valid stages: spec, plan, implementation." >&2
+      return 2
+      ;;
+  esac
+
+  case "$event" in
+    dispatch)
+      case "$stage" in
+        spec) printf 'Writing Spec\n' ;;
+        plan) printf 'Writing Plan\n' ;;
+        implementation) printf 'In Development\n' ;;
+      esac
+      ;;
+    ready-for-human-review)
+      case "$stage" in
+        spec) printf 'Spec in Review\n' ;;
+        plan) printf 'Plan in Review\n' ;;
+        implementation) printf 'Development in Review\n' ;;
+      esac
+      ;;
+    merged)
+      case "$stage" in
+        spec) printf 'Spec Ready\n' ;;
+        plan) printf 'Plan Ready\n' ;;
+        implementation) printf 'Merged\n' ;;
+      esac
+      ;;
+    released)
+      if [ "$stage" != "implementation" ]; then
+        echo "Error: event 'released' applies only to the implementation stage, not '${stage}'." >&2
+        return 2
+      fi
+      printf 'Released\n'
+      ;;
+    needs-fixes|ready-for-regression|needs-setup|human-checkpoint-required)
+      return 0
+      ;;
+    *)
+      echo "Error: unknown tracker event '${event}'. Valid events: dispatch, ready-for-human-review, merged, released (Status-changing); needs-fixes, ready-for-regression, needs-setup, human-checkpoint-required (no Status change)." >&2
+      return 2
+      ;;
+  esac
+}
+
+# workflow_tracker_status_strict_enabled
+#
+# True when WORKFLOW_TRACKER_STATUS_STRICT is set to 1/true/yes. Orchestrated
+# runs enable it (tracker-status-for.sh --apply does) so that a requested
+# Status the board does not offer is a non-zero failure instead of silent
+# drift. Unset keeps update_tracker_status_best_effort fully best-effort.
+workflow_tracker_status_strict_enabled() {
+  case "${WORKFLOW_TRACKER_STATUS_STRICT:-}" in
+    1|true|TRUE|True|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Script-level cache for GitHub Projects Status field metadata.
 __workflow_github_project_id_cache_owner=""
 __workflow_github_project_id_cache_number=""
@@ -2184,9 +2301,11 @@ for field in fields:
 page_info = field_connection.get('pageInfo') or {}
 has_next = 'true' if page_info.get('hasNextPage') else 'false'
 end_cursor = page_info.get('endCursor') or ''
+fields_present = 'true' if isinstance(((data.get('data') or {}).get('node') or {}).get('fields'), dict) else 'false'
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
+print('FIELDS_PRESENT=' + fields_present)
 " 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Status field response for project '${project_id}'." >&2
         printf ''
@@ -2196,17 +2315,25 @@ print('END_CURSOR=' + end_cursor)
       field_json=""
       has_next="false"
       end_cursor=""
+      fields_present="false"
       while IFS= read -r line; do
         case "$line" in
           FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
           HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
           END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+          FIELDS_PRESENT=*) fields_present="${line#FIELDS_PRESENT=}" ;;
         esac
       done <<EOF
 $page_state
 EOF
       if [ -n "$field_json" ]; then
         __workflow_project_status_field_cache_json="$field_json"
+        break
+      fi
+      if [ "$has_next" != "true" ] && [ "$fields_present" = "true" ]; then
+        # Every page was read and none has a field named "Status": a
+        # permanent board-configuration error, not a failed lookup (#1564).
+        __workflow_project_status_field_cache_json='{"field_id":"","options":{},"status_field_missing":true}'
         break
       fi
       if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
@@ -2523,7 +2650,24 @@ ensure_on_project_board() {
 # Best-effort update for the configured issue tracker's Status field.
 # Supports GitHub Projects (provider: github_projects) and emits actionable
 # guidance for Linear (provider: linear), which requires MCP/API access.
-# - Returns 0 in all warning/failure cases to avoid blocking caller flows.
+# - Returns 0 in all warning/failure cases to avoid blocking caller flows,
+#   except the vocabulary errors: when WORKFLOW_TRACKER_STATUS_STRICT is
+#   enabled and the board has no Status field (reason=status_field_missing) or
+#   its Status field has no option named <status_label>
+#   (reason=unknown_status_option), it returns 2 (issue #1564).
+# - When the field or option cannot be resolved it prints a
+#   "TRACKER_STATUS_UNRESOLVED issue=... requested='...' reason=...
+#   valid_options='...'" line; for an unknown option the warning names the
+#   board's valid options.
+# - Machine-readable outcome markers (the contract tracker-status-for.sh keys
+#   on): "TRACKER_STATUS_APPLIED issue=... status='...'" after a successful
+#   write, "TRACKER_STATUS_UPDATE_FAILED ... reason=mutation_failed" when the
+#   write fails, and TRACKER_STATUS_UNRESOLVED above. Any other return means
+#   the update was skipped (not on the board, rollback guard, source-status
+#   mismatch) or deferred (Linear TRACKER_ACTION_REQUIRED).
+# - Resolve <status_label> from workflow_tracker_status_for_event (or
+#   tracker-status-for.sh) rather than typing it; see
+#   docs/workflow/development-workflow/tracker-status-mapping.md.
 # - Respects status progression ordering and never rolls status backward
 #   (GitHub Projects path only; ordering is not enforced for Linear).
 # - Owner is resolved via workflow_resolve_github_project_owner (see that function
@@ -2586,8 +2730,46 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$status_label" 2>/dev/null || true)
-  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
-    echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
+  if [ -z "$field_id" ]; then
+    local status_field_missing
+    status_field_missing=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print('true' if data.get('status_field_missing') is True else 'false', end='')
+" 2>/dev/null || true)
+    if [ "$status_field_missing" = "true" ]; then
+      # Every field page was read and the board has no field named "Status":
+      # a permanent configuration error, like an unknown option, so it fails
+      # in strict (orchestrated) mode.
+      echo "Warning: project #${project_number} has no field named 'Status'; cannot set '${status_label}'. Add a single-select 'Status' field with the canonical options (docs/workflow/development-workflow/tracker-status-mapping.md). Skipping tracker status update."
+      echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=status_field_missing valid_options=''"
+      if workflow_tracker_status_strict_enabled; then
+        return 2
+      fi
+      return 0
+    fi
+    # The Status field could not be read (lookup failure, unparsable
+    # response, or pagination limit). This can be transient, so it stays
+    # best-effort even in strict mode.
+    echo "Warning: could not read the Status field of project #${project_number}; cannot set '${status_label}'. Skipping tracker status update."
+    echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=status_field_unavailable valid_options=''"
+    return 0
+  fi
+  if [ -z "$option_id" ]; then
+    # The field resolved but has no option with this exact name: a vocabulary
+    # error, never transient. Name the board's real options so the caller can
+    # self-correct (issue #1564), and fail in strict (orchestrated) mode.
+    local valid_options
+    valid_options=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print(', '.join(name for name in (data.get('options') or {}) if name), end='')
+" 2>/dev/null || true)
+    echo "Warning: '${status_label}' is not an option of the Status field of project #${project_number}. Valid options: ${valid_options:-<none>}. Canonical mapping: docs/workflow/development-workflow/tracker-status-mapping.md. Skipping tracker status update."
+    echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=unknown_status_option valid_options='${valid_options}'"
+    if workflow_tracker_status_strict_enabled; then
+      return 2
+    fi
     return 0
   fi
 
@@ -2631,9 +2813,11 @@ print(item.get('status') or '', end='')
       }
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
+    printf '\nTRACKER_STATUS_APPLIED issue=%s status=%s\n' "$issue_number" "'${status_label}'"
   else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
     workflow_print_captured_gh_stderr
+    echo "TRACKER_STATUS_UPDATE_FAILED issue=${issue_number} requested='${status_label}' reason=mutation_failed"
   fi
 }
 

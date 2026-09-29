@@ -557,18 +557,25 @@ This gate is additive: cross-layer scope checks architectural spread, while call
 
 Before this update — a tracker status change is one of the mutations the "Reviewer preflight before child dispatch" section below stops before — run that preflight first whenever this item's resume state (mode, target base, branch/PR, remaining stages) is already resolved at this point, exactly as that section describes. Do not apply the tracker status change below if the preflight returns `blocked`, `prerequisite-failed`, or a tooling failure; stop and report per that section's outcome table instead. If the preflight's own required inputs are not yet resolvable this early (still being determined by an earlier step), run the preflight immediately before the update below once they are, not after.
 
-When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:
+When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Take the target Status from the canonical `dispatch` row of [`tracker-status-mapping.md`](../tracker-status-mapping.md). Do not type the Status by hand. Resolve and apply it in one step:
 
-| Next action to dispatch                                                                       | Tracker status to set |
-| --------------------------------------------------------------------------------------------- | --------------------- |
-| Write Spec                                                                                    | `Writing Spec`        |
-| Write Plan                                                                                    | `Writing Plan`        |
-| Implement (feature/fix/refactor/hotfix branch)                                                | `In Development`      |
-| Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip      |
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tracker-status-for.sh \
+  --event dispatch --stage <spec|plan|implementation> --apply --issue "$ISSUE_NUMBER"
+```
 
-This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensures the tracker reflects the correct in-flight state regardless of whether the item was dispatched by the Portfolio Orchestrator or invoked directly by a human.
+The call is safe to repeat when resuming a stage whose in-flight Status is
+already set, and the helper never moves Status backward. This matches Protocol
+90 Step 2.5 at the portfolio level, so the tracker shows the same in-flight
+state whether the Portfolio Orchestrator dispatched the item or a human invoked
+the runner directly.
 
-If the tracker is unavailable, log a warning and proceed — do not block advancement.
+If the tracker is unavailable (`TRACKER_STATUS_RESULT=failed` or `skipped`),
+log a warning and proceed. Do not block advancement. Exit `3`
+(`TRACKER_STATUS_RESULT=unresolved`) means the board has no option for the
+canonical Status, or no Status field at all. That is a
+`missing_tracker_context` stop, handled as the mapping page describes.
 
 ### Stale `In Development` pre-dispatch check (AC-6, AC-7, AC-8, AC-10)
 
@@ -3494,11 +3501,26 @@ section 3 Gate 6:
    immediately after) before setting the tracker status. If the audit record
    cannot be produced, apply the `missing_audit_evidence` stop condition.
 
-After the label readiness checklist passes, update the tracker status to reflect the PR is waiting for human review:
+After the label readiness checklist passes, move the tracker to the Status
+that the canonical mapping assigns to the `ready-for-human-review` event (see
+[`tracker-status-mapping.md`](../tracker-status-mapping.md)). The mapping gives
+`Spec in Review` for `spec/*`, `Plan in Review` for `implementation-plan/*`,
+and `Development in Review` for `feature/*`, `fix/*`, `refactor/*`, and
+`hotfix/*`. `ready-for-human-review` is the only readiness label that changes
+Status. `ready-for-regression`, `needs-setup`, `human-checkpoint-required`,
+and `needs-fixes` leave it unchanged. Resolve and apply the Status with the
+helper. Do not type it by hand:
 
-- For **spec PRs** (`spec/*`): set tracker status to `Spec in Review`
-- For **plan PRs** (`implementation-plan/*`): set tracker status to `Plan in Review`
-- For **implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): set tracker status to `Development in Review`
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tracker-status-for.sh \
+  --event ready-for-human-review --branch "$BRANCH" --apply --issue "$ISSUE_NUMBER"
+```
+
+Exit `3` (`TRACKER_STATUS_RESULT=unresolved`) is a `missing_tracker_context`
+stop. Report the canonical Status, the board's valid options from the
+`TRACKER_STATUS_UNRESOLVED` line, and the unblock action. Never substitute a
+different Status.
 
 ### Routing: CLI vs. MCP
 
@@ -3520,7 +3542,7 @@ For issue tracker providers that have no supported `gh`-equivalent CLI, MCP serv
 
 - **The orchestrator** (or the human invoking the Work Item Runner directly) is responsible for performing the MCP-based status update after the subagent returns.
 
-If neither the CLI path nor MCP is available, log a warning and continue — do not block labeling or PR readiness on a tracker update failure.
+If neither the CLI path nor MCP is available, log a warning and continue. Do not block labeling or PR readiness on a transient tracker update failure. A board that lacks the canonical Status, or has no Status field, is not transient. It is the `missing_tracker_context` stop described above.
 
 ---
 
@@ -3636,13 +3658,12 @@ See `92-pr-readiness-signal-protocol.md` for label definitions.
 
 When a human confirms that a PR has been merged, or when this runner merged a PR
 through the delegated merge gate, update the issue tracker and clean up local
-state according to this table:
-
-| Merged PR branch type                             | Set tracker status to |
-| ------------------------------------------------- | --------------------- |
-| `spec/*`                                          | Spec Ready            |
-| `implementation-plan/*`                           | Plan Ready            |
-| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
+state. The tracker Status comes from the `merged` row of the canonical mapping
+in [`tracker-status-mapping.md`](../tracker-status-mapping.md): `Spec Ready`
+for `spec/*`, `Plan Ready` for `implementation-plan/*`, and `Merged` for
+`feature/*`, `fix/*`, `refactor/*`, and `hotfix/*`. Resolve it with
+`./scripts/development-workflow/tracker-status-for.sh --event merged --branch
+<merged-branch>`.
 
 **A PR may resolve more than one item** (#1391). `post-merge-cleanup.sh`
 processes the branch-derived issue plus every closing-keyword reference in the
@@ -3675,7 +3696,7 @@ status-updated) or confirmed non-closing — recorded in the item report.
   `LOCAL_DELETE_RESULT=skipped` means conflicting uncommitted changes blocked the detach;
   tracker updates still run, and the local branch needs manual cleanup.
 - After cleanup, re-read the live tracker status and Project status. If the live
-  status does not match the expected value in the table above, re-apply the
+  status does not match the canonical `merged` Status above, re-apply the
   tracker transition before reporting the item terminal.
 - For implementation branches (`feature/*`, `fix/*`, `refactor/*`, and
   `hotfix/*`), `post-merge-cleanup.sh` must report remote branch cleanup

@@ -256,20 +256,12 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 
 ## Workflow: Advancing Statuses
 
-The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the Linear work item status at each stage transition:
-
-| Action                                                                                          | Status transition                                               |
-| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | → Writing Spec                                                  |
-| Spec PR is human-ready (automation clean; ready for humans)                                     | → Spec in Review                                                |
-| Spec PR merged                                                                                  | → Spec Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead`       | → Writing Plan (Refactor items skip directly here from Backlog) |
-| Plan PR is human-ready (automation clean)                                                       | → Plan in Review                                                |
-| Plan PR merged                                                                                  | → Plan Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer`       | → In Development                                                |
-| Feature/fix PR is human-ready (automation clean)                                                | → Development in Review                                         |
-| Feature/fix PR merged to develop                                                                | → Merged                                                        |
-| Release deployed to production                                                                  | → Released                                                      |
+The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
+Linear work item status at each stage transition. The transitions and the
+status vocabulary are defined once in
+[`tracker-status-mapping.md`](../tracker-status-mapping.md). Resolve the target
+with `scripts/development-workflow/tracker-status-for.sh`, then apply it through
+the Linear MCP handoff described above.
 
 ---
 

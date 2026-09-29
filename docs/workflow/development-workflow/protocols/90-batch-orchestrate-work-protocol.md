@@ -680,16 +680,23 @@ For each item that passed the Step 2 eligibility check:
 
    Where `$INITIAL_STATUS` is the in-flight status appropriate to the next action (e.g., `"Writing Spec"`, `"Writing Plan"`, or `"In Development"`). For resume items the call is still idempotent — the function detects the item is already on the board and returns without modifying the existing status.
 
-2. **Update tracker status to the appropriate in-flight value** based on the next action that will be dispatched:
+2. **Update tracker status to the appropriate in-flight value** for the stage
+   that will be dispatched. Take the value from the canonical `dispatch` row of
+   [`tracker-status-mapping.md`](../tracker-status-mapping.md): `Writing Spec`,
+   `Writing Plan`, or `In Development`. Resolve and apply it with the helper
+   instead of typing it:
 
-   | Next action to dispatch                                                                       | Tracker status to set |
-   | --------------------------------------------------------------------------------------------- | --------------------- |
-   | Write Spec                                                                                    | `Writing Spec`        |
-   | Write Plan                                                                                    | `Writing Plan`        |
-   | Implement (feature/fix/refactor/hotfix branch)                                                | `In Development`      |
-   | Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip      |
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   ./scripts/development-workflow/tracker-status-for.sh \
+     --event dispatch --stage <spec|plan|implementation> --apply --issue "$ISSUE_NUMBER"
+   ```
 
-   For resume items (the last row), the status is already correct — do not reset it. This keeps the update idempotent.
+   Resume items already have the correct in-flight Status, so do not reset
+   them. The helper never moves Status backward, which keeps the update
+   idempotent. Exit `3` means the board lacks the canonical Status, or has no
+   Status field. That is a `missing_tracker_context` stop for the item, as the
+   mapping page describes.
 
 3. **Log each result** for transparency:
 
@@ -716,7 +723,7 @@ How to perform tracker updates depends on the configured `issue_tracker.provider
 
 For issue tracker providers where no CLI equivalent exists (e.g., Linear via MCP), subagent Work Item Runners **cannot** update tracker status because MCP servers are not available in subagent execution contexts. In these cases:
 
-- The **Portfolio Orchestrator owns all tracker status transitions** for the batch — both pre-dispatch (this step) and post-readiness (the `Development in Review` / `Spec in Review` / `Plan in Review` transitions that happen after a PR reaches `ready-for-human-review`).
+- The **Portfolio Orchestrator owns all tracker status transitions** for the batch — both pre-dispatch (this step) and post-readiness (the `Development in Review` / `Spec in Review` / `Plan in Review` transitions that happen after a PR reaches `ready-for-human-review`, per the canonical mapping in [`tracker-status-mapping.md`](../tracker-status-mapping.md)).
 - Subagents will return a `TRACKER_UPDATE_REQUIRED:` line in their summary when they could not perform the update themselves (see Step 8b of `91-orchestrate-work-protocol.md`).
 - After each Work Item Runner returns, the Portfolio Orchestrator must scan its summary for `TRACKER_UPDATE_REQUIRED:` lines and apply those transitions via MCP before moving on to the next item.
 
