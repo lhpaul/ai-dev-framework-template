@@ -316,6 +316,13 @@ comment_only_reviewer_verdict() {
       ' 2>/dev/null)"; then
     escalate review-parse-failed
   fi
+  # Round 25 (PRRT_kwDORWAxaM6m6_DC): PR-Agent publishes ONLY a SHA-pinned
+  # "PR Reviewer Guide" issue comment and shares the default github-actions[bot]
+  # identity with unrelated automation, so a formal review by that login is
+  # never PR-Agent completion evidence — always take the adapter path.
+  if [ "$platform_arg" = "pr-agent" ]; then
+    latest_review=""
+  fi
   if [ -z "$latest_review" ] || [ "$latest_review" = "null" ]; then
     # Round 16: the completion adapters return 0 (clean evidence — findings
     # are then counted through the shared scan), 1 (no readable evidence —

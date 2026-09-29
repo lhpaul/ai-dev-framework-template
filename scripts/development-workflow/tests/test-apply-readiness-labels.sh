@@ -2143,6 +2143,16 @@ MOCK_BASE_CONFIG="$_pr_agent_platform_yaml"
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":920,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\nNo major issues detected"}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_clean_comment_labels_exit" "0" "${result%%|*}"
+# Round 25 (PRRT_kwDORWAxaM6m6_DC): an unrelated COMMENTED review by the
+# shared github-actions[bot] login must NOT count as PR-Agent completion when
+# no PR Reviewer Guide comment exists.
+MOCK_REVIEWS='[{"user":{"login":"github-actions[bot]"},"id":530,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"unrelated automation summary","submitted_at":"2026-01-02T00:00:00Z"}]'
+MOCK_ISSUE_COMMENTS='[]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "pr_agent_unrelated_shared_login_review_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":920,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\nNo major issues detected"}]'
+result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_clean_comment_labels_result" "labeled" "$(field "$result" RESULT)"
 # Planted failing case 2: a hard-blocker focus label refuses.
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":921,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\n### Recommended focus areas for review\n<td><tr><strong>Security Concern</strong></td></tr>"}]'
