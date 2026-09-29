@@ -2437,10 +2437,13 @@ unbalanced_graphql_literals() {
 import re, sys
 text = open(sys.argv[1]).read()
 pairs = {"}": "{", ")": "("}
+# GraphQL string values ("..." with backslash escapes, and """block""")
+# are not syntax: their delimiters are skipped before nesting is checked.
+strings = re.compile(r'"""(?:\\"""|[^"]|"(?!""))*"""|"(?:\\.|[^"\\])*"')
 for m in re.finditer(r"query='([^']*)'", text):
     stack = []
     ok = True
-    for ch in m.group(1):
+    for ch in strings.sub('""', m.group(1)):
         if ch in "{(":
             stack.append(ch)
         elif ch in pairs:
@@ -2465,6 +2468,13 @@ run_test "graphql_scanner_reports_misnested_line" "3" "$(unbalanced_graphql_lite
 printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
   "gh api graphql -f query='query(\$a:Int{x)}'" > "$_gql_fixture"
 run_test "graphql_scanner_reports_crossed_delimiters_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+# Delimiters inside GraphQL string values are data, not syntax.
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{a(s:\")}\\\"(\"){id} b(t:\"\"\"{)\"\"\"){id}}'" > "$_gql_fixture"
+run_test "graphql_scanner_ignores_delimiters_in_strings" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{a(s:\"}\"){id}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_unbalanced_beside_string_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
 printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
   "gh api graphql -f query='query{repository{pullRequest{id}}}'" > "$_gql_fixture"
 run_test "graphql_scanner_accepts_balanced_fixture" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
