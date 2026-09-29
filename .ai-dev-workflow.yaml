@@ -70,11 +70,8 @@ review:
   on_ready:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
-    # codex-github is the ready-phase reviewer for this repository (Bugbot's
-    # usage limit was reached, so `bugbot` is intentionally not listed here;
-    # restore it in this list once its quota is available again).
     github:
-      - codex-github
+      - bugbot
 
   # Optional: TWO independent reviewer-loop cycle caps enforced by
   # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
