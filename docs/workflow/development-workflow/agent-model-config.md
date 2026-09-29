@@ -245,8 +245,8 @@ bash -lc 'claude --agent developer --model claude-opus-5'
 **Cursor:**
 Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To override for a single run:
 
-- Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
-- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
+- Switch your Composer's model before invoking the subagent (e.g., `/developer`); this takes effect only for an agent whose `model:` is `inherit`, or
+- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value, and explicitly name it as the stage agent to dispatch for that run (see "Cursor model source of truth")
 
 Use this decision path before overriding Cursor models:
 
