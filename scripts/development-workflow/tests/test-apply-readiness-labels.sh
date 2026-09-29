@@ -2171,8 +2171,19 @@ result="$(MOCK_WORKFLOW_RUNS="$_claude_run_inprogress" run_helper_platform "$_co
 run_test "claude_action_run_inprogress_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # Blocking review state posted by the bot still blocks a successful run.
 MOCK_REVIEWS='[{"user":{"login":"claude[bot]"},"id":600,"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-01-07T00:00:00Z"}]'
-result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" run_helper_platform "$_codex_config")"
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
 run_test "claude_action_run_with_changes_requested_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+# Round 28 (PRRT_kwDORWAxaM6nBlmk): an existing review must not bypass the
+# Actions-run adapter — a newer queued/no-op rerun refuses; a verified
+# successful run with the review present still labels.
+MOCK_REVIEWS='[{"user":{"login":"claude[bot]"},"id":601,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"","submitted_at":"2026-01-07T00:00:00Z"}]'
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_inprogress" run_helper_platform "$_codex_config")"
+run_test "claude_review_plus_inprogress_rerun_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Context prompt: NO PROMPT' run_helper_platform "$_codex_config")"
+run_test "claude_review_plus_noop_rerun_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
+run_test "claude_review_plus_verified_run_labels_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 
 # Thread PRRT_kwDORWAxaM6m2OtK: pr-agent / coderabbit-cli / local-ai-reviewer.

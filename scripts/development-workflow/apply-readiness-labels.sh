@@ -360,6 +360,24 @@ comment_only_reviewer_verdict() {
   # blocking SHA-pinned root verdict at or after this review (a same-head
   # rerun) refuses; an older one is superseded by the newer review. An
   # unreadable root-comment surface escalates inside the adapter (fail closed).
+  # Round 28 (PRRT_kwDORWAxaM6nBlmk): claude-code-action-reviewer.sh requires
+  # the NEWEST dispatched Actions run to complete successfully with a log that
+  # proves a review executed. An older formal review must not certify the head
+  # while a newer same-head rerun is queued, failed, or a no-op, so the run
+  # adapter is consulted even when a review exists; anything but clean run
+  # evidence refuses (fail closed). Findings are still scanned below.
+  if [ "$platform_arg" = "claude-code-action" ]; then
+    _saved_started_at="$reviewer_started_at"
+    _adapter_rc=0
+    comment_only_completion_evidence "$platform_arg" "$bot_login_arg" || _adapter_rc=$?
+    reviewer_started_at="$_saved_started_at"
+    if [ "$_adapter_rc" -ne 0 ]; then
+      result="refused"
+      reason="reviewer-check-absent"
+      reviewer_report="${platform_arg}:review"
+      refuse "reviewer-check-absent"
+    fi
+  fi
   if [ "$platform_arg" = "codex-github" ]; then
     _root_blocking_created=""
     _saved_started_at="$reviewer_started_at"
