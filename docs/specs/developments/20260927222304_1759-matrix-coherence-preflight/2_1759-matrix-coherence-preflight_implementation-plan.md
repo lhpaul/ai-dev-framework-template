@@ -205,7 +205,7 @@ Executed by the implementer (this PR's own file list — the change *is* documen
 5. Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — one cross-reference sentence near the reviewer dispatch map.
 6. Update `REVIEW.md` — Spec Review Checklist, Plan Review Checklist, and documentation-PR additional-check bullets.
 7. Update the 15 agent/skill mirror files (pointer sentences only, per the role groups in Layer-by-Layer Changes).
-8. Confirm no drift: run `grep -rn "Matrix coherence preflight" docs/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md` and confirm every hit is either the canonical definition, a pointer to it, or the gate-row name — no restated variant of the audit checks defined in "The six audit checks" section.
+8. Confirm no drift: run `grep -rn "Matrix coherence preflight"` over the 22 implementation targets only (the retained plan and smoke-runbook artifacts under `docs/specs/developments/` and `docs/testing/workflow/` necessarily restate the six checks and are excluded) and confirm every hit is either the canonical definition, a pointer to it, or the gate-row name — no restated variant of the audit checks defined in "The six audit checks" section.
 9. Verify the smoke runbook: `docs/testing/workflow/1759-matrix-coherence-preflight.smoke-test.md`.
 10. Update project docs per the Documentation Updates section (none beyond this PR's own files).
 11. Add a `changelog.d/1759.changed.matrix-coherence-preflight.md` fragment using the project's format: `- **Add matrix coherence preflight for spec reviewer loops** (#1759): <description>`. (Refactor implementation PR merged to `develop` — fragment required; not conventional-commit format.)
