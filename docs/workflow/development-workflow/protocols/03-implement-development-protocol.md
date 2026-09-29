@@ -323,8 +323,10 @@ When ordering or comparing events (e.g., determining which comment came first, w
 # Wrong — local clock may not match server time:
 TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Correct — capture the timestamp from the API response (run the PR Ownership
-# Guard for "$PR_NUMBER" first):
+# Correct — capture the timestamp from the API response, after the PR
+# Ownership Guard confirms "$PR_NUMBER" belongs to this item's branch:
+./scripts/development-workflow/pr-ownership-guard.sh \
+  --pr "$PR_NUMBER" --expected-branch "fix/[branch-slug]" || exit 1
 RESPONSE=$(gh pr comment "$PR_NUMBER" --body "$TRIGGER_BODY")
 TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
 ```
