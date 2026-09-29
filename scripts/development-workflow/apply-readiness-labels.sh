@@ -714,6 +714,42 @@ coderabbit_cli_local_ai_ledger_verdict() {
   _adapter_ledger_clean=1
 }
 
+# codex_current_occupancy_comment_ids — round 31 (PRRT_kwDORWAxaM6nCTd8).
+# Sets _occupancy_out to a JSON array of the issue-comment database ids that GitHub recorded
+# AFTER the current head last became the PR head. A force-push A -> B -> A
+# leaves A's first-occupancy Codex root comment (SHA-pinned to A) on the PR;
+# the marker alone matches the current head again although no review ran
+# during the second occupancy. codex_scan_comment_evidence bounds evidence by
+# an occupancy boundary; this mirrors it with the server-ordered timeline: the
+# boundary is the LAST PullRequestCommit for the head oid or
+# HeadRefForcePushedEvent whose afterCommit is the head oid, and only
+# IssueComment nodes after it qualify. No boundary found, or an unreadable
+# timeline, fails closed (empty set / escalate).
+codex_current_occupancy_comment_ids() {
+  local _o_owner="${repo%%/*}" _o_name="${repo#*/}" _o_json
+  if ! _o_json="$(gh api graphql --paginate --slurp \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on HeadRefForcePushedEvent{afterCommit{oid}} ...on IssueComment{databaseId}}}}}}}' \
+        -f owner="$_o_owner" -f repo="$_o_name" -F pr="$pr_number" 2>/dev/null)" \
+      || [ -z "$_o_json" ]; then
+    escalate codex-occupancy-timeline-fetch-failed
+  fi
+  if ! _occupancy_out="$(printf '%s\n' "$_o_json" | jq -c --arg sha "$head_sha" '
+        [ .[]?.data.repository.pullRequest.timelineItems.nodes[]? ] as $n
+        | ([ $n | to_entries[]
+             | select(
+                 (.value.__typename == "PullRequestCommit" and ((.value.commit.oid // "" | ascii_downcase) == ($sha | ascii_downcase)))
+                 or (.value.__typename == "HeadRefForcePushedEvent" and ((.value.afterCommit.oid // "" | ascii_downcase) == ($sha | ascii_downcase)))
+               )
+             | .key
+           ] | last) as $b
+        | if $b == null then []
+          else [ $n[($b + 1):][] | select(.__typename == "IssueComment") | (.databaseId // 0) ]
+          end
+      ' 2>/dev/null)"; then
+    escalate codex-occupancy-timeline-parse-failed
+  fi
+}
+
 # comment_only_completion_evidence <platform> <bot_login> — round 15 (PR
 # #1818 thread PRRT_kwDORWAxaM6m1pF_): non-review completion evidence for
 # hosted comment-only reviewers, mirroring exactly what the loop's own
@@ -774,10 +810,14 @@ comment_only_completion_evidence() {
   fi
   case "$platform_arg" in
     codex-github)
-      if ! entries="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" '
+      _occupancy_out="[]"
+      codex_current_occupancy_comment_ids
+      local _occupancy_ids="$_occupancy_out"
+      if ! entries="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" --argjson occ "$_occupancy_ids" '
             [ .[]?[]
               | select(
                   (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
+                  and ((.id // 0) as $cid | ($occ | index($cid)) != null)
                 )
               | {created_at: (.created_at // ""), body: (.body // "")}
             ]
@@ -787,6 +827,7 @@ comment_only_completion_evidence() {
           ' 2>/dev/null)"; then
         escalate issue-comment-parse-failed
       fi
+      local _clean_seen_created=""
       while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         body="$(printf '%s\n' "$entry" | jq -r '.body // ""' 2>/dev/null)"
@@ -810,14 +851,28 @@ comment_only_completion_evidence() {
           # sentence but never the canonical whole-body exact-template match.
           # codex_root_comment_body_is_approved below mirrors the canonical
           # blocking-first, approved-template-exact order.
-          if codex_root_comment_body_is_approved "$body"; then
-            reviewer_started_at="$created"
+          # Round 31 (PRRT_kwDORWAxaM6nCTd8 sibling, tie-break): entries are
+          # newest-first; on an exact created_at tie (second resolution) any
+          # non-approved verdict must outrank an approval, as the canonical
+          # selector ranks non-clean evidence ahead of approval on ties.
+          if [ -n "$_clean_seen_created" ] && [ "$created" != "$_clean_seen_created" ]; then
+            reviewer_started_at="$_clean_seen_created"
             return 0
+          fi
+          if codex_root_comment_body_is_approved "$body"; then
+            if [ -z "$_clean_seen_created" ]; then
+              _clean_seen_created="$created"
+            fi
+            continue
           fi
           _root_blocking_created="$created"
           return 2
         fi
       done <<< "$entries"
+      if [ -n "$_clean_seen_created" ]; then
+        reviewer_started_at="$_clean_seen_created"
+        return 0
+      fi
       return 1
       ;;
     claude-code-action)

@@ -206,6 +206,21 @@ case "$*" in
     emit "${MOCK_HEAD_COMMIT_JSON:-{\"commit\":{\"committer\":{\"date\":\"2026-01-05T00:00:00Z\"}}}}"
     exit 0
     ;;
+  *"HeadRefForcePushedEvent"*)
+    # Round 31 (PRRT_kwDORWAxaM6nCTd8): head-occupancy timeline. When
+    # MOCK_OCC_TIMELINE is set it is served verbatim as the nodes array;
+    # otherwise the stub synthesizes the ordinary single-occupancy history:
+    # the head commit node followed by every MOCK_ISSUE_COMMENTS comment.
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    [ "${MOCK_OCC_TIMELINE_EXIT:-0}" = "0" ] || exit 1
+    if [ -n "${MOCK_OCC_TIMELINE:-}" ]; then
+      _nodes="$MOCK_OCC_TIMELINE"
+    else
+      _nodes="$(printf '%s\n' "[${MOCK_ISSUE_COMMENTS:-[]}]" | jq -c '[{"__typename":"PullRequestCommit","commit":{"oid":"aaaa111000000000000"}}] + [ .[][]? | {"__typename":"IssueComment","databaseId":(.id // 0)} ]')"
+    fi
+    printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${_nodes}}}}}}]"
+    exit 0
+    ;;
   *"reviewThreads"*)
     # Round 27 (PRRT_kwDORWAxaM6m7SZu): unresolved bot review threads.
     # MOCK_REVIEW_THREADS carries the thread nodes array (default none);
@@ -449,6 +464,8 @@ run_helper() {
     MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
     MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
     MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
+    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
+    MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
@@ -1748,6 +1765,8 @@ run_helper_platform() {
     MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
     MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
     MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
+    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
+    MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
@@ -2102,6 +2121,31 @@ run_test "codex_newer_clean_root_supersedes_change_request_result" "labeled" "$(
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-01T00:00:00Z","id":922,"body":'"$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs .)"'}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_older_clean_root_keeps_change_request_reason" "blocking-findings" "$(field "$result" REASON)"
+# Round 31 (PRRT_kwDORWAxaM6nCTeE): clean and blocking SHA-pinned roots in the
+# SAME second — the blocker must win regardless of array order.
+_c_clean="$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs .)"
+_c_block='"Codex Review: Needs fixes. Must fix the guard. **Reviewed commit:** `'"$HEAD"'`"'
+MOCK_REVIEWS='[]'
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":930,"body":'"$_c_block"'},{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":931,"body":'"$_c_clean"'}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_tied_roots_blocker_wins_clean_last_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":931,"body":'"$_c_clean"'},{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":930,"body":'"$_c_block"'}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_tied_roots_blocker_wins_clean_first_reason" "blocking-findings" "$(field "$result" REASON)"
+# Round 31 (PRRT_kwDORWAxaM6nCTd8): a clean root from the head's FIRST
+# occupancy (force-push A -> B -> A) is not evidence for the second.
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":940,"body":'"$_c_clean"'}]'
+MOCK_OCC_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}},{"__typename":"IssueComment","databaseId":940},{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"bbbb222000000000000"}},{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"'"$HEAD"'"}}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_first_occupancy_root_not_evidence_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_OCC_TIMELINE='[{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"'"$HEAD"'"}},{"__typename":"IssueComment","databaseId":940}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_current_occupancy_root_is_evidence_result" "labeled" "$(field "$result" RESULT)"
+MOCK_OCC_TIMELINE_EXIT=1
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_occupancy_fetch_failure_escalates_reason" "codex-occupancy-timeline-fetch-failed" "$(field "$result" REASON)"
+MOCK_OCC_TIMELINE_EXIT=0
+MOCK_OCC_TIMELINE=''
 MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 # The clean sentence AND the head pin together still pass (unchanged
