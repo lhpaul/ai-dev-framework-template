@@ -412,21 +412,6 @@ restore_original_ref() {
 
   # The branch we started on may be the very one we just deleted.
   if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ]; then
-    # A caller's linked worktree left on the base branch would hold that branch
-    # and stop every other checkout (the main clone included) from switching to
-    # it (#1386). Detach it at the same commit instead. The main worktree keeps
-    # the old behavior and stays on the base branch.
-    if is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT"; then
-      print_kv CALLER_WORKTREE_PATH "$CLEANUP_REPO_ROOT"
-      if git -C "$CLEANUP_REPO_ROOT" checkout --quiet --detach "$DEVELOP_BRANCH" 2>/dev/null; then
-        print_kv CALLER_WORKTREE_ACTION "detached"
-        echo "Detached the calling worktree $CLEANUP_REPO_ROOT at $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted), so it does not hold $DEVELOP_BRANCH."
-      else
-        print_kv CALLER_WORKTREE_ACTION "detach_failed"
-        echo "WARNING: could not detach the calling worktree $CLEANUP_REPO_ROOT; it stays on $DEVELOP_BRANCH and holds that branch. Run 'git -C $CLEANUP_REPO_ROOT checkout --detach' to release it." >&2
-      fi
-      return 0
-    fi
     echo "Leaving $CLEANUP_REPO_ROOT on $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted)."
     return 0
   fi
@@ -679,6 +664,25 @@ echo "Fetching origin..."
 # --prune: remove stale remote-tracking refs (e.g. origin/<merged-branch>)
 git fetch origin --prune
 
+# When cleanup runs inside the caller's own linked worktree, still on the merged
+# branch, do not check the base branch out there (#1386): a linked worktree left
+# on the base holds it against every other checkout, and uncommitted changes in
+# the caller's worktree would make that checkout fail before the tracker work.
+# Reaching this point means no other worktree has the base checked out (the
+# re-entry above would have moved there), so fast-forward the base ref directly;
+# the caller's worktree is detached onto it below, before the branch delete.
+CALLER_ON_MERGED_BRANCH=0
+if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ] \
+  && is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT"; then
+  CALLER_ON_MERGED_BRANCH=1
+fi
+
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
+  echo "Fast-forwarding $DEVELOP_BRANCH without checking it out in the calling worktree..."
+  # A '<src>:<dst>' refspec fetch refuses non-fast-forward updates, matching
+  # the --ff-only pull used on the other path.
+  git fetch origin "refs/heads/$DEVELOP_BRANCH:refs/heads/$DEVELOP_BRANCH"
+else
 echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
 BASE_CHECKED_OUT=1
@@ -688,6 +692,7 @@ echo "Pulling $DEVELOP_BRANCH..."
 # tracking set (e.g. integration branches created/pushed without --set-upstream).
 # --ff-only: fail cleanly if the branch diverged (e.g. local commits) instead of creating a merge.
 git pull --ff-only origin "$DEVELOP_BRANCH"
+fi
 
 cleanup_remote_implementation_branch "$TO_DELETE"
 
@@ -1171,12 +1176,13 @@ if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
     FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
   elif [ "$ORIGINAL_REF_KIND" = "detached" ]; then
     FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
-  elif [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ] \
-    && is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT"; then
-    FINAL_REF_AFTER_CLEANUP="detached at $DEVELOP_BRANCH"
   fi
 fi
-if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; the calling worktree $CLEANUP_REPO_ROOT is detached at it; local branch '$TO_DELETE' has been removed locally."
+elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; local branch '$TO_DELETE' was KEPT and the calling worktree $CLEANUP_REPO_ROOT stays on it because it could not be detached (see LOCAL_DELETE_REASON)."
+elif [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
 elif [ "$SKIP_LOCAL_DELETE" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."

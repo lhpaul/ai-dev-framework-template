@@ -462,6 +462,47 @@ run_test "outside_caller_non_caller_worktree_removed" "no" "$(
   fi
 )"
 
+# Codex review on PR #1831: a dirty caller worktree with no other worktree
+# holding the base must not fail on a base checkout before the tracker work.
+# The base ref is fast-forwarded without being checked out in the caller.
+dirty_nobase_branch="feature/1391-dirty-no-base"
+dirty_nobase_repo="$(make_repo dirty-no-base "$dirty_nobase_branch" yes)"
+install_cleanup_helper "$dirty_nobase_repo"
+"$REAL_GIT" -C "$dirty_nobase_repo" checkout -q -b ops/current
+dirty_nobase_worktree="$TMP_ROOT/dirty-no-base-worktree"
+"$REAL_GIT" -C "$dirty_nobase_repo" worktree add -q "$dirty_nobase_worktree" "$dirty_nobase_branch"
+dirty_nobase_pusher="$TMP_ROOT/dirty-no-base-pusher"
+"$REAL_GIT" clone -q -b develop "$TMP_ROOT/dirty-no-base.git" "$dirty_nobase_pusher"
+"$REAL_GIT" -C "$dirty_nobase_pusher" -c user.email=fixture@example.com -c user.name=Fixture \
+  commit -q --allow-empty -m "advance develop"
+"$REAL_GIT" -C "$dirty_nobase_pusher" push -q origin develop
+dirty_nobase_remote_tip="$("$REAL_GIT" -C "$dirty_nobase_pusher" rev-parse HEAD)"
+printf 'uncommitted edit\n' >"$dirty_nobase_worktree/branch.txt"
+set +e
+dirty_nobase_output="$(
+  cd "$dirty_nobase_worktree" &&
+    GH_MERGED_HEAD="$dirty_nobase_branch" \
+    GH_MERGED_PR=1391 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$dirty_nobase_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1391 \
+      "$dirty_nobase_branch" 2>&1
+)"
+dirty_nobase_status=$?
+set -e
+run_test "dirty_no_base_exit_status" "0" "$dirty_nobase_status"
+run_contains "dirty_no_base_local_delete_skipped" "LOCAL_DELETE_REASON=caller_worktree_detach_failed" "$dirty_nobase_output"
+run_test "dirty_no_base_base_fast_forwarded" "$dirty_nobase_remote_tip" \
+  "$("$REAL_GIT" -C "$dirty_nobase_repo" rev-parse develop)"
+run_test "dirty_no_base_caller_stays_on_branch" "$dirty_nobase_branch" \
+  "$("$REAL_GIT" -C "$dirty_nobase_worktree" symbolic-ref --quiet --short HEAD)"
+run_test "dirty_no_base_edit_survives" "uncommitted edit" "$(cat "$dirty_nobase_worktree/branch.txt" 2>/dev/null || true)"
+run_contains "dirty_no_base_tracker_processing_still_runs" \
+  "Issue #1391 is already CLOSED, skipping close." \
+  "$dirty_nobase_output"
+
 # A worktree that is NOT the caller's keeps the existing behavior: it is
 # removed so the merged branch can be deleted.
 other_wt_branch="feature/noissue-other-worktree"
