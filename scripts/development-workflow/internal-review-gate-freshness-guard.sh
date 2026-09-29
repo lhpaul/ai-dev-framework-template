@@ -29,9 +29,13 @@ against the current PR HEAD SHA.
 
 Refuses readiness on any mismatch unless BOTH:
   1. Every commit in the gate_sha..head_sha range carries the literal marker
-     `MECHANICAL_DELTA:` in its commit message.
-  2. The cumulative diff (insertions + deletions) between gate_sha and
-     head_sha is at or below --max-mechanical-lines (default 10).
+     `MECHANICAL_DELTA:` at the start of a line in its commit message.
+  2. The changed-line count (insertions + deletions) is at or below
+     --max-mechanical-lines (default 10). It is the larger of the net
+     gate_sha..head_sha diff and the sum of each commit's own diff.
+
+gate_sha and head_sha must be literal hex commit SHAs; symbolic revisions
+(HEAD, branches, tags, HEAD~N) are rejected as invalid_input.
 
 This mirrors the Trivial-fix skip rule's non-structural / <=10-line bound
 (91-orchestrate-work-protocol.md) so both checks apply the same bar for what
@@ -111,6 +115,19 @@ if ! cd "$REPO_ROOT" 2>/dev/null; then
   exit 64
 fi
 
+# Only literal commit SHAs are accepted. Symbolic revisions (HEAD, branch
+# names, tags, HEAD~1, ...) move over time and would defeat binding the gate
+# verdict to a specific reviewed commit.
+sha_pattern='^[0-9a-fA-F]{7,64}$'
+if ! [[ "$GATE_SHA" =~ $sha_pattern ]]; then
+  emit_invalid_input "gate SHA $GATE_SHA is not a literal commit SHA (7-64 hex characters); symbolic revisions are not accepted"
+  exit 64
+fi
+if ! [[ "$HEAD_SHA" =~ $sha_pattern ]]; then
+  emit_invalid_input "HEAD SHA $HEAD_SHA is not a literal commit SHA (7-64 hex characters); symbolic revisions are not accepted"
+  exit 64
+fi
+
 resolved_gate_sha=""
 if ! resolved_gate_sha="$(git rev-parse --verify "${GATE_SHA}^{commit}" 2>/dev/null)"; then
   emit_invalid_input "gate SHA $GATE_SHA could not be resolved in this repository; confirm the Step 7a summary comment cites a real commit"
@@ -141,10 +158,16 @@ if ! shortstat="$(git diff --shortstat "${resolved_gate_sha}..${resolved_head_sh
     "$resolved_gate_sha" "$resolved_head_sha" "$resolved_gate_sha" "$resolved_head_sha"
   exit 2
 fi
-lines_changed="$(printf '%s\n' "$shortstat" | grep -Eo '[0-9]+ (insertion|deletion)' | grep -Eo '^[0-9]+' | awk '{s+=$1} END {print s+0}')"
+# Empty shortstat (no net diff) must yield 0, not abort: awk always exits 0,
+# unlike a grep pipeline that returns 1 on no match under pipefail/set -e.
+parse_shortstat_lines() {
+  awk '{ for (i = 2; i <= NF; i++) if ($i ~ /^(insertion|deletion)/) s += $(i-1) } END { print s + 0 }'
+}
+lines_changed="$(printf '%s\n' "$shortstat" | parse_shortstat_lines)"
 lines_changed="${lines_changed:-0}"
 
 marker_present="true"
+per_commit_total=0
 commit_list=""
 if ! commit_list="$(git rev-list "${resolved_gate_sha}..${resolved_head_sha}" 2>/dev/null)"; then
   printf 'RESULT=refused\nREASON=git_error\nGATE_SHA=%s\nHEAD_SHA=%s\nLINES_CHANGED=%s\nMARKER_PRESENT=false\nHUMAN_ACTION=could not list commits between %s and %s.\n' \
@@ -169,11 +192,23 @@ while IFS= read -r commit_sha; do
   # marker, so marker_present becomes "false" and the caller refuses
   # readiness) rather than silently passing.
   commit_message="$(git log -1 --format=%B "$commit_sha" 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - empty fallback fails closed to marker_present=false, see comment above
-  if ! grep -Fq 'MECHANICAL_DELTA:' <<< "$commit_message"; then
+  if ! grep -Eq '^[[:space:]]*MECHANICAL_DELTA:' <<< "$commit_message"; then
     marker_present="false"
     break
   fi
+  # Count each marked commit's own delta so a commit that adds and a later
+  # commit that reverts cannot hide churn behind a small net diff.
+  commit_stat="$(git diff --shortstat "${commit_sha}^" "$commit_sha" -- . 2>/dev/null || printf 'ERR')" # workflow-shell-guard: allow SH001 - ERR sentinel fails closed below
+  if [ "$commit_stat" = "ERR" ]; then
+    marker_present="false"
+    break
+  fi
+  commit_lines="$(printf '%s\n' "$commit_stat" | parse_shortstat_lines)"
+  per_commit_total=$((per_commit_total + commit_lines))
 done <<< "$commit_list"
+if [ "$per_commit_total" -gt "$lines_changed" ]; then
+  lines_changed="$per_commit_total"
+fi
 
 if [ "$marker_present" = "true" ] && [ "$lines_changed" -le "$MAX_MECHANICAL_LINES" ]; then
   printf 'RESULT=pass\nREASON=mechanical_delta_verified\nGATE_SHA=%s\nHEAD_SHA=%s\nLINES_CHANGED=%s\nMARKER_PRESENT=true\nHUMAN_ACTION=none\n' \
