@@ -2,7 +2,8 @@
 #
 # Post-merge cleanup: fetch origin, checkout the merge base, pull, delete the
 # local branch that was just merged, and verify or delete merged implementation
-# branches on the remote.
+# branches on the remote. The caller's own worktree is never removed: if the
+# merged branch is checked out there, it is detached onto the base instead.
 # Keeps the local repo clean after merging developments.
 #
 # Usage:
@@ -36,6 +37,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/closing-keyword-lib.sh
 . "$SCRIPT_DIR/closing-keyword-lib.sh"
 
+# Capture the caller's working directory before this script moves anywhere.
+# A worktree-isolated runner that invokes cleanup is standing inside a linked
+# worktree; that worktree must survive cleanup (#1386).
+CALLER_PWD="$(pwd -P 2>/dev/null || true)"
+
 cd_workflow_repo_root
 
 HUB_REPO_ROOT="$(workflow_repo_root)"
@@ -46,6 +52,7 @@ repo_root="$HUB_REPO_ROOT"
 base_branch_override=""
 merged_pr_number=""
 cleanup_repo_root_override=""
+repo_root_explicit=0
 
 require_option_value() {
   local option="$1"
@@ -66,6 +73,7 @@ while [ "$#" -gt 0 ]; do
     --repo-root)
       require_option_value "$@"
       repo_root="$2"
+      repo_root_explicit=1
       shift 2
       ;;
     --base)
@@ -101,6 +109,81 @@ done
 case "$merged_pr_number" in
   ''|*[!0-9]*) [ -z "$merged_pr_number" ] || { echo "Invalid --pr '${merged_pr_number}' — must be a positive integer." >&2; exit 64; } ;;
 esac
+
+# physical_worktree_root <path>
+# Prints the physical (symlink-resolved) top-level directory of the git
+# working tree containing <path>, or returns 1 when <path> is not inside one.
+physical_worktree_root() {
+  local top
+  [ -n "${1:-}" ] && [ -d "$1" ] || return 1
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "$top" ] || return 1
+  (CDPATH='' cd -- "$top" && pwd -P)
+}
+
+# physical_git_common_dir <path>
+# Prints the physical path of the shared git directory for <path>, so a linked
+# worktree and its main clone resolve to the same value.
+physical_git_common_dir() {
+  local dir
+  dir="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  [ -n "$dir" ] || return 1
+  case "$dir" in
+    /*) ;;
+    *) dir="$1/$dir" ;;
+  esac
+  (CDPATH='' cd -- "$dir" && pwd -P)
+}
+
+CALLER_WORKTREE_ROOT=""
+if [ -n "$CALLER_PWD" ]; then
+  CALLER_WORKTREE_ROOT="$(physical_worktree_root "$CALLER_PWD" || true)"
+fi
+
+# Never operate on a repo root the caller did not pass (#1386). Without
+# --repo-root the default used to be the checkout this script file lives in,
+# which is the shared main clone whenever a worktree runner invokes the
+# main-clone copy of the helper. When the caller is standing in another working
+# tree of the same repository, that working tree is the root it meant.
+if [ "$repo_root_explicit" -eq 0 ] && [ -n "$CALLER_WORKTREE_ROOT" ]; then
+  default_repo_root_real="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P || true)"
+  if [ -n "$default_repo_root_real" ] && [ "$CALLER_WORKTREE_ROOT" != "$default_repo_root_real" ]; then
+    caller_common_dir="$(physical_git_common_dir "$CALLER_WORKTREE_ROOT" || true)"
+    default_common_dir="$(physical_git_common_dir "$default_repo_root_real" || true)"
+    if [ -n "$caller_common_dir" ] && [ "$caller_common_dir" = "$default_common_dir" ]; then
+      echo "Using the calling working tree '$CALLER_WORKTREE_ROOT' as --repo-root (no --repo-root was passed)."
+      repo_root="$CALLER_WORKTREE_ROOT"
+    fi
+  fi
+fi
+
+# Working trees that belong to the caller. Cleanup must never remove one of
+# these; when the merged branch is checked out in one, that working tree is
+# detached onto the updated base instead (#1386). The list is inherited across
+# the base-worktree re-entry below, which changes this process's directory.
+CALLER_WORKTREES="${POST_MERGE_CLEANUP_CALLER_WORKTREES:-}"
+add_caller_worktree() {
+  local root
+  root="$(physical_worktree_root "${1:-}" || true)"
+  [ -n "$root" ] || return 0
+  if ! printf '%s\n' "$CALLER_WORKTREES" | grep -Fqx -- "$root"; then
+    CALLER_WORKTREES="${CALLER_WORKTREES:+$CALLER_WORKTREES
+}$root"
+  fi
+  return 0
+}
+add_caller_worktree "$CALLER_WORKTREE_ROOT"
+if [ "$repo_root_explicit" -eq 1 ]; then
+  add_caller_worktree "$repo_root"
+fi
+export POST_MERGE_CLEANUP_CALLER_WORKTREES="$CALLER_WORKTREES"
+
+is_caller_worktree() {
+  local candidate
+  [ -n "${1:-}" ] && [ -n "$CALLER_WORKTREES" ] || return 1
+  candidate="$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)" || return 1
+  printf '%s\n' "$CALLER_WORKTREES" | grep -Fqx -- "$candidate"
+}
 
 HUB_REPO_ROOT="$repo_root"
 cd "$HUB_REPO_ROOT" || exit 1
@@ -579,6 +662,7 @@ git pull --ff-only origin "$DEVELOP_BRANCH"
 
 cleanup_remote_implementation_branch "$TO_DELETE"
 
+SKIP_LOCAL_DELETE=0
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Skipping local branch delete for '$TO_DELETE' (already absent)."
 else
@@ -592,7 +676,26 @@ WORKTREE_PATH=$(git worktree list --porcelain | awk -v branch="branch refs/heads
   /^worktree / { wt = substr($0, 10) }
   $0 == branch  { print wt }
 ' || true)
-if [ -n "$WORKTREE_PATH" ]; then
+if [ -n "$WORKTREE_PATH" ] && is_caller_worktree "$WORKTREE_PATH"; then
+  # The merged branch is checked out in the caller's own working tree. Removing
+  # that worktree deletes the directory the caller is running in and kills the
+  # run before it can update the tracker (#1386). Detach it onto the updated
+  # base instead, then delete the branch.
+  print_kv CALLER_WORKTREE_PATH "$WORKTREE_PATH"
+  detach_target=""
+  detach_err=""
+  if detach_target="$(git rev-parse --verify --quiet "refs/heads/${DEVELOP_BRANCH}^{commit}")" \
+    && detach_err="$(git -C "$WORKTREE_PATH" checkout --quiet --detach "$detach_target" 2>&1)"; then
+    print_kv CALLER_WORKTREE_ACTION "detached"
+    echo "Worktree '$WORKTREE_PATH' is the calling worktree; detached it onto $DEVELOP_BRANCH ($detach_target) instead of removing it."
+  else
+    SKIP_LOCAL_DELETE=1
+    print_kv CALLER_WORKTREE_ACTION "detach_failed"
+    print_kv LOCAL_DELETE_RESULT "skipped"
+    print_kv LOCAL_DELETE_REASON "caller_worktree_detach_failed"
+    echo "WARNING: worktree '$WORKTREE_PATH' is the calling worktree and could not be detached from '$TO_DELETE' (${detach_err:-base branch '$DEVELOP_BRANCH' not found}); leaving the worktree and local branch in place. Detach it and delete the branch by hand." >&2
+  fi
+elif [ -n "$WORKTREE_PATH" ]; then
   echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
   # Proactive unlock: agent processes often leave worktrees locked; unlock is idempotent when not locked.
   git worktree unlock "$WORKTREE_PATH" 2>/dev/null || true
@@ -625,8 +728,10 @@ if [ -n "$WORKTREE_PATH" ]; then
   fi
   echo "Worktree removed."
 fi
-# -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
-git branch -D "$TO_DELETE"
+if [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+  # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
+  git branch -D "$TO_DELETE"
+fi
 fi
 
 # --- Update tracker status and close associated GitHub issue (if any) ---
