@@ -895,7 +895,7 @@ gh pr ready "$PR_NUMBER"
 Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
 
 ```bash
-bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
+bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "feature/sync-template-v{TEMPLATE_VERSION}"
 ```
 
 Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.

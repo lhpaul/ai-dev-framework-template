@@ -15658,16 +15658,49 @@ _run_loop_integration() {
     bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$@" 2>/dev/null
 }
 
-# Test 15.1: release/* head branch → main loop emits RESULT=skipped, REASON=release_pr, exits 0
-export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9"}'
+# Without --branch the loop derives the expected branch from the checkout it
+# runs against (#1444), so the no-branch cases run against a real fixture
+# checkout on the item's branch, with real git (the harness PATH shadows git
+# with a fail-fast mock) and the integration gh mock.
+_integ_fixtures="$(mktemp -d)"
+# _integ_fixture <name> <branch>: a checkout whose origin is example/repo and
+# whose HEAD names <branch> (unborn — no commit is needed to name a branch).
+_integ_fixture() {
+  local dir="$_integ_fixtures/$1"
+  PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -c init.defaultBranch=main init -q "$dir"
+  PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$dir" remote add origin https://github.com/example/repo.git
+  PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$dir" symbolic-ref HEAD "refs/heads/$2"
+  printf '%s\n' "$dir"
+}
+# _run_loop_derived <args...>: like _run_loop_integration, with real git and
+# GH_REPO / WORKFLOW_TARGET_GITHUB_REPO cleared so the target comes from the
+# fixture's origin.
+_run_loop_derived() {
+  env GH_REPO= WORKFLOW_TARGET_GITHUB_REPO= \
+    PATH="$_integration_mock_bin:$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+    bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$@" 2>/dev/null
+}
+_integ_head_json() {
+  printf '{"headRefName":"%s","headRepositoryOwner":{"login":"example"},"headRepository":{"name":"repo"},"isCrossRepository":false}' "$1"
+}
+
+# Test 15.1: release/* head branch, no --branch → the expected branch is derived
+# from the --repo-root checkout and verified; main loop emits RESULT=skipped,
+# REASON=release_pr, exits 0
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json release/v9.9.9)"
+export INTEG_MOCK_HEAD_JSON
 _integ_gh_log="$(mktemp)"
 export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
 set +e
-_integ_out="$(_run_loop_integration 999)"
+_integ_out="$(_run_loop_derived 999 --repo-root "$(_integ_fixture r999 release/v9.9.9)")"
 _integ_exit=$?
 set -e
+run_test "mainloop_derived_branch_source_checkout" "PR_OWNERSHIP_BRANCH_SOURCE=checkout" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_BRANCH_SOURCE=')"
+run_test "mainloop_derived_branch_owned" "PR_OWNERSHIP_RESULT=owned" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
 run_test "mainloop_release_guard_result_skipped" "RESULT=skipped" \
   "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
 run_test "mainloop_release_guard_reason_release_pr" "REASON=release_pr" \
@@ -15681,12 +15714,13 @@ unset INTEG_MOCK_GH_LOG
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.1b: release guard escalates if it cannot post the required summary marker
-export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.10"}'
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json release/v9.9.10)"
+export INTEG_MOCK_HEAD_JSON
 export INTEG_MOCK_PR_COMMENT_FAIL=1
 _integ_out=""
 _integ_exit=0
 set +e
-_integ_out="$(_run_loop_integration 997)"
+_integ_out="$(_run_loop_derived 997 --repo-root "$(_integ_fixture r997 release/v9.9.10)")"
 _integ_exit=$?
 set -e
 run_test "mainloop_release_guard_comment_failure_result" "RESULT=escalate" \
@@ -15700,13 +15734,16 @@ unset INTEG_MOCK_PR_COMMENT_FAIL
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
-export INTEG_MOCK_HEAD_JSON='{"headRefName":"hotfix/v9.9.1"}'
+# (expected branch derived from the working directory: no --repo-root)
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1)"
+export INTEG_MOCK_HEAD_JSON
 _integ_gh_log="$(mktemp)"
 export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
+_integ_hotfix_dir="$(_integ_fixture h998 hotfix/v9.9.1)"
 set +e
-_integ_out="$(_run_loop_integration 998)"
+_integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998)"
 _integ_exit=$?
 set -e
 run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
@@ -15873,6 +15910,57 @@ run_test "mainloop_ownership_no_target_no_gh_call" "" "$(cat "$_integ_gh_log")"
 rm -f "$_integ_gh_log" "$_integ_gh_env_log"
 rm -rf "$_own_fixture_root"
 unset INTEG_MOCK_HEAD_JSON _own_view_args _own_fixture_root _integ_gh_env_log
+
+# Tests 15.13–15.17: no --branch (#1444 review). The derived branch is checked
+# like --branch; a checkout that cannot vouch for a PR number fails closed.
+# 15.13: derived branch, PR number is a sibling's → mismatch, only the read call
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json spec/10-sibling-item)"
+export INTEG_MOCK_HEAD_JSON
+_integ_gh_log="$(mktemp)"
+_integ_out="$(INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 52 --repo-root "$(_integ_fixture own13 spec/13-own-item)")" || true
+run_test "mainloop_derived_mismatch_reason" "REASON=pr_ownership_mismatch" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_derived_mismatch_expected_branch" "PR_OWNERSHIP_EXPECTED_BRANCH=spec/13-own-item" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_EXPECTED_BRANCH=')"
+run_test "mainloop_derived_mismatch_only_read_call" \
+  "pr view 52 --repo example/repo --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" \
+  "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+
+# 15.14–15.16: develop, main, and a detached HEAD cannot vouch → fail closed
+# with REASON=pr_ownership_branch_required and no gh call at all
+_integ_detached="$(_integ_fixture detached fix/1-x)"
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_integ_detached" -c user.name=t -c user.email=t@example.com \
+  commit -q --allow-empty -m init
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_integ_detached" checkout -q --detach
+for _integ_case in develop main detached; do
+  case "$_integ_case" in
+    detached) _integ_dir="$_integ_detached" ;;
+    *) _integ_dir="$(_integ_fixture "nw-$_integ_case" "$_integ_case")" ;;
+  esac
+  _integ_gh_log="$(mktemp)"
+  _integ_exit=0
+  _integ_out="$(INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 53 --repo-root "$_integ_dir")" || _integ_exit=$?
+  run_test "mainloop_${_integ_case}_branch_required_reason" "REASON=pr_ownership_branch_required" \
+    "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+  run_test "mainloop_${_integ_case}_branch_required_exit2" "2" "$_integ_exit"
+  run_test "mainloop_${_integ_case}_branch_required_no_gh_call" "" "$(cat "$_integ_gh_log")"
+  rm -f "$_integ_gh_log"
+done
+
+# 15.17: --branch wins over the --repo-root checkout's branch (here develop,
+# which alone would fail closed)
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json release/v9.9.9)"
+export INTEG_MOCK_HEAD_JSON
+_integ_exit=0
+_integ_out="$(_run_loop_derived 997 --branch release/v9.9.9 --repo-root "$_integ_fixtures/nw-develop")" || _integ_exit=$?
+run_test "mainloop_branch_flag_wins_over_checkout_source" "PR_OWNERSHIP_BRANCH_SOURCE=argument" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_BRANCH_SOURCE=')"
+run_test "mainloop_branch_flag_wins_over_checkout_owned" "PR_OWNERSHIP_RESULT=owned" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_branch_flag_wins_over_checkout_exit0" "0" "$_integ_exit"
+rm -rf "$_integ_fixtures"
+unset INTEG_MOCK_HEAD_JSON _integ_fixtures _integ_detached _integ_dir _integ_case _integ_hotfix_dir
 
 _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON

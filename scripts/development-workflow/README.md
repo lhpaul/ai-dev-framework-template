@@ -766,6 +766,13 @@ Usage:
 bash ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
 
+Pass `--branch` whenever the item branch is known. Every run first verifies
+that the PR belongs to `--branch` — or, without it, to the workflow branch
+checked out in `--repo-root` or the working directory — and otherwise stops
+with `RESULT=escalate` (`REASON=pr_ownership_branch_required`,
+`pr_ownership_mismatch`, or `pr_ownership_unverified`) before touching the PR
+(issue #1444).
+
 What it does:
 
 - Evaluates configured draft and ready GitHub review platforms sequentially

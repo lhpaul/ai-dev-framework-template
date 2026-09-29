@@ -148,13 +148,17 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   `mktemp -d` — named with the item and process, for example
   `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
   sibling's content reach this PR with a correct PR number.
-- `pr-review-loop.sh <pr> --branch <branch>` runs this guard itself before any
-  side effect and stops with `RESULT=escalate` and
-  `REASON=pr_ownership_mismatch` (wrong branch or head repository) or
-  `REASON=pr_ownership_unverified` (PR or target repository not resolved),
-  exit `2`. It inspects the same target repository its lock key names
+- `pr-review-loop.sh` runs this guard itself on every run, before any side
+  effect. The expected branch is `--branch` when given (it wins over any
+  checkout); otherwise the workflow branch checked out in `--repo-root` (or the
+  working directory). It stops with `RESULT=escalate`, exit `2`, and
+  `REASON=pr_ownership_branch_required` (no `--branch` and the checkout is
+  detached or on `develop`, `main`, or another non-workflow branch),
+  `REASON=pr_ownership_mismatch` (wrong branch or head repository), or
+  `REASON=pr_ownership_unverified` (PR or target repository not resolved). It
+  inspects the same target repository its lock key names
   (`--repo`/`--product-repo`, `WORKFLOW_TARGET_GITHUB_REPO`, `GH_REPO`, then
-  the `--repo-root` origin). Always pass `--branch` so that check runs.
+  the `--repo-root` origin). Pass `--branch` whenever the item branch is known.
 - Mirror review-gate evidence recorded in the PR description (for example the
   Pre-Submission Self-Review log) as a PR comment after the PR exists: a
   description can be silently overwritten; a comment cannot.

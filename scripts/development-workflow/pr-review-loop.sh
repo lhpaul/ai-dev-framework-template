@@ -363,6 +363,18 @@ _resolve_lock_repo_key() {
   printf '\n'
 }
 
+# _is_trusted_workflow_branch <branch> — true for branches that belong to one
+# workflow item and can vouch for a PR number: the workflow prefixes known to
+# branch_prefix (spec, implementation-plan, feature, refactor, fix, hotfix,
+# release) plus backport/* and develop-<slug> graduation branches. develop,
+# main, and anything else are shared or unknown and return false (#1444).
+_is_trusted_workflow_branch() {
+  case "$1" in
+    backport/?*|develop-?*) return 0 ;;
+  esac
+  [ "$(branch_prefix "$1")" != "unknown" ] && [ "${1#*/}" != "" ]
+}
+
 # _lock_dir_for <repo-key> <pr-number>
 _lock_dir_for() {
   printf '/tmp/pr-review-loop-%s-%s.lockdir\n' "$1" "${2:-unknown}"
@@ -733,19 +745,31 @@ Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
-  REASON=pr_ownership_mismatch (exit 2, with RESULT=escalate: --branch was given
-    and the PR's head branch or head repository differs; nothing was posted,
-    readied, or labelled)
-  REASON=pr_ownership_unverified (exit 2, with RESULT=escalate: --branch was
-    given but pr-ownership-guard.sh could not resolve the PR; fail closed)
-  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown|repo_unresolved (only when
-    --branch is given; with PR_OWNERSHIP_PR_HEAD_BRANCH, _PR_HEAD_REPO,
-    _MISMATCH, and _REQUIRED_ACTION on refusal)
-  PR_OWNERSHIP_REPO=<owner/repo> (only when --branch is given: the repository
-    the check inspected, resolved like the lock key from --repo/--product-repo,
-    WORKFLOW_TARGET_GITHUB_REPO, GH_REPO, or --repo-root's origin; empty when
-    unresolvable, which fails closed as pr_ownership_unverified. After a pass,
-    the loop pins WORKFLOW_TARGET_GITHUB_REPO and GH_REPO to it)
+  PR ownership (issue #1444) — checked on every run before any PR side effect.
+  The expected branch is --branch when given (it wins over any checkout), else
+  the branch checked out in --repo-root (or the working directory without
+  --repo-root) when it is a workflow branch: spec/, implementation-plan/,
+  feature/, refactor/, fix/, hotfix/, release/, backport/, or develop-<slug>.
+  All three refusals exit 2 with RESULT=escalate; nothing is posted, readied,
+  or labelled:
+  REASON=pr_ownership_branch_required (no --branch, and the checkout is
+    detached, unreadable, or on develop, main, or another non-workflow branch;
+    no gh call is made)
+  REASON=pr_ownership_mismatch (the PR's head branch or head repository
+    differs from the expected branch)
+  REASON=pr_ownership_unverified (pr-ownership-guard.sh could not resolve the
+    PR, or the target repository could not be resolved)
+  PR_OWNERSHIP_BRANCH_SOURCE=argument|checkout
+  PR_OWNERSHIP_EXPECTED_BRANCH=<branch>
+  PR_OWNERSHIP_CHECKOUT_BRANCH=<branch> (on pr_ownership_branch_required)
+  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown|repo_unresolved
+    (with PR_OWNERSHIP_PR_HEAD_BRANCH, _PR_HEAD_REPO, _MISMATCH, and
+    _REQUIRED_ACTION on refusal)
+  PR_OWNERSHIP_REPO=<owner/repo> (the repository the check inspected, resolved
+    like the lock key from --repo/--product-repo, WORKFLOW_TARGET_GITHUB_REPO,
+    GH_REPO, or --repo-root's origin; empty when unresolvable, which fails
+    closed as pr_ownership_unverified. After a pass, the loop pins
+    WORKFLOW_TARGET_GITHUB_REPO and GH_REPO to it)
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
@@ -12412,6 +12436,7 @@ pr_number=""
 branch_name=""
 repo_selector=""
 repo_root="$(workflow_repo_root)"
+repo_root_explicit=0
 local_review_override_root=""
 review_policy_source="shared"
 poll_interval=120
@@ -12457,6 +12482,7 @@ while [ "$#" -gt 0 ]; do
     --repo-root)
       require_option_value "$@"
       repo_root="$2"
+      repo_root_explicit=1
       shift 2
       ;;
     --platform)
@@ -12561,11 +12587,16 @@ fi
 
 # --- PR ownership guard (issue #1444) ---
 # This loop comments on, readies, and labels the PR by number. Under parallel
-# waves a transposed number would make it mutate a sibling's PR. When the
-# caller names the item branch with --branch, prove the PR's head branch and
-# head repository belong to it before any side effect, and fail closed
-# otherwise. Without --branch the loop derives the head branch from the PR
-# itself, so there is no independent expectation to check.
+# waves a transposed number would make it mutate a sibling's PR, so every run
+# proves the PR's head branch and head repository belong to the expected
+# branch before any side effect, and fails closed otherwise.
+#
+# Expected branch: --branch when given — it always wins, even over a
+# --repo-root checkout on another branch. Otherwise the branch checked out in
+# --repo-root (or, without --repo-root, the caller's working directory), and
+# only when it is a workflow branch (_is_trusted_workflow_branch). Detached
+# HEAD, develop, main, or any other branch cannot vouch for a PR number, so
+# the run stops with REASON=pr_ownership_branch_required.
 #
 # The check must inspect the repository the loop mutates. The target comes
 # from _resolve_target_repo_slug (the lock key's resolver) against the
@@ -12574,42 +12605,64 @@ fi
 # target fails closed. Once verified, the target is pinned in
 # WORKFLOW_TARGET_GITHUB_REPO and GH_REPO so every later gh call — including
 # the release guard's summary comment, which runs before the loop enters
-# --repo-root — acts on the repository that was verified.
-if [ -n "$branch_name" ]; then
-  _ownership_repo=""
-  _ownership_output=""
-  _ownership_status=0
-  if _ownership_repo="$(_resolve_target_repo_slug "$repo_selector" "$repo_root")"; then
-    _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" \
-      --expected-branch "$branch_name" --repo "$_ownership_repo" --repo-root "$repo_root" 2>&1)" \
-      || _ownership_status=$?
-  else
-    _ownership_status=3
-    _ownership_output="RESULT=repo_unresolved
-REQUIRED_ACTION=Pass --repo owner/name (or a --repo-root whose origin is the PR's GitHub repository); WORKFLOW_TARGET_GITHUB_REPO and GH_REPO must not name different repositories.
-ERROR: could not resolve the target GitHub repository for the PR ownership check."
+# --repo-root — acts on the repository that was verified, and a derived
+# branch becomes branch_name for the rest of the run.
+_ownership_expected_branch="$branch_name"
+_ownership_branch_source="argument"
+if [ -z "$_ownership_expected_branch" ]; then
+  _ownership_branch_source="checkout"
+  _ownership_checkout="$PWD"
+  if [ "$repo_root_explicit" -eq 1 ]; then
+    _ownership_checkout="$repo_root"
   fi
-  print_kv PR_OWNERSHIP_REPO "$_ownership_repo"
-  if [ "$_ownership_status" -ne 0 ]; then
-    _ownership_reason="pr_ownership_unverified"
-    if [ "$_ownership_status" -eq 1 ]; then
-      _ownership_reason="pr_ownership_mismatch"
-    fi
+  _ownership_expected_branch="$(git -C "$_ownership_checkout" symbolic-ref --quiet --short HEAD 2>/dev/null)" \
+    || _ownership_expected_branch=""
+  if [ -z "$_ownership_expected_branch" ] || ! _is_trusted_workflow_branch "$_ownership_expected_branch"; then
     print_kv RESULT escalate
-    print_kv REASON "$_ownership_reason"
-    print_kv PR_OWNERSHIP_GUARD_EXIT "$_ownership_status"
-    # awk, not grep: a guard usage error has no key lines, and a no-match
-    # grep would abort this block under `set -e` before the exit 2 below.
-    printf '%s\n' "$_ownership_output" \
-      | awk '/^(RESULT|PR_HEAD_BRANCH|PR_HEAD_REPO|MISMATCH|REQUIRED_ACTION)=/ { print "PR_OWNERSHIP_" $0 }'
-    echo "STOP: PR #${pr_number} was not verified as the PR of branch '${branch_name}'; no reviewer ran and the PR was not modified." >&2
-    printf '%s\n' "$_ownership_output" | awk '/^(REFUSED|ERROR):/' >&2
+    print_kv REASON pr_ownership_branch_required
+    print_kv PR_OWNERSHIP_BRANCH_SOURCE "$_ownership_branch_source"
+    print_kv PR_OWNERSHIP_CHECKOUT_BRANCH "${_ownership_expected_branch:-<detached-or-unreadable>}"
+    print_kv PR_OWNERSHIP_REQUIRED_ACTION "Pass --branch <item-branch>, or run from the item's workflow-branch checkout (or pass its --repo-root)."
+    echo "STOP: no --branch was given and ${_ownership_checkout} is not on a workflow branch (${_ownership_expected_branch:-detached HEAD or not a checkout}), so PR #${pr_number} cannot be verified; no reviewer ran and the PR was not modified." >&2
     exit 2
   fi
-  print_kv PR_OWNERSHIP_RESULT owned
-  export WORKFLOW_TARGET_GITHUB_REPO="$_ownership_repo"
-  export GH_REPO="$_ownership_repo"
 fi
+_ownership_repo=""
+_ownership_output=""
+_ownership_status=0
+if _ownership_repo="$(_resolve_target_repo_slug "$repo_selector" "$repo_root")"; then
+  _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" \
+    --expected-branch "$_ownership_expected_branch" --repo "$_ownership_repo" --repo-root "$repo_root" 2>&1)" \
+    || _ownership_status=$?
+else
+  _ownership_status=3
+  _ownership_output="RESULT=repo_unresolved
+REQUIRED_ACTION=Pass --repo owner/name (or a --repo-root whose origin is the PR's GitHub repository); WORKFLOW_TARGET_GITHUB_REPO and GH_REPO must not name different repositories.
+ERROR: could not resolve the target GitHub repository for the PR ownership check."
+fi
+print_kv PR_OWNERSHIP_BRANCH_SOURCE "$_ownership_branch_source"
+print_kv PR_OWNERSHIP_EXPECTED_BRANCH "$_ownership_expected_branch"
+print_kv PR_OWNERSHIP_REPO "$_ownership_repo"
+if [ "$_ownership_status" -ne 0 ]; then
+  _ownership_reason="pr_ownership_unverified"
+  if [ "$_ownership_status" -eq 1 ]; then
+    _ownership_reason="pr_ownership_mismatch"
+  fi
+  print_kv RESULT escalate
+  print_kv REASON "$_ownership_reason"
+  print_kv PR_OWNERSHIP_GUARD_EXIT "$_ownership_status"
+  # awk, not grep: a guard usage error has no key lines, and a no-match
+  # grep would abort this block under `set -e` before the exit 2 below.
+  printf '%s\n' "$_ownership_output" \
+    | awk '/^(RESULT|PR_HEAD_BRANCH|PR_HEAD_REPO|MISMATCH|REQUIRED_ACTION)=/ { print "PR_OWNERSHIP_" $0 }'
+  echo "STOP: PR #${pr_number} was not verified as the PR of branch '${_ownership_expected_branch}'; no reviewer ran and the PR was not modified." >&2
+  printf '%s\n' "$_ownership_output" | awk '/^(REFUSED|ERROR):/' >&2
+  exit 2
+fi
+print_kv PR_OWNERSHIP_RESULT owned
+export WORKFLOW_TARGET_GITHUB_REPO="$_ownership_repo"
+export GH_REPO="$_ownership_repo"
+branch_name="$_ownership_expected_branch"
 
 # --- Reviewer-loop run identifier (#1502 follow-up: dual cap) ---
 # Resolved as early as possible (pr_number is now stable) so every code path

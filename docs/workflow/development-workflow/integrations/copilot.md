@@ -149,6 +149,7 @@ platforms and are configurable via `pr-review-loop.sh` flags:
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
+  --branch <branch_name> \
   --platform copilot \
   --poll-interval 30 \
   --max-wait 300

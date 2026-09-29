@@ -151,7 +151,7 @@ blocking triage category, the normal `needs_fixes` path still wins.
 By default, `Major` findings are treated as advisory (non-blocking). If your team wants `Major` findings to block PRs, set the environment variable before running `pr-review-loop.sh`:
 
 ```bash
-HAYSTACK_MAJOR_IS_BLOCKING=1 ./scripts/development-workflow/pr-review-loop.sh <pr_number>
+HAYSTACK_MAJOR_IS_BLOCKING=1 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
 ```
 
 ### "Rules violation" — CHANGELOG structure findings
@@ -217,7 +217,7 @@ Override both via environment variable:
 
 ```bash
 HAYSTACK_REVIEWER_TIMEOUT=180 HAYSTACK_POLL_INTERVAL=20 \
-  ./scripts/development-workflow/pr-review-loop.sh <pr_number>
+  ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
 ```
 
 If a single `haystack triage` call hangs (e.g., network issue), the script enforces a per-call timeout of `floor(remaining_budget / 2)` seconds (minimum 1 second) and retries as long as the overall budget allows. When the budget is finally exhausted due to a hung call, the script exits with `REASON=timeout` (exit code 2).
@@ -386,7 +386,7 @@ REASON=pending_timeout
 **Recovery options**:
 
 1. **Increase the timeout**: Set `HAYSTACK_REVIEWER_TIMEOUT=300` to give Haystack more time to complete analysis.
-2. **Re-run the review loop manually** after a few minutes: `./scripts/development-workflow/pr-review-loop.sh <pr_number>`.
+2. **Re-run the review loop manually** after a few minutes: `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>`.
 3. **Run haystack triage directly** if you need an immediate result:
 
    ```bash

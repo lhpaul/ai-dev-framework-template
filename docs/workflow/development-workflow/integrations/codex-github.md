@@ -420,6 +420,7 @@ Use a disposable or already-open PR and run:
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
+  --branch <branch_name> \
   --platform pr-agent,codex-github \
   --ready-phase codex-github \
   --post-final-summary \
