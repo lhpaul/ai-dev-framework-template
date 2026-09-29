@@ -52,7 +52,8 @@ Before running this smoke test:
 
 1. Open `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
 2. Locate the "Long spec/plan review-cycle guidance" section
-3. Confirm the re-run rule: two consecutive cycles whose blocking findings implicate the same matrix (matrix identity: its section heading, table, or step anchor in the reviewed spec, plan, or Refactor work-item brief) trigger a full six-check re-audit by the loop runner before the next fix push, with the result recorded in the fix commit comment and the counter-reset semantics stated (resets on a non-implicating cycle and after the re-audit)
+3. Confirm the re-run rule: two consecutive cycles whose blocking findings implicate the same matrix (matrix identity: its section heading, table, or step anchor in the reviewed spec, plan, or Refactor work-item brief) trigger, provided no stuck-loop condition applies (no-progress after 2+ cycles, finding reappearance, or `max_cycles`), a full six-check re-audit by the loop runner before the next fix push, with the result recorded in the fix commit comment and the counter-reset semantics stated (resets on a non-implicating cycle and after the re-audit)
+   - Negative cases: a first implicating cycle only sets the counter to one (no re-audit); a second consecutive implicating cycle that coincides with a stuck-loop condition escalates per the existing Detection rules and skips the re-audit, granting no extra fix attempt
 4. Confirm the existing stuck-loop escalation path is stated as unchanged
 
 **Expected result**: Re-run rule (loop-runner ownership, matrix identity, counter-reset semantics) and unchanged-escalation statement both present.
