@@ -288,17 +288,15 @@ closing that gap is Out of Scope here and tracked separately as **issue
 Under any profile that dispatches a Cursor subagent
 (`cursor-native-handoff` or `cursor-parent-orchestrated`), the dispatching
 context reads the target agent's `model:` field from
-`.cursor/agents/<agent>.md` in the checkout being run, before it dispatches.
-It uses that value, and it states that value when it reports or plans the
-dispatch.
+`.cursor/agents/<agent>.md` in the checkout being run, before it dispatches,
+and uses that value.
 
 The model tables in `agent-model-config.md` are template defaults and
 examples. They are never a substitute for a local pin. A downstream repository
 may pin a different model family (for example Grok or Composer), and that pin
-is honored as written. When the agent file or its `model:` field is missing,
-the dispatching context reports that gap rather than filling it from those
-tables. The full rule is in `agent-model-config.md` § "Cursor model source of
-truth".
+is honored as written. The missing-file and missing-field cases, and the
+one-off override exception, are defined in `agent-model-config.md`
+§ "Cursor model source of truth".
 
 ---
 

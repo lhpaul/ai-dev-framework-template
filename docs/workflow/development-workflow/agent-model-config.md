@@ -44,7 +44,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Once set, those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
+- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
@@ -78,18 +78,26 @@ repository actually runs.
 
 Downstream repositories may pin other model families, such as Grok, Composer,
 or a provider-specific ID the template never ships. Those pins must be honored
-as written. The same applies to the Claude Code defaults table: in Cursor, a
-Claude model ID from that table is never a substitute for the Cursor pin.
+as written, including a checked-in `inherit`. No table in this document, the
+Claude Code defaults table included, is a substitute for the value an agent
+file resolves to.
 
 Before dispatching a Cursor stage subagent, an orchestrating role (`/run-item`,
 `/run-items`, `/run-epic`, the item or portfolio orchestrator, or a parent
-running inline) reads the target agent's `model:` value from
-`.cursor/agents/<agent>.md` in the checkout being run and uses that value. It
-does not choose or announce a model from the tables in this document. When
-`.cursor/agents/<agent>.md` is missing, Cursor resolves the agent through the
-location precedence described after "Cursor model field values" below. When
-the file or its `model:` field is missing, report that gap in the run summary
-instead of filling it from this document.
+running inline) resolves the target agent's model from the checkout being run:
+
+1. If `.cursor/agents/<agent>.md` exists, use its `model:` value.
+2. If it does not exist, Cursor resolves the agent through the location
+   precedence described after "Cursor model field values" below; use the
+   `model:` value of the file that resolves, and name that file in the run
+   summary.
+3. If no agent file resolves, or the resolved file has no `model:` field,
+   report the gap in the run summary. Do not fill it from any table in this
+   document.
+
+A deliberate one-off override from "Option 1" below (a duplicate agent file,
+or `inherit` chosen and recorded for that run) supersedes the checked-in pin
+for that run only.
 
 ### Cursor model defaults (template)
 
