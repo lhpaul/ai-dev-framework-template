@@ -148,6 +148,9 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   `mktemp -d` — named with the item and process, for example
   `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
   sibling's content reach this PR with a correct PR number.
+- Mirror review-gate evidence recorded in the PR description (for example the
+  Pre-Submission Self-Review log) as a PR comment after the PR exists: a
+  description can be silently overwritten; a comment cannot.
 - A mutation that uses a number resolved moments earlier by `gh pr create` or
   `gh pr view --json number` on the item branch itself (for example the
   post-create base-branch assertion) already has ownership evidence; every

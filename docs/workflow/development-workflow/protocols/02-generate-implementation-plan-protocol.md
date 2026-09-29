@@ -646,7 +646,7 @@ If no blocking human decision remains:
       filename a sibling agent can overwrite
     - After the PR exists, mirror the `Document Quality Gate` log as a PR
       comment: a description can be silently overwritten; a comment cannot
-    - Before any later `gh pr edit`, `gh pr comment`, `gh pr ready`, or label
+    - Before any later `gh pr edit`, `gh pr comment`, `gh pr ready`, `gh pr close`, or label
       change that addresses this PR by number, run
       `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
       --expected-branch "implementation-plan/[branch-slug]"` and mutate only on
