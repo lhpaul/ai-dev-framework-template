@@ -316,6 +316,12 @@ comment_only_reviewer_verdict() {
     _saved_started_at="$reviewer_started_at"
     _adapter_rc=0
     comment_only_completion_evidence "$platform_arg" "$bot_login_arg" || _adapter_rc=$?
+    # rc 0: the newest SHA-pinned root verdict is clean — its created_at
+    # bounds unavailability notices (a clean re-run after a notice clears it).
+    _root_clean_created=""
+    if [ "$_adapter_rc" -eq 0 ]; then
+      _root_clean_created="$reviewer_started_at"
+    fi
     reviewer_started_at="$_saved_started_at"
     if [ "$_adapter_rc" -eq 2 ] && [ -n "$_root_blocking_created" ] && ! [ "$_root_blocking_created" \< "$reviewer_started_at" ]; then
       annotate_needs_fixes_best_effort
@@ -338,11 +344,12 @@ comment_only_reviewer_verdict() {
     if ! _unavail_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null)"; then
       escalate issue-comment-fetch-failed
     fi
-    if ! _unavail_count="$(printf '%s\n' "${_unavail_json:-[]}" | jq -r --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" --arg since "$reviewer_started_at" '
+    if ! _unavail_count="$(printf '%s\n' "${_unavail_json:-[]}" | jq -r --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" --arg since "$reviewer_started_at" --arg clean "$_root_clean_created" '
           [ .[]?[]
             | select(
                 (((.user.login // "") == $bot) or ((.user.login // "") == $plain) or ((.user.login // "") == ($bot + "[bot]")))
                 and ((.created_at // "") >= $since)
+                and (($clean == "") or ((.created_at // "") > $clean))
                 and ((.body // "") | contains("Reviewed commit") | not)
                 and ((.body // "") | test("usage[[:space:]]+limits?|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+a[[:space:]]+codex[[:space:]]+account"; "i"))
               )

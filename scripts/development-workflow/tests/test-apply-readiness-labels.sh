@@ -2034,6 +2034,10 @@ run_test "codex_review_plus_newer_env_error_refuses_reason" "reviewer-unavailabl
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-01T00:00:00Z","id":914,"body":"You have reached your Codex usage limits for code reviews."}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_review_supersedes_older_usage_limit_result" "labeled" "$(field "$result" RESULT)"
+# A clean SHA-pinned root re-run AFTER the notice clears it (no deadlock).
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":915,"body":"You have reached your Codex usage limits for code reviews."},{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-04T00:00:00Z","id":916,"body":'"$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs .)"'}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_clean_root_rerun_clears_older_notice_result" "labeled" "$(field "$result" RESULT)"
 MOCK_REVIEWS='[]'
 # The clean sentence AND the head pin together still pass (unchanged
 # behavior) — but round 17 (PRRT_kwDORWAxaM6m2604) requires the body to
