@@ -225,6 +225,20 @@ Verify:
 - Hub tracker status moved to `Merged` when the implementation closes the item.
 - The hub checkout returns to the integration branch for the topic.
 
+### Closing keywords in product PRs
+
+A bare closing keyword in a product PR (`Fixes #601`) is numbered in the
+**product** repository, but cleanup mutates the **hub** tracker, where `#601`
+may be an unrelated issue. Cleanup therefore does not apply bare
+`Closes`/`Fixes`/`Resolves #NNN` references from a product-repository PR to the
+hub tracker; it logs a `NOTE:` naming the skipped behavior instead. To close a
+hub issue from a product PR, write the hub-qualified form
+(`Closes <hub-owner>/<hub-repo>#NNN`); the close comment then names the product
+PR as `<product-owner>/<product-repo>#N`. If the hub repository cannot be
+resolved, cleanup warns and applies no PR-body references rather than guess.
+The branch-derived issue number (for example `feature/601-slug`) is unaffected
+and remains a hub issue number.
+
 ## Troubleshooting
 
 ### Failed CI

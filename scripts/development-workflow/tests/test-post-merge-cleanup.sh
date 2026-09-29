@@ -162,7 +162,15 @@ case "$1 $2" in
     fi
     ;;
   "issue close")
-    printf 'closed\n'
+    printf 'closed %s\n' "$*"
+    ;;
+  "repo view")
+    # Hub slug lookup (#1538). GH_HUB_REPO_FAIL simulates an unresolvable hub.
+    if [ -n "${GH_HUB_REPO_FAIL:-}" ]; then
+      echo "mock repo view failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${GH_HUB_REPO:-example/hub}"
     ;;
   *)
     echo "unexpected gh invocation: $*" >&2
@@ -1421,6 +1429,121 @@ run_test \
       printf 'no'
     fi
   )"
+
+# --- workflow_hub: PR-body closing refs must not cross tracker repos (#1538) ---
+# A product-repo PR's bare "Fixes #601" is numbered in the PRODUCT repo; the
+# cleanup script mutates the HUB tracker, where #601 is an unrelated issue.
+# Only "Fixes <hub owner/repo>#NNN" is honoured for a product-repo PR.
+make_hub_fixture() {
+  local name="$1" branch="$2"
+  local product_repo product_worktree hub
+  product_repo="$(make_repo "hub1538-$name-product" "$branch" yes)"
+  product_worktree="$TMP_ROOT/hub1538-$name-worktree"
+  "$REAL_GIT" -C "$product_repo" worktree add -q "$product_worktree" "$branch"
+  hub="$TMP_ROOT/hub1538-$name"
+  "$REAL_GIT" init -q -b develop "$hub"
+  "$REAL_GIT" -C "$hub" config user.email "fixture@example.com"
+  "$REAL_GIT" -C "$hub" config user.name "Fixture User"
+  cat >"$hub/.ai-dev-workflow.yaml" <<HUB_CONFIG
+schema_version: 2
+mode: workflow_hub
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/repo
+      default_branch: develop
+      role: mobile
+      scope: fixture app
+      tracker:
+        component: mobile
+HUB_CONFIG
+  cat >"$hub/.ai-dev-workflow.local.yaml" <<HUB_LOCAL_CONFIG
+product_repos:
+  - name: mobile-app
+    local_path: "$product_worktree"
+HUB_LOCAL_CONFIG
+  "$REAL_GIT" -C "$hub" add .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml
+  "$REAL_GIT" -C "$hub" commit -q -m "hub config"
+  printf '%s\n' "$hub"
+}
+
+# run_hub_cleanup <hub> <branch> <pr> <pr_body> [ENV=VAL ...]
+# Echoes combined output and a trailing "EXIT=<status>" line.
+run_hub_cleanup() {
+  local hub="$1" branch="$2" pr="$3" body="$4"
+  shift 4
+  local out status
+  set +e
+  out="$(
+    env GH_MERGED_HEAD="$branch" GH_MERGED_PR="$pr" GH_PR_BODY="$body" \
+      GH_ISSUE_STATE=OPEN PATH="$stub_bin:$PATH" "$@" \
+      "$HELPER" --repo-root "$hub" --repo mobile-app --base develop --pr "$pr" "$branch" 2>&1
+  )"
+  status=$?
+  set -e
+  printf '%s\nEXIT=%s\n' "$out" "$status"
+}
+
+lacks() { if grep -Fq "$1" <<<"$2"; then printf 'no'; else printf 'yes'; fi; }
+
+# A: bare ref in a product-repo PR is not applied to the hub tracker.
+h1538a_branch="feature/hub1538-bare-ref"
+h1538a_hub="$(make_hub_fixture bare "$h1538a_branch")"
+h1538a_out="$(run_hub_cleanup "$h1538a_hub" "$h1538a_branch" 91 'Fixes #601')"
+run_contains "hub_product_pr_bare_ref_exit_ok" "EXIT=0" "$h1538a_out"
+run_test "hub_product_pr_bare_ref_not_closed" "yes" "$(lacks "Closing issue #601" "$h1538a_out")"
+run_test "hub_product_pr_bare_ref_no_tracker_update" "yes" "$(lacks "Processing issue #601" "$h1538a_out")"
+run_contains "hub_product_pr_bare_ref_skip_is_announced" "NOT applied to the hub tracker" "$h1538a_out"
+
+# B: a hub-qualified ref is honoured, and the close comment names the PR by
+# its product repository so it is not read as a hub PR number.
+h1538b_branch="feature/hub1538-qualified-ref"
+h1538b_hub="$(make_hub_fixture qualified "$h1538b_branch")"
+h1538b_out="$(run_hub_cleanup "$h1538b_hub" "$h1538b_branch" 92 'Closes example/hub#602')"
+run_contains "hub_product_pr_qualified_ref_closed" "Closing issue #602..." "$h1538b_out"
+run_contains "hub_product_pr_qualified_ref_comment_names_product_repo" \
+  "602 --comment Closed by example/repo#92." "$h1538b_out"
+
+# C: mixed bare + qualified refs — only the hub-qualified one is applied.
+h1538c_branch="feature/hub1538-mixed-refs"
+h1538c_hub="$(make_hub_fixture mixed "$h1538c_branch")"
+h1538c_out="$(run_hub_cleanup "$h1538c_hub" "$h1538c_branch" 93 'Fixes #601
+Closes example/hub#602')"
+run_contains "hub_product_pr_mixed_refs_qualified_closed" "Closing issue #602..." "$h1538c_out"
+run_test "hub_product_pr_mixed_refs_bare_not_closed" "yes" "$(lacks "issue #601" "$h1538c_out")"
+
+# D: product repo that IS the hub's own repository keeps bare-ref behaviour.
+h1538d_branch="feature/hub1538-same-repo"
+h1538d_hub="$(make_hub_fixture samerepo "$h1538d_branch")"
+h1538d_out="$(run_hub_cleanup "$h1538d_hub" "$h1538d_branch" 94 'Fixes #603' GH_HUB_REPO=example/repo)"
+run_contains "hub_equals_product_repo_bare_ref_closed" "Closing issue #603..." "$h1538d_out"
+run_contains "hub_equals_product_repo_comment_unqualified" "603 --comment Closed by PR #94." "$h1538d_out"
+
+# E: an unresolvable hub slug never mutates on a guess, and is announced.
+h1538e_branch="feature/hub1538-unresolved-hub"
+h1538e_hub="$(make_hub_fixture unresolved "$h1538e_branch")"
+h1538e_out="$(run_hub_cleanup "$h1538e_hub" "$h1538e_branch" 95 'Fixes #604
+Closes example/hub#605' GH_HUB_REPO_FAIL=1)"
+run_contains "hub_slug_unresolved_exit_ok" "EXIT=0" "$h1538e_out"
+run_contains "hub_slug_unresolved_is_announced" "could not resolve the workflow hub GitHub repository" "$h1538e_out"
+run_test "hub_slug_unresolved_nothing_closed" "yes" "$(lacks "Closing issue" "$h1538e_out")"
+
+# F: team-prefixed branch — bare PR-body refs no longer override the
+# slug-derived identifier when the PR is in a product repo.
+h1538f_branch="fix/lh-97-hub1538-team-prefixed"
+h1538f_hub="$(make_hub_fixture teamprefixed "$h1538f_branch")"
+h1538f_out="$(run_hub_cleanup "$h1538f_hub" "$h1538f_branch" 96 'Fixes #601')"
+run_test "hub_team_prefixed_bare_ref_not_used_as_override" "yes" "$(lacks "using closing keyword refs from PR" "$h1538f_out")"
+run_test "hub_team_prefixed_bare_ref_not_closed" "yes" "$(lacks "Closing issue #601" "$h1538f_out")"
+
+# G: numeric branch — extra bare closing refs from a product-repo PR are not
+# applied to the hub tracker either.
+h1538g_branch="fix/1538-hub1538-extra-closes"
+h1538g_hub="$(make_hub_fixture extracloses "$h1538g_branch")"
+h1538g_out="$(run_hub_cleanup "$h1538g_hub" "$h1538g_branch" 97 'Fixes #1538
+Also Fixes #601')"
+run_test "hub_numeric_branch_extra_bare_ref_not_closed" "yes" "$(lacks "also closes" "$h1538g_out")"
+run_test "hub_numeric_branch_extra_bare_ref_no_tracker_update" "yes" "$(lacks "Processing issue #601" "$h1538g_out")"
 
 echo ""
 echo "Passed: $PASS_COUNT"
