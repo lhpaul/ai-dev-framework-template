@@ -184,7 +184,11 @@ GH_STATUS=0
 wait "$GH_PID" || GH_STATUS=$?
 
 if [ "$GH_STATUS" -ne 0 ]; then
-  refuse 3 pr_unresolved "gh pr view exited $GH_STATUS: $(head -n 1 "$SCRATCH_DIR/stderr" 2>/dev/null || true)" \
+  GH_ERROR=""
+  if [ -s "$SCRATCH_DIR/stderr" ]; then
+    GH_ERROR="$(head -n 1 "$SCRATCH_DIR/stderr")"
+  fi
+  refuse 3 pr_unresolved "gh pr view exited $GH_STATUS: ${GH_ERROR:-no error output}" \
     "Confirm the PR number and repository, then re-run the guard before mutating the PR."
 fi
 

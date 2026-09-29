@@ -303,6 +303,7 @@ fi
 
 When ordering or comparing events (e.g., determining which comment came first, whether a review happened after the last push), always use **server-returned timestamps from API responses**, not local `date` output. Local clocks can be skewed relative to the server by seconds or minutes.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Wrong — local clock may not match server time:
 TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
