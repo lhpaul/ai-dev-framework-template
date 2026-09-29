@@ -72,3 +72,11 @@ invalid-declaration boundaries are defined once, normatively, in
 `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
 Follow that document; this surface deliberately does not restate it.
 
+Stage-agent models in Cursor: before dispatching a stage subagent, read that
+agent's `model:` field from `.cursor/agents/<agent>.md` in the checkout being
+run and use it. Do not pick models from the template tables in
+`docs/workflow/development-workflow/agent-model-config.md`. Downstream
+repositories may pin other model families (for example Grok or Composer), and
+those pins are honored as written. See that document's "Cursor model source of
+truth" section.
+
