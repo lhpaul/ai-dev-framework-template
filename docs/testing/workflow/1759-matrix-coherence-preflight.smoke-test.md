@@ -72,7 +72,7 @@ Before running this smoke test:
 **Maps to**: brief scope — "what evidence it should produce"
 
 1. Open `REVIEW.md`'s Spec Review Checklist
-2. Confirm the bullet requiring the `Matrix coherence preflight` row on matrix-bearing spec PRs, with audit summary or reasoned `Not applicable`
+2. Confirm the bullet requiring the `Matrix coherence preflight` row on matrix-bearing spec PRs, requiring an audit summary (`Checked` or `Checked — gaps found`); a `Not applicable — no stateful contract` row on a matrix-bearing spec is itself a blocking misclassification finding (`Not applicable` is reserved for the non-stateful case in Step 4)
 3. Repeat for the Plan Review Checklist
 4. Open the `#1757` spec's decision-gate matrix and walk one check (e.g. check 2, missing states) as a dry run: confirm the six-check definition inlined in Protocol 01's preflight bullet is answerable against that real matrix
 
