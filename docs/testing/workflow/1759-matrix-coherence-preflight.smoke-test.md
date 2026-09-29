@@ -82,10 +82,10 @@ Before running this smoke test:
 
 **Maps to**: Decision 2 / Rule 2 (no drift)
 
-1. Run: `grep -rn "Matrix coherence preflight" docs/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md`
+1. Run: `grep -rn "Matrix coherence preflight"` over the 22 implementation targets listed in the plan's Verification Log row "Full 22-file population" (exclude the retained plan and this runbook, which necessarily restate the checks)
 2. Read each hit
 3. Confirm every hit is the canonical definition, a pointer to it, or the gate-row name — no restated variant of the audit checks
-4. Drift catch beyond the phrase: diff the audit-check list inlined in Protocol 01's preflight bullet against each other surface's text. Run `grep -rn "overlapping rows\|missing states\|precedence" docs/workflow/ .claude/ .cursor/ .codex/ .agents/ REVIEW.md` and read each hit: a surface naming check classes in its own words (rather than pointing to Protocol 01 or `review-doctrine.md`) is a restatement
+4. Drift catch beyond the phrase: diff the audit-check list inlined in Protocol 01's preflight bullet against each other surface's text. Run `grep -n "overlapping rows\|missing states\|precedence"` over the same 22 targets (same exclusions) and read each hit: a surface naming check classes in its own words (rather than pointing to Protocol 01 or `review-doctrine.md`) is a restatement
 
 **Expected result**: No file redefines the checks; agent/skill mirrors carry pointer sentences only.
 
