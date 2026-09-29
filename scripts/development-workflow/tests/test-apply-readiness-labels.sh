@@ -80,10 +80,12 @@ case "$*" in
     # `gh api user` calls do not consume awk's global state; MOCK_GH_USER
     # overrides it (default: the test's operator fixture login).
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    _uc="${TMP_ROOT:-/tmp}/gh-user.cache"
+    _uc="${MOCK_TMP_ROOT:-${TMP_ROOT:-/tmp}}/gh-user.cache"
+    # The helper calls `gh api user --jq '.login // ""'`: emit the bare
+    # login, as gh does once --jq is applied.
     [ -s "$_uc" ] && { cat "$_uc"; exit 0; }
-    printf '%s\n' "{\"login\":\"${MOCK_GH_USER:-loop-runner}\"}" >"$_uc" 2>/dev/null || true
-    cat "$_uc" 2>/dev/null || printf '%s\n' '{"login":"loop-runner"}'
+    printf '%s\n' "${MOCK_GH_USER:-loop-runner}" >"$_uc" 2>/dev/null || true
+    cat "$_uc" 2>/dev/null || printf '%s\n' 'loop-runner'
     exit 0
     ;;
   *"pr edit"*)
@@ -212,9 +214,28 @@ case "$*" in
     # to the already-filtered nodes).
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
     [ "${MOCK_PR_TIMELINE_EXIT:-0}" = "0" ] || exit 1
-    printf '%s\n' "{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE:-[]}}}}}}" \
-      | jq -r "${jq_filter:-.}"
+    # Round 19 (PRRT_kwDORWAxaM6m5slK): the helper now paginates (--paginate
+    # --slurp), so the stub emits an ARRAY OF PAGES. MOCK_PR_TIMELINE_PAGE2,
+    # when set, is a second page's nodes (the head commit can sit on page 1
+    # with the trigger only on page 2).
+    if [ -n "${MOCK_PR_TIMELINE_PAGE2:-}" ]; then
+      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE:-[]}}}}}},{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE_PAGE2}}}}}}]"
+    else
+      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE:-[]}}}}}}]"
+    fi
     exit 0
+    ;;
+  *"collaborators/"*"/permission"*)
+    # Round 19 (PRRT_kwDORWAxaM6m5slC): repository-permission lookup for the
+    # ledger author trust check. MOCK_PERMS is a space-separated list of
+    # login=permission pairs; an unlisted login has no access (exit 1, as
+    # the API 404s for a non-collaborator).
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    _pl="$(printf '%s' "$*" | sed -n 's#.*collaborators/\([^/]*\)/permission.*#\1#p')"
+    for _kv in ${MOCK_PERMS:-}; do
+      if [ "${_kv%%=*}" = "$_pl" ]; then printf '%s\n' "${_kv#*=}"; exit 0; fi
+    done
+    exit 1
     ;;
   *"run view"*)
     # Round 17 (PRRT_kwDORWAxaM6m260z): the claude-action run log fetch.
@@ -413,7 +434,10 @@ run_helper() {
     MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
     MOCK_WORKFLOW_RUNS="${MOCK_WORKFLOW_RUNS:-}" \
     MOCK_GH_USER="${MOCK_GH_USER:-}" \
+    MOCK_TMP_ROOT="$TMP_ROOT" \
     MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
+    MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
+    MOCK_PERMS="${MOCK_PERMS:-}" \
     MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
@@ -1639,7 +1663,6 @@ YAML
 # pre-fix the helper refused reviewer-check-name-unresolved before ever
 # reading the review surface.
 run_helper_platform() {
-  local config_file="$1"
   local label="${MOCK_LABEL:-ready-for-human-review}"
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
@@ -1683,7 +1706,10 @@ run_helper_platform() {
     MOCK_RUN_LOG_EXIT="${MOCK_RUN_LOG_EXIT:-0}" \
     MOCK_HEAD_COMMIT_JSON="${MOCK_HEAD_COMMIT_JSON:-}" \
     MOCK_GH_USER="${MOCK_GH_USER:-}" \
+    MOCK_TMP_ROOT="$TMP_ROOT" \
     MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
+    MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
+    MOCK_PERMS="${MOCK_PERMS:-}" \
     MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
@@ -1834,9 +1860,31 @@ MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":501,"commit
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_unrecognized_terminal_body_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
 # The approved clean sentence in a terminal body stays non-blocking.
-MOCK_REVIEWS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"id":501,"commit_id":"'"$HEAD"'","state":"COMMENTED","body":"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `'"$HEAD"'`","submitted_at":"2026-01-02T00:00:00Z"}]'
+_codex_review_json() {
+  # _codex_review_json <state> <body> [id] [submitted_at] — one Codex review
+  # object on the head (comma-join several into MOCK_REVIEWS).
+  printf '%s' "$2" | jq -Rsc --arg st "$1" --arg sha "$HEAD" --argjson id "${3:-501}" --arg ts "${4:-2026-01-02T00:00:00Z}" \
+    '{user:{login:"chatgpt-codex-connector[bot]"},id:$id,commit_id:$sha,state:$st,body:.,submitted_at:$ts}'
+}
+MOCK_REVIEWS="[$(_codex_review_json COMMENTED "$_codex_canonical_clean_body")]"
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_approved_terminal_body_labels_result" "labeled" "$(field "$result" RESULT)"
+# Round 19 (PRRT_kwDORWAxaM6m5sk3): the PR-review path runs the canonical
+# whole-body classifier — the clean sentence followed by later blocking text
+# is NOT the approved template and must block (old: substring grep passed it).
+MOCK_REVIEWS="[$(_codex_review_json COMMENTED "${_codex_canonical_clean_body} Must fix the guard before merge.")]"
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_clean_sentence_plus_must_fix_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+# Round 19 (PRRT_kwDORWAxaM6m5skr): a structured CHANGES_REQUESTED on the
+# head survives a LATER informational COMMENTED review from the same bot.
+MOCK_REVIEWS="[$(_codex_review_json CHANGES_REQUESTED "" 501 2026-01-02T00:00:00Z),$(_codex_review_json COMMENTED "$_codex_canonical_clean_body" 502 2026-01-03T00:00:00Z)]"
+result="$(run_helper_platform "$_codex_config")"
+run_test "changes_requested_survives_later_comment_reason" "blocking-findings" "$(field "$result" REASON)"
+# ...but a later APPROVED review by the same bot supersedes it.
+MOCK_REVIEWS="[$(_codex_review_json CHANGES_REQUESTED "" 501 2026-01-02T00:00:00Z),$(_codex_review_json APPROVED "" 503 2026-01-03T00:00:00Z)]"
+result="$(run_helper_platform "$_codex_config")"
+run_test "changes_requested_superseded_by_approved_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEWS='[]'
 
 # Thread PRRT_kwDORWAxaM6m1pF_: non-review completion evidence for hosted
 # comment-only reviewers. codex-github publishes its clean result as a
@@ -1903,6 +1951,16 @@ run_test "greptile_backdated_commit_pre_push_trigger_no_label" "0" "$(grep -c 'a
 MOCK_PR_TIMELINE="$_greptile_timeline_after_push"
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_post_push_trigger_labels_result" "labeled" "$(field "$result" RESULT)"
+# Round 19 (PRRT_kwDORWAxaM6m5slK): the timeline is paginated — the head
+# commit on page 1 and the trigger only on page 2 must still label (old:
+# last:100 omitted the anchor once >100 later events accumulated).
+MOCK_PR_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
+MOCK_PR_TIMELINE_PAGE2='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","body":"@greptile review"}]'
+MOCK_GREPTILE_REACTION="$_greptile_reaction_json"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"agent"},"created_at":"2026-01-05T00:00:00Z","id":901,"body":"@greptile review"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "greptile_trigger_on_timeline_page2_labels_result" "labeled" "$(field "$result" RESULT)"
+MOCK_PR_TIMELINE_PAGE2=''
 MOCK_HEAD_COMMIT_JSON=''
 MOCK_PR_TIMELINE=""
 MOCK_ISSUE_COMMENTS='[]'
@@ -2101,9 +2159,25 @@ result="$(run_helper_platform "$_codex_config")"
 run_test "coderabbit_cli_none_association_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 # A trusted association the invoker does NOT own (a repo COLLABORATOR) is
 # still the loop's trust domain — the loop can be run by any collaborator.
+MOCK_PERMS='trusted-collaborator=write'
 MOCK_ISSUE_COMMENTS="$(_ledger_comment trusted-collaborator COLLABORATOR 936 "$(_ledger_entry clean "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "coderabbit_cli_collaborator_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
+# Round 19 (PRRT_kwDORWAxaM6m5slC): a COLLABORATOR/MEMBER ASSOCIATION alone
+# is not write capability — a read-permission collaborator (and one whose
+# permission lookup fails) is untrusted and its ledger is refused.
+MOCK_PERMS='trusted-collaborator=read'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_read_permission_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_PERMS=''
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_lookup_failed_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_ISSUE_COMMENTS="$(_ledger_comment member-user MEMBER 938 "$(_ledger_entry clean "$HEAD" 3)")"
+MOCK_PERMS='member-user=read'
+result="$(run_helper_platform "$_codex_config")"
+run_test "coderabbit_cli_member_read_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_PERMS='trusted-collaborator=write'
+MOCK_ISSUE_COMMENTS="$(_ledger_comment trusted-collaborator COLLABORATOR 936 "$(_ledger_entry clean "$HEAD" 3)")"
 # A forged NEWER comment by an untrusted author must not shadow a trusted
 # one: the newest TRUSTED record is selected, and the forged entry is
 # ignored — labels (the forged entry claims needs_fixes, older trusted one
@@ -2148,6 +2222,7 @@ result="$(run_helper_platform "$_codex_config")"
 run_test "local_ai_reviewer_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
 MOCK_ISSUE_COMMENTS='[]'
 MOCK_GH_USER=''
+MOCK_PERMS=''
 
 echo ""
 echo "$pass passed, $fail failed"

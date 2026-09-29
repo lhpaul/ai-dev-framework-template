@@ -258,7 +258,7 @@ comment_only_reviewer_verdict() {
   if [ "${_adapter_run_head_sha:-}" = "$head_sha" ] && [ "${_adapter_run_platform:-}" = "$platform_arg" ]; then
     if [ "${_adapter_ledger_clean:-0}" = "1" ]; then
       reviewer_started_at="${_adapter_ledger_started_at:-}"
-      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg"
+      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg" 1
       return
     fi
     result="refused"
@@ -289,7 +289,7 @@ comment_only_reviewer_verdict() {
     _adapter_rc=0
     comment_only_completion_evidence "$platform_arg" "$bot_login_arg" || _adapter_rc=$?
     if [ "$_adapter_rc" -eq 0 ]; then
-      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg"
+      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg" 1
       return
     fi
     if [ "$_adapter_rc" -eq 2 ]; then
@@ -325,7 +325,7 @@ comment_only_reviewer_verdict() {
   if [ -n "$inline_earliest" ] && [ "$inline_earliest" \< "$reviewer_started_at" ]; then
     inline_bound="$inline_earliest"
   fi
-  count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$inline_bound" "$platform_arg"
+  count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$inline_bound" "$platform_arg" 1
 }
 
 # codex_root_comment_body_is_approved <body> — round 17 (PRRT_kwDORWAxaM6m2604).
@@ -503,27 +503,46 @@ coderabbit_cli_local_ai_ledger_verdict() {
   if ! invoker_login="$(gh api user --jq '.login // ""' 2>/dev/null)"; then
     invoker_login=""
   fi
-  if ! summary_record="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null | jq -c --arg invoker "$invoker_login" '
+  local _candidates _cand _cand_login _perm
+  summary_record=""
+  if ! _candidates="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate --slurp 2>/dev/null | jq -c '
         [ .[]?[]
           | select(
               (.body // "" | contains("### Automated Reviewer Loop Summary")) and
               (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
             )
-          | select(
-              (((.user.login // "") != "") and ((.user.login // "") == $invoker))
-              or (((.author_association // "") == "OWNER")
-                  or ((.author_association // "") == "MEMBER")
-                  or ((.author_association // "") == "COLLABORATOR"))
-            )
         ]
         | sort_by(.created_at)
-        | last
-      ' 2>/dev/null)" || [ -z "$summary_record" ] || [ "$summary_record" = "null" ] || [ "$summary_record" = "false" ]; then
+        | reverse
+        | .[]
+      ' 2>/dev/null)"; then
+    _candidates=""
+  fi
+  # Round 19 (thread PRRT_kwDORWAxaM6m5slC): author_association MEMBER /
+  # COLLABORATOR describes a relationship, not write capability. Trust is
+  # the invoker's own login (the token that posts the loop summary) or a
+  # live repository-permission lookup — the same
+  # repos/{repo}/collaborators/{user}/permission the repository's own
+  # authorization gates query — returning admin / maintain / write. A
+  # failed lookup leaves that candidate untrusted (fail closed). Newest
+  # trusted candidate wins; untrusted newer forgeries are skipped.
+  while IFS= read -r _cand; do
+    [ -n "$_cand" ] || continue
+    _cand_login="$(printf '%s\n' "$_cand" | jq -r '.user.login // ""' 2>/dev/null)" || continue
+    [ -n "$_cand_login" ] || continue
+    if [ -n "$invoker_login" ] && [ "$_cand_login" = "$invoker_login" ]; then
+      summary_record="$_cand"
+      break
+    fi
+    if _perm="$(gh api "repos/$repo/collaborators/$_cand_login/permission" --jq '.permission // ""' 2>/dev/null)"; then
+      case "$_perm" in
+        admin|maintain|write) summary_record="$_cand"; break ;;
+      esac
+    fi
+  done <<<"$_candidates"
+  if [ -z "$summary_record" ]; then
     # No TRUSTED summary comment (only forged/untrusted bodies, or none at
-    # all), or a fetch/parse failure: absent evidence — the generic absent
-    # refusal, matching the comment-only verdict path. An untrusted
-    # author's ledger is never read, so a forged newer comment cannot
-    # shadow or spoof a verdict either.
+    # all), or a fetch/parse failure: absent evidence.
     _adapter_refusal_reason="reviewer-check-absent"
     return
   fi
@@ -809,13 +828,16 @@ comment_only_completion_evidence() {
       # head commit refuses (absent evidence).
       local _greptile_owner="${repo%%/*}" _greptile_name="${repo#*/}"
       local _greptile_timeline
-      if ! _greptile_timeline="$(gh api graphql \
-            -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(last:100){nodes{__typename ...on PullRequestCommit{commit{oid}} ...on IssueComment{databaseId createdAt body}}}}}}' \
+      if ! _greptile_timeline="$(gh api graphql --paginate --slurp \
+            -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on IssueComment{databaseId createdAt body}}}}}}' \
             -f owner="$_greptile_owner" \
             -f repo="$_greptile_name" \
             -F pr="$pr_number" \
-            --jq '.data.repository.pullRequest.timelineItems.nodes' 2>/dev/null)" \
+            2>/dev/null)" \
           || [ -z "$_greptile_timeline" ] || [ "$_greptile_timeline" = "null" ]; then
+        escalate greptile-timeline-fetch-failed
+      fi
+      if ! _greptile_timeline="$(printf '%s\n' "$_greptile_timeline" | jq -c '[ .[]?.data.repository.pullRequest.timelineItems.nodes[]? ]' 2>/dev/null)"; then
         escalate greptile-timeline-fetch-failed
       fi
       trigger="$(printf '%s\n' "$_greptile_timeline" | jq -c --arg sha "$head_sha" '
@@ -884,7 +906,11 @@ commented_review_body_blocks() {
       # (acknowledgement/trigger text) — informational.
       case "$body_arg" in
         "Codex Review:"*)
-          if printf '%s\n' "$body_arg" | grep -q "Didn't find any major issues"; then
+          # Canonical blocking-first whole-body classifier (the same one the
+          # root-comment adapter uses): a clean sentence followed by later
+          # text such as "Must fix ..." is NOT the approved template and
+          # blocks; only an exact approved-template body is clean.
+          if codex_root_comment_body_is_approved "$body_arg"; then
             return 1
           fi
           return 0
@@ -1062,7 +1088,7 @@ bugbot_unavailable_notice_present() {
 # failure.
 count_reviewer_blocking_findings() {
   local bot_login_arg="$1" since_arg="$2"
-  local inline_since_arg="${3:-$2}" review_platform="${4:-}"
+  local inline_since_arg="${3:-$2}" review_platform="${4:-}" cr_persist="${5:-0}"
   local comments_json reviews_json inline_json review_json inline_count entry body state inline
   scan_blocking_count=0
   comments_json=""
@@ -1101,12 +1127,24 @@ count_reviewer_blocking_findings() {
   # blocking content (commented_review_body_blocks) — Bugbot's finding
   # markers, Devin's "**Devin Review**" summary, a codex terminal verdict.
   review_json=""
-  if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$since_arg" --argjson inline "$inline_count" '
+  if ! review_json="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --arg since "$since_arg" --arg persist "$cr_persist" --argjson inline "$inline_count" '
         [ .[]?[]
           | select(
               (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               and ((.commit_id // .commitId // "") == $sha)
-              and (((.submitted_at // "") >= $since))
+            )
+        ] as $mine
+        | [ $mine[]
+          | . as $r
+          | select(
+              (((.submitted_at // "") >= $since))
+              # Comment-only reviewers (persist=1): a structured
+              # CHANGES_REQUESTED on this head stays active across a later
+              # informational COMMENTED review; only a LATER APPROVED review
+              # by the same bot supersedes it (a dismissal changes the state
+              # itself, so it is no longer CHANGES_REQUESTED here).
+              or ($persist == "1" and ((.state // "") == "CHANGES_REQUESTED")
+                  and ([ $mine[] | select((.state // "") == "APPROVED" and ((.submitted_at // "") > ($r.submitted_at // ""))) ] | length == 0))
             )
           | { state: (.state // ""), body: (.body // ""), inline: $inline }
         ]
