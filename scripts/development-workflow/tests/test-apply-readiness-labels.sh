@@ -2183,6 +2183,20 @@ result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Context prompt
 run_test "claude_review_plus_noop_rerun_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
 run_test "claude_review_plus_verified_run_labels_result" "labeled" "$(field "$result" RESULT)"
+# Round 30 (PRRT_kwDORWAxaM6nCAK_): a nonempty Claude APPROVED body with a
+# verified run is clean.
+MOCK_REVIEWS='[{"user":{"login":"claude[bot]"},"id":602,"commit_id":"'"$HEAD"'","state":"APPROVED","body":"LGTM - reviewed the change, no issues.","submitted_at":"2026-01-07T00:00:00Z"}]'
+result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
+run_test "claude_approved_body_labels_result" "labeled" "$(field "$result" RESULT)"
+# Round 30 (PRRT_kwDORWAxaM6nCAK8): a DISMISSED bodyless review is no verdict —
+# a review-only platform (copilot) with only that review refuses absent.
+_saved_head_cfg2="$MOCK_HEAD_CONFIG"; _saved_base_cfg2="$MOCK_BASE_CONFIG"
+MOCK_HEAD_CONFIG="$_copilot_yaml"; MOCK_BASE_CONFIG="$_copilot_yaml"
+MOCK_REVIEWS='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"id":603,"commit_id":"'"$HEAD"'","state":"DISMISSED","body":"","submitted_at":"2026-01-07T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "dismissed_bodyless_review_is_not_verdict_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_HEAD_CONFIG="$_saved_head_cfg2"; MOCK_BASE_CONFIG="$_saved_base_cfg2"
+MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 

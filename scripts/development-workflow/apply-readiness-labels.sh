@@ -309,6 +309,11 @@ comment_only_reviewer_verdict() {
           | select(
               (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               and ((.commit_id // .commitId // "") == $sha)
+              # Round 30 (PRRT_kwDORWAxaM6nCAK8): only a live review verdict
+              # is completion evidence. A DISMISSED (or PENDING / unknown
+              # state) review is no verdict at all and must not become
+              # latest_review.
+              and (((.state // "") == "APPROVED") or ((.state // "") == "COMMENTED") or ((.state // "") == "CHANGES_REQUESTED"))
             )
         ]
         | sort_by(.submitted_at // "")
@@ -1287,9 +1292,12 @@ count_reviewer_blocking_findings() {
     [ -n "$body" ] || continue
     # Round 24 (PRRT_kwDORWAxaM6m63Su): run_copilot_review() treats an
     # APPROVED review state as clean regardless of body content, so a
-    # nonempty Copilot approval body is not a blocking finding. Scoped to
-    # copilot: every other platform keeps the generic body scan.
-    if [ "$state" = "APPROVED" ] && [ "$review_platform" = "copilot" ]; then
+    # nonempty Copilot approval body is not a blocking finding; round 30
+    # (PRRT_kwDORWAxaM6nCAK_): claude-code-action-reviewer.sh treats every
+    # post-dispatch state except CHANGES_REQUESTED as approved, so the same
+    # holds there. Scoped to those two: every other platform keeps the
+    # generic body scan.
+    if [ "$state" = "APPROVED" ] && { [ "$review_platform" = "copilot" ] || [ "$review_platform" = "claude-code-action" ]; }; then
       continue
     fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
