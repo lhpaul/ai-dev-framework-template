@@ -2441,6 +2441,18 @@ for m in re.finditer(r"query='([^']*)'", text):
         print(text[:m.start()].count("\n") + 1)
 PY
 }
+# Scanner self-test: a planted unbalanced literal must be reported at its
+# line, and the balanced form must report nothing — so a scanner that stops
+# recognising queries cannot pass silently.
+_gql_fixture="$(mktemp "${TMPDIR:-/tmp}/gql-fixture.XXXXXX")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{repository{pullRequest{id}}}}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_planted_unbalanced_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{repository{pullRequest{id}}}'" > "$_gql_fixture"
+run_test "graphql_scanner_accepts_balanced_fixture" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
+rm -f "$_gql_fixture"
+
 run_test "graphql_literals_have_balanced_braces" "" "$(unbalanced_graphql_literals "$HELPER")"
 run_test "graphql_literal_scan_finds_queries" "yes" \
   "$(grep -c "query='" "$HELPER" | awk '$1 > 0 {print "yes"}')"
