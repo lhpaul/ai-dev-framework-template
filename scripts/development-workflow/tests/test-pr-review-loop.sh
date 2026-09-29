@@ -15734,8 +15734,9 @@ unset INTEG_MOCK_PR_COMMENT_FAIL
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
-# (expected branch derived from the working directory: no --repo-root; the
-# named repository matches that directory's origin)
+# (expected branch derived from the working directory: no --repo-root). The
+# working directory is another checkout of this repository — same origin as
+# the checkout the loop enters, which is what makes it acceptable.
 INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1)"
 export INTEG_MOCK_HEAD_JSON
 _integ_gh_log="$(mktemp)"
@@ -15743,8 +15744,11 @@ export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
 _integ_hotfix_dir="$(_integ_fixture h998 hotfix/v9.9.1)"
+_integ_self_origin="$(PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" \
+  || _integ_self_origin="https://github.com/example/repo.git"
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_integ_hotfix_dir" remote set-url origin "$_integ_self_origin"
 set +e
-_integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998 --repo example/repo)"
+_integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998)"
 _integ_exit=$?
 set -e
 run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
@@ -16012,6 +16016,16 @@ run_test "mainloop_checkout_without_origin_result" "PR_OWNERSHIP_RESULT=repo_unr
 run_test "mainloop_checkout_without_origin_no_gh_call" "" "$(cat "$_integ_gh_log")"
 rm -f "$_integ_gh_log"
 
+# 15.20b: working-directory branch plus a named repository equal to that
+# directory's origin still fails closed when the checkout the loop enters is
+# another repository — the name cannot reconcile two checkouts
+_integ_gh_log="$(mktemp)"
+_integ_out="$(cd "$_integ_other" && INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 53 --repo example/repo)" || true
+run_test "mainloop_cwd_named_repo_other_root_result" "PR_OWNERSHIP_RESULT=repo_conflict" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_cwd_named_repo_other_root_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+
 # 15.21: a named repository equal to the checkout's origin (any case) → the
 # check runs against it
 _integ_gh_log="$(mktemp)"
@@ -16025,7 +16039,7 @@ rm -f "$_integ_gh_log"
 
 rm -rf "$_integ_fixtures"
 unset INTEG_MOCK_HEAD_JSON _integ_fixtures _integ_detached _integ_dir _integ_case _integ_hotfix_dir \
-  _integ_other _integ_noorigin
+  _integ_other _integ_noorigin _integ_self_origin
 
 _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON

@@ -805,8 +805,9 @@ Outputs stable key=value lines including:
     With --branch: the named repository (--repo/--product-repo,
     WORKFLOW_TARGET_GITHUB_REPO, GH_REPO), else --repo-root's origin. With a
     branch derived from a checkout, the repository is that checkout's origin:
-    a named repository must equal it, and without one it must equal the
-    origin of the --repo-root the loop enters; otherwise repo_conflict.
+    a named repository must equal it, and a working-directory checkout's
+    origin must also equal the origin of the --repo-root the loop enters;
+    otherwise repo_conflict.
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
@@ -12642,10 +12643,10 @@ fi
 #   --branch given: the explicit repository (--repo/--product-repo,
 #     WORKFLOW_TARGET_GITHUB_REPO, GH_REPO) when named, else the origin of the
 #     --repo-root the loop enters — the lock key's resolution.
-#   branch derived from checkout K: K's origin. An explicit repository must
-#     equal K's origin, and without one, K's origin must equal the origin of
-#     the --repo-root the loop enters (they differ only when K is the working
-#     directory); otherwise the run fails closed rather than pick one.
+#   branch derived from checkout K: K's origin. When K is the working
+#     directory (no --repo-root), K's origin must also equal the origin of the
+#     --repo-root the loop enters; a named repository must equal K's origin.
+#     Otherwise the run fails closed rather than pick one.
 # Anything unresolvable, invalid, or contradictory fails closed as
 # pr_ownership_unverified. Once verified, the target is pinned in
 # WORKFLOW_TARGET_GITHUB_REPO and GH_REPO so every later gh call — including
@@ -12701,6 +12702,13 @@ else
   if [ -z "$_ownership_checkout_origin" ]; then
     _ownership_repo_result="repo_unresolved"
     _ownership_repo_problem="the branch came from ${_ownership_checkout}, which has no GitHub origin to tie it to a repository"
+  elif [ "$repo_root_explicit" -eq 0 ] \
+      && ! { [ -n "$_ownership_root_origin" ] && _repo_slug_eq "$_ownership_checkout_origin" "$_ownership_root_origin"; }; then
+    # The branch came from the working directory, but the loop's local work
+    # runs in --repo-root (default: the script checkout). A named repository
+    # cannot reconcile two different checkouts.
+    _ownership_repo_result="repo_conflict"
+    _ownership_repo_problem="the branch came from ${_ownership_checkout} (origin ${_ownership_checkout_origin}), but the loop enters ${repo_root} (origin ${_ownership_root_origin:-<none>}); pass --repo-root"
   elif [ "$_ownership_explicit_rc" -eq 0 ]; then
     if _repo_slug_eq "$_ownership_explicit_repo" "$_ownership_checkout_origin"; then
       _ownership_repo="$_ownership_explicit_repo"
@@ -12709,12 +12717,9 @@ else
       _ownership_repo_result="repo_conflict"
       _ownership_repo_problem="the named repository ${_ownership_explicit_repo} differs from ${_ownership_checkout_origin}, the origin of ${_ownership_checkout} where the branch came from"
     fi
-  elif [ -n "$_ownership_root_origin" ] && _repo_slug_eq "$_ownership_checkout_origin" "$_ownership_root_origin"; then
+  else
     _ownership_repo="$_ownership_checkout_origin"
     _ownership_repo_source="checkout_origin"
-  else
-    _ownership_repo_result="repo_conflict"
-    _ownership_repo_problem="the branch came from ${_ownership_checkout} (origin ${_ownership_checkout_origin}), but the loop enters ${repo_root} (origin ${_ownership_root_origin:-<none>})"
   fi
 fi
 if [ -n "$_ownership_repo" ]; then
