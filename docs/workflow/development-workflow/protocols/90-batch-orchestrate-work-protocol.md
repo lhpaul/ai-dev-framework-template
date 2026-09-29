@@ -1113,6 +1113,29 @@ The terminal batch summary must record whether the isolation manifest passed,
 failed before dispatch, or escalated after detecting possible out-of-worktree
 mutation.
 
+### Private scratch namespace and PR ownership (parallel dispatch)
+
+A worktree isolates the checkout, not files a runner writes outside it. In a
+parallel wave, sibling agents that share one scratch directory and generic
+filenames (for example `scratchpad/pr-body.md`) can inject a sibling's content
+into their own PR with a correct PR number (issue #1444). When dispatching
+concurrent mutating runners:
+
+- Pass each runner a private scratch directory in its handoff (for example one
+  `mktemp -d` per item), distinct from every sibling's, and instruct it to
+  write anything outside its own worktree only there.
+- Require collision-proof filenames that carry the item and process, for
+  example `pr-body-<item>-<pid>.md`; never a shared generic name such as
+  `pr-body.md` or `review.md`.
+- Require the PR Ownership Guard before every PR mutation by number, from the
+  runner or from this orchestrator: run
+  `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
+  --expected-branch <item-branch>` and mutate only on exit 0. See Protocol 03
+  [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard).
+- Mirror review-gate evidence (the `Document Quality Gate` log, the
+  Pre-Submission Self-Review log) as a PR comment, not only in the PR
+  description: a description can be silently overwritten; a comment cannot.
+
 ### Checkpoint-resume gate for batch redispatch
 
 When a bounded-batch item is redispatched or continued after a

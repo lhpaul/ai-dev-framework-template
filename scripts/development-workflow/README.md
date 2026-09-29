@@ -668,6 +668,7 @@ Usage:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" \
   --expected-branch "fix/1444-example" || exit 1
 gh pr edit "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-body-1444-$$.md"

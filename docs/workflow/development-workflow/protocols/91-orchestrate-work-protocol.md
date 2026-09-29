@@ -1481,6 +1481,25 @@ When dispatching a stage agent (creator, reviewer, or fixer), include the follow
 
 This rule prevents agents from making changes that affect unrelated issues and causing downstream conflicts in batch runs.
 
+### Scratch Namespace and PR Ownership Rule for Dispatched Agents
+
+When dispatching a stage agent, pass it a private scratch directory (the one
+Protocol 90 assigned for this item in a parallel wave, otherwise a fresh
+`mktemp -d`) and include this instruction (issue #1444):
+
+> **Scratch and PR ownership rule**: Write anything outside this item's
+> worktree only under `<private-scratch-dir>`, with collision-proof names that
+> carry the item and process (for example `pr-body-<item>-<pid>.md`), never a
+> shared generic name such as `pr-body.md`. Before every `gh pr edit`,
+> `gh pr comment`, `gh pr ready`, `gh pr close`, or label change that addresses
+> a PR by number, run `scripts/development-workflow/pr-ownership-guard.sh --pr
+> <n> --expected-branch <item-branch>` and mutate only on exit 0. Mirror
+> review-gate evidence recorded in the PR description as a PR comment too.
+
+The Work Item Runner applies the same guard before its own PR mutations by
+number for this item, with `--expected-branch` set to the item branch. See
+Protocol 03 [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard).
+
 ---
 
 ## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)

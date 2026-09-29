@@ -120,6 +120,39 @@ delegated merge authority, and risk acceptance are not authorization for a
 shared-history rewrite. If the guard blocks, stop before mutation and report the
 safe follow-up commit path or the exact human authorization evidence required.
 
+## PR Ownership Guard
+
+`gh pr edit`, `gh pr comment`, `gh pr ready`, `gh pr close`, and label changes
+accept any PR number. Under parallel waves a transposed digit silently mutates a
+sibling's PR (issue #1444). Immediately before every PR mutation that addresses
+a PR by number, in every path of this protocol, run
+`scripts/development-workflow/pr-ownership-guard.sh` and mutate only on exit 0:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh \
+  --pr "$PR_NUMBER" --expected-branch "fix/[branch-slug]" || exit 1
+gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$$.md"
+```
+
+- Pass the item's own workflow branch as `--expected-branch`; omit it only when
+  running inside the item worktree on that branch. In `workflow_hub`, pass
+  `--repo <owner/name>` for the repository that owns the PR.
+- `RESULT=not_owned` (exit 1) means the number belongs to another branch:
+  re-resolve this item's PR with `gh pr view --json number` on the item branch;
+  never mutate the other PR. `RESULT=pr_unresolved` (exit 3) and
+  `RESULT=branch_unknown` (exit 4) fail closed: stop before mutation.
+- Write PR bodies, comments, and review evidence only to collision-proof files
+  in a private scratch directory — the one the orchestrator assigned, or
+  `mktemp -d` — named with the item and process, for example
+  `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
+  sibling's content reach this PR with a correct PR number.
+- A mutation that uses a number resolved moments earlier by `gh pr create` or
+  `gh pr view --json number` on the item branch itself (for example the
+  post-create base-branch assertion) already has ownership evidence; every
+  other number — from a handoff, a summary, a log, or memory — needs the guard.
+
 ## Scope-Residual Evidence Gate
 
 When the item title, body, spec, or plan describes sweep, batch, helper
@@ -2096,7 +2129,9 @@ echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 
 Regardless of whether the backport is an identical cherry-pick or introduces conflict-resolution changes, the following steps are required before the human merges:
 
-1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft.
+1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft,
+   after the [PR Ownership Guard](#pr-ownership-guard) passes with
+   `--expected-branch backport/hotfix/[slug]`.
 
 2. **Run the automated reviewer loop**:
 
