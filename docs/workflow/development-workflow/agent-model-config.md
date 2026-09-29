@@ -95,9 +95,14 @@ running inline) resolves the target agent's model from the checkout being run:
    report the gap in the run summary. Do not fill it from any table in this
    document.
 
-A deliberate one-off override from "Option 1" below (a duplicate agent file,
-or `inherit` chosen and recorded for that run) supersedes the checked-in pin
-for that run only.
+A one-off override from "Option 1" below changes the model only when the run
+actually dispatches it. Creating a duplicate agent file (for example
+`developer-premium.md`) does not change which agent `/run-item` dispatches: the
+run still dispatches the standard role (`developer`) and uses that role's pin.
+The duplicate applies only when the human explicitly names it as the stage
+agent to dispatch for that run, and the run summary records that substitution.
+Switching the Composer model affects only agents whose resolved `model:` is
+`inherit`.
 
 ### Cursor model defaults (template)
 
