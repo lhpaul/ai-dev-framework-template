@@ -807,7 +807,9 @@ Outputs stable key=value lines including:
     branch derived from a checkout, the repository is that checkout's origin:
     a named repository must equal it, and a working-directory checkout's
     origin must also equal the origin of the --repo-root the loop enters;
-    otherwise repo_conflict.
+    otherwise repo_conflict. Repositories named through WORKFLOW_TARGET_GITHUB_REPO
+    or GH_REPO count as explicit. Origins are compared, not checkouts: pass
+    --repo-root so local work also runs in the item checkout.
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
