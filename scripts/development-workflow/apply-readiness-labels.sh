@@ -721,8 +721,11 @@ comment_only_completion_evidence() {
       selected="$(printf '%s\n' "${runs_json:-[]}" | jq -c --arg wf "${CLAUDE_CODE_ACTION_WORKFLOW_FILE:-claude-code-review.yml}" --arg pr "$pr_number" '
           [ .[]?[]?[]? | objects ]
           | [ .[] | select(((.path // "")) | endswith($wf)) ] as $candidates
-          | ($candidates | if ([ $candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?) ] | length > 0) then
-              [ .[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr) ]
+          # Round 20 (PRRT_kwDORWAxaM6m6Vnb): the Runs API exposes the run-name
+          # as display_title (name stays the workflow name); fixtures carrying
+          # the run-name in name fall back.
+          | ($candidates | if ([ $candidates[] | select(((.display_title // .name) // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?) ] | length > 0) then
+              [ .[] | select((((.display_title // .name) // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr) ]
             else . end)
           | sort_by(.created_at)
           | reverse

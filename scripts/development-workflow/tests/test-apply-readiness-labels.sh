@@ -2038,6 +2038,13 @@ MOCK_HEAD_CONFIG="$_claude_action_platform_yaml"
 MOCK_BASE_CONFIG="$_claude_action_platform_yaml"
 MOCK_ISSUE_COMMENTS='[]'
 _claude_run_success='{"id":700,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"success","created_at":"2026-01-06T00:00:00Z","head_sha":"'"$HEAD"'"}'
+# Round 20 (PRRT_kwDORWAxaM6m6Vnb): real Runs API shape — name is the
+# workflow name, display_title carries the run-name. A NEWER run for another
+# PR must not be selected in place of this PR's current-head success.
+_claude_run_dt_mine='{"id":710,"name":"Claude Code Review","display_title":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"success","created_at":"2026-01-06T00:00:00Z","head_sha":"'"$HEAD"'"}'
+_claude_run_dt_other='{"id":711,"name":"Claude Code Review","display_title":"Claude Code Review — PR #43","path":".github/workflows/claude-code-review.yml","event":"workflow_dispatch","status":"completed","conclusion":"success","created_at":"2026-01-07T00:00:00Z","head_sha":"ffff000000000000000"}'
+result="$(MOCK_WORKFLOW_RUNS="${_claude_run_dt_other},${_claude_run_dt_mine}" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
+run_test "claude_display_title_scopes_pr_result" "labeled" "$(field "$result" RESULT)"
 result="$(MOCK_WORKFLOW_RUNS="$_claude_run_success" MOCK_RUN_LOG='Trigger result: true' run_helper_platform "$_codex_config")"
 run_test "claude_action_run_success_labels_exit" "0" "${result%%|*}"
 run_test "claude_action_run_success_result" "labeled" "$(field "$result" RESULT)"
