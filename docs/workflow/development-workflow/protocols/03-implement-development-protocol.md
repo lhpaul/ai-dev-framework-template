@@ -155,10 +155,14 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   `REASON=pr_ownership_branch_required` (no `--branch` and the checkout is
   detached or on `develop`, `main`, or another non-workflow branch),
   `REASON=pr_ownership_mismatch` (wrong branch or head repository), or
-  `REASON=pr_ownership_unverified` (PR or target repository not resolved). It
-  inspects the same target repository its lock key names
-  (`--repo`/`--product-repo`, `WORKFLOW_TARGET_GITHUB_REPO`, `GH_REPO`, then
-  the `--repo-root` origin). Pass `--branch` whenever the item branch is known.
+  `REASON=pr_ownership_unverified` (PR or target repository not resolved, or
+  the branch and repository do not come from the same checkout). With
+  `--branch`, the target repository is the named one
+  (`--repo`/`--product-repo`, `WORKFLOW_TARGET_GITHUB_REPO`, `GH_REPO`), else
+  the `--repo-root` origin. A branch taken from a checkout uses that
+  checkout's origin; a named repository that differs from it, or a working
+  directory whose origin differs from the `--repo-root` the loop enters, fails
+  closed. Pass `--branch` whenever the item branch is known.
 - Mirror review-gate evidence recorded in the PR description (for example the
   Pre-Submission Self-Review log) as a PR comment after the PR exists: a
   description can be silently overwritten; a comment cannot.

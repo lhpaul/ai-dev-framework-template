@@ -292,23 +292,25 @@ _lock_key_component() {
   printf '%s-%s' "$label" "$digest"
 }
 
-# _resolve_target_repo_slug <repo-selector> <repo-root>
+# _repo_slug_eq <a> <b> — GitHub owner/repo names compare case-insensitively.
+_repo_slug_eq() {
+  [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]
+}
+
+# _resolve_explicit_target_repo_slug <repo-selector> <repo-root>
 #
-# The single resolution of "which GitHub repository does this run target",
-# shared by the lock key and the PR ownership check (issue #1444) so the two can
-# never disagree. Sources, in order: the --repo/--product-repo selector,
-# WORKFLOW_TARGET_GITHUB_REPO, GH_REPO (which every bare `gh` call in this
-# script honours), then the origin remote of <repo-root> (default: the current
-# directory). Prints the owner/repo slug and returns 0; prints nothing and
-# returns 1 when no source yields a valid slug, or when WORKFLOW_TARGET_GITHUB_REPO
-# and GH_REPO name different repositories — then `repo_slug` and bare `gh`
-# calls in this script would already disagree with each other.
-_resolve_target_repo_slug() {
+# The explicitly named target repository, from the --repo/--product-repo
+# selector, else WORKFLOW_TARGET_GITHUB_REPO, else GH_REPO (which every bare
+# `gh` call in this script honours). Prints the owner/repo slug and returns 0;
+# returns 1 when nothing names a repository; returns 2 when something does but
+# it is not a valid slug, the selector cannot be resolved, or
+# WORKFLOW_TARGET_GITHUB_REPO and GH_REPO name different repositories — then
+# `repo_slug` and bare `gh` calls in this script would already disagree.
+_resolve_explicit_target_repo_slug() {
   local selector="${1:-}"
   local root="${2:-}"
   local slug=""
   local context=""
-  local git_url=""
   local env_target="${WORKFLOW_TARGET_GITHUB_REPO:-}"
   local env_gh_repo="${GH_REPO:-}"
 
@@ -322,23 +324,53 @@ _resolve_target_repo_slug() {
       fi
     fi
   elif [ -n "$env_target" ] || [ -n "$env_gh_repo" ]; then
-    if [ -n "$env_target" ] && [ -n "$env_gh_repo" ] \
-        && [ "$(printf '%s' "$env_target" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$env_gh_repo" | tr '[:upper:]' '[:lower:]')" ]; then
-      return 1
+    if [ -n "$env_target" ] && [ -n "$env_gh_repo" ] && ! _repo_slug_eq "$env_target" "$env_gh_repo"; then
+      return 2
     fi
     slug="${env_target:-$env_gh_repo}"
   else
-    git_url="$(git -C "${root:-.}" remote get-url origin 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - no origin remote is an expected case; callers decide how to handle an unresolved target
-    if [ -n "$git_url" ]; then
-      slug="$(workflow_github_repo_from_git_url "$git_url" 2>/dev/null || true)"
-    fi
+    return 1
   fi
 
   if [ -n "$slug" ] && workflow_is_valid_github_repo_slug "$slug"; then
     printf '%s\n' "$slug"
     return 0
   fi
+  return 2
+}
+
+# _origin_repo_slug <checkout> — owner/repo of <checkout>'s origin remote
+# (default: the current directory); returns 1 when it has none or it is not a
+# GitHub remote.
+_origin_repo_slug() {
+  local git_url="" slug=""
+  git_url="$(git -C "${1:-.}" remote get-url origin 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - no origin remote is an expected case; callers decide how to handle an unresolved target
+  if [ -n "$git_url" ]; then
+    slug="$(workflow_github_repo_from_git_url "$git_url" 2>/dev/null || true)"
+  fi
+  if [ -n "$slug" ] && workflow_is_valid_github_repo_slug "$slug"; then
+    printf '%s\n' "$slug"
+    return 0
+  fi
   return 1
+}
+
+# _resolve_target_repo_slug <repo-selector> <repo-root>
+#
+# The single resolution of "which GitHub repository does this run target",
+# shared by the lock key and the PR ownership check (issue #1444): the explicit
+# repository (_resolve_explicit_target_repo_slug) when one is named, else the
+# origin remote of <repo-root> (default: the current directory). Prints the
+# owner/repo slug and returns 0; returns 1 when no valid slug results,
+# including an explicit source that is invalid or self-contradictory.
+_resolve_target_repo_slug() {
+  local rc=0
+  _resolve_explicit_target_repo_slug "${1:-}" "${2:-}" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) _origin_repo_slug "${2:-}" ;;
+    *) return 1 ;;
+  esac
 }
 
 # _resolve_lock_repo_key <repo-selector> <repo-root>
@@ -762,14 +794,19 @@ Outputs stable key=value lines including:
   PR_OWNERSHIP_BRANCH_SOURCE=argument|checkout
   PR_OWNERSHIP_EXPECTED_BRANCH=<branch>
   PR_OWNERSHIP_CHECKOUT_BRANCH=<branch> (on pr_ownership_branch_required)
-  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown|repo_unresolved
+  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown|repo_unresolved|repo_conflict
     (with PR_OWNERSHIP_PR_HEAD_BRANCH, _PR_HEAD_REPO, _MISMATCH, and
     _REQUIRED_ACTION on refusal)
-  PR_OWNERSHIP_REPO=<owner/repo> (the repository the check inspected, resolved
-    like the lock key from --repo/--product-repo, WORKFLOW_TARGET_GITHUB_REPO,
-    GH_REPO, or --repo-root's origin; empty when unresolvable, which fails
-    closed as pr_ownership_unverified. After a pass, the loop pins
+  PR_OWNERSHIP_REPO=<owner/repo> (the repository the check inspected; empty
+    when unresolvable or contradictory, which fails closed as
+    pr_ownership_unverified. After a pass, the loop pins
     WORKFLOW_TARGET_GITHUB_REPO and GH_REPO to it)
+  PR_OWNERSHIP_REPO_SOURCE=explicit|repo_root_origin|explicit_matches_checkout|checkout_origin
+    With --branch: the named repository (--repo/--product-repo,
+    WORKFLOW_TARGET_GITHUB_REPO, GH_REPO), else --repo-root's origin. With a
+    branch derived from a checkout, the repository is that checkout's origin:
+    a named repository must equal it, and without one it must equal the
+    origin of the --repo-root the loop enters; otherwise repo_conflict.
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
@@ -12598,11 +12635,19 @@ fi
 # HEAD, develop, main, or any other branch cannot vouch for a PR number, so
 # the run stops with REASON=pr_ownership_branch_required.
 #
-# The check must inspect the repository the loop mutates. The target comes
-# from _resolve_target_repo_slug (the lock key's resolver) against the
-# --repo-root the loop later enters, and is always passed as --repo: a bare
-# lookup would read the caller's working directory instead. An unresolvable
-# target fails closed. Once verified, the target is pinned in
+# The check must inspect the repository the loop mutates, and the expected
+# branch and target repository must come from the same place. The target is
+# always passed as --repo (a bare lookup would read the caller's working
+# directory):
+#   --branch given: the explicit repository (--repo/--product-repo,
+#     WORKFLOW_TARGET_GITHUB_REPO, GH_REPO) when named, else the origin of the
+#     --repo-root the loop enters — the lock key's resolution.
+#   branch derived from checkout K: K's origin. An explicit repository must
+#     equal K's origin, and without one, K's origin must equal the origin of
+#     the --repo-root the loop enters (they differ only when K is the working
+#     directory); otherwise the run fails closed rather than pick one.
+# Anything unresolvable, invalid, or contradictory fails closed as
+# pr_ownership_unverified. Once verified, the target is pinned in
 # WORKFLOW_TARGET_GITHUB_REPO and GH_REPO so every later gh call — including
 # the release guard's summary comment, which runs before the loop enters
 # --repo-root — acts on the repository that was verified, and a derived
@@ -12628,21 +12673,64 @@ if [ -z "$_ownership_expected_branch" ]; then
   fi
 fi
 _ownership_repo=""
+_ownership_repo_source=""
+_ownership_repo_result=""
+_ownership_repo_problem=""
 _ownership_output=""
 _ownership_status=0
-if _ownership_repo="$(_resolve_target_repo_slug "$repo_selector" "$repo_root")"; then
+_ownership_explicit_rc=0
+_ownership_explicit_repo="$(_resolve_explicit_target_repo_slug "$repo_selector" "$repo_root")" \
+  || _ownership_explicit_rc=$?
+_ownership_root_origin="$(_origin_repo_slug "$repo_root")" || _ownership_root_origin=""
+if [ "$_ownership_explicit_rc" -ge 2 ]; then
+  _ownership_repo_result="repo_unresolved"
+  _ownership_repo_problem="the named repository (--repo/--product-repo, WORKFLOW_TARGET_GITHUB_REPO, GH_REPO) is invalid or unresolvable, or WORKFLOW_TARGET_GITHUB_REPO and GH_REPO disagree"
+elif [ "$_ownership_branch_source" = "argument" ]; then
+  if [ "$_ownership_explicit_rc" -eq 0 ]; then
+    _ownership_repo="$_ownership_explicit_repo"
+    _ownership_repo_source="explicit"
+  elif [ -n "$_ownership_root_origin" ]; then
+    _ownership_repo="$_ownership_root_origin"
+    _ownership_repo_source="repo_root_origin"
+  else
+    _ownership_repo_result="repo_unresolved"
+    _ownership_repo_problem="no repository is named and ${repo_root} has no GitHub origin"
+  fi
+else
+  _ownership_checkout_origin="$(_origin_repo_slug "$_ownership_checkout")" || _ownership_checkout_origin=""
+  if [ -z "$_ownership_checkout_origin" ]; then
+    _ownership_repo_result="repo_unresolved"
+    _ownership_repo_problem="the branch came from ${_ownership_checkout}, which has no GitHub origin to tie it to a repository"
+  elif [ "$_ownership_explicit_rc" -eq 0 ]; then
+    if _repo_slug_eq "$_ownership_explicit_repo" "$_ownership_checkout_origin"; then
+      _ownership_repo="$_ownership_explicit_repo"
+      _ownership_repo_source="explicit_matches_checkout"
+    else
+      _ownership_repo_result="repo_conflict"
+      _ownership_repo_problem="the named repository ${_ownership_explicit_repo} differs from ${_ownership_checkout_origin}, the origin of ${_ownership_checkout} where the branch came from"
+    fi
+  elif [ -n "$_ownership_root_origin" ] && _repo_slug_eq "$_ownership_checkout_origin" "$_ownership_root_origin"; then
+    _ownership_repo="$_ownership_checkout_origin"
+    _ownership_repo_source="checkout_origin"
+  else
+    _ownership_repo_result="repo_conflict"
+    _ownership_repo_problem="the branch came from ${_ownership_checkout} (origin ${_ownership_checkout_origin}), but the loop enters ${repo_root} (origin ${_ownership_root_origin:-<none>})"
+  fi
+fi
+if [ -n "$_ownership_repo" ]; then
   _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" \
     --expected-branch "$_ownership_expected_branch" --repo "$_ownership_repo" --repo-root "$repo_root" 2>&1)" \
     || _ownership_status=$?
 else
   _ownership_status=3
-  _ownership_output="RESULT=repo_unresolved
-REQUIRED_ACTION=Pass --repo owner/name (or a --repo-root whose origin is the PR's GitHub repository); WORKFLOW_TARGET_GITHUB_REPO and GH_REPO must not name different repositories.
-ERROR: could not resolve the target GitHub repository for the PR ownership check."
+  _ownership_output="RESULT=${_ownership_repo_result}
+REQUIRED_ACTION=Pass --branch and --repo-root for the item checkout (or --repo owner/name matching it); the branch and the repository must come from the same checkout.
+ERROR: could not resolve one target repository for the PR ownership check: ${_ownership_repo_problem}."
 fi
 print_kv PR_OWNERSHIP_BRANCH_SOURCE "$_ownership_branch_source"
 print_kv PR_OWNERSHIP_EXPECTED_BRANCH "$_ownership_expected_branch"
 print_kv PR_OWNERSHIP_REPO "$_ownership_repo"
+print_kv PR_OWNERSHIP_REPO_SOURCE "$_ownership_repo_source"
 if [ "$_ownership_status" -ne 0 ]; then
   _ownership_reason="pr_ownership_unverified"
   if [ "$_ownership_status" -eq 1 ]; then

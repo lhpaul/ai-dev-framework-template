@@ -15734,7 +15734,8 @@ unset INTEG_MOCK_PR_COMMENT_FAIL
 unset INTEG_MOCK_HEAD_JSON
 
 # Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
-# (expected branch derived from the working directory: no --repo-root)
+# (expected branch derived from the working directory: no --repo-root; the
+# named repository matches that directory's origin)
 INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1)"
 export INTEG_MOCK_HEAD_JSON
 _integ_gh_log="$(mktemp)"
@@ -15743,7 +15744,7 @@ _integ_out=""
 _integ_exit=0
 _integ_hotfix_dir="$(_integ_fixture h998 hotfix/v9.9.1)"
 set +e
-_integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998)"
+_integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998 --repo example/repo)"
 _integ_exit=$?
 set -e
 run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
@@ -15959,8 +15960,72 @@ run_test "mainloop_branch_flag_wins_over_checkout_source" "PR_OWNERSHIP_BRANCH_S
 run_test "mainloop_branch_flag_wins_over_checkout_owned" "PR_OWNERSHIP_RESULT=owned" \
   "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
 run_test "mainloop_branch_flag_wins_over_checkout_exit0" "0" "$_integ_exit"
+
+# Tests 15.18–15.21: the expected branch and the target repository come from
+# the same checkout (#1444 review, round 3).
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json spec/13-own-item)"
+export INTEG_MOCK_HEAD_JSON
+_integ_other="$(_integ_fixture cwd-other spec/13-own-item)"
+# 15.18: branch derived from a working directory whose origin (example/repo)
+# is not the repository of the checkout the loop enters (this repository) →
+# fail closed, no gh call; never verify and pin a same-number PR elsewhere
+_integ_gh_log="$(mktemp)"
+_integ_exit=0
+_integ_out="$(cd "$_integ_other" && INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 53)" || _integ_exit=$?
+run_test "mainloop_cwd_origin_differs_reason" "REASON=pr_ownership_unverified" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_cwd_origin_differs_result" "PR_OWNERSHIP_RESULT=repo_conflict" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_cwd_origin_differs_exit2" "2" "$_integ_exit"
+run_test "mainloop_cwd_origin_differs_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+
+# 15.19: a named repository that differs from the origin of the checkout the
+# branch came from → fail closed, no gh call
+_integ_gh_log="$(mktemp)"
+_integ_exit=0
+_integ_out="$(INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 53 --repo-root "$_integ_other" --repo acme/other)" || _integ_exit=$?
+run_test "mainloop_explicit_repo_vs_checkout_reason" "REASON=pr_ownership_unverified" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_explicit_repo_vs_checkout_result" "PR_OWNERSHIP_RESULT=repo_conflict" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_explicit_repo_vs_checkout_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+# ... and the same conflict when the repository is named through the environment
+_integ_gh_log="$(mktemp)"
+_integ_out="$(INTEG_MOCK_GH_LOG="$_integ_gh_log" env WORKFLOW_TARGET_GITHUB_REPO=acme/other \
+  PATH="$_integration_mock_bin:$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+  bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 53 --repo-root "$_integ_other" 2>/dev/null)" || true
+run_test "mainloop_env_repo_vs_checkout_result" "PR_OWNERSHIP_RESULT=repo_conflict" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_env_repo_vs_checkout_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+
+# 15.20: a checkout the branch came from with no GitHub origin → fail closed
+_integ_noorigin="$_integ_fixtures/no-origin-branch"
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -c init.defaultBranch=main init -q "$_integ_noorigin"
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_integ_noorigin" symbolic-ref HEAD refs/heads/spec/13-own-item
+_integ_gh_log="$(mktemp)"
+_integ_out="$(INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 53 --repo-root "$_integ_noorigin" --repo example/repo)" || true
+run_test "mainloop_checkout_without_origin_result" "PR_OWNERSHIP_RESULT=repo_unresolved" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_checkout_without_origin_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+
+# 15.21: a named repository equal to the checkout's origin (any case) → the
+# check runs against it
+_integ_gh_log="$(mktemp)"
+_integ_out="$(INTEG_MOCK_GH_LOG="$_integ_gh_log" _run_loop_derived 52 --repo-root "$_integ_other" --repo Example/Repo)" || true
+run_test "mainloop_explicit_repo_matches_checkout_source" "PR_OWNERSHIP_REPO_SOURCE=explicit_matches_checkout" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_REPO_SOURCE=')"
+run_test "mainloop_explicit_repo_matches_checkout_queries_it" \
+  "pr view 52 --repo Example/Repo --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" \
+  "$(head -n 1 "$_integ_gh_log")"
+rm -f "$_integ_gh_log"
+
 rm -rf "$_integ_fixtures"
-unset INTEG_MOCK_HEAD_JSON _integ_fixtures _integ_detached _integ_dir _integ_case _integ_hotfix_dir
+unset INTEG_MOCK_HEAD_JSON _integ_fixtures _integ_detached _integ_dir _integ_case _integ_hotfix_dir \
+  _integ_other _integ_noorigin
 
 _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
