@@ -1889,6 +1889,17 @@ run_test "changes_requested_survives_later_comment_reason" "blocking-findings" "
 MOCK_REVIEWS="[$(_codex_review_json CHANGES_REQUESTED "" 501 2026-01-02T00:00:00Z),$(_codex_review_json APPROVED "" 503 2026-01-03T00:00:00Z)]"
 result="$(run_helper_platform "$_codex_config")"
 run_test "changes_requested_superseded_by_approved_result" "labeled" "$(field "$result" RESULT)"
+# Round 24 (PRRT_kwDORWAxaM6m63Su): a nonempty Copilot APPROVED body is clean.
+_copilot_yaml='review:
+  on_ready:
+    github:
+      - copilot'
+_saved_head_cfg="$MOCK_HEAD_CONFIG"; _saved_base_cfg="$MOCK_BASE_CONFIG"
+MOCK_HEAD_CONFIG="$_copilot_yaml"; MOCK_BASE_CONFIG="$_copilot_yaml"
+MOCK_REVIEWS='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"id":520,"commit_id":"'"$HEAD"'","state":"APPROVED","body":"Copilot reviewed 3 files and generated no comments.","submitted_at":"2026-01-02T00:00:00Z"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "copilot_approved_body_labels_result" "labeled" "$(field "$result" RESULT)"
+MOCK_HEAD_CONFIG="$_saved_head_cfg"; MOCK_BASE_CONFIG="$_saved_base_cfg"
 MOCK_REVIEWS='[]'
 
 # Thread PRRT_kwDORWAxaM6m1pF_: non-review completion evidence for hosted

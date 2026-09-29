@@ -1245,6 +1245,13 @@ count_reviewer_blocking_findings() {
       continue
     fi
     [ -n "$body" ] || continue
+    # Round 24 (PRRT_kwDORWAxaM6m63Su): run_copilot_review() treats an
+    # APPROVED review state as clean regardless of body content, so a
+    # nonempty Copilot approval body is not a blocking finding. Scoped to
+    # copilot: every other platform keeps the generic body scan.
+    if [ "$state" = "APPROVED" ] && [ "$review_platform" = "copilot" ]; then
+      continue
+    fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body" || is_bugbot_explicit_skip_message "$body"; then
       continue
     fi
