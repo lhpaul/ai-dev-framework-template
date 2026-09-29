@@ -676,13 +676,18 @@ gh pr edit "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-body-1444-$$.md"
 
 What it does:
 
-- Resolves the PR's `headRefName` with one read-only `gh pr view` call.
+- Resolves the PR's `headRefName`, head repository, and `isCrossRepository`
+  with one read-only `gh pr view` call. Ownership is branch **and** head
+  repository: a cross-repository (fork) PR is refused (`MISMATCH=head_repository`)
+  even when its branch name matches, unless `--expected-head-repo owner/name`
+  names that fork.
 - Defaults `--expected-branch` to the branch checked out in `--repo-root`
   (default: the current directory); pass it explicitly when the caller is not
   inside the item worktree. `--repo owner/name` is passed through to `gh`.
 - Exits `0` with `RESULT=owned` on a match, `1` with `RESULT=not_owned` on a
-  mismatch, `3` with `RESULT=pr_unresolved` when `gh` is missing, fails, times
-  out, or returns no head branch, `4` with `RESULT=branch_unknown` when the
+  mismatch (`MISMATCH=branch` or `MISMATCH=head_repository`), `3` with
+  `RESULT=pr_unresolved` when `gh` or `jq` is missing, `gh` fails or times out,
+  or the response lacks the head branch or the cross-repository flag, `4` with `RESULT=branch_unknown` when the
   default expectation cannot be read (detached HEAD or not a checkout), and `2`
   on usage errors. Every non-zero exit is a stop before mutation.
 

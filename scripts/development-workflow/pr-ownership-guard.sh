@@ -8,6 +8,10 @@
 # this guard immediately before every PR mutation that addresses the PR by
 # number; proceed only on exit 0.
 #
+# Ownership is the head branch AND the head repository: a fork PR can carry an
+# identically named branch, so a cross-repository PR is refused unless the
+# caller names the fork with --expected-head-repo.
+#
 # The guard is read-only: it performs one `gh pr view` and never mutates the
 # PR, the checkout, or the tracker.
 
@@ -16,16 +20,20 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: pr-ownership-guard.sh --pr <number> [--expected-branch <branch>] \
-  [--repo <owner/name>] [--repo-root <path>]
+  [--expected-head-repo <owner/name>] [--repo <owner/name>] [--repo-root <path>]
 
-Resolves the PR's headRefName and exits 0 only when it equals the expected
-branch. Run it before any `gh pr edit|comment|ready|close` or label change that
+Resolves the PR's head branch and head repository and exits 0 only when both
+match. Run it before any `gh pr edit|comment|ready|close` or label change that
 addresses a PR by number.
 
 Options:
   --pr <number>              PR number about to be mutated (required)
   --expected-branch <branch> Branch the PR must belong to. Default: the branch
                              currently checked out in --repo-root.
+  --expected-head-repo <owner/name>
+                             Repository the PR head must live in. Default: the
+                             PR's own (base) repository, so any
+                             cross-repository (fork) PR is refused.
   --repo <owner/name>        Passed through to `gh pr view --repo`.
   --repo-root <path>         Checkout whose branch is the default expectation.
                              Default: the current directory.
@@ -35,14 +43,18 @@ Environment:
   PR_OWNERSHIP_GUARD_TIMEOUT_SECONDS  Deadline for the gh lookup (default 30).
 
 Output (stdout, key=value): RESULT, PR, EXPECTED_BRANCH,
-EXPECTED_BRANCH_SOURCE, PR_HEAD_BRANCH, and REQUIRED_ACTION on refusal.
+EXPECTED_BRANCH_SOURCE, PR_HEAD_BRANCH, PR_HEAD_REPO, PR_IS_CROSS_REPOSITORY,
+EXPECTED_HEAD_REPO, MISMATCH (branch|head_repository, on not_owned), and
+REQUIRED_ACTION on refusal.
 
 Exit codes:
   0  RESULT=owned          PR head branch equals the expected branch; proceed.
-  1  RESULT=not_owned      PR belongs to another branch; do not mutate it.
+  1  RESULT=not_owned      PR belongs to another branch or head repository;
+                           do not mutate it.
   2  usage error.
-  3  RESULT=pr_unresolved  gh missing, failed, timed out, or returned no
-                           head branch; fail closed.
+  3  RESULT=pr_unresolved  gh or jq missing, gh failed or timed out, or the
+                           response lacks the head branch or the
+                           cross-repository flag; fail closed.
   4  RESULT=branch_unknown No --expected-branch and the checkout is detached
                            or its branch cannot be read; fail closed.
 USAGE
@@ -62,6 +74,7 @@ require_value() {
 
 PR_NUMBER=""
 EXPECTED_BRANCH=""
+EXPECTED_HEAD_REPO=""
 REPO_SLUG=""
 REPO_ROOT="$(pwd)"
 
@@ -75,6 +88,11 @@ while [ "$#" -gt 0 ]; do
     --expected-branch)
       require_value "$@"
       EXPECTED_BRANCH="$2"
+      shift 2
+      ;;
+    --expected-head-repo)
+      require_value "$@"
+      EXPECTED_HEAD_REPO="$2"
       shift 2
       ;;
     --repo)
@@ -107,6 +125,12 @@ case "$REPO_SLUG" in
   ''|*/*) ;;
   *) die_usage "--repo must be in owner/name form" ;;
 esac
+case "$EXPECTED_HEAD_REPO" in
+  '') ;;
+  */*/*|/*|*/|*[[:space:]]*) die_usage "--expected-head-repo must be in owner/name form" ;;
+  */*) ;;
+  *) die_usage "--expected-head-repo must be in owner/name form" ;;
+esac
 [ -d "$REPO_ROOT" ] || die_usage "--repo-root must be an existing directory"
 
 TIMEOUT_SECONDS="${PR_OWNERSHIP_GUARD_TIMEOUT_SECONDS:-30}"
@@ -124,6 +148,12 @@ refuse() {
   printf 'EXPECTED_BRANCH=%s\n' "$EXPECTED_BRANCH"
   printf 'EXPECTED_BRANCH_SOURCE=%s\n' "$EXPECTED_SOURCE"
   printf 'PR_HEAD_BRANCH=%s\n' "${PR_HEAD_BRANCH:-}"
+  printf 'PR_HEAD_REPO=%s\n' "${PR_HEAD_REPO:-}"
+  printf 'PR_IS_CROSS_REPOSITORY=%s\n' "${PR_IS_CROSS:-}"
+  printf 'EXPECTED_HEAD_REPO=%s\n' "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"
+  if [ -n "${MISMATCH:-}" ]; then
+    printf 'MISMATCH=%s\n' "$MISMATCH"
+  fi
   printf 'REQUIRED_ACTION=%s\n' "$action"
   printf 'REFUSED: PR #%s mutation blocked: %s\n' "$PR_NUMBER" "$message" >&2
   exit "$code"
@@ -131,6 +161,9 @@ refuse() {
 
 EXPECTED_SOURCE="argument"
 PR_HEAD_BRANCH=""
+PR_HEAD_REPO=""
+PR_IS_CROSS=""
+MISMATCH=""
 if [ -z "$EXPECTED_BRANCH" ]; then
   EXPECTED_SOURCE="current_branch"
   if ! EXPECTED_BRANCH="$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null)" \
@@ -146,6 +179,10 @@ if ! command -v gh >/dev/null 2>&1; then
   refuse 3 pr_unresolved "gh CLI is not available" \
     "Install or expose gh CLI, then re-run the guard before mutating the PR."
 fi
+if ! command -v jq >/dev/null 2>&1; then
+  refuse 3 pr_unresolved "jq is not available" \
+    "Install or expose jq, then re-run the guard before mutating the PR."
+fi
 
 # A bare failure here would exit 1 under `set -e`, which reads as not_owned.
 SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pr-ownership-guard.XXXXXX")" \
@@ -160,7 +197,7 @@ GH_ARGS=(pr view "$PR_NUMBER")
 if [ -n "$REPO_SLUG" ]; then
   GH_ARGS+=(--repo "$REPO_SLUG")
 fi
-GH_ARGS+=(--json headRefName --jq .headRefName)
+GH_ARGS+=(--json "headRefName,headRepositoryOwner,headRepository,isCrossRepository")
 
 # Background-wait deadline instead of GNU `timeout`, which macOS lacks.
 gh "${GH_ARGS[@]}" >"$SCRATCH_DIR/stdout" 2>"$SCRATCH_DIR/stderr" &
@@ -192,17 +229,63 @@ if [ "$GH_STATUS" -ne 0 ]; then
     "Confirm the PR number and repository, then re-run the guard before mutating the PR."
 fi
 
-PR_HEAD_BRANCH="$(head -n 1 "$SCRATCH_DIR/stdout")"
+# One record: head branch, head owner, head repo name, cross-repo flag, joined
+# by the ASCII unit separator. Tab would be IFS whitespace, which collapses an
+# empty field (a deleted fork's owner) and shifts the ones after it. A missing
+# branch or flag yields an empty field, which fails closed below.
+if ! PR_RECORD="$(jq -r '
+    [ (.headRefName // "" | tostring),
+      (.headRepositoryOwner.login // ""),
+      (.headRepository.name // ""),
+      (if (.isCrossRepository | type) == "boolean" then (.isCrossRepository | tostring) else "" end)
+    ] | join("\u001f")' "$SCRATCH_DIR/stdout" 2>/dev/null)"; then
+  refuse 3 pr_unresolved "gh pr view returned unparseable output" \
+    "Confirm the PR number and repository, then re-run the guard before mutating the PR."
+fi
+IFS=$'\037' read -r PR_HEAD_BRANCH PR_HEAD_OWNER PR_HEAD_NAME PR_IS_CROSS <<EOF_RECORD
+$PR_RECORD
+EOF_RECORD
+if [ -n "$PR_HEAD_OWNER" ] && [ -n "$PR_HEAD_NAME" ]; then
+  PR_HEAD_REPO="$PR_HEAD_OWNER/$PR_HEAD_NAME"
+fi
 if [ -z "$PR_HEAD_BRANCH" ] || [ "$PR_HEAD_BRANCH" = "null" ]; then
   PR_HEAD_BRANCH=""
   refuse 3 pr_unresolved "gh pr view returned no head branch" \
     "Confirm the PR number and repository, then re-run the guard before mutating the PR."
 fi
+case "$PR_IS_CROSS" in
+  true|false) ;;
+  *)
+    PR_IS_CROSS=""
+    refuse 3 pr_unresolved "gh pr view returned no cross-repository flag" \
+      "Confirm the PR number and repository, then re-run the guard before mutating the PR."
+    ;;
+esac
 
 if [ "$PR_HEAD_BRANCH" != "$EXPECTED_BRANCH" ]; then
+  MISMATCH="branch"
   refuse 1 not_owned \
     "it belongs to branch '$PR_HEAD_BRANCH', not '$EXPECTED_BRANCH'" \
     "Re-resolve this item's own PR number (gh pr view --json number on the item branch); never mutate a sibling PR."
+fi
+
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+if [ -n "$EXPECTED_HEAD_REPO" ]; then
+  # GitHub owner and repository names are case-insensitive.
+  if [ "$(lowercase "$PR_HEAD_REPO")" != "$(lowercase "$EXPECTED_HEAD_REPO")" ]; then
+    MISMATCH="head_repository"
+    refuse 1 not_owned \
+      "its head lives in '${PR_HEAD_REPO:-<unknown>}', not '$EXPECTED_HEAD_REPO'" \
+      "Re-resolve this item's own PR number; never mutate a PR whose head lives in another repository."
+  fi
+elif [ "$PR_IS_CROSS" = "true" ]; then
+  MISMATCH="head_repository"
+  refuse 1 not_owned \
+    "it is a cross-repository PR from '${PR_HEAD_REPO:-<unknown>}' with the same branch name" \
+    "Re-resolve this item's own PR number; pass --expected-head-repo only when this item's PR genuinely comes from that fork."
 fi
 
 printf 'RESULT=owned\n'
@@ -210,3 +293,6 @@ printf 'PR=%s\n' "$PR_NUMBER"
 printf 'EXPECTED_BRANCH=%s\n' "$EXPECTED_BRANCH"
 printf 'EXPECTED_BRANCH_SOURCE=%s\n' "$EXPECTED_SOURCE"
 printf 'PR_HEAD_BRANCH=%s\n' "$PR_HEAD_BRANCH"
+printf 'PR_HEAD_REPO=%s\n' "$PR_HEAD_REPO"
+printf 'PR_IS_CROSS_REPOSITORY=%s\n' "$PR_IS_CROSS"
+printf 'EXPECTED_HEAD_REPO=%s\n' "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"

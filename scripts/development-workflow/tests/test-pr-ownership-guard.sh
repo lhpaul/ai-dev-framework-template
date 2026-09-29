@@ -2,8 +2,9 @@
 # test-pr-ownership-guard.sh - PR ownership guard coverage (issue #1444).
 #
 # Plants a mismatched PR number and proves the mutation behind the guard never
-# runs; proves the matching number proceeds with no side effects; proves an
-# unresolvable PR and a detached HEAD both fail closed.
+# runs; proves the matching number proceeds with no side effects; proves a fork
+# PR with the same branch name is refused; proves an unresolvable PR and a
+# detached HEAD both fail closed.
 
 set -euo pipefail
 
@@ -33,7 +34,8 @@ mkdir -p "$MOCK_BIN" "$EMPTY_BIN" "$NON_GIT_DIR"
 : > "$GH_LOG"
 
 # Mock gh: records every invocation, answers `pr view` from MOCK_GH_MODE and
-# MOCK_GH_HEADS ("<pr>=<branch> ..."), and records mutations so a test can
+# MOCK_GH_HEADS ("<pr>=<branch>[@<fork-owner>/<fork-repo>] ..."; no fork means a
+# same-repository PR in example/repo), and records mutations so a test can
 # prove a guarded mutation never ran.
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
@@ -48,11 +50,24 @@ case "${MOCK_GH_MODE:-ok}" in
     ;;
   empty) exit 0 ;;
   null) printf 'null\n'; exit 0 ;;
+  garbage) printf 'not json\n'; exit 0 ;;
+  no_cross_flag) printf '{"headRefName":"spec/13-own-item"}\n'; exit 0 ;;
+  deleted_fork)
+    printf '{"headRefName":"spec/13-own-item","headRepositoryOwner":null,"headRepository":null,"isCrossRepository":true}\n'
+    exit 0
+    ;;
   slow) sleep 5; exit 0 ;;
 esac
 for pair in ${MOCK_GH_HEADS:-}; do
   if [ "${pair%%=*}" = "$3" ]; then
-    printf '%s\n' "${pair#*=}"
+    spec="${pair#*=}"
+    branch="${spec%%@*}"
+    owner="example"; name="repo"; cross=false
+    if [ "$spec" != "$branch" ]; then
+      fork="${spec#*@}"; owner="${fork%%/*}"; name="${fork#*/}"; cross=true
+    fi
+    printf '{"headRefName":"%s","headRepositoryOwner":{"login":"%s"},"headRepository":{"name":"%s"},"isCrossRepository":%s}\n' \
+      "$branch" "$owner" "$name" "$cross"
     exit 0
   fi
 done
@@ -64,7 +79,8 @@ export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_LOG="$GH_LOG"
 
 # Two sibling PRs from one parallel wave: #52 is item 10's, #53 is item 13's.
-export MOCK_GH_HEADS="52=spec/10-sibling-item 53=spec/13-own-item"
+# #54 is a fork PR that happens to use item 13's branch name.
+export MOCK_GH_HEADS="52=spec/10-sibling-item 53=spec/13-own-item 54=spec/13-own-item@forker/repo-fork"
 
 git -c init.defaultBranch=main init -q "$FIXTURE_REPO"
 git -C "$FIXTURE_REPO" -c user.name=test -c user.email=test@example.com \
@@ -138,6 +154,7 @@ run_contains "mismatch_reports_not_owned" "RESULT=not_owned" "$(body "$out")"
 run_contains "mismatch_names_actual_head" "PR_HEAD_BRANCH=spec/10-sibling-item" "$(body "$out")"
 run_contains "mismatch_prints_refusal" "REFUSED: PR #52 mutation blocked" "$(body "$out")"
 run_contains "mismatch_required_action" "never mutate a sibling PR" "$(body "$out")"
+run_contains "mismatch_kind_branch" "MISMATCH=branch" "$(body "$out")"
 
 : > "$GH_LOG"
 set +e
@@ -155,7 +172,7 @@ out="$(guard_output --pr 53 --expected-branch spec/13-own-item --repo-root "$FIX
 run_test "match_proceeds_exit_0" "0" "$(status_code "$out")"
 run_contains "match_reports_owned" "RESULT=owned" "$(body "$out")"
 run_not_contains "match_prints_no_refusal" "REFUSED" "$(body "$out")"
-run_test "match_guard_only_reads" "pr view 53 --json headRefName --jq .headRefName" "$(cat "$GH_LOG")"
+run_test "match_guard_only_reads" "pr view 53 --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" "$(cat "$GH_LOG")"
 run_test "match_checkout_unchanged" "$status_before" "$(git -C "$FIXTURE_REPO" status --porcelain)"
 run_test "match_head_unchanged" "$head_before" "$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
 
@@ -166,6 +183,35 @@ edit_status=$?
 set -e
 run_test "match_guarded_edit_runs" "0" "$edit_status"
 run_contains "match_own_pr_edited" "pr edit 53" "$(cat "$GH_LOG")"
+
+# --- Fork PR with the same branch name: head repository is part of identity. ---
+: > "$GH_LOG"
+out="$(guard_output --pr 54 --expected-branch spec/13-own-item)"
+run_test "fork_same_branch_refused_exit_1" "1" "$(status_code "$out")"
+run_contains "fork_same_branch_not_owned" "RESULT=not_owned" "$(body "$out")"
+run_contains "fork_same_branch_kind" "MISMATCH=head_repository" "$(body "$out")"
+run_contains "fork_same_branch_names_fork" "PR_HEAD_REPO=forker/repo-fork" "$(body "$out")"
+set +e
+guarded_edit 54 spec/13-own-item
+edit_status=$?
+set -e
+run_test "fork_guarded_edit_blocked" "1" "$edit_status"
+run_not_contains "fork_pr_never_edited" "pr edit 54" "$(cat "$GH_LOG")"
+
+out="$(guard_output --pr 54 --expected-branch spec/13-own-item --expected-head-repo Forker/Repo-Fork)"
+run_test "fork_named_head_repo_proceeds_exit_0" "0" "$(status_code "$out")"
+run_contains "fork_named_head_repo_owned" "RESULT=owned" "$(body "$out")"
+out="$(guard_output --pr 54 --expected-branch spec/13-own-item --expected-head-repo other/fork)"
+run_test "fork_wrong_head_repo_refused_exit_1" "1" "$(status_code "$out")"
+out="$(guard_output --pr 53 --expected-branch spec/13-own-item --expected-head-repo forker/repo-fork)"
+run_test "same_repo_pr_wrong_expected_head_repo_exit_1" "1" "$(status_code "$out")"
+run_contains "same_repo_pr_wrong_expected_head_repo_kind" "MISMATCH=head_repository" "$(body "$out")"
+out="$(guard_output --pr 53 --expected-branch spec/13-own-item --expected-head-repo example/repo)"
+run_test "same_repo_pr_matching_expected_head_repo_exit_0" "0" "$(status_code "$out")"
+out="$(MOCK_GH_MODE=deleted_fork guard_output --pr 54 --expected-branch spec/13-own-item)"
+run_test "deleted_fork_refused_exit_1" "1" "$(status_code "$out")"
+run_contains "deleted_fork_kind" "MISMATCH=head_repository" "$(body "$out")"
+run_contains "deleted_fork_cross_flag_parsed" "PR_IS_CROSS_REPOSITORY=true" "$(body "$out")"
 
 # --- Default expectation: the checkout's current branch. ---
 out="$(guard_output --pr 53 --repo-root "$FIXTURE_REPO")"
@@ -178,14 +224,14 @@ run_test "current_branch_mismatch_exit_1" "1" "$(status_code "$out")"
 : > "$GH_LOG"
 out="$(guard_output --pr 53 --expected-branch spec/13-own-item --repo example/repo)"
 run_test "repo_passthrough_exit_0" "0" "$(status_code "$out")"
-run_test "repo_passthrough_args" "pr view 53 --repo example/repo --json headRefName --jq .headRefName" "$(cat "$GH_LOG")"
+run_test "repo_passthrough_args" "pr view 53 --repo example/repo --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" "$(cat "$GH_LOG")"
 
 # --- Unresolvable PR fails closed. ---
 out="$(guard_output --pr 999 --expected-branch spec/13-own-item)"
 run_test "unknown_pr_fails_closed_exit_3" "3" "$(status_code "$out")"
 run_contains "unknown_pr_reports_unresolved" "RESULT=pr_unresolved" "$(body "$out")"
 
-for mode in fail empty null; do
+for mode in fail empty null garbage no_cross_flag; do
   out="$(MOCK_GH_MODE="$mode" guard_output --pr 53 --expected-branch spec/13-own-item)"
   run_test "gh_${mode}_fails_closed_exit_3" "3" "$(status_code "$out")"
   run_contains "gh_${mode}_reports_unresolved" "RESULT=pr_unresolved" "$(body "$out")"
@@ -226,6 +272,10 @@ for bad_pr in abc 0 07 -5; do
 done
 out="$(guard_output --pr 53 --repo not-a-slug)"
 run_test "bad_repo_usage_exit_2" "2" "$(status_code "$out")"
+for bad_repo in solo a/b/c /repo owner/; do
+  out="$(guard_output --pr 53 --expected-branch spec/13-own-item --expected-head-repo "$bad_repo")"
+  run_test "bad_expected_head_repo_usage_exit_2" "2" "$(status_code "$out")"
+done
 out="$(guard_output --pr 53 --expected-branch 'spec/13 own')"
 run_test "whitespace_branch_usage_exit_2" "2" "$(status_code "$out")"
 out="$(guard_output --pr 53 --bogus)"
