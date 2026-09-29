@@ -296,13 +296,19 @@ run_contains \
   "worktree_cleanup_processes_numbered_issue_after_reentry" \
   "Issue #123 is already CLOSED, skipping close." \
   "$worktree_output"
-run_test "worktree_cleanup_pr_worktree_removed" "no" "$(
+# --repo-root names the caller's own worktree, so cleanup must detach it rather
+# than remove the directory the caller is running in (#1386).
+run_test "worktree_cleanup_caller_worktree_survives" "yes" "$(
   if [ -d "$worktree_pr_path" ]; then
     printf 'yes'
   else
     printf 'no'
   fi
 )"
+run_contains "worktree_cleanup_caller_worktree_detached" "CALLER_WORKTREE_ACTION=detached" "$worktree_output"
+run_test "worktree_cleanup_caller_worktree_head_detached_at_base" \
+  "$("$REAL_GIT" -C "$worktree_repo" rev-parse develop)" \
+  "$("$REAL_GIT" -C "$worktree_pr_path" rev-parse HEAD)"
 run_test "worktree_cleanup_local_branch_removed" "no" "$(
   if "$REAL_GIT" -C "$worktree_repo" show-ref --quiet "refs/heads/$worktree_branch"; then
     printf 'yes'
@@ -310,6 +316,281 @@ run_test "worktree_cleanup_local_branch_removed" "no" "$(
     printf 'no'
   fi
 )"
+
+# install_cleanup_helper <checkout>
+# Copies the helper and its sourced dependencies into a fixture checkout so the
+# script resolves that checkout as its own repository root.
+install_cleanup_helper() {
+  local checkout="$1"
+  local file
+  mkdir -p "$checkout/scripts/development-workflow"
+  for file in post-merge-cleanup.sh workflow-lib.sh closing-keyword-lib.sh workflow-config-resolver.py; do
+    cp "$REPO_ROOT/scripts/development-workflow/$file" "$checkout/scripts/development-workflow/$file"
+  done
+  chmod +x "$checkout/scripts/development-workflow/post-merge-cleanup.sh"
+}
+
+# #1386 regression: a worktree runner standing in its own worktree invokes the
+# main clone's copy of the helper without --repo-root. The helper used to
+# default to the main clone and then remove the caller's worktree with --force.
+caller_cwd_branch="feature/1386-caller-cwd"
+caller_cwd_repo="$(make_repo caller-cwd "$caller_cwd_branch" yes)"
+install_cleanup_helper "$caller_cwd_repo"
+caller_cwd_worktree="$TMP_ROOT/caller-cwd-worktree"
+"$REAL_GIT" -C "$caller_cwd_repo" worktree add -q "$caller_cwd_worktree" "$caller_cwd_branch"
+caller_cwd_output="$(
+  cd "$caller_cwd_worktree" &&
+    GH_MERGED_HEAD="$caller_cwd_branch" \
+    GH_MERGED_PR=1386 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$caller_cwd_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1386 \
+      "$caller_cwd_branch"
+)"
+run_contains "caller_cwd_defaults_repo_root_to_caller_worktree" \
+  "as --repo-root (no --repo-root was passed)" \
+  "$caller_cwd_output"
+run_test "caller_cwd_worktree_survives" "yes" "$(
+  if [ -d "$caller_cwd_worktree" ]; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_contains "caller_cwd_worktree_detached" "CALLER_WORKTREE_ACTION=detached" "$caller_cwd_output"
+run_contains "caller_cwd_local_delete_reported" "LOCAL_DELETE_RESULT=deleted" "$caller_cwd_output"
+run_test "caller_cwd_worktree_still_registered" "yes" "$(
+  if "$REAL_GIT" -C "$caller_cwd_repo" worktree list --porcelain | grep -Fqx "worktree $(cd "$caller_cwd_worktree" && pwd -P)"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_test "caller_cwd_local_branch_removed" "no" "$(
+  if "$REAL_GIT" -C "$caller_cwd_repo" show-ref --quiet "refs/heads/$caller_cwd_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_test "caller_cwd_main_clone_stays_on_base" "develop" \
+  "$("$REAL_GIT" -C "$caller_cwd_repo" symbolic-ref --quiet --short HEAD)"
+run_contains "caller_cwd_tracker_processing_still_runs" \
+  "Issue #1386 is already CLOSED, skipping close." \
+  "$caller_cwd_output"
+
+# #1386 review finding: with no worktree holding develop, the caller's own
+# worktree is the one that checks develop out to fast-forward it. It must not
+# be left holding develop afterwards, or no other checkout can switch to it.
+caller_nobase_branch="feature/1389-caller-no-base"
+caller_nobase_repo="$(make_repo caller-no-base "$caller_nobase_branch" yes)"
+install_cleanup_helper "$caller_nobase_repo"
+"$REAL_GIT" -C "$caller_nobase_repo" checkout -q -b ops/current
+caller_nobase_worktree="$TMP_ROOT/caller-no-base-worktree"
+"$REAL_GIT" -C "$caller_nobase_repo" worktree add -q "$caller_nobase_worktree" "$caller_nobase_branch"
+caller_nobase_output="$(
+  cd "$caller_nobase_worktree" &&
+    GH_MERGED_HEAD="$caller_nobase_branch" \
+    GH_MERGED_PR=1389 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$caller_nobase_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1389 \
+      "$caller_nobase_branch"
+)"
+run_contains "caller_no_base_worktree_detached" "CALLER_WORKTREE_ACTION=detached" "$caller_nobase_output"
+run_test "caller_no_base_worktree_head_detached" "detached" "$(
+  if "$REAL_GIT" -C "$caller_nobase_worktree" symbolic-ref --quiet HEAD >/dev/null; then
+    printf 'attached'
+  else
+    printf 'detached'
+  fi
+)"
+run_test "caller_no_base_worktree_at_base_tip" \
+  "$("$REAL_GIT" -C "$caller_nobase_repo" rev-parse develop)" \
+  "$("$REAL_GIT" -C "$caller_nobase_worktree" rev-parse HEAD)"
+run_test "caller_no_base_main_clone_restored" "ops/current" \
+  "$("$REAL_GIT" -C "$caller_nobase_repo" symbolic-ref --quiet --short HEAD)"
+run_test "caller_no_base_main_clone_can_check_out_base" "yes" "$(
+  if "$REAL_GIT" -C "$caller_nobase_repo" checkout -q develop 2>/dev/null; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
+# #1386 review finding: on the base-worktree re-entry the process directory is
+# the first pass's cleanup root, not the caller. A caller standing outside the
+# repository must not have that directory mistaken for its own worktree.
+outside_branch="feature/noissue-outside-caller"
+outside_repo="$(make_repo outside-caller "$outside_branch" yes)"
+install_cleanup_helper "$outside_repo"
+outside_worktree="$TMP_ROOT/outside-caller-worktree"
+"$REAL_GIT" -C "$outside_repo" worktree add -q "$outside_worktree" "$outside_branch"
+install_cleanup_helper "$outside_worktree"
+outside_cwd="$TMP_ROOT/not-a-repo"
+mkdir -p "$outside_cwd"
+outside_output="$(
+  cd "$outside_cwd" &&
+    GH_MERGED_HEAD="$outside_branch" \
+    GH_MERGED_PR=1390 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$outside_worktree/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1390 \
+      "$outside_branch"
+)"
+run_contains "outside_caller_reenters_base_worktree" \
+  "Re-entering cleanup through the workflow hub helper" \
+  "$outside_output"
+run_test "outside_caller_not_marked_as_caller" "no" "$(
+  if grep -Fq "CALLER_WORKTREE_ACTION=" <<<"$outside_output"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_test "outside_caller_non_caller_worktree_removed" "no" "$(
+  if [ -d "$outside_worktree" ]; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
+# Codex review on PR #1831: a dirty caller worktree with no other worktree
+# holding the base must not fail on a base checkout before the tracker work.
+# The base ref is fast-forwarded without being checked out in the caller.
+dirty_nobase_branch="feature/1391-dirty-no-base"
+dirty_nobase_repo="$(make_repo dirty-no-base "$dirty_nobase_branch" yes)"
+install_cleanup_helper "$dirty_nobase_repo"
+"$REAL_GIT" -C "$dirty_nobase_repo" checkout -q -b ops/current
+dirty_nobase_worktree="$TMP_ROOT/dirty-no-base-worktree"
+"$REAL_GIT" -C "$dirty_nobase_repo" worktree add -q "$dirty_nobase_worktree" "$dirty_nobase_branch"
+dirty_nobase_pusher="$TMP_ROOT/dirty-no-base-pusher"
+"$REAL_GIT" clone -q -b develop "$TMP_ROOT/dirty-no-base.git" "$dirty_nobase_pusher"
+"$REAL_GIT" -C "$dirty_nobase_pusher" -c user.email=fixture@example.com -c user.name=Fixture \
+  commit -q --allow-empty -m "advance develop"
+"$REAL_GIT" -C "$dirty_nobase_pusher" push -q origin develop
+dirty_nobase_remote_tip="$("$REAL_GIT" -C "$dirty_nobase_pusher" rev-parse HEAD)"
+printf 'uncommitted edit\n' >"$dirty_nobase_worktree/branch.txt"
+set +e
+dirty_nobase_output="$(
+  cd "$dirty_nobase_worktree" &&
+    GH_MERGED_HEAD="$dirty_nobase_branch" \
+    GH_MERGED_PR=1391 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$dirty_nobase_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1391 \
+      "$dirty_nobase_branch" 2>&1
+)"
+dirty_nobase_status=$?
+set -e
+run_test "dirty_no_base_exit_status" "0" "$dirty_nobase_status"
+run_contains "dirty_no_base_local_delete_skipped" "LOCAL_DELETE_REASON=caller_worktree_detach_failed" "$dirty_nobase_output"
+run_test "dirty_no_base_base_fast_forwarded" "$dirty_nobase_remote_tip" \
+  "$("$REAL_GIT" -C "$dirty_nobase_repo" rev-parse develop)"
+run_test "dirty_no_base_caller_stays_on_branch" "$dirty_nobase_branch" \
+  "$("$REAL_GIT" -C "$dirty_nobase_worktree" symbolic-ref --quiet --short HEAD)"
+run_test "dirty_no_base_edit_survives" "uncommitted edit" "$(cat "$dirty_nobase_worktree/branch.txt" 2>/dev/null || true)"
+run_contains "dirty_no_base_tracker_processing_still_runs" \
+  "Issue #1391 is already CLOSED, skipping close." \
+  "$dirty_nobase_output"
+
+# Step 7a review: a local base that is ahead of origin (unpushed commits) must
+# not stop cleanup, just as `git pull --ff-only` does not.
+ahead_branch="feature/1392-base-ahead"
+ahead_repo="$(make_repo base-ahead "$ahead_branch" yes)"
+install_cleanup_helper "$ahead_repo"
+"$REAL_GIT" -C "$ahead_repo" commit -q --allow-empty -m "local-only base commit"
+ahead_local_tip="$("$REAL_GIT" -C "$ahead_repo" rev-parse develop)"
+"$REAL_GIT" -C "$ahead_repo" checkout -q -b ops/current
+ahead_worktree="$TMP_ROOT/base-ahead-worktree"
+"$REAL_GIT" -C "$ahead_repo" worktree add -q "$ahead_worktree" "$ahead_branch"
+set +e
+ahead_output="$(
+  cd "$ahead_worktree" &&
+    GH_MERGED_HEAD="$ahead_branch" \
+    GH_MERGED_PR=1392 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$ahead_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1392 \
+      "$ahead_branch" 2>&1
+)"
+ahead_status=$?
+set -e
+run_test "base_ahead_exit_status" "0" "$ahead_status"
+run_test "base_ahead_local_commits_kept" "$ahead_local_tip" "$("$REAL_GIT" -C "$ahead_repo" rev-parse develop)"
+run_contains "base_ahead_caller_detached" "CALLER_WORKTREE_ACTION=detached" "$ahead_output"
+run_contains "base_ahead_tracker_processing_runs" "Issue #1392 is already CLOSED, skipping close." "$ahead_output"
+
+# A worktree that is NOT the caller's keeps the existing behavior: it is
+# removed so the merged branch can be deleted.
+other_wt_branch="feature/noissue-other-worktree"
+other_wt_repo="$(make_repo other-worktree "$other_wt_branch" yes)"
+other_wt_path="$TMP_ROOT/other-worktree-checkout"
+"$REAL_GIT" -C "$other_wt_repo" worktree add -q "$other_wt_path" "$other_wt_branch"
+other_wt_output="$(
+  cd "$other_wt_repo" &&
+    GH_MERGED_HEAD="$other_wt_branch" \
+    GH_MERGED_PR=1387 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$other_wt_repo" --base develop --pr 1387 "$other_wt_branch"
+)"
+run_contains "non_caller_worktree_removed_message" "Worktree removed." "$other_wt_output"
+run_test "non_caller_worktree_removed" "no" "$(
+  if [ -d "$other_wt_path" ]; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
+# When the caller's worktree cannot be detached (uncommitted changes that the
+# base would overwrite), cleanup must leave the worktree and branch alone and
+# still finish the tracker work instead of force-removing the worktree.
+dirty_branch="feature/1388-dirty-caller"
+dirty_repo="$(make_repo dirty-caller "$dirty_branch" yes)"
+dirty_worktree="$TMP_ROOT/dirty-caller-worktree"
+"$REAL_GIT" -C "$dirty_repo" worktree add -q "$dirty_worktree" "$dirty_branch"
+printf 'uncommitted edit\n' >"$dirty_worktree/branch.txt"
+set +e
+dirty_output="$(
+  cd "$dirty_worktree" &&
+    GH_MERGED_HEAD="$dirty_branch" \
+    GH_MERGED_PR=1388 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$dirty_repo" --base develop --pr 1388 "$dirty_branch" 2>&1
+)"
+dirty_status=$?
+set -e
+run_test "dirty_caller_exit_status" "0" "$dirty_status"
+run_contains "dirty_caller_detach_failed" "CALLER_WORKTREE_ACTION=detach_failed" "$dirty_output"
+run_contains "dirty_caller_local_delete_skipped" "LOCAL_DELETE_REASON=caller_worktree_detach_failed" "$dirty_output"
+run_test "dirty_caller_worktree_and_edit_survive" "uncommitted edit" "$(cat "$dirty_worktree/branch.txt" 2>/dev/null || true)"
+run_test "dirty_caller_local_branch_kept" "yes" "$(
+  if "$REAL_GIT" -C "$dirty_repo" show-ref --quiet "refs/heads/$dirty_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_contains "dirty_caller_summary_reports_branch_kept" \
+  "local branch '$dirty_branch' was KEPT" \
+  "$dirty_output"
+run_contains "dirty_caller_tracker_processing_still_runs" \
+  "Issue #1388 is already CLOSED, skipping close." \
+  "$dirty_output"
 
 absent_branch="feature/noissue-already-absent"
 absent_repo="$(make_repo absent "$absent_branch" no)"
