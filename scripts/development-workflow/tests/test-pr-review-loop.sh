@@ -15624,6 +15624,7 @@ trap '_integration_cleanup' EXIT
 cat > "$_integration_mock_bin/gh" <<'INTEG_GH_MOCK'
 #!/usr/bin/env bash
 [ -n "${INTEG_MOCK_GH_LOG:-}" ] && printf '%s\n' "$*" >> "$INTEG_MOCK_GH_LOG"
+[ -n "${INTEG_MOCK_GH_ENV_LOG:-}" ] && printf '%s|%s\n' "${GH_REPO:-}" "$*" >> "$INTEG_MOCK_GH_ENV_LOG"
 case "$*" in
   *"headRefName"*)
     # Use a variable for the default to avoid the bash brace-balance issue:
@@ -15725,7 +15726,7 @@ export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9","headRepositoryOwne
 _integ_out=""
 _integ_exit=0
 set +e
-_integ_out="$(_run_loop_integration 997 --branch release/v9.9.9)"
+_integ_out="$(GH_REPO= WORKFLOW_TARGET_GITHUB_REPO=example/repo _run_loop_integration 997 --branch release/v9.9.9)"
 _integ_exit=$?
 set -e
 run_test "mainloop_branch_flag_release_result_skipped" "RESULT=skipped" \
@@ -15744,7 +15745,7 @@ export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
 set +e
-_integ_out="$(_run_loop_integration 52 --branch spec/13-own-item)"
+_integ_out="$(GH_REPO= WORKFLOW_TARGET_GITHUB_REPO=example/repo _run_loop_integration 52 --branch spec/13-own-item)"
 _integ_exit=$?
 set -e
 run_test "mainloop_ownership_mismatch_result_escalate" "RESULT=escalate" \
@@ -15755,7 +15756,7 @@ run_test "mainloop_ownership_mismatch_exit2" "2" "$_integ_exit"
 run_test "mainloop_ownership_mismatch_head_reported" "PR_OWNERSHIP_PR_HEAD_BRANCH=spec/10-sibling-item" \
   "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_PR_HEAD_BRANCH=')"
 run_test "mainloop_ownership_mismatch_only_read_call" \
-  "pr view 52 --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" \
+  "pr view 52 --repo example/repo --json headRefName,headRepositoryOwner,headRepository,isCrossRepository" \
   "$(cat "$_integ_gh_log")"
 rm -f "$_integ_gh_log"
 unset INTEG_MOCK_GH_LOG
@@ -15765,7 +15766,7 @@ export INTEG_MOCK_HEAD_JSON='{"headRefName":"spec/13-own-item","headRepositoryOw
 _integ_out=""
 _integ_exit=0
 set +e
-_integ_out="$(_run_loop_integration 54 --branch spec/13-own-item)"
+_integ_out="$(GH_REPO= WORKFLOW_TARGET_GITHUB_REPO=example/repo _run_loop_integration 54 --branch spec/13-own-item)"
 _integ_exit=$?
 set -e
 run_test "mainloop_ownership_fork_reason" "REASON=pr_ownership_mismatch" \
@@ -15780,7 +15781,7 @@ unset INTEG_MOCK_HEAD_JSON
 _integ_out=""
 _integ_exit=0
 set +e
-_integ_out="$(_run_loop_integration 53 --branch spec/13-own-item)"
+_integ_out="$(GH_REPO= WORKFLOW_TARGET_GITHUB_REPO=example/repo _run_loop_integration 53 --branch spec/13-own-item)"
 _integ_exit=$?
 set -e
 run_test "mainloop_ownership_unresolved_result_escalate" "RESULT=escalate" \
@@ -15788,6 +15789,87 @@ run_test "mainloop_ownership_unresolved_result_escalate" "RESULT=escalate" \
 run_test "mainloop_ownership_unresolved_reason" "REASON=pr_ownership_unverified" \
   "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
 run_test "mainloop_ownership_unresolved_exit2" "2" "$_integ_exit"
+
+# Tests 15.7–15.12: the ownership check inspects the repository the loop
+# mutates, resolved like the lock key, and always passes it as --repo; the
+# verified repository is then pinned for every later gh call (#1444 review).
+_own_view_args='--json headRefName,headRepositoryOwner,headRepository,isCrossRepository'
+export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9","headRepositoryOwner":{"login":"acme"},"headRepository":{"name":"rootonly"},"isCrossRepository":false}'
+_own_fixture_root="$(mktemp -d)"
+git -c init.defaultBranch=main init -q "$_own_fixture_root/with-origin"
+git -C "$_own_fixture_root/with-origin" remote add origin https://github.com/acme/rootonly.git
+git -c init.defaultBranch=main init -q "$_own_fixture_root/no-origin"
+
+# _own_run <env-assignments...> -- <loop args...>: run the loop with GH_REPO and
+# WORKFLOW_TARGET_GITHUB_REPO cleared unless the case sets them.
+_own_run() {
+  local _envs=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do _envs+=("$1"); shift; done
+  shift
+  _integ_gh_log="$(mktemp)"
+  _integ_gh_env_log="$(mktemp)"
+  _integ_out=""
+  _integ_exit=0
+  set +e
+  _integ_out="$(env GH_REPO= WORKFLOW_TARGET_GITHUB_REPO= ${_envs[@]+"${_envs[@]}"} \
+    INTEG_MOCK_GH_LOG="$_integ_gh_log" INTEG_MOCK_GH_ENV_LOG="$_integ_gh_env_log" \
+    PATH="$_integration_mock_bin:$PATH" \
+    bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$@" 2>/dev/null)"
+  _integ_exit=$?
+  set -e
+}
+
+# 15.7: --repo-root only → the root's origin, not the caller's cwd repo
+_own_run -- 997 --branch release/v9.9.9 --repo-root "$_own_fixture_root/with-origin"
+run_test "mainloop_ownership_repo_root_only_queries_root_origin" \
+  "pr view 997 --repo acme/rootonly $_own_view_args" "$(head -n 1 "$_integ_gh_log")"
+run_test "mainloop_ownership_repo_root_only_reports_repo" "PR_OWNERSHIP_REPO=acme/rootonly" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_REPO=')"
+run_test "mainloop_ownership_repo_root_only_result_skipped" "RESULT=skipped" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
+run_test "mainloop_ownership_repo_root_only_summary_pinned" "1" \
+  "$(grep -c '^acme/rootonly|pr comment 997 --body-file' "$_integ_gh_env_log" || true)"
+rm -f "$_integ_gh_log" "$_integ_gh_env_log"
+
+# 15.8: WORKFLOW_TARGET_GITHUB_REPO only
+_own_run WORKFLOW_TARGET_GITHUB_REPO=acme/envonly -- 997 --branch release/v9.9.9
+run_test "mainloop_ownership_env_target_only_queries_env_repo" \
+  "pr view 997 --repo acme/envonly $_own_view_args" "$(head -n 1 "$_integ_gh_log")"
+run_test "mainloop_ownership_env_target_only_owned" "PR_OWNERSHIP_RESULT=owned" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+rm -f "$_integ_gh_log" "$_integ_gh_env_log"
+
+# 15.9: GH_REPO only — bare gh calls in the loop follow it, so the check must too
+_own_run GH_REPO=acme/ghonly -- 997 --branch release/v9.9.9
+run_test "mainloop_ownership_gh_repo_only_queries_gh_repo" \
+  "pr view 997 --repo acme/ghonly $_own_view_args" "$(head -n 1 "$_integ_gh_log")"
+rm -f "$_integ_gh_log" "$_integ_gh_env_log"
+
+# 15.10: --repo slug wins over the environment
+_own_run WORKFLOW_TARGET_GITHUB_REPO=acme/envonly -- 997 --branch release/v9.9.9 --repo acme/flag
+run_test "mainloop_ownership_repo_flag_queries_flag_repo" \
+  "pr view 997 --repo acme/flag $_own_view_args" "$(head -n 1 "$_integ_gh_log")"
+rm -f "$_integ_gh_log" "$_integ_gh_env_log"
+
+# 15.11: WORKFLOW_TARGET_GITHUB_REPO and GH_REPO disagree → fail closed, no gh call
+_own_run WORKFLOW_TARGET_GITHUB_REPO=acme/one GH_REPO=acme/two -- 997 --branch release/v9.9.9
+run_test "mainloop_ownership_env_conflict_reason" "REASON=pr_ownership_unverified" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_ownership_env_conflict_result" "PR_OWNERSHIP_RESULT=repo_unresolved" \
+  "$(printf '%s\n' "$_integ_out" | grep '^PR_OWNERSHIP_RESULT=')"
+run_test "mainloop_ownership_env_conflict_exit2" "2" "$_integ_exit"
+run_test "mainloop_ownership_env_conflict_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log" "$_integ_gh_env_log"
+
+# 15.12: --repo-root without an origin and no other source → fail closed
+_own_run -- 997 --branch release/v9.9.9 --repo-root "$_own_fixture_root/no-origin"
+run_test "mainloop_ownership_no_target_reason" "REASON=pr_ownership_unverified" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
+run_test "mainloop_ownership_no_target_exit2" "2" "$_integ_exit"
+run_test "mainloop_ownership_no_target_no_gh_call" "" "$(cat "$_integ_gh_log")"
+rm -f "$_integ_gh_log" "$_integ_gh_env_log"
+rm -rf "$_own_fixture_root"
+unset INTEG_MOCK_HEAD_JSON _own_view_args _own_fixture_root _integ_gh_env_log
 
 _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON

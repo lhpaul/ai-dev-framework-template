@@ -151,8 +151,10 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
 - `pr-review-loop.sh <pr> --branch <branch>` runs this guard itself before any
   side effect and stops with `RESULT=escalate` and
   `REASON=pr_ownership_mismatch` (wrong branch or head repository) or
-  `REASON=pr_ownership_unverified` (PR not resolved), exit `2`. Always pass
-  `--branch` so that check runs.
+  `REASON=pr_ownership_unverified` (PR or target repository not resolved),
+  exit `2`. It inspects the same target repository its lock key names
+  (`--repo`/`--product-repo`, `WORKFLOW_TARGET_GITHUB_REPO`, `GH_REPO`, then
+  the `--repo-root` origin). Always pass `--branch` so that check runs.
 - Mirror review-gate evidence recorded in the PR description (for example the
   Pre-Submission Self-Review log) as a PR comment after the PR exists: a
   description can be silently overwritten; a comment cannot.

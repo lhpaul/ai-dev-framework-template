@@ -292,13 +292,25 @@ _lock_key_component() {
   printf '%s-%s' "$label" "$digest"
 }
 
-# _resolve_lock_repo_key <repo-selector> <repo-root>
-_resolve_lock_repo_key() {
+# _resolve_target_repo_slug <repo-selector> <repo-root>
+#
+# The single resolution of "which GitHub repository does this run target",
+# shared by the lock key and the PR ownership check (issue #1444) so the two can
+# never disagree. Sources, in order: the --repo/--product-repo selector,
+# WORKFLOW_TARGET_GITHUB_REPO, GH_REPO (which every bare `gh` call in this
+# script honours), then the origin remote of <repo-root> (default: the current
+# directory). Prints the owner/repo slug and returns 0; prints nothing and
+# returns 1 when no source yields a valid slug, or when WORKFLOW_TARGET_GITHUB_REPO
+# and GH_REPO name different repositories — then `repo_slug` and bare `gh`
+# calls in this script would already disagree with each other.
+_resolve_target_repo_slug() {
   local selector="${1:-}"
   local root="${2:-}"
   local slug=""
   local context=""
   local git_url=""
+  local env_target="${WORKFLOW_TARGET_GITHUB_REPO:-}"
+  local env_gh_repo="${GH_REPO:-}"
 
   if [ -n "$selector" ]; then
     if workflow_is_valid_github_repo_slug "$selector"; then
@@ -308,17 +320,42 @@ _resolve_lock_repo_key() {
       if [ -n "$context" ]; then
         slug="$(workflow_github_repo_from_context "$context" 2>/dev/null || true)"
       fi
+    fi
+  elif [ -n "$env_target" ] || [ -n "$env_gh_repo" ]; then
+    if [ -n "$env_target" ] && [ -n "$env_gh_repo" ] \
+        && [ "$(printf '%s' "$env_target" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$env_gh_repo" | tr '[:upper:]' '[:lower:]')" ]; then
+      return 1
+    fi
+    slug="${env_target:-$env_gh_repo}"
+  else
+    git_url="$(git -C "${root:-.}" remote get-url origin 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - no origin remote is an expected case; callers decide how to handle an unresolved target
+    if [ -n "$git_url" ]; then
+      slug="$(workflow_github_repo_from_git_url "$git_url" 2>/dev/null || true)"
+    fi
+  fi
+
+  if [ -n "$slug" ] && workflow_is_valid_github_repo_slug "$slug"; then
+    printf '%s\n' "$slug"
+    return 0
+  fi
+  return 1
+}
+
+# _resolve_lock_repo_key <repo-selector> <repo-root>
+_resolve_lock_repo_key() {
+  local selector="${1:-}"
+  local root="${2:-}"
+  local slug=""
+
+  slug="$(_resolve_target_repo_slug "$selector" "$root")" || slug=""
+  if [ -z "$slug" ]; then
+    if [ -n "$selector" ]; then
       # A selector that names a product repo we cannot resolve here is still a
       # stable discriminator on its own — better than folding it into the
       # shared "unknown-repo" bucket.
-      [ -n "$slug" ] || slug="selector-$selector"
-    fi
-  elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
-    slug="$WORKFLOW_TARGET_GITHUB_REPO"
-  else
-    git_url="$(git -C "${root:-.}" remote get-url origin 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - no origin remote is an expected case; the key falls back to unknown-repo rather than failing the run over a lock name
-    if [ -n "$git_url" ]; then
-      slug="$(workflow_github_repo_from_git_url "$git_url" 2>/dev/null || true)"
+      slug="selector-$selector"
+    elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+      slug="$WORKFLOW_TARGET_GITHUB_REPO"
     fi
   fi
 
@@ -343,8 +380,11 @@ _unlock_hint() {
   # When the lock key came from WORKFLOW_TARGET_GITHUB_REPO (Protocol 91's usual
   # invocation with no --repo flag), echo that slug so a later shell cannot
   # re-resolve via a different checkout's origin and delete the wrong lock.
+  # GH_REPO is a key source too (see _resolve_target_repo_slug).
   if [ -z "$selector" ] && [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
     selector="$WORKFLOW_TARGET_GITHUB_REPO"
+  elif [ -z "$selector" ] && [ -n "${GH_REPO:-}" ]; then
+    selector="$GH_REPO"
   fi
 
   [ -n "$selector" ] && hint="$hint --repo \"$selector\""
@@ -606,8 +646,9 @@ Subcommands:
     The lock is keyed by target repository AND PR number, so `unlock` must
     resolve the same repository the blocked run did. Pass the same
     --repo/--product-repo/--repo-root options that run used; with none of them,
-    the repository is taken from the working directory's origin remote. The
-    lock_contention message prints the exact recovery command for that run.
+    the repository is taken from WORKFLOW_TARGET_GITHUB_REPO, then GH_REPO, then
+    the working directory's origin remote. The lock_contention message prints
+    the exact recovery command for that run.
 
     Example:
       ./scripts/development-workflow/pr-review-loop.sh unlock 123
@@ -695,9 +736,14 @@ Outputs stable key=value lines including:
     readied, or labelled)
   REASON=pr_ownership_unverified (exit 2, with RESULT=escalate: --branch was
     given but pr-ownership-guard.sh could not resolve the PR; fail closed)
-  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown (only when
+  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown|repo_unresolved (only when
     --branch is given; with PR_OWNERSHIP_PR_HEAD_BRANCH, _PR_HEAD_REPO,
     _MISMATCH, and _REQUIRED_ACTION on refusal)
+  PR_OWNERSHIP_REPO=<owner/repo> (only when --branch is given: the repository
+    the check inspected, resolved like the lock key from --repo/--product-repo,
+    WORKFLOW_TARGET_GITHUB_REPO, GH_REPO, or --repo-root's origin; empty when
+    unresolvable, which fails closed as pr_ownership_unverified. After a pass,
+    the loop pins WORKFLOW_TARGET_GITHUB_REPO and GH_REPO to it)
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
@@ -12518,15 +12564,30 @@ fi
 # head repository belong to it before any side effect, and fail closed
 # otherwise. Without --branch the loop derives the head branch from the PR
 # itself, so there is no independent expectation to check.
+#
+# The check must inspect the repository the loop mutates. The target comes
+# from _resolve_target_repo_slug (the lock key's resolver) against the
+# --repo-root the loop later enters, and is always passed as --repo: a bare
+# lookup would read the caller's working directory instead. An unresolvable
+# target fails closed. Once verified, the target is pinned in
+# WORKFLOW_TARGET_GITHUB_REPO and GH_REPO so every later gh call — including
+# the release guard's summary comment, which runs before the loop enters
+# --repo-root — acts on the repository that was verified.
 if [ -n "$branch_name" ]; then
-  _ownership_args=(--pr "$pr_number" --expected-branch "$branch_name" --repo-root "$repo_root")
-  if [ -n "${target_github_repo:-}" ]; then
-    _ownership_args+=(--repo "$target_github_repo")
-  fi
+  _ownership_repo=""
   _ownership_output=""
   _ownership_status=0
-  _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" "${_ownership_args[@]}" 2>&1)" \
-    || _ownership_status=$?
+  if _ownership_repo="$(_resolve_target_repo_slug "$repo_selector" "$repo_root")"; then
+    _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" \
+      --expected-branch "$branch_name" --repo "$_ownership_repo" --repo-root "$repo_root" 2>&1)" \
+      || _ownership_status=$?
+  else
+    _ownership_status=3
+    _ownership_output="RESULT=repo_unresolved
+REQUIRED_ACTION=Pass --repo owner/name (or a --repo-root whose origin is the PR's GitHub repository); WORKFLOW_TARGET_GITHUB_REPO and GH_REPO must not name different repositories.
+ERROR: could not resolve the target GitHub repository for the PR ownership check."
+  fi
+  print_kv PR_OWNERSHIP_REPO "$_ownership_repo"
   if [ "$_ownership_status" -ne 0 ]; then
     _ownership_reason="pr_ownership_unverified"
     if [ "$_ownership_status" -eq 1 ]; then
@@ -12544,6 +12605,8 @@ if [ -n "$branch_name" ]; then
     exit 2
   fi
   print_kv PR_OWNERSHIP_RESULT owned
+  export WORKFLOW_TARGET_GITHUB_REPO="$_ownership_repo"
+  export GH_REPO="$_ownership_repo"
 fi
 
 # --- Reviewer-loop run identifier (#1502 follow-up: dual cap) ---
