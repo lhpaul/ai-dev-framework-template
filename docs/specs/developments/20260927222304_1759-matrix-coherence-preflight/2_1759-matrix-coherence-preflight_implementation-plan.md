@@ -50,20 +50,18 @@ All commands run at repo revision `361a7972` (branch `develop`, `2026-09-27`).
 
 **Rule 1 — sampling or enumeration record.** Not applicable. The design binds to no external free-text output distribution: it adds review guidance over documents this repository authors. No third-party output is matched, parsed, classified, or enumerated. (Trigger absent: no producer, no population, no occurrence set.)
 
-### Per-rule outcome record (this plan revision — the PR head that contains this section)
+### Per-rule evidence pointers (not an outcome record)
 
-The outcomes below are determined against the plan text of the PR head that contains this section. A commit cannot name its own SHA, so this record carries no pinned marker that could go stale on a push; the PR body's Document Quality Gate record names the live head SHA and is refreshed after each push (lag of one push accepted by operator decision on PR #1815).
+This section only points at where each rule's evidence lives in this plan. The authoritative per-rule outcome record, with outcome labels and a revision identity that resolves to the PR head, is the Document Quality Gate record in the PR body, refreshed after each push (a lag of one push is accepted by operator decision on PR #1815). No outcome label is recorded in the plan itself, so there is no second record that can go stale.
 
-Outcome labels per `plan-authoring-rigor-rules.md`:
-
-| Rule | Outcome | Evidence pointer |
+| Rule | Evidence summary | Evidence pointer |
 | --- | --- | --- |
-| Rule 1 — Sampling an external output distribution | `Not applicable` — no external free-text producer, population, or occurrence set; guidance targets this repository's own documents | "Factual claim evidence" → Rule 1 paragraph above |
-| Rule 2 — One normative statement per fact | `Satisfied` — the six-check definition and the 22-file enumeration each appear once as normative; all other mentions are cross-references | "The six audit checks" section; Layer-by-Layer total line |
-| Rule 3 — Counts of codebase artifacts | `Satisfied` — 22-file count derived from the recorded direct union query (Verification Log row "Full 22-file population") at `361a7972`; the two greps corroborate the protocol and mirror subsets | Verification Log row "Full 22-file population" (`ls ... \| wc -l` = 22); Layer-by-Layer "Total: 22 files" |
-| Rule 4 — Independent verification of existence claims | `Satisfied` — non-existence claim covers all plausible locations (docs, scripts, REVIEW.md, AGENTS.md, and the four agent/skill trees); plan-reviewer exemption cites its direct grep | Verification Log row 1 (both recorded searches); Layer-by-Layer total line: `grep -ci "matrix" ...` evidence |
-| Rule 5 — Consumer enumeration at composed call sites | `Satisfied` — every direct consumer enumerated by a broad recorded search with post-change outcomes | Verification Log row "Every direct consumer of the changed `REVIEW.md` checklists is enumerated" |
-| Rule 6 — Conditional obligations name scope + discharge point | `Satisfied` — all three conditionals carry scope + discharge point in the same statement | "Factual claim evidence" → Rule 6 list |
+| Rule 1 — Sampling an external output distribution | no external free-text producer, population, or occurrence set; guidance targets this repository's own documents | "Factual claim evidence" → Rule 1 paragraph above |
+| Rule 2 — One normative statement per fact | the six-check definition and the 22-file enumeration each appear once as normative; all other mentions are cross-references | "The six audit checks" section; Layer-by-Layer total line |
+| Rule 3 — Counts of codebase artifacts | 22-file count derived from the recorded direct union query (Verification Log row "Full 22-file population") at `361a7972`; the two greps corroborate the protocol and mirror subsets | Verification Log row "Full 22-file population" (`ls ... \| wc -l` = 22); Layer-by-Layer "Total: 22 files" |
+| Rule 4 — Independent verification of existence claims | non-existence claim covers all plausible locations (docs, scripts, REVIEW.md, AGENTS.md, and the four agent/skill trees); plan-reviewer exemption cites its direct grep | Verification Log row 1 (both recorded searches); Layer-by-Layer total line: `grep -ci "matrix" ...` evidence |
+| Rule 5 — Consumer enumeration at composed call sites | every direct consumer enumerated by a broad recorded search with post-change outcomes | Verification Log row "Every direct consumer of the changed `REVIEW.md` checklists is enumerated" |
+| Rule 6 — Conditional obligations name scope + discharge point | all three conditionals carry scope + discharge point in the same statement | "Factual claim evidence" → Rule 6 list |
 
 ### Reversal note (published workflow contract changes)
 
