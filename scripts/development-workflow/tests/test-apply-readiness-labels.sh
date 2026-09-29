@@ -216,9 +216,13 @@ case "$*" in
     if [ -n "${MOCK_OCC_TIMELINE:-}" ]; then
       _nodes="$MOCK_OCC_TIMELINE"
     else
-      _nodes="$(printf '%s\n' "[${MOCK_ISSUE_COMMENTS:-[]}]" | jq -c '[{"__typename":"PullRequestCommit","commit":{"oid":"aaaa111000000000000"}}] + [ .[][]? | {"__typename":"IssueComment","databaseId":(.id // 0)} ]')"
+      _nodes="$(jq -cn --argjson ic "[${MOCK_ISSUE_COMMENTS:-[]}]" --argjson rv "[${MOCK_REVIEWS:-[]}]" '[{"__typename":"PullRequestCommit","commit":{"oid":"aaaa111000000000000"}}] + [ $rv[][]? | {"__typename":"PullRequestReview","databaseId":(.id // 0)} ] + [ $ic[][]? | {"__typename":"IssueComment","databaseId":(.id // 0)} ]')"
     fi
-    printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${_nodes}}}}}}]"
+    if [ -n "${MOCK_OCC_TIMELINE_PAGE2:-}" ]; then
+      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${_nodes}}}}}},{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE_PAGE2}}}}}}]"
+    else
+      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${_nodes}}}}}}]"
+    fi
     exit 0
     ;;
   *"reviewThreads"*)
@@ -234,19 +238,19 @@ case "$*" in
   *"api graphql"*)
     # Round 18 (PRRT_kwDORWAxaM6m36Wu): greptile's push-observation binding —
     # the PR timeline (PullRequestCommit / IssueComment nodes in server
-    # order). MOCK_PR_TIMELINE carries the timelineItems nodes array; the
+    # order). MOCK_OCC_TIMELINE carries the timelineItems nodes array; the
     # stub applies the caller's --jq filter itself (emit would re-apply it
     # to the already-filtered nodes).
     printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    [ "${MOCK_PR_TIMELINE_EXIT:-0}" = "0" ] || exit 1
+    [ "${MOCK_OCC_TIMELINE_EXIT:-0}" = "0" ] || exit 1
     # Round 19 (PRRT_kwDORWAxaM6m5slK): the helper now paginates (--paginate
-    # --slurp), so the stub emits an ARRAY OF PAGES. MOCK_PR_TIMELINE_PAGE2,
+    # --slurp), so the stub emits an ARRAY OF PAGES. MOCK_OCC_TIMELINE_PAGE2,
     # when set, is a second page's nodes (the head commit can sit on page 1
     # with the trigger only on page 2).
-    if [ -n "${MOCK_PR_TIMELINE_PAGE2:-}" ]; then
-      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE:-[]}}}}}},{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE_PAGE2}}}}}}]"
+    if [ -n "${MOCK_OCC_TIMELINE_PAGE2:-}" ]; then
+      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE:-[]}}}}}},{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE_PAGE2}}}}}}]"
     else
-      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_PR_TIMELINE:-[]}}}}}}]"
+      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE:-[]}}}}}}]"
     fi
     exit 0
     ;;
@@ -460,14 +464,12 @@ run_helper() {
     MOCK_WORKFLOW_RUNS="${MOCK_WORKFLOW_RUNS:-}" \
     MOCK_GH_USER="${MOCK_GH_USER:-}" \
     MOCK_TMP_ROOT="$TMP_ROOT" \
-    MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
-    MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
+    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
+    MOCK_OCC_TIMELINE_PAGE2="${MOCK_OCC_TIMELINE_PAGE2:-}" \
     MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
     MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
-    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
     MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
-    MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -1761,14 +1763,12 @@ run_helper_platform() {
     MOCK_HEAD_COMMIT_JSON="${MOCK_HEAD_COMMIT_JSON:-}" \
     MOCK_GH_USER="${MOCK_GH_USER:-}" \
     MOCK_TMP_ROOT="$TMP_ROOT" \
-    MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
-    MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
+    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
+    MOCK_OCC_TIMELINE_PAGE2="${MOCK_OCC_TIMELINE_PAGE2:-}" \
     MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
     MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
-    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
     MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
-    MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
     "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
   )"
@@ -1992,7 +1992,7 @@ MOCK_BASE_CONFIG="$_greptile_platform_yaml"
 # fixture below is the normal shape: head commit first, trigger after.
 _greptile_timeline_after_push='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}},{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","author":{"login":"agent"},"body":"@greptile review"}]'
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"agent"},"created_at":"2026-01-05T00:00:00Z","id":901,"body":"@greptile review"}]'
-MOCK_PR_TIMELINE="$_greptile_timeline_after_push"
+MOCK_OCC_TIMELINE="$_greptile_timeline_after_push"
 result="$(MOCK_GREPTILE_REACTION="$_greptile_reaction_json" run_helper_platform "$_codex_config")"
 run_test "greptile_reaction_completion_labels_exit" "0" "${result%%|*}"
 run_test "greptile_reaction_completion_result" "labeled" "$(field "$result" RESULT)"
@@ -2010,28 +2010,36 @@ run_test "greptile_no_reaction_refuses_reason" "reviewer-check-absent" "$(field 
 # would accept this; the timeline binding must refuse.
 MOCK_GREPTILE_REACTION="$_greptile_reaction_json"
 MOCK_HEAD_COMMIT_JSON='{"commit":{"committer":{"date":"2026-01-04T00:00:00Z"}}}'
-MOCK_PR_TIMELINE='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","author":{"login":"agent"},"body":"@greptile review"},{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
+MOCK_OCC_TIMELINE='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","author":{"login":"agent"},"body":"@greptile review"},{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_backdated_commit_pre_push_trigger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 run_test "greptile_backdated_commit_pre_push_trigger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 # The normal post-push trigger (timeline above) still labels with the same
 # backdated committer date — proving the binding is the server timeline,
 # not commit metadata.
-MOCK_PR_TIMELINE="$_greptile_timeline_after_push"
+MOCK_OCC_TIMELINE="$_greptile_timeline_after_push"
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_post_push_trigger_labels_result" "labeled" "$(field "$result" RESULT)"
 # Round 19 (PRRT_kwDORWAxaM6m5slK): the timeline is paginated — the head
 # commit on page 1 and the trigger only on page 2 must still label (old:
 # last:100 omitted the anchor once >100 later events accumulated).
-MOCK_PR_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
-MOCK_PR_TIMELINE_PAGE2='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","body":"@greptile review"}]'
+MOCK_OCC_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
+MOCK_OCC_TIMELINE_PAGE2='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","body":"@greptile review"}]'
 MOCK_GREPTILE_REACTION="$_greptile_reaction_json"
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"agent"},"created_at":"2026-01-05T00:00:00Z","id":901,"body":"@greptile review"}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_trigger_on_timeline_page2_labels_result" "labeled" "$(field "$result" RESULT)"
-MOCK_PR_TIMELINE_PAGE2=''
+# Round 32 (PRRT_kwDORWAxaM6nCoxN): after a force-push A -> B -> A the
+# first-occupancy trigger (before the LAST head transition) must not certify
+# the second occupancy; a trigger after the last transition still does.
+MOCK_OCC_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}},{"__typename":"IssueComment","databaseId":901},{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"bbbb222000000000000"}},{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"'"$HEAD"'"}}]'
+MOCK_OCC_TIMELINE_PAGE2=''
+result="$(run_helper_platform "$_codex_config")"
+run_test "greptile_first_occupancy_trigger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_OCC_TIMELINE=''
+MOCK_OCC_TIMELINE_PAGE2=''
 MOCK_HEAD_COMMIT_JSON=''
-MOCK_PR_TIMELINE=""
+MOCK_OCC_TIMELINE=""
 MOCK_ISSUE_COMMENTS='[]'
 
 # Thread PRRT_kwDORWAxaM6m1pGF: the inline-comment scan must be bounded by
@@ -2146,6 +2154,19 @@ result="$(run_helper_platform "$_codex_config")"
 run_test "codex_occupancy_fetch_failure_escalates_reason" "codex-occupancy-timeline-fetch-failed" "$(field "$result" REASON)"
 MOCK_OCC_TIMELINE_EXIT=0
 MOCK_OCC_TIMELINE=''
+# Round 32 (PRRT_kwDORWAxaM6nCoxI): a formal review from the head's FIRST
+# occupancy is not a verdict on the second — only reviews after the last head
+# transition qualify.
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_REVIEWS="[$(_codex_review_json COMMENTED "$_codex_canonical_clean_body" 950 2026-01-02T00:00:00Z)]"
+MOCK_OCC_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}},{"__typename":"PullRequestReview","databaseId":950},{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"'"$HEAD"'"}}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_first_occupancy_review_not_verdict_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_OCC_TIMELINE='[{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"'"$HEAD"'"}},{"__typename":"PullRequestReview","databaseId":950}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_current_occupancy_review_is_verdict_result" "labeled" "$(field "$result" RESULT)"
+MOCK_OCC_TIMELINE=''
+MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 # The clean sentence AND the head pin together still pass (unchanged

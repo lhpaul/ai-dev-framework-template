@@ -304,11 +304,20 @@ comment_only_reviewer_verdict() {
   if ! reviews_json="$(gh api "repos/$repo/pulls/$pr_number/reviews" --paginate --slurp 2>/dev/null)"; then
     escalate review-fetch-failed
   fi
-  if ! latest_review="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" '
+  # Round 32 (PRRT_kwDORWAxaM6nCoxI): bind formal reviews to the head's
+  # current occupancy as well — a review submitted during an earlier
+  # occupancy of the same SHA (force-push A -> B -> A) is not a verdict on
+  # the second. Reviews GitHub recorded after the last head transition only.
+  _occupancy_out="[]"
+  _occupancy_reviews_out="[]"
+  codex_current_occupancy_comment_ids
+  local _occ_reviews="$_occupancy_reviews_out"
+  if ! latest_review="$(printf '%s\n' "${reviews_json:-[]}" | jq -c --arg bot "$bot_login_arg" --arg sha "$head_sha" --argjson occr "$_occ_reviews" '
         [ .[]?[]
           | select(
               (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               and ((.commit_id // .commitId // "") == $sha)
+              and ((.id // 0) as $rid | ($occr | index($rid)) != null)
               # Round 30 (PRRT_kwDORWAxaM6nCAK8): only a live review verdict
               # is completion evidence. A DISMISSED (or PENDING / unknown
               # state) review is no verdict at all and must not become
@@ -715,7 +724,8 @@ coderabbit_cli_local_ai_ledger_verdict() {
 }
 
 # codex_current_occupancy_comment_ids — round 31 (PRRT_kwDORWAxaM6nCTd8).
-# Sets _occupancy_out to a JSON array of the issue-comment database ids that GitHub recorded
+# Sets _occupancy_out (issue-comment ids) and _occupancy_reviews_out (review
+# ids) to JSON arrays of the database ids that GitHub recorded
 # AFTER the current head last became the PR head. A force-push A -> B -> A
 # leaves A's first-occupancy Codex root comment (SHA-pinned to A) on the PR;
 # the marker alone matches the current head again although no review ran
@@ -728,7 +738,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
 codex_current_occupancy_comment_ids() {
   local _o_owner="${repo%%/*}" _o_name="${repo#*/}" _o_json
   if ! _o_json="$(gh api graphql --paginate --slurp \
-        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on HeadRefForcePushedEvent{afterCommit{oid}} ...on IssueComment{databaseId}}}}}}}' \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on HeadRefForcePushedEvent{afterCommit{oid}} ...on IssueComment{databaseId} ...on PullRequestReview{databaseId}}}}}}}' \
         -f owner="$_o_owner" -f repo="$_o_name" -F pr="$pr_number" 2>/dev/null)" \
       || [ -z "$_o_json" ]; then
     escalate codex-occupancy-timeline-fetch-failed
@@ -742,12 +752,17 @@ codex_current_occupancy_comment_ids() {
                )
              | .key
            ] | last) as $b
-        | if $b == null then []
-          else [ $n[($b + 1):][] | select(.__typename == "IssueComment") | (.databaseId // 0) ]
+        | if $b == null then {c: [], r: []}
+          else {
+            c: [ $n[($b + 1):][] | select(.__typename == "IssueComment") | (.databaseId // 0) ],
+            r: [ $n[($b + 1):][] | select(.__typename == "PullRequestReview") | (.databaseId // 0) ]
+          }
           end
       ' 2>/dev/null)"; then
     escalate codex-occupancy-timeline-parse-failed
   fi
+  _occupancy_reviews_out="$(printf '%s\n' "$_occupancy_out" | jq -c '.r' 2>/dev/null)" || escalate codex-occupancy-timeline-parse-failed
+  _occupancy_out="$(printf '%s\n' "$_occupancy_out" | jq -c '.c' 2>/dev/null)" || escalate codex-occupancy-timeline-parse-failed
 }
 
 # comment_only_completion_evidence <platform> <bot_login> — round 15 (PR
@@ -1005,30 +1020,24 @@ comment_only_completion_evidence() {
       # push observation available). A timeline fetch/parse failure
       # escalates fail-closed; a trigger the server ordered before the
       # head commit refuses (absent evidence).
-      local _greptile_owner="${repo%%/*}" _greptile_name="${repo#*/}"
-      local _greptile_timeline
-      if ! _greptile_timeline="$(gh api graphql --paginate --slurp \
-            -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){timelineItems(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ...on PullRequestCommit{commit{oid}} ...on IssueComment{databaseId createdAt body}}}}}}' \
-            -f owner="$_greptile_owner" \
-            -f repo="$_greptile_name" \
-            -F pr="$pr_number" \
-            2>/dev/null)" \
-          || [ -z "$_greptile_timeline" ] || [ "$_greptile_timeline" = "null" ]; then
-        escalate greptile-timeline-fetch-failed
-      fi
-      if ! _greptile_timeline="$(printf '%s\n' "$_greptile_timeline" | jq -c '[ .[]?.data.repository.pullRequest.timelineItems.nodes[]? ]' 2>/dev/null)"; then
-        escalate greptile-timeline-fetch-failed
-      fi
-      trigger="$(printf '%s\n' "$_greptile_timeline" | jq -c --arg sha "$head_sha" '
-        ( index( [ .[] | select(.__typename == "PullRequestCommit" and ((.commit.oid // "" | ascii_downcase) == ($sha | ascii_downcase)) ) ][0] ) ) as $head_commit_idx
-        | if $head_commit_idx == null then empty else
-            [ .[ $head_commit_idx: ][]
-              | select(.__typename == "IssueComment" and ((.body // "") == "@greptile review"))
-              | {id: (.databaseId // 0), created_at: (.createdAt // "")}
-            ]
-            | sort_by(.created_at)
-            | last // empty
-          end
+      # Round 32 (PRRT_kwDORWAxaM6nCoxN): the trigger must be an issue comment
+      # GitHub recorded AFTER the LAST head transition (latest PullRequestCommit
+      # / HeadRefForcePushedEvent for the head oid), not the first — after a
+      # force-push A -> B -> A the first-occupancy trigger sits in the suffix of
+      # the first matching commit node and would certify the second occupancy.
+      # The occupancy set is the shared server-ordered boundary; a
+      # timeline read failure escalates fail-closed.
+      _occupancy_out="[]"
+      _occupancy_reviews_out="[]"
+      codex_current_occupancy_comment_ids
+      trigger="$(printf '%s\n' "${issue_comments_json:-[]}" | jq -c --argjson occ "$_occupancy_out" '
+        [ .[]?[]
+          | select((.body // "") == "@greptile review")
+          | select((.id // 0) as $cid | ($occ | index($cid)) != null)
+          | {id: (.id // 0), created_at: (.created_at // "")}
+        ]
+        | sort_by(.created_at)
+        | last // empty
       ' 2>/dev/null)"
       [ -n "$trigger" ] || return 1
       local trigger_id
