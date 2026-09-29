@@ -525,6 +525,8 @@ for _arg in "$@"; do
   esac
 done
 unset _skip_next _capture_next
+# Without --repo-root the key reads the caller's cwd origin, not the script
+# checkout the loop later enters; kept as-is so existing lock names stay stable.
 _LOCK_REPO_KEY="$(_resolve_lock_repo_key "$_REPO_SELECTOR_ARG" "$_REPO_ROOT_ARG")"
 _LOCK_DIR="$(_lock_dir_for "$_LOCK_REPO_KEY" "$_PR_ARG")"
 _UNLOCK_COMMAND="$(_unlock_hint "$_REPO_SELECTOR_ARG" "$_REPO_ROOT_ARG" "${_PR_ARG:-<pr>}")"
