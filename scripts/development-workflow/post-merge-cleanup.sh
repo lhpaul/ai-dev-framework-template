@@ -815,7 +815,9 @@ fetch_pr_closing_issues() {
   local pr_repo="${1:-}"
   local pr_number="${2:-}"
   local qualified_repo="${3:-}"
-  local keyword_regex="$CLOSING_KEYWORD_REGEX"
+  # Function-local copy: the shared constant stays the single source of the
+  # keyword grammar; the qualified form below only rewrites its trailing ref.
+  local CLOSING_KEYWORD_REGEX="$CLOSING_KEYWORD_REGEX"
   local pr_body stripped_pr_body keyword_lines matched_refs stage_status
   if { [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; } || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number> [<qualified_repo>]." >&2
@@ -828,7 +830,7 @@ fetch_pr_closing_issues() {
     fi
     # Swap the shared regex's trailing bare "#[0-9]+" for "<slug>#[0-9]+".
     # A slug's only regex metacharacter is '.'.
-    keyword_regex="${CLOSING_KEYWORD_REGEX%'#[0-9]+'}${qualified_repo//./\\.}#[0-9]+"
+    CLOSING_KEYWORD_REGEX="${CLOSING_KEYWORD_REGEX%'#[0-9]+'}${qualified_repo//./\\.}#[0-9]+"
   fi
   pr_body="$(gh pr view "$pr_number" --repo "$pr_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)" || return 1
   # Commit messages carry closing keywords too, and GitHub only honours them
@@ -856,7 +858,7 @@ fetch_pr_closing_issues() {
   stripped_pr_body="${stripped_pr_body}
 ${stripped_pr_commit_text}"
   set +e
-  keyword_lines="$(printf '%s' "$stripped_pr_body" | grep -ioE "$keyword_regex")"
+  keyword_lines="$(printf '%s' "$stripped_pr_body" | grep -ioE "$CLOSING_KEYWORD_REGEX")"
   stage_status=$?
   set -e
   if [ "$stage_status" -gt 1 ]; then
