@@ -2430,28 +2430,44 @@ MOCK_PERMS=''
 # #1828: the helper's GraphQL is only ever exercised against a mocked `gh`,
 # which accepts any query text, so an unbalanced literal shipped and GitHub
 # rejected every occupancy fetch (escalate codex-occupancy-timeline-fetch-failed).
-# Every self-contained query='...' literal must have balanced braces and parens.
+# Every self-contained query='...' literal must have correctly nested braces
+# and parens — order, not just totals (`query{a}}{` balances by count).
 unbalanced_graphql_literals() {
   python3 - "$1" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
+pairs = {"}": "{", ")": "("}
 for m in re.finditer(r"query='([^']*)'", text):
-    q = m.group(1)
-    if q.count("{") != q.count("}") or q.count("(") != q.count(")"):
+    stack = []
+    ok = True
+    for ch in m.group(1):
+        if ch in "{(":
+            stack.append(ch)
+        elif ch in pairs:
+            if not stack or stack.pop() != pairs[ch]:
+                ok = False
+                break
+    if not ok or stack:
         print(text[:m.start()].count("\n") + 1)
 PY
 }
 # Scanner self-test: a planted unbalanced literal must be reported at its
 # line, and the balanced form must report nothing — so a scanner that stops
 # recognising queries cannot pass silently.
-_gql_fixture="$(mktemp "${TMPDIR:-/tmp}/gql-fixture.XXXXXX")"
+_gql_fixture="$TMP_ROOT/gql-fixture.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
   "gh api graphql -f query='query{repository{pullRequest{id}}}}'" > "$_gql_fixture"
 run_test "graphql_scanner_reports_planted_unbalanced_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+# Equal totals, wrong order: counting alone would miss this.
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{repository}}{'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_misnested_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query(\$a:Int{x)}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_crossed_delimiters_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
 printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
   "gh api graphql -f query='query{repository{pullRequest{id}}}'" > "$_gql_fixture"
 run_test "graphql_scanner_accepts_balanced_fixture" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
-rm -f "$_gql_fixture"
 
 run_test "graphql_literals_have_balanced_braces" "" "$(unbalanced_graphql_literals "$HELPER")"
 run_test "graphql_literal_scan_finds_queries" "yes" \
