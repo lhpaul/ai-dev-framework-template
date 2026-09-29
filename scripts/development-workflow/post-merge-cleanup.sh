@@ -416,11 +416,15 @@ restore_original_ref() {
     # and stop every other checkout (the main clone included) from switching to
     # it (#1386). Detach it at the same commit instead. The main worktree keeps
     # the old behavior and stays on the base branch.
-    if is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT" \
-      && git -C "$CLEANUP_REPO_ROOT" checkout --quiet --detach "$DEVELOP_BRANCH" 2>/dev/null; then
+    if is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT"; then
       print_kv CALLER_WORKTREE_PATH "$CLEANUP_REPO_ROOT"
-      print_kv CALLER_WORKTREE_ACTION "detached"
-      echo "Detached the calling worktree $CLEANUP_REPO_ROOT at $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted), so it does not hold $DEVELOP_BRANCH."
+      if git -C "$CLEANUP_REPO_ROOT" checkout --quiet --detach "$DEVELOP_BRANCH" 2>/dev/null; then
+        print_kv CALLER_WORKTREE_ACTION "detached"
+        echo "Detached the calling worktree $CLEANUP_REPO_ROOT at $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted), so it does not hold $DEVELOP_BRANCH."
+      else
+        print_kv CALLER_WORKTREE_ACTION "detach_failed"
+        echo "WARNING: could not detach the calling worktree $CLEANUP_REPO_ROOT; it stays on $DEVELOP_BRANCH and holds that branch. Run 'git -C $CLEANUP_REPO_ROOT checkout --detach' to release it." >&2
+      fi
       return 0
     fi
     echo "Leaving $CLEANUP_REPO_ROOT on $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted)."
@@ -1167,6 +1171,9 @@ if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
     FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
   elif [ "$ORIGINAL_REF_KIND" = "detached" ]; then
     FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  elif [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ] \
+    && is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT"; then
+    FINAL_REF_AFTER_CLEANUP="detached at $DEVELOP_BRANCH"
   fi
 fi
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then

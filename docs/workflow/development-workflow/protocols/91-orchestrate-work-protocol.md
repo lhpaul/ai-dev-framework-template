@@ -3672,7 +3672,7 @@ status-updated) or confirmed non-closing — recorded in the item report.
   base instead (`CALLER_WORKTREE_ACTION=detached`) and then deletes the branch.
   Without `--repo-root`, the helper uses the calling worktree rather than the
   main clone. `CALLER_WORKTREE_ACTION=detach_failed` with
-  `LOCAL_DELETE_RESULT=skipped` means uncommitted changes blocked the detach;
+  `LOCAL_DELETE_RESULT=skipped` means conflicting uncommitted changes blocked the detach;
   tracker updates still run, and the local branch needs manual cleanup.
 - After cleanup, re-read the live tracker status and Project status. If the live
   status does not match the expected value in the table above, re-apply the
