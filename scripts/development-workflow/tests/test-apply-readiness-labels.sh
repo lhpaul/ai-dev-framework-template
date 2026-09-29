@@ -2427,6 +2427,24 @@ MOCK_ISSUE_COMMENTS='[]'
 MOCK_GH_USER=''
 MOCK_PERMS=''
 
+# #1828: the helper's GraphQL is only ever exercised against a mocked `gh`,
+# which accepts any query text, so an unbalanced literal shipped and GitHub
+# rejected every occupancy fetch (escalate codex-occupancy-timeline-fetch-failed).
+# Every self-contained query='...' literal must have balanced braces and parens.
+unbalanced_graphql_literals() {
+  python3 - "$1" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+for m in re.finditer(r"query='([^']*)'", text):
+    q = m.group(1)
+    if q.count("{") != q.count("}") or q.count("(") != q.count(")"):
+        print(text[:m.start()].count("\n") + 1)
+PY
+}
+run_test "graphql_literals_have_balanced_braces" "" "$(unbalanced_graphql_literals "$HELPER")"
+run_test "graphql_literal_scan_finds_queries" "yes" \
+  "$(grep -c "query='" "$HELPER" | awk '$1 > 0 {print "yes"}')"
+
 echo ""
 echo "$pass passed, $fail failed"
 
