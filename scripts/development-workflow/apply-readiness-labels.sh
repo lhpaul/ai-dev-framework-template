@@ -305,6 +305,26 @@ comment_only_reviewer_verdict() {
     refuse "reviewer-check-absent"
   fi
   reviewer_started_at="$(printf '%s\n' "$latest_review" | jq -r '.submitted_at // ""' 2>/dev/null)" || escalate review-parse-failed
+  # Round 21 (PRRT_kwDORWAxaM6m6dJ1): a review existing for this head does not
+  # exempt the platform's root-comment surface — codex-github-reviewer.sh
+  # combines review and SHA-pinned root-comment evidence by timestamp. A
+  # blocking SHA-pinned root verdict at or after this review (a same-head
+  # rerun) refuses; an older one is superseded by the newer review. An
+  # unreadable root-comment surface escalates inside the adapter (fail closed).
+  if [ "$platform_arg" = "codex-github" ]; then
+    _root_blocking_created=""
+    _saved_started_at="$reviewer_started_at"
+    _adapter_rc=0
+    comment_only_completion_evidence "$platform_arg" "$bot_login_arg" || _adapter_rc=$?
+    reviewer_started_at="$_saved_started_at"
+    if [ "$_adapter_rc" -eq 2 ] && [ -n "$_root_blocking_created" ] && ! [ "$_root_blocking_created" \< "$reviewer_started_at" ]; then
+      annotate_needs_fixes_best_effort
+      result="refused"
+      reason="blocking-findings"
+      blocking_count=1
+      refuse "blocking-findings"
+    fi
+  fi
   # Inline bound (thread PRRT_kwDORWAxaM6m1pGF): earliest of submitted_at and
   # the review's own inline comments' earliest created_at. Comments fetch
   # failures escalate fail-closed — an unreadable finding surface is an
@@ -694,6 +714,7 @@ comment_only_completion_evidence() {
             reviewer_started_at="$created"
             return 0
           fi
+          _root_blocking_created="$created"
           return 2
         fi
       done <<< "$entries"
@@ -1418,7 +1439,7 @@ while IFS= read -r platform; do
   fi
   if ! check_state="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
         [ .[].check_runs[]? | select(.name == $name) ]
-        | sort_by(.started_at // .completed_at // "")
+        | sort_by(.started_at // .completed_at // .created_at // "9999-12-31T23:59:59Z")
         | last
         | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
       ' 2>/dev/null)"; then
@@ -1433,7 +1454,7 @@ while IFS= read -r platform; do
   # where `.created_at > $since` scopes the verdict read.
   reviewer_started_at="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
         [ .[].check_runs[]? | select(.name == $name) ]
-        | sort_by(.started_at // .completed_at // "")
+        | sort_by(.started_at // .completed_at // .created_at // "9999-12-31T23:59:59Z")
         | last
         | (.started_at // .completed_at // .created_at // "")
       ' 2>/dev/null)" || escalate check-run-parse-failed
@@ -1660,7 +1681,7 @@ revalidate_reviewer_state() {
     fi
     if ! check_state_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
           [ .[].check_runs[]? | select(.name == $name) ]
-          | sort_by(.started_at // .completed_at // "")
+          | sort_by(.started_at // .completed_at // .created_at // "9999-12-31T23:59:59Z")
           | last
           | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
         ' 2>/dev/null)" || [ -z "$check_state_arg" ]; then
@@ -1672,7 +1693,7 @@ revalidate_reviewer_state() {
     # the finding rescan below are both time-bounded to it.
     started_at_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
           [ .[].check_runs[]? | select(.name == $name) ]
-          | sort_by(.started_at // .completed_at // "")
+          | sort_by(.started_at // .completed_at // .created_at // "9999-12-31T23:59:59Z")
           | last
           | (.started_at // .completed_at // .created_at // "")
         ' 2>/dev/null)" || escalate revalidation-unreadable

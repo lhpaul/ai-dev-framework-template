@@ -575,6 +575,11 @@ MOCK_CHECK_RUNS="$_bugbot_dup"
 MOCK_PR_JSON="$(_with_ci SUCCESS)"
 result="$(run_helper)"
 run_test "duplicate_check_run_keeps_latest_exit" "0" "${result%%|*}"
+# Round 21 (PRRT_kwDORWAxaM6m6dJ3): a newly queued rerun has no started_at /
+# completed_at; it is the NEWEST run and must beat the older completed success.
+MOCK_CHECK_RUNS='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-02-01T00:00:00Z"},{"name":"Cursor Bugbot","status":"queued","conclusion":null,"started_at":null,"completed_at":null}]}'
+result="$(run_helper)"
+run_test "queued_rerun_beats_older_success_reason" "reviewer-check-not-completed" "$(field "$result" REASON)"
 
 # A `neutral` Bugbot check is clean ONLY when no unavailable notice exists for
 # the head. These two assertions are the planted failing case for PR #1818,
@@ -2008,6 +2013,16 @@ run_test "codex_root_comment_blocking_verdict_refuses_exit" "1" "${result%%|*}"
 run_test "codex_root_comment_blocking_verdict_reason" "blocking-findings" "$(field "$result" REASON)"
 run_test "codex_root_comment_blocking_verdict_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 run_test "codex_root_comment_blocking_verdict_annotated" "1" "$(grep -c 'add-label needs-fixes' "$_LABEL_LOG" || true)"
+# Round 21 (PRRT_kwDORWAxaM6m6dJ1): an earlier clean REVIEW must not exempt
+# the root-comment surface — a same-head rerun's newer blocking root verdict
+# refuses; an OLDER blocking root verdict is superseded by the newer review.
+MOCK_REVIEWS="[$(_codex_review_json COMMENTED "$_codex_canonical_clean_body" 501 2026-01-02T00:00:00Z)]"
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_review_plus_newer_blocking_root_refuses_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-01T00:00:00Z","id":911,"body":"Codex Review: Needs fixes. Must fix the guard before merge. **Reviewed commit:** `'"$HEAD"'`"}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_review_supersedes_older_blocking_root_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEWS='[]'
 # The clean sentence AND the head pin together still pass (unchanged
 # behavior) — but round 17 (PRRT_kwDORWAxaM6m2604) requires the body to
 # match the canonical CODEX_APPROVED_TEMPLATES whole-body exact template,
