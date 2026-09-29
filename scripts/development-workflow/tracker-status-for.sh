@@ -132,6 +132,7 @@ if [ "$apply_rc" -ne 0 ]; then
   exit 3
 fi
 case "$apply_output" in
+  *"TRACKER_STATUS_UNRESOLVED "*"reason=status_field_unavailable"*) printf 'TRACKER_STATUS_RESULT=failed\n' ;;
   *"GraphQL mutation failed"*) printf 'TRACKER_STATUS_RESULT=failed\n' ;;
   *"TRACKER_ACTION_REQUIRED"*) printf 'TRACKER_STATUS_RESULT=deferred\n' ;;
   *"Updating tracker status for issue #${issue} to '${status}'"*) printf 'TRACKER_STATUS_RESULT=applied\n' ;;

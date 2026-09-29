@@ -105,7 +105,8 @@ values:
 - `skipped`: the item is already further along, or it is not on the board.
 - `deferred`: the Linear MCP handoff is required.
 - `none`: the event changes nothing.
-- `failed`: a transient API error.
+- `failed`: a transient API error, or a Status field that could not be read
+  (`reason=status_field_unavailable`).
 - `unresolved`
 
 Runners that source `workflow-lib.sh` directly call the same mapping:

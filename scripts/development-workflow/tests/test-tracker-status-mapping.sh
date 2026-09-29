@@ -170,9 +170,17 @@ case "$*" in
         printf '%s\n' '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item","project":{"id":"PVT_project_1","number":1},"status":{"name":"In Development"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
         ;;
       *"fields(first:"*)
-        printf '%s\n' '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_dev","name":"In Development"},{"id":"OPT_merged","name":"Merged"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+        if [ "${MOCK_FIELDS_MODE:-ok}" = "fail" ]; then
+          printf 'GraphQL failure\n' >&2
+          exit 42
+        fi
+        printf '%s\n' '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_plan_ready","name":"Plan Ready"},{"id":"OPT_dev","name":"In Development"},{"id":"OPT_merged","name":"Merged"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
         ;;
       *"updateProjectV2ItemFieldValue"*)
+        if [ "${MOCK_MUTATION_MODE:-ok}" = "fail" ]; then
+          printf 'mutation failure\n' >&2
+          exit 42
+        fi
         printf '%s\n' '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item"}}}}'
         ;;
       *) printf '{}\n' ;;
@@ -201,7 +209,7 @@ mutations() { grep -c 'updateProjectV2ItemFieldValue' "$CALL_LOG" || true; }
 rc=0; apply_out="$(run_cli_mocked --event ready-for-human-review --branch fix/9-x --apply --issue 9 2>&1)" || rc=$?
 run_test "apply_unknown_option_exit_three" "3" "$rc"
 run_test "apply_unknown_option_result" "unresolved" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
-case "$apply_out" in *"Valid options: In Development, Merged."*) r="named" ;; *) r="$apply_out" ;; esac
+case "$apply_out" in *"Valid options: Plan Ready, In Development, Merged."*) r="named" ;; *) r="$apply_out" ;; esac
 run_test "apply_unknown_option_names_valid_options" "named" "$r"
 run_test "apply_unknown_option_does_not_mutate" "0" "$(mutations)"
 
@@ -216,6 +224,26 @@ rc=0; apply_out="$(run_cli_mocked --event needs-fixes --branch fix/9-x --apply -
 run_test "apply_no_change_exit_zero" "0" "$rc"
 run_test "apply_no_change_result" "none" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
 run_test "apply_no_change_makes_no_gh_call" "0" "$(grep -c . "$CALL_LOG" || true)"
+
+# A transient failure is reported as "failed" (exit 0, best-effort), never
+# folded into "skipped", so the runner can record it.
+: > "$CALL_LOG"
+rc=0; apply_out="$(MOCK_FIELDS_MODE=fail run_cli_mocked --event merged --branch fix/9-x --apply --issue 9 2>&1)" || rc=$?
+run_test "apply_field_unavailable_exit_zero" "0" "$rc"
+run_test "apply_field_unavailable_result_failed" "failed" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
+run_test "apply_field_unavailable_does_not_mutate" "0" "$(mutations)"
+
+: > "$CALL_LOG"
+rc=0; apply_out="$(MOCK_MUTATION_MODE=fail run_cli_mocked --event merged --branch fix/9-x --apply --issue 9 2>&1)" || rc=$?
+run_test "apply_mutation_failure_exit_zero" "0" "$rc"
+run_test "apply_mutation_failure_result_failed" "failed" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
+
+# Already further along: the helper's forward-only guard skips the write.
+: > "$CALL_LOG"
+rc=0; apply_out="$(run_cli_mocked --event merged --branch implementation-plan/9-x --apply --issue 9 2>&1)" || rc=$?
+run_test "apply_rollback_guard_exit_zero" "0" "$rc"
+run_test "apply_rollback_guard_result_skipped" "skipped" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
+run_test "apply_rollback_guard_does_not_mutate" "0" "$(mutations)"
 
 echo ""
 echo "Test summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
