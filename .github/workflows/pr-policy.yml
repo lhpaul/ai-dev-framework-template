@@ -58,6 +58,10 @@ jobs:
       # Trusted default-branch checkout of the readiness helper (#1408 round
       # 13): contents: read is least privilege for it.
       contents: read
+      # The readiness helper reads commits/<sha>/check-runs for check-run
+      # reviewers; without this the read is refused and every check-run
+      # reviewer escalates check-run-fetch-failed (#1408 round 29).
+      checks: read
 
     steps:
       # Trusted default-branch checkout: load apply-readiness-labels.sh (and

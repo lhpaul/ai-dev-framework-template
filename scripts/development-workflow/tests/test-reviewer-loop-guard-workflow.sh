@@ -168,6 +168,11 @@ run_test "permissions_include_actions_write" "yes" "$(contains "actions: write")
 # (trusted default branch), which needs contents: read — least privilege —
 # or the checkout fails in private downstream repos.
 run_test "permissions_include_contents_read" "yes" "$(contains "contents: read")"
+# Thread PRRT_kwDORWAxaM6nBzBW: the readiness helper reads
+# commits/<sha>/check-runs for check-run reviewers (bugbot, ronda, haystack);
+# without checks: read that read 403s and escalates check-run-fetch-failed,
+# so the issue_comment path could never apply ready-for-regression.
+run_test "permissions_include_checks_read" "yes" "$(contains "checks: read")"
 
 echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
