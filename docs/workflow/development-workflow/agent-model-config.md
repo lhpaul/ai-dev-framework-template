@@ -44,7 +44,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code.
+- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
@@ -68,7 +68,46 @@ Codex skills intentionally store recommended tiers rather than concrete model ID
 | `balanced` | `gpt-5.6-terra` | Implementation, review, setup, QA, item orchestration, and retrospectives |
 | `premium` | `gpt-5.6-sol` | Spec writing and technical planning |
 
+### Cursor model source of truth
+
+For Cursor runs, the `model:` field in each checked-in `.cursor/agents/<agent>.md`
+file is authoritative. The "Cursor model defaults (template)" table below is
+the template's starting point and an example of the tier split. It does not
+override a repository's local pins, and it does not describe what a downstream
+repository actually runs.
+
+Downstream repositories may pin other model families, such as Grok, Composer,
+or a provider-specific ID the template never ships. Those pins must be honored
+as written, including a checked-in `inherit`. No table in this document, the
+Claude Code defaults table included, is a substitute for the value an agent
+file resolves to.
+
+Before dispatching a Cursor stage subagent, an orchestrating role (`/run-item`,
+`/run-items`, `/run-epic`, the item or portfolio orchestrator, or a parent
+running inline) resolves the target agent's model from the checkout being run:
+
+1. If `.cursor/agents/<agent>.md` exists, use its `model:` value.
+2. If it does not exist, Cursor resolves the agent through the location
+   precedence described after "Cursor model field values" below; use the
+   `model:` value of the file that resolves, and name that file in the run
+   summary.
+3. If no agent file resolves, or the resolved file has no `model:` field,
+   report the gap in the run summary. Do not fill it from any table in this
+   document.
+
+A one-off override from "Option 1" below changes the model only when the run
+actually dispatches it. Creating a duplicate agent file (for example
+`developer-premium.md`) does not change which agent `/run-item` dispatches: the
+run still dispatches the standard role (`developer`) and uses that role's pin.
+The duplicate applies only when the human explicitly names it as the stage
+agent to dispatch for that run, and the run summary records that substitution.
+Switching the Composer model affects only agents whose resolved `model:` is
+`inherit`.
+
 ### Cursor model defaults (template)
+
+These are the values this template ships in `.cursor/agents/*.md`. Read the
+local files for the values in force; see "Cursor model source of truth" above.
 
 Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `fast` for economy coordination agents, `auto` for lower-risk balanced agents, and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
 
@@ -206,8 +245,8 @@ bash -lc 'claude --agent developer --model claude-opus-5'
 **Cursor:**
 Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To override for a single run:
 
-- Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
-- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
+- Switch your Composer's model before invoking the subagent (e.g., `/developer`); this takes effect only for an agent whose `model:` is `inherit`, or
+- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value, and explicitly name it as the stage agent to dispatch for that run (see "Cursor model source of truth")
 
 Use this decision path before overriding Cursor models:
 

@@ -283,6 +283,23 @@ closing that gap is Out of Scope here and tracked separately as **issue
 
 ---
 
+## Stage-agent model selection
+
+Under any profile that dispatches a Cursor subagent
+(`cursor-native-handoff` or `cursor-parent-orchestrated`), the dispatching
+context reads the target agent's `model:` field from
+`.cursor/agents/<agent>.md` in the checkout being run, before it dispatches,
+and uses that value.
+
+The model tables in `agent-model-config.md` are template defaults and
+examples. They are never a substitute for a local pin. A downstream repository
+may pin a different model family (for example Grok or Composer), and that pin
+is honored as written. The missing-file and missing-field cases, and the
+one-off override rules, are defined in `agent-model-config.md`
+§ "Cursor model source of truth".
+
+---
+
 ## Repository arrangement (`workflow_hub`)
 
 Obligations tied to repository arrangement — which repository owns
