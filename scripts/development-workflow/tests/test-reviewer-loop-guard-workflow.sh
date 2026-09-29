@@ -232,6 +232,8 @@ run_test "guard_clean_without_head_history_fails" "failure" \
   "$(guard_state_for 1 "$(summary_fixture clean "")")"
 run_test "guard_skipped_without_head_history_succeeds" "success" \
   "$(guard_state_for 1 "$(summary_fixture 'skipped — release/hotfix PR reviewer loop intentionally skipped' "")")"
+run_test "guard_skipped_with_stale_history_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — not_configured' "$STALE_HEAD")")"
 run_test "guard_missing_summary_fails" "failure" \
   "$(guard_state_for 0 "")"
 run_test "guard_no_longer_passes_on_presence_alone" "yes" \

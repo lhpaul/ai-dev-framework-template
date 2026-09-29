@@ -274,15 +274,16 @@ jobs:
           # the mere presence of a summary is not enough. An escalated or
           # otherwise non-clean result fails, and so does a clean result
           # written against an older head. A `skipped` summary is a
-          # branch-scoped decision (release/hotfix PRs to main) that carries
-          # no head history, so it is not head-bound.
+          # branch- or config-scoped decision (release/hotfix PRs to main, or
+          # no reviewers configured) that may carry no head history, so it
+          # is not head-bound.
           reviewer_loop_guard_verdict() {
             if [ "${FOUND:-0}" -le 0 ]; then
               STATE="failure"
               DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
             elif [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; then
               STATE="success"
-              DESCRIPTION="Reviewer loop intentionally skipped for this branch."
+              DESCRIPTION="Reviewer loop intentionally skipped."
             elif [ "$LATEST_SUMMARY_RESULT" != "clean" ]; then
               STATE="failure"
               DESCRIPTION="Latest reviewer-loop summary is not clean (escalated or incomplete)."
@@ -522,8 +523,8 @@ jobs:
           fi
 
           if [ "$STATE" = "failure" ]; then
-            echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."
+            echo "Guard FAILED: ${DESCRIPTION}"
             exit 1
           fi
 
-          echo "Guard PASSED: reviewer-loop summary is present."
+          echo "Guard PASSED: ${DESCRIPTION}"

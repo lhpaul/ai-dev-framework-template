@@ -79,13 +79,14 @@ The verdict is read from the **latest** matching summary comment (#1810):
 
 - `success` — its `Result:` is `clean` and the last reviewer-loop history
   entry's `head_sha` matches the PR's current head.
-- `success` — its `Result:` is `skipped` (release/hotfix PRs to `main`). A
-  skipped summary is a branch-scoped decision with no head history, so it is
-  not head-bound.
+- `success` — its `Result:` is `skipped` (release/hotfix PRs to `main`, or no
+  reviewers configured). A skipped summary is a branch- or config-scoped
+  decision that may carry no head history, so it is not head-bound.
 - `failure` — its `Result:` is anything else (for example `escalate`), so an
   escalated, non-converged PR cannot pass the guard.
 - `failure` — its `Result:` is `clean` but the recorded head is older than the
-  current head, or no head was recorded (history unavailable). Re-run the
+  current head, or no current head was recorded (history unavailable, so the
+  summary carries an empty stub or a preserved older block). Re-run the
   reviewer loop for the current head.
 - `failure` — no matching comment found; the PR is not yet
   reviewer-loop-complete.
