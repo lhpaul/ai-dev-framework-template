@@ -657,6 +657,34 @@ Use this when:
 - A deliberate split needs explicit `--allow-split true` approval with the
   approved base recorded in the parent summary.
 
+### `pr-ownership-guard.sh`
+
+Refuses a PR mutation by number unless the PR belongs to the expected branch
+(issue #1444). `gh pr edit`, `gh pr comment`, `gh pr ready`, `gh pr close`, and
+label changes accept any PR number, so under parallel waves a transposed digit
+silently mutates a sibling's PR.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" \
+  --expected-branch "fix/1444-example" || exit 1
+gh pr edit "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-body-1444-$$.md"
+```
+
+What it does:
+
+- Resolves the PR's `headRefName` with one read-only `gh pr view` call.
+- Defaults `--expected-branch` to the branch checked out in `--repo-root`
+  (default: the current directory); pass it explicitly when the caller is not
+  inside the item worktree. `--repo owner/name` is passed through to `gh`.
+- Exits `0` with `RESULT=owned` on a match, `1` with `RESULT=not_owned` on a
+  mismatch, `3` with `RESULT=pr_unresolved` when `gh` is missing, fails, times
+  out, or returns no head branch, `4` with `RESULT=branch_unknown` when the
+  default expectation cannot be read (detached HEAD or not a checkout), and `2`
+  on usage errors. Every non-zero exit is a stop before mutation.
+
 ### `item-completion-self-check.sh`
 
 Builds the mandatory ground-truth verification section for Work Item Runner and
