@@ -1004,7 +1004,7 @@ post-create assertion above are the enforcement mechanism — do not skip them.
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
+- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
 - Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
@@ -1684,7 +1684,7 @@ post-create assertion above are the enforcement mechanism — do not skip them.
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle:
 
-- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
+- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
 - Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated

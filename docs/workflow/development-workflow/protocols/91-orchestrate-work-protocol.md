@@ -2064,6 +2064,9 @@ Required fields:
 - **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
 - **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
 - **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
+- **Gate-approved commit**: the full commit SHA the gate approved at (`git rev-parse HEAD` at the moment of the `APPROVED` verdict). Use this exact field name — not "Reviewed commit", which already has a distinct meaning as the Codex GitHub App's own marker token parsed by `codex-github-evidence-lib.sh` for external-reviewer evidence. This is the gate-evidence SHA that Step 8a's freshness check and `internal-review-gate-freshness-guard.sh` compare against the PR's live HEAD — omitting it leaves the gate's own binding claim unverifiable.
+
+**Verdict binds to this commit only.** The internal review gate's verdict binds to the reviewed commit recorded above, not to the branch or PR as a whole. Any subsequent commit that is more than mechanical (typo/lint-only, see the trivial-fix classification below) invalidates the gate for the new HEAD; the gate must be re-run there before readiness. A clean automated-reviewer-loop result (Step 7) at the new HEAD is not a substitute — it validates the PR branch, it does not replace the pre-PR review gate.
 
 Example format for a **non-implementation PR** (single-pass):
 
@@ -2074,6 +2077,7 @@ Example format for a **non-implementation PR** (single-pass):
 **Effective reviewer set**: claude
 **Skipped reviewers**: codex (runtime absent; remedy: make the runtime available)
 **Verdict**: APPROVED
+**Gate-approved commit**: `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2`
 
 All reachable internal reviewers approved. Coverage was reduced from 2 to 1 because the codex runtime was absent.
 ```
@@ -2096,7 +2100,8 @@ Example format for an **implementation PR** (two-pass):
 - claude: APPROVED after 1 fix cycle (1 finding resolved)
 
 **Verdict**: APPROVED
-All passes approved at commit `abc1234`.
+**Gate-approved commit**: `b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3`
+All passes approved at the commit above.
 ```
 
 In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` policy triggered), the hard-fail comment posted in the Runtime-availability check section above **already satisfies BR-7** — do not post a second summary comment.
@@ -2142,6 +2147,8 @@ git diff HEAD~1 HEAD -- .
 If the diff includes any non-text change (e.g., new function, new import, changed conditional, structural markup change), override the fixer's self-certification and do not apply the trivial-fix skip.
 
 **Scope of skip**: The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by Pass 1 findings (i.e., `internal_review_cycle > 0` for findings from Pass 1) are also never skipped.
+
+**Distinct from the `MECHANICAL_DELTA:` marker**: `TRIVIAL_FIX: non-structural` (above) governs whether the orchestrator re-runs Step 7a *before* proceeding to Step 7, in the two fixer-push contexts described above. `MECHANICAL_DELTA:` (Step 8a's internal review gate freshness check, below) governs a different decision: whether a PR may reach readiness despite the Step 7a `APPROVED` verdict's recorded commit no longer matching HEAD. The two markers are not interchangeable and a commit message may need either, both, or neither depending on when in the loop it lands.
 
 ---
 
@@ -3556,6 +3563,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | Checkpoint status comment (when checkpoints in scope) | At least one PR comment containing `<!-- run-epic:checkpoint-status -->` whose blocking section matches the current label state. Skip when no checkpoint policy is in scope. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
+| Internal review gate freshness                  | The latest `### Step 7a Internal Review Gate Summary` comment's `**Gate-approved commit**` SHA must equal the PR's live `headRefOid`, verified by running `scripts/development-workflow/internal-review-gate-freshness-guard.sh --gate-sha <gate-approved sha> --head-sha <headRefOid> --repo-root <repo root>` and observing `RESULT=pass`. **This is the mechanical enforcement of the "verdict binds to the reviewed commit" rule (see `REVIEW.md` → PR Readiness, and Step 7a → "Verdict binds to this commit only" above) — the internal review gate's `APPROVED` verdict does not carry forward across a non-mechanical commit even when Step 7's automated reviewer loop reports clean at the new HEAD.** `RESULT=refused` (`REASON=stale_gate_evidence` or `gate_sha_not_ancestor`) fails this check; do not report ready — instead re-run Step 7a at the new HEAD, or, for a genuinely mechanical post-gate commit, add the literal `MECHANICAL_DELTA: <rationale>` marker to that commit's message (every commit in the gate..HEAD range needs it) before re-running the guard. Skip this check only when no Step 7a summary comment exists yet (initial gate run still pending — a distinct, earlier failure state). |
 | CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 If any check fails:
