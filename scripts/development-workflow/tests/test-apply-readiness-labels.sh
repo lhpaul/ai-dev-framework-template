@@ -2427,6 +2427,108 @@ MOCK_ISSUE_COMMENTS='[]'
 MOCK_GH_USER=''
 MOCK_PERMS=''
 
+# #1828: the helper's GraphQL is only ever exercised against a mocked `gh`,
+# which accepts any query text, so an unbalanced literal shipped and GitHub
+# rejected every occupancy fetch (escalate codex-occupancy-timeline-fetch-failed).
+# Every self-contained query='...' literal must have correctly nested braces,
+# parens, and brackets — order, not just totals (`query{a}}{` balances by count).
+unbalanced_graphql_literals() {
+  python3 - "$1" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+pairs = {"}": "{", ")": "(", "]": "["}
+# One pass over the query, as a GraphQL lexer would: "..." strings (with
+# backslash escapes), """block""" strings, and # comments to end of line are
+# skipped, so delimiters inside them are neither counted nor able to hide
+# real ones. An unterminated string or block string is malformed.
+def well_nested(q):
+    stack, i, n = [], 0, len(q)
+    while i < n:
+        if q.startswith('"""', i):
+            j = i + 3
+            while j < n and not q.startswith('"""', j):
+                j += 4 if q.startswith('\\"""', j) else 1
+            if j >= n:
+                return False
+            i = j + 3
+            continue
+        c = q[i]
+        if c == '"':
+            j = i + 1
+            while j < n and q[j] not in '"\r\n':
+                j += 2 if q[j] == '\\' and j + 1 < n and q[j + 1] not in '\r\n' else 1
+            if j >= n or q[j] != '"':
+                return False
+            i = j + 1
+            continue
+        if c == '#':
+            while i < n and q[i] not in '\r\n':
+                i += 1
+            continue
+        if c in "{([":
+            stack.append(c)
+        elif c in pairs:
+            if not stack or stack.pop() != pairs[c]:
+                return False
+        i += 1
+    return not stack
+
+for m in re.finditer(r"query='([^']*)'", text):
+    if not well_nested(m.group(1)):
+        print(text[:m.start()].count("\n") + 1)
+PY
+}
+# Scanner self-test: a planted unbalanced literal must be reported at its
+# line, and the balanced form must report nothing — so a scanner that stops
+# recognising queries cannot pass silently.
+_gql_fixture="$TMP_ROOT/gql-fixture.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{repository{pullRequest{id}}}}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_planted_unbalanced_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+# Equal totals, wrong order: counting alone would miss this.
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{repository}}{'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_misnested_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query(\$a:Int{x)}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_crossed_delimiters_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+# Delimiters inside GraphQL string values are data, not syntax.
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{a(s:\")}\\\"(\"){id} b(t:\"\"\"{)\"\"\"){id}}'" > "$_gql_fixture"
+run_test "graphql_scanner_ignores_delimiters_in_strings" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{a(s:\"}\"){id}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_unbalanced_beside_string_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+# Comments are skipped (a `})` in one is not syntax), and quotes inside a
+# comment cannot open a string that would swallow a missing brace.
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query # })" '{' ' field' "}'" > "$_gql_fixture"
+run_test "graphql_scanner_ignores_delimiters_in_comments" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query # \"" '{' ' field' "# \"'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_brace_hidden_by_comment_quotes" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{a(s:\"})'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_unterminated_string_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query(\$a:[Int!){x}'" > "$_gql_fixture"
+run_test "graphql_scanner_reports_unbalanced_bracket_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+# A backslash cannot carry a "..." string across a line break.
+cat > "$_gql_fixture" <<'GQL'
+#!/usr/bin/env bash
+echo filler
+gh api graphql -f query='query{a(s:"\
+}"){id}}'
+GQL
+run_test "graphql_scanner_reports_string_escaped_across_newline_line" "3" "$(unbalanced_graphql_literals "$_gql_fixture")"
+printf '%s\n' '#!/usr/bin/env bash' 'echo filler' \
+  "gh api graphql -f query='query{repository{pullRequest{id}}}'" > "$_gql_fixture"
+run_test "graphql_scanner_accepts_balanced_fixture" "" "$(unbalanced_graphql_literals "$_gql_fixture")"
+
+run_test "graphql_literals_have_balanced_braces" "" "$(unbalanced_graphql_literals "$HELPER")"
+run_test "graphql_literal_scan_finds_queries" "yes" \
+  "$(grep -c "query='" "$HELPER" | awk '$1 > 0 {print "yes"}')"
+
 echo ""
 echo "$pass passed, $fail failed"
 

@@ -3686,6 +3686,14 @@ status-updated) or confirmed non-closing — recorded in the item report.
 ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```
 
+- Cleanup never removes the caller's own worktree (#1386). When the merged
+  branch is checked out in the worktree named by `--repo-root`, or in the
+  worktree the helper is invoked from, it detaches that worktree onto the updated
+  base instead (`CALLER_WORKTREE_ACTION=detached`) and then deletes the branch.
+  Without `--repo-root`, the helper uses the calling worktree rather than the
+  main clone. `CALLER_WORKTREE_ACTION=detach_failed` with
+  `LOCAL_DELETE_RESULT=skipped` means conflicting uncommitted changes blocked the detach;
+  tracker updates still run, and the local branch needs manual cleanup.
 - After cleanup, re-read the live tracker status and Project status. If the live
   status does not match the expected value in the table above, re-apply the
   tracker transition before reporting the item terminal.

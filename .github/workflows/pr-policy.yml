@@ -270,6 +270,32 @@ jobs:
             fi
           }
 
+          # The guard proves the loop COMPLETED for the live head (#1810):
+          # the mere presence of a summary is not enough. An escalated or
+          # otherwise non-clean result fails, and so does a clean result
+          # written against an older head. A `skipped` summary is a
+          # branch- or config-scoped decision (release/hotfix PRs to main, or
+          # no reviewers configured) that may carry no head history, so it
+          # is not head-bound.
+          reviewer_loop_guard_verdict() {
+            if [ "${FOUND:-0}" -le 0 ]; then
+              STATE="failure"
+              DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
+            elif [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; then
+              STATE="success"
+              DESCRIPTION="Reviewer loop intentionally skipped."
+            elif [ "$LATEST_SUMMARY_RESULT" != "clean" ]; then
+              STATE="failure"
+              DESCRIPTION="Latest reviewer-loop summary is not clean (escalated or incomplete)."
+            elif [ "$LATEST_SUMMARY_HEAD_MATCHES" != "true" ]; then
+              STATE="failure"
+              DESCRIPTION="Reviewer-loop clean summary does not cover the current head. Re-run the loop."
+            else
+              STATE="success"
+              DESCRIPTION="Reviewer loop ran clean for the current head."
+            fi
+          }
+
           reviewer_summary_allows_regression() {
             { [ "$LATEST_SUMMARY_RESULT" = "clean" ] ||
               [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; } &&
@@ -479,13 +505,8 @@ jobs:
 
           echo "Reviewer-loop summary comments found: ${FOUND}"
 
-          if [ "${FOUND:-0}" -gt 0 ]; then
-            STATE="success"
-            DESCRIPTION="Reviewer-loop summary present."
-          else
-            STATE="failure"
-            DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
-          fi
+          echo "Latest reviewer-loop summary result: ${LATEST_SUMMARY_RESULT}; head match: ${LATEST_SUMMARY_HEAD_MATCHES}."
+          reviewer_loop_guard_verdict
 
           gh api \
             --method POST \
@@ -502,8 +523,8 @@ jobs:
           fi
 
           if [ "$STATE" = "failure" ]; then
-            echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."
+            echo "Guard FAILED: ${DESCRIPTION}"
             exit 1
           fi
 
-          echo "Guard PASSED: reviewer-loop summary is present."
+          echo "Guard PASSED: ${DESCRIPTION}"

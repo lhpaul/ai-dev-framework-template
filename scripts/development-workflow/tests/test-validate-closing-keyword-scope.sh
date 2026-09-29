@@ -185,7 +185,15 @@ TT='~~~'
 } > "$TMP_DIR/corpus.txt"
 lib_out="$(printf '%s' "$(cat "$TMP_DIR/corpus.txt")" | strip_fenced_pr_body_blocks | shasum -a 256 | awk '{print $1}')"
 develop_filter="$TMP_DIR/develop-filter.sh"
-if git -C "$REPO_ROOT" show "origin/develop:scripts/development-workflow/post-merge-cleanup.sh" > "$TMP_DIR/develop-cleanup.sh" 2>/dev/null; then
+if ! git -C "$REPO_ROOT" show "origin/develop:scripts/development-workflow/post-merge-cleanup.sh" > "$TMP_DIR/develop-cleanup.sh" 2>/dev/null; then
+  echo "SKIP: origin/develop unavailable; parity against the pre-extraction copy not checked"
+elif ! grep -Fq "strip_fenced_pr_body_blocks() {" "$TMP_DIR/develop-cleanup.sh"; then
+  # Once the extraction has merged, origin/develop's cleanup script sources the
+  # library too, so there is no pre-extraction copy left to compare against.
+  # Without this branch extract_filter exits 3 and aborts the whole suite
+  # under `set -e` on every later PR that touches post-merge-cleanup.sh.
+  echo "SKIP: origin/develop post-merge-cleanup.sh already sources the library; no pre-extraction copy to compare"
+else
   {
     echo '#!/usr/bin/env bash'
     extract_filter "$TMP_DIR/develop-cleanup.sh"
@@ -193,8 +201,6 @@ if git -C "$REPO_ROOT" show "origin/develop:scripts/development-workflow/post-me
   } > "$develop_filter"
   develop_out="$(printf '%s' "$(cat "$TMP_DIR/corpus.txt")" | bash "$develop_filter" | shasum -a 256 | awk '{print $1}')"
   check "filter output is byte-identical to post-merge cleanup's (origin/develop)" "$develop_out" "$lib_out"
-else
-  echo "SKIP: origin/develop unavailable; parity against the pre-extraction copy not checked"
 fi
 
 # Non-vacuity: a filter that returned its input unchanged would make every
