@@ -175,6 +175,69 @@ run_test "permissions_include_contents_read" "yes" "$(contains "contents: read")
 run_test "permissions_include_checks_read" "yes" "$(contains "checks: read")"
 
 echo ""
+echo "=== Reviewer-loop guard verdict (behavioral, #1810) ==="
+
+# Extract a shell function defined inside the workflow's run block, by its
+# 10-space indentation, and strip that indentation so it can be sourced.
+extract_workflow_function() {
+  local name="$1"
+  awk -v start="          ${name}() {" '
+    $0 == start { found=1 }
+    found { print; if ($0 == "          }") exit }
+  ' "$WORKFLOW" | sed 's/^          //'
+}
+
+GUARD_FUNCTIONS="$(
+  extract_workflow_function summarize_reviewer_loop_result
+  extract_workflow_function reviewer_loop_guard_verdict
+)"
+run_test "guard_functions_extractable" "yes" \
+  "$(printf '%s\n' "$GUARD_FUNCTIONS" | grep -c '() {' | grep -qx 2 && echo yes || echo no)"
+eval "$GUARD_FUNCTIONS"
+
+LIVE_HEAD="1111111111111111111111111111111111111111"
+STALE_HEAD="2222222222222222222222222222222222222222"
+
+summary_fixture() {
+  local result="$1"
+  local head="$2"
+  printf '### Automated Reviewer Loop Summary\n\n**Result:** %s\n' "$result"
+  if [ -n "$head" ]; then
+    printf '\n<details>\n```json\n{"entries":[{"head_sha":"%s"}]}\n```\n</details>\n' "$head"
+  fi
+  printf '\n*Posted automatically by `pr-review-loop.sh`.*\n'
+}
+
+guard_state_for() {
+  local found="$1"
+  local body="$2"
+  # shellcheck disable=SC2034 # read by the eval'd workflow functions
+  (
+    FOUND="$found"
+    HEAD_SHA="$LIVE_HEAD"
+    LATEST_SUMMARY_BODY="$body"
+    summarize_reviewer_loop_result
+    reviewer_loop_guard_verdict
+    printf '%s' "$STATE"
+  )
+}
+
+run_test "guard_clean_current_head_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$LIVE_HEAD")")"
+run_test "guard_escalated_current_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture 'escalate — max_total_cycles_exceeded' "$LIVE_HEAD")")"
+run_test "guard_clean_stale_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$STALE_HEAD")")"
+run_test "guard_clean_without_head_history_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture clean "")")"
+run_test "guard_skipped_without_head_history_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — release/hotfix PR reviewer loop intentionally skipped' "")")"
+run_test "guard_missing_summary_fails" "failure" \
+  "$(guard_state_for 0 "")"
+run_test "guard_no_longer_passes_on_presence_alone" "yes" \
+  "$(not_contains 'DESCRIPTION="Reviewer-loop summary present."')"
+
+echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 if [ "$FAIL_COUNT" -ne 0 ]; then
   exit 1
