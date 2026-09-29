@@ -206,6 +206,16 @@ case "$*" in
     emit "${MOCK_HEAD_COMMIT_JSON:-{\"commit\":{\"committer\":{\"date\":\"2026-01-05T00:00:00Z\"}}}}"
     exit 0
     ;;
+  *"reviewThreads"*)
+    # Round 27 (PRRT_kwDORWAxaM6m7SZu): unresolved bot review threads.
+    # MOCK_REVIEW_THREADS carries the thread nodes array (default none);
+    # MOCK_REVIEW_THREADS_EXIT=1 fails the read. Emitted as a slurped page
+    # array, the shape --paginate --slurp yields.
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    [ "${MOCK_REVIEW_THREADS_EXIT:-0}" = "0" ] || exit 1
+    printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":${MOCK_REVIEW_THREADS:-[]}}}}}}]"
+    exit 0
+    ;;
   *"api graphql"*)
     # Round 18 (PRRT_kwDORWAxaM6m36Wu): greptile's push-observation binding —
     # the PR timeline (PullRequestCommit / IssueComment nodes in server
@@ -437,6 +447,8 @@ run_helper() {
     MOCK_TMP_ROOT="$TMP_ROOT" \
     MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
     MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
+    MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
+    MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
@@ -962,6 +974,23 @@ MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_repl
 result="$(run_helper)"
 run_test "stale_same_sha_comment_ignored_exit" "0" "${result%%|*}"
 run_test "stale_same_sha_comment_ignored_result" "labeled" "$(field "$result" RESULT)"
+# Round 27 (PRRT_kwDORWAxaM6m7SZu): the same stale comment's review THREAD,
+# still unresolved, keeps blocking (canonical loop audits all bot threads);
+# once resolved it no longer does; an unreadable thread surface escalates.
+MOCK_REVIEW_THREADS='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"cursor"}}]}}]'
+result="$(run_helper)"
+run_test "stale_comment_unresolved_thread_blocks_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_REVIEW_THREADS='[{"isResolved":true,"comments":{"nodes":[{"author":{"login":"cursor"}}]}}]'
+result="$(run_helper)"
+run_test "stale_comment_resolved_thread_labels_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEW_THREADS='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"some-human"}}]}}]'
+result="$(run_helper)"
+run_test "unresolved_non_bot_thread_ignored_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEW_THREADS_EXIT=1
+result="$(run_helper)"
+run_test "thread_fetch_failure_escalates_reason" "review-thread-fetch-failed" "$(field "$result" REASON)"
+MOCK_REVIEW_THREADS_EXIT=0
+MOCK_REVIEW_THREADS=''
 MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-03-02T00:00:00Z","body":"**High Severity** fresh finding"}]'
 result="$(run_helper)"
 run_test "fresh_same_sha_comment_blocks_exit" "1" "${result%%|*}"
@@ -1714,6 +1743,8 @@ run_helper_platform() {
     MOCK_TMP_ROOT="$TMP_ROOT" \
     MOCK_PR_TIMELINE="${MOCK_PR_TIMELINE:-}" \
     MOCK_PR_TIMELINE_PAGE2="${MOCK_PR_TIMELINE_PAGE2:-}" \
+    MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
+    MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     MOCK_PR_TIMELINE_EXIT="${MOCK_PR_TIMELINE_EXIT:-0}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \

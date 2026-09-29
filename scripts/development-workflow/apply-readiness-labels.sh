@@ -1310,6 +1310,38 @@ count_reviewer_blocking_findings() {
     fi
     scan_blocking_count=$((scan_blocking_count + 1))
   done < <(printf '%s\n' "$inline_json" | jq -c '.[]' 2>/dev/null)
+
+  # Round 27 (PRRT_kwDORWAxaM6m7SZu): the timestamp-bounded scans above drop an
+  # older bot inline finding once a later review/check run exists for the same
+  # SHA, even while its review thread is still open. pr-review-loop.sh audits
+  # ALL bot-authored threads (check_unresolved_threads strict), so an
+  # unresolved bot thread stays blocking until its GraphQL thread is
+  # resolved, regardless of which commit or run it belongs to. The thread
+  # count and the scan count overlap (an in-window comment is also a thread),
+  # so the larger of the two is used rather than their sum. A thread-read
+  # failure escalates (fail closed).
+  local _threads_json _thread_count _t_owner="${repo%%/*}" _t_name="${repo#*/}"
+  if ! _threads_json="$(gh api graphql --paginate --slurp \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}' \
+        -f owner="$_t_owner" -f repo="$_t_name" -F pr="$pr_number" 2>/dev/null)" \
+      || [ -z "$_threads_json" ]; then
+    escalate review-thread-fetch-failed
+  fi
+  if ! _thread_count="$(printf '%s\n' "$_threads_json" | jq -r --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" '
+        [ .[]?.data.repository.pullRequest.reviewThreads.nodes[]?
+          | select((.isResolved // false) == false)
+          | select(
+              ((.comments.nodes[0].author.login // "") == $bot)
+              or ((.comments.nodes[0].author.login // "") == $plain)
+              or ((.comments.nodes[0].author.login // "") == ($bot + "[bot]"))
+            )
+        ] | length
+      ' 2>/dev/null)"; then
+    escalate review-thread-parse-failed
+  fi
+  if [ "${_thread_count:-0}" -gt "$scan_blocking_count" ]; then
+    scan_blocking_count="$_thread_count"
+  fi
 }
 
 # --- 1. PR state -----------------------------------------------------------
