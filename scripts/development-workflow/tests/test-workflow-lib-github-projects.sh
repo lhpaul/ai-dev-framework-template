@@ -1303,6 +1303,11 @@ case "$strict_known_out" in
   *) strict_known_result="$strict_known_out" ;;
 esac
 run_test "known_status_strict_updates" "updated" "$strict_known_result"
+case "$strict_known_out" in
+  *"TRACKER_STATUS_APPLIED issue=824 status='In Development'"*) strict_known_result="marker" ;;
+  *) strict_known_result="$strict_known_out" ;;
+esac
+run_test "known_status_emits_applied_marker" "marker" "$strict_known_result"
 
 # An unreadable Status field can be transient, so it stays best-effort even in
 # strict mode — only a definite vocabulary mismatch fails.

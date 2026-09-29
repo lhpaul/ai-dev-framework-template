@@ -109,6 +109,16 @@ values:
   (`reason=status_field_unavailable`).
 - `unresolved`
 
+The helper derives `TRACKER_STATUS_RESULT` from machine-readable markers that
+`update_tracker_status_best_effort` prints, never from its human-readable
+warnings:
+
+- `TRACKER_STATUS_APPLIED issue=<n> status='<status>'`: the write succeeded.
+- `TRACKER_STATUS_UPDATE_FAILED issue=<n> requested='<status>' reason=mutation_failed`:
+  the write failed.
+- `TRACKER_STATUS_UNRESOLVED`: the Status could not be resolved. The next
+  section covers the two reasons.
+
 Runners that source `workflow-lib.sh` directly call the same mapping:
 
 <!-- workflow-shell-contract: bash-zsh -->

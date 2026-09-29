@@ -237,6 +237,8 @@ run_test "apply_field_unavailable_does_not_mutate" "0" "$(mutations)"
 rc=0; apply_out="$(MOCK_MUTATION_MODE=fail run_cli_mocked --event merged --branch fix/9-x --apply --issue 9 2>&1)" || rc=$?
 run_test "apply_mutation_failure_exit_zero" "0" "$rc"
 run_test "apply_mutation_failure_result_failed" "failed" "$(printf '%s\n' "$apply_out" | sed -n 's/^TRACKER_STATUS_RESULT=//p')"
+case "$apply_out" in *"TRACKER_STATUS_UPDATE_FAILED issue=9 requested='Merged' reason=mutation_failed"*) r="marker" ;; *) r="$apply_out" ;; esac
+run_test "apply_mutation_failure_emits_marker" "marker" "$r"
 
 # Already further along: the helper's forward-only guard skips the write.
 : > "$CALL_LOG"

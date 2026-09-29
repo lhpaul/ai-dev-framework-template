@@ -2647,6 +2647,12 @@ ensure_on_project_board() {
 #   "TRACKER_STATUS_UNRESOLVED issue=... requested='...' reason=...
 #   valid_options='...'" line; for an unknown option the warning names the
 #   board's valid options.
+# - Machine-readable outcome markers (the contract tracker-status-for.sh keys
+#   on): "TRACKER_STATUS_APPLIED issue=... status='...'" after a successful
+#   write, "TRACKER_STATUS_UPDATE_FAILED ... reason=mutation_failed" when the
+#   write fails, and TRACKER_STATUS_UNRESOLVED above. Any other return means
+#   the update was skipped (not on the board, rollback guard, source-status
+#   mismatch) or deferred (Linear TRACKER_ACTION_REQUIRED).
 # - Resolve <status_label> from workflow_tracker_status_for_event (or
 #   tracker-status-for.sh) rather than typing it; see
 #   docs/workflow/development-workflow/tracker-status-mapping.md.
@@ -2778,9 +2784,11 @@ print(item.get('status') or '', end='')
       }
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
+    printf '\nTRACKER_STATUS_APPLIED issue=%s status=%s\n' "$issue_number" "'${status_label}'"
   else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
     workflow_print_captured_gh_stderr
+    echo "TRACKER_STATUS_UPDATE_FAILED issue=${issue_number} requested='${status_label}' reason=mutation_failed"
   fi
 }
 

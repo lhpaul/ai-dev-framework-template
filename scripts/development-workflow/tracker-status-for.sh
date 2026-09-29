@@ -121,20 +121,30 @@ if [ -n "$apply_output" ]; then
   printf '%s\n' "$apply_output"
 fi
 
+# Classify on the helper's machine-readable markers only (see the
+# update_tracker_status_best_effort header in workflow-lib.sh), never on its
+# human-readable warnings.
 case "$apply_output" in
   *"TRACKER_STATUS_UNRESOLVED "*"reason=unknown_status_option"*)
     printf 'TRACKER_STATUS_RESULT=unresolved\n'
     exit 3
     ;;
-esac
-if [ "$apply_rc" -ne 0 ]; then
-  printf 'TRACKER_STATUS_RESULT=failed\n'
-  exit 3
-fi
-case "$apply_output" in
-  *"TRACKER_STATUS_UNRESOLVED "*"reason=status_field_unavailable"*) printf 'TRACKER_STATUS_RESULT=failed\n' ;;
-  *"GraphQL mutation failed"*) printf 'TRACKER_STATUS_RESULT=failed\n' ;;
-  *"TRACKER_ACTION_REQUIRED"*) printf 'TRACKER_STATUS_RESULT=deferred\n' ;;
-  *"Updating tracker status for issue #${issue} to '${status}'"*) printf 'TRACKER_STATUS_RESULT=applied\n' ;;
-  *) printf 'TRACKER_STATUS_RESULT=skipped\n' ;;
+  *"TRACKER_STATUS_UNRESOLVED "*"reason=status_field_unavailable"*|*"TRACKER_STATUS_UPDATE_FAILED "*)
+    printf 'TRACKER_STATUS_RESULT=failed\n'
+    ;;
+  *"TRACKER_STATUS_APPLIED issue=${issue} "*)
+    printf 'TRACKER_STATUS_RESULT=applied\n'
+    ;;
+  *"TRACKER_ACTION_REQUIRED="*)
+    printf 'TRACKER_STATUS_RESULT=deferred\n'
+    ;;
+  *)
+    if [ "$apply_rc" -ne 0 ]; then
+      # A non-zero return with no recognised marker is not a vocabulary
+      # mismatch; report it as a best-effort failure, never as exit 3.
+      printf 'TRACKER_STATUS_RESULT=failed\n'
+    else
+      printf 'TRACKER_STATUS_RESULT=skipped\n'
+    fi
+    ;;
 esac
