@@ -15796,12 +15796,15 @@ run_test "mainloop_ownership_unresolved_exit2" "2" "$_integ_exit"
 _own_view_args='--json headRefName,headRepositoryOwner,headRepository,isCrossRepository'
 export INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9","headRepositoryOwner":{"login":"acme"},"headRepository":{"name":"rootonly"},"isCrossRepository":false}'
 _own_fixture_root="$(mktemp -d)"
-git -c init.defaultBranch=main init -q "$_own_fixture_root/with-origin"
-git -C "$_own_fixture_root/with-origin" remote add origin https://github.com/acme/rootonly.git
-git -c init.defaultBranch=main init -q "$_own_fixture_root/no-origin"
+# Real git (the harness PATH shadows git with a fail-fast mock): the fixtures
+# are real checkouts, and the loop must read their origin remotes.
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -c init.defaultBranch=main init -q "$_own_fixture_root/with-origin"
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_own_fixture_root/with-origin" remote add origin https://github.com/acme/rootonly.git
+PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -c init.defaultBranch=main init -q "$_own_fixture_root/no-origin"
 
 # _own_run <env-assignments...> -- <loop args...>: run the loop with GH_REPO and
-# WORKFLOW_TARGET_GITHUB_REPO cleared unless the case sets them.
+# WORKFLOW_TARGET_GITHUB_REPO cleared unless the case sets them, the integration
+# gh mock, and real git.
 _own_run() {
   local _envs=()
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do _envs+=("$1"); shift; done
@@ -15813,7 +15816,7 @@ _own_run() {
   set +e
   _integ_out="$(env GH_REPO= WORKFLOW_TARGET_GITHUB_REPO= ${_envs[@]+"${_envs[@]}"} \
     INTEG_MOCK_GH_LOG="$_integ_gh_log" INTEG_MOCK_GH_ENV_LOG="$_integ_gh_env_log" \
-    PATH="$_integration_mock_bin:$PATH" \
+    PATH="$_integration_mock_bin:$TEST_PR_REVIEW_LOOP_REAL_PATH" \
     bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$@" 2>/dev/null)"
   _integ_exit=$?
   set -e
