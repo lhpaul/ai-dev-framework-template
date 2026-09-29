@@ -1321,8 +1321,9 @@ count_reviewer_blocking_findings() {
   # so the larger of the two is used rather than their sum. A thread-read
   # failure escalates (fail closed).
   local _threads_json _thread_count _t_owner="${repo%%/*}" _t_name="${repo#*/}"
+  [ -n "$bot_login_arg" ] || return 0
   if ! _threads_json="$(gh api graphql --paginate --slurp \
-        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}' \
+        -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated comments(first:1){nodes{author{login} body}}}}}}}' \
         -f owner="$_t_owner" -f repo="$_t_name" -F pr="$pr_number" 2>/dev/null)" \
       || [ -z "$_threads_json" ]; then
     escalate review-thread-fetch-failed
@@ -1330,6 +1331,11 @@ count_reviewer_blocking_findings() {
   if ! _thread_count="$(printf '%s\n' "$_threads_json" | jq -r --arg bot "$bot_login_arg" --arg plain "${bot_login_arg%\[bot\]}" '
         [ .[]?.data.repository.pullRequest.reviewThreads.nodes[]?
           | select((.isResolved // false) == false)
+          # Same resolved-equivalents check_unresolved_threads applies in
+          # pr-review-loop.sh: an outdated thread, or one whose first comment
+          # carries the bot Addressed marker, is not blocking.
+          | select((.isOutdated // false) == false)
+          | select((.comments.nodes[0].body // "") | contains("✅ Addressed") | not)
           | select(
               ((.comments.nodes[0].author.login // "") == $bot)
               or ((.comments.nodes[0].author.login // "") == $plain)

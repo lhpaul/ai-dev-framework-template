@@ -986,6 +986,9 @@ run_test "stale_comment_resolved_thread_labels_result" "labeled" "$(field "$resu
 MOCK_REVIEW_THREADS='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"some-human"}}]}}]'
 result="$(run_helper)"
 run_test "unresolved_non_bot_thread_ignored_result" "labeled" "$(field "$result" RESULT)"
+MOCK_REVIEW_THREADS='[{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"cursor"},"body":"old"}]}},{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"cursor"},"body":"✅ Addressed in abc"}]}}]'
+result="$(run_helper)"
+run_test "outdated_and_addressed_threads_do_not_block_result" "labeled" "$(field "$result" RESULT)"
 MOCK_REVIEW_THREADS_EXIT=1
 result="$(run_helper)"
 run_test "thread_fetch_failure_escalates_reason" "review-thread-fetch-failed" "$(field "$result" REASON)"
