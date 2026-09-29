@@ -372,6 +372,16 @@ comment_only_reviewer_verdict() {
       _root_clean_created="$reviewer_started_at"
     fi
     reviewer_started_at="$_saved_started_at"
+    # Round 26 (PRRT_kwDORWAxaM6m7JN-): codex_combine_terminal_evidence makes
+    # the STRICTLY newer of review / SHA-pinned root verdict authoritative. A
+    # strictly newer clean root verdict supersedes the older review (even a
+    # CHANGES_REQUESTED one) — the findings scan then starts at the root
+    # verdict with no persisted change request. An equal timestamp is a tie
+    # and stays fail-closed (the review still governs).
+    _root_supersedes=0
+    if [ "$_adapter_rc" -eq 0 ] && [ -n "$_root_clean_created" ] && [ "$reviewer_started_at" \< "$_root_clean_created" ]; then
+      _root_supersedes=1
+    fi
     if [ "$_adapter_rc" -eq 2 ] && [ -n "$_root_blocking_created" ] && ! [ "$_root_blocking_created" \< "$reviewer_started_at" ]; then
       annotate_needs_fixes_best_effort
       result="refused"
@@ -385,6 +395,11 @@ comment_only_reviewer_verdict() {
       reason="reviewer-unavailable"
       reviewer_report="${platform_arg}:review"
       refuse "reviewer-unavailable"
+    fi
+    if [ "$_root_supersedes" -eq 1 ]; then
+      reviewer_started_at="$_root_clean_created"
+      count_reviewer_blocking_findings "$bot_login_arg" "$reviewer_started_at" "$reviewer_started_at" "$platform_arg" 0
+      return
     fi
   fi
   # Inline bound (thread PRRT_kwDORWAxaM6m1pGF): earliest of submitted_at and

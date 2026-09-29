@@ -2058,6 +2058,17 @@ run_test "codex_root_only_newer_usage_limit_refuses_reason" "reviewer-unavailabl
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-02T00:00:00Z","id":919,"body":"You have reached your Codex usage limits for code reviews."},{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":920,"body":'"$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs .)"'}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_root_only_older_usage_limit_superseded_result" "labeled" "$(field "$result" RESULT)"
+# Round 26 (PRRT_kwDORWAxaM6m7JN-): a strictly NEWER clean SHA-pinned root
+# verdict supersedes an older CHANGES_REQUESTED review; an OLDER clean root
+# does not (the newer change request still governs).
+MOCK_REVIEWS="[$(_codex_review_json CHANGES_REQUESTED "" 501 2026-01-02T00:00:00Z)]"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":921,"body":'"$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs .)"'}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_newer_clean_root_supersedes_change_request_result" "labeled" "$(field "$result" RESULT)"
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-01T00:00:00Z","id":922,"body":'"$(printf '%s' "$_codex_canonical_clean_body" | jq -Rs .)"'}]'
+result="$(run_helper_platform "$_codex_config")"
+run_test "codex_older_clean_root_keeps_change_request_reason" "blocking-findings" "$(field "$result" REASON)"
+MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
 # The clean sentence AND the head pin together still pass (unchanged
 # behavior) — but round 17 (PRRT_kwDORWAxaM6m2604) requires the body to
