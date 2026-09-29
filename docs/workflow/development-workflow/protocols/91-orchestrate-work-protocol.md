@@ -2064,6 +2064,9 @@ Required fields:
 - **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
 - **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
 - **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
+- **Gate-approved commit**: the full commit SHA the gate approved at (`git rev-parse HEAD` at the moment of the `APPROVED` verdict). Use this exact field name — not "Reviewed commit", which already has a distinct meaning as the Codex GitHub App's own marker token parsed by `codex-github-evidence-lib.sh` for external-reviewer evidence. This is the gate-evidence SHA that Step 8a's freshness check and `internal-review-gate-freshness-guard.sh` compare against the PR's live HEAD — omitting it leaves the gate's own binding claim unverifiable.
+
+**Verdict binds to this commit only.** The internal review gate's verdict binds to the reviewed commit recorded above, not to the branch or PR as a whole. Any subsequent commit that is more than mechanical (typo/lint-only, see the trivial-fix classification below) invalidates the gate for the new HEAD; the gate must be re-run there before readiness. A clean automated-reviewer-loop result (Step 7) at the new HEAD is not a substitute — it validates the PR branch, it does not replace the pre-PR review gate.
 
 Example format for a **non-implementation PR** (single-pass):
 
@@ -2074,6 +2077,7 @@ Example format for a **non-implementation PR** (single-pass):
 **Effective reviewer set**: claude
 **Skipped reviewers**: codex (runtime absent; remedy: make the runtime available)
 **Verdict**: APPROVED
+**Gate-approved commit**: `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2`
 
 All reachable internal reviewers approved. Coverage was reduced from 2 to 1 because the codex runtime was absent.
 ```
@@ -2096,7 +2100,8 @@ Example format for an **implementation PR** (two-pass):
 - claude: APPROVED after 1 fix cycle (1 finding resolved)
 
 **Verdict**: APPROVED
-All passes approved at commit `abc1234`.
+**Gate-approved commit**: `b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3`
+All passes approved at the commit above.
 ```
 
 In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` policy triggered), the hard-fail comment posted in the Runtime-availability check section above **already satisfies BR-7** — do not post a second summary comment.
@@ -2142,6 +2147,8 @@ git diff HEAD~1 HEAD -- .
 If the diff includes any non-text change (e.g., new function, new import, changed conditional, structural markup change), override the fixer's self-certification and do not apply the trivial-fix skip.
 
 **Scope of skip**: The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by Pass 1 findings (i.e., `internal_review_cycle > 0` for findings from Pass 1) are also never skipped.
+
+**Distinct from the `MECHANICAL_DELTA:` marker**: `TRIVIAL_FIX: non-structural` (above) governs whether the orchestrator re-runs Step 7a *before* proceeding to Step 7, in the two fixer-push contexts described above. `MECHANICAL_DELTA:` (Step 8a's internal review gate freshness check, below) governs a different decision: whether a PR may reach readiness despite the Step 7a `APPROVED` verdict's recorded commit no longer matching HEAD. The two markers are not interchangeable and a commit message may need either, both, or neither depending on when in the loop it lands.
 
 ---
 
@@ -2725,6 +2732,7 @@ Interpret the result as follows:
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
 | 12        | Reviewer-loop clean verdict not settled (Check 0.6 / 0.6b): `POST_CLEAN_*` or `LOCAL_AI_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, `POST_CLEAN_HEAD_SHA` differs from the live PR head, or `LOCAL_AI_HEAD_CURRENT` is not exactly `1` when `LOCAL_AI_CONFIGURED=1` | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` and `LOCAL_AI_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
+| 13        | Internal review gate summary missing, not `APPROVED`, or stale for the live head (freshness guard refused) at the pre-Check-4 gate | Do not label ready; re-run Step 7a at the current HEAD, then re-run this checklist |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -3288,6 +3296,26 @@ if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
   gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "needs-fixes"
 fi
 
+# Check 3.8: internal review gate freshness. Stale Step 7a evidence must stop
+# the readiness signal BEFORE the label is applied, not be caught by the Step 8c
+# post-label audit after label consumers may already have fired.
+GATE_COMMENT=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json comments \
+  --jq '[.comments[] | select(.body | contains("### Step 7a Internal Review Gate Summary"))] | last | .body // ""')
+GATE_VERDICT=$(printf '%s\n' "$GATE_COMMENT" | sed -n 's/^\*\*Verdict\*\*: *//p' | head -1)
+GATE_SHA=$(printf '%s\n' "$GATE_COMMENT" | sed -n 's/^\*\*Gate-approved commit\*\*: *`\{0,1\}\([0-9a-f]\{7,64\}\).*/\1/p' | head -1)
+LIVE_HEAD_OID=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json headRefOid --jq '.headRefOid')
+if [ "$GATE_VERDICT" != "APPROVED" ] || [ -z "$GATE_SHA" ] || \
+   ! ./scripts/development-workflow/internal-review-gate-freshness-guard.sh \
+        --gate-sha "$GATE_SHA" --head-sha "$LIVE_HEAD_OID" --repo-root "$(git rev-parse --show-toplevel)"; then
+  echo "ERROR: Cannot proceed to Check 4 — internal review gate evidence is missing, not APPROVED, or stale for head $LIVE_HEAD_OID."
+  echo "Re-run Step 7a at the current HEAD, then re-run this checklist from the beginning."
+  # A readiness label already on the PR describes a head the gate never approved:
+  # pull it back and keep the PR out of readiness before exiting.
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review" || true  # workflow-shell-guard: allow SH001 - label may be absent
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
+  exit 13  # Exit code 13 = "internal review gate evidence missing or stale at pre-Check-4 gate"
+fi
+
 # Check 4: apply (or revalidate) the ready-for-human-review label through the
 # helper — even when the label is already present, so a stale one is removed.
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
@@ -3500,8 +3528,9 @@ If neither the CLI path nor MCP is available, log a warning and continue — do 
 
 After Steps 8a and 8b complete, perform one final independent verification of the actual PR state via `gh pr view` before reporting the PR as ready for human review. **Do not rely on prior step outputs or agent self-reports** — query GitHub directly.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
+gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments,headRefOid
 ```
 
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly. **This query is mandatory — do not skip it or rely on self-tracked thread state:**
@@ -3556,6 +3585,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | Checkpoint status comment (when checkpoints in scope) | At least one PR comment containing `<!-- run-epic:checkpoint-status -->` whose blocking section matches the current label state. Skip when no checkpoint policy is in scope. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
+| Internal review gate freshness                  | The latest `### Step 7a Internal Review Gate Summary` comment's `**Verdict**` must be exactly `APPROVED` (any other verdict, such as `hard-fail` or `escalated`, fails this check even when the SHA matches), and its `**Gate-approved commit**` SHA must either equal the PR's live `headRefOid` or be a strict ancestor of it with the guard accepting the post-gate delta as a marked mechanical delta (`REASON=mechanical_delta_verified`); success is defined as an `APPROVED` verdict plus `RESULT=pass` from the guard, never as unconditional SHA equality. Verified — with the `headRefOid` queried live in the same independent `gh pr view` call, not reused from Step 8a — by running `scripts/development-workflow/internal-review-gate-freshness-guard.sh --gate-sha <gate-approved sha> --head-sha <headRefOid> --repo-root <repo root>` and observing `RESULT=pass`. **This is the mechanical enforcement of the "verdict binds to the reviewed commit" rule (see `REVIEW.md` → PR Readiness, and Step 7a → "Verdict binds to this commit only" above) — the internal review gate's `APPROVED` verdict does not carry forward across a non-mechanical commit even when Step 7's automated reviewer loop reports clean at the new HEAD.** `RESULT=refused` (`REASON=stale_gate_evidence` or `gate_sha_not_ancestor`) fails this check; do not report ready — instead re-run Step 7a at the new HEAD, the only non-destructive remedy after the fact. The `MECHANICAL_DELTA: <rationale>` marker exempts a post-gate commit only when it was written into that commit's message when the commit was first created (every commit in the gate..HEAD range, including merge commits, needs it); never amend, rebase, or force-push already-pushed commits to add it. A summary comment that predates this field (no `**Gate-approved commit**` line) cannot be verified and is treated the same as a stale mismatch — re-run Step 7a at the current HEAD to produce a comment carrying the field. A missing Step 7a summary comment (never posted, or deleted) is itself a failed check, never a skip — do not report ready; run Step 7a first, because without that comment nothing proves the internal review gate ran. |
 | CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 If any check fails:
