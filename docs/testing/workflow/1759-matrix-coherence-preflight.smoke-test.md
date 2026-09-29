@@ -41,7 +41,7 @@ Before running this smoke test:
 **Maps to**: same brief scope, plan surface
 
 1. Open `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md`
-2. Confirm Step 5 (cross-section consistency self-check) covers plan decision tables and Refactor work item briefs
+2. Confirm Step 5 (cross-section consistency self-check) covers the plan's own stateful contracts using the same complete trigger as Protocol 01 (decision matrix, state table, lifecycle, precedence rules, or similarly stateful construct) and Refactor work item briefs, so a lifecycle-only or precedence-only plan cannot take the `Not applicable` path
 3. Confirm the Document Quality Gate template includes a `Matrix coherence preflight` row example
 
 **Expected result**: Both edits present; no restated six-check list (pointer to the canonical definition only).
