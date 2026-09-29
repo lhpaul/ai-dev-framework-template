@@ -147,6 +147,7 @@ gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" \
 The default poll interval and maximum wait follow the same values as other
 platforms and are configurable via `pr-review-loop.sh` flags:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> \
   --branch <branch_name> \

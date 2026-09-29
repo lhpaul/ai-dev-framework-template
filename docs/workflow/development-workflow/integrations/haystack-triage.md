@@ -150,6 +150,7 @@ blocking triage category, the normal `needs_fixes` path still wins.
 
 By default, `Major` findings are treated as advisory (non-blocking). If your team wants `Major` findings to block PRs, set the environment variable before running `pr-review-loop.sh`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 HAYSTACK_MAJOR_IS_BLOCKING=1 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
 ```
@@ -215,6 +216,7 @@ If both conditions hold, the finding is a false positive and can be dismissed. G
 
 Override both via environment variable:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 HAYSTACK_REVIEWER_TIMEOUT=180 HAYSTACK_POLL_INTERVAL=20 \
   ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>

@@ -67,6 +67,7 @@ If the file is absent or the key is not present, CodeRabbit defaults to
 When a draft-restricting reviewer is listed in `review.on_ready.github`, the
 ready transition happens after the draft gate:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name> --draft-github-only
 ./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name>

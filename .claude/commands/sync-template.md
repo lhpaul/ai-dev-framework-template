@@ -895,6 +895,7 @@ gh pr ready "$PR_NUMBER"
 
 Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "feature/sync-template-v{TEMPLATE_VERSION}"
 ```
