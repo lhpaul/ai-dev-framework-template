@@ -136,7 +136,10 @@ physical_git_common_dir() {
 }
 
 CALLER_WORKTREE_ROOT=""
-if [ -n "$CALLER_PWD" ]; then
+# On the base-worktree re-entry below, this process's directory is wherever the
+# first pass had moved to, not the caller's. The first pass hands the caller's
+# worktrees over in POST_MERGE_CLEANUP_CALLER_WORKTREES instead.
+if [ -n "$CALLER_PWD" ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ]; then
   CALLER_WORKTREE_ROOT="$(physical_worktree_root "$CALLER_PWD" || true)"
 fi
 
@@ -166,23 +169,34 @@ add_caller_worktree() {
   local root
   root="$(physical_worktree_root "${1:-}" || true)"
   [ -n "$root" ] || return 0
-  if ! printf '%s\n' "$CALLER_WORKTREES" | grep -Fqx -- "$root"; then
+  if ! grep -Fqx -- "$root" <<<"$CALLER_WORKTREES"; then
     CALLER_WORKTREES="${CALLER_WORKTREES:+$CALLER_WORKTREES
 }$root"
   fi
   return 0
 }
 add_caller_worktree "$CALLER_WORKTREE_ROOT"
-if [ "$repo_root_explicit" -eq 1 ]; then
+if [ "$repo_root_explicit" -eq 1 ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ]; then
   add_caller_worktree "$repo_root"
 fi
 export POST_MERGE_CLEANUP_CALLER_WORKTREES="$CALLER_WORKTREES"
+
+# is_linked_worktree <path>
+# True when <path> is a linked worktree rather than the repository's main
+# working tree (their git dir and common git dir differ).
+is_linked_worktree() {
+  local git_dir common_dir
+  git_dir="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  git_dir="$(CDPATH='' cd -- "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  common_dir="$(physical_git_common_dir "$1")" || return 1
+  [ "$git_dir" != "$common_dir" ]
+}
 
 is_caller_worktree() {
   local candidate
   [ -n "${1:-}" ] && [ -n "$CALLER_WORKTREES" ] || return 1
   candidate="$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)" || return 1
-  printf '%s\n' "$CALLER_WORKTREES" | grep -Fqx -- "$candidate"
+  grep -Fqx -- "$candidate" <<<"$CALLER_WORKTREES"
 }
 
 HUB_REPO_ROOT="$repo_root"
@@ -398,6 +412,17 @@ restore_original_ref() {
 
   # The branch we started on may be the very one we just deleted.
   if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ]; then
+    # A caller's linked worktree left on the base branch would hold that branch
+    # and stop every other checkout (the main clone included) from switching to
+    # it (#1386). Detach it at the same commit instead. The main worktree keeps
+    # the old behavior and stays on the base branch.
+    if is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT" \
+      && git -C "$CLEANUP_REPO_ROOT" checkout --quiet --detach "$DEVELOP_BRANCH" 2>/dev/null; then
+      print_kv CALLER_WORKTREE_PATH "$CLEANUP_REPO_ROOT"
+      print_kv CALLER_WORKTREE_ACTION "detached"
+      echo "Detached the calling worktree $CLEANUP_REPO_ROOT at $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted), so it does not hold $DEVELOP_BRANCH."
+      return 0
+    fi
     echo "Leaving $CLEANUP_REPO_ROOT on $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted)."
     return 0
   fi
@@ -731,6 +756,7 @@ fi
 if [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
   # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
   git branch -D "$TO_DELETE"
+  print_kv LOCAL_DELETE_RESULT "deleted"
 fi
 fi
 
@@ -1145,6 +1171,8 @@ if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
 fi
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
+elif [ "$SKIP_LOCAL_DELETE" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 else
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' has been removed locally."
 fi
