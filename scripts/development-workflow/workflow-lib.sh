@@ -3737,6 +3737,159 @@ update_tracker_size_best_effort() {
   update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value" "required"
 }
 
+# --- Exhaustive open-issue / project-item reads (#1804) ---------------------
+#
+# `gh issue list --limit N` and `gh project item-list --limit N` are fetch
+# caps, not exhaustive queries: gh paginates internally only up to N records
+# and silently drops the rest. The two helpers below re-issue the read with a
+# larger cap until the result is provably complete, up to a deliberately
+# chosen hard bound (WORKFLOW_GH_LIST_MAX_RECORDS). Past that bound they
+# refuse to return a partial list (exit 3) rather than silently truncating.
+#
+# The first request always uses the historical 1000-record cap, so a
+# repository or board below that size still costs exactly one request.
+WORKFLOW_GH_LIST_INITIAL_RECORDS=1000
+WORKFLOW_GH_LIST_MAX_RECORDS=64000
+
+# _workflow_gh_list_next_limit <current-limit> [<reported-total>]
+#
+# Prints the next fetch cap: the reported total when known and larger than
+# double the current cap would not reach, otherwise double the current cap —
+# always clamped to WORKFLOW_GH_LIST_MAX_RECORDS.
+_workflow_gh_list_next_limit() {
+  local current="$1" total="${2:-}" next
+  next=$((current * 2))
+  case "$total" in
+    ''|*[!0-9]*) ;;
+    *) [ "$total" -gt "$next" ] && next="$total" ;;
+  esac
+  [ "$next" -gt "$WORKFLOW_GH_LIST_MAX_RECORDS" ] && next="$WORKFLOW_GH_LIST_MAX_RECORDS"
+  printf '%s\n' "$next"
+}
+
+# workflow_gh_list_open_issues_exhaustive <owner/repo>
+#
+# Prints every open issue of <owner/repo> as the JSON array produced by
+# `gh issue list --json number,title,labels,createdAt,url`.
+#
+# Completeness rule: a response shorter than the requested cap is complete
+# (gh stopped because the repository ran out of open issues). A response
+# exactly as long as the cap may be truncated, so the read is repeated with a
+# doubled cap.
+#
+# Exit codes:
+#   0 — complete; stdout is gh's response (may be blank — callers that must
+#       distinguish blank from "no open issues" validate it themselves)
+#   1 — gh failed
+#   2 — the response is not blank and not a JSON array
+#   3 — still possibly truncated at WORKFLOW_GH_LIST_MAX_RECORDS; nothing printed
+workflow_gh_list_open_issues_exhaustive() {
+  local repo_slug="$1"
+  local limit="$WORKFLOW_GH_LIST_INITIAL_RECORDS" out count
+
+  while :; do
+    if ! out="$(gh issue list --repo "$repo_slug" --state open --limit "$limit" --json number,title,labels,createdAt,url 2>/dev/null)"; then
+      return 1
+    fi
+    if [ -z "$out" ]; then
+      return 0
+    fi
+    if ! count="$(printf '%s' "$out" | jq -er 'if type == "array" then length else error("not an array") end' 2>/dev/null)"; then
+      return 2
+    fi
+    if [ "$count" -lt "$limit" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    if [ "$limit" -ge "$WORKFLOW_GH_LIST_MAX_RECORDS" ]; then
+      return 3
+    fi
+    limit="$(_workflow_gh_list_next_limit "$limit")"
+  done
+}
+
+# workflow_gh_project_items_exhaustive <project-number> <owner> [<query>]
+#
+# Prints every item of a GitHub Project as the JSON object produced by
+# `gh project item-list --format json` (optionally filtered by <query>).
+#
+# Completeness rule: gh reports the (query-filtered) board size as the
+# top-level `totalCount` — verified against a live
+# `gh project item-list --format json` call for #1804. When present, the
+# response is complete once it holds totalCount items; otherwise, or when gh
+# returned fewer items than the cap allowed, the same shorter-than-cap rule as
+# the issue read applies.
+#
+# Exit codes:
+#   0 — complete; stdout is gh's response
+#   1 — gh failed
+#   2 — the response is not a JSON object with an `items` array
+#   3 — still truncated at WORKFLOW_GH_LIST_MAX_RECORDS; nothing printed
+workflow_gh_project_items_exhaustive() {
+  local project_number="$1" owner="$2" query="${3:-}"
+  local limit="$WORKFLOW_GH_LIST_INITIAL_RECORDS" out counts count total
+  local -a query_args=()
+
+  if [ -n "$query" ]; then
+    query_args=(--query "$query")
+  fi
+
+  while :; do
+    if ! out="$(gh project item-list "$project_number" --owner "$owner" --limit "$limit" --format json ${query_args[@]+"${query_args[@]}"} 2>/dev/null)"; then
+      return 1
+    fi
+    if ! counts="$(printf '%s' "$out" | jq -er 'if type == "object" and (.items | type) == "array" then "\(.items | length) \(.totalCount // "")" else error("not an item list") end' 2>/dev/null)"; then
+      return 2
+    fi
+    count="${counts%% *}"
+    total="${counts#* }"
+    case "$total" in
+      ''|*[!0-9]*) total="" ;;
+    esac
+    if [ -n "$total" ] && [ "$count" -ge "$total" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    if [ "$count" -lt "$limit" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    if [ "$limit" -ge "$WORKFLOW_GH_LIST_MAX_RECORDS" ]; then
+      return 3
+    fi
+    limit="$(_workflow_gh_list_next_limit "$limit" "$total")"
+  done
+}
+
+# jq definitions shared by every project-item -> open-issue join (#1804).
+#
+# Issue numbers are unique only within one repository; an organization-owned
+# project can span several repositories, so a join by .content.number alone
+# can attach a foreign repository's board item to this repository's open
+# issue of the same number. item_repo_slug($item) resolves the item's own
+# repository from the live `gh project item-list --format json` content
+# schema — `content.repository` is "owner/repo" (verified live for #1804) —
+# falling back to the owner/repo segment of `content.url`, and lowercases it
+# (GitHub owner/repo names are case-insensitive). A legacy URL-form
+# `content.repository` is also accepted. It yields "" when neither field
+# identifies a repository (for example a draft issue); callers must treat ""
+# as NOT this repository — the join fails closed.
+# shellcheck disable=SC2016  # jq program text, not shell expansion
+WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS='
+  def item_repo_slug($item):
+    ( ($item.content.repository // "") | if type == "string" then . else "" end
+      | sub("^https?://[^/]+/"; "") | sub("/+$"; "") ) as $repo
+    | ( ($item.content.url // "") | if type == "string" then . else "" end ) as $url
+    | ( if $repo != "" then $repo
+        else (( $url | capture("^https?://[^/]+/(?<slug>[^/]+/[^/]+)/") | .slug ) // "")
+        end )
+    | ascii_downcase;
+
+  def same_repo_item($item; $repoSlug):
+    item_repo_slug($item) as $slug
+    | $slug != "" and $slug == ($repoSlug | ascii_downcase);
+'
+
 # list_open_workflow_type_issues
 #
 # Prints a JSON array of open GitHub issues whose project Type is Workflow.
@@ -3803,26 +3956,53 @@ list_open_workflow_type_issues() {
   fi
   repo_slug="${repo_owner}/${repo_name}"
 
-  if ! open_issues="$(gh issue list --repo "$repo_slug" --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
-    echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
-    printf '[]\n'
-    return 0
-  fi
+  local _lowti_read_rc=0
+  open_issues="$(workflow_gh_list_open_issues_exhaustive "$repo_slug")" || _lowti_read_rc=$?
+  case "$_lowti_read_rc" in
+    0) ;;
+    3)
+      echo "Warning: more than ${WORKFLOW_GH_LIST_MAX_RECORDS} open GitHub issues; refusing a truncated list, cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+    *)
+      echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+  esac
   if [ -z "$open_issues" ]; then
     printf '[]\n'
     return 0
   fi
 
-  if ! project_items="$(gh project item-list "$project_number" --owner "$owner" --limit 1000 --format json 2>/dev/null)"; then
-    echo "Warning: failed to list GitHub Project items; cannot discover Workflow Type issues." >&2
-    printf '[]\n'
-    return 0
-  fi
+  _lowti_read_rc=0
+  project_items="$(workflow_gh_project_items_exhaustive "$project_number" "$owner")" || _lowti_read_rc=$?
+  case "$_lowti_read_rc" in
+    0) ;;
+    2)
+      echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+    3)
+      echo "Warning: GitHub Project ${project_number} has more than ${WORKFLOW_GH_LIST_MAX_RECORDS} items; refusing a truncated list, cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+    *)
+      echo "Warning: failed to list GitHub Project items; cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+  esac
 
   _lowti_preferred_field="$(workflow_issue_tracker_custom_field type_field "$(workflow_effective_config_file || true)")"
   _lowti_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$_lowti_preferred_field")"
 
-  if ! _lowti_result_json="$(printf '%s' "$project_items" | jq --argjson open "$open_issues" --argjson candidate_keys "$_lowti_candidate_keys_json" '
+  # Join by (repository, number), never by number alone — see
+  # WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS (#1804).
+  if ! _lowti_result_json="$(printf '%s' "$project_items" | jq --argjson open "$open_issues" --argjson candidate_keys "$_lowti_candidate_keys_json" --arg repoSlug "$repo_slug" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
@@ -3839,6 +4019,7 @@ list_open_workflow_type_issues() {
         results: [ .items[]
           | select(item_type(.) == "Workflow")
           | . as $item
+          | select(same_repo_item($item; $repoSlug))
           | ($open[] | select(.number == $item.content.number)) as $issue
           | select(terminal($item.status) | not)
           | {
