@@ -1984,12 +1984,16 @@ For each PR identified in the detection step:
 1. **Remove `ready-for-human-review`** and **remove `ready-for-regression`** (if present — they will be re-applied after the re-triggered review passes):
 
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr edit <pr_number> --remove-label "ready-for-human-review" --remove-label "ready-for-regression"
    ```
 
 2. **Post `@coderabbitai review`** to request a fresh CodeRabbit review:
 
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr comment <pr_number> --body "@coderabbitai review"
    ```
 

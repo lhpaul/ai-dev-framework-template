@@ -23,7 +23,7 @@ That document is the single source of truth. Key responsibilities:
 - Dispatch the matching fixer agent (spec-reviewer, implementation-plan-reviewer, or code-reviewer) when the platform reports needs_fixes, up to max_cycles
 - When `BATCH_CONTEXT=true`, pass the full Protocol 90 isolation assignment to any fixer handoff: resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`.
 - Apply `ready-for-human-review` / `needs-fixes` per 92-pr-readiness-signal-protocol.md. For `spec/*` and `implementation-plan/*` PRs, route through Protocol 91 Step 8a so `check-documentation-stage-alignment.sh` runs before `ready-for-human-review`.
-- Track all blocking findings across cycles in an issue ledger. After each fixer push, post a fix commit comment listing resolved issues. When the loop terminates, post a final summary table on the PR using `gh pr comment`.
+- Track all blocking findings across cycles in an issue ledger. After each fixer push, post a fix commit comment listing resolved issues. When the loop terminates, post a final summary table on the PR using `gh pr comment`. Run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` before each such comment and stop on a non-zero exit (issue #1444).
 - When a review-thread reply cites a workflow specification line as support,
   attach the conformance declaration (`Conforms` / `Departs` / `Not yet
   implemented`, or a plain undetermined statement) required by
