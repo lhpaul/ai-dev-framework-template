@@ -233,6 +233,31 @@ write_fixture "$TMP_DIR/fp_heredoc.sh" \
   "gh api graphql -f query='query{ok}'"
 run_test "query_in_heredoc_body_ignored" "pass" "$(run_linter "$TMP_DIR/fp_heredoc.sh")"
 
+# Any valid Bash heredoc delimiter, not only identifier-style ones.
+write_fixture "$TMP_DIR/fp_heredoc_delims.sh" \
+  '#!/usr/bin/env bash' \
+  "cat <<'END-DOC'" \
+  "gh api graphql -f query='query{bad}}'" \
+  'END-DOC' \
+  'cat <<"a.b"' \
+  "gh api graphql -f query='query{bad}}'" \
+  'a.b' \
+  'cat <<\EOF' \
+  "gh api graphql -f query='query{bad}}'" \
+  'EOF' \
+  "gh api graphql -f query='query{ok}'"
+run_test "heredoc_nonidentifier_delimiters_ignored" "pass" "$(run_linter "$TMP_DIR/fp_heredoc_delims.sh")"
+
+# Arithmetic left shift is not a heredoc operator: it must not swallow the
+# rest of the file.
+write_fixture "$TMP_DIR/arith_shift.sh" \
+  '#!/usr/bin/env bash' \
+  'x=$(( y << z ))' \
+  'echo "$(( a << b ))"' \
+  '(( m <<= 1 ))' \
+  "gh api graphql -f query='query{a{b}}}'"
+run_test "arithmetic_shift_does_not_swallow_following_query" "fail" "$(run_linter "$TMP_DIR/arith_shift.sh")"
+
 # ...but a command substitution inside double quotes is code again: the
 # common real shape `var="$(gh api graphql -f query='...')"` is still caught.
 write_fixture "$TMP_DIR/cmdsubst_in_dq.sh" \

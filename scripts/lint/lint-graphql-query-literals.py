@@ -159,7 +159,34 @@ def at_command_position(text: str, i: int) -> bool:
     while j >= 0 and not text[j].isspace():
         j -= 1
     return text[j + 1 : word_end] in COMMAND_POSITION_WORDS
-HEREDOC_OPERATOR = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+# Any valid Bash delimiter: quoted ('END-DOC', "a.b"), backslash-escaped
+# (\EOF), or a bare word (END_DOC, END-DOC).
+HEREDOC_OPERATOR = re.compile(
+    r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([^\s;&|<>()'\"]+))"
+)
+
+
+def _skip_arithmetic(text: str, pos: int) -> int:
+    """Skip an arithmetic `(( ... ))` starting at `pos` (the first `(`).
+
+    Arithmetic holds no shell code or strings worth lexing, and its `<<`
+    (left shift) must never be mistaken for a heredoc operator — that would
+    swallow the rest of the file and silently drop every later query.
+    Returns the index after the closing `))`, or -1 when this is not an
+    arithmetic expansion (the caller then lexes it as `$(` / `(` normally).
+    """
+    depth, j, n = 0, pos, len(text)
+    while j < n:
+        if text[j] == "(":
+            depth += 1
+        elif text[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        elif text[j] == "\n" and depth <= 1:
+            break  # not arithmetic after all (e.g. a nested subshell)
+        j += 1
+    return -1
 
 
 def _skip_heredoc_bodies(text: str, pos: int, pending: list[tuple[str, bool]]) -> int:
@@ -201,6 +228,8 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
             elif c == '"':
                 stack.pop()
                 i += 1
+            elif text.startswith("$((", i) and (end := _skip_arithmetic(text, i + 1)) != -1:
+                i = end
             elif text.startswith("$(", i):
                 stack.append(["code", 0, 0])
                 i += 2
@@ -252,6 +281,10 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
         elif c == '"':
             stack.append(["dq", 0, 0])
             i += 1
+        elif text.startswith("$((", i) and (end := _skip_arithmetic(text, i + 1)) != -1:
+            i = end
+        elif at_word_start and text.startswith("((", i) and (end := _skip_arithmetic(text, i)) != -1:
+            i = end
         elif text.startswith("$(", i):
             stack.append(["code", 0, 0])
             i += 2
@@ -272,7 +305,8 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
         elif text.startswith("<<", i):
             heredoc = HEREDOC_OPERATOR.match(text, i)
             if heredoc:
-                pending_heredocs.append((heredoc.group(3), heredoc.group(1) == "-"))
+                word = heredoc.group(2) or heredoc.group(3) or heredoc.group(4)
+                pending_heredocs.append((word, heredoc.group(1) == "-"))
                 i = heredoc.end()
             else:
                 i += 2
