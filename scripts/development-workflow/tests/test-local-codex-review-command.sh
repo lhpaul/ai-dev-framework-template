@@ -39,6 +39,26 @@ run_test() {
   fi
 }
 
+# path_without_timeout — PATH with every `timeout` binary hidden, so the
+# script under test takes its no-GNU-timeout fallback path (#1843). Symlink
+# farms go under PATH_FARM_ROOT, which the caller creates and removes.
+path_without_timeout() {
+  local dir entry name farm new_path=""
+  local IFS=:
+  for dir in $1; do
+    if [ -n "$dir" ] && [ -x "$dir/timeout" ]; then
+      farm="$(mktemp -d "${PATH_FARM_ROOT:?}/farm.XXXXXX")"
+      for entry in "$dir"/*; do
+        name="${entry##*/}"
+        [ "$name" = "timeout" ] || ln -s "$entry" "$farm/$name"
+      done
+      dir="$farm"
+    fi
+    new_path="${new_path:+$new_path:}$dir"
+  done
+  printf '%s\n' "$new_path"
+}
+
 cat > "$MOCK_BIN/codex" <<'MOCK_CODEX'
 #!/usr/bin/env bash
 output_file=""
@@ -170,6 +190,8 @@ run_test "1843_codex_open_stdin_result" "clean" "$(jq -r '.result' "$OUTPUT_FILE
 run_test "1843_codex_open_stdin_prompt" "yes" "$([ "$stdin_elapsed" -lt 5 ] && echo yes || echo no)"
 
 # local-ai-reviewer.sh must not hand an open stdin pipe to the reviewer command.
+# With the caller's PATH this takes the GNU `timeout` path when one is
+# installed (the path that hung in #1843).
 cat > "$MOCK_BIN/local-ai-reviewer-stdin-probe" <<'MOCK_PROBE'
 #!/usr/bin/env bash
 read_status=0
@@ -188,7 +210,20 @@ LOCAL_AI_REVIEWER_COMMAND=local-ai-reviewer-stdin-probe \
 probe_elapsed=$(( $(date +%s) - probe_start ))
 run_test "1843_reviewer_open_stdin_prompt" "yes" "$([ "$probe_elapsed" -lt 5 ] && echo yes || echo no)"
 run_test "1843_reviewer_open_stdin_not_blocked" "no" "$(grep -q 'blocked on stdin' "$STDERR_FILE" "$OUTPUT_FILE" && echo yes || echo no)"
-rm -rf "$STDIN_MOCK_BIN"
+
+# Same check on the no-GNU-timeout fallback path (setsid or perl setpgrp).
+# Bash already gives a backgrounded command /dev/null as stdin, so this is a
+# guard against a future foreground refactor rather than a #1843 reproduction.
+PATH_FARM_ROOT="$(mktemp -d)"
+fallback_path="$(path_without_timeout "$MOCK_BIN:$PATH")"
+probe_start="$(date +%s)"
+LOCAL_AI_REVIEWER_COMMAND=local-ai-reviewer-stdin-probe \
+  PATH="$fallback_path" "$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh" \
+  123 owner repo >"$OUTPUT_FILE" 2>"$STDERR_FILE" < <(sleep 8) || true
+probe_elapsed=$(( $(date +%s) - probe_start ))
+run_test "1843_reviewer_fallback_open_stdin_prompt" "yes" "$([ "$probe_elapsed" -lt 5 ] && echo yes || echo no)"
+run_test "1843_reviewer_fallback_open_stdin_not_blocked" "no" "$(grep -q 'blocked on stdin' "$STDERR_FILE" "$OUTPUT_FILE" && echo yes || echo no)"
+rm -rf "$STDIN_MOCK_BIN" "$PATH_FARM_ROOT"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
