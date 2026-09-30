@@ -346,6 +346,12 @@ run_contains \
   "product_selects_codex_evidence_lib" \
   "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/codex-github-evidence-lib.sh glob=" \
   "$real_product_output"
+# #1444: pr-review-loop.sh runs pr-ownership-guard.sh before any PR side
+# effect; without the helper every product-repo loop run stops unverified.
+run_contains \
+  "product_selects_pr_ownership_guard" \
+  "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/pr-ownership-guard.sh glob=" \
+  "$real_product_output"
 run_contains \
   "product_selects_pr_review_loop_with_evidence_lib" \
   "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/pr-review-loop.sh glob=" \
