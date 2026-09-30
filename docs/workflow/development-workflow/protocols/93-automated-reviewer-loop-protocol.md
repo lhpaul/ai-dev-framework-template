@@ -1041,6 +1041,46 @@ A missing, stale, or contradictory quality-gate log should be fixed before
 another automated review cycle unless the next action is an explicit human
 escalation.
 
+**Matrix coherence re-audit (same-matrix re-run rule)**: this rule applies to
+reviewer-loop cycles on `spec/*` and `implementation-plan/*` PRs only.
+Implementation PRs (`feature/*`, `refactor/*`, `fix/*`, `hotfix/*`) are out of
+scope even when their findings concern a referenced spec or plan; their
+existing Pass 1 spec-compliance check is unchanged. On an in-scope PR, when
+**two consecutive cycles' blocking findings implicate the same stateful
+contract**
+(decision matrix, state table, lifecycle, precedence rules, or similarly
+stateful construct) of the spec, the plan, or — for Refactor items — the work
+item brief under review, the loop runner must re-run the full six-check
+coherence audit (defined in Protocol 01's Document Quality Gate section,
+"Matrix coherence preflight") on that matrix before the next fix push, and
+record the audit result in the fix commit comment (`Matrix coherence
+re-audit:` line in the "Fix commit comment" template — Protocol 91).
+
+- **Matrix identity**: a matrix is identified by its normative location — the
+  section heading, table, or step anchor in the reviewed document (for a
+  Refactor brief, the brief's own section/table anchor, tracked with the same
+  counter and reset semantics as a spec or plan matrix).
+- **Implication**: a blocking finding implicates a matrix when it concerns
+  that matrix's stateful contract — its rows, states, outcomes,
+  evidence-currency rules, or precedence — including associated normative
+  prose, regardless of whether the fix lands in the matrix itself or in
+  surrounding text.
+- **Counter semantics**: the consecutive-cycle count for a given matrix
+  increments for each cycle whose blocking findings implicate that matrix,
+  resets to zero when a cycle's blocking findings do not implicate it, and
+  resets after the re-audit runs.
+- **Responsibility**: the re-audit is the loop runner's responsibility alone;
+  dispatched fixers receive its result with the fix dispatch rather than
+  performing it themselves.
+- **Gate ordering**: the stuck-loop escalation rules in "Detection rules"
+  below (no-progress after 2+ cycles, a second reappearance of a previously
+  fixed finding, `max_cycles`) are evaluated first and always win. The
+  re-audit is not an additional fix attempt and never extends any cap — it
+  runs only when the loop is otherwise proceeding to another fixer dispatch,
+  adding one audit step to that already-granted dispatch. The existing
+  no-progress/stuck-loop escalation path is unchanged and still applies when
+  the audit itself does not clear the loop.
+
 ### Re-query reviewThreads after each push (mandatory)
 
 **After every push that addresses reviewer feedback — including the final push before Step 8c — you MUST re-issue the GraphQL `reviewThreads` query (as defined in Protocol 91 Step 8c) before proceeding to check readiness.**

@@ -33,3 +33,11 @@ That document is the single source of truth. Key responsibilities:
   point to Protocol 91 and that canonical page rather than a lighter
   requirement.
 - Use the helper scripts in `scripts/development-workflow/`
+- For `spec/*` and `implementation-plan/*` PRs, apply Protocol 93's matrix
+  coherence re-audit rule: when two consecutive cycles' blocking findings
+  implicate the same stateful contract (decision matrix, state table,
+  lifecycle, precedence rules, or — for Refactor items — the work item brief),
+  re-run the six-check audit before the next fix push and record the result in
+  the fix commit comment's `Matrix coherence re-audit:` line. Stuck-loop
+  escalation rules always evaluate first and win; the re-audit never extends a
+  cycle cap.

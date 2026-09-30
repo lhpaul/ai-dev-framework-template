@@ -780,7 +780,11 @@ fi
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
 
-# fetch_pr_closing_issues <pr_repo> <pr_number>
+# fetch_pr_closing_issues <pr_repo> <pr_number> [<qualified_repo>]
+# By default matches bare "#NNN" references. When <qualified_repo> (an
+# owner/repo slug) is given, matches only "<qualified_repo>#NNN" references
+# instead — used to honour explicit hub-tracker references in a product-repo
+# PR (#1538); bare "#NNN" there names a product-repo issue.
 # Fetches PR title+body, strips fenced code blocks (so example closing
 # keywords in a code sample are not treated as live references — see
 # strip_fenced_pr_body_blocks above), and extracts GitHub closing-keyword
@@ -808,12 +812,25 @@ fi
 # (not a failure, per grep's own exit-code contract) and is not an error;
 # anything else (grep exit >1, or `sort` failing) is.
 fetch_pr_closing_issues() {
-  local pr_repo="$1"
-  local pr_number="$2"
+  local pr_repo="${1:-}"
+  local pr_number="${2:-}"
+  local qualified_repo="${3:-}"
+  # Function-local copy: the shared constant stays the single source of the
+  # keyword grammar; the qualified form below only rewrites its trailing ref.
+  local CLOSING_KEYWORD_REGEX="$CLOSING_KEYWORD_REGEX"
   local pr_body stripped_pr_body keyword_lines matched_refs stage_status
-  if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number>." >&2
+  if { [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; } || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number> [<qualified_repo>]." >&2
     return 2
+  fi
+  if [ "$#" -eq 3 ]; then
+    if ! workflow_is_valid_github_repo_slug "$qualified_repo"; then
+      echo "ERROR: fetch_pr_closing_issues <qualified_repo> must be an owner/repo GitHub repository slug." >&2
+      return 2
+    fi
+    # Swap the shared regex's trailing bare "#[0-9]+" for "<slug>#[0-9]+".
+    # A slug's only regex metacharacter is '.'.
+    CLOSING_KEYWORD_REGEX="${CLOSING_KEYWORD_REGEX%'#[0-9]+'}${qualified_repo//./\\.}#[0-9]+"
   fi
   pr_body="$(gh pr view "$pr_number" --repo "$pr_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)" || return 1
   # Commit messages carry closing keywords too, and GitHub only honours them
@@ -869,7 +886,84 @@ ${stripped_pr_commit_text}"
   return 0
 }
 
-# close_issues_from_pr <pr_number> <issue_numbers_newline_list>
+# hub_github_repo_slug
+# Echoes the owner/repo slug of the workflow hub's own repository (the one
+# that owns the issue tracker this script mutates), resolved from
+# $HUB_REPO_ROOT. Deliberately does NOT go through repo_slug(): that honours
+# WORKFLOW_TARGET_GITHUB_REPO, which names the *product* repo in hub mode.
+# Returns 1 when the slug cannot be resolved.
+hub_github_repo_slug() {
+  local slug
+  slug="$(cd "$HUB_REPO_ROOT" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)" || return 1
+  [ -n "$slug" ] || return 1
+  printf '%s\n' "$slug"
+}
+
+# pr_repo_is_hub_tracker_repo <pr_repo>
+# Returns 0 when <pr_repo> is the repository whose issue numbers this script's
+# tracker mutations (`gh issue view/close`, project status) address, 1 when it
+# is a different repository (a workflow_hub product repo), and 2 when that
+# cannot be determined. Outside a product-repo cleanup (TARGET_GITHUB_REPO
+# empty) the PR always lives in the current repository.
+pr_repo_is_hub_tracker_repo() {
+  local pr_repo="$1" hub_slug
+  [ -n "$TARGET_GITHUB_REPO" ] || return 0
+  hub_slug="$(hub_github_repo_slug)" || return 2
+  if [ "$(printf '%s' "$pr_repo" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$hub_slug" | tr '[:upper:]' '[:lower:]')" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# pr_close_label <pr_repo> <pr_number>
+# Echoes how a close comment names the merged PR: "PR #N" when it lives in the
+# hub tracker's own repository, else "<pr_repo>#N" so a product-repo PR number
+# is not read as a hub PR number (#1538). An undeterminable hub is treated as
+# "not the hub" (the qualified form is never wrong; the bare one can be).
+pr_close_label() {
+  local pr_repo="$1" pr_number="$2" status=0
+  if [ -n "$pr_repo" ]; then
+    pr_repo_is_hub_tracker_repo "$pr_repo" || status=$?
+    if [ "$status" -ne 0 ]; then
+      printf '%s#%s\n' "$pr_repo" "$pr_number"
+      return 0
+    fi
+  fi
+  printf 'PR #%s\n' "$pr_number"
+}
+
+# fetch_hub_tracker_closing_issues <pr_repo> <pr_number>
+# Like fetch_pr_closing_issues, but only returns issue numbers that belong to
+# the hub tracker (#1538). A bare "Fixes #NNN" in a PR is numbered in the
+# repository the PR lives in; when that is a workflow_hub product repo, the
+# same number in the hub is an unrelated issue, so bare refs are NOT applied
+# (announced on stderr) and only explicit "Fixes <hub owner/repo>#NNN" refs
+# are honoured. When the PR lives in the hub's own repo this is identical to
+# fetch_pr_closing_issues. Same return contract as fetch_pr_closing_issues;
+# an undeterminable hub slug is warned about and yields no refs rather than
+# guessing (never mutating a tracker on a guess).
+fetch_hub_tracker_closing_issues() {
+  local pr_repo="${1:-}" pr_number="${2:-}" hub_slug status=0
+  if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: fetch_hub_tracker_closing_issues requires <pr_repo> <pr_number>." >&2
+    return 2
+  fi
+  pr_repo_is_hub_tracker_repo "$pr_repo" || status=$?
+  case "$status" in
+    0) fetch_pr_closing_issues "$pr_repo" "$pr_number" ;;
+    1)
+      hub_slug="$(hub_github_repo_slug)" || return 1
+      echo "NOTE: PR #${pr_number} lives in product repository '${pr_repo}', not the workflow hub ('${hub_slug}'); bare closing-keyword refs (e.g. 'Fixes #NNN') name product-repo issues and are NOT applied to the hub tracker. Only 'Fixes ${hub_slug}#NNN' references are honoured." >&2
+      fetch_pr_closing_issues "$pr_repo" "$pr_number" "$hub_slug"
+      ;;
+    *)
+      echo "WARNING: could not resolve the workflow hub GitHub repository; closing-keyword refs from PR #${pr_number} in '${pr_repo}' were NOT applied to the hub tracker." >&2
+      return 0
+      ;;
+  esac
+}
+
+# close_issues_from_pr <pr_number> <issue_numbers_newline_list> [<pr_repo>]
 # For each issue number in the list, updates the tracker status to Merged,
 # closes the issue if it is still open (commenting with the closing PR
 # number), and reasserts Merged status after close. A `gh issue view` failure
@@ -883,14 +977,19 @@ ${stripped_pr_commit_text}"
 # issues in the list either way). The issue-numbers list may be empty (a
 # no-op loop), but <pr_number> must be a non-empty numeric PR number so an
 # invalid caller cannot produce a close comment like "Closed by PR #.".
+# When the optional <pr_repo> is a different repository than the hub tracker's
+# (a workflow_hub product repo), the close comment names the PR as
+# "<pr_repo>#N" so it does not read as a hub PR number (#1538).
 close_issues_from_pr() {
-  local pr_number="$1"
-  local issue_list="$2"
-  local issue_num issue_state view_failures=0
-  if [ "$#" -ne 2 ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: close_issues_from_pr requires <pr_number> (numeric) <issue_numbers_newline_list>." >&2
+  local pr_number="${1:-}"
+  local issue_list="${2:-}"
+  local pr_repo="${3:-}"
+  local issue_num issue_state view_failures=0 close_pr_label
+  if { [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; } || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: close_issues_from_pr requires <pr_number> (numeric) <issue_numbers_newline_list> [<pr_repo>]." >&2
     return 2
   fi
+  close_pr_label="$(pr_close_label "$pr_repo" "$pr_number")"
   while IFS= read -r issue_num; do
     [ -z "$issue_num" ] && continue
     echo "Processing issue #${issue_num} from PR #${pr_number} closing keywords..."
@@ -902,7 +1001,7 @@ close_issues_from_pr() {
     update_tracker_status_best_effort "$issue_num" "Merged"
     if [ "$issue_state" = "OPEN" ]; then
       echo "Closing issue #${issue_num}..."
-      if gh issue close "$issue_num" --comment "Closed by PR #${pr_number}."; then
+      if gh issue close "$issue_num" --comment "Closed by ${close_pr_label}."; then
         echo "Reasserting issue #${issue_num} tracker status as Merged after close..."
         update_tracker_status_best_effort "$issue_num" "Merged" "" "allow-backward"
       else
@@ -1045,7 +1144,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
         }
       fi
       if [ -n "$PR_FOR_OVERRIDE" ]; then
-        PR_OVERRIDE_ISSUES="$(fetch_pr_closing_issues "$pr_override_repo" "$PR_FOR_OVERRIDE")" || {
+        PR_OVERRIDE_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_override_repo" "$PR_FOR_OVERRIDE")" || {
           echo "ERROR: could not fetch PR #${PR_FOR_OVERRIDE} body from '$pr_override_repo' (gh command failed)." >&2
           exit 1
         }
@@ -1054,7 +1153,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
 
     if [ -n "$PR_OVERRIDE_ISSUES" ]; then
       echo "Team-prefixed identifier '$ISSUE_IDENTIFIER' in branch '$TO_DELETE' is ambiguous; using closing keyword refs from PR #${PR_FOR_OVERRIDE} instead: $(printf '%s' "$PR_OVERRIDE_ISSUES" | tr '\n' ' ')"
-      close_issues_from_pr "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES" || exit 1
+      close_issues_from_pr "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES" "$pr_override_repo" || exit 1
       warn_unprocessed_title_refs "$pr_override_repo" "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES"
     else
       # Update the tracker status BEFORE closing the issue so that
@@ -1086,10 +1185,10 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
       fi
       if [ "$ISSUE_STATE" = "OPEN" ]; then
         if [ -n "$MERGED_PR" ]; then
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          CLOSE_COMMENT="Closed by $(pr_close_label "$merged_pr_repo" "$MERGED_PR")."
         elif [ -n "$VERIFIED_MERGED_PR" ]; then
           MERGED_PR="$VERIFIED_MERGED_PR"
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          CLOSE_COMMENT="Closed by $(pr_close_label "$merged_pr_repo" "$MERGED_PR")."
         fi
         if [ -n "$MERGED_PR" ]; then
           echo "Closing issue #$ISSUE_NUMBER..."
@@ -1109,14 +1208,14 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
       # every closing reference from the PR title, body, and commit messages
       # that is not the branch-derived issue, and warn about bare title refs.
       if [ -n "${MERGED_PR:-}" ]; then
-        if ! EXTRA_CLOSES="$(fetch_pr_closing_issues "$merged_pr_repo" "$MERGED_PR")"; then
+        if ! EXTRA_CLOSES="$(fetch_hub_tracker_closing_issues "$merged_pr_repo" "$MERGED_PR")"; then
           echo "ERROR: could not fetch PR #${MERGED_PR} closing refs from '$merged_pr_repo' (gh command failed)." >&2
           exit 1
         fi
         EXTRA_CLOSES="$(printf '%s\n' "$EXTRA_CLOSES" | grep -vx "$ISSUE_NUMBER" || true)"
         if [ -n "$EXTRA_CLOSES" ]; then
           echo "PR #${MERGED_PR} also closes: $(printf '%s' "$EXTRA_CLOSES" | tr '\n' ' ')"
-          close_issues_from_pr "$MERGED_PR" "$EXTRA_CLOSES" || exit 1
+          close_issues_from_pr "$MERGED_PR" "$EXTRA_CLOSES" "$merged_pr_repo" || exit 1
         fi
         warn_unprocessed_title_refs "$merged_pr_repo" "$MERGED_PR" "$(printf '%s\n%s' "$ISSUE_NUMBER" "$EXTRA_CLOSES")"
       fi
@@ -1155,14 +1254,14 @@ else
         fi
       fi
       if [ -n "$CLOSING_PR" ]; then
-        if ! CLOSES_ISSUES="$(fetch_pr_closing_issues "$pr_closes_repo" "$CLOSING_PR")"; then
+        if ! CLOSES_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_closes_repo" "$CLOSING_PR")"; then
           echo "ERROR: could not fetch PR #${CLOSING_PR} body from '$pr_closes_repo' (gh command failed)." >&2
           exit 1
         fi
         if [ -n "$CLOSES_ISSUES" ]; then
           echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
           cd "$HUB_REPO_ROOT"
-          close_issues_from_pr "$CLOSING_PR" "$CLOSES_ISSUES" || exit 1
+          close_issues_from_pr "$CLOSING_PR" "$CLOSES_ISSUES" "$pr_closes_repo" || exit 1
           warn_unprocessed_title_refs "$pr_closes_repo" "$CLOSING_PR" "$CLOSES_ISSUES"
         else
           echo "No issue number in branch name '$TO_DELETE' or PR #${CLOSING_PR} body; skipping issue close and tracker update."

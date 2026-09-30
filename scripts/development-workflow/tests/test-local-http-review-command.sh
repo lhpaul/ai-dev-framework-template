@@ -458,6 +458,30 @@ set -e
 run_test "backend_unknown_nonzero" "1" "$unknown_rc"
 unset LOCAL_AI_REVIEWER_BACKEND LOCAL_AI_REVIEWER_COMMAND
 
+# #1843: LOCAL_AI_REVIEWER_API_KEY_COMMAND must not inherit an idle stdin pipe
+# (a password-manager CLI can block reading it).
+cat > "$MOCK_BIN/api-key-stdin-probe" <<'MOCK_KEY'
+#!/usr/bin/env bash
+read_status=0
+IFS= read -r -t 5 _ || read_status=$?
+if [ "$read_status" -gt 128 ]; then
+  echo "blocked on stdin" >&2
+  exit 3
+fi
+printf '%s\n' probe-key
+MOCK_KEY
+chmod +x "$MOCK_BIN/api-key-stdin-probe"
+key_start="$(date +%s)"
+(
+  cd "$WORK_DIR"
+  unset LOCAL_AI_REVIEWER_API_KEY DEEPSEEK_API_KEY OPENAI_API_KEY
+  LOCAL_AI_REVIEWER_API_KEY_COMMAND="$MOCK_BIN/api-key-stdin-probe" \
+    PATH="$MOCK_BIN:$PATH" "$COMMAND"
+) >"$OUTPUT_FILE" 2>"$STDERR_FILE" < <(sleep 8) || true
+key_elapsed=$(( $(date +%s) - key_start ))
+run_test "1843_http_key_command_open_stdin_result" "clean" "$(jq -r '.result' "$OUTPUT_FILE" 2>/dev/null || echo invalid)"
+run_test "1843_http_key_command_open_stdin_prompt" "yes" "$([ "$key_elapsed" -lt 5 ] && echo yes || echo no)"
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
   exit 1

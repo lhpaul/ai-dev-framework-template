@@ -22,3 +22,4 @@ Recommended model tier: `economy`
    point to Protocol 91 and that canonical page rather than a lighter
    requirement.
 8. Keep repository routing thin: in `workflow_hub`, pass selected product repository context through to shared reviewer and CI scripts for product implementation PRs; hub-owned spec, plan, and workflow PRs continue to target the hub.
+9. For `spec/*` and `implementation-plan/*` PRs, apply Protocol 93's matrix coherence re-audit rule: when two consecutive cycles' blocking findings implicate the same stateful contract (decision matrix, state table, lifecycle, precedence rules, or — for Refactor items — the work item brief), re-run the six-check audit before the next fix push and record the result in the fix commit comment's `Matrix coherence re-audit:` line. Stuck-loop escalation rules always evaluate first and win; the re-audit never extends a cycle cap.

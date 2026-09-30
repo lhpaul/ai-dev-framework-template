@@ -2023,6 +2023,11 @@ For each indexed Reachable reviewer selected by the proceed verdict, dispatch th
 | `codex-github` | `implementation-plan/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
 | `codex-github` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
 
+When a `spec/*` or `implementation-plan/*` fixer dispatch follows a matrix
+coherence re-audit (Protocol 93's "Long spec/plan review-cycle guidance"
+same-matrix re-run rule), the dispatch carries the loop runner's audit result;
+the re-audit itself is performed by the loop runner, not the dispatched fixer.
+
 When a local-runtime reviewer does not match the driving runner, invoke its
 installed CLI from the artifact root: `claude -p --output-format text`,
 `cursor-agent --print --output-format text`, or `codex exec --sandbox read-only`.
@@ -2271,6 +2276,8 @@ Addressed **N** finding(s) from cycle M:
 | --- | -------- | --------------- | ------------------------- |
 | 1   | greptile | `src/foo.ts:42` | First 80 chars of body... |
 
+Matrix coherence re-audit: <six-check result or n/a>
+
 <details><summary>Remaining open findings: K</summary>
 
 | #   | Platform | File           | Description               |
@@ -2281,6 +2288,10 @@ Addressed **N** finding(s) from cycle M:
 ```
 
 If 0 findings were resolved: post a shorter note — "Pushed fixes for cycle M. 0 findings resolved so far — re-running review to check."
+
+The `Matrix coherence re-audit:` line is optional; include it only when
+Protocol 93's same-matrix re-run rule triggered a re-audit for this cycle
+(the value is the six-check audit result), otherwise omit the line entirely.
 
 #### Resolve inline review comments
 
@@ -3727,13 +3738,28 @@ for `spec/*`, `Plan Ready` for `implementation-plan/*`, and `Merged` for
 <merged-branch>`.
 
 **A PR may resolve more than one item** (#1391). `post-merge-cleanup.sh`
-processes the branch-derived issue plus every closing-keyword reference in the
-PR title, body, and commit messages, and warns about bare `#N` title
-references it did not process. Verify the transition for **each** referenced
-item — do not stop after the first. A "references issue(s) … without a closing
-keyword" warning is **non-terminal**: cleanup stays incomplete until every
-named issue has an explicit disposition — processed (closed and
-status-updated) or confirmed non-closing — recorded in the item report.
+processes the branch-derived issue plus the closing-keyword references in the
+PR title, body, and commit messages that belong to the hub tracker (see the
+table below), and warns about bare `#N` title references it did not process.
+Verify the transition for **each** referenced item — do not stop after the
+first.
+
+| Where the merged PR lives                     | Closing-keyword form               | Applied to the hub tracker? |
+| --------------------------------------------- | ---------------------------------- | --------------------------- |
+| Hub repo, or `single_repo` mode               | `Fixes #N`                         | Yes                         |
+| `workflow_hub` product repo                   | `Fixes #N` (bare)                  | No — skipped with a `NOTE:` |
+| `workflow_hub` product repo                   | `Fixes <hub-owner>/<hub-repo>#N`   | Yes                         |
+| `workflow_hub` product repo, hub slug unknown | any                                | No — warned, none applied   |
+
+A skipped bare reference names a product-repo issue, so it needs its own
+disposition (closed in the product repository, or confirmed non-closing) in the
+item report. See
+[`cross-repo-pr-flow.md`](../cross-repo-pr-flow.md#closing-keywords-in-product-prs).
+
+A "references issue(s) … without a closing keyword" warning is
+**non-terminal**: cleanup stays incomplete until every named issue has an
+explicit disposition — processed (closed and status-updated) or confirmed
+non-closing — recorded in the item report.
 
 **Key rules:**
 

@@ -108,6 +108,13 @@ Check:
   the changed surface. Missing or contradictory matrix evidence is blocking
   before `ready-for-human-review`; for non-gate documentation changes, accept a
   concise not-applicable rationale.
+- When the spec contains a stateful contract (a decision matrix, state table,
+  lifecycle, precedence rules, or similarly stateful construct), the PR's
+  `Document Quality Gate` log carries a `Matrix coherence preflight` row with
+  the six-check audit summary or a reasoned `Not applicable`. A row that reads
+  `Not applicable — no stateful contract` when the spec actually contains one
+  is a blocking misclassification finding — the fixer runs the six-check audit
+  and replaces the row.
 - Spec PRs contain only expected spec-stage artifacts. Implementation files,
   migrations, product source files, workflow scripts, or unrelated docs on a
   `spec/*` branch are a workflow-stage blocker unless a human explicitly
@@ -157,6 +164,13 @@ Check:
   required next actions, mirror surfaces, and examples when examples are part of
   the changed surface. Missing rows, contradictory next actions, or unreasoned
   not-applicable entries are blocking before `ready-for-human-review`.
+- When the plan's own stateful contract (a decision matrix, state table,
+  lifecycle, or precedence rules) or, for Refactor items, the work item brief
+  contains one, the PR's `Document Quality Gate` log carries a `Matrix
+  coherence preflight` row with the six-check audit summary or a reasoned
+  `Not applicable`. A row that reads `Not applicable — no stateful contract`
+  when the plan or brief actually contains one is a blocking misclassification
+  finding — the fixer runs the six-check audit and replaces the row.
 - Plan PRs contain only expected plan-stage artifacts: the implementation plan
   and any plan-stage smoke-test runbook. Implementation files, migrations,
   product source files, workflow scripts, or unrelated docs on an
@@ -426,6 +440,12 @@ Additional checks for **shell scripts** (`*.sh`):
 - User-supplied input (PR numbers, branch names) is validated before interpolation into file paths or commands
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 - Workflow shell PRs run `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` in addition to ShellCheck; missing guard execution is an important finding
+
+Additional checks for **PRs that add or change a `gh api graphql` query literal under `scripts/`**:
+
+- **Delimiter-balance lint** (blocking): confirm `python3 scripts/lint/lint-graphql-query-literals.py scripts` passes (exit `0`) at the PR's head; a green `ShellCheck` CI job at that head (which runs the lint) is sufficient evidence. A `1` or `2` exit (or a stale/absent run) is blocking — this is the exact defect class from #1828, where a mocked `gh` let an unbalanced query literal ship.
+- **Live validation** (blocking): confirm the PR evidence shows the new or changed query was run once against a real GitHub repository or PR (not only the mocked test suite) and returned data rather than a GraphQL parse/validation error. A delimiter-balance pass is necessary but not sufficient — it cannot detect an unknown field, wrong argument type, or deprecated schema element. See `docs/best-practices/3-testing.md` → "Live-Validate New or Changed GraphQL Queries" for the implementer-facing version of this rule.
+- **Exemption**: a change that only reformats or re-indents an existing, already-validated query (no field, argument, or structural change) does not require re-validation; the PR evidence should state the exemption rationale.
 
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
 

@@ -39,5 +39,7 @@ if [ -n "${LOCAL_CODEX_REVIEWER_MODEL:-}" ]; then
 fi
 codex_args+=("$prompt")
 
-"$codex_bin" "${codex_args[@]}" >/dev/null
+# Close stdin: `codex exec` reads extra prompt input from any non-TTY stdin and
+# blocks forever on an idle inherited pipe (e.g. a background harness, #1843).
+"$codex_bin" "${codex_args[@]}" </dev/null >/dev/null
 cat "$output_file"

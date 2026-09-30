@@ -293,11 +293,12 @@ run_with_timeout() {
   shift 3
 
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$timeout_seconds" "$@" >"$stdout_file" 2>"$stderr_file"
+    # Close stdin so the CLI cannot block reading an idle inherited pipe (#1843).
+    timeout "$timeout_seconds" "$@" </dev/null >"$stdout_file" 2>"$stderr_file"
     return $?
   fi
 
-  "$@" >"$stdout_file" 2>"$stderr_file" &
+  "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
   local child_pid=$!
   local elapsed=0
   while kill -0 "$child_pid" 2>/dev/null && [ "$elapsed" -lt "$timeout_seconds" ]; do
