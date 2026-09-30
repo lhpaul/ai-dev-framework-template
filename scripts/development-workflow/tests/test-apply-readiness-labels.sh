@@ -502,7 +502,7 @@ run_helper() {
     MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
-    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" "${_dry_run_flag[@]}" 2>/dev/null
+    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" "${_dry_run_flag[@]+"${_dry_run_flag[@]}"}" 2>/dev/null
   )"
   code=$?
   set -e
