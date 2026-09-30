@@ -237,6 +237,7 @@ bot_login_for_platform() {
     coderabbit) printf 'coderabbitai\n' ;;
     devin) printf 'devin-ai-integration\n' ;;
     greptile) printf 'greptile-apps\n' ;;
+    pr-agent) printf '%s\n' "${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" ;;
     haystack) printf '%s\n' "${HAYSTACK_BOT_LOGIN:-haystack[bot]}" ;;
     codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
@@ -245,6 +246,30 @@ bot_login_for_platform() {
     ronda) printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
     *) printf '\n' ;;
   esac
+}
+
+# Platforms that never post GitHub review threads (local runtime / CLI only).
+platform_has_no_review_threads() {
+  case "$1" in
+    local-ai-reviewer|coderabbit-cli) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when at least one review platform is configured and every configured
+# platform is a no-thread platform, so the review-threads row cannot apply.
+configured_platforms_all_no_thread() {
+  local config_file=""
+  local platform=""
+  local seen=0
+
+  config_file="$(workflow_effective_config_file)"
+  while IFS= read -r platform; do
+    [ -n "$platform" ] || continue
+    platform_has_no_review_threads "$platform" || return 1
+    seen=1
+  done < <(configured_review_platforms "$config_file")
+  [ "$seen" -eq 1 ]
 }
 
 thread_bot_login_variants() {
@@ -815,7 +840,11 @@ if [ -n "$pr_number" ]; then
         thread_count=""
         graph_thread_comment_ids="[]"
         if [ "$(printf '%s\n' "$thread_bot_logins_json" | jq -r 'length')" = "0" ]; then
-          add_row "pull_request.review_threads" "unavailable_required" "no configured bot logins" "configured review platforms"
+          if configured_platforms_all_no_thread; then
+            add_row "pull_request.review_threads" "not_applicable" "configured review platforms post no review threads" "configured review platforms"
+          else
+            add_row "pull_request.review_threads" "unavailable_required" "no configured bot logins" "configured review platforms"
+          fi
         elif threads_json="$(fetch_review_threads_json "$owner" "$name" "$pr_number" 2>&1)" \
           && thread_count="$(printf '%s\n' "$threads_json" | jq -r --argjson botLogins "$thread_bot_logins_json" '
             [

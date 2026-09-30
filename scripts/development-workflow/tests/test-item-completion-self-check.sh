@@ -1216,6 +1216,89 @@ unset AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "no_thread_bot_logins_exit_one" "1" "$(status_code "$out")"
 run_contains "no_thread_bot_logins_unavailable" "| pull_request.review_threads | unavailable_required | no configured bot logins |" "$(body "$out")"
 
+repo="$(make_repo local_reviewer_only)"
+bind_local_head_fixture "$repo"
+local_reviewer_only_config="$TMP_ROOT/local_reviewer_only-workflow.yaml"
+cat > "$local_reviewer_only_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - local-ai-reviewer
+  on_ready:
+    github: []
+YAML
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_reviewer_only_config"
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1202 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false \
+  --require-review-threads true)"
+unset AI_DEV_WORKFLOW_CONFIG_FILE MOCK_GH_HEAD_OID MOCK_GH_PR_MODE MOCK_GH_SUMMARY_MODE
+run_test "local_reviewer_only_exit" "0" "$(status_code "$out")"
+run_contains "local_reviewer_only_row" "| pull_request.review_threads | not_applicable |" "$(body "$out")"
+
+repo="$(make_repo pr_agent_local_reviewer)"
+bind_local_head_fixture "$repo"
+pr_agent_local_reviewer_config="$TMP_ROOT/pr_agent_local_reviewer-workflow.yaml"
+cat > "$pr_agent_local_reviewer_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - pr-agent
+      - local-ai-reviewer
+  on_ready:
+    github: []
+YAML
+export AI_DEV_WORKFLOW_CONFIG_FILE="$pr_agent_local_reviewer_config"
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1202 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-summary true \
+  --require-ci-green false \
+  --require-review-threads true)"
+unset AI_DEV_WORKFLOW_CONFIG_FILE MOCK_GH_HEAD_OID MOCK_GH_PR_MODE MOCK_GH_SUMMARY_MODE
+run_test "pr_agent_local_reviewer_exit" "0" "$(status_code "$out")"
+run_contains "pr_agent_local_reviewer_row" "| pull_request.review_threads | verified | unresolved=0 |" "$(body "$out")"
+
+repo="$(make_repo local_reviewer_custom_mixed)"
+local_reviewer_custom_mixed_config="$TMP_ROOT/local_reviewer_custom_mixed-workflow.yaml"
+cat > "$local_reviewer_custom_mixed_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - local-ai-reviewer
+      - custom-reviewer
+  on_ready:
+    github: []
+YAML
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_reviewer_custom_mixed_config"
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1202 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-threads true)"
+unset AI_DEV_WORKFLOW_CONFIG_FILE
+run_test "local_reviewer_custom_mixed_exit" "1" "$(status_code "$out")"
+run_contains "local_reviewer_custom_mixed_row" "| pull_request.review_threads | unavailable_required | no configured bot logins |" "$(body "$out")"
+
 repo="$(make_repo graphql-thread-fetch-failed)"
 export MOCK_GH_THREAD_MODE=fetch_failed
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
