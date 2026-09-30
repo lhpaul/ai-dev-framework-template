@@ -3666,13 +3666,28 @@ for `spec/*`, `Plan Ready` for `implementation-plan/*`, and `Merged` for
 <merged-branch>`.
 
 **A PR may resolve more than one item** (#1391). `post-merge-cleanup.sh`
-processes the branch-derived issue plus every closing-keyword reference in the
-PR title, body, and commit messages, and warns about bare `#N` title
-references it did not process. Verify the transition for **each** referenced
-item — do not stop after the first. A "references issue(s) … without a closing
-keyword" warning is **non-terminal**: cleanup stays incomplete until every
-named issue has an explicit disposition — processed (closed and
-status-updated) or confirmed non-closing — recorded in the item report.
+processes the branch-derived issue plus the closing-keyword references in the
+PR title, body, and commit messages that belong to the hub tracker (see the
+table below), and warns about bare `#N` title references it did not process.
+Verify the transition for **each** referenced item — do not stop after the
+first.
+
+| Where the merged PR lives                     | Closing-keyword form               | Applied to the hub tracker? |
+| --------------------------------------------- | ---------------------------------- | --------------------------- |
+| Hub repo, or `single_repo` mode               | `Fixes #N`                         | Yes                         |
+| `workflow_hub` product repo                   | `Fixes #N` (bare)                  | No — skipped with a `NOTE:` |
+| `workflow_hub` product repo                   | `Fixes <hub-owner>/<hub-repo>#N`   | Yes                         |
+| `workflow_hub` product repo, hub slug unknown | any                                | No — warned, none applied   |
+
+A skipped bare reference names a product-repo issue, so it needs its own
+disposition (closed in the product repository, or confirmed non-closing) in the
+item report. See
+[`cross-repo-pr-flow.md`](../cross-repo-pr-flow.md#closing-keywords-in-product-prs).
+
+A "references issue(s) … without a closing keyword" warning is
+**non-terminal**: cleanup stays incomplete until every named issue has an
+explicit disposition — processed (closed and status-updated) or confirmed
+non-closing — recorded in the item report.
 
 **Key rules:**
 
