@@ -1983,6 +1983,7 @@ For each PR identified in the detection step:
 
 1. **Remove `ready-for-human-review`** and **remove `ready-for-regression`** (if present — they will be re-applied after the re-triggered review passes):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    set -euo pipefail
    ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
@@ -1991,6 +1992,7 @@ For each PR identified in the detection step:
 
 2. **Post `@coderabbitai review`** to request a fresh CodeRabbit review:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    set -euo pipefail
    ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1

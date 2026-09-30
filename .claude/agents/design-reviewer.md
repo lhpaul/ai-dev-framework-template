@@ -175,6 +175,7 @@ private scratch directory (`DESIGN_REVIEW_SCRATCH="$(mktemp -d)"`), never a
 shared `/tmp` name a parallel agent could overwrite, and verify PR ownership
 first (issue #1444):
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 ./scripts/development-workflow/pr-ownership-guard.sh --pr <PR_NUMBER> --expected-branch <branch_name> || exit 1
@@ -258,6 +259,7 @@ To enable design review: <guidance specific to the skip reason>.
 
 ## Step 8: Clean Up Temp Files
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 rm -f /tmp/design-review-*.png /tmp/design-review-console.mjs
 rm -rf "${DESIGN_REVIEW_SCRATCH:?}"

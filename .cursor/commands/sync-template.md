@@ -886,6 +886,7 @@ Apply any blocking fixes, commit, and push before proceeding. Continue until all
 
 Once the Step 7a gate passes, ensure the PR is non-draft:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit 1
