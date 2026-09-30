@@ -1564,7 +1564,7 @@ expensive_gate_unresolved_threads_status() {
 # Snapshot of non-reviewer checks on the PR. Prints
 # "<state> <live_head>" where state is green|failed|pending|empty|unavailable.
 # Does NOT call pr-ci-loop.sh. Collapses statusCheckRollup duplicates to the
-# latest entry per check key (same normalization as pr-ci-loop.sh) before
+# latest entry per check key (normalize_status_check_rollup, workflow-lib.sh) before
 # excluding reviewer-owned names and classifying.
 expensive_gate_baseline_checks_status() {
   local pr_number_arg="$1"
@@ -1591,28 +1591,7 @@ expensive_gate_baseline_checks_status() {
   reviewer_names="$(configured_reviewer_check_names_json "")" || reviewer_names='[]'
 
   if ! normalized_json="$(
-    printf '%s\n' "$payload" | jq '
-      (.statusCheckRollup // [])
-      | map(
-          . + {
-            __check_key: (
-              if (.context // "") != "" then
-                "status:" + .context
-              elif (.workflowName // "") != "" and (.name // "") != "" then
-                "check:" + .workflowName + "/" + .name
-              elif (.name // "") != "" then
-                "check:" + .name
-              else
-                "unknown"
-              end
-            ),
-            __check_ts: (.startedAt // .completedAt // .createdAt // "")
-          }
-        )
-      | sort_by(.__check_key, .__check_ts)
-      | group_by(.__check_key)
-      | map(last | del(.__check_key, .__check_ts))
-    ' 2>/dev/null
+    printf '%s\n' "$payload" | normalize_status_check_rollup 2>/dev/null
   )"; then
     printf 'unavailable %s\n' "$live_head"
     return 0
@@ -2939,8 +2918,8 @@ run_ronda_review() {
     set +e
     fetch_output="$(
       gh api "repos/$owner/$repo_name/commits/$current_sha/check-runs" --paginate 2>/dev/null \
-        | jq -s --arg name "$check_name" '
-            [ .[].check_runs[] | select(.name == $name) ] | sort_by(.started_at) | last
+        | jq -s --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+            [ .[].check_runs[] | select(.name == $name) ] | dedupe_status_check_rollup | last
           ' 2>/dev/null
     )"
     fetch_rc=$?
@@ -3262,13 +3241,13 @@ bugbot_cursor_check_run_count() {
   set +e
   count="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -se --arg name "$check_name" '
+      | jq -se --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
                 (.name == $name)
               )
-          ] | length
+          ] | dedupe_status_check_rollup | length
         ' 2>/dev/null
   )"
   set -e
@@ -3294,14 +3273,18 @@ bugbot_disabled_preflight_applies_for_head() {
   set +e
   fetch_output="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -se -r --arg name "$check_name" '
+      | jq -se -r --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
                 (.name == $name)
               )
           ]
-          | sort_by(.started_at) | last
+          # Every Cursor-app run is one logical Bugbot check: give them one
+          # key so the shared recency rule (a queued re-run is newest, #1559)
+          # picks the winner, not a started_at sort that puts it first.
+          | map(.name = "cursor-bugbot")
+          | dedupe_status_check_rollup | last
           | ((.status // "") + " " + (.conclusion // ""))
         ' 2>/dev/null
   )"
@@ -3647,13 +3630,13 @@ run_bugbot_review() {
   local _bb_run_count_rc=0
   _bb_run_count="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -se --arg name "$check_name" '
+      | jq -se --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
                 (.name == $name)
               )
-          ] | length
+          ] | dedupe_status_check_rollup | length
         ' 2>/dev/null
   )"
   _bb_run_count_rc=$?
@@ -3745,14 +3728,16 @@ run_bugbot_review() {
     local _fetch_output
     _fetch_output="$(
       gh api "repos/$repo/commits/$_current_sha/check-runs" --paginate 2>/dev/null \
-        | jq -se -r --arg name "$check_name" '
+        | jq -se -r --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
             ([ .[].check_runs[]
                | select(
                    ((.app.slug // "") | test("cursor"; "i")) or
                    (.name == $name)
                  )
              ]
-             | sort_by(.started_at) | last) as $run
+             # One logical Bugbot check (see bugbot_disabled_preflight_applies_for_head).
+             | map(.name = "cursor-bugbot")
+             | dedupe_status_check_rollup | last) as $run
             | (($run.status // "") + " " + ($run.conclusion // "") + " " + ($run.started_at // "")),
               ($run.output.summary // "")
           ' 2>/dev/null
@@ -5113,11 +5098,11 @@ run_devin_review() {
 
     read -r devin_any_check_count check_completed < <(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq -s -r '
-            [.[].check_runs[] | select(
+        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+            ([.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
-            )] as $runs
+            )] | dedupe_status_check_rollup) as $runs
             | ($runs | length),
               ($runs | map(select(.status == "completed")) | length)
             | tostring
@@ -5134,13 +5119,15 @@ run_devin_review() {
     #   for check_completed so a pending status never starts the grace timer prematurely.
     # Deduplicate by context (keep latest entry per context) to avoid double-counting
     # when the same context transitions through multiple states (e.g. pending → success).
+    # Shared dedupe (workflow-lib.sh, #1559); the REST list is newest-first, so it
+    # is reversed first and a same-second tie resolves to the newer status.
     read -r devin_status_count devin_completed_status_count < <(
       gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-        | jq -s -r '
+        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
             ( [.[].[] | select(.context | test("devin"; "i"))]
-              | group_by(.context) | map(max_by(.updated_at)) | length ),
+              | reverse | dedupe_status_check_rollup | length ),
             ( [.[].[] | select(.context | test("devin"; "i"))]
-              | group_by(.context) | map(max_by(.updated_at))
+              | reverse | dedupe_status_check_rollup
               | map(select(.state == "success" or .state == "failure" or .state == "error"))
               | length )
             | tostring
@@ -5481,7 +5468,7 @@ run_pr_agent_review() {
 
   _pr_agent_active_review_check_count() {
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-      | jq -rs '[.[].check_runs[]? | select(.name == "PR-Agent review" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending"))] | length' \
+      | jq -rs "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].check_runs[]? | select(.name == "PR-Agent review")] | dedupe_status_check_rollup | map(select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")) | length' \
       2>/dev/null \
       || printf '0'
   }
@@ -6480,9 +6467,10 @@ coderabbit_thread_gate_clean() {
 # call sites in run_coderabbit_review use this helper so the description guard
 # is applied identically at both sites.
 #
-# Deduplicates by context (keeping the latest entry per context via
-# max_by(.updated_at)) before checking state/description, so a superseded
-# status is not counted — same dedup pattern used before this fix existed.
+# Deduplicates by context (the shared dedupe_status_check_rollup from
+# workflow-lib.sh, #1559; the REST list is newest-first, so it is reversed
+# first and a same-second tie resolves to the newer status) before checking
+# state/description, so a superseded status is not counted.
 coderabbit_success_status_count() {
   local repo="$1" head_sha="$2"
   # Validate arguments before the API call: a missing repo or head_sha would
@@ -6500,10 +6488,10 @@ coderabbit_success_status_count() {
     return 0
   fi
   gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-    | jq -s '[.[].[] | select(
+    | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].[] | select(
               (.context // "" | ascii_downcase | test("coderabbit"))
             )]
-            | group_by(.context) | map(max_by(.updated_at))
+            | reverse | dedupe_status_check_rollup
             | map(select(
                 .state == "success"
                 and ((.description // "")

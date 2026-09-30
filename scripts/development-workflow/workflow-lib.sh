@@ -544,41 +544,151 @@ configured_reviewer_check_names_json() {
   printf '%s\n' "${names[@]}" | jq -R . | jq -s .
 }
 
+# STATUS_CHECK_ROLLUP_DEDUPE_JQ — the single statusCheckRollup deduplication
+#
+# GitHub's `statusCheckRollup` keeps EVERY check run and status for a head SHA,
+# including superseded ones: a check that failed and then passed on re-run
+# appears twice, once `FAILURE` and once `SUCCESS` (issue #1559, observed on PR
+# #1547). Counting non-green entries over the raw rollup therefore reports a
+# failure that is no longer true, so "0 non-green checks" is only meaningful
+# AFTER this deduplication.
+#
+# This jq definition is the one place that collapses the rollup. It defines
+# `dedupe_status_check_rollup`, which takes a rollup ARRAY and returns it with
+# one entry per check key — the most recent run:
+#
+#   - key: `.context` for status contexts; `.workflowName`/`.name` for check
+#     runs (so same-named jobs in two workflows stay distinct); else `.name`.
+#     An entry with none of those is never merged with another entry — two
+#     unidentifiable entries are not evidence that one supersedes the other.
+#   - recency: the first present of `.startedAt`, `.completedAt`,
+#     `.createdAt` (GraphQL) or `.started_at`, `.completed_at`, `.created_at`
+#     (REST and hand-assembled evidence), then `.updatedAt`/`.updated_at`
+#     (a commit status is immutable, so it equals `created_at`). An entry
+#     with no timestamp (or GitHub's zero time) in a recognized pending state
+#     (status QUEUED/IN_PROGRESS/WAITING/REQUESTED/PENDING/EXPECTED, or state
+#     PENDING/EXPECTED) — a queued re-run has not started yet — counts as the
+#     NEWEST entry, so a pending re-run is never hidden behind the result it
+#     supersedes. An empty or unrecognized status is not treated as pending.
+#   - winner: when every entry for a check has a recency value, the newest
+#     wins. Ties (timestamps have one-second resolution) go to the higher
+#     numeric `.id`/`.databaseId` — REST check-run and status ids increase
+#     with creation, and REST lists newest-first, so input order alone would
+#     keep the OLDER run — and only then to input order. When any entry
+#     lacks a recency value, order is unknown: an undated non-terminal entry
+#     (a queued re-run) still wins, so an unsettled check never reads as
+#     settled; otherwise the highest id wins, then the LAST input entry.
+#
+# Shell callers use normalize_status_check_rollup below. Callers that must
+# stay inside one jq program (a `gh pr list` array, a projection) prepend this
+# definition to their filter: `jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ ..."`. Do not
+# re-implement the grouping in a caller; test-status-check-rollup-dedupe.sh
+# fails when a copy appears outside this file.
+# shellcheck disable=SC2016  # jq program text, not a shell expansion.
+STATUS_CHECK_ROLLUP_DEDUPE_JQ='
+def dedupe_status_check_rollup:
+  (. // [])
+  | to_entries
+  | map(
+      .key as $idx
+      | .value
+      | . + {
+        __check_key: (
+          if (.context // "") != "" then
+            "status:" + .context
+          elif (.workflowName // "") != "" and (.name // "") != "" then
+            "check:" + .workflowName + "/" + .name
+          elif (.name // "") != "" then
+            "check:" + .name
+          else
+            "unnamed:" + ($idx | tostring)
+          end
+        ),
+        __check_idx: $idx,
+        __check_seq: ((.id // .databaseId) | if type == "number" then . else null end),
+        __check_ts: (
+          ([.startedAt, .completedAt, .createdAt,
+            .started_at, .completed_at, .created_at,
+            .updatedAt, .updated_at]
+            | map(select(type == "string" and . != ""
+                         and (startswith("0001-01-01") | not)))
+            | first) as $ts
+          | if $ts != null then $ts
+            elif ((.status // "") | ascii_upcase
+                  | IN("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED"))
+                 or ((.state // "") | ascii_upcase | IN("PENDING", "EXPECTED"))
+            then "9999-12-31T23:59:59Z"
+            else ""
+            end
+        )
+      }
+    )
+  | group_by(.__check_key)
+  | map(
+      (if all(.[]; .__check_ts != "")
+       then sort_by(.__check_ts, .__check_seq, .__check_idx)
+       elif any(.[]; .__check_ts == "9999-12-31T23:59:59Z")
+       then map(select(.__check_ts == "9999-12-31T23:59:59Z")) | sort_by(.__check_seq, .__check_idx)
+       else sort_by(.__check_seq, .__check_idx)
+       end)
+      | last
+      | del(.__check_key, .__check_idx, .__check_seq, .__check_ts)
+    );
+'
+
 # normalize_status_check_rollup
 #
 # Reads a `gh pr view --json statusCheckRollup` payload on stdin and prints one
-# JSON array with historical duplicates collapsed to the latest entry per check
-# key. The key prefers `.context` (status contexts), then
-# `.workflowName`/`.name` (check runs), then `.name`; the timestamp prefers
-# `.startedAt`, then `.completedAt`, then `.createdAt`.
-#
-# Factored out of pr-review-loop.sh / pr-ci-loop.sh, which already carried
-# byte-identical copies of this normalization (issue #1408). Both scripts keep
-# their inline copies for now — #1559 audits the remaining `statusCheckRollup`
-# consumers — so this helper is additive and no caller is regressed by it.
+# JSON array with superseded runs collapsed to the latest entry per check (see
+# STATUS_CHECK_ROLLUP_DEDUPE_JQ above). Every single-PR rollup consumer calls
+# this instead of scanning `.statusCheckRollup` directly (issues #1408, #1559).
 normalize_status_check_rollup() {
-  jq '
-    (.statusCheckRollup // [])
-    | map(
-        . + {
-          __check_key: (
-            if (.context // "") != "" then
-              "status:" + .context
-            elif (.workflowName // "") != "" and (.name // "") != "" then
-              "check:" + .workflowName + "/" + .name
-            elif (.name // "") != "" then
-              "check:" + .name
-            else
-              "unknown"
-            end
-          ),
-          __check_ts: (.startedAt // .completedAt // .createdAt // "")
-        }
-      )
-    | sort_by(.__check_key, .__check_ts)
-    | group_by(.__check_key)
-    | map(last | del(.__check_key, .__check_ts))
+  jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+    .statusCheckRollup | dedupe_status_check_rollup
   '
+}
+
+# latest_check_runs_for_sha <owner/repo> <sha>
+#
+# Prints one JSON array: the latest REST check run per check for <sha>, every
+# page read. Returns non-zero when either read fails, so a caller can fail
+# closed rather than judge CI on a partial read.
+#
+# REST `commits/<sha>/check-runs` keeps superseded runs as well (its default
+# filter=latest is per check SUITE, and another run of a workflow reports in a
+# new suite), and — unlike the GraphQL rollup — carries no workflow name. Keying
+# on the job name alone would merge same-named jobs of two different
+# workflows, hiding one workflow's failure behind the other's later success.
+# So each run first gets its workflow identity: the workflow file path of the
+# Actions run that owns its check suite (from `actions/runs?head_sha=`), or the
+# app slug for checks posted by a non-Actions app. An Actions (or app-less) run
+# whose suite has no listed workflow run gets its own suite as identity, so it
+# is never merged with another suite's run: that can only keep a stale result
+# visible (blocking), never hide a current one. Then the shared
+# dedupe_status_check_rollup keeps the latest run per workflow + job.
+latest_check_runs_for_sha() {
+  local repo="$1" sha="$2" check_pages="" workflow_pages=""
+  [ -n "$repo" ] && [ -n "$sha" ] || return 2
+  check_pages="$(gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  workflow_pages="$(gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  [ -n "$check_pages" ] && [ -n "$workflow_pages" ] || return 1
+  { printf '%s\n' "$check_pages"; printf '%s\n' "$workflow_pages"; } \
+    | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+        .[0] as $check_pages | .[1] as $workflow_pages
+        | ([$workflow_pages[].workflow_runs[]?
+            | select(.check_suite_id != null)
+            | {key: (.check_suite_id | tostring), value: (.path // .name // "")}]
+           | from_entries) as $workflow_by_suite
+        | [$check_pages[].check_runs[]?
+           | ((.check_suite.id // "") | tostring) as $suite
+           | . + {workflowName: (
+               $workflow_by_suite[$suite]
+               // (if (.app.slug // "") != "" and .app.slug != "github-actions"
+                   then .app.slug
+                   else "unmapped-suite:" + (if $suite != "" then $suite else ((.id // "") | tostring) end)
+                   end))}]
+        | dedupe_status_check_rollup
+      '
 }
 
 # bot_login_for_platform <platform>

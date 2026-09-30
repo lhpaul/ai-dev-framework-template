@@ -2749,12 +2749,31 @@ Prefer the helper script:
 If a local watch/poll command exits before GitHub has reached a final state,
 treat that as an incomplete observation, not as a terminal item state. Re-query
 `gh pr view <pr_number> --json statusCheckRollup,labels,isDraft,headRefOid`,
-ignore superseded duplicate runs that are cancelled or skipped in favor of newer
-checks for the same head SHA, and re-run `pr-ci-loop.sh` whenever required
-checks are still pending/queued or the regression label was just applied. A
+judge only the latest run per check (see "Superseded runs" below), and re-run
+`pr-ci-loop.sh` whenever required checks are still pending/queued or the
+regression label was just applied. A
 same-session runner must continue the Step 8 loop until the helper returns
 `green`, `red`, or `timeout`; only `red` and `timeout` trigger the actions in the
 table below.
+
+**Superseded runs (issue #1559):** `statusCheckRollup` keeps every run of a
+check for the head SHA, not only the current one. A check that failed and then
+passed on re-run appears twice — PR #1547 carried `policy failure 05:26:31` and
+`policy success 05:28:16` for one SHA. "0 non-green checks", counted over the
+raw rollup, is therefore **not** a reliable readiness assertion: it reports
+superseded failures as current, and a queued re-run can hide behind the result
+it replaces. Read CI state through `pr-ci-loop.sh` or, for a raw
+`gh pr view --json statusCheckRollup` payload, pipe it through
+`normalize_status_check_rollup` from `scripts/development-workflow/workflow-lib.sh`
+first. That helper is the single deduplication every workflow script uses: it
+keeps the latest run per check (status context, or workflow plus check name)
+and treats a not-yet-started re-run as the latest. A failure that is still
+the latest run stays a failure. The REST `commits/<sha>/check-runs` endpoint
+has the same property: its default `filter=latest` means latest per check
+suite, and another run of a workflow reports in a new suite. It also carries no
+workflow name, so `latest_check_runs_for_sha` (same file) first tags each run
+with its workflow — keeping same-named jobs of different workflows apart — and
+then applies the same definition before anything is counted.
 
 Interpret the result as follows:
 
@@ -3000,10 +3019,18 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 # `--slurp` cannot be combined with `--jq`, so each call returns an array of
 # whole pages and the aggregation is done by an external jq.
 #
+# Superseded runs (issue #1559): check-runs' default `filter=latest` is latest
+# per CHECK SUITE, and another run of a workflow reports in a new suite —
+# PR #1547's head returns both `policy failure 05:26:31` and
+# `policy success 05:28:16`. latest_check_runs_for_sha (workflow-lib.sh,
+# sourced above) reads every page, tags each run with its workflow so
+# same-named jobs of different workflows stay separate, and keeps only the
+# latest run per workflow + job via the shared dedupe.
+#
 # Both reads fail closed. If either endpoint cannot be read, the gate does not
 # know the CI state, and "unknown" must never be labelled as green — the same
 # rule the CI_TOTAL check below applies to an empty check set.
-if ! CHECKS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate --slurp); then
+if ! CHECK_RUNS=$(latest_check_runs_for_sha "$REPO" "$HEAD_SHA"); then
   echo "ERROR: could not read check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
@@ -3017,9 +3044,11 @@ if ! STATUS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" -
   echo "ERROR: could not read commit statuses for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
-CI_FAILING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
-CI_PENDING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status != "completed")] | length')
-CI_TOTAL=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[]] | length')
+# (The combined `/status` endpoint above already reports only the latest
+# status per context.)
+CI_FAILING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+CI_PENDING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status != "completed")] | length')
+CI_TOTAL=$(printf '%s' "$CHECK_RUNS" | jq 'length')
 CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "failure" or .state == "error")] | length')))
 CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "pending")] | length')))
 CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]?] | length')))
@@ -3680,7 +3709,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
 | Internal review gate freshness                  | The latest `### Step 7a Internal Review Gate Summary` comment's `**Verdict**` must be exactly `APPROVED` (any other verdict, such as `hard-fail` or `escalated`, fails this check even when the SHA matches), and its `**Gate-approved commit**` SHA must either equal the PR's live `headRefOid` or be a strict ancestor of it with the guard accepting the post-gate delta as a marked mechanical delta (`REASON=mechanical_delta_verified`); success is defined as an `APPROVED` verdict plus `RESULT=pass` from the guard, never as unconditional SHA equality. Verified — with the `headRefOid` queried live in the same independent `gh pr view` call, not reused from Step 8a — by running `scripts/development-workflow/internal-review-gate-freshness-guard.sh --gate-sha <gate-approved sha> --head-sha <headRefOid> --repo-root <repo root>` and observing `RESULT=pass`. **This is the mechanical enforcement of the "verdict binds to the reviewed commit" rule (see `REVIEW.md` → PR Readiness, and Step 7a → "Verdict binds to this commit only" above) — the internal review gate's `APPROVED` verdict does not carry forward across a non-mechanical commit even when Step 7's automated reviewer loop reports clean at the new HEAD.** `RESULT=refused` (`REASON=stale_gate_evidence` or `gate_sha_not_ancestor`) fails this check; do not report ready — instead re-run Step 7a at the new HEAD, the only non-destructive remedy after the fact. The `MECHANICAL_DELTA: <rationale>` marker exempts a post-gate commit only when it was written into that commit's message when the commit was first created (every commit in the gate..HEAD range, including merge commits, needs it); never amend, rebase, or force-push already-pushed commits to add it. A summary comment that predates this field (no `**Gate-approved commit**` line) cannot be verified and is treated the same as a stale mismatch — re-run Step 7a at the current HEAD to produce a comment carrying the field. A missing Step 7a summary comment (never posted, or deleted) is itself a failed check, never a skip — do not report ready; run Step 7a first, because without that comment nothing proves the internal review gate ran. |
-| CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| CI checks                                       | The latest run of every required status check has `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state), judged after `normalize_status_check_rollup` collapses superseded runs (see Step 8 "Superseded runs") — never by counting non-green entries in the raw rollup |
 
 If any check fails:
 

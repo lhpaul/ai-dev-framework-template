@@ -1726,9 +1726,12 @@ while IFS= read -r platform; do
   if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate --slurp 2>/dev/null)" || [ -z "$check_runs_json" ]; then
     escalate check-run-fetch-failed
   fi
-  if ! check_state="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" '
+  # Latest run of this check only (shared dedupe, workflow-lib.sh, #1559):
+  # check-runs' default filter=latest is per check suite, so a re-run keeps
+  # the superseded run in the response.
+  if ! check_state="$(printf '%s\n' "$check_runs_json" | jq -r --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
         [ .[].check_runs[]? | select(.name == $name) ]
-        | sort_by(.started_at // .completed_at // .created_at // "9999-12-31T23:59:59Z")
+        | dedupe_status_check_rollup
         | last
         | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
       ' 2>/dev/null)"; then
@@ -1968,9 +1971,9 @@ revalidate_reviewer_state() {
     if ! check_runs_arg="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate --slurp 2>/dev/null)" || [ -z "$check_runs_arg" ]; then
       escalate revalidation-unreadable
     fi
-    if ! check_state_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" '
+    if ! check_state_arg="$(printf '%s\n' "$check_runs_arg" | jq -r --arg name "$check_name_arg" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]? | select(.name == $name) ]
-          | sort_by(.started_at // .completed_at // .created_at // "9999-12-31T23:59:59Z")
+          | dedupe_status_check_rollup
           | last
           | (if . == null then " " else ((.status // "") + " " + (.conclusion // "")) end)
         ' 2>/dev/null)" || [ -z "$check_state_arg" ]; then

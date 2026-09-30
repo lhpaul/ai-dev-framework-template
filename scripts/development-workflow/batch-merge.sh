@@ -670,12 +670,10 @@ cmd_discover() {
 
 normalize_checks_state() {
   local json="$1"
-  printf '%s\n' "$json" | jq -r '
+  # Superseded runs are collapsed by the shared definition in workflow-lib.sh
+  # (#1559); this function only classifies the latest run per check.
+  printf '%s\n' "$json" | jq -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
     def check_name: (.name // .context // .workflowName // "");
-    def check_key:
-      if .__typename == "StatusContext" then check_name
-      else ((.workflowName // .workflow // .app.name // "") + "\u0000" + check_name)
-      end;
     def state:
       if .__typename == "StatusContext" then ((.state // "") | ascii_downcase)
       else
@@ -684,10 +682,8 @@ normalize_checks_state() {
     (.statusCheckRollup // []) as $checks |
     (
       $checks
+      | dedupe_status_check_rollup
       | map(select((check_name | test("^E2E regression \\(placeholder\\)$") | not)))
-      | sort_by(check_key, (.startedAt // .completedAt // .updatedAt // .createdAt // ""))
-      | group_by(check_key)
-      | map(last)
     ) as $required |
     if ($checks | length) == 0 then "pending"
     elif ($required | length) == 0 then "pending"

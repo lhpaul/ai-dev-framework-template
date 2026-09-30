@@ -104,6 +104,14 @@
 
 set -euo pipefail
 
+# The shared statusCheckRollup / check-run dedupe (#1559) lives in
+# workflow-lib.sh. Resolve its directory with parameter expansion only: this
+# reviewer is exercised under a minimal PATH (no dirname).
+HAYSTACK_REVIEWER_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[ "$HAYSTACK_REVIEWER_SCRIPT_DIR" != "${BASH_SOURCE[0]}" ] || HAYSTACK_REVIEWER_SCRIPT_DIR="."
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$HAYSTACK_REVIEWER_SCRIPT_DIR/workflow-lib.sh"
+
 # Emit REVIEWED_HEAD when the check/PR head was established (#1651).
 emit_reviewed_head_if_known() {
   [ -n "${REVIEWED_HEAD_SHA:-}" ] || return 0
@@ -235,7 +243,9 @@ fetch_haystack_check_run_json() {
   fi
   [ -n "$runs_json" ] || return 1
 
-  if ! check_json="$(printf '%s\n' "$runs_json" | jq -c --arg name "$CHECK_NAME" '
+  # Latest Haystack run only (shared dedupe, workflow-lib.sh, #1559): a re-run
+  # is a new check suite, so the superseded run is still in the response.
+  if ! check_json="$(printf '%s\n' "$runs_json" | jq -c --arg name "$CHECK_NAME" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
     [
       if type == "array" then
         .[] | (.check_runs[]? // empty)
@@ -244,7 +254,7 @@ fetch_haystack_check_run_json() {
       end
     ]
     | map(select((.name // "") == $name))
-    | sort_by(.started_at // .completed_at // "")
+    | dedupe_status_check_rollup
     | last // empty
   ' 2>/dev/null)"; then
     return 1

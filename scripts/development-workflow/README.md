@@ -750,6 +750,9 @@ Usage:
 What it does:
 
 - Reads the PR's `statusCheckRollup` via `gh`
+- Judges only the latest run per check: the rollup keeps superseded runs, so it
+  collapses them first with `normalize_status_check_rollup` (`workflow-lib.sh`),
+  the one deduplication every rollup consumer shares (issue #1559)
 - Reports a stable `RESULT=green|red|timeout`
 - Emits parseable `key=value` lines for failing and pending checks
 
