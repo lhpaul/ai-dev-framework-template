@@ -922,6 +922,7 @@ set -euo pipefail
 # Readiness labels are helper-applied only (issue #1408). The helper refuses
 # unless the ready-phase reviewer check run is completed for the live head SHA
 # and no non-reviewer check is pending or failing; a `refused` verdict is a stop.
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit $?
 ./scripts/development-workflow/apply-readiness-labels.sh \
   --pr "$PR_NUMBER" --label ready-for-regression
 ./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
@@ -938,6 +939,7 @@ Once CI is green:
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit $?
 ./scripts/development-workflow/apply-readiness-labels.sh \
   --pr "$PR_NUMBER" --label ready-for-human-review
 ```

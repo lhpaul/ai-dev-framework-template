@@ -2624,6 +2624,8 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
 # Only for implementation PRs (feature/*, fix/*, refactor/*, hotfix/*,
 # backport/hotfix/*). The helper refuses unless every configured ready-phase
 # reviewer check run is `completed` for the current head SHA and the reviewer
@@ -2914,7 +2916,10 @@ application) in the readiness checklist. This sync step never applies
    `invocation_policy.effective_policy.checkpoints`).
 3. Detect satisfaction from human signals and sync labels:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH" || exit $?
    ./scripts/development-workflow/run-epic-checkpoint-lifecycle.sh sync-pr-labels \
      --pr "$PR_NUMBER" \
      --item "$ITEM_NUMBER" \

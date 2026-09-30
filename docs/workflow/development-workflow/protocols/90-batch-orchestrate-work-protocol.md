@@ -2081,6 +2081,8 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <number> --expected-branch <branch_name> || exit $?
    ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <number> --reason risk_guardrail_hold --held-by "<who decided>"
    ```
 

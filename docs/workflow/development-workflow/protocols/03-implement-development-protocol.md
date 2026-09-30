@@ -126,7 +126,12 @@ safe follow-up commit path or the exact human authorization evidence required.
 accept any PR number. Under parallel waves a transposed digit silently mutates a
 sibling's PR (issue #1444). Immediately before every PR mutation that addresses
 a PR by number, in every path of this protocol, run
-`scripts/development-workflow/pr-ownership-guard.sh` and mutate only on exit 0:
+`scripts/development-workflow/pr-ownership-guard.sh` and mutate only on exit 0.
+This covers helper scripts that mutate a PR given `--pr <n>` — for example
+`apply-readiness-labels.sh`, `batch-merge.sh annotate-hold`,
+`run-epic-checkpoint-lifecycle.sh sync-pr-labels`, and
+`check-documentation-stage-alignment.sh` — exactly like raw `gh` calls: those
+helpers take no branch input, so the guard runs at the call site:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -1117,6 +1122,8 @@ Step 1.3 — Apply `ready-for-regression`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "feature/[branch-slug]" || exit $?
 # Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
 # (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
 # re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
@@ -1140,6 +1147,8 @@ Step 2.2 — Apply `ready-for-human-review`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "feature/[branch-slug]" || exit $?
 # Only after Step 2.1 passes. Helper-applied only (issue #1408): a `refused`
 # verdict means the reviewer verdict or CI is not settled for the live head SHA.
 ./scripts/development-workflow/apply-readiness-labels.sh \
@@ -1795,6 +1804,8 @@ Step 1.3 — Apply `ready-for-regression`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "fix/[branch-slug]" || exit $?
 # Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
 # (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
 # re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
@@ -2128,6 +2139,7 @@ echo "Base-branch guard passed: backport branch descends from origin/main"
 
 **Post-create base-branch assertion (mandatory)**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr create --draft --base develop \
   --title "chore(hotfix): backport [slug] to develop" \
@@ -2170,6 +2182,8 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <backport_pr_number> --expected-branch "backport/hotfix/[slug]" || exit $?
    ./scripts/development-workflow/apply-readiness-labels.sh \
      --pr <backport_pr_number> --label ready-for-regression
    ```
@@ -2180,6 +2194,8 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <backport_pr_number> --expected-branch "backport/hotfix/[slug]" || exit $?
    ./scripts/development-workflow/apply-readiness-labels.sh \
      --pr <backport_pr_number> --label ready-for-human-review
    ```
