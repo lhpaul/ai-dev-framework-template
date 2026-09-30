@@ -87,6 +87,37 @@ See `REVIEW.md` → Code Review Checklist → Pass 2 → "PRs that add or modify
 
 For a worked instance of this rule — a regex-based key-extraction scanner, its full edge-case table, and a named dynamic-key concatenation gap (`t('x.' + k)`) that a naive first version missed and a fix closed with documented regression cases — see [`docs/best-practices/stack/i18n.md` § Key-extraction scanner and the dynamic-key pitfall](stack/i18n.md#key-extraction-scanner-and-the-dynamic-key-pitfall).
 
+## Live-Validate New or Changed GraphQL Queries
+
+Any PR that adds or changes a `gh api graphql` query literal under `scripts/`
+must run that query live against a real GitHub repository or PR at least once
+before the PR is trusted on a green mocked suite alone.
+
+**Why**: `gh` is mocked in this repo's workflow test harnesses under
+`scripts/development-workflow/tests/` (for example
+`test-apply-readiness-labels.sh`), and a mocked `gh` accepts any query
+text — well-formed or not. #1828 shipped a query with one extra closing brace
+in `apply-readiness-labels.sh`; the mocked suite stayed green while GitHub
+rejected the query on every real call, escalating
+`codex-occupancy-timeline-fetch-failed` on every `codex-github` PR. Neither the
+tests nor the code review for the PR that introduced it caught this, because
+nothing in the loop ever sent the query to GitHub.
+
+**What "live-validate" means**: exercise the calling script's normal code path
+against a real PR or repository (a draft PR in a scratch repo is sufficient),
+or invoke the query directly, e.g. `gh api graphql -f query='...' -f
+owner=<owner> -f repo=<repo> ...`, and confirm GitHub returns data rather than
+a GraphQL parse or validation error. A delimiter-balance lint (see
+`scripts/lint/lint-graphql-query-literals.py`) is necessary but not
+sufficient — it proves the literal's braces/brackets/parens are well-nested,
+not that the query matches GitHub's current schema (field names, argument
+types, and deprecations all pass a delimiter check while still being rejected
+live).
+
+**Exemption**: a change that only reformats or re-indents an existing,
+already-validated query (no field, argument, or structural change) does not
+require re-validation.
+
 ## Test-Scope Proportionality
 
 When the test scaffolding you ship (fixture manifests, proof-cycle lists, case

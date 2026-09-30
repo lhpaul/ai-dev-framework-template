@@ -427,6 +427,12 @@ Additional checks for **shell scripts** (`*.sh`):
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 - Workflow shell PRs run `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` in addition to ShellCheck; missing guard execution is an important finding
 
+Additional checks for **PRs that add or change a `gh api graphql` query literal under `scripts/`**:
+
+- **Delimiter-balance lint** (blocking): confirm `python3 scripts/lint/lint-graphql-query-literals.py scripts` passes (exit `0`) at the PR's head; a green `ShellCheck` CI job at that head (which runs the lint) is sufficient evidence. A `1` or `2` exit (or a stale/absent run) is blocking — this is the exact defect class from #1828, where a mocked `gh` let an unbalanced query literal ship.
+- **Live validation** (blocking): confirm the PR evidence shows the new or changed query was run once against a real GitHub repository or PR (not only the mocked test suite) and returned data rather than a GraphQL parse/validation error. A delimiter-balance pass is necessary but not sufficient — it cannot detect an unknown field, wrong argument type, or deprecated schema element. See `docs/best-practices/3-testing.md` → "Live-Validate New or Changed GraphQL Queries" for the implementer-facing version of this rule.
+- **Exemption**: a change that only reformats or re-indents an existing, already-validated query (no field, argument, or structural change) does not require re-validation; the PR evidence should state the exemption rationale.
+
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
 
 - **Trigger/backfill arithmetic parity**: If both a trigger and a backfill compute the same derived value, they must use the **same formula**, including guards such as `GREATEST`, `LEAST`, `COALESCE`, and null handling. A trigger that differs from its backfill is a latent production bug.
