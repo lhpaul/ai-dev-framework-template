@@ -25,9 +25,12 @@ adapter: how `pr-review-loop.sh` consumes Ronda's GitHub-facing output.
 
 ## Bot identity and check name
 
-Ronda posts as `ronda[bot]` and its check run is named `Ronda review` by
-default. Both are overridable via env vars (see
-[Configuration](#configuration) below) if a deployment uses different values.
+Ronda's check run is named `Ronda review` by default. The review verdict is
+read from that check run alone, so the adapter's verdict path does not depend
+on who authored the review: reviews posted through Ronda's reusable GitHub
+Actions workflow are authored by `github-actions[bot]`, while a GitHub App
+deployment posts as `ronda[bot]`. Both names are overridable via env vars (see
+[Configuration](#configuration) below).
 
 ---
 
@@ -70,32 +73,47 @@ every poll:
 | ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | No check run found yet                                           | **Not finished yet** — never treated as clean or skipped; keep polling |
 | Found, `status != completed`                                     | Not finished yet — keep polling (defensive; Ronda should not emit this)|
-| Found, `status=completed`, `conclusion=success`                  | `RESULT=clean`                                                         |
-| Found, `status=completed`, `conclusion=failure` or `action_required` | `RESULT=needs_fixes`                                                |
-| Found, `status=completed`, any other conclusion                  | `RESULT=escalate` (`REASON=ronda_unexpected_conclusion`) — fail closed  |
+| Found, `status=completed`, `conclusion=success`, summary `Blocking: 0` | `RESULT=clean` (`SUGGESTION_COUNT` = Important + Nit)            |
+| Found, `status=completed`, `conclusion=success`, summary `Blocking: N` (N ≥ 1) | `RESULT=needs_fixes` (`REASON=ronda_blocking_findings`, `BLOCKING_COUNT=N`) |
+| Found, `status=completed`, `conclusion=success`, severity line missing, duplicated, or unparseable | `RESULT=escalate` (`REASON=ronda_severity_unparseable`) — fail closed |
+| Found, `status=completed`, `conclusion=failure`                  | `RESULT=escalate` (`REASON=ronda_pass_failed`, `RONDA_CHECK_TITLE` names the cause) |
+| Found, `status=completed`, any other conclusion (including `action_required`) | `RESULT=escalate` (`REASON=ronda_unexpected_conclusion`) — fail closed |
 | `max_wait` exhausted with no completed run observed               | `RESULT=escalate` (`REASON=timeout`)                                   |
 
 Because the check-runs query is scoped to the current head SHA on every
 poll, a new commit pushed mid-poll naturally supersedes any in-flight pass
 — the loop keys on head SHA, not on a review or check-run count.
 
-### Step 7.3 — Fetch inline comments
+Ronda's consumption contract (`lhpaul/ronda`,
+`docs/adoption/ronda-review-adoption.md` §4) defines the conclusion as
+whether the **pass** completed, not whether it found problems:
 
-When the check run concludes `failure` or `action_required`, the helper
-looks up Ronda's pull-request review for the current head SHA and counts
-its inline review comments for `COMMENT_COUNT`/`BLOCKING_COUNT`:
+- `success` — the pass worked, **with or without findings**. A successful
+  pass can carry Blocking findings, so `success` alone is never clean.
+- `failure` — the pass could not complete (timed out, model unavailable,
+  credential missing or invalid, changes too large, unusable model output,
+  or an unexpected error). That is an infrastructure failure, not a code
+  finding, so the loop escalates instead of sending the fixer after
+  findings that do not exist.
 
-<!-- workflow-shell-contract: bash-zsh -->
-```bash
-gh api --paginate repos/{owner}/{repo}/pulls/{pr_number}/reviews \
-  --jq '[.[] | select(.user.login == "ronda[bot]" and .commit_id == "'"$head_sha"'")] | last | .id'
-gh api --paginate repos/{owner}/{repo}/pulls/{pr_number}/reviews/{review_id}/comments
+### Step 7.3 — Read the finding verdict
+
+On a successful pass the check-run summary carries exactly one severity
+line (produced by `buildCheckRunOutput` in Ronda's `src/core/summary.ts`):
+
+```text
+Blocking: 0, Important: 1, Nit: 0
 ```
 
-If Ronda placed its findings in the review body rather than as inline
-comments (so no comments are found), `BLOCKING_COUNT` is floored to 1 so a
-`failure`/`action_required` conclusion is never reported with zero blocking
-findings.
+The helper reads the counts from that line of the same check run it polled
+— no review or review-comment lookup is involved in the verdict.
+`BLOCKING_COUNT` is the Blocking count, `SUGGESTION_COUNT` is Important +
+Nit, and `COMMENT_COUNT` is the total. Exactly one line may start with a
+`Blocking:` label (case-insensitive, even indented or emphasized), and that
+line must be well-formed; trailing whitespace is tolerated. A missing,
+duplicated, or malformed line escalates rather than being guessed clean, so
+a valid `Blocking: 0` line cannot mask a second malformed one. If Ronda changes that line's format, the loop fails
+closed (`ronda_severity_unparseable`) until the adapter is updated.
 
 ---
 
@@ -115,8 +133,8 @@ Env var overrides:
 
 | Variable            | Default          | Purpose                             |
 | -------------------- | ---------------- | ------------------------------------ |
-| `RONDA_BOT_LOGIN`    | `ronda[bot]`     | Bot login used to filter reviews     |
-| `RONDA_CHECK_NAME`   | `Ronda review`   | Check-run name polled for completion |
+| `RONDA_BOT_LOGIN`    | `ronda[bot]`     | Bot login used by the unresolved-thread and readiness checks (not by the verdict); set `github-actions[bot]` for the Actions ingress |
+| `RONDA_CHECK_NAME`   | `Ronda review`   | Check-run name polled for completion and verdict |
 
 ---
 
@@ -124,6 +142,6 @@ Env var overrides:
 
 - **No manual re-trigger.** Ronda reacts to pushes automatically; there is
   no documented trigger comment to force a fresh pass out of band.
-- **Vendor-maintained details.** The check-run name, bot login, and pass
-  semantics are controlled by Ronda and may change; consult `lhpaul/ronda`
-  for the authoritative product behavior.
+- **Vendor-maintained details.** The check-run name, bot login, summary
+  severity-line format, and pass semantics are controlled by Ronda and may
+  change; consult `lhpaul/ronda` for the authoritative product behavior.
