@@ -215,5 +215,29 @@ _out="$(run_ci MOCK_ROLLUP="$_fail_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CU
 run_test "failing_check_still_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
 run_test "failing_check_names_it" "FAILING_CHECKS=ShellCheck" "$(grep '^FAILING_CHECKS=' <<<"$_out" || true)"
 
+# 6. Issue #1559: statusCheckRollup keeps superseded runs. The PR #1547 shape —
+#    a commit status that failed at 05:26:31 and passed on re-run at 05:28:16,
+#    beside a check run with the same history — is green (AC-2), whatever
+#    order GitHub lists the entries in.
+_superseded_rollup='{"statusCheckRollup":[
+  {"__typename":"StatusContext","context":"policy","state":"SUCCESS","startedAt":"2026-06-01T05:28:16Z"},
+  {"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-01T05:26:31Z"},
+  {"__typename":"StatusContext","context":"policy","state":"FAILURE","startedAt":"2026-06-01T05:26:31Z"},
+  {"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-01T05:28:16Z"}
+]}'
+_out="$(run_ci MOCK_ROLLUP="$_superseded_rollup" MOCK_PREV_CHECKS="$_runs_one" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
+run_test "superseded_failure_is_green_1559" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "superseded_failure_counts_latest_runs_only_1559" "TOTAL_CHECK_COUNT=2" "$(grep '^TOTAL_CHECK_COUNT=' <<<"$_out" || true)"
+
+# 6b. The reverse history — passed, then genuinely failed on the current run —
+#     is still red and names the check (AC-3).
+_current_failure_rollup='{"statusCheckRollup":[
+  {"__typename":"StatusContext","context":"policy","state":"FAILURE","startedAt":"2026-06-01T05:28:16Z"},
+  {"__typename":"StatusContext","context":"policy","state":"SUCCESS","startedAt":"2026-06-01T05:26:31Z"}
+]}'
+_out="$(run_ci MOCK_ROLLUP="$_current_failure_rollup" MOCK_PREV_CHECKS="$_runs_one" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
+run_test "current_failure_still_red_1559" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "current_failure_named_1559" "FAILING_CHECKS=policy" "$(grep '^FAILING_CHECKS=' <<<"$_out" || true)"
+
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
