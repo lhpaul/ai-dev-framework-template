@@ -569,10 +569,13 @@ configured_reviewer_check_names_json() {
 #     started yet — counts as the NEWEST entry, so a pending re-run is never
 #     hidden behind the result it supersedes.
 #   - winner: when every entry for a check has a recency value, the newest
-#     wins (input order breaks ties). When any entry lacks one, order is
-#     unknown: an undated non-terminal entry (a queued re-run) still wins, so
-#     an unsettled check never reads as settled; otherwise the LAST entry in
-#     input order wins.
+#     wins. Ties (timestamps have one-second resolution) go to the higher
+#     numeric `.id`/`.databaseId` — REST check-run and status ids increase
+#     with creation, and REST lists newest-first, so input order alone would
+#     keep the OLDER run — and only then to input order. When any entry
+#     lacks a recency value, order is unknown: an undated non-terminal entry
+#     (a queued re-run) still wins, so an unsettled check never reads as
+#     settled; otherwise the highest id wins, then the LAST input entry.
 #
 # Shell callers use normalize_status_check_rollup below. Callers that must
 # stay inside one jq program (a `gh pr list` array, a projection) prepend this
@@ -600,6 +603,7 @@ def dedupe_status_check_rollup:
           end
         ),
         __check_idx: $idx,
+        __check_seq: ((.id // .databaseId) | if type == "number" then . else null end),
         __check_ts: (
           ([.startedAt, .completedAt, .createdAt,
             .started_at, .completed_at, .created_at,
@@ -620,13 +624,13 @@ def dedupe_status_check_rollup:
   | group_by(.__check_key)
   | map(
       (if all(.[]; .__check_ts != "")
-       then sort_by(.__check_ts, .__check_idx)
+       then sort_by(.__check_ts, .__check_seq, .__check_idx)
        elif any(.[]; .__check_ts == "9999-12-31T23:59:59Z")
-       then map(select(.__check_ts == "9999-12-31T23:59:59Z")) | sort_by(.__check_idx)
-       else sort_by(.__check_idx)
+       then map(select(.__check_ts == "9999-12-31T23:59:59Z")) | sort_by(.__check_seq, .__check_idx)
+       else sort_by(.__check_seq, .__check_idx)
        end)
       | last
-      | del(.__check_key, .__check_idx, .__check_ts)
+      | del(.__check_key, .__check_idx, .__check_seq, .__check_ts)
     );
 '
 

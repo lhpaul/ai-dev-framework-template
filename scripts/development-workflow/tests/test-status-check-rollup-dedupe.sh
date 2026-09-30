@@ -125,6 +125,18 @@ run_test "missing_timestamp_uses_latest_input_entry" "guard=SUCCESS" "$(printf '
   {"name":"guard","status":"COMPLETED","conclusion":"FAILURE","completed_at":"2026-06-12T10:00:00Z"},
   {"name":"guard","status":"COMPLETED","conclusion":"SUCCESS"}]' \
   | jq -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"' dedupe_status_check_rollup | map(.name + "=" + .conclusion) | join(",")')"
+# REST lists newest-first and timestamps have one-second resolution: an equal
+# timestamp goes to the higher numeric id (the newer run), not input order.
+run_test "equal_timestamps_higher_id_wins_newest_first" "guard=failure" "$(printf '%s\n' '[
+  {"id":102,"name":"guard","status":"completed","conclusion":"failure","started_at":"2026-06-12T10:00:00Z"},
+  {"id":101,"name":"guard","status":"completed","conclusion":"success","started_at":"2026-06-12T10:00:00Z"}]' \
+  | jq -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"' dedupe_status_check_rollup | map(.name + "=" + .conclusion) | join(",")')"
+run_test "equal_timestamps_higher_id_wins_oldest_first" "guard=failure" "$(printf '%s\n' '[
+  {"id":101,"name":"guard","status":"completed","conclusion":"success","started_at":"2026-06-12T10:00:00Z"},
+  {"id":102,"name":"guard","status":"completed","conclusion":"failure","started_at":"2026-06-12T10:00:00Z"}]' \
+  | jq -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"' dedupe_status_check_rollup | map(.name + "=" + .conclusion) | join(",")')"
+run_test "no_internal_seq_field_leaks" "false" "$(printf '%s\n' '[{"id":1,"name":"g","status":"completed","conclusion":"success"}]' \
+  | jq -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"' dedupe_status_check_rollup | .[0] | has("__check_seq")')"
 run_test "equal_timestamps_use_latest_input_entry" "policy=SUCCESS" "$(latest '[
   {"context":"policy","state":"FAILURE","startedAt":"2026-06-01T05:26:31Z"},
   {"context":"policy","state":"SUCCESS","startedAt":"2026-06-01T05:26:31Z"}]')"
@@ -298,6 +310,13 @@ app_repost_pages='[{"total_count":2,"check_runs":[
   {"id":601,"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":31},"app":{"slug":"cursor"}},
   {"id":602,"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":32},"app":{"slug":"cursor"}}]}]'
 run_test "check0_app_repost_is_superseded" "0 0 2" "$(run_check0 "$app_repost_pages")"
+
+# Same workflow, same second, newest-first REST order: the newer run (higher
+# id) failed. Check 0 must count it rather than keep the older success.
+same_second_pages='[{"total_count":2,"check_runs":[
+  {"id":102,"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":2},"app":{"slug":"github-actions"}},
+  {"id":101,"name":"policy","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":1},"app":{"slug":"github-actions"}}]}]'
+run_test "check0_same_second_newer_failure_counts" "1 0 2" "$(run_check0 "$same_second_pages" "$policy_workflow_runs")"
 
 # REST check runs carry no workflow name. Two workflows that both have a job
 # named `test` are two checks: unit's failure must not disappear behind e2e's
