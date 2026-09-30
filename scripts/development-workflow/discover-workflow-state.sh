@@ -172,7 +172,7 @@ echo "== open pull requests =="
 if gh_available; then
   echo "-- hub repository --"
   gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,labels,statusCheckRollup \
-    --jq '
+    --jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
       if length == 0 then
         "(none)"
       else
@@ -183,7 +183,7 @@ if gh_available; then
             ("base=" + .baseRefName),
             ("labels=" + ([.labels[].name] | join(","))),
             ("checks=" + (
-              [.statusCheckRollup[]? | (.conclusion // .state // .status // "unknown")]
+              [.statusCheckRollup | dedupe_status_check_rollup | .[] | ([.conclusion, .state, .status] | map(select(type == "string" and . != "")) | first // "unknown")]
               | join(",")
             )),
             .title
@@ -194,7 +194,7 @@ if gh_available; then
   if [ "$workflow_mode" = "workflow_hub" ] && [ -n "$target_github_repo" ]; then
     echo "-- product repository: $target_github_repo --"
     gh pr list --repo "$target_github_repo" --state open --limit 100 --json number,title,headRefName,baseRefName,labels,statusCheckRollup \
-      --jq '
+      --jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
         if length == 0 then
           "(none)"
         else
@@ -205,7 +205,7 @@ if gh_available; then
               ("base=" + .baseRefName),
               ("labels=" + ([.labels[].name] | join(","))),
               ("checks=" + (
-                [.statusCheckRollup[]? | (.conclusion // .state // .status // "unknown")]
+                [.statusCheckRollup | dedupe_status_check_rollup | .[] | ([.conclusion, .state, .status] | map(select(type == "string" and . != "")) | first // "unknown")]
                 | join(",")
               )),
               .title

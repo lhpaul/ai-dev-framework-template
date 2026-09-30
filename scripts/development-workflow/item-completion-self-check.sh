@@ -698,28 +698,9 @@ if [ -n "$pr_number" ]; then
       fi
 
       reviewer_checks="$(reviewer_check_names_json)"
-      if normalized_checks="$(printf '%s\n' "$pr_json" | jq '
-        (.statusCheckRollup // [])
-        | map(
-            . + {
-              __check_key: (
-                if (.context // "") != "" then
-                  "status:" + .context
-                elif (.workflowName // "") != "" and (.name // "") != "" then
-                  "check:" + .workflowName + "/" + .name
-                elif (.name // "") != "" then
-                  "check:" + .name
-                else
-                  "unknown"
-                end
-              ),
-              __check_ts: (.startedAt // .completedAt // .createdAt // "")
-            }
-          )
-        | sort_by(.__check_key, .__check_ts)
-        | group_by(.__check_key)
-        | map(last | del(.__check_key, .__check_ts))
-      ' 2>&1)" \
+      # Superseded runs stay in the rollup; judge only the latest run per
+      # check (shared helper, workflow-lib.sh, #1559).
+      if normalized_checks="$(printf '%s\n' "$pr_json" | normalize_status_check_rollup 2>&1)" \
         && check_summary="$(printf '%s\n' "$normalized_checks" | jq -r --argjson reviewerChecks "$reviewer_checks" '
         .
         | map(select(([.name // "", .context // "", .workflowName // ""] | any(. as $n | ($reviewerChecks | index($n)) != null)) | not))
