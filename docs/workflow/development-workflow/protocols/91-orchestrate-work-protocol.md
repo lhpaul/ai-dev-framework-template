@@ -1488,6 +1488,25 @@ When dispatching a stage agent (creator, reviewer, or fixer), include the follow
 
 This rule prevents agents from making changes that affect unrelated issues and causing downstream conflicts in batch runs.
 
+### Scratch Namespace and PR Ownership Rule for Dispatched Agents
+
+When dispatching a stage agent, pass it a private scratch directory (the one
+Protocol 90 assigned for this item in a parallel wave, otherwise a fresh
+`mktemp -d`) and include this instruction (issue #1444):
+
+> **Scratch and PR ownership rule**: Write anything outside this item's
+> worktree only under `<private-scratch-dir>`, with collision-proof names that
+> carry the item and process (for example `pr-body-<item>-<pid>.md`), never a
+> shared generic name such as `pr-body.md`. Before every `gh pr edit`,
+> `gh pr comment`, `gh pr ready`, `gh pr close`, or label change that addresses
+> a PR by number, run `scripts/development-workflow/pr-ownership-guard.sh --pr
+> <n> --expected-branch <item-branch>` and mutate only on exit 0. Mirror
+> review-gate evidence recorded in the PR description as a PR comment too.
+
+The Work Item Runner applies the same guard before its own PR mutations by
+number for this item, with `--expected-branch` set to the item branch. See
+Protocol 03 [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard).
+
 ---
 
 ## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)
@@ -1614,6 +1633,18 @@ for this stage. Per `guardrails-enforcement.md` section 3 Gate 4:
   decision using the review-and-fix behavior described in this step.
 - Otherwise: leave the PR at its normal `ready-for-human-review` handoff — do
   not make the review decision autonomously.
+
+**PR ownership for Steps 7a–9 (issue #1444)**: every comment, `gh pr ready`,
+body edit, label change, and review-thread mutation on this item's PR in Steps
+7a through 9 addresses the PR by number. Take the number only from
+`gh pr view --json number` on the item branch, and run
+`scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number>
+--expected-branch <branch_name>` (plus `--repo <owner/name>` outside
+single-repo mode) immediately before each such mutation — the executable
+blocks below include it, and prose instructions such as "post via
+`gh pr comment`" carry the same requirement. A non-zero exit is a stop before
+mutation. Pass the same private scratch directory rule to every stage agent
+(see "Scratch Namespace and PR Ownership Rule for Dispatched Agents").
 
 Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings. Resolve availability and apply policy first. Only a proceed verdict permits the draft-state pre-check, Design Review Gate, and configured-reviewer dispatch below; a blocking result dispatches no reviewer, including `design-reviewer`.
 
@@ -1872,6 +1903,8 @@ before dispatch when it is `false` or absent; preserve draft state when it is
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
 gh pr ready <pr_number>
 ```
 
@@ -2264,7 +2297,10 @@ Protocol 93's same-matrix re-run rule triggered a re-audit for this cycle
 
 After each fixer push, reply to each addressed inline review comment on the PR to mark it as resolved. Use `gh api` to post a reply to each comment whose ledger entry transitioned to `resolved`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
 gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
   -f body="Fixed in commit \`<short_sha>\`."
 ```
@@ -2398,6 +2434,7 @@ Interpret the result as follows:
 | `needs_fixes` and `cycle >= max_cycles` | Summary comment posted or updated automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                          |
 | `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
 | `waiting_on_reviewer` (exit code 4)     | Summary comment posted automatically by the script. Stop this local runner as waiting on the named reviewer; do not dispatch fixes, post duplicate triggers, apply readiness labels, enter CI readiness gates, or merge. Re-run Step 7 after the reviewer posts current-head terminal evidence or the human explicitly asks to poll again.                                                                                                                 |
+| `escalate` with `REASON=pr_ownership_branch_required`, `REASON=pr_ownership_mismatch`, or `REASON=pr_ownership_unverified` | The loop stopped before any side effect: the PR number passed to it is not verified as the PR of `--branch` (or, without `--branch`, of the workflow branch checked out where it ran), issue #1444. For `pr_ownership_branch_required`, re-run with `--branch <branch_name>`. No summary comment was posted and nothing on the PR changed. Do not dispatch a fixer. Re-resolve this item's PR with `gh pr view --json number` on the item branch and re-run Step 7 with that number; if the PR cannot be resolved, stop with `pr_ownership_refused` (`guardrails-enforcement.md` section 4) and include the `PR_OWNERSHIP_*` lines. |
 | `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
 
 ### PR-Agent "Possible Issue" advisory labels
@@ -2598,6 +2635,8 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
 # Only for implementation PRs (feature/*, fix/*, refactor/*, hotfix/*,
 # backport/hotfix/*). The helper refuses unless every configured ready-phase
 # reviewer check run is `completed` for the current head SHA and the reviewer
@@ -2751,6 +2790,7 @@ Interpret the result as follows:
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
 | 12        | Reviewer-loop clean verdict not settled (Check 0.6 / 0.6b): `POST_CLEAN_*` or `LOCAL_AI_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, `POST_CLEAN_HEAD_SHA` differs from the live PR head, or `LOCAL_AI_HEAD_CURRENT` is not exactly `1` when `LOCAL_AI_CONFIGURED=1` | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` and `LOCAL_AI_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
 | 13        | Internal review gate summary missing, not `APPROVED`, or stale for the live head (freshness guard refused) at the pre-Check-4 gate | Do not label ready; re-run Step 7a at the current HEAD, then re-run this checklist |
+| 14        | PR ownership not verified (`pr-ownership-guard.sh` refused: the PR number belongs to another branch or repository, or could not be resolved) — issue #1444 | Change nothing; re-resolve this item's PR with `gh pr view --json number` on the item branch and re-run this checklist |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2803,7 +2843,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
    b. Replace any existing `## Pre-merge Setup` section in the PR body with the newly constructed one, then update the PR body. This step runs on every pass through Step 8a (including after fixer pushes), so the section must always reflect the current diff — never accumulate stale or duplicate sections:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    # Remove any existing ## Pre-merge Setup block (from header to next ## heading or EOF),
    # then append the updated block at the end of the cleaned body.
    CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
@@ -2823,7 +2866,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
    c. Apply the `needs-setup` label (BR-1 — the label must always accompany the section):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr edit <pr_number> --add-label "needs-setup"
    ```
 
@@ -2833,7 +2879,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
    Ensure `needs-setup` is not present and no `## Pre-merge Setup` section exists in the PR body. If either is present from a prior scan (e.g., a previous commit introduced an env var that has since been removed), remove them:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    # Remove label only if it is currently present (avoids silencing real API/auth errors)
    HAS_SETUP_LABEL=$(gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -c "^needs-setup$" || true)
    if [ "$HAS_SETUP_LABEL" -gt 0 ]; then
@@ -2878,7 +2927,10 @@ application) in the readiness checklist. This sync step never applies
    `invocation_policy.effective_policy.checkpoints`).
 3. Detect satisfaction from human signals and sync labels:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH" || exit $?
    ./scripts/development-workflow/run-epic-checkpoint-lifecycle.sh sync-pr-labels \
      --pr "$PR_NUMBER" \
      --item "$ITEM_NUMBER" \
@@ -2911,6 +2963,14 @@ BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
 TARGET_REPO=$(repo_slug)
+
+# PR ownership (issue #1444): every label and body change below addresses the
+# PR by number, so prove it is this item's PR before any of them.
+if ! ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" \
+    --expected-branch "$BRANCH" --repo "$TARGET_REPO"; then
+  echo "ERROR: PR #$PR_NUMBER is not verified as the PR of $BRANCH in $TARGET_REPO; nothing was changed."
+  exit 14  # Exit code 14 = "PR ownership not verified"
+fi
 
 # Determine PR type (implementation vs. spec/plan)
 case "$BRANCH" in
@@ -3455,6 +3515,7 @@ a wait of its own (issue #1574).
      if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
        echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved review thread(s)."
        echo "Removing ready-for-human-review label and returning to Step 7a."
+       ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH" --repo "$TARGET_REPO" || exit 14
        gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review"
        gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
        echo "Return to Step 7a to address the newly-discovered threads."
@@ -3623,7 +3684,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 
 If any check fails:
 
-1. Log the specific failure(s) — include the PR number, failed check name, and observed value.
+1. Log the specific failure(s) — include the PR number, failed check name, and observed value — then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>`; stop on a non-zero exit (issue #1444).
 2. Apply `needs-fixes` if not already present: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 3. Remove `ready-for-human-review` if it was already applied: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 4. Fix the root cause (wrong base branch, missing label, missing review comment, failing CI) and return to Step 7a.

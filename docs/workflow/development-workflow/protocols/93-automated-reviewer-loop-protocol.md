@@ -67,9 +67,10 @@ If the file is absent or the key is not present, CodeRabbit defaults to
 When a draft-restricting reviewer is listed in `review.on_ready.github`, the
 ready transition happens after the draft gate:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <number> --draft-github-only
-./scripts/development-workflow/pr-review-loop.sh <number>
+./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name> --draft-github-only
+./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name>
 ```
 
 The second command marks the PR ready immediately before the first ready-phase
@@ -458,7 +459,7 @@ preflight does.
 | --- | --- |
 | `STAGE_SKIP_ENABLED=0\|1` | Whether staging skips were possible this run |
 | `STAGE_SKIP_DISABLED_REASON=<reason>` | Why not, when disabled: `disabled_by_env`, `compare_mode`, `explicit_platform_selection`, `head_unknown`, `history_unavailable` |
-| `STAGE_SKIPPED_PLATFORMS=<platforms>` | Comma-separated platforms replayed instead of dispatched; emitted alongside every `RESULT=` that follows the platform loop, empty when none. Guard exits that never reach the loop (`lock_contention`, `release_pr`, `truncated_run`) emit none of these keys |
+| `STAGE_SKIPPED_PLATFORMS=<platforms>` | Comma-separated platforms replayed instead of dispatched; emitted alongside every `RESULT=` that follows the platform loop, empty when none. Guard exits that never reach the loop (`lock_contention`, `release_pr`, `truncated_run`, `pr_ownership_branch_required`, `pr_ownership_mismatch`, `pr_ownership_unverified`) emit none of these keys. The PR ownership check (`pr_ownership_*`, issue #1444) runs on every run: against `--branch` when given, else against the workflow branch checked out in `--repo-root` (or the working directory); with neither, the run fails closed as `pr_ownership_branch_required`. A branch taken from a checkout is checked in that checkout's origin repository; a named repository or a `--repo-root` origin that disagrees with it fails closed as `pr_ownership_unverified` (`PR_OWNERSHIP_RESULT=repo_conflict`; an unresolvable one is `repo_unresolved`) |
 
 Staging stands down when the caller names platforms with `--platform` (an
 explicit selection is an instruction to run those reviewers), in `--compare`

@@ -887,7 +887,10 @@ Apply any blocking fixes, commit, and push before proceeding. Continue until all
 
 Once the Step 7a gate passes, ensure the PR is non-draft:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit 1
 gh pr ready "$PR_NUMBER"
 ```
 
@@ -895,8 +898,9 @@ gh pr ready "$PR_NUMBER"
 
 Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
+bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "feature/sync-template-v{TEMPLATE_VERSION}"
 ```
 
 Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
@@ -918,6 +922,7 @@ set -euo pipefail
 # Readiness labels are helper-applied only (issue #1408). The helper refuses
 # unless the ready-phase reviewer check run is completed for the live head SHA
 # and no non-reviewer check is pending or failing; a `refused` verdict is a stop.
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit $?
 ./scripts/development-workflow/apply-readiness-labels.sh \
   --pr "$PR_NUMBER" --label ready-for-regression
 ./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
@@ -934,6 +939,7 @@ Once CI is green:
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit $?
 ./scripts/development-workflow/apply-readiness-labels.sh \
   --pr "$PR_NUMBER" --label ready-for-human-review
 ```

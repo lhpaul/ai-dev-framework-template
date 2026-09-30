@@ -638,6 +638,7 @@ If no blocking human decision remains:
 12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
     mode when a positive numeric issue number is available:
 
+    <!-- workflow-shell-contract: bash-zsh -->
     ```bash
     ./scripts/development-workflow/run-nested-artifact-guard.sh \
       --mode pre-pr \
@@ -657,6 +658,18 @@ If no blocking human decision remains:
     - For complex workflow decision-gate plans: the consistency matrix or a
       pointer to it, using the canonical fields from the Document Quality Gate
       above; for non-gate plans, the not-applicable rationale is enough
+    - Write the body to a collision-proof file in a private scratch directory
+      (for example `pr-body-<item>-<pid>.md` under `mktemp -d` or the
+      orchestrator-assigned scratch directory), never a shared generic
+      filename a sibling agent can overwrite
+    - After the PR exists, mirror the `Document Quality Gate` log as a PR
+      comment: a description can be silently overwritten; a comment cannot
+    - Before any later `gh pr edit`, `gh pr comment`, `gh pr ready`,
+      `gh pr close`, or label change that addresses this PR by number, run
+      `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
+      --expected-branch "implementation-plan/[branch-slug]"` and mutate only on
+      exit 0 (Protocol 03 [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard);
+      in `workflow_hub`, add `--repo <hub-owner/name>`)
 14. Return the branch + PR details to the **Work Item Runner**
 
 ---

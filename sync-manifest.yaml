@@ -133,6 +133,9 @@ categories:
     - path: scripts/development-workflow/codex-github-evidence-lib.sh
       mode_scope: product_repo_injection
       note: shared Codex evidence helpers required by pr-review-loop.sh
+    - path: scripts/development-workflow/pr-ownership-guard.sh
+      mode_scope: product_repo_injection
+      note: PR ownership guard (#1444) required by pr-review-loop.sh before any PR mutation
     - path: scripts/development-workflow/pr-review-loop.sh
       mode_scope: product_repo_injection
       note: product-repo runtime reviewer loop for product-owned PRs

@@ -1120,6 +1120,29 @@ The terminal batch summary must record whether the isolation manifest passed,
 failed before dispatch, or escalated after detecting possible out-of-worktree
 mutation.
 
+### Private scratch namespace and PR ownership (parallel dispatch)
+
+A worktree isolates the checkout, not files a runner writes outside it. In a
+parallel wave, sibling agents that share one scratch directory and generic
+filenames (for example `scratchpad/pr-body.md`) can inject a sibling's content
+into their own PR with a correct PR number (issue #1444). When dispatching
+concurrent mutating runners:
+
+- Pass each runner a private scratch directory in its handoff (for example one
+  `mktemp -d` per item), distinct from every sibling's, and instruct it to
+  write anything outside its own worktree only there.
+- Require collision-proof filenames that carry the item and process, for
+  example `pr-body-<item>-<pid>.md`; never a shared generic name such as
+  `pr-body.md` or `review.md`.
+- Require the PR Ownership Guard before every PR mutation by number, from the
+  runner or from this orchestrator: run
+  `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
+  --expected-branch <item-branch>` and mutate only on exit 0. See Protocol 03
+  [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard).
+- Mirror review-gate evidence (the `Document Quality Gate` log, the
+  Pre-Submission Self-Review log) as a PR comment, not only in the PR
+  description: a description can be silently overwritten; a comment cannot.
+
 ### Checkpoint-resume gate for batch redispatch
 
 When a bounded-batch item is redispatched or continued after a
@@ -1722,7 +1745,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 
 **`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:
 
-1. Applies the label through the helper (issue #1408 — never `gh pr edit --add-label ready-*` directly): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-regression`. A `refused` verdict means a gate is unmet: redispatch instead of labelling.
+1. Applies the label through the helper (issue #1408 — never `gh pr edit --add-label ready-*` directly), after `pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` passes (issue #1444): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-regression`. A `refused` verdict means a gate is unmet: redispatch instead of labelling.
 2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> (<branch-type>) — applied by orchestrator Step 5.1`
 3. **Re-polls CI** — the label triggers configured real regression workflows,
    or an explicitly enabled placeholder. The CI check row in this verification
@@ -1739,7 +1762,7 @@ Do not redispatch the agent for a missing label alone — the label is applied t
 
 If a check requires agent redispatch:
 
-1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
+1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below), then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` for the item's branch; stop on a non-zero exit (issue #1444).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must invoke `checkpoint-resume-gate.sh` before mutation. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
@@ -1832,7 +1855,7 @@ For the pre-label orphaned case (`isDraft=false`, no labels, no summary): the PR
 
 **Expected action when incomplete state is detected**:
 
-1. Log the incomplete PR in your retrospective notes.
+1. Log the incomplete PR in your retrospective notes, then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` for the item's branch; stop on a non-zero exit (issue #1444).
 2. Remove `ready-for-human-review` if present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7a (internal review gate).
@@ -1960,13 +1983,19 @@ For each PR identified in the detection step:
 
 1. **Remove `ready-for-human-review`** and **remove `ready-for-regression`** (if present — they will be re-applied after the re-triggered review passes):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr edit <pr_number> --remove-label "ready-for-human-review" --remove-label "ready-for-regression"
    ```
 
 2. **Post `@coderabbitai review`** to request a fresh CodeRabbit review:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr comment <pr_number> --body "@coderabbitai review"
    ```
 
@@ -2052,6 +2081,8 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <number> --expected-branch <branch_name> || exit $?
    ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <number> --reason risk_guardrail_hold --held-by "<who decided>"
    ```
 
@@ -2073,6 +2104,8 @@ state in the stable `reviewer-access-bypass` audit marker.
 | Parallel implementation batch (2+ PRs) | `batch-merge.sh` + Protocol 94 |
 | Single implementation PR               | `gh pr merge` is acceptable    |
 | Spec or plan PR (any count)            | `gh pr merge` is acceptable    |
+
+Run `pr-ownership-guard.sh` for the item's branch before a `gh pr merge` by number (issue #1444).
 
 Violating this rule causes CHANGELOG merge conflicts that must be resolved manually, as observed in the Batch 4 incident (2026-04-22).
 

@@ -128,6 +128,71 @@ delegated merge authority, and risk acceptance are not authorization for a
 shared-history rewrite. If the guard blocks, stop before mutation and report the
 safe follow-up commit path or the exact human authorization evidence required.
 
+## PR Ownership Guard
+
+`gh pr edit`, `gh pr comment`, `gh pr ready`, `gh pr close`, and label changes
+accept any PR number. Under parallel waves a transposed digit silently mutates a
+sibling's PR (issue #1444). Immediately before every PR mutation that addresses
+a PR by number, in every path of this protocol, run
+`scripts/development-workflow/pr-ownership-guard.sh` and mutate only on exit 0.
+This covers helper scripts that mutate a PR given `--pr <n>` — for example
+`apply-readiness-labels.sh`, `batch-merge.sh annotate-hold`,
+`run-epic-checkpoint-lifecycle.sh sync-pr-labels`, and
+`check-documentation-stage-alignment.sh` — exactly like raw `gh` calls: those
+helpers take no branch input, so the guard runs at the call site:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh \
+  --pr "$PR_NUMBER" --expected-branch "fix/[branch-slug]" || exit 1
+gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$$.md"
+```
+
+- Pass the item's own workflow branch as `--expected-branch`; omit it only when
+  running inside the item worktree on that branch. In `workflow_hub`, pass
+  `--repo <owner/name>` for the repository that owns the PR.
+- `RESULT=not_owned` (exit 1) means the number belongs to another branch:
+  re-resolve this item's PR with `gh pr view --json number` on the item branch;
+  never mutate the other PR. `RESULT=pr_unresolved` (exit 3) and
+  `RESULT=branch_unknown` (exit 4) fail closed: stop before mutation.
+  When re-resolving does not yield an owned PR, stop with the named stop
+  condition `pr_ownership_refused` (`guardrails-enforcement.md` section 4),
+  naming the item, the PR number, the guard's `RESULT=` line, and the
+  human action: confirm which PR belongs to the item branch.
+- Write PR bodies, comments, and review evidence only to collision-proof files
+  in a private scratch directory — the one the orchestrator assigned, or
+  `mktemp -d` — named with the item and process, for example
+  `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
+  sibling's content reach this PR with a correct PR number.
+- `pr-review-loop.sh` runs this guard itself on every run, before any side
+  effect. One check per run is enough: GitHub fixes a PR's head branch and
+  head repository at creation, and the loop's PR number and verified repository
+  do not change within the run, so later writes in the same run act on the
+  already-verified PR. Callers that issue separate mutations outside the loop
+  still run the guard before each one. The expected branch is `--branch` when given (it wins over any
+  checkout); otherwise the workflow branch checked out in `--repo-root` (or the
+  working directory). It stops with `RESULT=escalate`, exit `2`, and
+  `REASON=pr_ownership_branch_required` (no `--branch` and the checkout is
+  detached or on `develop`, `main`, or another non-workflow branch),
+  `REASON=pr_ownership_mismatch` (wrong branch or head repository), or
+  `REASON=pr_ownership_unverified` (PR or target repository not resolved, or
+  the branch and repository do not come from the same checkout). With
+  `--branch`, the target repository is the named one
+  (`--repo`/`--product-repo`, `WORKFLOW_TARGET_GITHUB_REPO`, `GH_REPO`), else
+  the `--repo-root` origin. A branch taken from a checkout uses that
+  checkout's origin; a named repository that differs from it, or a working
+  directory whose origin differs from the `--repo-root` the loop enters, fails
+  closed. Pass `--branch` whenever the item branch is known.
+- Mirror review-gate evidence recorded in the PR description (for example the
+  Pre-Submission Self-Review log) as a PR comment after the PR exists: a
+  description can be silently overwritten; a comment cannot.
+- A mutation that uses a number resolved moments earlier by `gh pr create` or
+  `gh pr view --json number` on the item branch itself already has ownership
+  evidence — for example the `gh pr close` in each path's post-create
+  base-branch assertion. Every other number — from a handoff, a summary, a log,
+  or memory — needs the guard.
+
 ## Scope-Residual Evidence Gate
 
 When the item title, body, spec, or plan describes sweep, batch, helper
@@ -257,6 +322,7 @@ Under `set -e`, any command that exits non-zero causes the script to abort — *
 
 Capture exit codes explicitly when the command can legitimately fail:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Wrong under set -e — aborts if gh pr view exits non-zero (e.g., PR not found):
 PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
@@ -274,11 +340,15 @@ fi
 
 When ordering or comparing events (e.g., determining which comment came first, whether a review happened after the last push), always use **server-returned timestamps from API responses**, not local `date` output. Local clocks can be skewed relative to the server by seconds or minutes.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Wrong — local clock may not match server time:
 TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Correct — capture the timestamp from the API response:
+# Correct — capture the timestamp from the API response, after the PR
+# Ownership Guard confirms "$PR_NUMBER" belongs to this item's branch:
+./scripts/development-workflow/pr-ownership-guard.sh \
+  --pr "$PR_NUMBER" --expected-branch "fix/[branch-slug]" || exit 1
 RESPONSE=$(gh pr comment "$PR_NUMBER" --body "$TRIGGER_BODY")
 TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
 ```
@@ -590,7 +660,8 @@ Complete all applicable checks:
    `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
    current PR is a documentation-stage PR, run
    `scripts/development-workflow/check-documentation-stage-alignment.sh --pr <pr_number>`
-   before readiness. A mismatch must be corrected by moving/removing
+   (it posts a PR comment, so run the [PR Ownership Guard](#pr-ownership-guard)
+   first) before readiness. A mismatch must be corrected by moving/removing
    implementation files from the documentation-stage PR or escalated for a
    human workflow-stage decision.
 5. **Complex workflow decision-gate matrix check**: when the implementation adds
@@ -1069,6 +1140,8 @@ Step 1.3 — Apply `ready-for-regression`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "feature/[branch-slug]" || exit $?
 # Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
 # (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
 # re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
@@ -1092,6 +1165,8 @@ Step 2.2 — Apply `ready-for-human-review`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "feature/[branch-slug]" || exit $?
 # Only after Step 2.1 passes. Helper-applied only (issue #1408): a `refused`
 # verdict means the reviewer verdict or CI is not settled for the live head SHA.
 ./scripts/development-workflow/apply-readiness-labels.sh \
@@ -1747,6 +1822,8 @@ Step 1.3 — Apply `ready-for-regression`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "fix/[branch-slug]" || exit $?
 # Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
 # (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
 # re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
@@ -2061,6 +2138,7 @@ Open a PR targeting `develop`:
 
 **Pre-PR-create base-branch guard (mandatory)**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 if [ -n "${ISSUE_NUMBER:-}" ]; then
   ./scripts/development-workflow/run-nested-artifact-guard.sh \
@@ -2080,6 +2158,7 @@ echo "Base-branch guard passed: backport branch descends from origin/main"
 
 **Post-create base-branch assertion (mandatory)**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr create --draft --base develop \
   --title "chore(hotfix): backport [slug] to develop" \
@@ -2104,7 +2183,9 @@ echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 
 Regardless of whether the backport is an identical cherry-pick or introduces conflict-resolution changes, the following steps are required before the human merges:
 
-1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft.
+1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft,
+   after the [PR Ownership Guard](#pr-ownership-guard) passes with
+   `--expected-branch backport/hotfix/[slug]`.
 
 2. **Run the automated reviewer loop**:
 
@@ -2120,6 +2201,8 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <backport_pr_number> --expected-branch "backport/hotfix/[slug]" || exit $?
    ./scripts/development-workflow/apply-readiness-labels.sh \
      --pr <backport_pr_number> --label ready-for-regression
    ```
@@ -2130,6 +2213,8 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <backport_pr_number> --expected-branch "backport/hotfix/[slug]" || exit $?
    ./scripts/development-workflow/apply-readiness-labels.sh \
      --pr <backport_pr_number> --label ready-for-human-review
    ```
