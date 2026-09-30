@@ -345,7 +345,13 @@ jobs:
             # failure to run the helper keeps the documented WARN-and-continue
             # posture: the guard status below is never masked by label-policy
             # trouble. WORKFLOW_TARGET_GITHUB_REPO points its repo-root
-            # resolution at the target repository.
+            # resolution at the target repository. --branch "$BRANCH" is
+            # required (issue #1837): the helper's ownership guard otherwise
+            # defaults to the branch checked out in its repo root, which here
+            # is $GITHUB_WORKSPACE on the trusted DEFAULT branch, not the PR's
+            # branch — every PR would refuse `ownership-mismatch` without it.
+            # $BRANCH comes from the PR API read above, never from this
+            # checkout.
             if [ "$should_apply_regression_label" != "true" ]; then
               :
             elif ! ensure_regression_label_exists; then
@@ -354,7 +360,7 @@ jobs:
             elif ! refreshed_metadata_matches_current_head; then
               echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
             elif ! ( cd "$GITHUB_WORKSPACE" && WORKFLOW_TARGET_GITHUB_REPO="$REPO" \
-                bash "$GITHUB_WORKSPACE/scripts/development-workflow/apply-readiness-labels.sh" --pr "$PR_NUMBER" --repo "$REPO" --label "$LABEL_NAME" ); then
+                bash "$GITHUB_WORKSPACE/scripts/development-workflow/apply-readiness-labels.sh" --pr "$PR_NUMBER" --repo "$REPO" --branch "$BRANCH" --label "$LABEL_NAME" ); then
               # Exit 1 is the helper refusing (RESULT=refused): live
               # reviewer/CI/head validation did not pass, so the label must not
               # land. Exit 2 escalates (unreadable state). Either way this
