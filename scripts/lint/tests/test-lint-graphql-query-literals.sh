@@ -12,11 +12,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
-case "$GIT_COMMON_DIR" in
-  /*) REPO_ROOT="$(cd "$GIT_COMMON_DIR/.." && pwd -P)" ;;
-  *)  REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)" ;;
-esac
+# Resolve the toplevel of the *current checkout* (worktree or main clone),
+# not the shared main-clone root via --git-common-dir. lint-graphql-query-literals.py
+# and this test are added together in the same branch, so in a linked
+# worktree (this framework's normal dev environment) a --git-common-dir-based
+# resolution would point at the main clone's checkout of `develop`, where
+# neither file exists yet, and every test below would fail for the wrong
+# reason (linter not found) rather than testing the linter itself.
+REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 
 LINTER="$REPO_ROOT/scripts/lint/lint-graphql-query-literals.py"
 TMP_DIR="$(mktemp -d)"
@@ -154,7 +157,35 @@ rm -rf "$TMP_DIR/excl"
 write_fixture "$TMP_DIR/excl/tests/fixture.sh" \
   '#!/usr/bin/env bash' \
   "gh api graphql -f query='query{unbalanced}}'"
+write_fixture "$TMP_DIR/excl/prod.sh" \
+  '#!/usr/bin/env bash' \
+  "gh api graphql -f query='query{ok}'"
 run_test "tests_directory_excluded_from_scan" "pass" "$(run_linter "$TMP_DIR/excl")"
+
+# The exclusion is relative to the scan root: a root that itself lives under
+# a directory named `tests` must still be scanned.
+rm -rf "$TMP_DIR/tests/root"
+write_fixture "$TMP_DIR/tests/root/prod.sh" \
+  '#!/usr/bin/env bash' \
+  "gh api graphql -f query='query{bad}}'"
+run_test "root_under_tests_dir_still_scanned" "fail" "$(run_linter "$TMP_DIR/tests/root")"
+
+# A run that examines no shell file refuses to read as a pass (exit 2).
+rm -rf "$TMP_DIR/empty"
+mkdir -p "$TMP_DIR/empty"
+set +e
+python3 "$LINTER" "$TMP_DIR/empty" >/dev/null 2>&1
+empty_rc=$?
+set -e
+run_test "empty_scan_exits_2" "2" "$empty_rc"
+
+# --- Shell comments are not query literals ----------------------------------
+
+write_fixture "$TMP_DIR/shell_comment.sh" \
+  '#!/usr/bin/env bash' \
+  "# example: gh api graphql -f query='query{" \
+  "gh api graphql -f query='query{ok}'"
+run_test "query_in_shell_comment_ignored" "pass" "$(run_linter "$TMP_DIR/shell_comment.sh")"
 
 # --- Self-check: the real repo tree is currently clean ----------------------
 

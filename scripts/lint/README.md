@@ -187,11 +187,21 @@ test fixtures deliberately construct malformed and regex-shaped `query='...'`
 text to prove the tokenizer, and those are not production `gh api graphql`
 calls.
 
-**Known limitation**: a query fragment held in a variable that is not itself
-named `*query` (e.g. `pr_fields='commits(last:1){...}'` spliced into a larger
-query by concatenation) is treated as an opaque, assumed-balanced blob at the
-splice point rather than independently validated. Name query-fragment
-variables so they end in `query` (or inline them) to bring them into scope.
+Matches on a line whose first non-blank character is `#` (shell comments) are
+not treated as query literals.
+
+**Known limitations** (false-negative surfaces, not defects):
+
+- A query fragment held in a variable that is not itself named `*query` (e.g.
+  `pr_fields='commits(last:1){...}'` spliced into a larger query by
+  concatenation) is treated as an opaque, assumed-balanced blob at the splice
+  point rather than independently validated. Name query-fragment variables so
+  they end in `query` (or inline them) to bring them into scope.
+- Only single-quoted `query='...'` literals are scanned. Double-quoted
+  `query="..."` literals and heredoc-built queries are not; keep new queries in
+  the single-quoted form.
+- An unquoted expansion between segments (`'a'$x'b'`) ends the join, so the
+  head segment alone is checked. Quote the expansion (`'a'"$x"'b'`).
 
 **Usage:**
 
@@ -202,7 +212,9 @@ bash scripts/lint/tests/test-lint-graphql-query-literals.sh
 
 Exit code `0` means no findings; exit code `1` means one or more unbalanced or
 misnested query literals were found; exit code `2` means a given path does not
-exist. Every run prints an `examined=<files>, queries=<count>, findings=<count>`
+exist or the run examined no shell file at all. The `tests/` exclusion is
+evaluated relative to each scan root, and an explicitly named file is always
+scanned. Every run prints an `examined=<files>, queries=<count>, findings=<count>`
 summary line to stderr so a clean run can be told apart from a run that
 silently matched nothing.
 

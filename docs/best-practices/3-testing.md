@@ -93,9 +93,9 @@ Any PR that adds or changes a `gh api graphql` query literal under `scripts/`
 must run that query live against a real GitHub repository or PR at least once
 before the PR is trusted on a green mocked suite alone.
 
-**Why**: `gh` is mocked in this repo's test suite (see
-`docs/best-practices/STACK-SPECIFIC.md` and the workflow test harnesses under
-`scripts/development-workflow/tests/`), and a mocked `gh` accepts any query
+**Why**: `gh` is mocked in this repo's workflow test harnesses under
+`scripts/development-workflow/tests/` (for example
+`test-apply-readiness-labels.sh`), and a mocked `gh` accepts any query
 text — well-formed or not. #1828 shipped a query with one extra closing brace
 in `apply-readiness-labels.sh`; the mocked suite stayed green while GitHub
 rejected the query on every real call, escalating

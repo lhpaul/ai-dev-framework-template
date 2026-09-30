@@ -120,9 +120,23 @@ def well_nested(query: str) -> bool:
     return not stack
 
 
+def in_shell_comment(text: str, index: int) -> bool:
+    """True when `index` sits on a line whose first non-blank char is `#`."""
+    line_start = text.rfind("\n", 0, index) + 1
+    return text[line_start:index].lstrip().startswith("#")
+
+
+def query_starts(text: str) -> list[re.Match[str]]:
+    return [
+        match
+        for match in QUERY_ASSIGNMENT_START.finditer(text)
+        if not in_shell_comment(text, match.start())
+    ]
+
+
 def find_unbalanced_in_text(path: str, text: str) -> list[Finding]:
     findings: list[Finding] = []
-    for match in QUERY_ASSIGNMENT_START.finditer(text):
+    for match in query_starts(text):
         quote_pos = match.end() - 1
         extracted = extract_concatenated_query(text, quote_pos)
         line = text.count("\n", 0, match.start()) + 1
@@ -136,17 +150,22 @@ def find_unbalanced_in_text(path: str, text: str) -> list[Finding]:
 
 
 def count_query_literals(text: str) -> int:
-    return len(QUERY_ASSIGNMENT_START.findall(text))
+    return len(query_starts(text))
 
 
-def is_excluded(path: Path) -> bool:
-    return EXCLUDED_PATH_SEGMENT in f"/{path.as_posix()}/"
+def is_excluded(relative: Path) -> bool:
+    # Evaluated on the path relative to the scan root, so a checkout that
+    # itself lives under a directory named `tests` is not wholly excluded.
+    return EXCLUDED_PATH_SEGMENT in f"/{relative.as_posix()}"
 
 
 def discover_shell_files(root: Path) -> list[Path]:
+    # An explicitly named file is always scanned: the caller asked for it.
     if root.is_file():
-        return [] if is_excluded(root) else [root]
-    return sorted(p for p in root.rglob("*.sh") if not is_excluded(p))
+        return [root]
+    return sorted(
+        p for p in root.rglob("*.sh") if not is_excluded(p.relative_to(root))
+    )
 
 
 def format_findings(findings: list[Finding]) -> str:
@@ -207,6 +226,14 @@ def main() -> int:
     if findings:
         print(format_findings(findings), file=sys.stderr)
         return 1
+
+    if examined == 0:
+        # A run that examined nothing proves nothing; refuse to read as a pass.
+        print(
+            "ERROR: no shell files examined; check the scan path(s).",
+            file=sys.stderr,
+        )
+        return 2
 
     return 0
 
