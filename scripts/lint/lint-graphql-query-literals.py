@@ -137,7 +137,7 @@ def well_nested(query: str) -> bool:
     return not stack
 
 
-WORD_BOUNDARY_BEFORE = " \t\r\n;&|()"
+WORD_BOUNDARY_BEFORE = " \t\r\n;&|()`"
 # `case WORD in` / `esac` count only as the compound command, never as a plain
 # argument such as `echo case` (an unmatched count would stop a `$( )` from
 # closing and silently drop every later query).
@@ -210,11 +210,13 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
     and heredoc bodies is data, not code, so a `query='` there is never a
     literal passed to `gh api graphql`. Command substitutions (`$( ... )`)
     are code again even inside double quotes — most real call sites have the
-    shape `var="$(gh api graphql -f query='...')"`.
+    shape `var="$(gh api graphql -f query='...')"` — and so are legacy
+    backtick substitutions (`` var="`gh api graphql ...`" ``).
     """
     starts: list[tuple[int, int]] = []
-    # Each frame: ["code", paren_depth, case_depth] or ["dq", 0, 0]. The
-    # bottom frame is code. case_depth tracks open `case ... esac` blocks so a
+    # Each frame: ["code", paren_depth, case_depth], ["bt", paren_depth,
+    # case_depth] (a backtick substitution: code that closes on a backtick), or
+    # ["dq", 0, 0]. The bottom frame is code. case_depth tracks open `case ... esac` blocks so a
     # pattern terminator `)` is never mistaken for the `$(` closer.
     stack: list[list] = [["code", 0, 0]]
     pending_heredocs: list[tuple[str, bool]] = []
@@ -233,6 +235,9 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
             elif text.startswith("$(", i):
                 stack.append(["code", 0, 0])
                 i += 2
+            elif c == "`":
+                stack.append(["bt", 0, 0])
+                i += 1
             else:
                 i += 1
             continue
@@ -265,6 +270,12 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
                 continue
         if c == "\\":
             i += 2
+        elif c == "`":
+            if frame[0] == "bt":
+                stack.pop()
+            else:
+                stack.append(["bt", 0, 0])
+            i += 1
         elif c == "\n":
             i += 1
             if pending_heredocs:
@@ -296,8 +307,8 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
                 frame[1] -= 1
             elif frame[2] > 0:
                 pass  # a `case` pattern terminator, not the `$(` closer
-            elif len(stack) > 1:
-                stack.pop()
+            elif frame[0] == "code" and len(stack) > 1:
+                stack.pop()  # closes the enclosing `$(`
             i += 1
         elif text.startswith("<<<", i):
             # Here-string: the operand is an ordinary word, lexed normally.

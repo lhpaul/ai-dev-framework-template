@@ -203,8 +203,10 @@ calls.
   double-quoted strings, `#` comments (whole-line or trailing), other
   single-quoted and `$'...'` strings, and heredoc bodies as data, so
   `echo "gh api graphql -f query='...'"` or `cmd # query='...'` is ignored. A
-  command substitution is code again even inside double quotes, so the common
-  real shape `var="$(gh api graphql -f query='...')"` is still checked.
+  command substitution (`$( )` or legacy backticks) is code again even inside
+  double quotes, so the common real shape `var="$(gh api graphql -f query='...')"`
+  is still checked. Arithmetic `$(( ))` / `(( ))` is skipped so a left shift is
+  never read as a heredoc, and any valid heredoc delimiter is recognised.
 
 **Known limitations** (false-negative surfaces, not defects):
 

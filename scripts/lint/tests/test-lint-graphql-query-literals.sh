@@ -302,6 +302,19 @@ write_fixture "$TMP_DIR/tabbed_heredoc.sh" \
   "gh api graphql -f query='query{a{b}}}'"
 run_test "tab_stripped_heredoc_terminator_found" "fail" "$(run_linter "$TMP_DIR/tabbed_heredoc.sh")"
 
+# Legacy backtick substitutions are executed code, inside double quotes too.
+# shellcheck disable=SC2016 # literal backticks are the fixture content
+write_fixture "$TMP_DIR/backtick_in_dq.sh" \
+  '#!/usr/bin/env bash' \
+  "result=\"\`gh api graphql -f query='query{a{b}}}'\`\""
+run_test "backtick_substitution_in_double_quotes_caught" "fail" "$(run_linter "$TMP_DIR/backtick_in_dq.sh")"
+
+write_fixture "$TMP_DIR/backtick_then_query.sh" \
+  '#!/usr/bin/env bash' \
+  'now="`date`"' \
+  "gh api graphql -f query='query{a{b}}}'"
+run_test "backtick_substitution_does_not_drop_following_query" "fail" "$(run_linter "$TMP_DIR/backtick_then_query.sh")"
+
 # Real call-site shapes that do not spell `gh api graphql` on one command
 # are still recognised.
 write_fixture "$TMP_DIR/wrapper_form.sh" \
