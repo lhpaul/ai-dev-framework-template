@@ -126,7 +126,9 @@ case "$EXPECTED_BRANCH" in
   *[[:space:]]*) die_usage "--expected-branch must not contain whitespace" ;;
 esac
 case "$REPO_SLUG" in
-  ''|*/*) ;;
+  '') ;;
+  */*/*|/*|*/|*[[:space:]]*) die_usage "--repo must be in owner/name form" ;;
+  */*) ;;
   *) die_usage "--repo must be in owner/name form" ;;
 esac
 case "$EXPECTED_HEAD_REPO" in

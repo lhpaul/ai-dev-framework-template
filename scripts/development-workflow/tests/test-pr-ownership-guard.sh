@@ -320,8 +320,10 @@ for bad_pr in abc 0 07 -5; do
   out="$(guard_output --pr "$bad_pr" --expected-branch spec/13-own-item)"
   run_test "bad_pr_${bad_pr}_usage_exit_2" "2" "$(status_code "$out")"
 done
-out="$(guard_output --pr 53 --repo not-a-slug)"
-run_test "bad_repo_usage_exit_2" "2" "$(status_code "$out")"
+for bad_repo in not-a-slug a/b/c /repo owner/ 'own er/repo'; do
+  out="$(guard_output --pr 53 --expected-branch spec/13-own-item --repo "$bad_repo")"
+  run_test "bad_repo_usage_exit_2" "2" "$(status_code "$out")"
+done
 for bad_repo in solo a/b/c /repo owner/; do
   out="$(guard_output --pr 53 --expected-branch spec/13-own-item --expected-head-repo "$bad_repo")"
   run_test "bad_expected_head_repo_usage_exit_2" "2" "$(status_code "$out")"
