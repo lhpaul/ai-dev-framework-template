@@ -3280,8 +3280,11 @@ bugbot_disabled_preflight_applies_for_head() {
                 (.name == $name)
               )
           ]
-          | dedupe_status_check_rollup
-          | sort_by(.started_at) | last
+          # Every Cursor-app run is one logical Bugbot check: give them one
+          # key so the shared recency rule (a queued re-run is newest, #1559)
+          # picks the winner, not a started_at sort that puts it first.
+          | map(.name = "cursor-bugbot")
+          | dedupe_status_check_rollup | last
           | ((.status // "") + " " + (.conclusion // ""))
         ' 2>/dev/null
   )"
@@ -3732,8 +3735,9 @@ run_bugbot_review() {
                    (.name == $name)
                  )
              ]
-             | dedupe_status_check_rollup
-             | sort_by(.started_at) | last) as $run
+             # One logical Bugbot check (see bugbot_disabled_preflight_applies_for_head).
+             | map(.name = "cursor-bugbot")
+             | dedupe_status_check_rollup | last) as $run
             | (($run.status // "") + " " + ($run.conclusion // "") + " " + ($run.started_at // "")),
               ($run.output.summary // "")
           ' 2>/dev/null
