@@ -21,12 +21,37 @@
 
 ## Verification Log
 
-> Record reproducible plan-time verification commands that influenced scope, counts, or file lists. Include repo revision and concrete results.
+> Record reproducible plan-time verification commands that influenced scope, counts, or file lists. Include repo revision and concrete results. This is also
+> where firing-rule evidence required by
+> [`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md) lives:
+> Rule 3 count derivations (command, revision, counted population), Rule 4
+> existence searches (search terms, places searched, revision), and Rule 5
+> consumer enumerations (recorded search, revision, outcome at each consumer),
+> whenever those rules fire.
 
 | Check                       | Command / query              | Result                |
 | --------------------------- | ---------------------------- | --------------------- |
 | Repo revision               | `git rev-parse --short HEAD` | [short SHA]           |
 | [Pattern/search validation] | `[exact command]`            | [count and key paths] |
+
+---
+
+## Factual claim evidence (optional — delete if not applicable)
+
+> Holds evidence for firing rules whose records do not fit naturally in the
+> Verification Log table: Rule 1 sampling/enumeration records, and Rule 6
+> scoped-obligation statements. Delete this section when neither rule fires.
+
+**Rule 1 — sampling or enumeration record** (delete if Rule 1 does not fire):
+producer; population and window sampled (or cited closure provenance and a
+single reproducing command, for the enumeration escape hatch); occurrences
+examined; distinct variants observed; saturation status; per-occurrence
+locators; adequacy rationale; and, when the design binds to a fixed set, the
+cited producer contract fixing that set.
+
+**Rule 6 — scoped obligations** (delete if Rule 6 does not fire): for each
+conditional obligation, the governed scope (edges, revisions, call sites, or
+input classes) and the discharge point (the step or site that checks it).
 
 ---
 
@@ -92,6 +117,15 @@ linked resource, artifact owner, or canonical configuration value].
 
 1. [Scenario 1 — maps to Acceptance Criterion N]
 2. [Scenario 2]
+
+**Coverage intent**: state the coverage classes each group of projected test
+scaffolding provides, and why the projected volume is proportionate to the
+deliverable. Mark any enumeration with the exact literal
+`**Binding enumeration**` only when the implementer must not substitute a
+coverage-equivalent set at implementation time; an unmarked enumeration is
+indicative by default. See
+[`test-scope-proportionality.md`](../test-scope-proportionality.md)
+for the full rule.
 
 **Smoke test runbook**: `docs/testing/[section]/[slug].smoke-test.md`
 

@@ -169,6 +169,26 @@ scripts/development-workflow/component-release-evidence.sh \
   --output /path/to/component-release-evidence.json
 ```
 
+After the product release completes, re-render the evidence so it binds
+`--component-tag` and `--component-version` before attaching it to a delivery
+bundle (otherwise `update-component` fails with `component_tag_unbound`):
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "<tracker-item-or-epic>" \
+  --component-tag "${COMPONENT_TAG:?}" \
+  --component-version "${VERSION:?}" \
+  --output /path/to/component-release-evidence.json
+```
+
 When the component release belongs to an open hub-owned delivery bundle, attach
 that evidence to the bundle after the product release evidence file exists. The
 delivery bundle remains hub-owned; this handoff must not change the product
@@ -339,7 +359,7 @@ Apply only to the **release PR that targets `main`**. Do **not** apply the regre
 
 **No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into the resolved release base. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
 
-Note: release PRs use a simplified readiness flow (the CI loop step applies `ready-for-human-review` directly after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
+Note: release PRs use a simplified readiness flow (the CI loop step routes `ready-for-human-review` through `apply-readiness-labels.sh` after CI is green, revalidating live CI and the current head SHA like every other readiness surface) and do not run Protocol 91's Step 8a/8b label checklist.
 
 ### 7.1 Resolve the production PR number
 
@@ -365,13 +385,30 @@ If any artifact is missing or incorrect, fix it on the release branch, push, and
 **Downstream script-bug review**: Before labeling the production PR
 `ready-for-human-review`, search for open workflow-framework GitHub issues that
 were filed from downstream sync retrospectives. When `issue_tracker.provider` is
-`github_projects`, use the project Type field instead of the legacy `workflow`
-label:
+`github_projects`, use `list_open_framework_items.sh` — the only supported
+entrypoint for this read (#1583) — instead of the legacy `workflow` label:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
+./scripts/development-workflow/list_open_framework_items.sh
 ```
+
+Read `FRAMEWORK_ITEMS_LOOKUP_STATUS` (exact key; the third key,
+`FRAMEWORK_ITEMS_JSON`, has no `LOOKUP_` segment):
+
+- `ok` or `empty` — the lookup completed; review `FRAMEWORK_ITEMS_JSON`
+  (empty on `empty`) as the open-item list.
+- `unavailable` — the lookup could not be performed. **Continue** the
+  release flow; state in this step's output that the lookup was not
+  performed and why (`FRAMEWORK_ITEMS_LOOKUP_REASON`); do **not** record
+  the downstream script-bug review as satisfied — it did not run.
+
+In a **consumer repository**, `list_open_framework_items.sh` delegates to
+the unchanged `list_open_workflow_type_issues` (Workflow-only filtering). In
+a **framework-mode repository**, it returns every open, non-terminal board
+item regardless of Type — because this template repository refuses to file
+new `Workflow`-typed items (#1583), so a Workflow-only filter would
+silently stop discovering this repository's own open framework work.
 
 When the provider is `github_issues`, use the repository's configured
 classification convention. Older repositories may still use:
@@ -393,10 +430,11 @@ configured real regression checks, or an explicitly enabled placeholder, can run
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-gh pr edit <pr_number> --add-label "ready-for-regression"
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
 
-This mirrors Step 7b in `91` for implementation PRs, but scoped here to the release PR targeting `main`.
+This mirrors Step 7b in `91` for implementation PRs, but scoped here to the release PR targeting `main`. The helper classifies `release/*` (and `hotfix/*`) heads as non-implementation, so it skips the reviewer leg entirely — no reviewer check run is required — while still enforcing the CI leg; `ready-for-regression` permits pending non-reviewer checks (the label triggers the regression workflow), so a freshly opened release PR is not deadlocked. Treat `RESULT=refused` as a stop: fix or wait per the printed `REASON`, then re-run. The release PR's content was already reviewer-gated on each constituent implementation PR.
 
 ### 7.4 CI loop
 
@@ -407,9 +445,9 @@ Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/reg
 ./scripts/development-workflow/pr-ci-loop.sh <pr_number>
 ```
 
-| Result    | Action                                                                                                                                                            |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `green`   | Apply `ready-for-human-review` per [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the production PR is ready for human merge review. |
+| Result    | Action                                                                                                                                                                                                                             |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `green`   | Route `ready-for-human-review` through the readiness helper — never a direct label edit (see [`92-pr-readiness-signal-protocol.md`](92-pr-readiness-signal-protocol.md); the helper revalidates live CI and the current head SHA immediately before applying the label): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-human-review`. The production PR is then ready for human merge review. |
 | `red`     | Apply `needs-fixes`, fix, push, then return to the artifact validation step (§7.2) and repeat through the CI loop step (§7.4).                                                        |
 | `timeout` | Escalate to a human; do not apply `ready-for-human-review`.                                                                                                       |
 

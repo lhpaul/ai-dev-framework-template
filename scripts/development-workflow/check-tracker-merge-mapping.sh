@@ -70,7 +70,8 @@ get_target_status() {
 }
 
 # ---------------------------------------------------------------------------
-# Expected mappings (BR-1, BR-2, BR-3, BR-9)
+# Expected mappings (BR-1, BR-2, BR-3, BR-9), resolved from the canonical
+# tracker-status mapping (docs/workflow/development-workflow/tracker-status-mapping.md)
 # ---------------------------------------------------------------------------
 check_mapping() {
   local prefix="$1"
@@ -90,12 +91,23 @@ echo "Checking branch-type → tracker-status mappings in:"
 echo "  $WORKFLOW_FILE"
 echo ""
 
-check_mapping "spec"                "Spec Ready"
-check_mapping "implementation-plan" "Plan Ready"
-check_mapping "feature"             "Merged"
-check_mapping "fix"                 "Merged"
-check_mapping "refactor"            "Merged"
-check_mapping "hotfix"              "Merged"
+# Expected values come from the canonical mapping in workflow-lib.sh
+# (workflow_tracker_status_for_event merged <stage>, issue #1564) so this
+# check cannot drift from the mapping every other surface resolves through.
+expected_merge_status() {
+  local prefix="$1" stage
+  stage="$(workflow_tracker_stage_for_branch "${prefix}/0-probe")" || return 1
+  workflow_tracker_status_for_event merged "$stage"
+}
+
+for prefix in spec implementation-plan feature fix refactor hotfix; do
+  if ! expected="$(expected_merge_status "$prefix")" || [ -z "$expected" ]; then
+    echo "ERROR: canonical mapping has no merged status for branch '$prefix/*'"
+    ERRORS=$((ERRORS + 1))
+    continue
+  fi
+  check_mapping "$prefix" "$expected"
+done
 
 echo ""
 # Graduation heads must invoke closeout fallback rather than silent untracked skip.
@@ -106,6 +118,60 @@ if grep -Eq 'BRANCH_TYPE="graduation"|branch_type=graduation' "$WORKFLOW_FILE" \
 else
   echo "ERROR: branch 'develop-*' → expected graduation closeout fallback wiring (BRANCH_TYPE=graduation + graduation-closeout-from-merged-pr.sh)"
   ERRORS=$((ERRORS + 1))
+fi
+
+# ---------------------------------------------------------------------------
+# Tracker-configuration gate (issue #1715)
+#
+# `github-token` is a REQUIRED input of actions/github-script, so an empty
+# GH_PROJECT_TOKEN aborts that action before any guard inside its `script:`
+# body can run. Every step that consumes the secret must therefore be gated on
+# the separate "Check tracker configuration" step, which exposes `configured`
+# as a plain step output (the `secrets` context is unavailable in step-level
+# `if:` conditions).
+#
+# Stated fail-closed: when the workflow references secrets.GH_PROJECT_TOKEN at
+# all, the gate step must exist AND every consuming step must be gated. The
+# "no reference" case is reported explicitly rather than passing silently, so
+# an empty set is never treated as satisfied.
+# ---------------------------------------------------------------------------
+if grep -Fq 'secrets.GH_PROJECT_TOKEN' "$WORKFLOW_FILE"; then
+  if grep -Eq '^[[:space:]]*id:[[:space:]]*config[[:space:]]*$' "$WORKFLOW_FILE" \
+    && grep -Fq 'configured=true' "$WORKFLOW_FILE" \
+    && grep -Fq 'configured=false' "$WORKFLOW_FILE"; then
+    echo "OK: tracker-configuration gate step is present"
+  else
+    echo "ERROR: workflow uses secrets.GH_PROJECT_TOKEN but has no 'id: config' gate step emitting configured=true/false"
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  # Report every token-consuming step that is not gated. The gate step itself
+  # reads the secret to decide, so it is exempt by design.
+  UNGATED_STEPS="$(awk '
+    /^[[:space:]]*-[[:space:]]*name:[[:space:]]/ {
+      if (in_step && uses_token && !gated && !is_gate) print step_name
+      in_step = 1; uses_token = 0; gated = 0; is_gate = 0
+      step_name = $0
+      sub(/^[[:space:]]*-[[:space:]]*name:[[:space:]]*/, "", step_name)
+      next
+    }
+    in_step && /^[[:space:]]*id:[[:space:]]*config[[:space:]]*$/ { is_gate = 1 }
+    in_step && /secrets\.GH_PROJECT_TOKEN/ { uses_token = 1 }
+    in_step && /steps\.config\.outputs\.configured[[:space:]]*==[[:space:]]*.true./ { gated = 1 }
+    END { if (in_step && uses_token && !gated && !is_gate) print step_name }
+  ' "$WORKFLOW_FILE")"
+
+  if [ -z "$UNGATED_STEPS" ]; then
+    echo "OK: every step consuming GH_PROJECT_TOKEN is gated on the configuration check"
+  else
+    while IFS= read -r ungated_step; do
+      [ -z "$ungated_step" ] && continue
+      echo "ERROR: step '${ungated_step}' consumes secrets.GH_PROJECT_TOKEN without gating on steps.config.outputs.configured == 'true'"
+      ERRORS=$((ERRORS + 1))
+    done <<< "$UNGATED_STEPS"
+  fi
+else
+  echo "OK: workflow does not reference secrets.GH_PROJECT_TOKEN — configuration gate not applicable"
 fi
 
 # Checkout for graduation closeout requires contents: read when permissions: is explicit.

@@ -81,7 +81,7 @@ MOCK
   echo
 }
 
-positives=(source_declaration unspecified_step spec_traceability ac_test_coverage phase_ordering dependency_state reversal_risk)
+positives=(source_declaration unspecified_step spec_traceability ac_test_coverage phase_ordering dependency_state reversal_risk test_scope_proportionality)
 negatives=(declared_addition irreversible_declared all_falsifying_tests refactor_brief)
 
 if [ -n "${SMOKE_FIXTURE_ONLY:-}" ]; then

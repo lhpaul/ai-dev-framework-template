@@ -32,7 +32,7 @@ Before starting, read:
 - `docs/project/3-software-architecture.md` — architecture constraints
 - The feature brief. If you have an issue tracker configured, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` to get the current brief.
 
-**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
+**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md)). If you invoke this protocol standalone, mirror the same status progression with `scripts/development-workflow/tracker-status-for.sh`.
 
 **Spec-dispatch context**: When the Work Item Runner or Portfolio Orchestrator
 provides output from `scripts/development-workflow/spec-dispatch-context.sh`,
@@ -174,6 +174,7 @@ rationale for every `Not applicable` item:
 - Internal consistency: Checked - terminology and status labels are consistent.
 - Behavioral guarantees: Not applicable - this spec does not introduce guarantees beyond ACs.
 - Complex workflow decision-gate matrix: Not applicable - this spec does not add or modify workflow decision-gate behavior.
+- Matrix coherence preflight: Not applicable - no stateful contract.
 - Reviewer-risk categories: Checked - API surface, concurrency, snapshot semantics, edge cases, and template placeholders reviewed.
 ```
 
@@ -197,6 +198,40 @@ Before the PR is opened, verify:
   not change decision-gate behavior, record a short not-applicable rationale.
   If an expected input, outcome, example, or mirror surface is marked not
   applicable, include the rationale in the matrix row.
+- Matrix coherence preflight: when the spec contains a decision matrix, state
+  table, lifecycle, precedence rules, or similarly stateful contract, run this
+  six-check audit before the PR is first pushed (before the reviewer loop is
+  ever entered):
+  1. **Overlapping rows** — can two rows match the same input combination, and
+     if so, does the document state which wins?
+  2. **Missing states** — for every input combination the surrounding prose
+     admits, is there a row/branch, including malformed or unknown input
+     handling?
+  3. **Precedence / order ambiguity** — when rules or rows fire together, is
+     the ordering stated?
+  4. **Malformed / unknown input handling** — is the outcome defined for
+     missing, empty, invalid, or unrecognized inputs?
+  5. **Stale vs current evidence** — do the rules say which evidence
+     revision/currency governs, when recency decides?
+  6. **Terminal vs waiting vs escalation outcomes** — does every path end in
+     one of the stated outcome classes, with no gap where the loop could
+     neither proceed, wait, nor escalate?
+
+  This is the canonical, single normative definition of the six-check audit;
+  `review-doctrine.md`'s `Criteria/matrix mismatch` and `Trigger ambiguity`
+  patterns cover checks 1, 2, and 4, and its `Stateful-contract outcome gaps`
+  pattern covers checks 3, 5, and 6. Record the result as a `Matrix coherence
+  preflight` row in the Document Quality Gate log: `Checked` with a one-line
+  audit summary naming each check and its pass/fail, or `Not applicable — no
+  stateful contract` with the rationale. If the spec has no stateful contract,
+  no ceremony is added beyond that one reasoned row.
+
+  A failed check blocks the push: fix the matrix (or its governing prose),
+  re-run the audit, and push only when all six checks pass. A `Checked` row
+  is recorded only for a passing audit. If a failed check cannot be resolved
+  without a product or human decision, record the row as `Checked — gaps
+  found` listing each failed check, and stop for that decision instead of
+  entering the reviewer loop.
 - Reviewer-risk categories: common high-signal reviewer concerns are checked:
   API-surface completeness, concurrency correctness, single-snapshot or
   consistency semantics, missing edge cases, vague actors/triggers, untestable
@@ -326,7 +361,48 @@ If no blocking human decision remains:
 5. **Board membership check (when a tracker issue ID is present)**: If an issue number is available (i.e., the workflow uses a configured issue tracker and an issue ID was provided or created), call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation. Skip this step entirely when no issue ID is present (no-tracker workflows).
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
-8. Push: `git push -u origin spec/[branch-slug]`
+8. Push with an explicit refspec so the destination never depends on local
+   `push.default`, then verify the remote head matches local before opening the
+   PR (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+
+   # The push must send THIS branch. A checkout left on another branch would push
+   # that one under this branch's name (issue #1593).
+   if [ "$(git rev-parse --abbrev-ref HEAD)" != "spec/[branch-slug]" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch spec/[branch-slug]."
+     echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not spec/[branch-slug]."
+     echo "Human action: switch this checkout to spec/[branch-slug] and re-run the push step."
+     exit 1
+   fi
+
+   # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+   # block before the verification below, so the contractual stop would never print.
+   if ! git push origin "spec/[branch-slug]:spec/[branch-slug]"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch spec/[branch-slug]."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+
+   # Verify the push actually landed: a refused or mis-aimed push must not pass as
+   # success (issue #1593). The refusal message is multi-line and can be truncated
+   # to nothing by shell-output filtering.
+   LOCAL_SHA=$(git rev-parse HEAD)
+   REMOTE_SHA="$(git ls-remote origin "refs/heads/spec/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch spec/[branch-slug] and its pull request."
+     echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+     echo "Human action: check the branch upstream and push permissions, re-run"
+     echo "  git push origin \"spec/[branch-slug]:spec/[branch-slug]\", and confirm the remote head matches before continuing."
+     exit 1
+   fi
+   ```
 9. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
    mode when a positive numeric issue number is available:
 
@@ -350,6 +426,18 @@ If no blocking human decision remains:
    - For complex workflow decision-gate specs: the consistency matrix or a
      pointer to it, using the canonical fields from the Document Quality Gate
      above; for non-gate specs, the not-applicable rationale is enough
+   - Write the body to a collision-proof file in a private scratch directory
+     (for example `pr-body-<item>-<pid>.md` under `mktemp -d` or the
+     orchestrator-assigned scratch directory), never a shared generic filename
+     a sibling agent can overwrite
+   - After the PR exists, mirror the `Document Quality Gate` log as a PR
+     comment: a description can be silently overwritten; a comment cannot
+   - Before any later `gh pr edit`, `gh pr comment`, `gh pr ready`,
+     `gh pr close`, or label change that addresses this PR by number, run
+     `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
+     --expected-branch "spec/[branch-slug]"` and mutate only on exit 0
+     (Protocol 03 [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard);
+     in `workflow_hub`, add `--repo <hub-owner/name>`)
 11. Return the branch + PR details to the **Work Item Runner**
 
 ---
@@ -358,7 +446,7 @@ If no blocking human decision remains:
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- Run the internal spec review gate (`spec-reviewer` / `01-review-spec-protocol.md`) on the draft PR
+- Run the internal spec review gate (`spec-reviewer` / `01-review-spec-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
 - Apply `ready-for-human-review` and move the tracker to **Spec in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated

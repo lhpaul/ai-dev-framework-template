@@ -137,6 +137,13 @@ run_test "bad_identity_flags_field" "true" "$(jq -r '.scenario_results[] | selec
 run_contains "shell_output_status" "ADOPTION_STATUS=validated" "$(cat "$TMP_ROOT/valid.env")"
 run_contains "shell_output_history" "HISTORICAL_NO_REWRITE=True" "$(cat "$TMP_ROOT/valid.env")"
 
+# T21: trust_class attestation
+run_test "T21_trust_class_json" "attestation" "$(jq -r '.trust_class' "$TMP_ROOT/valid.json")"
+run_contains "T21_trust_class_shell" "TRUST_CLASS=attestation" "$(cat "$TMP_ROOT/valid.env")"
+
+# T22: garbage release_contract still blocked (regression guard)
+run_test "T22_garbage_release_contract_blocked" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/garbage-evidence.json")"
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAILURES: $FAIL_COUNT"
   exit 1

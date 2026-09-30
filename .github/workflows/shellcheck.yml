@@ -10,12 +10,14 @@ on:
       - develop-**
       - main
     paths:
-      - 'scripts/development-workflow/**/*.sh'
+      - 'scripts/**/*.sh'
       - 'scripts/lint/workflow-shell-guard-lint.py'
       - 'scripts/lint/tests/test-workflow-shell-guard-lint.sh'
       - 'scripts/lint/workflow-shell-snippet-lint.py'
       - 'scripts/lint/tests/test-workflow-shell-snippet-lint.sh'
       - 'scripts/lint/review-doctrine-lint.sh'
+      - 'scripts/lint/lint-graphql-query-literals.py'
+      - 'scripts/lint/tests/test-lint-graphql-query-literals.sh'
       - 'docs/workflow/**'
       - 'docs/best-practices/**'
       - '.agents/skills/**'
@@ -53,6 +55,12 @@ jobs:
 
       - name: Run ShellCheck on review doctrine linter
         run: shellcheck --severity=warning scripts/lint/review-doctrine-lint.sh
+
+      - name: Run GraphQL query literal lint tests
+        run: bash scripts/lint/tests/test-lint-graphql-query-literals.sh
+
+      - name: Lint gh api graphql query literals under scripts/
+        run: python3 scripts/lint/lint-graphql-query-literals.py scripts
 
       - name: Run workflow shell guard lint tests
         run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh

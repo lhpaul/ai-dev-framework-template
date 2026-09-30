@@ -19,7 +19,7 @@ Before starting, read:
 - **Project documentation**: Scan `docs/` (e.g. `docs/project/`, `docs/best-practices/`, `AGENTS.md`, and any feature- or domain-specific docs) so the plan can explicitly list which of these need updates after implementation.
 - If an issue tracker exists for this item, follow `docs/workflow/development-workflow/integrations/issue-tracker.md` for expectations while the work item is entering **Writing Plan** (Full Pipeline: after spec is merged; Refactor: directly from Backlog).
 
-**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
+**Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Plan** before dispatch, **Plan in Review** when the PR is human-ready, and **Plan Ready** only after merge (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md)). If you invoke this protocol standalone, mirror the same status progression with `scripts/development-workflow/tracker-status-for.sh`.
 
 **Repository mode ownership**: Resolve repository mode before writing or
 reviewing plan artifacts. Missing mode or explicit `single_repo` means the
@@ -180,11 +180,48 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
 - **Explicit freeze exception**: You may copy a fixed enumeration only when the spec explicitly freezes scope to a named subset; quote that spec section in the plan.
 - **Verification Log required**: Every plan must include a reproducible Verification Log (command/query, repo SHA, and resulting counts/paths that drive scope statements).
 - **Changelog fragment literal format**: When the Implementation Order includes a literal changelog fragment body for the developer to copy, it must follow the project's `**Bold Title** (#N):` bullet format (e.g., `- **Fix tech-lead CHANGELOG format** (#226): ...`). Never use conventional-commit format (`fix(scope): message`) in a changelog literal — that format is for git commit messages, not release notes. The impl agent will copy the literal verbatim; a wrong format wastes a reviewer cycle.
+- **Plan authoring rigor**: Read
+  [`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md) before
+  writing Layer-by-Layer changes. It states six portable rules (Rule 1
+  sampling an external output distribution; Rule 2 one normative statement
+  per fact; Rule 3 counts of codebase artifacts; Rule 4 independent
+  verification of existence claims; Rule 5 expectations at the composed call
+  site; Rule 6 a conditional obligation names its scope) that apply to every
+  plan this protocol produces, including Refactor / no-spec plans. Record
+  firing-rule evidence in the plan itself — the Verification Log and/or the
+  template's optional "Factual claim evidence" subsection — never only in PR
+  comments. Rule 2 fires on every non-empty plan; record it Not applicable
+  only for an essentially empty plan.
 - **Verification command simplicity**: Verification steps in Implementation Order steps must be simple and human-readable. Follow these rules:
   - Prefer prose assertions ("confirm the output lists only the renamed files") over exact file counts or byte counts.
   - Avoid multi-flag grep one-liners that are difficult to verify by reading (e.g., complex exclusion scopes, self-referencing exclusion globs, chained pipes with hard-coded counts).
   - For mass-rename or substitution operations: include an explicit "run the command and confirm the output matches expectations" sanity check rather than prescribing the exact expected count — counts go stale as the repo evolves and breed fix commits when reviewers find mismatches.
   - A verification step is correct if a developer can execute it, read the output, and confidently determine pass/fail without consulting an external reference.
+- **Test-scope proportionality (authoring default)**: when the plan projects
+  test scaffolding (fixture manifests, proof-cycle lists, case tables,
+  scenario enumerations), express **coverage intent** — the classes of
+  behavior and input that must be exercised — rather than only a literal
+  list. When a count is given, say why that number is enough, and mark the
+  enumeration `**Binding enumeration**` (the exact literal, on or
+  immediately above the line that introduces it) only when the implementer
+  must not substitute a coverage-equivalent set; otherwise it is indicative
+  by default. See
+  [`test-scope-proportionality.md`](../test-scope-proportionality.md) for
+  the full rule. This rule and the **Pattern completeness checks** /
+  **Explicit freeze exception** bullets above govern different axes: those
+  two bound what the plan must cover (source to plan — did the plan account
+  for everything the spec or brief implies); this one bounds how literally
+  the plan's own enumeration binds the implementer (plan to
+  implementation — must the delivered set match the plan's list exactly).
+  The two are not in conflict.
+- **Gate B self-check**: before committing the plan, apply the advisory
+  test-scope sanity signal from
+  [`test-scope-proportionality.md`](../test-scope-proportionality.md) (Gate
+  B) to your own plan: does the projected test scaffolding exceed the size
+  of the deliverable it protects, or does a prose-only/documentation-only
+  deliverable propose a custom parser, scanner, or matcher to validate it?
+  If either is true, state why the scaffolding is proportionate or reduce
+  it. This is advisory only; do not add a Document Quality Gate row for it.
 
 ### Executable workflow shell snippets
 
@@ -438,6 +475,15 @@ If no blocking human decision remains:
 
    Fix all inconsistencies found before moving to the lint check. Do not proceed to commit with known cross-section contradictions.
 
+   - **Matrix coherence preflight**: this check also extends to the plan's own
+     stateful contracts — a decision matrix, state table, lifecycle, or
+     precedence-rule set the plan itself defines — and, for Refactor items, to
+     the work item brief. When the plan or brief contains a stateful contract,
+     run the same six-check audit defined in Protocol 01's Document Quality
+     Gate section ("Matrix coherence preflight", the canonical six-check
+     definition) before committing. Record the result as a `Matrix coherence
+     preflight` row in the Document Quality Gate log below.
+
 7. **Document Quality Gate (mandatory — do not skip)**:
 
    Run this gate after the cross-section consistency self-check and before
@@ -456,8 +502,34 @@ If no blocking human decision remains:
    - Implementation-order consistency: Checked - file list and order agree.
    - Verification support: Checked - broad claims cite Verification Log evidence.
    - Complex workflow decision-gate matrix: Not applicable - this plan does not add or modify workflow decision-gate behavior.
+   - Matrix coherence preflight: Not applicable - no stateful contract in the plan or brief.
    - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
+
+   ### Plan authoring rigor — per-rule outcome record
+
+   Plan revision: `<git rev-parse --short HEAD of plan branch>`
+
+   | Rule | Outcome | Rationale / first external inspection finding |
+   | --- | --- | --- |
+   | Rule 1 | Not applicable | No design depends on external free-text output. |
+   | Rule 2 | Satisfied | Single assertion per fact; see Verification Log. |
+   | … | … | … |
    ```
+
+   The per-rule outcome record documents that:
+
+   <!-- markdown-heuristic-disable COUNT001 -->
+   - All six rules appear exactly once.
+   - Outcomes use the three display labels only (`Satisfied`, `Not applicable`,
+     `Unsatisfied`), per
+     [`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md).
+   - `Not applicable` rows include a one-line trigger rationale.
+   - Rows for Rule 1 external citations (contract, manifest, notice, protected
+     artifact) include the first-inspecting round's finding when applicable.
+   - Authors refresh the record whenever plan text changes; the revision SHA
+     must match the PR head before `ready-for-human-review`.
+   - These obligations apply to every Protocol 02 plan, including Refactor /
+     no-spec work items — there is no bypass when a product spec is absent.
 
    Before the PR is opened, verify:
 
@@ -480,6 +552,13 @@ If no blocking human decision remains:
      decision-gate behavior, record a short not-applicable rationale. If an
      expected input, outcome, example, or mirror surface is marked not
      applicable, include the rationale in the matrix row.
+   - Matrix coherence preflight: when the plan's own stateful contract or, for
+     Refactor items, the work item brief contains a decision matrix, state
+     table, lifecycle, or precedence rules, the six-check audit from Step 6 was
+     run and the Document Quality Gate log carries a `Matrix coherence
+     preflight` row: `Checked` with a one-line audit summary naming each check
+     and its pass/fail, or `Not applicable — no stateful contract` with the
+     rationale.
    - Parser/API/concurrency checklist completeness: when parser-risk,
      API-surface, single-snapshot or consistency-semantics, or
      concurrent-event-source signals apply, the required checklist sections are
@@ -514,10 +593,52 @@ If no blocking human decision remains:
 
 9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 10. Commit: `docs: add implementation plan for [feature-name]`
-11. Push: `git push -u origin implementation-plan/[branch-slug]`
+11. Push with an explicit refspec so the destination never depends on local
+    `push.default`, then verify the remote head matches local before opening the
+    PR (issue #1593):
+
+    <!-- workflow-shell-contract: bash-zsh -->
+    ```bash
+    set -euo pipefail
+
+    # The push must send THIS branch. A checkout left on another branch would push
+    # that one under this branch's name (issue #1593).
+    if [ "$(git rev-parse --abbrev-ref HEAD)" != "implementation-plan/[branch-slug]" ]; then
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
+      echo "Item: branch implementation-plan/[branch-slug]."
+      echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not implementation-plan/[branch-slug]."
+      echo "Human action: switch this checkout to implementation-plan/[branch-slug] and re-run the push step."
+      exit 1
+    fi
+
+    # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+    # block before the verification below, so the contractual stop would never print.
+    if ! git push origin "implementation-plan/[branch-slug]:implementation-plan/[branch-slug]"; then
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
+      echo "Item: branch implementation-plan/[branch-slug]."
+      echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+      echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+      exit 1
+    fi
+
+    # Verify the push actually landed: a refused or mis-aimed push must not pass as
+    # success (issue #1593). The refusal message is multi-line and can be truncated
+    # to nothing by shell-output filtering.
+    LOCAL_SHA=$(git rev-parse HEAD)
+    REMOTE_SHA="$(git ls-remote origin "refs/heads/implementation-plan/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+      echo "STOP: guardrail 'push_verification_failed' halted this run."
+      echo "Item: branch implementation-plan/[branch-slug] and its pull request."
+      echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+      echo "Human action: check the branch upstream and push permissions, re-run"
+      echo "  git push origin \"implementation-plan/[branch-slug]:implementation-plan/[branch-slug]\", and confirm the remote head matches before continuing."
+      exit 1
+    fi
+    ```
 12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
     mode when a positive numeric issue number is available:
 
+    <!-- workflow-shell-contract: bash-zsh -->
     ```bash
     ./scripts/development-workflow/run-nested-artifact-guard.sh \
       --mode pre-pr \
@@ -537,6 +658,18 @@ If no blocking human decision remains:
     - For complex workflow decision-gate plans: the consistency matrix or a
       pointer to it, using the canonical fields from the Document Quality Gate
       above; for non-gate plans, the not-applicable rationale is enough
+    - Write the body to a collision-proof file in a private scratch directory
+      (for example `pr-body-<item>-<pid>.md` under `mktemp -d` or the
+      orchestrator-assigned scratch directory), never a shared generic
+      filename a sibling agent can overwrite
+    - After the PR exists, mirror the `Document Quality Gate` log as a PR
+      comment: a description can be silently overwritten; a comment cannot
+    - Before any later `gh pr edit`, `gh pr comment`, `gh pr ready`,
+      `gh pr close`, or label change that addresses this PR by number, run
+      `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
+      --expected-branch "implementation-plan/[branch-slug]"` and mutate only on
+      exit 0 (Protocol 03 [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard);
+      in `workflow_hub`, add `--repo <hub-owner/name>`)
 14. Return the branch + PR details to the **Work Item Runner**
 
 ---
@@ -545,7 +678,7 @@ If no blocking human decision remains:
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- Run the internal plan review gate (`implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`) on the draft PR
+- Run the internal plan review gate (`implementation-plan-reviewer` / `02-review-implementation-plan-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
 - Apply `ready-for-human-review` and move the tracker to **Plan in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated

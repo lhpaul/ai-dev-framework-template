@@ -31,6 +31,37 @@ for the full routing specification.
 
 ---
 
+## Cursor dispatch profile (execution arrangement)
+
+Before dispatch (Step 3) or any mutation, establish the execution arrangement
+per `integrations/cursor-dispatch-profiles.md`. When the item layer is
+absorbed by the invoking context under `cursor-parent-orchestrated`, this
+protocol is followed by that context, unchanged, with stage delegation as
+the only handoff — this sentence applies only when a Cursor dispatch profile
+is declared.
+
+This protocol runs only in a Cursor environment; other runners are unchanged by this requirement -- Claude Code and Codex behavior is unaffected. Before any mutating action, declare which dispatch profile is in force per `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md` (the canonical, normative source): `cursor-native-handoff`, `cursor-parent-orchestrated`, or `cursor-inline-fallback`, naming the Work Item Runner (item layer) as the accountable orchestration role.
+
+Evaluation order: initial handoff -- whether the current context can hand orchestration to the Work Item Runner at all -- is evaluated first; onward-handoff capability -- whether the Work Item Runner can hand stage work onward -- is evaluated only once initial handoff is confirmed. A profile decision never evaluates onward-handoff capability before initial handoff is confirmed.
+
+Unconfirmed-handoff outcomes: once initial handoff is confirmed available, onward-handoff capability that cannot be confirmed is treated as unavailable, and the run declares `cursor-parent-orchestrated` as the conservative default until confirmed. Separately, initial handoff availability that itself cannot be confirmed is treated the same as no handoff of any kind: the run declares `cursor-inline-fallback` and stays read-only for the remainder of the run. A later confirmation never upgrades a run in place; the next run declares afresh.
+
+Accountability postures: a declaration states exactly one of personally accountable (absorbed), handed off intact, or observing for the Work Item Runner role. Observing is valid only at a read-only checkpoint; a mutating action always declares absorbed or handed off. The required posture follows the run's current checkpoint, never its earlier mutation history; a mismatch in either direction is a missing declaration.
+
+Under `cursor-parent-orchestrated`: the current context absorbs the item layer itself (this protocol's full contract), dispatches no Work Item Runner, and delegates every stage of product work (spec, plan, implement, review) to its stage role with full handoff metadata -- never inline.
+
+Named stop conditions (exact strings): `dispatch_profile_declaration_missing`, `dispatch_handoff_unavailable`, and the reused `missing_required_secret_or_permission`.
+
+- `dispatch_profile_declaration_missing` -- affected work item: the branch, pull request, or development-folder path this invocation targets. Human unblocking action: the stopped run is not resumed or corrected in place; start a fresh invocation supplying a valid profile, a named accountable role, a posture valid for the checkpoint, and, when rejected for a fact mismatch, the profile the known facts assign.
+- `dispatch_handoff_unavailable` -- affected work item: the branch, pull request, or development-folder path the mutating action would have applied to. Human unblocking action: move to an environment where initial handoff is confirmed available and re-run, or explicitly accept the read-only result; for the parent-orchestrated stage-handoff-unavailable cause, first confirm the specific stage role the action needed is reachable in the target environment.
+- `missing_required_secret_or_permission` (reused) -- when a reachable stage role reports a specific delegated action refused for a missing credential, GitHub permission, or access token: grant the identified credential or permission and re-run the same delegated action, or, for a structural restriction, reassign to the same stage role in a different context or explicitly accept the action does not proceed; the absorbing context never performs the action inline. This path never extends to a harness tool or local file-path permission denial.
+
+No named stop for a harness or local-path denial: a reachable stage role's harness tool or local file-path permission denial on a delegated action is not a named stop condition; it is only observably similar to the `SUBAGENT_PERMISSION_DENIAL` contract (Work Item Runner to Portfolio Orchestrator only), and is Out of Scope, tracked as #1746.
+
+Invalid-declaration boundaries: an invalid profile value, an invalid accountable role (none named, including empty), an invalid posture for the checkpoint, and a coarse-fact mismatch in either direction (more permissive or less permissive than the assigned outcome) are each a missing declaration. The coarse check governs the initial declaration and coarse-fact re-declarations only; it does not govern the mid-run recovery transitions (stage-handoff loss, native-handoff mid-run failure), which remain valid re-declarations.
+
+---
+
 ## Execution Discipline: A Paused Turn Does Not Resume
 
 Read this before running any long step.
@@ -66,8 +97,11 @@ restate this rule for those two specifically):**
   <!-- workflow-shell-contract: bash-zsh -->
   ```bash
   while true; do
-    pgrep -f "[p]r-review-loop.sh 1550" >/dev/null
-    pgrep_rc=$?
+    if pgrep -f "[p]r-review-loop.sh 1550" >/dev/null; then
+      pgrep_rc=0
+    else
+      pgrep_rc=$?
+    fi
     case $pgrep_rc in
       0) sleep 20 ;;
       1) break ;;  # no match — step ended
@@ -102,17 +136,22 @@ restate this rule for those two specifically):**
   the turn is not a way to make the wait "free"; it is a way to lose the run.
 
 **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.**
-The script takes a per-PR single-instance lock; a second concurrent invocation
-exits `75` with `REASON=lock_contention` and gives no review information at
-all — it will not tell the runner anything about the PR's actual state. If
-re-entering this item after a backgrounded or interrupted `pr-review-loop.sh`
-run, do not start a new one. Instead, poll for the prior process to finish (or
-confirm it is genuinely gone), then read the outcome directly from PR state —
-`gh pr view`, the "Automated Reviewer Loop Summary" comment, and the GraphQL
-review-thread query — rather than launching a duplicate run. Use
+The script takes a single-instance lock keyed by target repository and PR
+number; a second concurrent invocation exits `75` with
+`REASON=lock_contention` and gives no review information at all — it will not
+tell the runner anything about the PR's actual state. If re-entering this item
+after a backgrounded or interrupted `pr-review-loop.sh` run, do not start a new
+one. Instead, poll for the prior process to finish (or confirm it is genuinely
+gone), then read the outcome directly from PR state — `gh pr view`, the
+"Automated Reviewer Loop Summary" comment, and the GraphQL review-thread query
+— rather than launching a duplicate run. Use
 `pr-review-loop.sh unlock <pr-number>` only after confirming the recorded lock
 PID is no longer alive; it is a stale-lock recovery command, not a way to force
-a second run alongside a live one.
+a second run alongside a live one. Pass `unlock` the same
+`--repo`/`--product-repo`/`--repo-root` options the blocked run used, or it
+resolves a different lock than the one reported — the contention message prints
+the exact recovery command, and `LOCK_REPO_KEY` names the repository the lock
+belongs to.
 
 ---
 
@@ -415,7 +454,8 @@ mutation.
 | Backlog (Feature)                                                  | Human has requested this specific item and tracker Type/brief classifies it as Feature                                                              | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md`                                                                                                                                                                                              |
 | Backlog (Bug)                                                      | Human has requested this specific item and tracker Type/brief classifies it as Bug                                                                  | Run the Fast Track blast-radius gate below. If the gate allows Fast Track, set tracker status to **In Development** and run `03-implement-development-protocol.md` Path 3. Otherwise follow the gate outcome: route to **Writing Spec**, request clarification, or require a tracked pre-flight follow-up before later Fast Track dispatch. |
 | Backlog (Refactor)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Refactor                                                             | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec)                                                                                                                                                                   |
-| Backlog (Workflow)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Workflow                                                             | Route by the brief's concrete path: full pipeline, refactor, or fast-track. If ambiguous, stop for a human decision rather than guessing.                                                                                                                                     |
+| Backlog (Workflow), consumer repository                            | Human has requested this specific item and tracker Type/brief classifies it as Workflow                                                             | Route per the brief's concrete path: full pipeline, refactor, or fast-track. If ambiguous, stop for a human decision rather than guessing.                                                                                                                                     |
+| Backlog (Workflow), framework-mode repository (`template.is_template: true`) | Reconciled tracker status is Backlog and neither development-folder artifacts nor implementation branch/PR evidence exist for the item (`framework-mode-backlog-type-gate.sh`) | **Stop** — `missing_tracker_context`. Framework-mode repositories do not route Workflow-typed items to a pipeline (#1583); the stop names the item and its required re-classification (Feature, Bug, or Refactor). A stale Backlog that already has artifacts or an in-flight branch/PR continues unchanged, and a mid-pipeline Workflow item is not re-evaluated. |
 | Writing Spec                                                       | Tracker **Writing Spec** — spec PR not yet human-ready                                                                                              | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review**                                                                                                                                                       |
 | Spec in Review                                                     | Tracker **Spec in Review** — spec PR ready for humans                                                                                               | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
 | Spec branch pushed, no PR yet                                      | Branch exists on local / remote / worktree; `stages.spec.may_open_pr` is `true` (default) — if `false`, do not open the PR and report the `stages.spec.may_open_pr` guardrail | Run the spec review gate via `REVIEW.md` / `01-review-spec-protocol.md`, open the PR, then finish PR readiness                                                                                                                                                               |
@@ -515,18 +555,27 @@ This gate is additive: cross-layer scope checks architectural spread, while call
 
 ### Pre-dispatch tracker status update (single-item path)
 
-When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Use the same transition table as Protocol 90 Step 2.5:
+Before this update — a tracker status change is one of the mutations the "Reviewer preflight before child dispatch" section below stops before — run that preflight first whenever this item's resume state (mode, target base, branch/PR, remaining stages) is already resolved at this point, exactly as that section describes. Do not apply the tracker status change below if the preflight returns `blocked`, `prerequisite-failed`, or a tooling failure; stop and report per that section's outcome table instead. If the preflight's own required inputs are not yet resolvable this early (still being determined by an earlier step), run the preflight immediately before the update below once they are, not after.
 
-| Next action to dispatch                                                                       | Tracker status to set |
-| --------------------------------------------------------------------------------------------- | --------------------- |
-| Write Spec                                                                                    | `Writing Spec`        |
-| Write Plan                                                                                    | `Writing Plan`        |
-| Implement (feature/fix/refactor/hotfix branch)                                                | `In Development`      |
-| Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip      |
+When the Work Item Runner is invoked **directly** (not via Protocol 90) and the item's tracker status is stale — for example, a Refactor item is still `Backlog` even though the plan is merged and implementation is about to start — the runner must update the tracker status **before** dispatching the creator agent. Take the target Status from the canonical `dispatch` row of [`tracker-status-mapping.md`](../tracker-status-mapping.md). Do not type the Status by hand. Resolve and apply it in one step:
 
-This mirrors what Protocol 90 does at the portfolio level in Step 2.5 and ensures the tracker reflects the correct in-flight state regardless of whether the item was dispatched by the Portfolio Orchestrator or invoked directly by a human.
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tracker-status-for.sh \
+  --event dispatch --stage <spec|plan|implementation> --apply --issue "$ISSUE_NUMBER"
+```
 
-If the tracker is unavailable, log a warning and proceed — do not block advancement.
+The call is safe to repeat when resuming a stage whose in-flight Status is
+already set, and the helper never moves Status backward. This matches Protocol
+90 Step 2.5 at the portfolio level, so the tracker shows the same in-flight
+state whether the Portfolio Orchestrator dispatched the item or a human invoked
+the runner directly.
+
+If the tracker is unavailable (`TRACKER_STATUS_RESULT=failed` or `skipped`),
+log a warning and proceed. Do not block advancement. Exit `3`
+(`TRACKER_STATUS_RESULT=unresolved`) means the board has no option for the
+canonical Status, or no Status field at all. That is a
+`missing_tracker_context` stop, handled as the mapping page describes.
 
 ### Stale `In Development` pre-dispatch check (AC-6, AC-7, AC-8, AC-10)
 
@@ -654,6 +703,87 @@ The guard validates the expected workflow branch name before it scans artifacts.
 Use bare numeric identifiers such as feature/1858-safe-name, never
 feature/#1858-safe-name; it rejects unsafe characters before creation or PR
 readiness can continue.
+
+### Reviewer preflight before child dispatch
+
+Before dispatching any creator-stage or PR-opening child agent — before any
+branch is created, any pull request is opened, or any tracker status changes
+on this item's own account, not merely before the reviewer gates (Step 7a /
+Step 7) run — cross-check the reviewer configuration surfaces with:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/reviewer-preflight.sh \
+  --repo-root "$ARTIFACT_REPO_ROOT" \
+  --mode <pre-dispatch|branch-resume|pr-resume> \
+  --target-base "$BASE_BRANCH" \
+  [--branch "<branch-prefix>/<slug>"] \
+  [--pr <number> --owner <owner> --repo <repo>] \
+  --remaining-stages <csv of on_draft.runner,on_draft.github,on_ready.github still ahead of this item> \
+  --pr-state <bucket=draft|ready,... for each listed stage, after any existing adjustment such as the internal review gate's draft-to-ready conversion>
+```
+
+Choose `--mode` from the same resume-state evidence Step 1/Step 2 and
+Existing-branch reuse validation already resolved for this item — do not
+resolve it a second time independently:
+
+| This item's resolved state | `--mode` | What is cross-checked |
+| --- | --- | --- |
+| No branch exists yet (fresh dispatch) | `pre-dispatch` | Each platform's own configuration and the shared reviewer list, both read from `$BASE_BRANCH` — the only copies that exist before a branch does |
+| An existing branch with no pull request yet (`compatible_reuse`, or a branch-only resume) | `branch-resume` | Each platform's own configuration from that existing branch's own copy; the shared reviewer list still from `$BASE_BRANCH` (the single base this item's execution already resolved to target, not the branch itself) |
+| An existing pull request (any resumed PR) | `pr-resume` | Each platform's own configuration from that pull request's own head commit (GitHub's own reported `headRefOid`); the shared reviewer list from that pull request's own target base branch, resolved live from the remote — matching `pr-review-loop.sh`'s own `baseRefName` resolution |
+
+The `pre-dispatch` path applies only when resuming finds neither a branch nor
+a pull request in place. Once a branch exists, checking `$BASE_BRANCH` alone
+would miss a disabling change already present on the branch the reviewer
+platform will actually read.
+
+This script is fully read-only: it resolves every remote tip with `git
+ls-remote` (never `git fetch`) and reads content directly by the resolved
+commit SHA, so it never creates or updates `refs/remotes/*`, writes
+`FETCH_HEAD`, or downloads objects into the local object database. When a
+resolved remote SHA's commit object is not already present locally (this
+script never fetches to make it so), reading that content is impossible
+without a fetch this script will not perform — that surfaces through the
+same `OUTCOME` values documented below: a per-platform read degrades to
+Undetermined (`passed-unverified`), and a shared-configuration read (or a
+branch-resume ancestry comparison that itself needs both commits present)
+fails closed as a tooling failure (exit `3`). A `--target-base` (or PR base)
+that is syntactically valid but confirmed absent on the remote right now is
+a run-input problem, not a tooling outage: it classifies as
+`prerequisite-failed` (exit `2`), the same as any other malformed or
+unresolved `--target-base`.
+
+Route the script's `OUTCOME` (exit code in parentheses) as follows:
+
+| `OUTCOME` | Display label | Required next action |
+| --- | --- | --- |
+| `passed` (`0`) | Passed | Dispatch proceeds unchanged. No operator confirmation is collected. |
+| `passed-unverified` (`0`) | Passed, some unverified | Dispatch proceeds. Carry the unverified-platform list into the Work Item Runner summary so the operator can see which coverage was assumed rather than checked. |
+| `blocked` (`1`) | Blocked | Stop before this item's first mutation: no branch, no pull request, no tracker status change on this item's own account. Emit a stop message per `guardrails-enforcement.md` § Stop-Message Contract, naming the exact stop condition `reviewer_preflight_blocked` (see § Named Stop Conditions), this item's identifier (issue number, and the branch/PR the preflight was run against when one exists), and the concrete unblock action — the printed report's platform, disagreement reason, surface (file), setting, and remedy for every `Cannot review` platform. Print this before this item's own output, so it is never mistaken for this item's own later failure. |
+| `prerequisite-failed` (`2`) | Prerequisite not met | Stop before mutation. Emit a stop message per `guardrails-enforcement.md` § Stop-Message Contract, naming the exact stop condition `reviewer_preflight_prerequisite_failed`, this item's identifier, and the concrete unblock action — the specific failed input (base branch, remaining-stage set, or per-stage pull-request state) and how to resolve it before re-running; this is a run-input failure, not a reviewer-configuration verdict. |
+| `no-review-remaining` (`0`) | No review remaining | Dispatch proceeds. No per-platform verdict was computed because no lifecycle stage still ahead of this item invokes a reviewer (for example, a resume that only dispatches merge or post-merge cleanup). |
+| (tooling failure, exit `3`) | — | Treat as a stop; the script itself failed rather than reaching a verdict. Emit a stop message per `guardrails-enforcement.md` § Stop-Message Contract, naming the exact stop condition `reviewer_preflight_tooling_failed` (see § Named Stop Conditions — distinct from `reviewer_preflight_prerequisite_failed`, which is reserved for `OUTCOME=prerequisite-failed`), this item's identifier, and the concrete unblock action — fix the reported tooling problem and re-run. |
+
+A `Blocked` or `Prerequisite not met` preflight is a stop, exactly like a
+`blocked_duplicate` or `incompatible_reuse_blocked` guard result above: no
+creator-stage dispatch, no file mutation, no Git mutation, no PR mutation, and
+no tracker mutation follow it for this item. The preflight itself performs no
+write of any kind; folding its outcome into a Work Item Runner summary the run
+already produces is the run's own pre-existing record, not an action the
+preflight requires. Record `preflight_passed`, `preflight_passed_unverified`,
+`preflight_blocked`, `preflight_prerequisite_failed`, or
+`preflight_no_review_remaining` in the Work Item Runner summary alongside the
+other resume-path records above.
+
+This gate changes no reviewer gate's own behaviour after it passes: Step 7a
+and Step 7 run exactly as documented below, with the same reviewers, the same
+verdict semantics, and the same cycle limits. See
+`docs/workflow/development-workflow/integrations/coderabbit.md` for the
+branch-in-force resolution rule this preflight and Step 7's own reviewer
+dispatch both depend on, and
+`docs/specs/developments/20260911230501_1561-reviewer-preflight/` for the
+full cross-check specification and implementation plan.
 
 ### Existing-branch reuse validation
 
@@ -953,24 +1083,75 @@ Use the matching workflow agent / skill for the next stage when your runner supp
    the missing assignment to the Portfolio Orchestrator. The command depends on
    whether the item's branch already exists:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Fetch latest remote refs first
 git fetch origin
 
 # Case A: New item — branch does not exist yet
 # <worktree-path> must be the manifest-assigned absolute path.
-git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
+# --no-track is required: branching from a remote-tracking ref otherwise sets
+# branch.<name>.merge to refs/heads/<base-branch>, and a later bare `git push`
+# then aims at the integration branch (issue #1593).
+git worktree add <worktree-path> -b <branch-prefix>/<slug> --no-track origin/<base-branch>
 
 # Case B: Resuming item — branch exists locally
 git worktree add <worktree-path> <branch-prefix>/<slug>
 
 # Case C: Resuming item — branch exists only on remote
+# No --no-track here: this branch's own remote branch is the correct upstream.
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<branch-prefix>/<slug>
 
 cd <worktree-path>
 ```
 
 Use the pre-dispatch branch check from Step 2 (`git branch --list`, `git branch -r --list`) to determine which case applies. Case B and C are common when resuming "In Development" items, PRs with `needs-fixes`, or any item with prior work.
+
+**Upstream verification — mandatory immediately after creating or entering the worktree**
+
+`git worktree add -b <branch> origin/<base>` sets `branch.<branch>.merge` to
+`refs/heads/<base>`, so the new branch's upstream is the **integration branch**.
+Verified on git 2.50.1. Two harms follow from a later bare `git push`:
+
+1. With the default `push.default=simple` the push is **refused** — the safe
+   outcome, but the refusal is a multi-line message that RTK filtering can
+   truncate to nothing, so it reads as success and the PR silently sits on a
+   stale head (observed on PR #1592).
+2. With `push.default=upstream` or `tracking` the push **writes feature commits
+   straight onto the integration branch**, bypassing the PR path entirely.
+
+Case B inherits whatever upstream the existing branch already carries, which may
+have been set by a Case A creation before this rule existed. Assert it in every
+case rather than trusting the creation path:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+UPSTREAM_MERGE=$(git config --get "branch.${BRANCH}.merge" || true)
+UPSTREAM_REMOTE=$(git config --get "branch.${BRANCH}.remote" || true)
+if [ -n "$UPSTREAM_MERGE" ] && [ "$UPSTREAM_MERGE" != "refs/heads/${BRANCH}" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch ${BRANCH} in this worktree."
+  echo "Cause: it tracks ${UPSTREAM_MERGE}, not its own remote branch, so a bare"
+  echo "  'git push' from here is refused or aims at the wrong branch."
+  echo "Human action: run 'git branch --unset-upstream' in this worktree, then re-run"
+  echo "  this verification before any push."
+  exit 1
+fi
+# The branch name is only half the destination. A branch tracking the right
+# name on the wrong remote passes the check above while a bare push lands
+# somewhere the pull request will never see.
+if [ -n "$UPSTREAM_REMOTE" ] && [ "$UPSTREAM_REMOTE" != "origin" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch ${BRANCH} in this worktree."
+  echo "Cause: it tracks remote '${UPSTREAM_REMOTE}', not 'origin', so a bare"
+  echo "  'git push' from here would not reach the pull request."
+  echo "Human action: run 'git branch --unset-upstream' in this worktree, then re-run"
+  echo "  this verification before any push."
+  exit 1
+fi
+echo "Upstream verified: ${BRANCH} tracks ${UPSTREAM_REMOTE:-no remote}/${UPSTREAM_MERGE:-nothing}"
+```
 
 **Branch-context verification — mandatory immediately after entering the worktree**
 
@@ -1307,6 +1488,25 @@ When dispatching a stage agent (creator, reviewer, or fixer), include the follow
 
 This rule prevents agents from making changes that affect unrelated issues and causing downstream conflicts in batch runs.
 
+### Scratch Namespace and PR Ownership Rule for Dispatched Agents
+
+When dispatching a stage agent, pass it a private scratch directory (the one
+Protocol 90 assigned for this item in a parallel wave, otherwise a fresh
+`mktemp -d`) and include this instruction (issue #1444):
+
+> **Scratch and PR ownership rule**: Write anything outside this item's
+> worktree only under `<private-scratch-dir>`, with collision-proof names that
+> carry the item and process (for example `pr-body-<item>-<pid>.md`), never a
+> shared generic name such as `pr-body.md`. Before every `gh pr edit`,
+> `gh pr comment`, `gh pr ready`, `gh pr close`, or label change that addresses
+> a PR by number, run `scripts/development-workflow/pr-ownership-guard.sh --pr
+> <n> --expected-branch <item-branch>` and mutate only on exit 0. Mirror
+> review-gate evidence recorded in the PR description as a PR comment too.
+
+The Work Item Runner applies the same guard before its own PR mutations by
+number for this item, with `--expected-branch` set to the item branch. See
+Protocol 03 [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard).
+
 ---
 
 ## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)
@@ -1395,7 +1595,9 @@ After the selected item reaches a terminal condition, provide a concise summary:
 - Final state: ready for human review / waiting on human decision / blocked / escalated
 - Path taken: plan written -> reviewed -> PR opened -> automated review clean -> CI green
 - Next human action: merge PR / answer architecture question / unblock dependency
+- Stops: [named cause, affected item, unblocking action; for `architecture_decision`, the full escalation report per [`architecture-decision-escalation.md`](../architecture-decision-escalation.md)]
 - Local reviewer head evidence: LOCAL_AI_CONFIGURED=[0|1], LOCAL_AI_REVIEWED_HEAD=[sha|empty], LOCAL_AI_HEAD_CURRENT=[1|0|empty]
+- Cursor dispatch profile (when a Cursor dispatch profile was declared for this run, per `integrations/cursor-dispatch-profiles.md`): profile in force at the end of the run; every profile transition that occurred, with its reason; and, under `cursor-parent-orchestrated`, which orchestration layers were absorbed and which stages were handed off
 
 ## Ground-Truth Completion Verification
 
@@ -1432,37 +1634,281 @@ for this stage. Per `guardrails-enforcement.md` section 3 Gate 4:
 - Otherwise: leave the PR at its normal `ready-for-human-review` handoff — do
   not make the review decision autonomously.
 
-Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings.
+**PR ownership for Steps 7a–9 (issue #1444)**: every comment, `gh pr ready`,
+body edit, label change, and review-thread mutation on this item's PR in Steps
+7a through 9 addresses the PR by number. Take the number only from
+`gh pr view --json number` on the item branch, and run
+`scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number>
+--expected-branch <branch_name>` (plus `--repo <owner/name>` outside
+single-repo mode) immediately before each such mutation — the executable
+blocks below include it, and prose instructions such as "post via
+`gh pr comment`" carry the same requirement. A non-zero exit is a stop before
+mutation. Pass the same private scratch directory rule to every stage agent
+(see "Scratch Namespace and PR Ownership Rule for Dispatched Agents").
 
-### Draft-state pre-check (mandatory, before any reviewer is dispatched)
+Run this step immediately after opening a draft PR, and again after any push that addresses internal-review findings. Resolve availability and apply policy first. Only a proceed verdict permits the draft-state pre-check, Design Review Gate, and configured-reviewer dispatch below; a blocking result dispatches no reviewer, including `design-reviewer`.
 
-Before dispatching any reviewer, check whether the PR is currently in draft state:
+### Determining which reviewers to run
 
+The only configuration resolution for Step 7a is the bounded availability
+helper. Run it on every cycle, before dispatch, passing the actual driving
+session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
+from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
+
+The strict `review-effective` reader requires PyYAML (CI pin `6.0.2`) in the gate's
+`python3` environment for every reviewer. Workflow CI already provisions it;
+`scripts/cloud-agent-install.sh` provisions the distribution package. Locally,
+install the pinned version in a virtual environment and put its `bin` directory
+on PATH. Missing PyYAML blocks as `policy-unreadable`, with installation guidance
+in `UNREADABLE_DETAIL`; the helper never installs dependencies.
+
+Strict syntax is delegated to PyYAML's `BaseLoader` scanner/parser and composed
+nodes, never YAML object construction. YAML 1.1 line-break semantics apply:
+raw NEL/U+2028/U+2029 are line breaks, not ordinary scalar whitespace. Use spaces
+for separation outside quoted values; PyYAML's pure scanner rejects tabs in some
+separation positions. Quoted/interior indicators accepted by that parser remain
+literal values. The supported workflow subset excludes tags, anchors, aliases,
+directives, document markers, complex/quoted mapping keys, multiline scalars and
+flow collections, and non-empty flow mappings. Duplicate mapping keys and
+unsupported shapes fail closed throughout both files. Scalar typing remains
+explicit: only `null`/`Null`/`NULL`/`~` and empty plain values are null, and only
+`true`/`True`/`TRUE` or `false`/`False`/`FALSE` are booleans; quoted values stay
+strings. Numeric conversion limits produce structured unreadable-config diagnostics.
+Legacy resolver commands retain their existing dependency-free parser.
+
+
+The resolver accepts the transition-release `review.internal_reviewers` alias
+when `review.on_draft.runner` is absent in that file. An explicitly present modern
+key takes precedence, including empty or malformed values. Resolve each file's
+reviewer key before applying local-over-shared precedence; an alias must never
+turn configured reviewers into an absent-list fallback.
+
+<!-- workflow-shell-contract: bash -->
 ```bash
-gh pr view <pr_number> --json isDraft --jq '.isDraft'
+bash scripts/development-workflow/resolve-reviewer-availability.sh \
+  --repo-root <artifact-repo-root> --owner <target-owner> --repo <target-repo> \
+  --runner-kind <actual-driving-session-kind>
 ```
 
-If the result is `true` (PR is a draft), inspect the resolved
-`review.on_draft.runner` list from `.ai-dev-workflow.yaml` (after any
-`.ai-dev-workflow.local.yaml` override) and the `review.on_draft.github` /
-`review.on_ready.github` lists.
+Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and
+`coderabbit`, `codex-github` (hosted-service). If no list is defined, the
+helper falls back to the driving runner's own stage reviewer. Consume reviewer
+names only from its indexed `REVIEWER_N_*` fields; aggregate lists are
+display-only and must never be split or `eval`ed. The helper reports local
+override state and `override-excluded` records, which are deliberate omissions
+and never unreachability warnings.
 
-If `coderabbit` is **only** listed under `review.on_ready.github`, keep the PR as
-a draft during Step 7a. This is intentional: `.coderabbit.yaml` has
-`reviews.auto_review.drafts: false`, so draft state prevents CodeRabbit from
-starting before the draft GitHub reviewer gate. If `coderabbit` is listed under
-`review.on_draft.github` while draft reviews are disabled, treat the reviewer
-placement as a configuration issue to fix before Step 7: draft GitHub reviewers
-are expected to support draft PRs.
+On exit `0`, dispatch each indexed reachable reviewer, in configured order, only after applying the returned `OUTCOME`. Never dispatch unreachable or override-excluded records. When
+`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer
+exactly once. No reviewer is dispatched until the resolver returns and the
+policy has been applied; a verdict from an earlier cycle is never reused.
+The invocation passes `--runner-kind <actual-driving-session-kind>` and is
+never a value inferred from PATH, the reviewer list, or inherited environment.
 
-If `coderabbit` is listed as a **runner reviewer** and is therefore required
-inside Step 7a itself, convert the PR to non-draft before triggering reviewers:
+### Runtime-availability check
 
+Availability follows capability at the moment of the run. A matching driving
+runner is sufficient positive evidence; it never makes another reviewer
+unreachable. The helper finishes within its fixed ten-second budget and emits
+`reachable`, `unreachable`, or `override-excluded`, with reasons
+`runtime-absent`, `prerequisite-missing`, `check-inconclusive`, or
+`value-not-supported` and a remedy for every unreachable entry. Determination
+is read-only: do not review, post a comment, alter the PR, install software, or
+substitute a reviewer while it runs. Do not provision services or write tracked files. This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.
+
+| Reason | Remedy |
+| --- | --- |
+| `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
+| `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
+| `check-inconclusive` | Use the remedy for the actual failing probe context below. |
+| `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
+
+Inconclusive remedies use an explicit internal probe context, not the reviewer
+name or free-text detail. The four reason values and output keys stay unchanged.
+An unstarted probe uses `budget`; CodeRabbit parsing and dependency failures
+never receive hosted-activity guidance, and local runtime failures never receive
+CodeRabbit or gh setup guidance.
+
+| Probe context | Inconclusive remedy |
+| --- | --- |
+| `local-runtime` | Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate. |
+| `coderabbit-config` | Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate. |
+| `coderabbit-dependency` | Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate. |
+| `coderabbit-parser` | Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate. |
+| `hosted-activity` | Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate. |
+| `budget` | Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again. |
+
+Hosted-service availability is decided at runtime from whether the service is
+installed and reachable. Where the service is not installed and reachable it is
+unavailable with a named reason. The repository-activity signal used for
+`coderabbit` and `codex-github` is an accepted proxy, not proof of that source
+condition: historical activity can be a false Reachable after removal, while a
+new or review-only installation can be false Unreachable. Decision 8 waives
+literal verification of both directions for this implementation. A reviewer
+that then fails, errors, times out, or has no verdict is a review failure under
+either policy, never an unreachability reclassification.
+
+<!-- step7a-codex-github-availability:start -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
+<!-- step7a-codex-github-availability:end -->
+
+#### Policy resolution
+
+Consume the helper's resolved policy and outcome; do not re-read configuration.
+The helper resolves repository defaults and the machine-local override once,
+validates policy before evaluating the reviewer list, then classifies capability
+and applies policy. Absent, null, bare, or empty policy means `warn` with
+`POLICY_SOURCE=default`. A non-empty unsupported string blocks before list
+fallback; a non-scalar policy or unreadable config file is `policy-unreadable`.
+An absent or empty list falls back to the driving runner's own stage reviewer;
+a malformed non-list or list with non-string members never falls back.
+
+The fixed external ceiling is ten seconds, with an eight-second internal budget
+including configuration resolution and probe cleanup. Configuration gets at
+most two seconds, each local probe at most three, and each hosted check at most
+four, clamped to the remaining global budget. Native positive evidence and
+unsupported-value classification still apply after budget exhaustion. Linux probes run under a Python child subreaper with a separate probe process group, so killed descendants are reaped even when container PID 1 does not reap them. The inner deadline reserves cleanup time; the outer watchdog still bounds an unresponsive supervisor. An
+unstarted bounded probe is `check-inconclusive`. A config timeout reports
+`config-resolution-inconclusive`, with both input states `not-evaluated` and
+zero reviewer records. Exit `2` means invocation/execution failure and provides
+no policy verdict.
+
+For hosted checks, `gh` absence, authentication failure, transport error, invalid
+response, or timeout is `check-inconclusive`. There is no authentication preflight.
+One bounded GET reads the newest repository issue comments with
+`per_page=100&sort=created&direction=desc`. A bot match is positive proxy evidence;
+a full unmatched page is incomplete (`check-inconclusive`), and a short unmatched
+page is `prerequisite-missing`. CodeRabbit additionally requires
+`reviews.auto_review.enabled: true`; its login is `coderabbitai[bot]`.
+CodeRabbit configuration validation requires PyYAML (the existing CI pin is
+`6.0.2`) in the gate's `python3`. A missing parser is `check-inconclusive` with
+installation guidance; the probe never installs it. The whole document is
+parsed with a safe loader, rejecting syntax errors, unsafe tags, and duplicate
+explicit keys while permitting merge defaults with explicit overrides. Boolean
+settings accept `true`/`True`/`TRUE` and `false`/`False`/`FALSE`; quoted values,
+numbers, and YAML 1.1 `yes`/`no`/`on`/`off` remain nonbooleans.
+An unreadable or rejected `.coderabbit.yaml` produces `check-inconclusive` with
+the read or syntax error and a remedy to repair that file; a missing file or a
+readable disabled setting is `prerequisite-missing`. An enablement-probe timeout
+remains `check-inconclusive` with execution guidance. These reviewer records
+follow the same resolved availability policy as other probe results.
+`codex-github` uses `CODEX_GITHUB_BOT_LOGIN` or
+`chatgpt-codex-connector[bot]`. Matching accepts the optional `[bot]` suffix.
+Neither reviewer is classified unavailable because the PR is draft.
+
+To override the policy locally without changing shared config, prefer
+`.ai-dev-workflow.local.yaml`:
+
+```yaml
+review:
+  on_draft:
+    runner:
+      - cursor
+  internal_reviewers_unavailable_policy: warn
+```
+
+Allowed values: `warn` (default), `fail-if-any-unavailable`.
+
+| Condition                                                 | Policy                    | Action                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Policy unreadable                                         | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unreadable`; dispatch nobody and restore an already-ready PR to draft. |
+| Policy unsupported                                        | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unsupported`; dispatch nobody and restore an already-ready PR to draft. |
+| Reviewer list malformed                                   | Any                       | **Hard-fail** with `BLOCK_CAUSE=list-malformed`; dispatch nobody and restore an already-ready PR to draft. |
+| Config resolution timed out | Any | **Hard-fail** with `BLOCK_CAUSE=config-resolution-inconclusive`; do not evaluate the list or dispatch. |
+| No configured list and no driving runner                  | Any                       | **Hard-fail** with `BLOCK_CAUSE=no-driving-runner`. |
+| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
+| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post the reason-and-remedy warning, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
+| Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
+| All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
+
+#### Warning comment format (one or more unreachable, `warn` policy)
+
+Post via `gh pr comment` only when `OUTCOME=proceeded-reduced`, after determination and before dispatching any reviewer. Use indexed names, reasons, and remedies to render each unreachable reviewer and the reachable subset; never name runner context or include override-excluded records in this warning. Use the following wording for each unreachable reviewer:
+
+> `WARNING: internal_reviewer '<reviewer>' unreachable — <reason-display-label>. Remedy: <remedy>. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
+
+Example when the Codex runtime is absent and the configured list is
+`review.on_draft.runner: [claude, codex]`:
+
+> `WARNING: internal_reviewer 'codex' unreachable — runtime absent. Remedy: Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
+
+#### Hard-fail comment format
+
+Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a summary comment in the hard-fail case. Use the appropriate template based on the hard-fail condition:
+
+**Case A — Zero reviewers reachable (any policy):**
+
+> `Step 7a BLOCKED: BLOCK_CAUSE=zero-reachable. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (<reason-display-label>; Remedy: <remedy>), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: make the missing runtime or prerequisite available, correct the configured value, or narrow 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
+
+Render `<local-override-state>` directly from `LOCAL_OVERRIDE_STATE`, without
+reconstructing it from legacy reader fields. It is `none`, an applied override
+path and origin, or a present-but-unpropagated path diagnostic. Investigate an
+unpropagated override from the artifact worktree before treating it as final.
+
+**Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
+
+> `Step 7a BLOCKED: BLOCK_CAUSE=policy-forbids-reduced-coverage. No reviewers were dispatched. Reachable: [<reachable-list>]. Unreachable: [<reviewer> (<reason-display-label>; Remedy: <remedy>), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: make a runtime available, set the policy to 'warn', or narrow the local list.`
+
+**Case C — blocking configuration input or resolver failure:** report
+`BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`,
+`no-driving-runner`, or `config-resolution-inconclusive`), `POLICY_STATE`,
+`POLICY_SOURCE`, the exact `POLICY_INPUT` for an unsupported value, and
+`UNREADABLE_FILE` / `UNREADABLE_DETAIL` for unreadable input. For a malformed
+list, name `CONFIG_LIST_SOURCE` and its malformed state. Explain the corrective
+action without guessing classifications for entries that were not evaluated.
+For exit `2`, report `availability-resolver-failed`, exit status, and stderr;
+there is no returned policy verdict to invent.
+
+Every configured reviewer with its verdict is included in each hard-fail report.
+Use the available indexed records, including Reachable and Excluded by override
+records; state that none was dispatched. Include each Unreachable record's named
+reason and remedy, `BLOCK_CAUSE`, and `LOCAL_OVERRIDE_STATE`. When policy caused
+the block, explicitly name that policy (Case B names
+`fail-if-any-unavailable`); do not attribute a block to runner identity. When
+input validation precluded classification, state `not-evaluated` rather than
+claiming no reviewers were configured.
+
+Treat helper exit `1` and exit `2` (`availability-resolver-failed`) alike:
+dispatch nobody, never convert to ready, and escalate. After determination, read
+current draft state. If already ready, run `gh pr ready <pr_number> --undo`, then
+verify `isDraft: true` before completing the block report. If restoration or
+verification fails, escalate as `missing_required_secret_or_permission` and do
+not claim the PR is draft. A PR that was draft remains draft. Post the hard-fail
+summary only after this recovery attempt, including any recovery failure.
+
+After a proceed verdict, if a Reachable `coderabbit` is selected, read the PR's
+draft state and `.coderabbit.yaml` `reviews.auto_review.drafts` setting. Convert
+with `gh pr ready <pr_number>` only if needed, when that setting is `false` or absent; when
+it is `true`, preserve the draft state until normal approval. Verify non-draft
+state before its dispatch only on the conversion path. This conversion occurs after availability
+and policy but before dispatch; it is a CodeRabbit draft-eligibility precondition,
+not availability evidence. Other reviewer paths retain conversion after approval.
+A conversion/verification failure escalates as `missing_required_secret_or_permission`
+and dispatches nobody. The CodeRabbit exception below never applies on a block.
+
+### Draft-state pre-check (after availability, before dispatch)
+
+Do not read configuration or mutate PR state before the availability helper has
+returned a proceed verdict. Its indexed reviewer records are the sole source for
+reviewer selection in this check. This keeps configuration resolution within the bounded availability
+window and leaves a blocked draft PR draft.
+There is no independent `review-effective` or `review-overrides` call.
+
+After a proceed verdict, check draft state with `gh pr view <pr_number> --json
+isDraft --jq '.isDraft'`. If it is draft and the indexed records select a
+Reachable `coderabbit` reviewer for dispatch, read only
+`.coderabbit.yaml`'s `reviews.auto_review.drafts` setting. Convert immediately
+before dispatch when it is `false` or absent; preserve draft state when it is
+`true`. An Unreachable or Excluded by override record never triggers conversion:
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
 gh pr ready <pr_number>
 ```
 
-Post a comment on the PR explaining the action:
+Post this explanation:
 
 > `INFO: PR converted from draft to non-draft before Step 7a internal review. Reason: CodeRabbit is configured as an internal reviewer and '.coderabbit.yaml' sets 'auto_review.drafts: false' — CodeRabbit silently skips draft PRs. Converting now to ensure full reviewer coverage.`
 
@@ -1481,29 +1927,29 @@ internal review gate would silently pass with reduced coverage.
 | `claude`     | Never — Claude Code agents always review regardless of draft state          |
 | `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
 
-To check whether `.coderabbit.yaml` restricts draft PRs:
+Read `.coderabbit.yaml` as YAML and select only the root
+`reviews.auto_review.drafts` field; similarly named keys or instruction text do
+not determine eligibility. If the file or field is absent, CodeRabbit defaults
+to `drafts: false`. A boolean `true` permits draft review, while boolean `false`
+requires conversion. If the file cannot be read or the field is not a boolean,
+stop before conversion and report the draft-eligibility error; do not guess or
+reclassify the reviewer as unreachable.
 
-```bash
-grep -E '^\s*drafts:\s*false' .coderabbit.yaml
-```
-
-If the file is absent or the key is not present, CodeRabbit defaults to `drafts: false` — treat it as draft-restricting.
-
-**Important**: Do not convert a draft PR to non-draft merely because CodeRabbit
-appears in `review.on_draft.github` or `review.on_ready.github`. Convert early
-only when CodeRabbit is part of `review.on_draft.runner`. Otherwise, keep the
-draft state until the draft GitHub reviewer gate below has passed.
+**Important**: `auto_review.drafts: false` is not an unreachability condition.
+The availability decision happens first; this conversion guarantees eligibility
+before dispatch only on the proceed path.
 
 If the PR is **not** in draft state, skip this pre-check entirely and proceed to the Design Review Gate.
 
 ### Design Review Gate (implementation PRs only)
 
-This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Determining which reviewers to run" for those PR types.
+This gate applies only to PRs on `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches (BR-1). It is skipped entirely for `spec/*` and `implementation-plan/*` branches — proceed directly to "Reviewer dispatch map" for those PR types.
 
 #### Frontend-file detection
 
 Inspect the PR's changed files:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr diff <pr_number> --name-only
 ```
@@ -1521,7 +1967,7 @@ These detection rules are extensible — downstream teams that need additional e
 
 **Path A — No frontend changes detected (Use Case 2):**
 
-Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Determining which reviewers to run". This skip is not a failure (BR-10).
+Skip the design-reviewer agent entirely. No comment is posted. Proceed to "Reviewer dispatch map". This skip is not a failure (BR-10).
 
 **Path B — Frontend changes detected, provider available (Use Case 1):**
 
@@ -1535,7 +1981,7 @@ After the agent posts its PR comment, parse the verdict from the comment header 
 
 | Verdict          | Action                                                                                                                            |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `Approved`       | Proceed normally to "Determining which reviewers to run"                                                                          |
+| `Approved`       | Proceed normally to "Reviewer dispatch map"                                                                          |
 | `Needs Revision` | Treat as a review finding. Do not advance to `ready-for-human-review` until the issues are resolved or explicitly accepted (BR-5) |
 | `Skipped`        | Development server was unreachable; log the skip and continue without blocking (BR-4)                                             |
 
@@ -1555,145 +2001,9 @@ The design-reviewer agent resolves the preview base URL in this order (BR-11):
 
 The agent reads `browser_automation.provider` from `.ai-dev-workflow.yaml`. For this repository the provider is `playwright_cli`. The agent must not hard-code a provider value (BR-8).
 
-### Determining which reviewers to run
-
-Read the `review.on_draft.runner` list from `.ai-dev-workflow.yaml`. For local
-developer overrides, prefer `.ai-dev-workflow.local.yaml` (gitignored) with the
-same nested review shape:
-
-```yaml
-review:
-  on_draft:
-    runner:
-      - cursor
-  internal_reviewers_unavailable_policy: warn
-```
-
-The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
-developers without access to all configured review tools to run a subset, such
-as only `cursor`, without changing the shared config.
-
-Resolve the effective lists with the config resolver rather than by reading
-the files by hand. It applies the precedence above and locates the override
-file for the checkout you are actually in:
-
-<!-- workflow-shell-contract: bash-zsh -->
-```bash
-python3 ./scripts/development-workflow/workflow-config-resolver.py review-overrides --repo-root "$(pwd -P)"
-```
-
-`REVIEW_ON_DRAFT_RUNNER` is the override list (empty when the local file sets
-none — then `review.on_draft.runner` from `.ai-dev-workflow.yaml` applies).
-`LOCAL_OVERRIDE_FILE` names the file the values came from and
-`LOCAL_OVERRIDE_ORIGIN` where it lives: `checkout` (this directory),
-`main_clone` (this directory is a linked git worktree with no file of its own,
-so the main clone's applies — `git worktree add` never carries gitignored
-files, #1560), or `override_root` (`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`, the
-reviewer-loop handoff path from #1033). `MAIN_CLONE_LOCAL_OVERRIDE_FILE` is set
-whenever a linked worktree's main clone holds a local override, whichever file
-was applied. A worktree created through the Protocol 90 isolation manifest
-therefore resolves the same reviewer configuration as the main clone without
-anyone copying the file into it; do not copy it by hand — a copy shadows the
-main clone's file and drifts from it.
-
-Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
-
-If neither config file defines `review.on_draft.runner`, fall back to running
-the stage-appropriate reviewer once (default behavior: `claude`).
-
-When the local file supplies an override, log the following before running the
-availability check:
-
-> `INFO: Using review.on_draft.runner override from .ai-dev-workflow.local.yaml: [<override-list>]. Original list: [<yaml-list>].`
-
-No warning comment is posted for reviewers intentionally removed by the override list (`override-excluded`). If any reviewer still present in the override list is unreachable at runtime, post the standard warning comment for those unreachable reviewers (the runtime-availability check still applies to the override list).
-
-### Runtime-availability check
-
-Before dispatching any reviewer, classify each entry in the resolved list as `reachable` or `unreachable`. For `claude`, `cursor`, and `codex`, the check is deterministic and requires no external network call — runner identity is a sufficient proxy for reviewer reachability because the gate only dispatches reviewers the current runner can invoke without a cross-runner CLI handoff. For `coderabbit`, reachability is determined at runtime via an App installation check (see below).
-
-#### Reachability classification table
-
-| Runner context                                    | `claude` reachable? | `cursor` reachable? | `codex` reachable? | `coderabbit` reachable?           |
-| ------------------------------------------------- | ------------------- | ------------------- | ------------------ | --------------------------------- |
-| Claude Code (direct human session)                | Yes                 | No                  | No                 | Determined at runtime (App check) |
-| Claude Code subagent (dispatched by orchestrator) | Yes                 | No                  | No                 | Determined at runtime (App check) |
-| Cursor direct session or subagent                 | No                  | Yes                 | No                 | Determined at runtime (App check) |
-| Codex runner / Codex skill                        | Yes                 | No                  | Yes                | Determined at runtime (App check) |
-| Direct human (shell / CI with `gh`)               | Yes                 | Yes                 | Yes                | Determined at runtime (App check) |
-
-To determine `coderabbit` reachability, the runner checks whether `coderabbitai[bot]` has any prior activity on the repository (App installation signal — via `gh api repos/{owner}/{repo}/installation` or by checking the PR for a prior CodeRabbit comment), **and** confirms that `.coderabbit.yaml` does not disable auto-review (`reviews.auto_review.enabled: true` required). If either check fails, classify `coderabbit` as `unreachable`.
-
-Note: the `auto_review.drafts: false` restriction is **not** treated as an unreachability condition here — it is handled upstream by the "Draft-state pre-check" at the top of Step 7a, which converts any draft PR to non-draft before this reachability check runs. By the time the reachability check executes, the PR is guaranteed to be non-draft (if the pre-check determined that a draft-restricting reviewer was in the list).
-
-#### Policy resolution
-
-After classifying each reviewer, apply the configured policy. Read
-`internal_reviewers_unavailable_policy` from `.ai-dev-workflow.yaml` (or its
-local override in `.ai-dev-workflow.local.yaml`). This policy key is retained
-for compatibility even though the reviewer list moved to
-`review.on_draft.runner`. If the key is absent, the default is `warn`.
-
-To override the policy locally without changing shared config, prefer
-`.ai-dev-workflow.local.yaml`:
-
-```yaml
-review:
-  on_draft:
-    runner:
-      - cursor
-  internal_reviewers_unavailable_policy: warn
-```
-
-Allowed values: `warn` (default), `fail-if-any-unavailable`.
-
-| Condition                                                 | Policy                    | Action                                                                                                                                                                                                                                                                                           |
-| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
-| One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post a warning comment to the PR naming each unreachable reviewer and the runner context, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
-| Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
-| All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
-
-#### Warning comment format (one or more unreachable, `warn` policy)
-
-Post via `gh pr comment` before dispatching any reviewer. Use the following wording for each unreachable reviewer:
-
-> `WARNING: internal_reviewer '<reviewer>' unreachable from current runner (<runner-context>) — skipping. Only '<reachable-list>' will run in this Step 7a cycle. Reviewer coverage is reduced from <total> to <reachable-count>.`
-
-Example for `codex` unreachable from a Claude Code subagent with
-`review.on_draft.runner: [claude, codex]`:
-
-> `WARNING: internal_reviewer 'codex' unreachable from current runner (Claude Code subagent) — skipping. Only 'claude' will run in this Step 7a cycle. Reviewer coverage is reduced from 2 to 1.`
-
-#### Hard-fail comment format
-
-Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a summary comment in the hard-fail case. Use the appropriate template based on the hard-fail condition:
-
-**Case A — Zero reviewers reachable (any policy):**
-
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
-
-`<local-override-state>` comes from the resolver output, never from a guess
-(#1560 AC-3):
-
-- `none` — `LOCAL_OVERRIDE_FILE` and `MAIN_CLONE_LOCAL_OVERRIDE_FILE` are both
-  empty. This is a genuine configuration-policy block.
-- `<LOCAL_OVERRIDE_FILE> (<LOCAL_OVERRIDE_ORIGIN>), applied` — an override was
-  resolved and still left zero reachable reviewers; the override itself names
-  reviewers this runner cannot reach.
-- `present but unpropagated: <MAIN_CLONE_LOCAL_OVERRIDE_FILE>` —
-  `LOCAL_OVERRIDE_FILE` is empty while the main clone has a file. This is
-  almost always a worktree resolving the wrong file rather than a policy
-  decision: re-run the resolver from the worktree path (`pwd -P`) and report
-  the discrepancy instead of treating the block as final.
-
-**Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
-
-> `Step 7a BLOCKED: policy 'fail-if-any-unavailable' triggered — one or more internal reviewers are unreachable. No reviewers were dispatched. Effective reviewer set: none (policy block). Reachable: [<reachable-list>]. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner where all configured reviewers are reachable, or set internal_reviewers_unavailable_policy to 'warn' temporarily, or override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
-
 ### Reviewer dispatch map
 
-For each reviewer in the resolved list, dispatch the stage-appropriate agent:
+For each indexed Reachable reviewer selected by the proceed verdict, dispatch the stage-appropriate agent:
 
 | Reviewer     | PR branch prefix                                  | Agent / protocol to dispatch                                                                                           |
 | ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -1709,6 +2019,31 @@ For each reviewer in the resolved list, dispatch the stage-appropriate agent:
 | `coderabbit` | `spec/*`                                          | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `implementation-plan/*`                           | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
+| `codex-github` | `spec/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
+| `codex-github` | `implementation-plan/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
+| `codex-github` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `codex-github-reviewer.sh <pr_number> <owner> <repo>` |
+
+When a `spec/*` or `implementation-plan/*` fixer dispatch follows a matrix
+coherence re-audit (Protocol 93's "Long spec/plan review-cycle guidance"
+same-matrix re-run rule), the dispatch carries the loop runner's audit result;
+the re-audit itself is performed by the loop runner, not the dispatched fixer.
+
+When a local-runtime reviewer does not match the driving runner, invoke its
+installed CLI from the artifact root: `claude -p --output-format text`,
+`cursor-agent --print --output-format text`, or `codex exec --sandbox read-only`.
+The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
+reviewed base/head, and active pass. Request a read-only review and exactly one
+`VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
+fixes, commits and pushes them, and re-runs the required reviewers after the push.
+Preserve existing CLI permission controls; never add permission-bypass flags or
+substitute another runtime. The read-only prompt is an instruction; the Codex
+command additionally enforces a read-only sandbox. Capture the exit status and
+complete response; approval requires exit `0` and exactly one valid terminal verdict.
+For `codex-github`, exit `0` approves, `1` enters revision, `2` and `3` are
+review failures, and `4` waits for the reviewer. A non-zero CLI exit, timeout,
+permission denial, or missing/ambiguous verdict is a review failure, not an
+availability result.
+Every dispatched failure is a review failure under either policy.
 
 ### Branch-type detection
 
@@ -1719,7 +2054,7 @@ Before running any reviewers, classify the PR branch to determine which executio
 
 ### Multi-reviewer execution rules
 
-Run all configured internal reviewers **sequentially** in the order listed. Each reviewer runs against `REVIEW.md`, applies deterministic fixes directly, and commits + pushes if needed.
+Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
@@ -1732,11 +2067,11 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 | Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                        |
 | Any reviewer returns `NEEDS REVISION` (product/design decision)                                           | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding                                        |
 
-All internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
+Except for the conditional CodeRabbit conversion above, all selected internal reviewers must APPROVE before `gh pr ready` is called. If any reviewer finds issues, fix them and re-run ALL internal reviewers.
 
 #### Implementation PRs (feature/_, fix/_, refactor/_, hotfix/_): two-pass
 
-Implementation PRs run two sequential passes before `gh pr ready` is called. Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
+Implementation PRs run two sequential passes before final approval (with the conditional pre-dispatch CodeRabbit conversion above when needed). Pass 2 is never dispatched until all reviewers have approved Pass 1 for the current commit.
 
 **Pass 1 (Spec Compliance)**: each reviewer evaluates only the `### Pass 1: Spec Compliance` sub-checklist from `REVIEW.md`. The orchestrator passes the active pass name (`Pass 1: Spec Compliance`) in the dispatch prompt so the reviewer scopes its findings accordingly.
 
@@ -1758,11 +2093,15 @@ Implementation PRs run two sequential passes before `gh pr ready` is called. Pas
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (product/design decision)                                                                                                        | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human                                                                                                                                                                    |
 
-Both passes must complete with all reviewers `APPROVED` before `gh pr ready` is called. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
+Both passes must complete with all selected reviewers `APPROVED` before final advancement. The conditional CodeRabbit conversion above is not approval. The `internal_review_cycle` counter increments on every fix cycle — whether the fix is trivial (Pass 2 restart only) or non-trivial (full Pass 1 → Pass 2 restart). This ensures that repeated trivial-fix cycles are bounded by `max_internal_review_cycles` and cannot loop indefinitely.
 
 #### Step 7a summary comment (mandatory)
 
 A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before `gh pr ready` (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
+
+Include a per-reviewer verdict for every configured reviewer, with its display
+label and its reason and remedy when unreachable, plus the gate outcome.
+Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED` and the own-stage dispatch when fallback applies; do not report success with no reviewer dispatched.
 
 Required fields:
 
@@ -1770,6 +2109,9 @@ Required fields:
 - **Effective reviewer set**: which reviewers actually ran (excluding skipped/unreachable ones)
 - **Skipped reviewers**: each reviewer skipped, with reason (e.g., `unreachable`, `override-excluded`)
 - **Final verdict**: `APPROVED`, `hard-fail`, or `escalated — <reason>`
+- **Gate-approved commit**: the full commit SHA the gate approved at (`git rev-parse HEAD` at the moment of the `APPROVED` verdict). Use this exact field name — not "Reviewed commit", which already has a distinct meaning as the Codex GitHub App's own marker token parsed by `codex-github-evidence-lib.sh` for external-reviewer evidence. This is the gate-evidence SHA that Step 8a's freshness check and `internal-review-gate-freshness-guard.sh` compare against the PR's live HEAD — omitting it leaves the gate's own binding claim unverifiable.
+
+**Verdict binds to this commit only.** The internal review gate's verdict binds to the reviewed commit recorded above, not to the branch or PR as a whole. Any subsequent commit that is more than mechanical (typo/lint-only, see the trivial-fix classification below) invalidates the gate for the new HEAD; the gate must be re-run there before readiness. A clean automated-reviewer-loop result (Step 7) at the new HEAD is not a substitute — it validates the PR branch, it does not replace the pre-PR review gate.
 
 Example format for a **non-implementation PR** (single-pass):
 
@@ -1778,10 +2120,11 @@ Example format for a **non-implementation PR** (single-pass):
 
 **PR type**: Non-implementation (single-pass)
 **Effective reviewer set**: claude
-**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+**Skipped reviewers**: codex (runtime absent; remedy: make the runtime available)
 **Verdict**: APPROVED
+**Gate-approved commit**: `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2`
 
-All reachable internal reviewers approved. Note: codex was unreachable from the current runner — reviewer coverage was reduced from 2 to 1. Human reviewers may re-run Step 7a from a Codex-capable runner if full coverage is required.
+All reachable internal reviewers approved. Coverage was reduced from 2 to 1 because the codex runtime was absent.
 ```
 
 Example format for an **implementation PR** (two-pass):
@@ -1791,7 +2134,7 @@ Example format for an **implementation PR** (two-pass):
 
 **PR type**: Implementation (two-pass)
 **Effective reviewer set**: claude
-**Skipped reviewers**: codex (unreachable from Claude Code subagent)
+**Skipped reviewers**: codex (runtime absent; remedy: make the runtime available)
 
 **Pass 1 (Spec Compliance)**
 
@@ -1802,7 +2145,8 @@ Example format for an **implementation PR** (two-pass):
 - claude: APPROVED after 1 fix cycle (1 finding resolved)
 
 **Verdict**: APPROVED
-All passes approved at commit `abc1234`.
+**Gate-approved commit**: `b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3`
+All passes approved at the commit above.
 ```
 
 In the hard-fail case (zero reachable reviewers or `fail-if-any-unavailable` policy triggered), the hard-fail comment posted in the Runtime-availability check section above **already satisfies BR-7** — do not post a second summary comment.
@@ -1849,6 +2193,8 @@ If the diff includes any non-text change (e.g., new function, new import, change
 
 **Scope of skip**: The initial Step 7a run (after a draft PR is opened) is always full and cannot be skipped. Step 7a re-runs triggered by Pass 1 findings (i.e., `internal_review_cycle > 0` for findings from Pass 1) are also never skipped.
 
+**Distinct from the `MECHANICAL_DELTA:` marker**: `TRIVIAL_FIX: non-structural` (above) governs whether the orchestrator re-runs Step 7a *before* proceeding to Step 7, in the two fixer-push contexts described above. `MECHANICAL_DELTA:` (Step 8a's internal review gate freshness check, below) governs a different decision: whether a PR may reach readiness despite the Step 7a `APPROVED` verdict's recorded commit no longer matching HEAD. The two markers are not interchangeable and a commit message may need either, both, or neither depending on when in the loop it lands.
+
 ---
 
 ## Step 7: Automated Reviewer Loop
@@ -1861,7 +2207,7 @@ If one or more automated code review platforms are configured (see [`integration
 
 1. **Do not race ahead.** Do not run Step 7 in the background while proceeding to Step 8 without its result.
 2. **Do not background-and-yield.** Do not start `pr-review-loop.sh` in the background and then **end your turn** to wait for it. A backgrounded process's completion notification is delivered to whatever dispatched *you* (the parent orchestrator, or a human) — never back to you. If you end your turn while the loop is still running in the background, you park permanently: not blocked, not escalated, not dead, just structurally unable to ever observe your own process finishing. A parked runner is indistinguishable from a terminated one from the outside, which means it will not be recovered automatically. Run Step 7 in the foreground, or if you must background it, keep polling it yourself **in the same turn** until it returns. The review loop can take several minutes (poll interval × wait for bot); that is expected — stay with it. Only when the script exits with `clean` or `skipped`, observed by you in-turn, may you continue to Step 8.
-3. **Never launch a second `pr-review-loop.sh` for the same PR while one is already running.** The script holds a per-PR single-instance lock; a concurrent invocation exits `75` with `REASON=lock_contention` and reports nothing about the PR's actual review state. If you are re-entering this step after a backgrounded or interrupted run (including after a compaction or a fresh session resuming this item), do not start a new invocation to "check." Poll for the earlier process to finish, or confirm via the lock file / process table that it is genuinely gone, and read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, the GraphQL review-thread query). Reserve `pr-review-loop.sh unlock <pr-number>` for a confirmed-stale lock (recorded PID no longer alive) — never as a way to run two instances at once. See the "Execution Discipline" section above the Step 0 heading for the general foreground/poll rule this specializes.
+3. **Never launch a second `pr-review-loop.sh` for the same PR while one is already running.** The script holds a single-instance lock keyed by target repository and PR number; a concurrent invocation exits `75` with `REASON=lock_contention` and reports nothing about the PR's actual review state. If you are re-entering this step after a backgrounded or interrupted run (including after a compaction or a fresh session resuming this item), do not start a new invocation to "check." Poll for the earlier process to finish, or confirm via the lock file / process table that it is genuinely gone, and read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, the GraphQL review-thread query). Reserve `pr-review-loop.sh unlock <pr-number>` for a confirmed-stale lock (recorded PID no longer alive) — never as a way to run two instances at once, and pass it the same `--repo`/`--product-repo`/`--repo-root` options the blocked run used so it resolves the same lock. The contention output prints the exact recovery command along with `LOCK_DIR` and `LOCK_REPO_KEY`; use those rather than reconstructing the path by hand. See the "Execution Discipline" section above the Step 0 heading for the general foreground/poll rule this specializes.
 
 The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
@@ -1930,6 +2276,8 @@ Addressed **N** finding(s) from cycle M:
 | --- | -------- | --------------- | ------------------------- |
 | 1   | greptile | `src/foo.ts:42` | First 80 chars of body... |
 
+Matrix coherence re-audit: <six-check result or n/a>
+
 <details><summary>Remaining open findings: K</summary>
 
 | #   | Platform | File           | Description               |
@@ -1941,11 +2289,18 @@ Addressed **N** finding(s) from cycle M:
 
 If 0 findings were resolved: post a shorter note — "Pushed fixes for cycle M. 0 findings resolved so far — re-running review to check."
 
+The `Matrix coherence re-audit:` line is optional; include it only when
+Protocol 93's same-matrix re-run rule triggered a re-audit for this cycle
+(the value is the six-check audit result), otherwise omit the line entirely.
+
 #### Resolve inline review comments
 
 After each fixer push, reply to each addressed inline review comment on the PR to mark it as resolved. Use `gh api` to post a reply to each comment whose ledger entry transitioned to `resolved`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
 gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
   -f body="Fixed in commit \`<short_sha>\`."
 ```
@@ -2079,6 +2434,7 @@ Interpret the result as follows:
 | `needs_fixes` and `cycle >= max_cycles` | Summary comment posted or updated automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                          |
 | `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
 | `waiting_on_reviewer` (exit code 4)     | Summary comment posted automatically by the script. Stop this local runner as waiting on the named reviewer; do not dispatch fixes, post duplicate triggers, apply readiness labels, enter CI readiness gates, or merge. Re-run Step 7 after the reviewer posts current-head terminal evidence or the human explicitly asks to poll again.                                                                                                                 |
+| `escalate` with `REASON=pr_ownership_branch_required`, `REASON=pr_ownership_mismatch`, or `REASON=pr_ownership_unverified` | The loop stopped before any side effect: the PR number passed to it is not verified as the PR of `--branch` (or, without `--branch`, of the workflow branch checked out where it ran), issue #1444. For `pr_ownership_branch_required`, re-run with `--branch <branch_name>`. No summary comment was posted and nothing on the PR changed. Do not dispatch a fixer. Re-resolve this item's PR with `gh pr view --json number` on the item branch and re-run Step 7 with that number; if the PR cannot be resolved, stop with `pr_ownership_refused` (`guardrails-enforcement.md` section 4) and include the `PR_OWNERSHIP_*` lines. |
 | `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
 
 ### PR-Agent "Possible Issue" advisory labels
@@ -2275,14 +2631,26 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 
 **`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception for **all** implementation branch types (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`). The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
 
+> **Readiness labels are helper-applied only (issue #1408).** Agents **must not call `gh pr edit --add-label ready-*`** directly, and **must not call `apply-readiness-labels.sh` for a `ready-*` label** unless the helper's own gate runs first. Readiness labels are input to the merge gates (`run-epic-delegated-gate.sh`, `batch-merge.sh`, `workflow-next-action.sh`), so a label applied on an agent's judgement asserts readiness no reviewer verdict supports. An agent that applies one by hand has not completed this step — it has skipped it.
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only for implementation PRs:
-gh pr edit <pr_number> --add-label "ready-for-regression"
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
+# Only for implementation PRs (feature/*, fix/*, refactor/*, hotfix/*,
+# backport/hotfix/*). The helper refuses unless every configured ready-phase
+# reviewer check run is `completed` for the current head SHA and the reviewer
+# posted no blocking findings on that SHA. It emits RESULT= and REASON= for the
+# run summary.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
+
+`RESULT=labeled` (exit 0) means the gate passed and the label is on the PR. `RESULT=refused` (exit 1) carries the reason — `reviewer-check-absent`, `reviewer-check-not-completed`, `reviewer-unavailable`, `blocking-findings`, or `ci-failing` — and is a stop: return to Step 7 rather than labelling. `reviewer-unavailable` covers a `neutral` Bugbot check run paired with a usage/spend-limit notice, where the reviewer never actually reviewed. `RESULT=escalate` (exit 2) means the PR state could not be read; do not label, and report the `REASON`. A **pending** check does not refuse this label — Step 7b runs before the Step 8 CI loop, and this label is what starts the configured regression workflow.
 
 This label triggers the `e2e-regression.yml` workflow (or project-specific equivalents). The template placeholder remains inactive unless explicitly enabled; downstream real regression suites should keep this label gate when they replace the placeholder. Step 8's CI loop (`pr-ci-loop.sh`) will then naturally pick up configured e2e checks as part of its green/red polling via `statusCheckRollup`.
 
-The `gh pr edit --add-label` command is idempotent — applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
+Applying a label that already exists is a no-op. When the label is already present from a previous cycle, the `synchronize` event from the latest push will have already re-triggered the workflow.
 
 Skip this step entirely for spec and plan PRs, and for graduation PRs (`develop-<slug>` → `develop`).
 
@@ -2295,7 +2663,7 @@ After applying the label, **verify it was applied successfully** before proceedi
 gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -q "^ready-for-regression$" && echo "✅ Step 7b complete: ready-for-regression label verified"
 ```
 
-If the verification fails (label not present), do not proceed to Step 8. Re-run the `gh pr edit --add-label` command and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
+If the verification fails (label not present), do not proceed to Step 8. Re-run `apply-readiness-labels.sh` (never `gh pr edit --add-label` directly — issue #1408) and verify again. This confirmation is required — Step 8a will block on a missing label and force a CI loop re-run, wasting cycles.
 
 See [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) for the full integration guide, including downstream customization.
 
@@ -2381,12 +2749,31 @@ Prefer the helper script:
 If a local watch/poll command exits before GitHub has reached a final state,
 treat that as an incomplete observation, not as a terminal item state. Re-query
 `gh pr view <pr_number> --json statusCheckRollup,labels,isDraft,headRefOid`,
-ignore superseded duplicate runs that are cancelled or skipped in favor of newer
-checks for the same head SHA, and re-run `pr-ci-loop.sh` whenever required
-checks are still pending/queued or the regression label was just applied. A
+judge only the latest run per check (see "Superseded runs" below), and re-run
+`pr-ci-loop.sh` whenever required checks are still pending/queued or the
+regression label was just applied. A
 same-session runner must continue the Step 8 loop until the helper returns
 `green`, `red`, or `timeout`; only `red` and `timeout` trigger the actions in the
 table below.
+
+**Superseded runs (issue #1559):** `statusCheckRollup` keeps every run of a
+check for the head SHA, not only the current one. A check that failed and then
+passed on re-run appears twice — PR #1547 carried `policy failure 05:26:31` and
+`policy success 05:28:16` for one SHA. "0 non-green checks", counted over the
+raw rollup, is therefore **not** a reliable readiness assertion: it reports
+superseded failures as current, and a queued re-run can hide behind the result
+it replaces. Read CI state through `pr-ci-loop.sh` or, for a raw
+`gh pr view --json statusCheckRollup` payload, pipe it through
+`normalize_status_check_rollup` from `scripts/development-workflow/workflow-lib.sh`
+first. That helper is the single deduplication every workflow script uses: it
+keeps the latest run per check (status context, or workflow plus check name)
+and treats a not-yet-started re-run as the latest. A failure that is still
+the latest run stays a failure. The REST `commits/<sha>/check-runs` endpoint
+has the same property: its default `filter=latest` means latest per check
+suite, and another run of a workflow reports in a new suite. It also carries no
+workflow name, so `latest_check_runs_for_sha` (same file) first tags each run
+with its workflow — keeping same-named jobs of different workflows apart — and
+then applies the same definition before anything is counted.
 
 Interpret the result as follows:
 
@@ -2421,6 +2808,8 @@ Interpret the result as follows:
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
 | 12        | Reviewer-loop clean verdict not settled (Check 0.6 / 0.6b): `POST_CLEAN_*` or `LOCAL_AI_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, `POST_CLEAN_HEAD_SHA` differs from the live PR head, or `LOCAL_AI_HEAD_CURRENT` is not exactly `1` when `LOCAL_AI_CONFIGURED=1` | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` and `LOCAL_AI_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
+| 13        | Internal review gate summary missing, not `APPROVED`, or stale for the live head (freshness guard refused) at the pre-Check-4 gate | Do not label ready; re-run Step 7a at the current HEAD, then re-run this checklist |
+| 14        | PR ownership not verified (`pr-ownership-guard.sh` refused: the PR number belongs to another branch or repository, or could not be resolved) — issue #1444 | Change nothing; re-resolve this item's PR with `gh pr view --json number` on the item branch and re-run this checklist |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2473,7 +2862,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
    b. Replace any existing `## Pre-merge Setup` section in the PR body with the newly constructed one, then update the PR body. This step runs on every pass through Step 8a (including after fixer pushes), so the section must always reflect the current diff — never accumulate stale or duplicate sections:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    # Remove any existing ## Pre-merge Setup block (from header to next ## heading or EOF),
    # then append the updated block at the end of the cleaned body.
    CURRENT_BODY=$(gh pr view <pr_number> --json body --jq '.body')
@@ -2493,7 +2885,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
    c. Apply the `needs-setup` label (BR-1 — the label must always accompany the section):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr edit <pr_number> --add-label "needs-setup"
    ```
 
@@ -2503,7 +2898,10 @@ Before running the readiness checklist below, perform a best-effort scan of the 
 
    Ensure `needs-setup` is not present and no `## Pre-merge Setup` section exists in the PR body. If either is present from a prior scan (e.g., a previous commit introduced an env var that has since been removed), remove them:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    # Remove label only if it is currently present (avoids silencing real API/auth errors)
    HAS_SETUP_LABEL=$(gh pr view <pr_number> --json labels --jq '.labels[].name' | grep -c "^needs-setup$" || true)
    if [ "$HAS_SETUP_LABEL" -gt 0 ]; then
@@ -2548,7 +2946,10 @@ application) in the readiness checklist. This sync step never applies
    `invocation_policy.effective_policy.checkpoints`).
 3. Detect satisfaction from human signals and sync labels:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH" || exit $?
    ./scripts/development-workflow/run-epic-checkpoint-lifecycle.sh sync-pr-labels \
      --pr "$PR_NUMBER" \
      --item "$ITEM_NUMBER" \
@@ -2582,6 +2983,14 @@ BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
 source scripts/development-workflow/workflow-lib.sh
 TARGET_REPO=$(repo_slug)
 
+# PR ownership (issue #1444): every label and body change below addresses the
+# PR by number, so prove it is this item's PR before any of them.
+if ! ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" \
+    --expected-branch "$BRANCH" --repo "$TARGET_REPO"; then
+  echo "ERROR: PR #$PR_NUMBER is not verified as the PR of $BRANCH in $TARGET_REPO; nothing was changed."
+  exit 14  # Exit code 14 = "PR ownership not verified"
+fi
+
 # Determine PR type (implementation vs. spec/plan)
 case "$BRANCH" in
   feature/*|fix/*|hotfix/*|refactor/*|backport/hotfix/*)
@@ -2610,10 +3019,18 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 # `--slurp` cannot be combined with `--jq`, so each call returns an array of
 # whole pages and the aggregation is done by an external jq.
 #
+# Superseded runs (issue #1559): check-runs' default `filter=latest` is latest
+# per CHECK SUITE, and another run of a workflow reports in a new suite —
+# PR #1547's head returns both `policy failure 05:26:31` and
+# `policy success 05:28:16`. latest_check_runs_for_sha (workflow-lib.sh,
+# sourced above) reads every page, tags each run with its workflow so
+# same-named jobs of different workflows stay separate, and keeps only the
+# latest run per workflow + job via the shared dedupe.
+#
 # Both reads fail closed. If either endpoint cannot be read, the gate does not
 # know the CI state, and "unknown" must never be labelled as green — the same
 # rule the CI_TOTAL check below applies to an empty check set.
-if ! CHECKS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate --slurp); then
+if ! CHECK_RUNS=$(latest_check_runs_for_sha "$REPO" "$HEAD_SHA"); then
   echo "ERROR: could not read check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
@@ -2627,9 +3044,11 @@ if ! STATUS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" -
   echo "ERROR: could not read commit statuses for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
-CI_FAILING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
-CI_PENDING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status != "completed")] | length')
-CI_TOTAL=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[]] | length')
+# (The combined `/status` endpoint above already reports only the latest
+# status per context.)
+CI_FAILING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+CI_PENDING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status != "completed")] | length')
+CI_TOTAL=$(printf '%s' "$CHECK_RUNS" | jq 'length')
 CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "failure" or .state == "error")] | length')))
 CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "pending")] | length')))
 CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]?] | length')))
@@ -2789,7 +3208,9 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   if [ "$HAS_REGRESSION_LABEL" -eq 0 ]; then
     echo "WARNING: Implementation PR is missing 'ready-for-regression' label — Step 7b was not completed before Step 8."
     echo "Applying 'ready-for-regression' label now and logging as protocol deviation."
-    gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
+    # Helper-gated (issue #1408): never `gh pr edit --add-label ready-*` directly.
+    ./scripts/development-workflow/apply-readiness-labels.sh \
+      --pr "$PR_NUMBER" --repo "$TARGET_REPO" --label ready-for-regression || exit 12
     echo "PROTOCOL_DEVIATION: ready-for-regression was missing on PR #${PR_NUMBER} at Step 8a — applied by agent. Step 7b must be run before Step 8 in future cycles."
     echo "Re-running Step 8 CI loop to wait for the e2e/regression workflow triggered by the label..."
     # EXIT this checklist script and re-run Step 8 before returning here.
@@ -2947,6 +3368,12 @@ else
           | select((.isOutdated // false) == false)
           | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
           | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+  # Split the owner and name out of TARGET_REPO (resolved at the top of this
+  # checklist). Do not leave <owner>/<repo> placeholders here — gh passes them
+  # through literally and the gate silently queries a repository that does not
+  # exist.
+  GRAPHQL_OWNER="${TARGET_REPO%%/*}"
+  GRAPHQL_REPO="${TARGET_REPO#*/}"
   UNRESOLVED_COUNT=$(gh api graphql -f query='
     query($owner:String!, $repo:String!, $number:Int!) {
       repository(owner:$owner, name:$repo) {
@@ -2956,8 +3383,7 @@ else
           }
         }
       }
-    }
-  }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
+    }' -f owner="$GRAPHQL_OWNER" -f repo="$GRAPHQL_REPO" -F number="$PR_NUMBER" \
     --jq "$JQ_FILTER")
 
   if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
@@ -2977,7 +3403,28 @@ if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
   gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "needs-fixes"
 fi
 
-# Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
+# Check 3.8: internal review gate freshness. Stale Step 7a evidence must stop
+# the readiness signal BEFORE the label is applied, not be caught by the Step 8c
+# post-label audit after label consumers may already have fired.
+GATE_COMMENT=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json comments \
+  --jq '[.comments[] | select(.body | contains("### Step 7a Internal Review Gate Summary"))] | last | .body // ""')
+GATE_VERDICT=$(printf '%s\n' "$GATE_COMMENT" | sed -n 's/^\*\*Verdict\*\*: *//p' | head -1)
+GATE_SHA=$(printf '%s\n' "$GATE_COMMENT" | sed -n 's/^\*\*Gate-approved commit\*\*: *`\{0,1\}\([0-9a-f]\{7,64\}\).*/\1/p' | head -1)
+LIVE_HEAD_OID=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json headRefOid --jq '.headRefOid')
+if [ "$GATE_VERDICT" != "APPROVED" ] || [ -z "$GATE_SHA" ] || \
+   ! ./scripts/development-workflow/internal-review-gate-freshness-guard.sh \
+        --gate-sha "$GATE_SHA" --head-sha "$LIVE_HEAD_OID" --repo-root "$(git rev-parse --show-toplevel)"; then
+  echo "ERROR: Cannot proceed to Check 4 — internal review gate evidence is missing, not APPROVED, or stale for head $LIVE_HEAD_OID."
+  echo "Re-run Step 7a at the current HEAD, then re-run this checklist from the beginning."
+  # A readiness label already on the PR describes a head the gate never approved:
+  # pull it back and keep the PR out of readiness before exiting.
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review" || true  # workflow-shell-guard: allow SH001 - label may be absent
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
+  exit 13  # Exit code 13 = "internal review gate evidence missing or stale at pre-Check-4 gate"
+fi
+
+# Check 4: apply (or revalidate) the ready-for-human-review label through the
+# helper — even when the label is already present, so a stale one is removed.
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 # Last look before the label (issue #1574): several API-backed gates ran since
 # Check 0.6, and a push during any of them leaves the settled verdict
@@ -2991,11 +3438,21 @@ if [ "${SETTLE_APPLIES:-1}" -eq 1 ] && ! settle_head_ok; then
   fi
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
-if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
-  echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
-else
-  echo "Applying 'ready-for-human-review' label..."
-  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "ready-for-human-review"
+# Run the helper for BOTH label-present and label-absent PRs (issue #1408):
+# a label that is already present is NOT proof it is still current. The helper
+# revalidates it against the live head SHA and removes it on refusal, so a
+# same-SHA reviewer rerun that fails after the label went on pulls the stale
+# label back off instead of leaving it for the merge gates.
+echo "Applying/revalidating 'ready-for-human-review' label through the helper gate..."
+# Agents must not call `gh pr edit --add-label ready-*` directly (issue #1408).
+# The helper re-verifies, for the live head SHA, that every configured
+# ready-phase reviewer check run is `completed`, that the reviewer posted no
+# blocking findings, and that no non-reviewer check is pending or failing. A
+# `refused` verdict here is a stop, not a warning: return to Step 7 or Step 8
+# per the printed REASON.
+if ! ./scripts/development-workflow/apply-readiness-labels.sh \
+      --pr "$PR_NUMBER" --repo "$TARGET_REPO" --label ready-for-human-review; then
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
 
 echo "✅ Label readiness checklist passed. PR is ready for human review."
@@ -3065,6 +3522,8 @@ a wait of its own (issue #1574).
          | select((.isOutdated // false) == false)
          | select(.comments.nodes[0].author.login as \$a | [\"coderabbitai\",\"devin-ai-integration\",\"greptile-apps\",\"$CODEX_BOT_LOGIN\"] | index(\$a) != null)
          | select((.comments.nodes[0].body // \"\") | test(\"✅ Addressed\") | not)] | length"
+   GRAPHQL_OWNER="${TARGET_REPO%%/*}"
+   GRAPHQL_REPO="${TARGET_REPO#*/}"
    UNRESOLVED_RECHECK=$(gh api graphql -f query='
      query($owner:String!, $repo:String!, $number:Int!) {
        repository(owner:$owner, name:$repo) {
@@ -3074,7 +3533,7 @@ a wait of its own (issue #1574).
            }
          }
        }
-     }' -f owner="<owner>" -f repo="<repo>" -F number="$PR_NUMBER" \
+     }' -f owner="$GRAPHQL_OWNER" -f repo="$GRAPHQL_REPO" -F number="$PR_NUMBER" \
      --jq "$JQ_FILTER")
    ```
 
@@ -3085,6 +3544,7 @@ a wait of its own (issue #1574).
      if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
        echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved review thread(s)."
        echo "Removing ready-for-human-review label and returning to Step 7a."
+       ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH" --repo "$TARGET_REPO" || exit 14
        gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review"
        gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
        echo "Return to Step 7a to address the newly-discovered threads."
@@ -3142,11 +3602,26 @@ section 3 Gate 6:
    immediately after) before setting the tracker status. If the audit record
    cannot be produced, apply the `missing_audit_evidence` stop condition.
 
-After the label readiness checklist passes, update the tracker status to reflect the PR is waiting for human review:
+After the label readiness checklist passes, move the tracker to the Status
+that the canonical mapping assigns to the `ready-for-human-review` event (see
+[`tracker-status-mapping.md`](../tracker-status-mapping.md)). The mapping gives
+`Spec in Review` for `spec/*`, `Plan in Review` for `implementation-plan/*`,
+and `Development in Review` for `feature/*`, `fix/*`, `refactor/*`, and
+`hotfix/*`. `ready-for-human-review` is the only readiness label that changes
+Status. `ready-for-regression`, `needs-setup`, `human-checkpoint-required`,
+and `needs-fixes` leave it unchanged. Resolve and apply the Status with the
+helper. Do not type it by hand:
 
-- For **spec PRs** (`spec/*`): set tracker status to `Spec in Review`
-- For **plan PRs** (`implementation-plan/*`): set tracker status to `Plan in Review`
-- For **implementation PRs** (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): set tracker status to `Development in Review`
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tracker-status-for.sh \
+  --event ready-for-human-review --branch "$BRANCH" --apply --issue "$ISSUE_NUMBER"
+```
+
+Exit `3` (`TRACKER_STATUS_RESULT=unresolved`) is a `missing_tracker_context`
+stop. Report the canonical Status, the board's valid options from the
+`TRACKER_STATUS_UNRESOLVED` line, and the unblock action. Never substitute a
+different Status.
 
 ### Routing: CLI vs. MCP
 
@@ -3168,7 +3643,7 @@ For issue tracker providers that have no supported `gh`-equivalent CLI, MCP serv
 
 - **The orchestrator** (or the human invoking the Work Item Runner directly) is responsible for performing the MCP-based status update after the subagent returns.
 
-If neither the CLI path nor MCP is available, log a warning and continue — do not block labeling or PR readiness on a tracker update failure.
+If neither the CLI path nor MCP is available, log a warning and continue. Do not block labeling or PR readiness on a transient tracker update failure. A board that lacks the canonical Status, or has no Status field, is not transient. It is the `missing_tracker_context` stop described above.
 
 ---
 
@@ -3176,8 +3651,9 @@ If neither the CLI path nor MCP is available, log a warning and continue — do 
 
 After Steps 8a and 8b complete, perform one final independent verification of the actual PR state via `gh pr view` before reporting the PR as ready for human review. **Do not rely on prior step outputs or agent self-reports** — query GitHub directly.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments
+gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments,headRefOid
 ```
 
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly. **This query is mandatory — do not skip it or rely on self-tracked thread state:**
@@ -3232,11 +3708,12 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | Checkpoint status comment (when checkpoints in scope) | At least one PR comment containing `<!-- run-epic:checkpoint-status -->` whose blocking section matches the current label state. Skip when no checkpoint policy is in scope. |
 | All automated-reviewer `reviewThreads` resolved | GraphQL query above returns empty output — `isResolved: true` (or first comment body contains `✅ Addressed`) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Automated reviewer loop summary                 | At least one comment whose body contains `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` (skip this check only when Step 7 was `skipped` because no review platforms are configured), and the latest summary's `Result:` line is `clean` or `skipped`. **This is a hard requirement. Agents applying fixes MUST NOT remove or skip this check — the presence of the comment plus a clean/skipped result is the only reliable signal that Step 7 ran to completion successfully. A PR that has `ready-for-human-review` but lacks this comment or has `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result is in an incomplete state and must re-run Step 7 or escalate.** (Note: the Step 7a summary comment posted by the internal review gate is a distinct comment from a distinct step — it does not satisfy this check. This check targets the external automated reviewer loop summary from Step 7 only.) |
-| CI checks                                       | All required status checks have `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Internal review gate freshness                  | The latest `### Step 7a Internal Review Gate Summary` comment's `**Verdict**` must be exactly `APPROVED` (any other verdict, such as `hard-fail` or `escalated`, fails this check even when the SHA matches), and its `**Gate-approved commit**` SHA must either equal the PR's live `headRefOid` or be a strict ancestor of it with the guard accepting the post-gate delta as a marked mechanical delta (`REASON=mechanical_delta_verified`); success is defined as an `APPROVED` verdict plus `RESULT=pass` from the guard, never as unconditional SHA equality. Verified — with the `headRefOid` queried live in the same independent `gh pr view` call, not reused from Step 8a — by running `scripts/development-workflow/internal-review-gate-freshness-guard.sh --gate-sha <gate-approved sha> --head-sha <headRefOid> --repo-root <repo root>` and observing `RESULT=pass`. **This is the mechanical enforcement of the "verdict binds to the reviewed commit" rule (see `REVIEW.md` → PR Readiness, and Step 7a → "Verdict binds to this commit only" above) — the internal review gate's `APPROVED` verdict does not carry forward across a non-mechanical commit even when Step 7's automated reviewer loop reports clean at the new HEAD.** `RESULT=refused` (`REASON=stale_gate_evidence` or `gate_sha_not_ancestor`) fails this check; do not report ready — instead re-run Step 7a at the new HEAD, the only non-destructive remedy after the fact. The `MECHANICAL_DELTA: <rationale>` marker exempts a post-gate commit only when it was written into that commit's message when the commit was first created (every commit in the gate..HEAD range, including merge commits, needs it); never amend, rebase, or force-push already-pushed commits to add it. A summary comment that predates this field (no `**Gate-approved commit**` line) cannot be verified and is treated the same as a stale mismatch — re-run Step 7a at the current HEAD to produce a comment carrying the field. A missing Step 7a summary comment (never posted, or deleted) is itself a failed check, never a skip — do not report ready; run Step 7a first, because without that comment nothing proves the internal review gate ran. |
+| CI checks                                       | The latest run of every required status check has `state: SUCCESS` or `conclusion: success` in `statusCheckRollup` (no check in `PENDING`, `FAILURE`, or `ERROR` state), judged after `normalize_status_check_rollup` collapses superseded runs (see Step 8 "Superseded runs") — never by counting non-green entries in the raw rollup |
 
 If any check fails:
 
-1. Log the specific failure(s) — include the PR number, failed check name, and observed value.
+1. Log the specific failure(s) — include the PR number, failed check name, and observed value — then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>`; stop on a non-zero exit (issue #1444).
 2. Apply `needs-fixes` if not already present: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 3. Remove `ready-for-human-review` if it was already applied: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 4. Fix the root cause (wrong base branch, missing label, missing review comment, failing CI) and return to Step 7a.
@@ -3282,22 +3759,36 @@ See `92-pr-readiness-signal-protocol.md` for label definitions.
 
 When a human confirms that a PR has been merged, or when this runner merged a PR
 through the delegated merge gate, update the issue tracker and clean up local
-state according to this table:
-
-| Merged PR branch type                             | Set tracker status to |
-| ------------------------------------------------- | --------------------- |
-| `spec/*`                                          | Spec Ready            |
-| `implementation-plan/*`                           | Plan Ready            |
-| `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
+state. The tracker Status comes from the `merged` row of the canonical mapping
+in [`tracker-status-mapping.md`](../tracker-status-mapping.md): `Spec Ready`
+for `spec/*`, `Plan Ready` for `implementation-plan/*`, and `Merged` for
+`feature/*`, `fix/*`, `refactor/*`, and `hotfix/*`. Resolve it with
+`./scripts/development-workflow/tracker-status-for.sh --event merged --branch
+<merged-branch>`.
 
 **A PR may resolve more than one item** (#1391). `post-merge-cleanup.sh`
-processes the branch-derived issue plus every closing-keyword reference in the
-PR title, body, and commit messages, and warns about bare `#N` title
-references it did not process. Verify the transition for **each** referenced
-item — do not stop after the first. A "references issue(s) … without a closing
-keyword" warning is **non-terminal**: cleanup stays incomplete until every
-named issue has an explicit disposition — processed (closed and
-status-updated) or confirmed non-closing — recorded in the item report.
+processes the branch-derived issue plus the closing-keyword references in the
+PR title, body, and commit messages that belong to the hub tracker (see the
+table below), and warns about bare `#N` title references it did not process.
+Verify the transition for **each** referenced item — do not stop after the
+first.
+
+| Where the merged PR lives                     | Closing-keyword form               | Applied to the hub tracker? |
+| --------------------------------------------- | ---------------------------------- | --------------------------- |
+| Hub repo, or `single_repo` mode               | `Fixes #N`                         | Yes                         |
+| `workflow_hub` product repo                   | `Fixes #N` (bare)                  | No — skipped with a `NOTE:` |
+| `workflow_hub` product repo                   | `Fixes <hub-owner>/<hub-repo>#N`   | Yes                         |
+| `workflow_hub` product repo, hub slug unknown | any                                | No — warned, none applied   |
+
+A skipped bare reference names a product-repo issue, so it needs its own
+disposition (closed in the product repository, or confirmed non-closing) in the
+item report. See
+[`cross-repo-pr-flow.md`](../cross-repo-pr-flow.md#closing-keywords-in-product-prs).
+
+A "references issue(s) … without a closing keyword" warning is
+**non-terminal**: cleanup stays incomplete until every named issue has an
+explicit disposition — processed (closed and status-updated) or confirmed
+non-closing — recorded in the item report.
 
 **Key rules:**
 
@@ -3312,8 +3803,16 @@ status-updated) or confirmed non-closing — recorded in the item report.
 ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```
 
+- Cleanup never removes the caller's own worktree (#1386). When the merged
+  branch is checked out in the worktree named by `--repo-root`, or in the
+  worktree the helper is invoked from, it detaches that worktree onto the updated
+  base instead (`CALLER_WORKTREE_ACTION=detached`) and then deletes the branch.
+  Without `--repo-root`, the helper uses the calling worktree rather than the
+  main clone. `CALLER_WORKTREE_ACTION=detach_failed` with
+  `LOCAL_DELETE_RESULT=skipped` means conflicting uncommitted changes blocked the detach;
+  tracker updates still run, and the local branch needs manual cleanup.
 - After cleanup, re-read the live tracker status and Project status. If the live
-  status does not match the expected value in the table above, re-apply the
+  status does not match the canonical `merged` Status above, re-apply the
   tracker transition before reporting the item terminal.
 - For implementation branches (`feature/*`, `fix/*`, `refactor/*`, and
   `hotfix/*`), `post-merge-cleanup.sh` must report remote branch cleanup
@@ -3363,3 +3862,74 @@ Stop conditions never weaken below the baseline human-stops defined in
 `guardrails-enforcement.md` section 4. Every stop appears in the Work Item
 Runner Summary under a "Stops" section with its named cause, affected item, and
 unblocking action.
+
+**`architecture_decision` coverage analysis (required before the terminal
+summary)**: where the named stop condition is `architecture_decision`, before
+emitting the terminal Work Item Runner Summary, the runner performs the
+per-axis coverage analysis and produces the well-formed escalation report
+defined by the canonical page
+[`architecture-decision-escalation.md`](../architecture-decision-escalation.md)
+— axis decomposition, per-axis coverage verdict, per-citation conformance
+declaration (including the per-citation declaration rule for mixed reports),
+and a requested decision scoped to genuinely open axes only. Attach the full
+report to the Work Item Runner Summary's `Stops:` line. Do not restate the
+canonical page's full vocabulary here — link to it.
+
+**No genuinely open axis (continuation, not suppression)**: where the coverage
+analysis finds every axis Settled by specification, every citation on those
+axes carrying a determined declaration of `Conforms` or `Not yet implemented`
+(never `Departs`, never undetermined conformance, and never an unresolved
+raised substance question), the runner is not uncertain, and the runner does
+not dispute any citation's substance, the `architecture_decision` trigger's own
+precondition was never actually met — applying the cited lines is what the
+specification already required. The runner applies the cited lines and
+continues; this is **not** a relaxation of the stop condition, only a
+recognition that the analysis has shown no genuinely unanswered question
+exists. This continuation path does **not** apply — and the run stops under
+`architecture_decision` instead — when: any axis remains Genuinely open; any
+citation on a settled axis is `Departs` and correction is not the obvious next
+step (see the dispute branch below); any citation's conformance cannot be
+determined; or a reviewer or human has actually raised a citation's substance
+in question and the runner genuinely cannot resolve it (the canonical page's
+raised-question gate).
+
+**Departs on an otherwise-fully-settled report**: where every axis is settled
+but a citation declares `Departs`, the runner either corrects the behavior to
+conform (the citation then conforms, and the continuation path above applies)
+or, where the departure is instead a substance dispute, raises the departure as
+its own separate axis — **Genuinely open** with the reason **Governing line
+disputed**, carrying a required proposed amendment for what the line should
+become — while the covered axis stays **Settled by specification**. The runner
+then stops for that new axis only; it does not continue past it.
+
+**PR durability (upsert, not append-only)**: where a pull request exists for
+the work item and the run stops under `architecture_decision`, the runner
+**upserts** a single durable PR issue comment carrying the escalation report,
+rather than posting a new comment on every run. The comment body starts with
+the HTML marker `<!-- architecture-decision-escalation -->` followed by the
+heading `## Architecture decision escalation`, then the full report content
+already attached to the run summary. Do **not** model this on Step 7a's
+`gh pr comment` — that call posts a new comment on every exit and is not the
+pattern here. Instead, use the same idempotent find-marker-then-PATCH-or-POST
+algorithm `apply_comment`/`find_marker_comment_id` in
+`scripts/development-workflow/run-epic-audit-trail.sh` already use for
+checkpoint-status and security-advisory marker comments (or an equivalent
+shared helper with the same contract):
+
+1. Paginate the PR's issue comments (`gh api --paginate` across
+   `issues/<pr>/comments`) and locate an existing comment whose body contains
+   the marker `<!-- architecture-decision-escalation -->`.
+2. If found, `gh api` `PATCH` that comment's body in place.
+3. If not found, **re-run the marker lookup immediately before POSTing** (the
+   same re-check `apply_comment` performs) so a concurrent run cannot create a
+   duplicate; `PATCH` if the re-check now finds it, otherwise `POST` a new
+   comment.
+
+This reuses the *existing* marker-comment upsert mechanism to satisfy the
+spec's PR-durability acceptance criterion (the report must be "readable on
+that pull request after the run ends" where a PR exists) — it is not a new
+routing or notification destination (spec Out of Scope, item 7). A run that
+stops before any pull request exists gets no new durable destination from this
+requirement; its durability remains whatever the existing stop-message
+contract already provides. No new script is required for this MVP unless
+implementation extracts a shared helper.

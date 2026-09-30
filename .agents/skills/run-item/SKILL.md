@@ -84,6 +84,14 @@ advances exactly one non-epic item through Protocol 91.
 10. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
    documentation-stage alignment checker before readiness; correct or escalate
    mismatches instead of applying `ready-for-human-review`.
+10a. Before stopping under `architecture_decision`, run the per-axis coverage
+   analysis and produce the well-formed escalation report required by
+   `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+   axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+   `Departs` / `Not yet implemented` declaration, and a requested decision
+   scoped to genuinely open axes only. Never describe such an escalation as
+   well-formed without that analysis. Upsert the PR marker comment per
+   Protocol 91.
 11. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
 12. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
@@ -107,3 +115,28 @@ advances exactly one non-epic item through Protocol 91.
 
 > **Deprecated alias**: `$run-item-work` / `/run-item-work` resolves to the same
 > behavior for legacy invocations.
+
+---
+
+## Cursor dispatch profile
+
+In a Cursor environment only, declare the dispatch profile in force before any
+mutating action — `cursor-native-handoff`, `cursor-parent-orchestrated`, or
+`cursor-inline-fallback` — naming the Work Item Runner (item layer) as the
+accountable orchestration role, with a posture valid for the current checkpoint. Other runners are unaffected by
+this requirement.
+
+Evaluation order, unconfirmed-handoff outcomes, accountability postures, the
+named stop conditions and their human unblocking actions, and the
+invalid-declaration boundaries are defined once, normatively, in
+`docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
+Follow that document; this surface deliberately does not restate it.
+
+Stage-agent models in Cursor: before dispatching a stage subagent, read that
+agent's `model:` field from `.cursor/agents/<agent>.md` in the checkout being
+run and use it. Do not pick models from the template tables in
+`docs/workflow/development-workflow/agent-model-config.md`. Downstream
+repositories may pin other model families (for example Grok or Composer), and
+those pins are honored as written. See that document's "Cursor model source of
+truth" section.
+

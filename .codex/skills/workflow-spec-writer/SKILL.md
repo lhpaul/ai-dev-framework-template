@@ -33,7 +33,11 @@ Recommended model tier: `premium`
    briefs, include the mandatory Brief Objective List, Coverage Matrix, and
    PR-visible Deferral Notes as part of that gate. For complex workflow
    decision-gate specs, include Protocol 01's consistency matrix or
-   not-applicable rationale.
+   not-applicable rationale. When the spec contains a decision matrix, state
+   table, lifecycle, precedence rules, or similarly stateful contract, run
+   Protocol 01's matrix coherence preflight (six-check audit) before the first
+   push and record the result as a `Matrix coherence preflight` row in the
+   gate log.
 9. Before opening the draft spec PR, call `ensure_on_project_board <issue_number> "Writing Spec"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 10. Before creating the spec branch or opening the spec PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, plus the expected `spec/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
 11. When creating the development folder, discover design assets per

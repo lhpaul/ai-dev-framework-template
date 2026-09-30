@@ -7,6 +7,10 @@ Thumbs.db
 .env.*
 !.env.example
 .ai-dev-workflow.local.yaml
+.ai-dev-workflow.local.yaml.retired
+.ai-dev-workflow.local.env
+# Local /run-item and /run-epic checkpoint satisfaction state
+checkpoint-policy.json
 
 # Claude Code
 .claude/settings.local.json

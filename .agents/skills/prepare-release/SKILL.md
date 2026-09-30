@@ -28,11 +28,14 @@ This is the Codex command-style alias for Claude Code `/prepare-release`.
 8. For workflow-hub component releases, run
    `component-milestone-reconciliation.sh` after component release evidence and
    cleanup are complete. The evidence must include `hub_tracker_ref`,
-   `hub_tracker_reconciliation_outcome` of `complete` or `deferred`,
-   `cleanup_outcome` of `complete`, and `child_release_state` of `released` or
-   `merged`. Apply namespaced component milestones only to matching component
-   child issues, and use delivery-bundle parent inspection/apply paths for
-   parent release status without stamping parent or delivery issues.
+   `cleanup_outcome` of `complete`, and a bound `component_tag` /
+   `component_version`. Supply `hub_tracker_reconciliation_outcome`
+   (`complete` or `deferred`) and `child_release_state` (`released` or
+   `merged`) as flags to `component-milestone-reconciliation.sh` — they are
+   hub-supplied inputs, not evidence fields. Apply namespaced component
+   milestones only to matching component child issues, and use delivery-bundle
+   parent inspection/apply paths for parent release status without stamping
+   parent or delivery issues.
 9. For first-time or changed workflow-hub multi-repository adoption, collect
    self-review evidence with the multi-repository release adoption guide before
    release PR creation or any release mutation. Continue only when adoption

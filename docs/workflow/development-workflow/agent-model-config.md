@@ -44,7 +44,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code.
+- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
@@ -68,7 +68,46 @@ Codex skills intentionally store recommended tiers rather than concrete model ID
 | `balanced` | `gpt-5.6-terra` | Implementation, review, setup, QA, item orchestration, and retrospectives |
 | `premium` | `gpt-5.6-sol` | Spec writing and technical planning |
 
+### Cursor model source of truth
+
+For Cursor runs, the `model:` field in each checked-in `.cursor/agents/<agent>.md`
+file is authoritative. The "Cursor model defaults (template)" table below is
+the template's starting point and an example of the tier split. It does not
+override a repository's local pins, and it does not describe what a downstream
+repository actually runs.
+
+Downstream repositories may pin other model families, such as Grok, Composer,
+or a provider-specific ID the template never ships. Those pins must be honored
+as written, including a checked-in `inherit`. No table in this document, the
+Claude Code defaults table included, is a substitute for the value an agent
+file resolves to.
+
+Before dispatching a Cursor stage subagent, an orchestrating role (`/run-item`,
+`/run-items`, `/run-epic`, the item or portfolio orchestrator, or a parent
+running inline) resolves the target agent's model from the checkout being run:
+
+1. If `.cursor/agents/<agent>.md` exists, use its `model:` value.
+2. If it does not exist, Cursor resolves the agent through the location
+   precedence described after "Cursor model field values" below; use the
+   `model:` value of the file that resolves, and name that file in the run
+   summary.
+3. If no agent file resolves, or the resolved file has no `model:` field,
+   report the gap in the run summary. Do not fill it from any table in this
+   document.
+
+A one-off override from "Option 1" below changes the model only when the run
+actually dispatches it. Creating a duplicate agent file (for example
+`developer-premium.md`) does not change which agent `/run-item` dispatches: the
+run still dispatches the standard role (`developer`) and uses that role's pin.
+The duplicate applies only when the human explicitly names it as the stage
+agent to dispatch for that run, and the run summary records that substitution.
+Switching the Composer model affects only agents whose resolved `model:` is
+`inherit`.
+
 ### Cursor model defaults (template)
+
+These are the values this template ships in `.cursor/agents/*.md`. Read the
+local files for the values in force; see "Cursor model source of truth" above.
 
 Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `fast` for economy coordination agents, `auto` for lower-risk balanced agents, and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
 
@@ -105,6 +144,61 @@ and `inherit` as quota controls:
 | `tech-lead` | `premium` | `cursor-grok-4.5-high` |
 
 Update pinned IDs and tier mappings when your provider deprecates a model; keep the tier intent stable.
+
+### Cursor dispatch profiles
+
+Applies only in a Cursor environment; other runners are unchanged. Profile
+selection is declared, not automatically detected, per
+`integrations/cursor-dispatch-profiles.md` (the canonical, normative source).
+For an environment or orchestration layer whose handoff behavior has not been
+directly observed, the profile recorded below is an explicit assumption, not
+an observed fact, and takes the more restrictive of the profiles under
+consideration until confirmed by observation.
+
+**Profile and evidence marker per environment x layer**:
+
+| Environment | Layer | Profile | Evidence marker | Rationale |
+| --- | --- | --- | --- | --- |
+| Cursor Desktop | Portfolio | Native handoff (`cursor-native-handoff`) | confirmed by observation | The two-hop handoff holds on desktop, naming the portfolio orchestrator |
+| Cursor Desktop | Epic | Native handoff (`cursor-native-handoff`) | confirmed by observation | Same, naming the epic runner |
+| Cursor Desktop | Item | Native handoff (`cursor-native-handoff`) | confirmed by observation | Same, naming the work item runner |
+| Cursor Remote Control | Portfolio | Parent orchestrated (`cursor-parent-orchestrated`) | explicit assumption | Onward-handoff failure is recorded only environment-wide ("frequently"); no portfolio-layer case is recorded, so onward capability cannot be confirmed at this layer and the conservative default applies. At this layer the current context absorbs the portfolio and item layers and runs items one at a time (Protocol 90 Step 4 Cursor-scoped paragraph) |
+| Cursor Remote Control | Epic | Parent orchestrated (`cursor-parent-orchestrated`) | explicit assumption | No epic-layer case is recorded; onward capability is unconfirmed, so the conservative default applies |
+| Cursor Remote Control | Item | Parent orchestrated (`cursor-parent-orchestrated`) | confirmed by observation | The recorded incident (one context doing orchestration and implementation at once) is an item-layer case |
+| Cursor Cloud Agents | Portfolio | Inline fallback (`cursor-inline-fallback`) | explicit assumption | Nothing observed for this environment, so initial handoff cannot be confirmed and the matrix assigns inline fallback |
+| Cursor Cloud Agents | Epic | Inline fallback (`cursor-inline-fallback`) | explicit assumption | Same |
+| Cursor Cloud Agents | Item | Inline fallback (`cursor-inline-fallback`) | explicit assumption | Same |
+
+Consequence for Cloud Agents: a mutating bounded run stops with
+`dispatch_handoff_unavailable` recording that initial handoff is unconfirmed,
+rather than absorbing a role. An operator who observes and records in run
+output that initial handoff is available makes the **next** run declare
+afresh against the confirmed facts (parent orchestrated if onward handoff is
+unavailable or unconfirmed, native handoff if both are available); a run
+never upgrades in place. The same applies to a Remote Control portfolio or
+epic layer once an operator observes and records the onward fact for that
+layer: the next run declares afresh.
+
+**Model assignment per environment x layer** (evidence marker in the last
+column; the tiers come from the Agent Assignments table above — Portfolio
+Orchestrator `economy`/`fast`, Work Item Runner `balanced`/`auto`; the epic
+layer has no dedicated agent file, so it takes the Work Item Runner tier
+(`balanced`) as its floor; stage roles always keep their own configured
+models under every profile):
+
+| Environment | Portfolio layer model | Epic layer model | Item layer model | Evidence marker |
+| --- | --- | --- | --- | --- |
+| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | explicit assumption (the framework documents that a Cursor subagent's frontmatter `model` applies on native handoff, but no model observation is recorded) |
+| Cursor Remote Control | The floor is the highest tier among the layers the run absorbs: a `/run-work` scan absorbs nothing (observing), so the `economy` floor applies (`fast` where selectable); `/run-items` absorbs the portfolio **and** item layers, so the `balanced` floor applies (`auto` where selectable) | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | explicit assumption at every layer (the remote session's model is not switched by role frontmatter, and no model observation is recorded) |
+| Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | explicit assumption (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row the confirmed facts assign, including its model floor |
+
+Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
+as a substitute for the floor: if the session model is below the absorbed
+role's tier, the declaration records the shortfall and the operator switches
+the session model before the first mutating action. Under
+`cursor-inline-fallback` no orchestration role is absorbed, so no role floor
+applies. Unobserved environments use the more restrictive applicable profile
+until an operator confirms otherwise in run output.
 
 See also:
 
@@ -151,8 +245,8 @@ bash -lc 'claude --agent developer --model claude-opus-5'
 **Cursor:**
 Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To override for a single run:
 
-- Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
-- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
+- Switch your Composer's model before invoking the subagent (e.g., `/developer`); this takes effect only for an agent whose `model:` is `inherit`, or
+- Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value, and explicitly name it as the stage agent to dispatch for that run (see "Cursor model source of truth")
 
 Use this decision path before overriding Cursor models:
 
@@ -219,7 +313,7 @@ gh pr view <pr_number> --json isDraft,labels,comments,statusCheckRollup
 | `ready-for-regression` present                                                                                       | Step 7b applied the label                                                                                                                                                                    |
 | `ready-for-human-review` present **but** no reviewer loop summary comment                                            | **Incomplete** — the label was applied before Step 7 completed; the PR is not actually ready (**skip this check only when Step 7 was `skipped` because no review platforms are configured**) |
 | No comment containing `"Automated Reviewer Loop Summary"`, `"Reviewer Loop Summary"`, or `"No blocking PR feedback"` | Step 7 (external automated reviewers) did not finish (**skip this check only when no review platforms are configured**)                                                                      |
-| CI checks absent or in PENDING/FAILURE state                                                                         | Step 8 (CI loop) did not finish                                                                                                                                                              |
+| CI checks absent, or the latest run of a check in PENDING/FAILURE state                                               | Step 8 (CI loop) did not finish. The rollup keeps superseded runs, so a failure followed by a passing re-run is green; judge with `pr-ci-loop.sh`, not by scanning the raw rollup (#1559)      |
 | `needs-fixes` label present                                                                                          | A prior run detected issues but the fix loop did not complete                                                                                                                                |
 
 A PR that has readiness labels but **no reviewer loop summary comment** is the canonical sign of an interrupted run. The label alone is not a reliable completion signal.

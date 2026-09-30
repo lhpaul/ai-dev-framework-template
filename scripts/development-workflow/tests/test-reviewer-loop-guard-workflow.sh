@@ -80,7 +80,20 @@ run_test "guard_path_cancels_stale_runs" "yes" "$(contains "cancel-in-progress: 
 run_test "no_default_max_wait" "yes" "$(not_contains "GUARD_MAX_WAIT")"
 run_test "no_poll_interval" "yes" "$(not_contains "GUARD_POLL_INTERVAL")"
 run_test "no_sleep_polling" "yes" "$(not_contains "sleep ")"
-run_test "no_checkout" "yes" "$(not_contains "actions/checkout")"
+# PR #1818 codex-github round 13: the privileged job loads the readiness
+# helper from the repository's TRUSTED default branch, never from the PR head
+# revision (thread PRRT_kwDORWAxaM6m0pQc: a same-repo author could plant
+# shell in the head revision and have it executed with this job's write
+# token; the fork guard does not cover same-repo branches).
+run_test "helper_checkout_pinned" "yes" "$(contains 'uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd')"
+run_test "helper_checkout_targets_default_branch" "yes" "$(contains 'ref: ${{ github.event.repository.default_branch }}')"
+run_test "helper_checkout_persists_no_credentials" "yes" "$(contains 'persist-credentials: false')"
+# Thread PRRT_kwDORWAxaM6m0pQl: the helper sources workflow-lib.sh from its
+# own SCRIPT_DIR, so an API fetch of the single file died with "workflow-lib.sh:
+# No such file or directory"; the default-branch checkout ships the closure.
+run_test "helper_runs_from_trusted_workspace" "yes" "$(contains 'bash "$GITHUB_WORKSPACE/scripts/development-workflow/apply-readiness-labels.sh"')"
+run_test "no_contents_api_fetch_of_helper" "yes" "$(not_contains 'contents/scripts/development-workflow/apply-readiness-labels.sh')"
+run_test "no_pr_head_ref_fetch_of_helper" "yes" "$(not_contains '?ref=$HEAD_SHA')"
 run_test "missing_summary_fails_without_elapsed_wait" "yes" "$(contains "No reviewer-loop summary found. Run the automated reviewer loop before merging.")"
 
 run_test "summary_marker_one_checked" "yes" "$(contains "MARKER1=\"### Automated Reviewer Loop Summary\"")"
@@ -109,8 +122,12 @@ run_test "regression_label_constant_preserved" "yes" "$(contains "LABEL_NAME=\"r
 run_test "regression_label_create_preserved" "yes" "$(contains 'gh label create "$LABEL_NAME"')"
 run_test "regression_label_create_race_handled" "yes" "$(contains "Concurrent creator race")"
 run_test "label_waits_on_open_reopen_ready" "yes" "$(contains "regression waits for current-head reviewer-loop clean evidence")"
-run_test "label_add_preserved" "yes" "$(contains '--add-label "$LABEL_NAME"')"
 run_test "label_add_failure_continues_to_guard" "yes" "$(contains "Continuing to reviewer-loop guard status.")"
+run_test "label_add_routes_through_readiness_helper" "yes" "$(contains "apply-readiness-labels.sh")"
+run_test "no_direct_regression_label_apply" "yes" "$(not_contains '--add-label "$LABEL_NAME"')"
+run_test "helper_invoked_with_pr_and_label" "yes" "$(contains 'apply-readiness-labels.sh" --pr "$PR_NUMBER"')"
+run_test "helper_invoked_with_repo" "yes" "$(contains 'apply-readiness-labels.sh" --pr "$PR_NUMBER" --repo "$REPO"')"
+run_test "helper_refused_does_not_hard_fail" "yes" "$(contains "refused to apply \${LABEL_NAME}")"
 run_test "regression_workflow_default_present" "yes" "$(contains "vars.PR_POLICY_REGRESSION_WORKFLOW || 'e2e-regression.yml'")"
 run_test "regression_dispatch_disable_var_present" "yes" "$(contains "vars.PR_POLICY_REGRESSION_DISPATCH_ENABLED || 'true'")"
 run_test "regression_dispatch_disable_guard_present" "yes" "$(contains "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED")"
@@ -147,6 +164,80 @@ run_test "permissions_include_issues_write" "yes" "$(contains "issues: write")"
 run_test "permissions_include_pull_requests_write" "yes" "$(contains "pull-requests: write")"
 run_test "permissions_include_statuses_write" "yes" "$(contains "statuses: write")"
 run_test "permissions_include_actions_write" "yes" "$(contains "actions: write")"
+# Thread PRRT_kwDORWAxaM6m0pQq: the job now checks out repository contents
+# (trusted default branch), which needs contents: read — least privilege —
+# or the checkout fails in private downstream repos.
+run_test "permissions_include_contents_read" "yes" "$(contains "contents: read")"
+# Thread PRRT_kwDORWAxaM6nBzBW: the readiness helper reads
+# commits/<sha>/check-runs for check-run reviewers (bugbot, ronda, haystack);
+# without checks: read that read 403s and escalates check-run-fetch-failed,
+# so the issue_comment path could never apply ready-for-regression.
+run_test "permissions_include_checks_read" "yes" "$(contains "checks: read")"
+
+echo ""
+echo "=== Reviewer-loop guard verdict (behavioral, #1810) ==="
+
+# Extract a shell function defined inside the workflow's run block, by its
+# 10-space indentation, and strip that indentation so it can be sourced.
+extract_workflow_function() {
+  local name="$1"
+  awk -v start="          ${name}() {" '
+    $0 == start { found=1 }
+    found { print; if ($0 == "          }") exit }
+  ' "$WORKFLOW" | sed 's/^          //'
+}
+
+GUARD_FUNCTIONS="$(
+  extract_workflow_function summarize_reviewer_loop_result
+  extract_workflow_function reviewer_loop_guard_verdict
+)"
+run_test "guard_functions_extractable" "yes" \
+  "$(printf '%s\n' "$GUARD_FUNCTIONS" | grep -c '() {' | grep -qx 2 && echo yes || echo no)"
+eval "$GUARD_FUNCTIONS"
+
+LIVE_HEAD="1111111111111111111111111111111111111111"
+STALE_HEAD="2222222222222222222222222222222222222222"
+
+summary_fixture() {
+  local result="$1"
+  local head="$2"
+  printf '### Automated Reviewer Loop Summary\n\n**Result:** %s\n' "$result"
+  if [ -n "$head" ]; then
+    printf '\n<details>\n```json\n{"entries":[{"head_sha":"%s"}]}\n```\n</details>\n' "$head"
+  fi
+  printf '\n*Posted automatically by `pr-review-loop.sh`.*\n'
+}
+
+guard_state_for() {
+  local found="$1"
+  local body="$2"
+  # shellcheck disable=SC2034 # read by the eval'd workflow functions
+  (
+    FOUND="$found"
+    HEAD_SHA="$LIVE_HEAD"
+    LATEST_SUMMARY_BODY="$body"
+    summarize_reviewer_loop_result
+    reviewer_loop_guard_verdict
+    printf '%s' "$STATE"
+  )
+}
+
+run_test "guard_clean_current_head_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$LIVE_HEAD")")"
+run_test "guard_escalated_current_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture 'escalate — max_total_cycles_exceeded' "$LIVE_HEAD")")"
+run_test "guard_clean_stale_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$STALE_HEAD")")"
+run_test "guard_clean_without_head_history_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture clean "")")"
+run_test "guard_skipped_without_head_history_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — release/hotfix PR reviewer loop intentionally skipped' "")")"
+run_test "guard_skipped_with_stale_history_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — not_configured' "$STALE_HEAD")")"
+run_test "guard_missing_summary_fails" "failure" \
+  "$(guard_state_for 0 "")"
+run_test "guard_no_longer_passes_on_presence_alone" "yes" \
+  "$(not_contains 'DESCRIPTION="Reviewer-loop summary present."')"
 
 echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

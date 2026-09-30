@@ -261,9 +261,9 @@ settings before Step 8a can apply it. Suggested color: `#d93f0b` (orange-red).
    - Once the internal review gate is clean, run `gh pr ready <pr-number>` to convert the draft to non-draft
 4. Run `./scripts/development-workflow/pr-review-loop.sh <pr-number> --branch <branch> [--platform <platform> ...]` when automated review tooling is configured
 5. If any automated reviewer reports blocking PR feedback: apply fixes, push, and repeat Step 4
-6. For implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), or for production release PRs per `05-prepare-release-protocol.md` Step 7.4: apply `ready-for-regression` label to trigger e2e/regression CI checks
+6. For implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), or for production release PRs per `05-prepare-release-protocol.md` Step 7.4: apply `ready-for-regression` through `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr-number> --label ready-for-regression` to trigger e2e/regression CI checks; if the helper prints `RESULT=refused`, stop and follow the fix cycle per the printed `REASON`, then re-run — never apply the label with a direct `gh pr edit --add-label`
 7. Run `./scripts/development-workflow/pr-ci-loop.sh <pr-number>`
-8. If CI passes and all reviews are clean (or not configured): apply `ready-for-human-review` (the PR is already non-draft from Step 3) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`) when the tracker is the source of truth
+8. If CI passes and all reviews are clean (or not configured): apply `ready-for-human-review` through `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr-number> --label ready-for-human-review` (the PR is already non-draft from Step 3; a `RESULT=refused` verdict is a stop per the printed `REASON`, not a warning) and move the tracker status to the matching human-review stage (`Spec in Review`, `Plan in Review`, or `Development in Review`, per the canonical mapping in [`tracker-status-mapping.md`](../tracker-status-mapping.md); resolve and apply it with `tracker-status-for.sh --event ready-for-human-review --branch <branch> --apply --issue <n>`) when the tracker is the source of truth
 9. If CI fails: apply `needs-fixes`, fix PR feedback or failing checks, push, and return to Step 4
 
 ### Human requests changes
@@ -273,7 +273,7 @@ settings before Step 8a can apply it. Suggested color: `#d93f0b` (orange-red).
 3. Remove `ready-for-human-review`, add `needs-fixes`
 4. Address all requested changes
 5. Push fixes
-6. Remove `needs-fixes`, add `ready-for-human-review`
+6. Remove `needs-fixes`, then re-add `ready-for-human-review` through `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr-number> --label ready-for-human-review` — a `RESULT=refused` verdict is a stop per the printed `REASON`, never a warning to push past
 7. Notify human that feedback has been addressed
 
 ---

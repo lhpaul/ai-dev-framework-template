@@ -109,12 +109,33 @@ categories:
     - path: scripts/development-workflow/workflow-config-resolver.py
       mode_scope: product_repo_injection
       note: product-repo runtime helper for repository mode and release contract resolution
+    - path: scripts/development-workflow/resolve-reviewer-availability.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper for Step 7a reviewer availability resolution
+    - path: scripts/development-workflow/reviewer-preflight.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper for the reviewer preflight cross-check (#1561), invoked by Protocol 91 before an item's first mutation
+    - path: scripts/development-workflow/reviewer_preflight.py
+      mode_scope: product_repo_injection
+      note: reviewer preflight cross-check engine, invoked by reviewer-preflight.sh
+    - path: scripts/development-workflow/reviewer_preflight_build_input.py
+      mode_scope: product_repo_injection
+      note: reviewer preflight input-JSON builder, invoked by reviewer-preflight.sh
+    - path: scripts/development-workflow/reviewer_preflight_coderabbit.py
+      mode_scope: product_repo_injection
+      note: shared CodeRabbit own-configuration parser, used by both resolve-reviewer-availability.sh and reviewer-preflight.sh
     - path: scripts/development-workflow/validate-workflow-config.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for non-secret workflow configuration validation
     - path: scripts/development-workflow/workflow-lib.sh
       mode_scope: product_repo_injection
       note: shared shell helpers required by product-repo runtime scripts
+    - path: scripts/development-workflow/codex-github-evidence-lib.sh
+      mode_scope: product_repo_injection
+      note: shared Codex evidence helpers required by pr-review-loop.sh
+    - path: scripts/development-workflow/pr-ownership-guard.sh
+      mode_scope: product_repo_injection
+      note: PR ownership guard (#1444) required by pr-review-loop.sh before any PR mutation
     - path: scripts/development-workflow/pr-review-loop.sh
       mode_scope: product_repo_injection
       note: product-repo runtime reviewer loop for product-owned PRs
@@ -127,6 +148,9 @@ categories:
     - path: scripts/development-workflow/post-merge-cleanup.sh
       mode_scope: product_repo_injection
       note: product-repo cleanup helper for product-owned branch and PR evidence
+    - path: scripts/development-workflow/apply-readiness-labels.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper gating readiness-label application on reviewer/CI verdicts (#1408)
     - path: scripts/lint/
       glob: "**/*"
       mode_scope: shared

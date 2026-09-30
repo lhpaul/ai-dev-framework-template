@@ -87,6 +87,62 @@ See `REVIEW.md` → Code Review Checklist → Pass 2 → "PRs that add or modify
 
 For a worked instance of this rule — a regex-based key-extraction scanner, its full edge-case table, and a named dynamic-key concatenation gap (`t('x.' + k)`) that a naive first version missed and a fix closed with documented regression cases — see [`docs/best-practices/stack/i18n.md` § Key-extraction scanner and the dynamic-key pitfall](stack/i18n.md#key-extraction-scanner-and-the-dynamic-key-pitfall).
 
+## Live-Validate New or Changed GraphQL Queries
+
+Any PR that adds or changes a `gh api graphql` query literal under `scripts/`
+must run that query live against a real GitHub repository or PR at least once
+before the PR is trusted on a green mocked suite alone.
+
+**Why**: `gh` is mocked in this repo's workflow test harnesses under
+`scripts/development-workflow/tests/` (for example
+`test-apply-readiness-labels.sh`), and a mocked `gh` accepts any query
+text — well-formed or not. #1828 shipped a query with one extra closing brace
+in `apply-readiness-labels.sh`; the mocked suite stayed green while GitHub
+rejected the query on every real call, escalating
+`codex-occupancy-timeline-fetch-failed` on every `codex-github` PR. Neither the
+tests nor the code review for the PR that introduced it caught this, because
+nothing in the loop ever sent the query to GitHub.
+
+**What "live-validate" means**: exercise the calling script's normal code path
+against a real PR or repository (a draft PR in a scratch repo is sufficient),
+or invoke the query directly, e.g. `gh api graphql -f query='...' -f
+owner=<owner> -f repo=<repo> ...`, and confirm GitHub returns data rather than
+a GraphQL parse or validation error. A delimiter-balance lint (see
+`scripts/lint/lint-graphql-query-literals.py`) is necessary but not
+sufficient — it proves the literal's braces/brackets/parens are well-nested,
+not that the query matches GitHub's current schema (field names, argument
+types, and deprecations all pass a delimiter check while still being rejected
+live).
+
+**Exemption**: a change that only reformats or re-indents an existing,
+already-validated query (no field, argument, or structural change) does not
+require re-validation.
+
+## Test-Scope Proportionality
+
+When the test scaffolding you ship (fixture manifests, proof-cycle lists, case
+tables, scenario enumerations) removes at least one item the plan projected
+(an addition-only delta does not trigger this; a net-even or net-larger swap
+that drops a projected item does): if the plan marked that enumeration with
+the exact literal `**Binding enumeration**`, restore the listed item, or
+obtain a human decision to amend the plan, before opening the PR — a
+deviation record cannot authorize removing a binding item, regardless of
+whether the substitution is coverage-equivalent. Otherwise, when the
+deviation is coverage-equivalent, write a `## Test-Scope Deviation Record` in
+the PR description before opening the PR: which plan enumeration was
+reduced, what was delivered instead, the coverage classes retained and which
+tests exercise them, the coverage argument, and residual risk accepted (or
+"None identified"). A plan enumeration is indicative by default and binds
+only when marked with that exact literal; a delta that changes observable
+behavior or drops acceptance-criterion coverage is unaffected by this rule
+and stays governed by Pass 1's unchanged spec/plan compliance check
+regardless of test counts.
+
+See `docs/workflow/development-workflow/test-scope-proportionality.md` for the
+full rule, the Gate A / Gate B decision matrices, and a worked example, and
+`REVIEW.md` → Code Review Checklist → Pass 1 for the reviewer-facing
+enforcement of this rule.
+
 ## Test Data and Seed Data
 
 - Tests that require data should use deterministic seed data, not random values

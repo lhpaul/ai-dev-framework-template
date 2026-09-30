@@ -90,6 +90,13 @@ proposal step.
 15. For `spec/*` and `implementation-plan/*` PRs, require Protocol 91 Step 8a's
    documentation-stage alignment checker before accepting readiness. A
    mismatch keeps the item under supervision until corrected or escalated.
+15a. Where a child item's stop condition is `architecture_decision`, the batch
+   summary references that the child carried the canonical escalation report
+   (axis-separated, per-citation conformance declarations, requested decision
+   scoped to open axes) per
+   `docs/workflow/development-workflow/architecture-decision-escalation.md` —
+   never restate the whole question as undifferentiated open in the batch
+   summary. Per Protocol 90.
 16. Before accepting any in-scope item as terminal, require the item runner's
    `## Ground-Truth Completion Verification` output from
    `item-completion-self-check.sh` or run the helper directly from current
@@ -140,3 +147,20 @@ proposal step.
 
 > **Deprecation notice**: `/run-epic --items` is deprecated. Use `/run-items` for
 > explicit item lists and `/run-epic --epic <n>` for epic-scoped runs.
+
+---
+
+## Cursor dispatch profile
+
+In a Cursor environment only, declare the dispatch profile in force before any
+mutating action — `cursor-native-handoff`, `cursor-parent-orchestrated`, or
+`cursor-inline-fallback` — naming the Work Item Runner (item layer) as the
+accountable orchestration role, with a posture valid for the current checkpoint. Other runners are unaffected by
+this requirement.
+
+Evaluation order, unconfirmed-handoff outcomes, accountability postures, the
+named stop conditions and their human unblocking actions, and the
+invalid-declaration boundaries are defined once, normatively, in
+`docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
+Follow that document; this surface deliberately does not restate it.
+

@@ -70,6 +70,22 @@ For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
 plans, name the residual verification strategy and evidence source the
 implementation must produce before readiness.
 
+Test scaffolding enumerations (fixture manifests, proof-cycle lists, case
+tables, scenario enumerations) are indicative by default — express coverage
+intent, and mark an enumeration `**Binding enumeration**` only when the
+implementer must not substitute a coverage-equivalent set; before committing
+the plan, self-check it against Gate B in
+[`test-scope-proportionality.md`](../../docs/workflow/development-workflow/test-scope-proportionality.md).
+
+Before Document Quality Gate, read
+`docs/workflow/development-workflow/plan-authoring-rigor-rules.md` and follow
+its six plan-authoring rules. Record firing-rule evidence in the plan itself
+(Verification Log and/or the template's "Factual claim evidence" subsection),
+then complete the per-rule outcome record in the PR description's `Document
+Quality Gate` section — all six rules, the plan revision SHA, and a rationale
+beside each `Not applicable` row. These obligations apply to every plan,
+including Refactor / no-spec items.
+
 Before committing in Step 5, run the cross-section consistency self-check and
 Document Quality Gate defined in protocol 02. Check every item that appears more
 than once across plan sections: function/method names, constant names, decision
@@ -77,7 +93,11 @@ index labels, file paths, directory names, and route/URL structures. For complex
 workflow decision-gate plans, include protocol 02's matrix classification and
 Document Quality Gate entry. Fix all inconsistencies before proceeding to the
 lint check, and include the Document Quality Gate log in the draft PR
-description.
+description. When the plan's own stateful contract, or the work item brief for
+Refactor items, contains a decision matrix, state table, lifecycle, or
+precedence rules, run protocol 02's matrix coherence preflight (the same
+six-check audit as protocol 01) and record the result as a `Matrix coherence
+preflight` row in the gate log.
 
 Before writing or updating the smoke runbook (protocol 02 Step 4), discover
 design assets per `docs/workflow/development-workflow/design-assets.md`. When

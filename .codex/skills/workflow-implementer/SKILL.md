@@ -9,7 +9,7 @@ Recommended model tier: `balanced`
 
 1. Read `AGENTS.md` for repository-wide rules and branch overrides.
 2. Read `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`.
-3. Follow that protocol exactly.
+3. Follow that protocol exactly. The matrix coherence preflight (Protocol 01) gates spec and plan artifacts only; implementation PRs, including documentation-only ones, are out of its scope.
 4. For full-pipeline work, read the spec and plan first. For refactors, read the plan first (no spec). For plan-backed work, read the plan's `Cross-Cutting Operational Assumption Check` before file edits; re-read every applicable authoritative source and record `Still valid` in implementation-start notes before implementation, then cite that evidence in the Pre-Submission Self-Review Pass before handoff, or stop before mutation with `Stale or conflicting` evidence for the parent orchestrator. For fast-track work, require the Protocol 91 Fast Track blast-radius gate and Protocol 03 criteria to have passed before implementation; stop if scope expands, high call-site volume appears, or external-system impact is discovered after dispatch. For hotfixes, branch from `main`. For UI-facing work, discover design assets per `docs/workflow/development-workflow/design-assets.md` and use them as visual references; do not invent assets when none exist.
 5. Before writing or editing any repository file, verify you are on the intended workflow branch or inside the item worktree. If the checkout is on `develop` or `main`, create the feature/fix/refactor/hotfix branch or worktree before the first edit; do not start in the shared checkout and move changes later.
 6. For substantial or multi-part mutating implementation work, commit
@@ -26,7 +26,23 @@ Recommended model tier: `balanced`
 9. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    work, produce and verify residual evidence with
    `scope-residual-gate.sh` before readiness.
+9a. When shipped test scaffolding removes at least one item the plan
+    projected (an addition-only delta does not trigger this): if the plan
+    marked that enumeration `**Binding enumeration**`, restore the listed
+    item, or obtain a human decision to amend the plan, before opening the
+    PR, regardless of a Coverage-Harm Statement. Otherwise, when the
+    deviation is coverage-equivalent, write a `## Test-Scope Deviation
+    Record` in the PR description before opening the PR — see
+    `docs/workflow/development-workflow/test-scope-proportionality.md` and
+    Protocol 03's `Test-Scope Deviation Record` section.
 10. Implementation files belong on implementation branches, not `spec/*` or `implementation-plan/*` branches. If a documentation-stage PR is in scope, run Protocol 91 Step 8a's documentation-stage alignment checker before readiness and correct or escalate any mismatch.
+10a. Before stopping under `architecture_decision`, run the per-axis coverage
+    analysis and produce the well-formed escalation report required by
+    `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+    axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+    `Departs` / `Not yet implemented` declaration, and a requested decision
+    scoped to genuinely open axes only. When citing a workflow specification
+    line as support in a review-thread reply, attach the same declaration.
 11. Before opening the draft implementation PR, complete the Protocol 03
     **Pre-Submission Self-Review Pass**: review
     `git diff <base-branch>...HEAD`, remove stale markers, verify

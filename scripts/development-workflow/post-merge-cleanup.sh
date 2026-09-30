@@ -2,7 +2,8 @@
 #
 # Post-merge cleanup: fetch origin, checkout the merge base, pull, delete the
 # local branch that was just merged, and verify or delete merged implementation
-# branches on the remote.
+# branches on the remote. The caller's own worktree is never removed: if the
+# merged branch is checked out there, it is detached onto the base instead.
 # Keeps the local repo clean after merging developments.
 #
 # Usage:
@@ -33,6 +34,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=scripts/development-workflow/closing-keyword-lib.sh
+. "$SCRIPT_DIR/closing-keyword-lib.sh"
+
+# Capture the caller's working directory before this script moves anywhere.
+# A worktree-isolated runner that invokes cleanup is standing inside a linked
+# worktree; that worktree must survive cleanup (#1386).
+CALLER_PWD="$(pwd -P 2>/dev/null || true)"
 
 cd_workflow_repo_root
 
@@ -43,6 +51,8 @@ target_repo=""
 repo_root="$HUB_REPO_ROOT"
 base_branch_override=""
 merged_pr_number=""
+cleanup_repo_root_override=""
+repo_root_explicit=0
 
 require_option_value() {
   local option="$1"
@@ -63,6 +73,7 @@ while [ "$#" -gt 0 ]; do
     --repo-root)
       require_option_value "$@"
       repo_root="$2"
+      repo_root_explicit=1
       shift 2
       ;;
     --base)
@@ -73,6 +84,11 @@ while [ "$#" -gt 0 ]; do
     --pr)
       require_option_value "$@"
       merged_pr_number="$2"
+      shift 2
+      ;;
+    --cleanup-repo-root)
+      require_option_value "$@"
+      cleanup_repo_root_override="$2"
       shift 2
       ;;
     -h|--help)
@@ -93,6 +109,95 @@ done
 case "$merged_pr_number" in
   ''|*[!0-9]*) [ -z "$merged_pr_number" ] || { echo "Invalid --pr '${merged_pr_number}' — must be a positive integer." >&2; exit 64; } ;;
 esac
+
+# physical_worktree_root <path>
+# Prints the physical (symlink-resolved) top-level directory of the git
+# working tree containing <path>, or returns 1 when <path> is not inside one.
+physical_worktree_root() {
+  local top
+  [ -n "${1:-}" ] && [ -d "$1" ] || return 1
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "$top" ] || return 1
+  (CDPATH='' cd -- "$top" && pwd -P)
+}
+
+# physical_git_common_dir <path>
+# Prints the physical path of the shared git directory for <path>, so a linked
+# worktree and its main clone resolve to the same value.
+physical_git_common_dir() {
+  local dir
+  dir="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  [ -n "$dir" ] || return 1
+  case "$dir" in
+    /*) ;;
+    *) dir="$1/$dir" ;;
+  esac
+  (CDPATH='' cd -- "$dir" && pwd -P)
+}
+
+CALLER_WORKTREE_ROOT=""
+# On the base-worktree re-entry below, this process's directory is wherever the
+# first pass had moved to, not the caller's. The first pass hands the caller's
+# worktrees over in POST_MERGE_CLEANUP_CALLER_WORKTREES instead.
+if [ -n "$CALLER_PWD" ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ]; then
+  CALLER_WORKTREE_ROOT="$(physical_worktree_root "$CALLER_PWD" || true)"
+fi
+
+# Never operate on a repo root the caller did not pass (#1386). Without
+# --repo-root the default used to be the checkout this script file lives in,
+# which is the shared main clone whenever a worktree runner invokes the
+# main-clone copy of the helper. When the caller is standing in another working
+# tree of the same repository, that working tree is the root it meant.
+if [ "$repo_root_explicit" -eq 0 ] && [ -n "$CALLER_WORKTREE_ROOT" ]; then
+  default_repo_root_real="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P || true)"
+  if [ -n "$default_repo_root_real" ] && [ "$CALLER_WORKTREE_ROOT" != "$default_repo_root_real" ]; then
+    caller_common_dir="$(physical_git_common_dir "$CALLER_WORKTREE_ROOT" || true)"
+    default_common_dir="$(physical_git_common_dir "$default_repo_root_real" || true)"
+    if [ -n "$caller_common_dir" ] && [ "$caller_common_dir" = "$default_common_dir" ]; then
+      echo "Using the calling working tree '$CALLER_WORKTREE_ROOT' as --repo-root (no --repo-root was passed)."
+      repo_root="$CALLER_WORKTREE_ROOT"
+    fi
+  fi
+fi
+
+# Working trees that belong to the caller. Cleanup must never remove one of
+# these; when the merged branch is checked out in one, that working tree is
+# detached onto the updated base instead (#1386). The list is inherited across
+# the base-worktree re-entry below, which changes this process's directory.
+CALLER_WORKTREES="${POST_MERGE_CLEANUP_CALLER_WORKTREES:-}"
+add_caller_worktree() {
+  local root
+  root="$(physical_worktree_root "${1:-}" || true)"
+  [ -n "$root" ] || return 0
+  if ! grep -Fqx -- "$root" <<<"$CALLER_WORKTREES"; then
+    CALLER_WORKTREES="${CALLER_WORKTREES:+$CALLER_WORKTREES
+}$root"
+  fi
+  return 0
+}
+add_caller_worktree "$CALLER_WORKTREE_ROOT"
+if [ "$repo_root_explicit" -eq 1 ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ]; then
+  add_caller_worktree "$repo_root"
+fi
+export POST_MERGE_CLEANUP_CALLER_WORKTREES="$CALLER_WORKTREES"
+
+# is_linked_worktree <path>
+# True when <path> is a linked worktree rather than the repository's main
+# working tree (their git dir and common git dir differ).
+is_linked_worktree() {
+  local git_dir common_dir
+  git_dir="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  git_dir="$(CDPATH='' cd -- "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  common_dir="$(physical_git_common_dir "$1")" || return 1
+  [ "$git_dir" != "$common_dir" ]
+}
+
+is_caller_worktree() {
+  local candidate
+  [ -n "${1:-}" ] && [ -n "$CALLER_WORKTREES" ] || return 1
+  candidate="$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)" || return 1
+  grep -Fqx -- "$candidate" <<<"$CALLER_WORKTREES"
+}
 
 HUB_REPO_ROOT="$repo_root"
 cd "$HUB_REPO_ROOT" || exit 1
@@ -202,6 +307,10 @@ if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementa
   fi
 fi
 
+if [ -n "$cleanup_repo_root_override" ]; then
+  CLEANUP_REPO_ROOT="$cleanup_repo_root_override"
+fi
+
 case "$TO_DELETE" in
   "$DEVELOP_BRANCH"|"$selected_product_default_branch"|main|master)
     echo "Refusing to delete protected branch '$TO_DELETE'." >&2
@@ -273,6 +382,61 @@ case "$branch_owner_kind" in
 esac
 
 cd "$CLEANUP_REPO_ROOT" || exit 1
+
+# Remember where this repository was pointing before we move it.
+#
+# This script has to check out the base branch to fast-forward it, but the caller
+# is frequently a worktree-isolated agent — and in that case CLEANUP_REPO_ROOT is
+# the shared main clone, not the agent's worktree. Leaving it parked on the base
+# branch is a side effect the caller never asked for, and it has two real costs:
+# a hand-run deploy from a clone parked on an integration branch ships unreleased
+# code, and a branch left checked out here cannot be checked out by any other
+# worktree. Capture the ref now and restore it on exit; the base branch still
+# gets fetched and fast-forwarded either way.
+ORIGINAL_REF=""
+ORIGINAL_REF_KIND=""
+if ORIGINAL_REF="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
+  ORIGINAL_REF_KIND="branch"
+elif ORIGINAL_REF="$(git rev-parse --quiet --verify HEAD 2>/dev/null)"; then
+  ORIGINAL_REF_KIND="detached"
+else
+  ORIGINAL_REF=""
+fi
+BASE_CHECKED_OUT=0
+
+# Best effort by contract: this must never change the script's exit status, so
+# every branch returns 0 and every git call is guarded.
+restore_original_ref() {
+  [ "$BASE_CHECKED_OUT" -eq 1 ] || return 0
+  [ -n "$ORIGINAL_REF" ] || return 0
+
+  # The branch we started on may be the very one we just deleted.
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ]; then
+    echo "Leaving $CLEANUP_REPO_ROOT on $DEVELOP_BRANCH (its previous branch '$TO_DELETE' was deleted)."
+    return 0
+  fi
+
+  if ! CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
+    if ! CURRENT_REF="$(git -C "$CLEANUP_REPO_ROOT" rev-parse --quiet --verify HEAD 2>/dev/null)"; then
+      CURRENT_REF=""
+    fi
+  fi
+  [ "$CURRENT_REF" = "$ORIGINAL_REF" ] && return 0
+
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] \
+    && ! git -C "$CLEANUP_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ORIGINAL_REF"; then
+    echo "WARNING: cannot restore $CLEANUP_REPO_ROOT to '$ORIGINAL_REF' (branch no longer exists); it stays on $DEVELOP_BRANCH." >&2
+    return 0
+  fi
+
+  if git -C "$CLEANUP_REPO_ROOT" checkout --quiet "$ORIGINAL_REF" 2>/dev/null; then
+    echo "Restored $CLEANUP_REPO_ROOT to '$ORIGINAL_REF' (it was moved to $DEVELOP_BRANCH only to fast-forward it)."
+  else
+    echo "WARNING: could not restore $CLEANUP_REPO_ROOT to '$ORIGINAL_REF' (uncommitted changes?); it stays on $DEVELOP_BRANCH." >&2
+  fi
+  return 0
+}
+trap restore_original_ref EXIT
 
 remote_cleanup_repo_slug() {
   if [ -n "$TARGET_GITHUB_REPO" ]; then
@@ -435,7 +599,7 @@ fi
 echo ""
 
 reenter_base_worktree_if_needed() {
-  local current_root base_worktree script_path
+  local current_root base_worktree script_path script_dir_real tracker_repo_root tracker_repo_root_real
   local reenter_args=()
 
   # Git refuses to check out a branch that is already checked out in another
@@ -456,17 +620,36 @@ reenter_base_worktree_if_needed() {
     return 1
   fi
 
-  script_path="$base_worktree/scripts/development-workflow/post-merge-cleanup.sh"
+  script_path=""
+  script_dir_real=""
+  if [ -f "$SCRIPT_DIR/post-merge-cleanup.sh" ]; then
+    script_dir_real="$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)" || return 1
+    case "$script_dir_real" in
+      "$current_root"|"$current_root"/*)
+        ;;
+      *)
+        script_path="$SCRIPT_DIR/post-merge-cleanup.sh"
+        ;;
+    esac
+  fi
+  if [ -z "$script_path" ]; then
+    script_path="$base_worktree/scripts/development-workflow/post-merge-cleanup.sh"
+  fi
   if [ ! -f "$script_path" ]; then
-    echo "ERROR: base branch '$DEVELOP_BRANCH' is checked out at '$base_worktree', but cleanup helper is missing there: $script_path" >&2
+    echo "ERROR: cleanup helper is missing from the surviving checkout: $script_path" >&2
     return 1
   fi
 
-  echo "Base branch '$DEVELOP_BRANCH' is already checked out at '$base_worktree'. Re-entering cleanup from that worktree..."
+  echo "Base branch '$DEVELOP_BRANCH' is already checked out at '$base_worktree'. Re-entering cleanup through the workflow hub helper..."
   if [ -n "$target_repo" ]; then
     reenter_args+=(--repo "$target_repo")
   fi
-  reenter_args+=(--repo-root "$base_worktree" --base "$DEVELOP_BRANCH")
+  tracker_repo_root="$HUB_REPO_ROOT"
+  tracker_repo_root_real="$(CDPATH='' cd -- "$tracker_repo_root" && pwd -P)" || return 1
+  if [ "$tracker_repo_root_real" = "$current_root" ]; then
+    tracker_repo_root="$base_worktree"
+  fi
+  reenter_args+=(--repo-root "$tracker_repo_root" --cleanup-repo-root "$base_worktree" --base "$DEVELOP_BRANCH")
   if [ -n "$merged_pr_number" ]; then
     reenter_args+=(--pr "$merged_pr_number")
   fi
@@ -481,17 +664,47 @@ echo "Fetching origin..."
 # --prune: remove stale remote-tracking refs (e.g. origin/<merged-branch>)
 git fetch origin --prune
 
+# When cleanup runs inside the caller's own linked worktree, still on the merged
+# branch, do not check the base branch out there (#1386): a linked worktree left
+# on the base holds it against every other checkout, and uncommitted changes in
+# the caller's worktree would make that checkout fail before the tracker work.
+# Reaching this point means no other worktree has the base checked out (the
+# re-entry above would have moved there), so fast-forward the base ref directly;
+# the caller's worktree is detached onto it below, before the branch delete.
+CALLER_ON_MERGED_BRANCH=0
+if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ] \
+  && is_caller_worktree "$CLEANUP_REPO_ROOT" && is_linked_worktree "$CLEANUP_REPO_ROOT"; then
+  CALLER_ON_MERGED_BRANCH=1
+fi
+
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
+  echo "Fast-forwarding $DEVELOP_BRANCH without checking it out in the calling worktree..."
+  # Same outcomes as the --ff-only pull on the other path: create the branch
+  # when it is missing, do nothing when it already contains origin's tip
+  # (including when it is ahead), fast-forward otherwise, and fail when the two
+  # have diverged. The '<src>:<dst>' fetch refuses non-fast-forward updates.
+  if ! git show-ref --verify --quiet "refs/heads/$DEVELOP_BRANCH"; then
+    git branch --quiet --track "$DEVELOP_BRANCH" "refs/remotes/origin/$DEVELOP_BRANCH"
+  elif git merge-base --is-ancestor "refs/remotes/origin/$DEVELOP_BRANCH" "refs/heads/$DEVELOP_BRANCH"; then
+    echo "$DEVELOP_BRANCH already contains origin/$DEVELOP_BRANCH."
+  else
+    git fetch origin "refs/heads/$DEVELOP_BRANCH:refs/heads/$DEVELOP_BRANCH"
+  fi
+else
 echo "Checking out $DEVELOP_BRANCH..."
 git checkout "$DEVELOP_BRANCH"
+BASE_CHECKED_OUT=1
 
 echo "Pulling $DEVELOP_BRANCH..."
 # Use explicit 'origin <branch>' so this works even when the local branch has no upstream
 # tracking set (e.g. integration branches created/pushed without --set-upstream).
 # --ff-only: fail cleanly if the branch diverged (e.g. local commits) instead of creating a merge.
 git pull --ff-only origin "$DEVELOP_BRANCH"
+fi
 
 cleanup_remote_implementation_branch "$TO_DELETE"
 
+SKIP_LOCAL_DELETE=0
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Skipping local branch delete for '$TO_DELETE' (already absent)."
 else
@@ -505,7 +718,26 @@ WORKTREE_PATH=$(git worktree list --porcelain | awk -v branch="branch refs/heads
   /^worktree / { wt = substr($0, 10) }
   $0 == branch  { print wt }
 ' || true)
-if [ -n "$WORKTREE_PATH" ]; then
+if [ -n "$WORKTREE_PATH" ] && is_caller_worktree "$WORKTREE_PATH"; then
+  # The merged branch is checked out in the caller's own working tree. Removing
+  # that worktree deletes the directory the caller is running in and kills the
+  # run before it can update the tracker (#1386). Detach it onto the updated
+  # base instead, then delete the branch.
+  print_kv CALLER_WORKTREE_PATH "$WORKTREE_PATH"
+  detach_target=""
+  detach_err=""
+  if detach_target="$(git rev-parse --verify --quiet "refs/heads/${DEVELOP_BRANCH}^{commit}")" \
+    && detach_err="$(git -C "$WORKTREE_PATH" checkout --quiet --detach "$detach_target" 2>&1)"; then
+    print_kv CALLER_WORKTREE_ACTION "detached"
+    echo "Worktree '$WORKTREE_PATH' is the calling worktree; detached it onto $DEVELOP_BRANCH ($detach_target) instead of removing it."
+  else
+    SKIP_LOCAL_DELETE=1
+    print_kv CALLER_WORKTREE_ACTION "detach_failed"
+    print_kv LOCAL_DELETE_RESULT "skipped"
+    print_kv LOCAL_DELETE_REASON "caller_worktree_detach_failed"
+    echo "WARNING: worktree '$WORKTREE_PATH' is the calling worktree and could not be detached from '$TO_DELETE' (${detach_err:-base branch '$DEVELOP_BRANCH' not found}); leaving the worktree and local branch in place. Detach it and delete the branch by hand." >&2
+  fi
+elif [ -n "$WORKTREE_PATH" ]; then
   echo "Worktree '$WORKTREE_PATH' is still using branch '$TO_DELETE'. Removing worktree first..."
   # Proactive unlock: agent processes often leave worktrees locked; unlock is idempotent when not locked.
   git worktree unlock "$WORKTREE_PATH" 2>/dev/null || true
@@ -538,95 +770,21 @@ if [ -n "$WORKTREE_PATH" ]; then
   fi
   echo "Worktree removed."
 fi
-# -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
-git branch -D "$TO_DELETE"
+if [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+  # -D: branch is already merged on remote (squash/rebase merges don't leave tip in develop)
+  git branch -D "$TO_DELETE"
+  print_kv LOCAL_DELETE_RESULT "deleted"
+fi
 fi
 
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
-# strip_fenced_pr_body_blocks
-# Removes quoted/example PR body text from stdin before it is scanned for
-# closing keywords, so an example like "Closes #999" inside a code sample,
-# inline code span, or blockquote is not treated as a live closing reference.
-# Handles both backtick (```) and tilde (~~~) fence styles, and treats an
-# unclosed opening fence as extending to end of input (rather than leaving the
-# rest of the body unfiltered). Matches GitHub-Flavored Markdown's
-# fence-matching rule: a closing fence must use the same character as the
-# opening fence, be at least as long, and have nothing but trailing whitespace
-# after the fence marker — a shorter, differently-charactered, or
-# content-suffixed line (e.g. a nested example fence, or "``` end of block") is
-# treated as still being inside the fence rather than closing it. A fence
-# delimiter may be indented up to 3 spaces per GFM; 4+ spaces of leading
-# whitespace makes it indented code instead, so the raw line (not a fully
-# whitespace-stripped line) is matched to preserve that boundary — otherwise a
-# 4-space-indented "```" could be mistaken for a real fence and hide a live
-# closing reference.
-strip_fenced_pr_body_blocks() {
-  python3 -c '
-import re, sys
 
-def strip_inline_code_spans(line):
-    out = []
-    i = 0
-    while i < len(line):
-        if line[i] != "`":
-            out.append(line[i])
-            i += 1
-            continue
-        j = i
-        while j < len(line) and line[j] == "`":
-            j += 1
-        ticks = line[i:j]
-        closing = line.find(ticks, j)
-        if closing == -1:
-            out.append(line[i])
-            i += 1
-            continue
-        i = closing + len(ticks)
-    return "".join(out)
-
-def strip_inline_code_spans_by_paragraph(lines):
-    out_lines = []
-    paragraph = []
-    for line in lines:
-        if line.strip() == "":
-            if paragraph:
-                out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
-                paragraph = []
-            out_lines.append(line)
-        else:
-            paragraph.append(line)
-    if paragraph:
-        out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
-    return "\n".join(out_lines)
-
-lines = sys.stdin.read().split("\n")
-out = []
-fence_char = None
-fence_len = 0
-fence_re = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-for line in lines:
-    match = fence_re.match(line)
-    if fence_char is None:
-        if match:
-            fence_char = match.group(1)[0]
-            fence_len = len(match.group(1))
-            continue
-        if re.match(r"^\s*>", line):
-            continue
-        out.append(line)
-    else:
-        if (match and match.group(1)[0] == fence_char
-                and len(match.group(1)) >= fence_len
-                and match.group(2).strip() == ""):
-            fence_char = None
-            fence_len = 0
-        continue
-sys.stdout.write(strip_inline_code_spans_by_paragraph(out))
-'
-}
-
-# fetch_pr_closing_issues <pr_repo> <pr_number>
+# fetch_pr_closing_issues <pr_repo> <pr_number> [<qualified_repo>]
+# By default matches bare "#NNN" references. When <qualified_repo> (an
+# owner/repo slug) is given, matches only "<qualified_repo>#NNN" references
+# instead — used to honour explicit hub-tracker references in a product-repo
+# PR (#1538); bare "#NNN" there names a product-repo issue.
 # Fetches PR title+body, strips fenced code blocks (so example closing
 # keywords in a code sample are not treated as live references — see
 # strip_fenced_pr_body_blocks above), and extracts GitHub closing-keyword
@@ -654,12 +812,25 @@ sys.stdout.write(strip_inline_code_spans_by_paragraph(out))
 # (not a failure, per grep's own exit-code contract) and is not an error;
 # anything else (grep exit >1, or `sort` failing) is.
 fetch_pr_closing_issues() {
-  local pr_repo="$1"
-  local pr_number="$2"
+  local pr_repo="${1:-}"
+  local pr_number="${2:-}"
+  local qualified_repo="${3:-}"
+  # Function-local copy: the shared constant stays the single source of the
+  # keyword grammar; the qualified form below only rewrites its trailing ref.
+  local CLOSING_KEYWORD_REGEX="$CLOSING_KEYWORD_REGEX"
   local pr_body stripped_pr_body keyword_lines matched_refs stage_status
-  if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number>." >&2
+  if { [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; } || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number> [<qualified_repo>]." >&2
     return 2
+  fi
+  if [ "$#" -eq 3 ]; then
+    if ! workflow_is_valid_github_repo_slug "$qualified_repo"; then
+      echo "ERROR: fetch_pr_closing_issues <qualified_repo> must be an owner/repo GitHub repository slug." >&2
+      return 2
+    fi
+    # Swap the shared regex's trailing bare "#[0-9]+" for "<slug>#[0-9]+".
+    # A slug's only regex metacharacter is '.'.
+    CLOSING_KEYWORD_REGEX="${CLOSING_KEYWORD_REGEX%'#[0-9]+'}${qualified_repo//./\\.}#[0-9]+"
   fi
   pr_body="$(gh pr view "$pr_number" --repo "$pr_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)" || return 1
   # Commit messages carry closing keywords too, and GitHub only honours them
@@ -687,7 +858,7 @@ fetch_pr_closing_issues() {
   stripped_pr_body="${stripped_pr_body}
 ${stripped_pr_commit_text}"
   set +e
-  keyword_lines="$(printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+')"
+  keyword_lines="$(printf '%s' "$stripped_pr_body" | grep -ioE "$CLOSING_KEYWORD_REGEX")"
   stage_status=$?
   set -e
   if [ "$stage_status" -gt 1 ]; then
@@ -715,7 +886,84 @@ ${stripped_pr_commit_text}"
   return 0
 }
 
-# close_issues_from_pr <pr_number> <issue_numbers_newline_list>
+# hub_github_repo_slug
+# Echoes the owner/repo slug of the workflow hub's own repository (the one
+# that owns the issue tracker this script mutates), resolved from
+# $HUB_REPO_ROOT. Deliberately does NOT go through repo_slug(): that honours
+# WORKFLOW_TARGET_GITHUB_REPO, which names the *product* repo in hub mode.
+# Returns 1 when the slug cannot be resolved.
+hub_github_repo_slug() {
+  local slug
+  slug="$(cd "$HUB_REPO_ROOT" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)" || return 1
+  [ -n "$slug" ] || return 1
+  printf '%s\n' "$slug"
+}
+
+# pr_repo_is_hub_tracker_repo <pr_repo>
+# Returns 0 when <pr_repo> is the repository whose issue numbers this script's
+# tracker mutations (`gh issue view/close`, project status) address, 1 when it
+# is a different repository (a workflow_hub product repo), and 2 when that
+# cannot be determined. Outside a product-repo cleanup (TARGET_GITHUB_REPO
+# empty) the PR always lives in the current repository.
+pr_repo_is_hub_tracker_repo() {
+  local pr_repo="$1" hub_slug
+  [ -n "$TARGET_GITHUB_REPO" ] || return 0
+  hub_slug="$(hub_github_repo_slug)" || return 2
+  if [ "$(printf '%s' "$pr_repo" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$hub_slug" | tr '[:upper:]' '[:lower:]')" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# pr_close_label <pr_repo> <pr_number>
+# Echoes how a close comment names the merged PR: "PR #N" when it lives in the
+# hub tracker's own repository, else "<pr_repo>#N" so a product-repo PR number
+# is not read as a hub PR number (#1538). An undeterminable hub is treated as
+# "not the hub" (the qualified form is never wrong; the bare one can be).
+pr_close_label() {
+  local pr_repo="$1" pr_number="$2" status=0
+  if [ -n "$pr_repo" ]; then
+    pr_repo_is_hub_tracker_repo "$pr_repo" || status=$?
+    if [ "$status" -ne 0 ]; then
+      printf '%s#%s\n' "$pr_repo" "$pr_number"
+      return 0
+    fi
+  fi
+  printf 'PR #%s\n' "$pr_number"
+}
+
+# fetch_hub_tracker_closing_issues <pr_repo> <pr_number>
+# Like fetch_pr_closing_issues, but only returns issue numbers that belong to
+# the hub tracker (#1538). A bare "Fixes #NNN" in a PR is numbered in the
+# repository the PR lives in; when that is a workflow_hub product repo, the
+# same number in the hub is an unrelated issue, so bare refs are NOT applied
+# (announced on stderr) and only explicit "Fixes <hub owner/repo>#NNN" refs
+# are honoured. When the PR lives in the hub's own repo this is identical to
+# fetch_pr_closing_issues. Same return contract as fetch_pr_closing_issues;
+# an undeterminable hub slug is warned about and yields no refs rather than
+# guessing (never mutating a tracker on a guess).
+fetch_hub_tracker_closing_issues() {
+  local pr_repo="${1:-}" pr_number="${2:-}" hub_slug status=0
+  if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: fetch_hub_tracker_closing_issues requires <pr_repo> <pr_number>." >&2
+    return 2
+  fi
+  pr_repo_is_hub_tracker_repo "$pr_repo" || status=$?
+  case "$status" in
+    0) fetch_pr_closing_issues "$pr_repo" "$pr_number" ;;
+    1)
+      hub_slug="$(hub_github_repo_slug)" || return 1
+      echo "NOTE: PR #${pr_number} lives in product repository '${pr_repo}', not the workflow hub ('${hub_slug}'); bare closing-keyword refs (e.g. 'Fixes #NNN') name product-repo issues and are NOT applied to the hub tracker. Only 'Fixes ${hub_slug}#NNN' references are honoured." >&2
+      fetch_pr_closing_issues "$pr_repo" "$pr_number" "$hub_slug"
+      ;;
+    *)
+      echo "WARNING: could not resolve the workflow hub GitHub repository; closing-keyword refs from PR #${pr_number} in '${pr_repo}' were NOT applied to the hub tracker." >&2
+      return 0
+      ;;
+  esac
+}
+
+# close_issues_from_pr <pr_number> <issue_numbers_newline_list> [<pr_repo>]
 # For each issue number in the list, updates the tracker status to Merged,
 # closes the issue if it is still open (commenting with the closing PR
 # number), and reasserts Merged status after close. A `gh issue view` failure
@@ -729,14 +977,19 @@ ${stripped_pr_commit_text}"
 # issues in the list either way). The issue-numbers list may be empty (a
 # no-op loop), but <pr_number> must be a non-empty numeric PR number so an
 # invalid caller cannot produce a close comment like "Closed by PR #.".
+# When the optional <pr_repo> is a different repository than the hub tracker's
+# (a workflow_hub product repo), the close comment names the PR as
+# "<pr_repo>#N" so it does not read as a hub PR number (#1538).
 close_issues_from_pr() {
-  local pr_number="$1"
-  local issue_list="$2"
-  local issue_num issue_state view_failures=0
-  if [ "$#" -ne 2 ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: close_issues_from_pr requires <pr_number> (numeric) <issue_numbers_newline_list>." >&2
+  local pr_number="${1:-}"
+  local issue_list="${2:-}"
+  local pr_repo="${3:-}"
+  local issue_num issue_state view_failures=0 close_pr_label
+  if { [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; } || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: close_issues_from_pr requires <pr_number> (numeric) <issue_numbers_newline_list> [<pr_repo>]." >&2
     return 2
   fi
+  close_pr_label="$(pr_close_label "$pr_repo" "$pr_number")"
   while IFS= read -r issue_num; do
     [ -z "$issue_num" ] && continue
     echo "Processing issue #${issue_num} from PR #${pr_number} closing keywords..."
@@ -748,7 +1001,7 @@ close_issues_from_pr() {
     update_tracker_status_best_effort "$issue_num" "Merged"
     if [ "$issue_state" = "OPEN" ]; then
       echo "Closing issue #${issue_num}..."
-      if gh issue close "$issue_num" --comment "Closed by PR #${pr_number}."; then
+      if gh issue close "$issue_num" --comment "Closed by ${close_pr_label}."; then
         echo "Reasserting issue #${issue_num} tracker status as Merged after close..."
         update_tracker_status_best_effort "$issue_num" "Merged" "" "allow-backward"
       else
@@ -891,7 +1144,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
         }
       fi
       if [ -n "$PR_FOR_OVERRIDE" ]; then
-        PR_OVERRIDE_ISSUES="$(fetch_pr_closing_issues "$pr_override_repo" "$PR_FOR_OVERRIDE")" || {
+        PR_OVERRIDE_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_override_repo" "$PR_FOR_OVERRIDE")" || {
           echo "ERROR: could not fetch PR #${PR_FOR_OVERRIDE} body from '$pr_override_repo' (gh command failed)." >&2
           exit 1
         }
@@ -900,7 +1153,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
 
     if [ -n "$PR_OVERRIDE_ISSUES" ]; then
       echo "Team-prefixed identifier '$ISSUE_IDENTIFIER' in branch '$TO_DELETE' is ambiguous; using closing keyword refs from PR #${PR_FOR_OVERRIDE} instead: $(printf '%s' "$PR_OVERRIDE_ISSUES" | tr '\n' ' ')"
-      close_issues_from_pr "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES" || exit 1
+      close_issues_from_pr "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES" "$pr_override_repo" || exit 1
       warn_unprocessed_title_refs "$pr_override_repo" "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES"
     else
       # Update the tracker status BEFORE closing the issue so that
@@ -932,10 +1185,10 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
       fi
       if [ "$ISSUE_STATE" = "OPEN" ]; then
         if [ -n "$MERGED_PR" ]; then
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          CLOSE_COMMENT="Closed by $(pr_close_label "$merged_pr_repo" "$MERGED_PR")."
         elif [ -n "$VERIFIED_MERGED_PR" ]; then
           MERGED_PR="$VERIFIED_MERGED_PR"
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          CLOSE_COMMENT="Closed by $(pr_close_label "$merged_pr_repo" "$MERGED_PR")."
         fi
         if [ -n "$MERGED_PR" ]; then
           echo "Closing issue #$ISSUE_NUMBER..."
@@ -955,14 +1208,14 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
       # every closing reference from the PR title, body, and commit messages
       # that is not the branch-derived issue, and warn about bare title refs.
       if [ -n "${MERGED_PR:-}" ]; then
-        if ! EXTRA_CLOSES="$(fetch_pr_closing_issues "$merged_pr_repo" "$MERGED_PR")"; then
+        if ! EXTRA_CLOSES="$(fetch_hub_tracker_closing_issues "$merged_pr_repo" "$MERGED_PR")"; then
           echo "ERROR: could not fetch PR #${MERGED_PR} closing refs from '$merged_pr_repo' (gh command failed)." >&2
           exit 1
         fi
         EXTRA_CLOSES="$(printf '%s\n' "$EXTRA_CLOSES" | grep -vx "$ISSUE_NUMBER" || true)"
         if [ -n "$EXTRA_CLOSES" ]; then
           echo "PR #${MERGED_PR} also closes: $(printf '%s' "$EXTRA_CLOSES" | tr '\n' ' ')"
-          close_issues_from_pr "$MERGED_PR" "$EXTRA_CLOSES" || exit 1
+          close_issues_from_pr "$MERGED_PR" "$EXTRA_CLOSES" "$merged_pr_repo" || exit 1
         fi
         warn_unprocessed_title_refs "$merged_pr_repo" "$MERGED_PR" "$(printf '%s\n%s' "$ISSUE_NUMBER" "$EXTRA_CLOSES")"
       fi
@@ -1001,14 +1254,14 @@ else
         fi
       fi
       if [ -n "$CLOSING_PR" ]; then
-        if ! CLOSES_ISSUES="$(fetch_pr_closing_issues "$pr_closes_repo" "$CLOSING_PR")"; then
+        if ! CLOSES_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_closes_repo" "$CLOSING_PR")"; then
           echo "ERROR: could not fetch PR #${CLOSING_PR} body from '$pr_closes_repo' (gh command failed)." >&2
           exit 1
         fi
         if [ -n "$CLOSES_ISSUES" ]; then
           echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
           cd "$HUB_REPO_ROOT"
-          close_issues_from_pr "$CLOSING_PR" "$CLOSES_ISSUES" || exit 1
+          close_issues_from_pr "$CLOSING_PR" "$CLOSES_ISSUES" "$pr_closes_repo" || exit 1
           warn_unprocessed_title_refs "$pr_closes_repo" "$CLOSING_PR" "$CLOSES_ISSUES"
         else
           echo "No issue number in branch name '$TO_DELETE' or PR #${CLOSING_PR} body; skipping issue close and tracker update."
@@ -1023,8 +1276,23 @@ else
 fi
 
 echo ""
+FINAL_REF_AFTER_CLEANUP="$DEVELOP_BRANCH"
+if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
+  if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" != "$TO_DELETE" ] \
+    && git -C "$CLEANUP_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ORIGINAL_REF"; then
+    FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  elif [ "$ORIGINAL_REF_KIND" = "detached" ]; then
+    FINAL_REF_AFTER_CLEANUP="$ORIGINAL_REF"
+  fi
+fi
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
-  echo "Done. You are on $DEVELOP_BRANCH; local branch '$TO_DELETE' was already removed."
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was already removed."
+elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; the calling worktree $CLEANUP_REPO_ROOT is detached at it; local branch '$TO_DELETE' has been removed locally."
+elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; local branch '$TO_DELETE' was KEPT and the calling worktree $CLEANUP_REPO_ROOT stays on it because it could not be detached (see LOCAL_DELETE_REASON)."
+elif [ "$SKIP_LOCAL_DELETE" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 else
-  echo "Done. You are on $DEVELOP_BRANCH and '$TO_DELETE' has been removed locally."
+  echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' has been removed locally."
 fi

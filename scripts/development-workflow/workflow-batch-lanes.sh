@@ -29,6 +29,12 @@ stage_lane_for_next_action() {
     write-plan|run-plan-review-and-open-pr) printf 'plan\n' ;;
     run-code-review-and-open-pr|resolve-pr-readiness|resume-fix-loop|wait-human-review) printf 'review\n' ;;
     implement|resolve-development-pr) printf 'implementation\n' ;;
+    # #1583: an explicit arm rather than the `*)` fallback — both currently
+    # return "review", but the fallback is not a stable contract, and the
+    # dispatch="held" wiring in the lane-assignment loop below depends on
+    # this action landing in a lane other than "none" (which would force
+    # dispatch="skip" and report as INFORMATIONAL, not HELD).
+    hold-misclassified-type) printf 'review\n' ;;
     *) printf 'review\n' ;;
   esac
 }
@@ -61,6 +67,15 @@ report_category_for_item() {
 
   if [ "$dispatch" = "skip" ]; then
     printf 'informational\n'
+    return 0
+  fi
+
+  # #1583: a misclassified-type hold must report as HELD even when the
+  # block also carries a ready-for-human-review label or an in-review
+  # status — this arm is ordered ahead of both of those checks below so
+  # neither can downgrade it to INFORMATIONAL.
+  if [ "$next_action" = "hold-misclassified-type" ] && [ "$dispatch" = "held" ]; then
+    printf 'held\n'
     return 0
   fi
 
@@ -357,12 +372,14 @@ while [ "$idx" -lt "$block_idx" ]; do
   local_runtime="none"
   slug=""
   development_path=""
+  misclassified_type_reason=""
   while IFS='=' read -r key value; do
     case "$key" in
       NEXT_ACTION) next_action="$value" ;;
       LOCAL_RUNTIME) local_runtime="$value" ;;
       SLUG) slug="$value" ;;
       DEVELOPMENT_PATH) development_path="$value" ;;
+      MISCLASSIFIED_TYPE_REASON) misclassified_type_reason="$value" ;;
     esac
   done < "$TMP_BLOCKS.$idx"
 
@@ -374,7 +391,13 @@ while [ "$idx" -lt "$block_idx" ]; do
   dispatch="proposed"
   hold_reason=""
 
-  if [ "$stage_lane" = "none" ]; then
+  if [ "$next_action" = "hold-misclassified-type" ]; then
+    # #1583: a misclassification hold, ahead of the stage-lane-cap logic
+    # below, so it never consumes a lane-cap slot — this item was never
+    # dispatch-eligible in the first place, not squeezed out by a cap.
+    dispatch="held"
+    hold_reason="${misclassified_type_reason:-item is Type Workflow at Backlog with no work started; framework-mode repositories do not route Workflow-typed items}"
+  elif [ "$stage_lane" = "none" ]; then
     dispatch="skip"
     hold_reason="not dispatch-eligible (${next_action})"
   else

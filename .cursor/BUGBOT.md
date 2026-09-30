@@ -21,8 +21,8 @@ rules as project-specific review guidance for this framework repository.
 
 - Do not require a `.cursor/skills/` mirror. The repository intentionally uses
   `.cursor/agents/`, `.cursor/commands/`, and shared `.agents/skills/` surfaces.
-- Do not flag the default `review.on_draft.runner: [codex]` as a problem by
-  itself. Local runner overrides belong in `.ai-dev-workflow.local.yaml`.
+- Do not flag the shipped `review.on_draft.runner` list by itself. Local
+  narrowing belongs in `.ai-dev-workflow.local.yaml`.
 - Do not treat advisory reviewer findings as blockers unless the workflow
   contract says the specific finding type must block readiness.
 

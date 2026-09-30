@@ -61,7 +61,32 @@ A PR is ready for human review only when all of the following are true:
   coherent checkpoint commits after completed logical sub-parts, or the PR notes
   why the work had no meaningful intermediate checkpoint before the final commit
 
+The internal review gate's verdict binds to the commit it reviewed, not to the
+branch. Any subsequent non-mechanical commit invalidates that verdict for the
+new HEAD and requires re-running the gate before readiness — a clean
+automated-reviewer-loop result at the new HEAD is evidence for Step 7, not a
+substitute for re-running the internal review gate. See
+[`91-orchestrate-work-protocol.md`](docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md)
+Step 7a and Step 8a for the summary-comment commit-SHA requirement and the
+`internal-review-gate-freshness-guard.sh` check that enforces it.
+
 If any blocking finding remains, the PR must stay out of `ready-for-human-review`.
+
+### Test-scope proportionality
+
+A delta confined to test scaffolding (fixture manifests, proof-cycle lists,
+case tables, scenario enumerations) is blocking only when the reviewer states
+a **Coverage-Harm Statement**: the specific coverage the removed items
+provided, and the defect class that now escapes. A plan enumeration is
+indicative unless marked with the exact literal `**Binding enumeration**`,
+in which case a delta that removes a listed item stays blocking regardless
+of any Coverage-Harm Statement. This never relaxes review of production-code
+correctness (a delta that changes observable behaviour or drops
+acceptance-criterion coverage stays governed by the unchanged Pass 1 rule)
+or matching of third-party reviewer output. See
+[`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
+for the full rule, the Gate A / Gate B decision matrices, and the worked
+example.
 
 ---
 
@@ -83,6 +108,13 @@ Check:
   the changed surface. Missing or contradictory matrix evidence is blocking
   before `ready-for-human-review`; for non-gate documentation changes, accept a
   concise not-applicable rationale.
+- When the spec contains a stateful contract (a decision matrix, state table,
+  lifecycle, precedence rules, or similarly stateful construct), the PR's
+  `Document Quality Gate` log carries a `Matrix coherence preflight` row with
+  the six-check audit summary or a reasoned `Not applicable`. A row that reads
+  `Not applicable — no stateful contract` when the spec actually contains one
+  is a blocking misclassification finding — the fixer runs the six-check audit
+  and replaces the row.
 - Spec PRs contain only expected spec-stage artifacts. Implementation files,
   migrations, product source files, workflow scripts, or unrelated docs on a
   `spec/*` branch are a workflow-stage blocker unless a human explicitly
@@ -132,6 +164,13 @@ Check:
   required next actions, mirror surfaces, and examples when examples are part of
   the changed surface. Missing rows, contradictory next actions, or unreasoned
   not-applicable entries are blocking before `ready-for-human-review`.
+- When the plan's own stateful contract (a decision matrix, state table,
+  lifecycle, or precedence rules) or, for Refactor items, the work item brief
+  contains one, the PR's `Document Quality Gate` log carries a `Matrix
+  coherence preflight` row with the six-check audit summary or a reasoned
+  `Not applicable`. A row that reads `Not applicable — no stateful contract`
+  when the plan or brief actually contains one is a blocking misclassification
+  finding — the fixer runs the six-check audit and replaces the row.
 - Plan PRs contain only expected plan-stage artifacts: the implementation plan
   and any plan-stage smoke-test runbook. Implementation files, migrations,
   product source files, workflow scripts, or unrelated docs on an
@@ -175,6 +214,57 @@ Check:
   - Cross-reference consistency: line numbers, counts, and symbolic references (e.g., smoke test counts, Verification Log output counts, log line references) must be consistent across the plan document; flag any number or reference that cannot be confirmed against the codebase or a prior plan step
 - Behavioral guarantee mechanism citation: every behavioral guarantee stated in the plan (e.g., "at most once per run", "bounded", "idempotent") cites the specific mechanism that enforces it (flag, guard clause, constraint, lock, etc.); a guarantee without a cited enforcement mechanism is unverifiable and must be flagged
 - Cross-section consistency: all references to the same function, constant, architecture decision, file path, directory name, or route/URL structure are consistent across all sections of the plan (e.g., a function described in the Architecture section must have the same signature in the Implementation Order steps; a constant must carry the same value everywhere it appears; a decision index must map to the same decision in every reference; a file path or route pattern defined in one section must match every other section where it appears)
+- **Plan authoring rigor (backstop)**:
+  - Read
+    [`plan-authoring-rigor-rules.md`](docs/workflow/development-workflow/plan-authoring-rigor-rules.md)
+    (the canonical statement) and the plan's per-rule outcome record.
+  - For each rule recorded as firing, re-run repository-derived evidence at
+    the recorded revision; for Rule 1 sampling/enumeration, follow the
+    canonical file's Group A external-source exception.
+  - Raise blocking findings per the canonical file's gate matrix;
+    distinguish non-blocking consolidation and adequacy judgments from
+    blocking findings.
+  - Treat a missing outcome record, a missing `Not applicable` rationale, a
+    stale revision SHA, or evidence recorded only in PR comments as blocking
+    per Group H.
+  - **Required content (so the mirror harness assertions hold):** this block
+    names all six rules by their canonical names, one line each, in the form
+    `Rule N — <canonical name>: <one-line trigger>`:
+    - Rule 1 — Sampling an external output distribution: fires when the
+      design depends on wording, shape, or presence of externally produced
+      free text.
+    - Rule 2 — One normative statement per fact: fires on every plan that
+      asserts a fact.
+    - Rule 3 — Counts of codebase artifacts: fires when the plan states a
+      quantity of artifacts that exist in the codebase or test suite.
+    - Rule 4 — Independent verification of existence claims: fires when the
+      plan states that something does or does not exist, or is already
+      handled.
+    - Rule 5 — Expectations at the composed call site: fires when the plan
+      changes a unit with more than one consumer on an ordered decision
+      path.
+    - Rule 6 — A conditional obligation names its scope: fires on every
+      conditional obligation ("required when X", "checkable once Y", "must
+      hold after Z").
+
+    It also names the three outcome labels (`Satisfied`, `Not applicable`,
+    `Unsatisfied`) and links
+    [`plan-authoring-rigor-rules.md`](docs/workflow/development-workflow/plan-authoring-rigor-rules.md)
+    as the canonical statement; it never restates pass conditions.
+
+  Do **not** duplicate the full matrix prose here — reference the canonical
+  file.
+- Test-scope proportionality (advisory, never blocking — Gate B in
+  [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)):
+  flag as `suggestion` when projected test scaffolding clearly exceeds the
+  size of the deliverable it protects, or when a prose-only or
+  documentation-only deliverable proposes a custom parser, scanner, or
+  matcher to validate it. Do not guess a ratio when sizes cannot be
+  estimated from the plan.
+- Any enumeration the plan intends as binding carries the exact literal
+  `**Binding enumeration**` on, or immediately above, the line that
+  introduces it; an enumeration with no such marker is indicative and may be
+  satisfied by a coverage-equivalent set at implementation time.
 
 Typical `blocking` issues:
 
@@ -214,7 +304,7 @@ Read before reviewing:
 
 Check:
 
-- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours.
+- Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours. A delta confined to test scaffolding is evaluated under Gate A of [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md), not under this bullet directly; a behaviour or acceptance-criterion delta stays governed by this bullet regardless of test counts (Gate A exclusion X1).
 - CHANGELOG fragments and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; normal feature/fix/refactor PRs add or update `changelog.d/` fragments; hotfix PRs update `CHANGELOG.md` directly with a versioned section; fixes to unreleased work update existing fragments rather than adding duplicates)
 - For implementation PRs, flag stale debug comments, newly introduced `TODO`/`FIXME` markers, review-marker comments, sibling/caller inconsistencies, or uncovered spec/plan/issue-body requirements that should have been caught by the Protocol 03 Pre-Submission Self-Review Pass.
 - For Full Pipeline and Refactor implementation PRs, verify the
@@ -225,7 +315,7 @@ Check:
 
 Typical `blocking` issues:
 
-- Implementation diverges from the approved spec or plan in a way that changes observable behaviour
+- Implementation diverges from the approved spec or plan in a way that changes observable behaviour, or drops the coverage of an acceptance criterion; a test-scaffolding-only delta is blocking only when the reviewer states a Coverage-Harm Statement (both the specific coverage lost and the defect class it lets through), except when the plan marked the reduced enumeration `**Binding enumeration**` — that delta stays blocking regardless of a harm statement — per [`test-scope-proportionality.md`](docs/workflow/development-workflow/test-scope-proportionality.md)
 - Missing acceptance criteria coverage
 - Stale markers, caller inconsistencies, or uncovered spec/plan/issue-body requirements remain in the PR after the pre-submission pass
 - Missing implementation-start operational-assumption re-verification for a
@@ -266,7 +356,7 @@ Additional checks for **PRs that add or modify guardrails enforcement behavior**
 
 - **Named-stop contract**: every stop message emitted by the changed code or documented behavior names (a) the exact stop condition string from `docs/workflow/development-workflow/guardrails-enforcement.md` section 4, (b) the affected work item, and (c) the concrete human action to unblock. Missing any of the three elements is a `blocking` finding.
 - **Single run-epic policy path**: verify the changed code or documentation does not introduce a second policy model separate from the run-epic helpers (`run-epic-risk-classifier.sh`, `run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`). Adding a parallel enforcement path is a `blocking` finding.
-- **Five enforcement gates present**: confirm the PR accounts for all six gates from `guardrails-enforcement.md` section 3 (load+report, backlog-start, PR-open, delegated review, delegated merge, and completion) and does not leave any gate unimplemented or bypassed.
+- **Six enforcement gates present**: confirm the PR accounts for all six gates from `guardrails-enforcement.md` section 3 (load+report, backlog-start, PR-open, delegated review, delegated merge, and completion) and does not leave any gate unimplemented or bypassed.
 - **Delegated merge/review/backlog-start/completion gates**: confirm the orchestration path (Protocol 90, 91, or 95) enforces each of these gates before the relevant decision point (opening a PR, making a review decision, merging, marking complete), not after.
 - **Audit recording**: when `audit.pr_disposition_record` or `audit.work_item_ledger_record` is required, confirm the stable audit markers (`<!-- run-epic:pr-disposition -->` and `<!-- run-epic:epic-ledger -->`) are used so reruns update rather than duplicate records.
 - **Conservative defaults declared**: the load+report step must state "conservative defaults in effect" when no `guardrails` section is present, and must enumerate each default value (mode=`manual`, `may_merge_pr: false`, `max_merge_risk: low`, backlog starts confirmation-gated, no audit requirements).
@@ -351,6 +441,12 @@ Additional checks for **shell scripts** (`*.sh`):
 - `|| true` does not silently swallow failures from external commands (e.g., `gh`, `git`) that the caller needs to know about
 - Workflow shell PRs run `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop` in addition to ShellCheck; missing guard execution is an important finding
 
+Additional checks for **PRs that add or change a `gh api graphql` query literal under `scripts/`**:
+
+- **Delimiter-balance lint** (blocking): confirm `python3 scripts/lint/lint-graphql-query-literals.py scripts` passes (exit `0`) at the PR's head; a green `ShellCheck` CI job at that head (which runs the lint) is sufficient evidence. A `1` or `2` exit (or a stale/absent run) is blocking — this is the exact defect class from #1828, where a mocked `gh` let an unbalanced query literal ship.
+- **Live validation** (blocking): confirm the PR evidence shows the new or changed query was run once against a real GitHub repository or PR (not only the mocked test suite) and returned data rather than a GraphQL parse/validation error. A delimiter-balance pass is necessary but not sufficient — it cannot detect an unknown field, wrong argument type, or deprecated schema element. See `docs/best-practices/3-testing.md` → "Live-Validate New or Changed GraphQL Queries" for the implementer-facing version of this rule.
+- **Exemption**: a change that only reformats or re-indents an existing, already-validated query (no field, argument, or structural change) does not require re-validation; the PR evidence should state the exemption rationale.
+
 Additional checks for **database migrations** (when a migration adds or changes triggers, functions, or backfills):
 
 - **Trigger/backfill arithmetic parity**: If both a trigger and a backfill compute the same derived value, they must use the **same formula**, including guards such as `GREATEST`, `LEAST`, `COALESCE`, and null handling. A trigger that differs from its backfill is a latent production bug.
@@ -408,6 +504,13 @@ branch implies.
 7. Does every catalogue entry read generally — no person's name, no document
    title, no wording that only makes sense to someone who saw the original
    incident?
+8. When a PR touches escalation or stop guidance: are genuinely open axes
+   reported separately from axes settled by specification; does every
+   determinable citation — including inside an otherwise-incomplete, mixed
+   report — carry its own `Conforms` / `Departs` / `Not yet implemented`
+   declaration; does the requested decision cover only the open axes; and is
+   a `Departs` citation never used as support? See
+   [`architecture-decision-escalation.md`](docs/workflow/development-workflow/architecture-decision-escalation.md).
 
 ---
 

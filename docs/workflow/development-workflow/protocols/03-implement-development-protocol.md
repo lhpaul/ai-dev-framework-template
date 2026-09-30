@@ -17,6 +17,14 @@
 
 ---
 
+## Matrix coherence preflight — not applicable to implementation PRs
+
+The matrix coherence preflight (Protocol 01's Document Quality Gate section,
+"Matrix coherence preflight") gates spec and plan artifacts only. Implementation
+PRs — including documentation-only implementation PRs produced by this protocol
+— are out of its scope; documentation changes made here follow the existing
+Code Review Checklist review path unchanged.
+
 ## Pre-Edit Branch/Worktree Guard
 
 Before writing or editing any repository file for implementation work, verify
@@ -120,6 +128,71 @@ delegated merge authority, and risk acceptance are not authorization for a
 shared-history rewrite. If the guard blocks, stop before mutation and report the
 safe follow-up commit path or the exact human authorization evidence required.
 
+## PR Ownership Guard
+
+`gh pr edit`, `gh pr comment`, `gh pr ready`, `gh pr close`, and label changes
+accept any PR number. Under parallel waves a transposed digit silently mutates a
+sibling's PR (issue #1444). Immediately before every PR mutation that addresses
+a PR by number, in every path of this protocol, run
+`scripts/development-workflow/pr-ownership-guard.sh` and mutate only on exit 0.
+This covers helper scripts that mutate a PR given `--pr <n>` — for example
+`apply-readiness-labels.sh`, `batch-merge.sh annotate-hold`,
+`run-epic-checkpoint-lifecycle.sh sync-pr-labels`, and
+`check-documentation-stage-alignment.sh` — exactly like raw `gh` calls: those
+helpers take no branch input, so the guard runs at the call site:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh \
+  --pr "$PR_NUMBER" --expected-branch "fix/[branch-slug]" || exit 1
+gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$$.md"
+```
+
+- Pass the item's own workflow branch as `--expected-branch`; omit it only when
+  running inside the item worktree on that branch. In `workflow_hub`, pass
+  `--repo <owner/name>` for the repository that owns the PR.
+- `RESULT=not_owned` (exit 1) means the number belongs to another branch:
+  re-resolve this item's PR with `gh pr view --json number` on the item branch;
+  never mutate the other PR. `RESULT=pr_unresolved` (exit 3) and
+  `RESULT=branch_unknown` (exit 4) fail closed: stop before mutation.
+  When re-resolving does not yield an owned PR, stop with the named stop
+  condition `pr_ownership_refused` (`guardrails-enforcement.md` section 4),
+  naming the item, the PR number, the guard's `RESULT=` line, and the
+  human action: confirm which PR belongs to the item branch.
+- Write PR bodies, comments, and review evidence only to collision-proof files
+  in a private scratch directory — the one the orchestrator assigned, or
+  `mktemp -d` — named with the item and process, for example
+  `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
+  sibling's content reach this PR with a correct PR number.
+- `pr-review-loop.sh` runs this guard itself on every run, before any side
+  effect. One check per run is enough: GitHub fixes a PR's head branch and
+  head repository at creation, and the loop's PR number and verified repository
+  do not change within the run, so later writes in the same run act on the
+  already-verified PR. Callers that issue separate mutations outside the loop
+  still run the guard before each one. The expected branch is `--branch` when given (it wins over any
+  checkout); otherwise the workflow branch checked out in `--repo-root` (or the
+  working directory). It stops with `RESULT=escalate`, exit `2`, and
+  `REASON=pr_ownership_branch_required` (no `--branch` and the checkout is
+  detached or on `develop`, `main`, or another non-workflow branch),
+  `REASON=pr_ownership_mismatch` (wrong branch or head repository), or
+  `REASON=pr_ownership_unverified` (PR or target repository not resolved, or
+  the branch and repository do not come from the same checkout). With
+  `--branch`, the target repository is the named one
+  (`--repo`/`--product-repo`, `WORKFLOW_TARGET_GITHUB_REPO`, `GH_REPO`), else
+  the `--repo-root` origin. A branch taken from a checkout uses that
+  checkout's origin; a named repository that differs from it, or a working
+  directory whose origin differs from the `--repo-root` the loop enters, fails
+  closed. Pass `--branch` whenever the item branch is known.
+- Mirror review-gate evidence recorded in the PR description (for example the
+  Pre-Submission Self-Review log) as a PR comment after the PR exists: a
+  description can be silently overwritten; a comment cannot.
+- A mutation that uses a number resolved moments earlier by `gh pr create` or
+  `gh pr view --json number` on the item branch itself already has ownership
+  evidence — for example the `gh pr close` in each path's post-create
+  base-branch assertion. Every other number — from a handoff, a summary, a log,
+  or memory — needs the guard.
+
 ## Scope-Residual Evidence Gate
 
 When the item title, body, spec, or plan describes sweep, batch, helper
@@ -130,6 +203,40 @@ to classify the scope and verify structured evidence. If the helper returns
 `RESULT=block` or `RESULT=escalate`, keep the PR out of readiness, report the
 remaining residual groups, and either finish the work, link a follow-up issue, or
 record explicit out-of-scope rationale.
+
+---
+
+## Test-Scope Deviation Record
+
+When the test scaffolding you ship (fixture manifests, proof-cycle lists,
+case tables, scenario enumerations) removes at least one item an
+**indicative** plan enumeration projected, but is coverage-equivalent, write
+a `## Test-Scope Deviation Record` in the PR description before opening the
+PR. This is the same condition Gate A uses (canonical document, exclusion
+X2): item count is not the trigger — a swap, consolidation, or rewrite that
+nets even or larger in total count but drops a projected item still requires
+the record, while a delta that only adds to, or leaves intact, every
+projected item does not, whatever the totals. This record path does not
+apply when the removed item came from an enumeration marked
+`**Binding enumeration**` — a record cannot authorize that removal; restore
+the item, or obtain a human decision to amend the plan, before opening the
+PR (rows A5/A6). The full rule is
+[`test-scope-proportionality.md`](../test-scope-proportionality.md). The
+record does not apply to a delta that changes observable behavior or drops
+acceptance-criterion coverage; that stays governed by the unchanged Pass 1
+rule in `REVIEW.md` regardless of test counts.
+
+Required fields:
+
+- **Plan enumeration reduced**: which enumeration, and where it appears in
+  the plan.
+- **Delivered instead**: what the implementation shipped in its place.
+- **Coverage classes retained**: which coverage classes remain, and which
+  tests exercise them.
+- **Coverage argument**: why the delivered set is coverage-equivalent to the
+  plan's projection.
+- **Residual risk accepted**: the residual risk accepted by the reduction, or
+  "None identified".
 
 ---
 
@@ -215,6 +322,7 @@ Under `set -e`, any command that exits non-zero causes the script to abort — *
 
 Capture exit codes explicitly when the command can legitimately fail:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Wrong under set -e — aborts if gh pr view exits non-zero (e.g., PR not found):
 PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
@@ -232,11 +340,15 @@ fi
 
 When ordering or comparing events (e.g., determining which comment came first, whether a review happened after the last push), always use **server-returned timestamps from API responses**, not local `date` output. Local clocks can be skewed relative to the server by seconds or minutes.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Wrong — local clock may not match server time:
 TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Correct — capture the timestamp from the API response:
+# Correct — capture the timestamp from the API response, after the PR
+# Ownership Guard confirms "$PR_NUMBER" belongs to this item's branch:
+./scripts/development-workflow/pr-ownership-guard.sh \
+  --pr "$PR_NUMBER" --expected-branch "fix/[branch-slug]" || exit 1
 RESPONSE=$(gh pr comment "$PR_NUMBER" --body "$TRIGGER_BODY")
 TRIGGER_TIME=$(echo "$RESPONSE" | jq -r '.createdAt')
 ```
@@ -531,12 +643,25 @@ Complete all applicable checks:
    - Full Pipeline: confirm every spec acceptance criterion is implemented or explicitly documented as an approved deviation.
    - Refactor: confirm every implementation-plan acceptance criterion is addressed.
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
+   - When the delivered test scaffolding removes at least one item the plan
+     projected (an addition-only delta does not trigger this; a net-even or
+     net-larger swap that drops a projected item does): if the plan marked
+     that enumeration `**Binding enumeration**`, restore the listed item, or
+     obtain a human decision to amend the plan, before opening the PR — this
+     is required regardless of whether a Coverage-Harm Statement can be
+     named. Otherwise, when the deviation is coverage-equivalent, write the
+     [Test-Scope Deviation Record](#test-scope-deviation-record) before
+     opening the PR. If a reviewer could instead name lost coverage and the
+     defect class it lets through, restore that coverage or narrow the
+     deviation first — a record is not a substitute for a harmful removal,
+     and is written only once a coverage-equivalent deviation remains.
 4. **Branch-stage discipline check**: implementation files belong on
    implementation branches (`feature/*`, `fix/*`, `refactor/*`, or
    `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
    current PR is a documentation-stage PR, run
    `scripts/development-workflow/check-documentation-stage-alignment.sh --pr <pr_number>`
-   before readiness. A mismatch must be corrected by moving/removing
+   (it posts a PR comment, so run the [PR Ownership Guard](#pr-ownership-guard)
+   first) before readiness. A mismatch must be corrected by moving/removing
    implementation files from the documentation-stage PR or escalated for a
    human workflow-stage decision.
 5. **Complex workflow decision-gate matrix check**: when the implementation adds
@@ -846,10 +971,44 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "feat([scope]): [description]"
-git push -u origin feature/[slug]
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "feature/[slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not feature/[slug]."
+  echo "Human action: switch this checkout to feature/[slug] and re-run the push step."
+  exit 1
+fi
+
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "feature/[slug]:feature/[slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/feature/[slug]" | cut -f1)" || REMOTE_SHA=""
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch feature/[slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"feature/[slug]:feature/[slug]\", and confirm the remote head matches before continuing."
+  exit 1
+fi
 ```
 
 Use Conventional Commits (see `docs/best-practices/2-version-control.md`).
@@ -873,7 +1032,7 @@ or `develop-<slug>` for integration-branch items) with:
   - What was implemented
   - Link to spec and plan
   - Test plan (how to validate)
-  - Any deviations from the plan (with justification)
+  - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended -- write the record too if a coverage-equivalent deviation remains after the amendment)
   - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -924,9 +1083,9 @@ post-create assertion above are the enforcement mechanism — do not skip them.
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle for this item:
 
-- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
+- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
-- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md))
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
 **Label derivation rule**: The `ready-for-regression` label requirement is determined by the **branch prefix**, not by the content of the PR. `feature/*` branches always require `ready-for-regression` regardless of whether the changes are code, documentation, or configuration. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
@@ -979,9 +1138,16 @@ Pass condition: empty output. If non-empty: resolve or address each reported thr
 
 Step 1.3 — Apply `ready-for-regression`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only after Steps 1.1 and 1.2 pass:
-gh pr edit <pr_number> --add-label "ready-for-regression"
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "feature/[branch-slug]" || exit $?
+# Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
+# (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
+# re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
+# verdict is a stop.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
 
 **Phase 2 checklist — run ALL of these before applying `ready-for-human-review`**:
@@ -997,9 +1163,14 @@ Pass condition: script exits with `RESULT=green`. If `RESULT=red`: fix the faili
 
 Step 2.2 — Apply `ready-for-human-review`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only after Step 2.1 passes:
-gh pr edit <pr_number> --add-label "ready-for-human-review"
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "feature/[branch-slug]" || exit $?
+# Only after Step 2.1 passes. Helper-applied only (issue #1408): a `refused`
+# verdict means the reviewer verdict or CI is not settled for the live head SHA.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-human-review
 ```
 
 This two-phase sequence aligns with `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c. When invoked through the Work Item Runner, those steps enforce this gate automatically. When invoked standalone, execute each numbered step above explicitly and verify its pass condition before proceeding to the next.
@@ -1194,7 +1365,47 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
    If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reopen and save in your editor) before staging.
 
 7. Commit: `refactor([scope]): [description]`
-8. Push branch to remote
+8. Push with an explicit refspec so the destination never depends on local
+   `push.default`, then verify the remote head matches local before opening the
+   PR (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   # The push must send THIS branch. A checkout left on another branch would push
+   # that one under this branch's name (issue #1593).
+   if [ "$(git rev-parse --abbrev-ref HEAD)" != "refactor/[branch-slug]" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug]."
+     echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not refactor/[branch-slug]."
+     echo "Human action: switch this checkout to refactor/[branch-slug] and re-run the push step."
+     exit 1
+   fi
+
+   # Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+   # block before the verification below, so the contractual stop would never print.
+   if ! git push origin "refactor/[branch-slug]:refactor/[branch-slug]"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug]."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+
+   # Verify the push actually landed: a refused or mis-aimed push must not pass as
+   # success (issue #1593). The refusal message is multi-line and can be truncated
+   # to nothing by shell-output filtering.
+   LOCAL_SHA=$(git rev-parse HEAD)
+   REMOTE_SHA="$(git ls-remote origin "refs/heads/refactor/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: branch refactor/[branch-slug] and its pull request."
+     echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+     echo "Human action: check the branch upstream and push permissions, re-run"
+     echo "  git push origin \"refactor/[branch-slug]:refactor/[branch-slug]\", and confirm the remote head matches before continuing."
+     exit 1
+   fi
+   ```
 9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 10. **Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the [Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item exists, create or accept a retroactive backlog item and reference it in the PR description before running `gh pr create`.
 11. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
@@ -1207,7 +1418,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - What was refactored and why
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
-      - Any deviations from the plan (with justification)
+      - Any deviations from the plan (with justification); include the [Test-Scope Deviation Record](#test-scope-deviation-record) format when the deviation removes at least one item an indicative plan enumeration's projected test scaffolding included and is coverage-equivalent (an addition-only delta does not need the record; a harmful removal is restored or narrowed rather than recorded; and a removal from a `**Binding enumeration**` is restored, or the plan is amended -- write the record too if a coverage-equivalent deviation remains after the amendment)
       - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
@@ -1455,10 +1666,44 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "fix([scope]): [description]"
-git push -u origin fix/[branch-slug]
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "fix/[branch-slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not fix/[branch-slug]."
+  echo "Human action: switch this checkout to fix/[branch-slug] and re-run the push step."
+  exit 1
+fi
+
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "fix/[branch-slug]:fix/[branch-slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/fix/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch fix/[branch-slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"fix/[branch-slug]:fix/[branch-slug]\", and confirm the remote head matches before continuing."
+  exit 1
+fi
 ```
 
 ### Step 8: Open PR (Draft)
@@ -1522,9 +1767,9 @@ post-create assertion above are the enforcement mechanism — do not skip them.
 
 After the draft PR exists, the **Work Item Runner** owns the rest of the lifecycle:
 
-- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR
+- Run the internal code review gate (`code-reviewer` / `03-review-implementation-protocol.md`) on the draft PR. The gate's verdict binds to the commit it reviewed — any subsequent non-mechanical commit invalidates it for the new HEAD and requires re-running the gate before readiness; a clean automated reviewer loop result is not a substitute (see `REVIEW.md` and `91-orchestrate-work-protocol.md` Step 7a / Step 8a)
 - Run the automated reviewer loop and CI loop to completion
-- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready
+- Apply `ready-for-human-review` and move the tracker to **Development in Review** when the PR is human-ready (canonical mapping: [`tracker-status-mapping.md`](../tracker-status-mapping.md))
 - Stop only when the PR is waiting on human review / merge or the run has escalated
 
 **Label derivation rule**: `fix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
@@ -1575,9 +1820,16 @@ Pass condition: empty output. If non-empty: resolve or address each reported thr
 
 Step 1.3 — Apply `ready-for-regression`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Only after Steps 1.1 and 1.2 pass:
-gh pr edit <pr_number> --add-label "ready-for-regression"
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch "fix/[branch-slug]" || exit $?
+# Only after Steps 1.1 and 1.2 pass. Readiness labels are helper-applied only
+# (issue #1408) — never `gh pr edit --add-label ready-*` directly. The helper
+# re-verifies the reviewer verdict and CI for the live head SHA; a `refused`
+# verdict is a stop.
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr <pr_number> --label ready-for-regression
 ```
 
 For Phase 2 (`ready-for-human-review` gate) and the full pre-label ordering contract, follow Path 1 `### Step 9: Handoff to Work Item Runner`. When invoked through the Work Item Runner, `91-orchestrate-work-protocol.md` Steps 7b → 8 → 8a → 8c enforce this gate automatically. When invoked standalone, execute each numbered step explicitly and verify its pass condition before proceeding to the next.
@@ -1769,10 +2021,44 @@ If any file is flagged, append a newline to it (e.g., `echo "" >> <file>` or reo
 
 ### Step 7: Commit & Push
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 git add [files]
 git commit -m "fix([scope]): [description] (hotfix)"
-git push -u origin hotfix/[branch-slug]
+# The push must send THIS branch. A checkout left on another branch would push
+# that one under this branch's name (issue #1593).
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "hotfix/[branch-slug]" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug]."
+  echo "Cause: HEAD is on $(git rev-parse --abbrev-ref HEAD), not hotfix/[branch-slug]."
+  echo "Human action: switch this checkout to hotfix/[branch-slug] and re-run the push step."
+  exit 1
+fi
+
+# Handle a failed push explicitly. Under `set -e` a bare failure would abort the
+# block before the verification below, so the contractual stop would never print.
+if ! git push origin "hotfix/[branch-slug]:hotfix/[branch-slug]"; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug]."
+  echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+  echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+  exit 1
+fi
+
+# Verify the push actually landed: a refused or mis-aimed push must not pass as
+# success (issue #1593). The refusal message is multi-line and can be truncated
+# to nothing by shell-output filtering.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA="$(git ls-remote origin "refs/heads/hotfix/[branch-slug]" | cut -f1)" || REMOTE_SHA=""
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "STOP: guardrail 'push_verification_failed' halted this run."
+  echo "Item: branch hotfix/[branch-slug] and its pull request."
+  echo "Cause: the push did not land — local $LOCAL_SHA, remote ${REMOTE_SHA:-<absent>}."
+  echo "Human action: check the branch upstream and push permissions, re-run"
+  echo "  git push origin \"hotfix/[branch-slug]:hotfix/[branch-slug]\", and confirm the remote head matches before continuing."
+  exit 1
+fi
 ```
 
 ### Step 8: Open PR (Draft)
@@ -1852,6 +2138,7 @@ Open a PR targeting `develop`:
 
 **Pre-PR-create base-branch guard (mandatory)**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 if [ -n "${ISSUE_NUMBER:-}" ]; then
   ./scripts/development-workflow/run-nested-artifact-guard.sh \
@@ -1871,6 +2158,7 @@ echo "Base-branch guard passed: backport branch descends from origin/main"
 
 **Post-create base-branch assertion (mandatory)**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr create --draft --base develop \
   --title "chore(hotfix): backport [slug] to develop" \
@@ -1895,7 +2183,9 @@ echo "Post-create assertion passed: backport PR base is '$ACTUAL_BASE'"
 
 Regardless of whether the backport is an identical cherry-pick or introduces conflict-resolution changes, the following steps are required before the human merges:
 
-1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft.
+1. **Run `gh pr ready <backport_pr_number>`** to convert the draft PR to non-draft,
+   after the [PR Ownership Guard](#pr-ownership-guard) passes with
+   `--expected-branch backport/hotfix/[slug]`.
 
 2. **Run the automated reviewer loop**:
 
@@ -1909,16 +2199,24 @@ Regardless of whether the backport is an identical cherry-pick or introduces con
 
 3. **Apply `ready-for-regression`** after the reviewer loop is clean:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   gh pr edit <backport_pr_number> --add-label "ready-for-regression"
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <backport_pr_number> --expected-branch "backport/hotfix/[slug]" || exit $?
+   ./scripts/development-workflow/apply-readiness-labels.sh \
+     --pr <backport_pr_number> --label ready-for-regression
    ```
 
 4. **Verify CI is green** using `pr-ci-loop.sh` or by checking the PR's status checks.
 
 5. **Apply `ready-for-human-review`** after CI is green and all reviewer loop threads are resolved:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   gh pr edit <backport_pr_number> --add-label "ready-for-human-review"
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <backport_pr_number> --expected-branch "backport/hotfix/[slug]" || exit $?
+   ./scripts/development-workflow/apply-readiness-labels.sh \
+     --pr <backport_pr_number> --label ready-for-human-review
    ```
 
 Both `ready-for-regression` and `ready-for-human-review` are required on the backport PR before the human merges it. The orchestrator's Step 5.1 verification (Protocol 91) checks for these labels on `backport/hotfix/*` branches and will flag missing labels as a protocol deviation. The backport PR can be merged by the human alongside or after the main hotfix review.

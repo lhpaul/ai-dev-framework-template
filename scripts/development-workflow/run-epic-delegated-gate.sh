@@ -753,7 +753,7 @@ state_json="$(printf '%s\n' "$state_json" | jq --argjson decisions "$verified_se
 verified_security_advisory_fixes="$(github_verified_security_advisory_fixes "$state_json" "$effective_root")"
 state_json="$(printf '%s\n' "$state_json" | jq --argjson fixes "$verified_security_advisory_fixes" '.githubVerifiedSecurityAdvisoryFixes = $fixes' 2>/dev/null)" || error_exit "failed to attach verified security advisory fixes"
 
-decision_json="$(printf '%s\n' "$state_json" | jq '
+decision_json="$(printf '%s\n' "$state_json" | jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
   def policy: if (.policy | type) == "object" then .policy else {} end;
   def policy_object_present: (.policy | type) == "object";
   def ci_policy: (.ciPolicy // .ci_policy // "required");
@@ -973,9 +973,15 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     # diagnosis itself is reported separately via status_checks_key_present,
     # which remains the single source of truth for "is .statusChecks
     # well-formed" (array-typed, every member an object).
+    #
+    # Evidence copied from `gh pr view --json statusCheckRollup` keeps
+    # superseded runs; a failure followed by a passing re-run must not read
+    # as a current CI blocker, so only the latest run per check is judged
+    # (shared dedupe_status_check_rollup, workflow-lib.sh, #1559).
     (reviewer_check_keys) as $reviewerKeys |
     ((.statusChecks // null) | if type == "array" then . else [] end)
     | map(select(type == "object"))
+    | dedupe_status_check_rollup
     | map(. as $check | select(($reviewerKeys | index(reviewer_check_key($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then

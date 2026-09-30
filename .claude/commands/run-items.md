@@ -123,3 +123,20 @@ For read-only portfolio scan and proposal use `/run-work`.
 
 > **Deprecation notice**: `/run-epic --items` is deprecated. Use `/run-items` for
 > explicit item lists and `/run-epic --epic <n>` for epic-scoped runs.
+
+---
+
+## Cursor dispatch profile
+
+In a Cursor environment only, declare the dispatch profile in force before any
+mutating action — `cursor-native-handoff`, `cursor-parent-orchestrated`, or
+`cursor-inline-fallback` — naming the Work Item Runner (item layer) as the
+accountable orchestration role, with a posture valid for the current checkpoint. Other runners are unaffected by
+this requirement.
+
+Evaluation order, unconfirmed-handoff outcomes, accountability postures, the
+named stop conditions and their human unblocking actions, and the
+invalid-declaration boundaries are defined once, normatively, in
+`docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
+Follow that document; this surface deliberately does not restate it.
+

@@ -181,7 +181,7 @@ def blocker_for_component(component):
             return "pending_component_outcome"
         if value in ("failed", "blocked"):
             return "blocked_component_outcome"
-    if component.get("ci_outcome") not in ("passed", "not_applicable", "skipped"):
+    if component.get("ci_outcome") not in ("passed", "not_applicable"):
         return "blocked_component_outcome"
     if component.get("deployment_outcome") not in ("recorded", "not_applicable"):
         return "blocked_component_outcome"
@@ -303,6 +303,7 @@ def component_from_evidence(args):
         "contract_revision": stable_value(evidence, "contract_revision"),
         "component_tag": args.component_tag,
         "component_version": args.component_version,
+        "release_branch": evidence.get("release_branch"),
         "source_pr": str(args.source_pr),
         "release_pr": str(args.release_pr),
         "routing_outcome": evidence.get("routing_outcome"),
@@ -357,6 +358,21 @@ def component_from_evidence(args):
             + str(args.component_tag)
             + "' does not match evidence component_tag '"
             + str(evidence_tag)
+            + "'",
+        )
+    evidence_version = evidence.get("component_version")
+    if not evidence_version:
+        fail(
+            "component_version_unbound",
+            "evidence does not bind a component_version; render evidence with --component-version before mutation",
+        )
+    if evidence_version != args.component_version:
+        fail(
+            "component_version_mismatch",
+            "--component-version '"
+            + str(args.component_version)
+            + "' does not match evidence component_version '"
+            + str(evidence_version)
             + "'",
         )
     return component_view(component)
@@ -581,15 +597,21 @@ def main():
     update.add_argument("--component-key", required=True, dest="component_key")
     update.add_argument("--evidence-file", required=True, dest="evidence_file")
     update.add_argument("--component-tag", required=True, dest="component_tag")
-    update.add_argument("--component-version", default=None, dest="component_version")
+    update.add_argument("--component-version", required=True, dest="component_version")
     update.add_argument("--source-pr", required=True, dest="source_pr")
     update.add_argument("--release-pr", required=True, dest="release_pr")
     update.add_argument("--child-item", required=True, dest="child_item")
-    update.add_argument("--child-release-state", required=True, dest="child_release_state")
+    update.add_argument(
+        "--child-release-state",
+        required=True,
+        dest="child_release_state",
+        choices=["not_started", "pending", "released", "merged", "failed", "blocked"],
+    )
     update.add_argument(
         "--hub-tracker-reconciliation-outcome",
         default="pending",
         dest="hub_tracker_reconciliation_outcome",
+        choices=["pending", "complete", "deferred"],
     )
     update.set_defaults(func=cmd_update_component)
 

@@ -47,6 +47,7 @@ TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET
 TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
 scripts/development-workflow/component-release-target.sh \
   --repo "$TARGET_REPO_KEY" \
+  --release-branch "$RELEASE_BRANCH" \
   --json > "$TARGET_BINDING_TMP"
 mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```
@@ -66,6 +67,28 @@ scripts/development-workflow/component-release-evidence.sh \
   --deployment-outcome pending \
   --cleanup-outcome not_started \
   --hub-tracker-ref "#123" \
+  --output /path/to/component-release-evidence.json
+```
+
+After the product release completes and the component tag/version are known,
+re-render the same evidence file so it binds `--component-tag` and
+`--component-version`. Bundle attachment (`delivery-bundle-manifest.sh
+update-component`) requires that re-rendered file — a pending record without a
+bound tag fails with `component_tag_unbound`:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "#123" \
+  --component-tag "$COMPONENT_TAG" \
+  --component-version "$COMPONENT_VERSION" \
   --output /path/to/component-release-evidence.json
 ```
 
@@ -201,6 +224,23 @@ Verify:
 - Product branch cleanup completed.
 - Hub tracker status moved to `Merged` when the implementation closes the item.
 - The hub checkout returns to the integration branch for the topic.
+
+### Closing keywords in product PRs
+
+A bare closing keyword in a product PR (`Fixes #601`) is numbered in the
+**product** repository, but cleanup mutates the **hub** tracker, where `#601`
+may be an unrelated issue. Cleanup therefore does not apply bare
+`Closes`/`Fixes`/`Resolves #NNN` references from a product-repository PR to the
+hub tracker; it logs a `NOTE:` naming the skipped behavior instead. To close a
+hub issue from a product PR, write the hub-qualified form
+(`Closes <hub-owner>/<hub-repo>#NNN`). If the hub repository cannot be
+resolved, cleanup warns and applies no PR-body references rather than guess.
+The branch-derived issue number (for example `feature/601-slug`) is unaffected
+by the skip and remains a hub issue number. Every close comment cleanup posts
+for a product-repository PR, on the branch-derived issue and on hub-qualified
+references alike, names the PR as `<product-owner>/<product-repo>#N` so it is
+not read as a hub PR number; when the PR lives in the hub repository (or in
+`single_repo` mode) the comment reads `Closed by PR #N.`.
 
 ## Troubleshooting
 

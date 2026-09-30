@@ -64,6 +64,8 @@ def load_json_file(path: str | None, label: str, required: bool = True) -> dict[
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
+    except OSError as exc:
+        fail(f"{label}_unreadable", f"{label} file could not be read: {exc}")
     except json.JSONDecodeError as exc:
         fail("invalid_json", f"{label} file is not valid JSON: {exc}")
     if not isinstance(data, dict):
@@ -172,28 +174,25 @@ def non_hub_result(args: argparse.Namespace) -> dict[str, Any]:
         mutation_allowed=args.target_kind == "component_child",
         required_next_action="stamp the existing single-repository release milestone",
         blockers=[],
+        trust_basis="caller_asserted",
     )
     return result
 
 
+EVIDENCE_STATE_ENUM = {"verified", "released", "stale", "conflicting", "missing", "partial"}
+
+
 def evidence_state(evidence: dict[str, Any]) -> str:
+    # Absent key: keep pre-existing schema_version synthesis unchanged (D9 absent row).
+    if "evidence_state" not in evidence:
+        if evidence.get("schema_version") == EVIDENCE_SCHEMA:
+            return "verified"
+        return ""
     raw = evidence.get("evidence_state")
-    if isinstance(raw, str) and raw:
+    if isinstance(raw, str) and raw in EVIDENCE_STATE_ENUM:
         return raw
-    # component-release-evidence.sh (the canonical evidence producer) never
-    # emits evidence_state itself: by the time it successfully renders a
-    # component_release_evidence.v1 file, it has already verified the
-    # evidence's identity fields (routing_outcome, selected_product_repo_key,
-    # canonical_repository_identity, artifact_owners, release_correlation_key,
-    # contract_revision) against an independent target binding. Treat a
-    # schema-correct evidence file with no explicit evidence_state as
-    # verified rather than blocking on a field the producer never sets.
-    # Consumers that need to flag stale/conflicting evidence (for example a
-    # delivery bundle manifest component view) still set evidence_state
-    # explicitly and that value continues to win above.
-    if evidence.get("schema_version") == EVIDENCE_SCHEMA:
-        return "verified"
-    return ""
+    # Present but not a closed-enum member (unrecognized string, null, or other non-string).
+    return "__invalid_evidence_state__"
 
 
 def classify_component(args: argparse.Namespace) -> dict[str, Any]:
@@ -202,6 +201,11 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
     validate_target_kind(args.target_kind)
 
     if args.mode == "single_repo":
+        if args.evidence_file:
+            fail(
+                "evidence_not_supported_in_single_repo",
+                "--evidence-file is not supported in single_repo mode; omit it or use workflow_hub mode",
+            )
         return non_hub_result(args)
 
     result = base_component_result(args)
@@ -263,6 +267,16 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
         )
         return result
 
+    # GAP-4: require hub-routed evidence before any product/component identity match.
+    if stable_value(evidence, "routing_outcome") != "component_release_routed":
+        result.update(
+            reconciliation_outcome="component_target_mismatch",
+            child_release_state="blocked",
+            required_next_action="correct the evidence's routing outcome to component_release_routed, or re-run component release routing, before mutation",
+            blockers=["routing_outcome_mismatch"],
+        )
+        return result
+
     evidence_product = stable_value(evidence, "selected_product_repo_key")
     if evidence_product != product_repo:
         result.update(
@@ -314,49 +328,56 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
         return result
 
     release = evidence.get("release_outcome")
-    ci = evidence.get("ci_outcome")
-    deployment = evidence.get("deployment_outcome")
+    ci_raw = evidence.get("ci_outcome")
+    deployment_raw = evidence.get("deployment_outcome")
     cleanup = evidence.get("cleanup_outcome")
-    # hub_tracker_reconciliation_outcome and child_release_state describe hub
-    # tracker/child-issue state, not the product release itself, so
-    # component-release-evidence.sh (which only knows about the product
-    # repository's release/ci/deployment/cleanup outcomes) never emits them.
-    # Accept them as explicit CLI flags, matching delivery-bundle-manifest.sh's
-    # --hub-tracker-reconciliation-outcome/--child-release-state, and fall
-    # back to the evidence file only for callers that already embed them
-    # there (for example a manifest-derived component view).
-    hub_reconciliation = (
-        getattr(args, "hub_tracker_reconciliation_outcome", None)
-        or evidence.get("hub_tracker_reconciliation_outcome")
-        or evidence.get("hub_tracker_reconciliation")
-    )
-    child_state = getattr(args, "child_release_state", None) or evidence.get("child_release_state")
+    # GAP-5/D5: hub-owned facts come only from CLI flags — never from the evidence file.
+    hub_reconciliation = getattr(args, "hub_tracker_reconciliation_outcome", None)
+    child_state = getattr(args, "child_release_state", None)
     state = evidence_state(evidence)
 
     blockers: list[str] = []
     if not state:
         blockers.append("evidence_state_missing")
-    if state in {"stale", "conflicting"}:
+    elif state == "__invalid_evidence_state__":
+        blockers.append("invalid_evidence_state")
+    elif state in {"stale", "conflicting"}:
         blockers.append(f"{state}_component_evidence")
+    elif state == "missing":
+        blockers.append("missing_component_evidence")
+    elif state == "partial":
+        blockers.append("partial_component_evidence")
     if release != "completed":
         blockers.append(f"release_outcome_{release or 'missing'}")
-    if ci not in {"passed", "skipped", "not_applicable"}:
-        blockers.append(f"ci_outcome_{ci or 'missing'}")
-    if deployment not in {"recorded", "not_applicable"}:
-        blockers.append(f"deployment_outcome_{deployment or 'missing'}")
+    if "ci_outcome" in evidence and not isinstance(ci_raw, str):
+        blockers.append("ci_outcome_invalid")
+    elif ci_raw not in {"passed", "not_applicable"}:
+        blockers.append(f"ci_outcome_{ci_raw or 'missing'}")
+    if "deployment_outcome" in evidence and not isinstance(deployment_raw, str):
+        blockers.append("deployment_outcome_invalid")
+    elif deployment_raw not in {"recorded", "not_applicable"}:
+        blockers.append(f"deployment_outcome_{deployment_raw or 'missing'}")
     if cleanup != "complete":
         blockers.append(f"cleanup_outcome_{cleanup or 'missing'}")
-    if hub_reconciliation not in {"complete", "deferred"}:
-        blockers.append(f"hub_tracker_reconciliation_{hub_reconciliation or 'missing'}")
+    if not hub_reconciliation:
+        blockers.append("hub_tracker_reconciliation_outcome_required")
+    elif hub_reconciliation not in {"complete", "deferred"}:
+        blockers.append(f"hub_tracker_reconciliation_{hub_reconciliation}")
     if not child_state:
-        blockers.append("child_release_state_missing")
+        blockers.append("child_release_state_required")
     elif child_state not in {"released", "merged"}:
-        blockers.append(f"child_release_state_{child_state or 'missing'}")
+        blockers.append(f"child_release_state_{child_state}")
 
     if blockers:
         if release == "failed" or child_state == "failed":
             child_release_state = "failed"
-        elif release == "blocked" or state in {"stale", "conflicting"}:
+        elif (
+            release == "blocked"
+            or state in {"stale", "conflicting"}
+            or "invalid_evidence_state" in blockers
+            or "missing_component_evidence" in blockers
+            or "partial_component_evidence" in blockers
+        ):
             child_release_state = "blocked"
         else:
             child_release_state = "pending"
@@ -365,6 +386,7 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
             child_release_state=child_release_state,
             required_next_action="repair or retry component release evidence before milestone mutation",
             blockers=blockers,
+            trust_basis="evidence_bound",
         )
         return result
 
@@ -375,6 +397,7 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
         mutation_allowed=True,
         required_next_action="create or reuse the namespaced component milestone and assign it only to the component child",
         blockers=[],
+        trust_basis="evidence_bound",
     )
     return result
 

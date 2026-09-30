@@ -45,6 +45,7 @@
 #
 #   select-test-suites.sh --changed-files <path>   # '-' reads stdin
 #   select-test-suites.sh --all
+#   select-test-suites.sh --all --shards 8
 #   select-test-suites.sh --report-gaps
 #   select-test-suites.sh --print-map
 #
@@ -52,6 +53,11 @@
 #   --changed-files <path>  File with one changed repo-relative path per line.
 #                           Emits the suites that change set requires.
 #   --all                   Emit every suite (the scheduled full run).
+#   --shards <n>            Group the selected suites into at most <n> shards
+#                           instead of emitting them individually, so CI can
+#                           run one job per shard rather than one job per
+#                           suite. See "Sharding" below. Requires --all or
+#                           --changed-files.
 #   --report-gaps           Emit the coverage-gap report (AC-3): workflow
 #                           scripts with no suite, and suites that no PR change
 #                           set can select. Always exits 0 — the report is
@@ -59,7 +65,45 @@
 #   --print-map             Emit 'suite<TAB>pattern' for each resolved mapping.
 #   --format <lines|json>   Output format for suite lists. Default 'lines'.
 #
-# Output (lines format): repo-relative suite paths, one per line, sorted.
+# ── Sharding ────────────────────────────────────────────────────────────────
+#
+# GitHub bills every job rounded UP to a whole minute, and most suites here
+# finish in seconds, so one job per suite bills several times the compute it
+# uses. --shards packs the selection into at most <n> groups that each run
+# sequentially in one job.
+#
+# Packing is longest-processing-time-first: suites are sorted longest-first and
+# each is placed in the shard with the least work so far. That keeps the
+# slowest shard — and therefore the wall-clock time of the whole run — close to
+# the theoretical minimum, which is what stops the cheaper billing from costing
+# latency. The BILL is roughly independent of how well the packing balances
+# (it is the total work plus one rounding penalty per shard); the WALL TIME is
+# not, which is why the packing is worth doing properly.
+#
+# A suite's expected duration comes from a '# duration: <seconds>' header line,
+# read from the same bounded header window as '# covers:'. A suite that does
+# not declare one is assumed to take DEFAULT_SUITE_SECONDS. Only suites that
+# run materially longer than that need a header — the default is deliberately
+# close to the median so an undeclared suite cannot distort the packing much,
+# and a stale hint costs balance, never correctness.
+#
+# ── Output ──────────────────────────────────────────────────────────────────
+#
+# Without --shards
+#   lines: repo-relative suite paths, one per line, sorted.
+#   json:  ["suite", ...]
+#
+# With --shards <n>
+#   lines: one shard per line, '<id><TAB><space-joined suites>'.
+#   json:  [{"id":"1/8","suites":"a b c","timeout_minutes":38}, ...] —
+#          shaped for a GitHub Actions matrix, where each element becomes one
+#          job, 'id' names it, and 'timeout_minutes' gives that shard enough
+#          budget for every suite to reach its own per-suite cap plus the
+#          timeout command's kill-after grace.
+#
+# Fewer suites than shards yields fewer shards; an empty selection yields no
+# shards at all ('[]' in json), so the caller can skip the test job entirely.
+#
 # Exit codes: 0 success, 2 usage error.
 #
 # Portability: written for bash 3.2 (the macOS system bash) — no mapfile,
@@ -89,6 +133,34 @@ SCRIPTS_DIR="scripts/development-workflow"
 # widening a suite's declared surface.
 COVERS_HEADER_LINES=60
 
+# Assumed duration of a suite that declares no '# duration:' header, in
+# seconds. Measured over production runs by subtracting the per-job overhead
+# floor from observed suite durations. Most suites in downstream rollouts run
+# in the low seconds, so this slightly over-states a typical undeclared suite.
+# That direction is the safe one — an unknown suite gets spread out rather than
+# piled onto a shard that is already the critical path.
+DEFAULT_SUITE_SECONDS=5
+
+# Mirrors workflow-tests.yml's per-suite timeout defaults. The workflow exports
+# these env vars before calling this selector, so matrix timeouts stay in step
+# with the per-suite guard without asking GitHub expressions to do arithmetic.
+SHARD_SUITE_TIMEOUT_SECONDS="${SUITE_TIMEOUT_SECONDS:-600}"
+case "$SHARD_SUITE_TIMEOUT_SECONDS" in
+  '' | *[!0-9]*) die "SUITE_TIMEOUT_SECONDS must be a positive integer, got '$SHARD_SUITE_TIMEOUT_SECONDS'" ;;
+esac
+SHARD_SUITE_TIMEOUT_SECONDS=$((10#$SHARD_SUITE_TIMEOUT_SECONDS))
+[ "$SHARD_SUITE_TIMEOUT_SECONDS" -gt 0 ] \
+  || die "SUITE_TIMEOUT_SECONDS must be a positive integer, got '$SHARD_SUITE_TIMEOUT_SECONDS'"
+SHARD_TIMEOUT_KILL_AFTER_SECONDS="${SUITE_TIMEOUT_KILL_AFTER_SECONDS:-30}"
+case "$SHARD_TIMEOUT_KILL_AFTER_SECONDS" in
+  '' | *[!0-9]*) die "SUITE_TIMEOUT_KILL_AFTER_SECONDS must be a positive integer, got '$SHARD_TIMEOUT_KILL_AFTER_SECONDS'" ;;
+esac
+SHARD_TIMEOUT_KILL_AFTER_SECONDS=$((10#$SHARD_TIMEOUT_KILL_AFTER_SECONDS))
+[ "$SHARD_TIMEOUT_KILL_AFTER_SECONDS" -gt 0 ] \
+  || die "SUITE_TIMEOUT_KILL_AFTER_SECONDS must be a positive integer, got '$SHARD_TIMEOUT_KILL_AFTER_SECONDS'"
+SHARD_TIMEOUT_OVERHEAD_MINUTES=5
+GITHUB_JOB_TIMEOUT_LIMIT_MINUTES=360
+
 # Changing any of these invalidates the per-suite mapping itself, or is a shared
 # dependency of most suites, so a change to one runs the full set rather than a
 # selected subset. Deliberately conservative: the cost of over-running is wall
@@ -99,7 +171,11 @@ $TESTS_DIR/fixtures/**
 .github/workflows/workflow-tests.yml"
 
 usage() {
-  sed -n '3,66p' "$0" | sed 's/^# \{0,1\}//'
+  # Print the whole leading comment header rather than a hard-coded line range:
+  # a fixed range silently truncates the help text the moment the header grows,
+  # and the truncation is invisible unless someone reads --help expecting the
+  # part that vanished.
+  awk 'NR <= 2 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 # ── Pattern matching ────────────────────────────────────────────────────────
@@ -227,6 +303,56 @@ suite_patterns() {
   return 0
 }
 
+# suite_duration <suite-path> — the suite's expected runtime in seconds.
+#
+# Read from a '# duration: <seconds>' header line in the same bounded window as
+# '# covers:', defaulting to DEFAULT_SUITE_SECONDS. Only used to balance shards,
+# so a missing or stale value costs wall-clock balance and never correctness —
+# which is why a malformed value falls back to the default rather than dying.
+suite_duration() {
+  local suite="$1" line rest token value=""
+
+  while IFS= read -r line; do
+    case "$line" in
+      '#'*duration:*)
+        rest="${line#*duration:}"
+        # Word-split without pathname expansion, matching suite_patterns. Only
+        # the first token is the duration; anything after it is prose.
+        set -f
+        # shellcheck disable=SC2086  # deliberate word-splitting; globbing disabled above
+        for token in $rest; do
+          value="$token"
+          break
+        done
+        set +f
+        ;;
+    esac
+    # Read the whole header rather than breaking out on the first hit: breaking
+    # closes the process substitution while read_suite_header is still writing,
+    # which surfaces as EPIPE noise on stderr.
+  done < <(read_suite_header "$suite")
+
+  case "$value" in
+    '' | *[!0-9]*) printf '%s\n' "$DEFAULT_SUITE_SECONDS"; return 0 ;;
+  esac
+
+  # Normalise to base 10 HERE, at the boundary, before the value reaches any
+  # arithmetic. A digits-only check is not enough: bash reads a leading-zero
+  # literal as octal, so '# duration: 08' passes validation and then dies in
+  # emit_shards with 'value too great for base', taking the whole selection —
+  # and therefore the CI gate — down over a duration hint that is only ever
+  # meant to affect shard balance. '10#' forces base 10 regardless of padding.
+  value=$((10#$value))
+
+  # Checked after normalisation so '0', '00' and '000' are all caught; a
+  # zero-length suite would let one shard absorb unlimited work.
+  if [ "$value" -le 0 ]; then
+    printf '%s\n' "$DEFAULT_SUITE_SECONDS"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
 # suite_has_mapping <suite> — true when the suite covers something beyond
 # itself, i.e. some PR change set other than editing the test can select it.
 suite_has_mapping() {
@@ -267,14 +393,131 @@ emit_suites() {
   printf ']\n'
 }
 
+# json_escape <string> — escape for a JSON string body.
+json_escape() {
+  local escaped="$1"
+  # Backslash first, then the quote, so a value containing either still yields
+  # valid JSON. The workflow feeds this straight into fromJSON(), where a
+  # malformed string fails the whole run rather than one job.
+  escaped="${escaped//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '%s' "$escaped"
+}
+
+# emit_shards <format> <shard-count> — reads a newline-delimited suite list on
+# stdin and packs it into at most <shard-count> shards.
+#
+# Longest-processing-time-first: sort the suites longest-first, then place each
+# into whichever shard has the least work so far. Deterministic — ties in
+# duration break on the suite path — so the same selection always produces the
+# same shards, which is what makes the packing testable.
+emit_shards() {
+  local format="$1" shard_count="$2"
+  local suite secs i idx total=0 n=0 timeout_minutes per_suite_timeout_minutes
+  local -a bin_load bin_suites bin_count
+  local first=1
+
+  # Pair each suite with its duration and sort longest-first. Sorting here, in
+  # one pass, rather than calling suite_duration inside the packing loop keeps
+  # the header of each suite read exactly once.
+  local paired=""
+  while IFS= read -r suite; do
+    [ -n "$suite" ] || continue
+    secs="$(suite_duration "$suite")"
+    paired="$paired$secs	$suite
+"
+    total=$((total + 1))
+  done
+
+  if [ "$total" -eq 0 ]; then
+    [ "$format" = json ] && printf '[]\n'
+    return 0
+  fi
+
+  # More shards than suites would emit empty shards, i.e. jobs that bill a
+  # minute to run nothing.
+  [ "$shard_count" -gt "$total" ] && shard_count="$total"
+
+  i=0
+  while [ "$i" -lt "$shard_count" ]; do
+    bin_load[i]=0
+    bin_suites[i]=""
+    bin_count[i]=0
+    i=$((i + 1))
+  done
+
+  while IFS='	' read -r secs suite; do
+    [ -n "$suite" ] || continue
+    # Least-loaded shard wins; the lowest index wins a tie, keeping the
+    # assignment deterministic.
+    idx=0
+    i=1
+    while [ "$i" -lt "$shard_count" ]; do
+      if [ "${bin_load[$i]}" -lt "${bin_load[$idx]}" ]; then
+        idx=$i
+      fi
+      i=$((i + 1))
+    done
+    bin_load[idx]=$(( bin_load[idx] + secs ))
+    bin_count[idx]=$(( bin_count[idx] + 1 ))
+    if [ -z "${bin_suites[$idx]}" ]; then
+      bin_suites[idx]="$suite"
+    else
+      bin_suites[idx]="${bin_suites[idx]} $suite"
+    fi
+  done <<EOF
+$(printf '%s' "$paired" | LC_ALL=C sort -t'	' -k1,1nr -k2,2)
+EOF
+
+  per_suite_timeout_minutes=$(((SHARD_SUITE_TIMEOUT_SECONDS + SHARD_TIMEOUT_KILL_AFTER_SECONDS + 59) / 60))
+  i=0
+  while [ "$i" -lt "$shard_count" ]; do
+    timeout_minutes=$((bin_count[i] * per_suite_timeout_minutes + SHARD_TIMEOUT_OVERHEAD_MINUTES))
+    if [ "$timeout_minutes" -gt "$GITHUB_JOB_TIMEOUT_LIMIT_MINUTES" ]; then
+      die "shard $((i + 1))/$shard_count requires ${timeout_minutes}m, exceeding GitHub Actions ${GITHUB_JOB_TIMEOUT_LIMIT_MINUTES}m job timeout cap; increase --shards"
+    fi
+    i=$((i + 1))
+  done
+
+  [ "$format" = json ] && printf '['
+  i=0
+  while [ "$i" -lt "$shard_count" ]; do
+    n=$((i + 1))
+    if [ "$format" = json ]; then
+      timeout_minutes=$((bin_count[i] * per_suite_timeout_minutes + SHARD_TIMEOUT_OVERHEAD_MINUTES))
+      [ "$first" -eq 1 ] || printf ','
+      first=0
+      printf '{"id":"%s/%s","suites":"%s","timeout_minutes":%s}' \
+        "$n" "$shard_count" "$(json_escape "${bin_suites[$i]}")" "$timeout_minutes"
+    else
+      printf '%s/%s\t%s\n' "$n" "$shard_count" "${bin_suites[$i]}"
+    fi
+    i=$((i + 1))
+  done
+  [ "$format" = json ] && printf ']\n'
+  return 0
+}
+
 # ── Modes ───────────────────────────────────────────────────────────────────
 
+# emit_selection <format> <shard-count> — the single exit point for a suite
+# list, so --all and --changed-files cannot drift on how sharding is applied.
+# A shard count of 0 means "not sharding".
+emit_selection() {
+  local format="$1" shard_count="$2"
+  if [ "$shard_count" -gt 0 ]; then
+    emit_shards "$format" "$shard_count"
+  else
+    emit_suites "$format"
+  fi
+}
+
 mode_all() {
-  list_suites | emit_suites "$1"
+  list_suites | emit_selection "$1" "$2"
 }
 
 mode_changed() {
-  local format="$1" source="$2"
+  local format="$1" source="$2" shard_count="$3"
   local changed_raw changed="" line pattern suite matched file
 
   if [ "$source" = '-' ]; then
@@ -301,7 +544,7 @@ EOF
       [ -n "$pattern" ] || continue
       if path_matches "$file" "$pattern"; then
         printf 'INFO: full run triggered by %s (matches %s)\n' "$file" "$pattern" >&2
-        mode_all "$format"
+        mode_all "$format" "$shard_count"
         return 0
       fi
     done <<EOF
@@ -335,7 +578,7 @@ EOF
     # Guard the brace group's own exit status: 'set -o pipefail' would
     # otherwise surface a falsy last command here as a selector failure.
     true
-  } | emit_suites "$format"
+  } | emit_selection "$format" "$shard_count"
 }
 
 mode_report_gaps() {
@@ -416,7 +659,7 @@ mode_print_map() {
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 main() {
-  local mode="" changed_source="" format="lines"
+  local mode="" changed_source="" format="lines" shard_count=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -438,16 +681,44 @@ main() {
         esac
         shift 2
         ;;
+      --shards)
+        [ $# -ge 2 ] || die "--shards requires a value"
+        shard_count="$2"
+        case "$shard_count" in
+          '' | *[!0-9]*) die "--shards must be a positive integer, got '$2'" ;;
+        esac
+        # Normalise before the range check, for the same reason suite_duration
+        # does: a digits-only test accepts '00', which is not the literal '0'
+        # and so slipped past a '| 0)' arm, then compared equal to zero
+        # downstream and silently emitted the UNSHARDED shape — a JSON array of
+        # strings where the matrix expects {id, suites} objects, so the caller
+        # got blank shard fields instead of a usage error. '10#' additionally
+        # stops a padded value like '08' being read as octal.
+        shard_count=$((10#$shard_count))
+        [ "$shard_count" -gt 0 ] \
+          || die "--shards must be a positive integer, got '$2'"
+        shift 2
+        ;;
       -h | --help) usage; exit 0 ;;
       *) die "unknown argument '$1'" ;;
     esac
   done
 
+  # --shards changes the SHAPE of a suite list, so it is meaningless for the
+  # two report modes. Rejecting it is better than ignoring it: a caller that
+  # passes it there has misunderstood the output it is about to parse.
+  if [ "$shard_count" -gt 0 ]; then
+    case "$mode" in
+      all | changed) ;;
+      *) die "--shards requires --all or --changed-files" ;;
+    esac
+  fi
+
   assert_suites_readable
 
   case "$mode" in
-    all) mode_all "$format" ;;
-    changed) mode_changed "$format" "$changed_source" ;;
+    all) mode_all "$format" "$shard_count" ;;
+    changed) mode_changed "$format" "$changed_source" "$shard_count" ;;
     gaps) mode_report_gaps ;;
     map) mode_print_map ;;
     *) die "no mode selected (expected --changed-files, --all, --report-gaps, or --print-map)" ;;

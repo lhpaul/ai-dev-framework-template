@@ -131,6 +131,11 @@ MILESTONE_TITLE="${PRODUCT_REPO}@${COMPONENT_TAG}"
 SINGLE_REPO_VERSION="v999.999.999"
 SINGLE_REPO_ISSUE=3579
 
+HUB_FLAGS=(
+  --hub-tracker-reconciliation-outcome complete
+  --child-release-state released
+)
+
 component_ready="$TMP_ROOT/component-ready.json"
 "$HELPER" inspect-component \
   --issue "$COMPONENT_ISSUE" \
@@ -138,6 +143,7 @@ component_ready="$TMP_ROOT/component-ready.json"
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
   --evidence-file "$EVIDENCE" \
+  "${HUB_FLAGS[@]}" \
   --json > "$component_ready"
 
 run_test "inspect_schema" "component_milestone_reconciliation.v1" "$(jq -r '.schema_version' "$component_ready")"
@@ -153,6 +159,7 @@ component_apply="$TMP_ROOT/component-apply.json"
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
   --evidence-file "$EVIDENCE" \
+  "${HUB_FLAGS[@]}" \
   --json > "$component_apply"
 
 run_test "apply_component_outcome" "component_released" "$(jq -r '.reconciliation_outcome' "$component_apply")"
@@ -169,6 +176,7 @@ hash_after_apply="$(gh_log_hash)"
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
   --evidence-file "$EVIDENCE" \
+  "${HUB_FLAGS[@]}" \
   --json > "$TMP_ROOT/component-reapply.json"
 run_test "reapply_is_idempotent" "true" "$(jq -r '.idempotent' "$TMP_ROOT/component-reapply.json")"
 run_test "reapply_no_mutation_calls" "$hash_after_apply" "$(gh_log_hash)"
@@ -180,6 +188,7 @@ set +e
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
   --evidence-file "$MISMATCHED_EVIDENCE" \
+  "${HUB_FLAGS[@]}" \
   --json > "$TMP_ROOT/mismatch.json" 2> "$TMP_ROOT/mismatch.err"
 mismatch_status=$?
 set -e
@@ -200,12 +209,23 @@ while IFS= read -r evidence_case; do
   [ -z "$product_repo" ] || cmd+=(--product-repo "$product_repo")
   [ -z "$component_tag" ] || cmd+=(--component-tag "$component_tag")
   [ -z "$evidence_file" ] || cmd+=(--evidence-file "$evidence_file")
+  # Supply hub flags so Table B can evaluate evidence-specific defects (GAP-5).
+  cmd+=(--hub-tracker-reconciliation-outcome complete --child-release-state released)
 
   set +e
   "${cmd[@]}" > "$output_file" 2> "$TMP_ROOT/evidence-case-${case_name}.err"
   case_status=$?
   set -e
-  if [ "$case_status" -eq 0 ]; then
+  if [ "$expected_outcome" = "component_released" ]; then
+    if [ "$case_status" -eq 0 ]; then
+      echo "PASS: evidence_case_${case_name}_accepted"
+      PASS_COUNT=$((PASS_COUNT + 1))
+    else
+      echo "FAIL: evidence_case_${case_name}_accepted - command failed"
+      printf 'Status: %s\nOutput:\n%s\n' "$case_status" "$(cat "$output_file" "$TMP_ROOT/evidence-case-${case_name}.err" 2>/dev/null)"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+  elif [ "$case_status" -eq 0 ]; then
     echo "FAIL: evidence_case_${case_name}_rejected - command succeeded"
     FAIL_COUNT=$((FAIL_COUNT + 1))
   else
@@ -213,7 +233,11 @@ while IFS= read -r evidence_case; do
     PASS_COUNT=$((PASS_COUNT + 1))
   fi
   run_test "evidence_case_${case_name}_outcome" "$expected_outcome" "$(jq -r '.reconciliation_outcome' "$output_file")"
-  run_test "evidence_case_${case_name}_no_mutation" "$before_case_hash" "$(gh_log_hash)"
+  if [ "$expected_outcome" = "component_released" ]; then
+    run_test "evidence_case_${case_name}_mutation_allowed" "true" "$(jq -r '.mutation_allowed' "$output_file")"
+  else
+    run_test "evidence_case_${case_name}_no_mutation" "$before_case_hash" "$(gh_log_hash)"
+  fi
 done < <(jq -c '.evidence_cases[]' "$fixture_json")
 
 run_fails_contains \
@@ -252,6 +276,7 @@ run_fails_contains \
     --product-repo "$PRODUCT_REPO" \
     --component-tag "$COMPONENT_TAG" \
     --evidence-file "$EVIDENCE" \
+    "${HUB_FLAGS[@]}" \
     --json
 run_test "milestone_conflict_no_patch" "$conflict_hash_before" "$(gh_log_hash)"
 
@@ -362,6 +387,180 @@ run_test "single_repo_invalid_version_no_mutation" "$single_hash_before" "$(gh_l
 run_test "single_repo_apply_outcome" "single_repo_milestone" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/single-repo-apply.json")"
 run_test "single_repo_apply_mutates" "1" "$([ "$single_hash_before" != "$(gh_log_hash)" ] && echo 1 || echo 0)"
 run_contains "single_repo_log_mentions_version" "$SINGLE_REPO_VERSION" "$(cat "$GH_CALL_LOG")"
+
+# --- #1529 trust-boundary reconciliation cases ---
+
+# T12: single_repo_release evidence on hub path
+single_routed="$TMP_ROOT/single-routed-evidence.json"
+jq '.routing_outcome = "single_repo_release"' "$EVIDENCE" > "$single_routed"
+t12_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$single_routed" "${HUB_FLAGS[@]}" --json)"
+run_test "T12_routing_outcome" "component_target_mismatch" "$(jq -r '.reconciliation_outcome' <<< "$t12_out")"
+run_contains "T12_routing_blocker" "routing_outcome_mismatch" "$t12_out"
+run_test "T12_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t12_out")"
+
+# T13: hub flag omitted despite evidence carrying complete
+t13_evidence="$TMP_ROOT/t13-evidence.json"
+jq '.hub_tracker_reconciliation_outcome = "complete" | .child_release_state = "released"' "$EVIDENCE" > "$t13_evidence"
+t13_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t13_evidence" \
+  --child-release-state released --json)"
+run_contains "T13_hub_flag_required" "hub_tracker_reconciliation_outcome_required" "$t13_out"
+
+# T14: child flag omitted despite evidence carrying released
+t14_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t13_evidence" \
+  --hub-tracker-reconciliation-outcome complete --json)"
+run_contains "T14_child_flag_required" "child_release_state_required" "$t14_out"
+
+# T13a / T14a: pending values block (green-by-construction)
+t13a_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$EVIDENCE" \
+  --hub-tracker-reconciliation-outcome pending \
+  --child-release-state released --json)"
+run_contains "T13a_hub_pending_blocker" "hub_tracker_reconciliation_pending" "$t13a_out"
+run_test "T13a_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t13a_out")"
+
+t14a_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$EVIDENCE" \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-release-state pending --json)"
+run_contains "T14a_child_pending_blocker" "child_release_state_pending" "$t14a_out"
+run_test "T14a_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t14a_out")"
+
+# T15: unrecognized evidence_state
+t15_evidence="$TMP_ROOT/t15-evidence.json"
+jq '.evidence_state = "totally-fine"' "$EVIDENCE" > "$t15_evidence"
+t15_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t15_evidence" "${HUB_FLAGS[@]}" --json)"
+run_contains "T15_invalid_evidence_state" "invalid_evidence_state" "$t15_out"
+run_test "T15_child_blocked" "blocked" "$(jq -r '.child_release_state' <<< "$t15_out")"
+run_test "T15_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t15_out")"
+
+# T15a: partial then missing
+for es in partial:partial_component_evidence missing:missing_component_evidence; do
+  state="${es%%:*}"
+  blocker="${es##*:}"
+  ev="$TMP_ROOT/t15a-${state}.json"
+  jq --arg s "$state" '.evidence_state = $s' "$EVIDENCE" > "$ev"
+  out="$("$HELPER" inspect-component \
+    --issue "$COMPONENT_ISSUE" --target-kind component_child \
+    --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+    --evidence-file "$ev" "${HUB_FLAGS[@]}" --json)"
+  run_contains "T15a_${state}_blocker" "$blocker" "$out"
+  run_test "T15a_${state}_child_blocked" "blocked" "$(jq -r '.child_release_state' <<< "$out")"
+  run_test "T15a_${state}_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$out")"
+done
+
+# T15b: released remains non-blocking
+t15b_evidence="$TMP_ROOT/t15b-evidence.json"
+jq '.evidence_state = "released"' "$EVIDENCE" > "$t15b_evidence"
+t15b_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t15b_evidence" "${HUB_FLAGS[@]}" --json)"
+run_test "T15b_released_no_blocker" "false" \
+  "$(jq '([.blockers[]] | map(test("evidence_state|component_evidence")) | any)' <<< "$t15b_out")"
+run_test "T15b_outcome" "component_released" "$(jq -r '.reconciliation_outcome' <<< "$t15b_out")"
+
+# T15c: absent evidence_state synthesizes verified
+t15c_evidence="$TMP_ROOT/t15c-evidence.json"
+jq 'del(.evidence_state)' "$EVIDENCE" > "$t15c_evidence"
+t15c_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t15c_evidence" "${HUB_FLAGS[@]}" --json)"
+run_test "T15c_absent_outcome" "component_released" "$(jq -r '.reconciliation_outcome' <<< "$t15c_out")"
+
+# T15d: evidence_state null
+t15d_evidence="$TMP_ROOT/t15d-evidence.json"
+jq '.evidence_state = null' "$EVIDENCE" > "$t15d_evidence"
+t15d_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t15d_evidence" "${HUB_FLAGS[@]}" --json)"
+run_contains "T15d_null_invalid" "invalid_evidence_state" "$t15d_out"
+run_test "T15d_child_blocked" "blocked" "$(jq -r '.child_release_state' <<< "$t15d_out")"
+
+# T16: single_repo + evidence-file rejected
+t16_hash_before="$(gh_log_hash)"
+set +e
+t16_out="$("$HELPER" inspect-component \
+  --mode single_repo --issue "$SINGLE_REPO_ISSUE" --target-kind component_child \
+  --version "$SINGLE_REPO_VERSION" --evidence-file "$EVIDENCE" --json 2>&1)"
+t16_status=$?
+set -e
+run_test "T16_nonzero" "1" "$((t16_status == 0 ? 0 : 1))"
+run_contains "T16_error_code" "evidence_not_supported_in_single_repo" "$t16_out"
+run_test "T16_no_gh" "$t16_hash_before" "$(gh_log_hash)"
+
+# T17: single_repo trust_basis
+t17_out="$("$HELPER" inspect-component \
+  --mode single_repo --issue "$SINGLE_REPO_ISSUE" --target-kind component_child \
+  --version "$SINGLE_REPO_VERSION" --json)"
+run_test "T17_trust_basis" "caller_asserted" "$(jq -r '.trust_basis' <<< "$t17_out")"
+
+# T18: hub path trust_basis
+t18_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$EVIDENCE" "${HUB_FLAGS[@]}" --json)"
+run_test "T18_trust_basis" "evidence_bound" "$(jq -r '.trust_basis' <<< "$t18_out")"
+
+# T24: ci_outcome skipped
+t24_evidence="$TMP_ROOT/t24-evidence.json"
+jq '.ci_outcome = "skipped"' "$EVIDENCE" > "$t24_evidence"
+t24_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t24_evidence" "${HUB_FLAGS[@]}" --json)"
+run_contains "T24_ci_skipped" "ci_outcome_skipped" "$t24_out"
+run_test "T24_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t24_out")"
+
+# T25 / T26: non-str ci/deployment outcomes
+t25_evidence="$TMP_ROOT/t25-evidence.json"
+jq '.ci_outcome = []' "$EVIDENCE" > "$t25_evidence"
+t25_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t25_evidence" "${HUB_FLAGS[@]}" --json)"
+run_contains "T25_ci_invalid" "ci_outcome_invalid" "$t25_out"
+run_test "T25_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t25_out")"
+
+t26_evidence="$TMP_ROOT/t26-evidence.json"
+jq '.deployment_outcome = []' "$EVIDENCE" > "$t26_evidence"
+t26_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t26_evidence" "${HUB_FLAGS[@]}" --json)"
+run_contains "T26_deployment_invalid" "deployment_outcome_invalid" "$t26_out"
+run_test "T26_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$t26_out")"
+
+# T28: evidence-file is a directory
+t28_dir="$TMP_ROOT/t28-evidence-dir"
+mkdir -p "$t28_dir"
+set +e
+t28_out="$("$HELPER" inspect-component \
+  --issue "$COMPONENT_ISSUE" --target-kind component_child \
+  --product-repo "$PRODUCT_REPO" --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$t28_dir" "${HUB_FLAGS[@]}" --json 2>&1)"
+t28_status=$?
+set -e
+run_test "T28_nonzero" "1" "$((t28_status == 0 ? 0 : 1))"
+run_contains "T28_error_code" "ERROR_CODE=evidence_unreadable" "$t28_out"
+run_test "T28_no_json_stdout" "true" "$(printf '%s' "$t28_out" | jq -e . >/dev/null 2>&1 && echo false || echo true)"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAILURES: $FAIL_COUNT"

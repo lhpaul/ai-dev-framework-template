@@ -78,6 +78,8 @@ This stage protects the codebase from "understood in my head" engineering. It al
 
 When relevant, the plan should make observability and analytics explicit instead of leaving them implicit. That can include frontend crash reporting, backend logging and alerting, product analytics events, and any downstream analytical-data handling needed to make the feature measurable and supportable in production.
 
+Every plan also follows the six portable plan-authoring rigor rules in [`plan-authoring-rigor-rules.md`](./plan-authoring-rigor-rules.md), which the plan review gate applies as a backstop check.
+
 Plans must also record the `Cross-Cutting Operational Assumption Check`. When a
 plan depends on an operational fact that concurrent work could invalidate, such
 as an environment target, approved base branch, artifact owner, linked resource,
@@ -94,6 +96,8 @@ Implementation turns the approved plan into code, tests, docs, and changelog upd
 This stage also includes the validation work needed to prove the implementation is truly ready. That means keeping automated tests in sync during development and, later, running the final smoke-test checkpoint before humans treat the change as ready.
 
 The final implementation-validation checkpoint in this workflow is the smoke test: a targeted run driven by a smoke test runbook or an existing committed automated spec.
+
+A pull request opened in this stage is also checked for **closing-keyword scope**: if its description declares `Closes #N` for an issue that another open pull request's branch names, the workflow posts an advisory warning naming the issue and the sibling. It never blocks a merge, and a pull request that deliberately closes several issues silences it with the `multi-issue-intentional` label. The point is to catch the mistake while the batch is in flight, rather than after a release has been assembled around the wrong scope.
 
 ### Merge
 
@@ -351,7 +355,7 @@ docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 
 ### Tracker Status Model
 
-If an issue tracker is configured, the work item status usually maps to the workflow like this:
+If an issue tracker is configured, the work item status usually maps to the workflow like this. The vocabulary and the event-to-Status mapping are defined once in [`tracker-status-mapping.md`](tracker-status-mapping.md).
 
 `Backlog -> Writing Spec -> Spec in Review -> Spec Ready -> Writing Plan -> Plan in Review -> Plan Ready -> In Development -> Development in Review -> Merged -> Released`
 
@@ -533,6 +537,7 @@ guardrails:
     - destructive_action
     - missing_tracker_context
     - missing_required_secret_or_permission
+    - push_verification_failed
   audit:
     pr_disposition_record: required
     work_item_ledger_record: required
@@ -555,8 +560,9 @@ Important implementation notes:
   [`workflow-hub-setup.md`](workflow-hub-setup.md),
   [`product-repo-injection.md`](product-repo-injection.md), and
   [`cross-repo-pr-flow.md`](cross-repo-pr-flow.md).
-- `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.ai-dev-workflow.local.yaml` (gitignored).
+- `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to the driving runner's own stage reviewer. The shipped list is `[claude]`. Developers can broaden or narrow the list locally via `.ai-dev-workflow.local.yaml` (gitignored).
 - `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`. See the Workflow Configuration section for the default ready-phase reviewer and CodeRabbit opt-in policy.
+- **Reviewer preflight** (#1561): before Protocol 91 dispatches an item — before any branch is created or pull request is opened — `scripts/development-workflow/reviewer-preflight.sh` cross-checks the three surfaces above against each other: the shared list, the machine-local override, and each platform's own configuration (where one exists in the repository, such as `.coderabbit.yaml`). A platform listed for a stage or base its own configuration will decline produces `Blocked`, naming the file, the setting, and a remedy, before this item's first mutation. A platform with no readable own configuration (most hosted platforms and every local-runtime reviewer) reports `Undetermined` rather than a silent pass. See the "Reviewer preflight before child dispatch" section of `91-orchestrate-work-protocol.md` for the full outcome table, and [`integrations/coderabbit.md`](integrations/coderabbit.md#6-branch-in-force-configuration-and-the-reviewer-preflight-1561) for why the platform's own configuration is read from the branch or pull request in force, not always the same branch as the shared list.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
 - `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely. Note: this field is set by downstream consumer repos pointing back to their template origin; the template repo itself leaves this empty.
@@ -644,12 +650,19 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 ### Review Contract
 
 - `REVIEW.md`
+- `docs/workflow/development-workflow/test-scope-proportionality.md` — canonical
+  rule for weighing a delta between a plan's projected test scaffolding and
+  what an implementation ships: the Coverage-Harm Statement, the Test-Scope
+  Deviation Record, the indicative-vs-binding default, and the Gate A / Gate B
+  decision matrices
 
 ### Tooling And Configuration
 
 - `docs/workflow/development-workflow/agent-model-config.md`
 - `docs/workflow/development-workflow/guardrails.md` — plain-language reference for the guardrails configuration model: autonomy modes, per-stage permissions, risk scale, stop conditions, audit requirements, safe defaults, and worked examples
 - `docs/workflow/development-workflow/guardrails-enforcement.md` — single source of truth for how orchestration resolves effective guardrails (three-layer precedence), the config-field→run-epic-policy mapping table, the six enforcement gates (load+report, backlog-start, PR-open, delegated review, delegated merge, completion), named stop conditions and the stop-message contract, conservative defaults, and audit-evidence rules
+- `docs/workflow/development-workflow/tracker-status-mapping.md` — canonical tracker Status vocabulary and the single event-to-Status mapping (`dispatch`, `ready-for-human-review`, `merged`, `released`, and the readiness labels that leave Status unchanged), resolved by `tracker-status-for.sh`
+- `docs/workflow/development-workflow/architecture-decision-escalation.md` — canonical requirement for well-formed `architecture_decision` escalation content: axis decomposition, coverage verdicts, per-citation conformance declarations, and the requested decision scoped to genuinely open axes only
 - `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`, `guardrails`)
 - `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides
 
@@ -680,6 +693,7 @@ Repository helpers:
 - `docs/workflow/development-workflow/integrations/ci-cd-deployment.md`
 - `docs/workflow/development-workflow/integrations/e2e-regression.md`
 - `docs/workflow/development-workflow/integrations/actions-cost-audit.md`
+- `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`
 
 ---
 

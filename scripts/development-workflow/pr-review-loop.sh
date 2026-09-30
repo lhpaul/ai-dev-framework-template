@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=scripts/development-workflow/codex-github-evidence-lib.sh
+source "$SCRIPT_DIR/codex-github-evidence-lib.sh"
 
 # Effective harness mode: only active when HARNESS_MODE=1 AND the script is
 # sourced (BASH_SOURCE[0] != $0). When executed directly with HARNESS_MODE=1
@@ -222,18 +224,271 @@ _check_execution_budget() {
 # and no backslash escapes that differ between the two.
 CODERABBIT_SKIP_BANNER_RE='skip review by coderabbit|> *#{1,6} *review skipped|auto reviews are disabled'
 
+# ---------------------------------------------------------------------------
+# Lock key resolution (repository-scoped single-instance lock)
+#
+# The lock must be keyed by (target repository, PR number), never by PR number
+# alone. PR numbers are per-repository counters, so any two checkouts on one
+# machine reach the same low numbers almost immediately: a live loop for
+# other-org/other-repo PR #3 used to hold /tmp/pr-review-loop-3.lockdir and
+# make an unrelated this-org/this-repo PR #3 exit 75 with
+# REASON=lock_contention. Nothing was corrupted — the foreign lock was
+# correctly seen as live rather than stale — but the run was blocked by a PR it
+# has nothing to do with, and the recovery hint it printed
+# (`pr-review-loop.sh unlock <pr>`) would have deleted the *other*
+# repository's in-flight lock.
+#
+# Resolution order, cheapest and most explicit first. Every step is local (no
+# network) because this runs before anything else in the script:
+#   1. an explicit --repo/--product-repo selector: used directly when it is
+#      already an owner/repo slug, otherwise resolved through the repository
+#      context resolver (product-repo mode);
+#   2. WORKFLOW_TARGET_GITHUB_REPO from the environment;
+#   3. the origin remote of --repo-root (or the working directory).
+# When none of those resolve, the key degrades to "unknown-repo" — which
+# preserves the historical PR-number-only behavior rather than failing a run
+# over a lock name.
+#
+# Note the one residual aliasing case: invoking the same run once as
+# `--repo owner/name` and once as `--product-repo name` yields two different
+# keys when the context resolver is unavailable to normalize the selector.
+# That is an aliasing case (one repository, two keys), not a collision case
+# (two repositories, one key) — it can only ever weaken mutual exclusion
+# between two spellings of the same run, never let one repository block
+# another. Both forms are stable within themselves.
+# ---------------------------------------------------------------------------
+
+# _lock_digest — short digest of stdin. Used to make the lock key injective;
+# see _lock_key_component. shasum/sha256sum are present on every platform this
+# workflow targets; cksum is a last-resort fallback so a missing hasher degrades
+# the collision margin rather than breaking the run.
+_lock_digest() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -c1-8
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -c1-8
+  else
+    cksum | LC_ALL=C tr -cd '0-9' | cut -c1-8
+  fi
+}
+
+# _lock_key_component <value> — render a value as a filesystem-safe lock-name
+# component: a readable label plus a short digest of the ORIGINAL value.
+#
+# The digest is not decoration. Sanitizing alone is lossy — everything outside
+# [A-Za-z0-9._-] folds to '-', the '/' of an owner/repo slug included — so
+# `acme/widgets-core` and `acme-widgets/core` both render `acme-widgets-core`
+# and would share one lock. That is the same defect this repository-scoped key
+# exists to fix, merely narrowed from "every repository at PR #N" to "slugs
+# that differ only in where the slash falls". The digest is taken before
+# sanitizing, so distinct inputs cannot share a key however they fold.
+#
+# The label is kept (and truncated) so `ls /tmp` still says which repository a
+# lock belongs to; correctness rests on the digest, readability on the label.
+_lock_key_component() {
+  local raw="$1" label digest
+  label="$(printf '%s' "$raw" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-' | cut -c1-64)"
+  digest="$(printf '%s' "$raw" | _lock_digest)"
+  printf '%s-%s' "$label" "$digest"
+}
+
+# _repo_slug_eq <a> <b> — GitHub owner/repo names compare case-insensitively.
+_repo_slug_eq() {
+  [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]
+}
+
+# _resolve_explicit_target_repo_slug <repo-selector> <repo-root>
+#
+# The explicitly named target repository, from the --repo/--product-repo
+# selector, else WORKFLOW_TARGET_GITHUB_REPO, else GH_REPO (which every bare
+# `gh` call in this script honours). Prints the owner/repo slug and returns 0;
+# returns 1 when nothing names a repository; returns 2 when something does but
+# it is not a valid slug, the selector cannot be resolved, or
+# WORKFLOW_TARGET_GITHUB_REPO and GH_REPO name different repositories — then
+# `repo_slug` and bare `gh` calls in this script would already disagree.
+_resolve_explicit_target_repo_slug() {
+  local selector="${1:-}"
+  local root="${2:-}"
+  local slug=""
+  local context=""
+  local env_target="${WORKFLOW_TARGET_GITHUB_REPO:-}"
+  local env_gh_repo="${GH_REPO:-}"
+
+  if [ -n "$selector" ]; then
+    if workflow_is_valid_github_repo_slug "$selector"; then
+      slug="$selector"
+    else
+      context="$(workflow_repository_context "$selector" "${root:-$(workflow_repo_root)}" 2>/dev/null || true)"
+      if [ -n "$context" ]; then
+        slug="$(workflow_github_repo_from_context "$context" 2>/dev/null || true)"
+      fi
+    fi
+  elif [ -n "$env_target" ] || [ -n "$env_gh_repo" ]; then
+    if [ -n "$env_target" ] && [ -n "$env_gh_repo" ] && ! _repo_slug_eq "$env_target" "$env_gh_repo"; then
+      return 2
+    fi
+    slug="${env_target:-$env_gh_repo}"
+  else
+    return 1
+  fi
+
+  if [ -n "$slug" ] && workflow_is_valid_github_repo_slug "$slug"; then
+    printf '%s\n' "$slug"
+    return 0
+  fi
+  return 2
+}
+
+# _origin_repo_slug <checkout> — owner/repo of <checkout>'s origin remote
+# (default: the current directory); returns 1 when it has none or it is not a
+# GitHub remote.
+_origin_repo_slug() {
+  local git_url="" slug=""
+  git_url="$(git -C "${1:-.}" remote get-url origin 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - no origin remote is an expected case; callers decide how to handle an unresolved target
+  if [ -n "$git_url" ]; then
+    slug="$(workflow_github_repo_from_git_url "$git_url" 2>/dev/null || true)"
+  fi
+  if [ -n "$slug" ] && workflow_is_valid_github_repo_slug "$slug"; then
+    printf '%s\n' "$slug"
+    return 0
+  fi
+  return 1
+}
+
+# _resolve_target_repo_slug <repo-selector> <repo-root>
+#
+# The single resolution of "which GitHub repository does this run target",
+# shared by the lock key and the PR ownership check (issue #1444): the explicit
+# repository (_resolve_explicit_target_repo_slug) when one is named, else the
+# origin remote of <repo-root> (default: the current directory). Prints the
+# owner/repo slug and returns 0; returns 1 when no valid slug results,
+# including an explicit source that is invalid or self-contradictory.
+_resolve_target_repo_slug() {
+  local rc=0
+  _resolve_explicit_target_repo_slug "${1:-}" "${2:-}" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) _origin_repo_slug "${2:-}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# _resolve_lock_repo_key <repo-selector> <repo-root>
+_resolve_lock_repo_key() {
+  local selector="${1:-}"
+  local root="${2:-}"
+  local slug=""
+
+  slug="$(_resolve_target_repo_slug "$selector" "$root")" || slug=""
+  if [ -z "$slug" ]; then
+    if [ -n "$selector" ]; then
+      # A selector that names a product repo we cannot resolve here is still a
+      # stable discriminator on its own — better than folding it into the
+      # shared "unknown-repo" bucket.
+      slug="selector-$selector"
+    elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+      slug="$WORKFLOW_TARGET_GITHUB_REPO"
+    fi
+  fi
+
+  _lock_key_component "${slug:-unknown-repo}"
+  printf '\n'
+}
+
+# _is_trusted_workflow_branch <branch> — true for branches that belong to one
+# workflow item and can vouch for a PR number: the workflow prefixes known to
+# branch_prefix (spec, implementation-plan, feature, refactor, fix, hotfix,
+# release) plus backport/* and develop-<slug> graduation branches. develop,
+# main, and anything else are shared or unknown and return false (#1444).
+_is_trusted_workflow_branch() {
+  case "$1" in
+    backport/?*|develop-?*) return 0 ;;
+  esac
+  [ "$(branch_prefix "$1")" != "unknown" ] && [ "${1#*/}" != "" ]
+}
+
+# _lock_dir_for <repo-key> <pr-number>
+_lock_dir_for() {
+  printf '/tmp/pr-review-loop-%s-%s.lockdir\n' "$1" "${2:-unknown}"
+}
+
+# _unlock_hint <repo-selector> <repo-root> <pr-number> — the exact recovery
+# command for this run, so an operator recovering from lock_contention cannot
+# accidentally target a different repository's lock.
+_unlock_hint() {
+  local selector="${1:-}"
+  local root="${2:-}"
+  local pr="${3:-<pr>}"
+  local hint="./scripts/development-workflow/pr-review-loop.sh unlock ${pr}"
+
+  # When the lock key came from WORKFLOW_TARGET_GITHUB_REPO (Protocol 91's usual
+  # invocation with no --repo flag), echo that slug so a later shell cannot
+  # re-resolve via a different checkout's origin and delete the wrong lock.
+  # GH_REPO is a key source too (see _resolve_target_repo_slug).
+  if [ -z "$selector" ] && [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    selector="$WORKFLOW_TARGET_GITHUB_REPO"
+  elif [ -z "$selector" ] && [ -n "${GH_REPO:-}" ]; then
+    selector="$GH_REPO"
+  fi
+
+  [ -n "$selector" ] && hint="$hint --repo \"$selector\""
+  [ -n "$root" ] && hint="$hint --repo-root \"$root\""
+  printf '%s\n' "$hint"
+}
+
 # --- unlock subcommand ---
 # Must run before the single-instance lock guard so stale-lock recovery always
 # works: if a previous invocation crashed, the lock guard would re-acquire the
 # lock for this process before `unlock` could check it, causing `unlock` to see
 # a live PID and refuse to remove the (now re-owned) lock dir.
 if [ "${1:-}" = "unlock" ]; then
-  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-    echo "Usage: $0 unlock <pr-number>" >&2
+  shift
+  _UNLOCK_PR=""
+  _UNLOCK_REPO_SELECTOR=""
+  _UNLOCK_REPO_ROOT=""
+  # Accepts the same repository selectors as a normal run, because the lock
+  # name now depends on them. With none of them given the key comes from the
+  # working directory's origin remote, which is the common case: an operator
+  # recovering a stale lock is standing in the checkout that took it.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo|--product-repo)
+        if [ -z "${2:-}" ]; then
+          echo "$1 requires a value." >&2
+          exit 64
+        fi
+        _UNLOCK_REPO_SELECTOR="$2"
+        shift 2
+        ;;
+      --repo-root)
+        if [ -z "${2:-}" ]; then
+          echo "$1 requires a value." >&2
+          exit 64
+        fi
+        _UNLOCK_REPO_ROOT="$2"
+        shift 2
+        ;;
+      -*)
+        echo "Unknown option for unlock: $1" >&2
+        echo "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
+        exit 64
+        ;;
+      *)
+        if [ -n "$_UNLOCK_PR" ]; then
+          echo "Only one PR number may be provided." >&2
+          exit 64
+        fi
+        _UNLOCK_PR="$1"
+        shift
+        ;;
+    esac
+  done
+  if [ -z "$_UNLOCK_PR" ]; then
+    echo "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
     exit 64
   fi
-  _UNLOCK_PR="$2"
-  _UNLOCK_LOCK_DIR="/tmp/pr-review-loop-${_UNLOCK_PR}.lockdir"
+  _UNLOCK_REPO_KEY="$(_resolve_lock_repo_key "$_UNLOCK_REPO_SELECTOR" "$_UNLOCK_REPO_ROOT")"
+  _UNLOCK_LOCK_DIR="$(_lock_dir_for "$_UNLOCK_REPO_KEY" "$_UNLOCK_PR")"
   # Read lock metadata only when the dir exists; surface failures explicitly so
   # filesystem or permission errors are not silently swallowed.
   _UNLOCK_PID=""
@@ -251,16 +506,16 @@ if [ "${1:-}" = "unlock" ]; then
     fi
   fi
   if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR}. Not removing a live lock." >&2
     echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
     exit 1
   fi
   if [ -d "$_UNLOCK_LOCK_DIR" ]; then
     rm -rf "$_UNLOCK_LOCK_DIR"
-    echo "OK: stale lock removed for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
+    echo "OK: stale lock removed for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR)."
     exit 0
   else
-    echo "OK: no lock found for PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
+    echo "OK: no lock found for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR} ($_UNLOCK_LOCK_DIR). Nothing to remove."
     exit 0
   fi
 fi
@@ -271,26 +526,54 @@ fi
 if [ "$_HARNESS_MODE_EFFECTIVE" -ne 1 ]; then
 
 # --- Single-instance guard ---
-# Prevent two simultaneous invocations for the same PR. Uses an atomic mkdir
-# lock directory (POSIX-guaranteed atomic) so two concurrent callers cannot
-# both acquire the lock. The lock dir name includes the PR number so parallel
-# runs for different PRs do not interfere with each other.
+# Prevent two simultaneous invocations for the same PR of the same repository.
+# Uses an atomic mkdir lock directory (POSIX-guaranteed atomic) so two
+# concurrent callers cannot both acquire the lock. The lock dir name includes
+# both the target repository and the PR number, so parallel runs for different
+# PRs — or for the same PR number in different repositories — do not interfere
+# with each other. See "Lock key resolution" above for why the repository
+# component is required.
 #
 # Layout:
-#   /tmp/pr-review-loop-<pr>.lockdir/   — lock directory (atomic creation)
-#   /tmp/pr-review-loop-<pr>.lockdir/pid — PID of the owner process
-#   /tmp/pr-review-loop-<pr>.lockdir/cmd — basename of script ($0) for verification
+#   /tmp/pr-review-loop-<repo-key>-<pr>.lockdir/     — lock dir (atomic creation)
+#   /tmp/pr-review-loop-<repo-key>-<pr>.lockdir/pid  — PID of the owner process
+#   /tmp/pr-review-loop-<repo-key>-<pr>.lockdir/cmd  — basename of script ($0) for verification
+#
+# <repo-key> is `<owner>-<repo>-<digest>` (see _lock_key_component): a readable
+# label for `ls /tmp`, plus a digest that keeps distinct repositories on
+# distinct keys even where the label folds them together.
 _PR_ARG=""
+_REPO_SELECTOR_ARG=""
+_REPO_ROOT_ARG=""
 _skip_next=0
+_capture_next=""
+# Scans the whole argument list rather than stopping at the PR number: --repo
+# and --repo-root routinely follow it (`pr-review-loop.sh 12 --repo o/r`), and
+# the lock name now depends on them. The first bare numeric argument is still
+# the PR number; option values are consumed before that test can see them.
 for _arg in "$@"; do
+  if [ -n "$_capture_next" ]; then
+    case "$_capture_next" in
+      repo) _REPO_SELECTOR_ARG="$_arg" ;;
+      repo-root) _REPO_ROOT_ARG="$_arg" ;;
+    esac
+    _capture_next=""
+    continue
+  fi
   if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
-    --branch|--platform|--poll-interval|--max-wait|--pre-trigger-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
-    [0-9]*) _PR_ARG="$_arg"; break ;;
+    --repo|--product-repo) _capture_next="repo" ;;
+    --repo-root) _capture_next="repo-root" ;;
+    --branch|--platform|--poll-interval|--max-wait|--pre-trigger-wait|--ready-phase|--phase-after-clean) _skip_next=1 ;;
+    [0-9]*) [ -n "$_PR_ARG" ] || _PR_ARG="$_arg" ;;
   esac
 done
-unset _skip_next
-_LOCK_DIR="/tmp/pr-review-loop-${_PR_ARG:-unknown}.lockdir"
+unset _skip_next _capture_next
+# Without --repo-root the key reads the caller's cwd origin, not the script
+# checkout the loop later enters; kept as-is so existing lock names stay stable.
+_LOCK_REPO_KEY="$(_resolve_lock_repo_key "$_REPO_SELECTOR_ARG" "$_REPO_ROOT_ARG")"
+_LOCK_DIR="$(_lock_dir_for "$_LOCK_REPO_KEY" "$_PR_ARG")"
+_UNLOCK_COMMAND="$(_unlock_hint "$_REPO_SELECTOR_ARG" "$_REPO_ROOT_ARG" "${_PR_ARG:-<pr>}")"
 _OWN_LOCK=0
 _PR_CONFIG_TMPFILE=""
 # PID of the current background child (sleep or gh api) started by
@@ -310,14 +593,15 @@ else
   _LOCK_PID="$(cat "$_LOCK_DIR/pid" 2>/dev/null || true)"
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    echo "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
     echo "  Lock file: $_LOCK_DIR" >&2
     echo "  If the process is dead (stale lock from a crash), recover with:" >&2
-    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "    $_UNLOCK_COMMAND" >&2
     echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
     print_kv LOCK_DIR "$_LOCK_DIR"
+    print_kv LOCK_REPO_KEY "$_LOCK_REPO_KEY"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75  # EX_TEMPFAIL — lock contention; not a normal review result (0/1/2)
   fi
@@ -333,14 +617,15 @@ else
     printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
     _OWN_LOCK=1
   else
-    echo "ERROR: pr-review-loop.sh is already running for PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    echo "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
     echo "  Lock file: $_LOCK_DIR" >&2
     echo "  If the process is dead (stale lock from a crash), recover with:" >&2
-    echo "    ./scripts/development-workflow/pr-review-loop.sh unlock ${_PR_ARG:-<pr>}" >&2
+    echo "    $_UNLOCK_COMMAND" >&2
     echo "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
     print_kv LOCK_DIR "$_LOCK_DIR"
+    print_kv LOCK_REPO_KEY "$_LOCK_REPO_KEY"
     print_kv PR_NUMBER "${_PR_ARG:-}"
     exit 75
   fi
@@ -386,29 +671,40 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
-       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot,ronda] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
+       ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
 If a platform times out or escalates, the script exits 2. If all configured
 platforms are clean or skipped, the script exits 0. If a second instance is
-detected for the same PR number, the script emits RESULT=escalate with
-REASON=lock_contention and exits 75 (EX_TEMPFAIL).
+detected for the same PR number in the same repository, the script emits
+RESULT=escalate with REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
 Subcommands:
-  unlock <pr-number>
+  unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]
     Remove the stale lock directory for a PR whose previous run crashed without
     cleaning up. Safe to run when no review loop is actively running for that PR.
     Use this to recover autonomously when lock_contention is reported but the
     recorded PID is no longer alive.
 
+    The lock is keyed by target repository AND PR number, so `unlock` must
+    resolve the same repository the blocked run did. Pass the same
+    --repo/--product-repo/--repo-root options that run used; with none of them,
+    the repository is taken from WORKFLOW_TARGET_GITHUB_REPO, then GH_REPO, then
+    the working directory's origin remote. The lock_contention message prints
+    the exact recovery command for that run.
+
     Example:
       ./scripts/development-workflow/pr-review-loop.sh unlock 123
+      ./scripts/development-workflow/pr-review-loop.sh unlock 123 --repo acme/widgets
 
-    The lock directory path is /tmp/pr-review-loop-<pr>.lockdir. You can also
-    remove it manually with: rm -rf /tmp/pr-review-loop-<pr>.lockdir
+    The lock directory path is /tmp/pr-review-loop-<repo-key>-<pr>.lockdir,
+    where <repo-key> is derived from the target repository. Do not build the
+    path by hand — a lock_contention report prints LOCK_DIR verbatim, and
+    `unlock` prints the path it resolved. You can remove it manually with:
+    rm -rf <that path>
 
 --post-final-summary:
   Compatibility no-op. The script now posts or updates the
@@ -481,6 +777,39 @@ Outputs stable key=value lines including:
   RESULT=clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
+  PR ownership (issue #1444) — checked on every run before any PR side effect.
+  The expected branch is --branch when given (it wins over any checkout), else
+  the branch checked out in --repo-root (or the working directory without
+  --repo-root) when it is a workflow branch: spec/, implementation-plan/,
+  feature/, refactor/, fix/, hotfix/, release/, backport/, or develop-<slug>.
+  All three refusals exit 2 with RESULT=escalate; nothing is posted, readied,
+  or labelled:
+  REASON=pr_ownership_branch_required (no --branch, and the checkout is
+    detached, unreadable, or on develop, main, or another non-workflow branch;
+    no gh call is made)
+  REASON=pr_ownership_mismatch (the PR's head branch or head repository
+    differs from the expected branch)
+  REASON=pr_ownership_unverified (pr-ownership-guard.sh could not resolve the
+    PR, or the target repository could not be resolved)
+  PR_OWNERSHIP_BRANCH_SOURCE=argument|checkout
+  PR_OWNERSHIP_EXPECTED_BRANCH=<branch>
+  PR_OWNERSHIP_CHECKOUT_BRANCH=<branch> (on pr_ownership_branch_required)
+  PR_OWNERSHIP_RESULT=owned|not_owned|pr_unresolved|branch_unknown|repo_unresolved|repo_conflict
+    (with PR_OWNERSHIP_PR_HEAD_BRANCH, _PR_HEAD_REPO, _MISMATCH, and
+    _REQUIRED_ACTION on refusal)
+  PR_OWNERSHIP_REPO=<owner/repo> (the repository the check inspected; empty
+    when unresolvable or contradictory, which fails closed as
+    pr_ownership_unverified. After a pass, the loop pins
+    WORKFLOW_TARGET_GITHUB_REPO and GH_REPO to it)
+  PR_OWNERSHIP_REPO_SOURCE=explicit|repo_root_origin|explicit_matches_checkout|checkout_origin
+    With --branch: the named repository (--repo/--product-repo,
+    WORKFLOW_TARGET_GITHUB_REPO, GH_REPO), else --repo-root's origin. With a
+    branch derived from a checkout, the repository is that checkout's origin:
+    a named repository must equal it, and a working-directory checkout's
+    origin must also equal the origin of the --repo-root the loop enters;
+    otherwise repo_conflict. Repositories named through WORKFLOW_TARGET_GITHUB_REPO
+    or GH_REPO count as explicit. Origins are compared, not checkouts: pass
+    --repo-root so local work also runs in the item checkout.
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
@@ -615,8 +944,37 @@ Outputs stable key=value lines including:
                   unreadable ledger. Absent otherwise.
   REASON=expensive_gate_deferred (RESULT=needs_fixes; expensive reviewer held back)
   REASON=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable (RESULT=escalate)
+  STAGE_SKIP_ENABLED=0|1
+  STAGE_SKIP_DISABLED_REASON=disabled_by_env|compare_mode|explicit_platform_selection|head_unknown|history_unavailable
+  STAGE_SKIPPED_PLATFORMS=<comma-separated platforms>
+                  Per-head reviewer staging (issue #1692). A platform the persisted
+                  reviewer_loop_history.v1 ledger already records clean on the loop's current head
+                  is not re-dispatched on a later cycle of that same head; its recorded verdict is
+                  replayed instead, contributing the same peer evidence, reviewed_heads[] entry, and
+                  ledger record a dispatch would have contributed. The governing verdict is the
+                  newest ledger entry carrying a platform_results record for that platform, and the
+                  reviewed head is read from that same entry — never borrowed from another one.
+                  Fail-closed: missing, unparseable, non-clean, or other-head evidence all dispatch,
+                  and an independent GitHub App/Actions check is never substitute evidence. A new
+                  head clears every skip on its own, so #1656 still owns the local re-dispatch.
+                  An expensive reviewer still owes its #1649 gate BEFORE a replay is acted on: the
+                  gate's unresolved-thread and baseline-check conditions are live inputs a recorded
+                  clean cannot vouch for, so a deferring gate still yields needs_fixes /
+                  expensive_gate_deferred even when the ledger says that reviewer is clean on this
+                  head, and a passing gate that ends in a replay suppresses its
+                  EXPENSIVE_GATE_RESULT=dispatched telemetry the way the ready-phase preflight does.
+                  STAGE_SKIPPED_PLATFORMS is emitted
+                  alongside every RESULT= that follows the platform loop, including the
+                  no-platforms-configured exit (empty when nothing was skipped). Guard exits that
+                  never reach the loop (lock_contention, release_pr, truncated_run,
+                  execution_budget_misconfigured) emit none of these keys.
 
 Environment variables:
+  PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1
+                                     Disable per-head reviewer staging (#1692) and dispatch every configured
+                                     platform even when the ledger already records it clean on this head.
+                                     Staging is also off in --compare runs and whenever the caller named
+                                     platforms with --platform.
   POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
                                      called settled (issue #1556). Defaults per platform: 120 for coderabbit /
                                      coderabbit-cli, 60 otherwise. Any platform activity — including an in-place
@@ -741,6 +1099,10 @@ is_phase_after_clean_platform() {
 # review threads, and green non-reviewer baseline checks. Membership is a
 # property of the reviewer, not of repository config.
 EXPENSIVE_REVIEWER_PLATFORMS=(codex-github)
+# Per-head reviewer staging (issue #1692): the REASON/STAGE_SKIP_REASON token
+# recorded when a platform is not dispatched because the persisted ledger
+# already carries a clean verdict for it on the loop's current head.
+REVIEWER_LOOP_STAGE_SKIP_REASON="already_clean_current_head"
 EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS=(not_configured explicit-skip release_pr unsupported-platform)
 # Resolved once per run by expensive_gate_resolve_max_deferrals (default 3).
 expensive_gate_max_deferrals=""
@@ -756,6 +1118,7 @@ strict_spec_recorded=0
 strict_spec_state=""
 strict_spec_count=""
 strict_spec_checks=""
+strict_spec_applied=""
 strict_spec_unknown_count=""
 strict_spec_reason=""
 strict_spec_summary_section=""
@@ -770,6 +1133,9 @@ strict_plan_reason=""
 strict_plan_summary_section=""
 # Peer evidence collected during this invocation: "platform|result|reason".
 declare -a platform_peer_evidence=()
+# Set when the caller named platforms with --platform. An explicit selection is
+# an instruction to run those reviewers, so the #1692 per-head skip stands down.
+platform_selection_explicit=0
 
 # expensive_gate_sync_last_from_output <gate_kv_output>
 #
@@ -935,6 +1301,27 @@ expensive_gate_local_ai_head_current() {
 
   if [ "$found" -eq 0 ]; then
     printf '\n'
+  fi
+}
+
+# expensive_gate_local_ai_result_clean
+#
+# Prints 1 when the latest local-ai-reviewer peer evidence records a clean
+# verdict, 0 when it records any other verdict, or empty when absent.
+expensive_gate_local_ai_result_clean() {
+  local evidence result
+
+  evidence="$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
+  if [ -z "$evidence" ]; then
+    printf '\n'
+    return 0
+  fi
+
+  result="${evidence%%|*}"
+  if [ "$result" = "clean" ]; then
+    printf '1\n'
+  else
+    printf '0\n'
   fi
 }
 
@@ -1177,7 +1564,7 @@ expensive_gate_unresolved_threads_status() {
 # Snapshot of non-reviewer checks on the PR. Prints
 # "<state> <live_head>" where state is green|failed|pending|empty|unavailable.
 # Does NOT call pr-ci-loop.sh. Collapses statusCheckRollup duplicates to the
-# latest entry per check key (same normalization as pr-ci-loop.sh) before
+# latest entry per check key (normalize_status_check_rollup, workflow-lib.sh) before
 # excluding reviewer-owned names and classifying.
 expensive_gate_baseline_checks_status() {
   local pr_number_arg="$1"
@@ -1204,28 +1591,7 @@ expensive_gate_baseline_checks_status() {
   reviewer_names="$(configured_reviewer_check_names_json "")" || reviewer_names='[]'
 
   if ! normalized_json="$(
-    printf '%s\n' "$payload" | jq '
-      (.statusCheckRollup // [])
-      | map(
-          . + {
-            __check_key: (
-              if (.context // "") != "" then
-                "status:" + .context
-              elif (.workflowName // "") != "" and (.name // "") != "" then
-                "check:" + .workflowName + "/" + .name
-              elif (.name // "") != "" then
-                "check:" + .name
-              else
-                "unknown"
-              end
-            ),
-            __check_ts: (.startedAt // .completedAt // .createdAt // "")
-          }
-        )
-      | sort_by(.__check_key, .__check_ts)
-      | group_by(.__check_key)
-      | map(last | del(.__check_key, .__check_ts))
-    ' 2>/dev/null
+    printf '%s\n' "$payload" | normalize_status_check_rollup 2>/dev/null
   )"; then
     printf 'unavailable %s\n' "$live_head"
     return 0
@@ -1366,6 +1732,7 @@ expensive_reviewer_gate() {
   local deferrals=""
   local configured=""
   local head_current=""
+  local result_clean=""
   local peer_reason=""
   local threads_status="" threads_count="" threads_head=""
   local checks_state="" checks_head=""
@@ -1379,6 +1746,7 @@ expensive_reviewer_gate() {
 
   configured="$(expensive_gate_local_ai_configured)"
   head_current="$(expensive_gate_local_ai_head_current "$head_sha")"
+  result_clean="$(expensive_gate_local_ai_result_clean)"
 
   if [ -z "$head_sha" ]; then
     reason="evidence_unavailable_head"
@@ -1389,6 +1757,10 @@ expensive_reviewer_gate() {
   elif [ "$head_current" = "0" ]; then
     reason="local_evidence_stale"
   elif [ "$head_current" != "1" ]; then
+    reason="local_evidence_missing"
+  elif [ "$result_clean" = "0" ]; then
+    reason="local_evidence_not_clean"
+  elif [ "$result_clean" != "1" ]; then
     reason="local_evidence_missing"
   fi
 
@@ -1878,8 +2250,9 @@ run_codex_github_review() {
   # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
   # bot logins WITH the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]").
   # GraphQL API returns bot logins WITHOUT the "[bot]" suffix
-  # (e.g. "chatgpt-codex-connector"). Strip it here so check_unresolved_threads,
-  # which queries GraphQL, compares against the correct login form.
+  # (e.g. "chatgpt-codex-connector"). Strip it here so
+  # codex_review_thread_evidence_counts, which queries GraphQL, compares
+  # against the correct login form.
   local graphql_bot_login="${bot_login%\[bot\]}"
   local repo
   local reviewer_script
@@ -1888,22 +2261,30 @@ run_codex_github_review() {
   local thread_check_output=""
   local thread_check_status=0
   local unresolved_count=0
+  local owner repo_name
 
   require_gh
   cd_workflow_repo_root
   repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
 
   # Phase 1: Check for existing unresolved review threads from the codex bot.
-  # mode=provisional (#1508): a thread whose last comment is a non-bot reply
-  # posted after the current head commit does not block re-triggering the
-  # review here — see check_unresolved_threads for why this cannot cause a
-  # false RESULT=clean.
+  # #1757 (AC-1, AC-2): use the shared, applicability-aware Codex evidence
+  # counter (codex-github-evidence-lib.sh) with mode=strict, not the generic
+  # check_unresolved_threads used by other reviewer platforms. Codex-specific
+  # applicability (dismissed reviews, live-head commit correlation) matters
+  # here because this count decides needs_fixes directly; strict mode never
+  # applies the #1508 reply-after-push relaxation, so it cannot under-report
+  # a real blocker.
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" provisional "$graphql_bot_login")"
+  thread_check_output="$(codex_review_thread_evidence_counts "$owner" "$repo_name" "$pr_number" "$graphql_bot_login" strict)"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
-    unresolved_count="$thread_check_output"
+    IFS=$'\t' read -r unresolved_count _ _ <<EOF
+$thread_check_output
+EOF
   else
     # Thread check failed — escalate rather than proceeding with stale unresolved_count=0,
     # which would dispatch a new review even if blocking threads already exist.
@@ -1916,27 +2297,23 @@ run_codex_github_review() {
     return 2
   fi
 
-  if [ "$unresolved_count" -gt 0 ]; then
-    reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
-    reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
-    print_kv RESULT needs_fixes
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv REASON existing_findings
-    print_kv COMMENT_COUNT "$unresolved_count"
-    print_kv BLOCKING_COUNT "$unresolved_count"
-    print_kv SUGGESTION_COUNT 0
-    return 1
-  fi
+  # #1757 (AC-7, AC-9): do NOT short-circuit to needs_fixes here. An
+  # unresolved-conversation count alone is necessary but not sufficient — a
+  # current fail-closed escalation for the live head (malformed marker,
+  # unrecognized verdict, correlation-missing finding, or evidence
+  # unavailable) takes precedence, and only the companion's own
+  # classification (which this count alone cannot see) can decide that.
+  # Proceed to Phase 2 below unconditionally; the companion's pre-trigger
+  # check performs this same applicability-aware count check before
+  # deciding, and the exit-1 handler performs the authoritative strict
+  # recount and reports RESULT=needs_fixes / REASON=unresolved_review_threads
+  # exactly as this removed short-circuit used to, while a fail-closed
+  # escalation instead falls into the exit-2 handler below with the
+  # matching REASON=.
 
   # Phase 2: Trigger the codex-github review and wait for response
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/codex-github-reviewer.sh"
 
-  local owner repo_name
-  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
-  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
   local max_retriggers
   max_retriggers="${CODEX_GITHUB_MAX_RETRIGGERS:-1}"
   case "$max_retriggers" in
@@ -1981,18 +2358,31 @@ run_codex_github_review() {
     1)
       unresolved_count=0
       local actual_unresolved_count=0
-      # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
-      # reporting and must reflect true resolution state, not the provisional
-      # reply relaxation used to decide whether to trigger the review above.
+      local recount_ok=0
+      # #1757 (AC-1, AC-2, AC-8): recount with the shared strict,
+      # applicability-aware counter — this feeds the caller's
+      # needs_fixes/COMMENT_COUNT reporting and must reflect true resolution
+      # state, not the provisional reply relaxation used to decide whether to
+      # trigger the review above. Unlike the pre-#1757 recount, a genuine
+      # zero-unresolved result is no longer floored to 1: a resolved Codex
+      # finding that is merely still visible on the pull request must not be
+      # reported as a current blocker (spec Business Rule 2, AC-2).
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
+      thread_check_output="$(codex_review_thread_evidence_counts "$owner" "$repo_name" "$pr_number" "$graphql_bot_login" strict)"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
-        unresolved_count="$thread_check_output"
+        IFS=$'\t' read -r unresolved_count _ _ <<EOF
+$thread_check_output
+EOF
         actual_unresolved_count="$unresolved_count"
+        recount_ok=1
+      else
+        # Recount failed — fail closed exactly as the shipped floor did:
+        # treat as one unresolved blocker rather than silently clearing the
+        # pull request from an indeterminate thread-state read.
+        unresolved_count=1
       fi
-      [ "$unresolved_count" -eq 0 ] && unresolved_count=1
 
       reviewer_loop_print_reviewed_head_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login"
       reviewer_loop_print_blocking_from_unresolved_bot_threads "$pr_number" "$repo" "$graphql_bot_login" || true
@@ -2001,10 +2391,49 @@ run_codex_github_review() {
       # paths with no unresolved threads; do not fall back when threads exist
       # (multi-commit thread heads must stay unattributable per AC-11) or when
       # the thread audit could not be completed.
-      if [ "$thread_check_status" -eq 0 ] && [ "$actual_unresolved_count" -eq 0 ]; then
-        local companion_reviewed_head
-        companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
-        [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+      if [ "$recount_ok" -eq 1 ] && [ "$actual_unresolved_count" -eq 0 ]; then
+        # Bugbot (PR #1780): a zero-thread recount alone must never wave
+        # through a live-head CHANGES_REQUESTED review — GitHub's structured
+        # request-for-changes state is not itself a thread and is never
+        # cleared by resolving conversations (spec Business Rules 5/6).
+        # codex_current_head_changes_requested_blocker re-derives this
+        # directly from the live PR review state, fail-closed on any lookup
+        # failure, since the companion's exit code alone does not tell us
+        # WHY it said NEEDS_REVISION.
+        local live_head_changes_requested
+        live_head_changes_requested="$(codex_current_head_changes_requested_blocker \
+          "$owner" "$repo_name" "$pr_number" "$bot_login" "$graphql_bot_login")"
+
+        if [ "$live_head_changes_requested" != "1" ]; then
+          local companion_reviewed_head
+          companion_reviewed_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+          [ -n "$companion_reviewed_head" ] && print_kv REVIEWED_HEAD "$companion_reviewed_head"
+
+          # #1757 (AC-2, AC-8): the companion reported NEEDS_REVISION, but a
+          # strict, applicability-aware recount confirms zero live-head Codex
+          # conversations remain unresolved, and no live-head CHANGES_REQUESTED
+          # review is active — historical visibility alone must not produce
+          # needs_fixes. Request a fresh current-head review (cleared-findings
+          # retrigger) instead of a stale needs_fixes.
+          print_kv RESULT waiting_on_reviewer
+          print_kv REASON codex-github-review-pending
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 4
+        fi
+
+        # A confirmed (or indeterminate, fail-closed) live-head
+        # CHANGES_REQUESTED review is an actionable blocker: fall through to
+        # needs_fixes below. Floor to 1 so COMMENT_COUNT/BLOCKING_COUNT never
+        # report zero for a real blocker (mirrors the Copilot
+        # CHANGES_REQUESTED-with-no-inline-comments floor elsewhere in this
+        # file).
+        [ "$unresolved_count" -eq 0 ] && unresolved_count=1
       fi
 
       print_kv RESULT needs_fixes
@@ -2019,8 +2448,14 @@ run_codex_github_review() {
       return 1
       ;;
     3)
+      # #1757 (Operational Visibility): read the companion's own REASON=
+      # instead of hardcoding the usage-limit code, so
+      # codex_return_account_not_connected's REASON=codex-github-account-not-connected
+      # is not mislabelled as a usage limit. Falls back to today's value when
+      # the companion emits no REASON= (should not happen on exit 3, but keeps
+      # a reason-less exit 3 unchanged).
       print_kv RESULT escalate
-      print_kv REASON codex-github-usage-limit
+      print_kv REASON "$(kv_value_default REASON "$script_output" codex-github-usage-limit)"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -2049,6 +2484,25 @@ run_codex_github_review() {
     *)
       local codex_reason
       codex_reason="$(kv_value_default REASON "$script_output" timeout)"
+      # #1757 (AC-9, AC-10): the companion's shipped contract for
+      # acknowledgement-only evidence is exit 4 (see
+      # codex_return_reaction_without_review). This is a defensive safety net
+      # only — if a companion code path is ever missed and still exits with
+      # this REASON= on a non-4 exit, map it to waiting_on_reviewer rather than
+      # escalate, since the spec's complete fail-closed escalation set
+      # excludes both wait reason codes.
+      if [ "$codex_reason" = "codex-github-reaction-without-review" ]; then
+        print_kv RESULT waiting_on_reviewer
+        print_kv REASON "$codex_reason"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 4
+      fi
       print_kv RESULT escalate
       print_kv REASON "$codex_reason"
       print_kv PLATFORM "$platform"
@@ -2219,7 +2673,9 @@ run_copilot_review() {
 
   # Resolve head SHA before requesting review so the poll loop can filter
   # reviews to only those submitted against the current commit (#759).
-  head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
+  if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    head_sha=""
+  fi
   if [ -z "$head_sha" ]; then
     # Cannot determine current commit — escalate rather than risk matching a
     # stale unscoped review from a previous cycle.
@@ -2352,6 +2808,265 @@ run_copilot_review() {
   done
 
   # Timeout — no review posted within max_wait.
+  print_kv RESULT escalate
+  print_kv REASON timeout
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  return 2
+}
+
+run_ronda_review() {
+  # Waits on Ronda's GitHub check run for the PR's current head SHA and maps
+  # its conclusion to the standard exit-code contract.
+  #
+  # Ronda is a GitHub-facing bot (not a chat-completions endpoint): it posts
+  # a pull-request review plus a single check run (default name
+  # "Ronda review") per head SHA, out of band. Per Ronda's architecture the
+  # check run is created exactly once, at the end of a pass, already
+  # `completed` — there is deliberately no `in_progress` write. Absence of
+  # the check run therefore means "not finished yet", never "no review
+  # configured" or "clean": this loop keeps polling rather than returning
+  # skipped/clean until the check run appears (or the wait budget runs out).
+  # Re-resolving the head SHA on every poll iteration, and scoping the
+  # check-runs query to that SHA, means a new commit mid-poll naturally
+  # supersedes any in-flight pass — the loop keys on head SHA, not on a
+  # review/check-run count.
+  #
+  # Verdict source (#1849). Ronda's consumption contract
+  # (lhpaul/ronda docs/adoption/ronda-review-adoption.md §4) defines the
+  # check-run conclusion as "did the pass complete", NOT "were there blocking
+  # findings": `success` means the pass worked, with or without findings;
+  # `failure` means the pass could not complete (timeout, model unavailable,
+  # credential missing, changes too large, unusable output, unexpected
+  # error). The finding verdict lives in the successful check run's summary,
+  # which carries exactly one severity line of the form
+  #   Blocking: <n>, Important: <n>, Nit: <n>
+  # (lhpaul/ronda src/core/summary.ts buildCheckRunOutput). The verdict is
+  # read from that line, so no review-author lookup is needed — reviews
+  # posted through Ronda's reusable Actions workflow are authored by
+  # `github-actions[bot]`, not `ronda[bot]`.
+  #
+  #   0 → RESULT=clean       (conclusion=success, Blocking: 0)
+  #   1 → RESULT=needs_fixes (conclusion=success, Blocking: N ≥ 1)
+  #   2 → RESULT=escalate    (conclusion=success with a missing, duplicated,
+  #                           or unparseable severity line; conclusion=failure
+  #                           — a pass failure, not a code finding; any other
+  #                           terminal conclusion; timeout;
+  #                           head-sha-unavailable; fetch-failed)
+  #
+  # Env var overrides:
+  #   RONDA_CHECK_NAME  — override check-run name (default: "Ronda review")
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="ronda"
+  local check_name="${RONDA_CHECK_NAME:-Ronda review}"
+  local repo owner repo_name
+  local elapsed=0
+  local head_sha=""
+
+  require_gh
+  cd_workflow_repo_root
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  # Resolve head SHA before polling so an early lookup failure escalates
+  # immediately rather than risk matching a stale check run (#759 pattern,
+  # mirrored from run_copilot_review). Scope to the target repo explicitly
+  # (matching the poll loop below) so a product-repo target via
+  # WORKFLOW_TARGET_GITHUB_REPO / --repo does not fall through to the
+  # workflow repo's own PR list on the first lookup.
+  if ! head_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    head_sha=""
+  fi
+  if [ -z "$head_sha" ]; then
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  local effective_poll_interval="$poll_interval"
+  if [ "$effective_poll_interval" -gt "$max_wait" ]; then
+    effective_poll_interval="$max_wait"
+  fi
+  [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    local current_sha _sha_rc
+    set +e
+    current_sha="$(gh pr view "$pr_number" --repo "$owner/$repo_name" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
+    _sha_rc=$?
+    set -e
+    if [ "$_sha_rc" -ne 0 ] || [ -z "$current_sha" ]; then
+      echo "WARN: run_ronda_review: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
+      current_sha="$head_sha"
+    fi
+
+    # No `-e` on the jq flags below: an empty/no-match result must produce
+    # `null` with jq exit 0 (never yet — keep polling), while a real gh/jq
+    # failure must still be distinguishable via a non-zero pipeline exit
+    # (pipefail propagates gh's failure through jq's success).
+    local fetch_output fetch_rc
+    set +e
+    fetch_output="$(
+      gh api "repos/$owner/$repo_name/commits/$current_sha/check-runs" --paginate 2>/dev/null \
+        | jq -s --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+            [ .[].check_runs[] | select(.name == $name) ] | dedupe_status_check_rollup | last
+          ' 2>/dev/null
+    )"
+    fetch_rc=$?
+    set -e
+    if [ "$fetch_rc" -ne 0 ]; then
+      echo "WARN: run_ronda_review: check-run fetch/parse failed for PR #$pr_number (SHA=$current_sha)" >&2
+      print_kv RESULT escalate
+      print_kv REASON fetch-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 2
+    fi
+
+    if [ -z "$fetch_output" ] || [ "$fetch_output" = "null" ]; then
+      # No "Ronda review" check run yet for this head SHA. Ronda writes it
+      # exactly once, already completed, at the end of a pass — absence
+      # means "not finished yet", so keep polling rather than declaring
+      # clean or skipped.
+      _interruptible_sleep "$effective_poll_interval"
+      elapsed=$(( elapsed + effective_poll_interval ))
+      continue
+    fi
+
+    local status conclusion
+    status="$(printf '%s' "$fetch_output" | jq -r '.status // ""')"
+    conclusion="$(printf '%s' "$fetch_output" | jq -r '.conclusion // ""')"
+
+    if [ "$status" != "completed" ]; then
+      # Ronda's contract never writes in_progress, but fail safe if a future
+      # rollout ever does: keep waiting for the terminal write.
+      _interruptible_sleep "$effective_poll_interval"
+      elapsed=$(( elapsed + effective_poll_interval ))
+      continue
+    fi
+
+    case "$conclusion" in
+      success)
+        # The pass completed; the verdict is the summary's severity line
+        # (#1849). Exactly one well-formed line is required — a missing,
+        # duplicated, or malformed line escalates (fail closed) rather than
+        # guessing clean. Counts are capped at 9 digits so the arithmetic
+        # below cannot overflow, and forced to base 10 so a leading zero is
+        # never read as octal.
+        #
+        # Duplicate detection counts CANDIDATE lines (any line that starts
+        # with a "Blocking:" label, however malformed) before validating
+        # syntax, so a well-formed `Blocking: 0 ...` line cannot mask a
+        # second, malformed `Blocking: 1, Important: bad ...` line and read
+        # clean. Only trailing whitespace is tolerated on the valid line.
+        local summary summary_lines severity_lines
+        local candidate_count severity_line_count
+        local ronda_blocking ronda_important ronda_nit
+        local severity_re='^Blocking: [0-9]{1,9}, Important: [0-9]{1,9}, Nit: [0-9]{1,9}[[:space:]]*$'
+        summary="$(printf '%s' "$fetch_output" | jq -r '.output.summary // ""' 2>/dev/null)" || summary=""
+        summary_lines="$(printf '%s\n' "$summary" | tr -d '\r')"
+        candidate_count="$(printf '%s\n' "$summary_lines" \
+          | grep -c -i -E '^[[:space:]]*[*_`]*Blocking[*_`]*[[:space:]]*:')" || candidate_count=0
+        severity_lines="$(printf '%s\n' "$summary_lines" | grep -E "$severity_re")" || severity_lines=""
+        if [ -z "$severity_lines" ]; then
+          severity_line_count=0
+        else
+          severity_line_count="$(printf '%s\n' "$severity_lines" | wc -l | tr -d ' ')"
+        fi
+        if [ "$candidate_count" -ne 1 ] || [ "$severity_line_count" -ne 1 ]; then
+          echo "WARN: run_ronda_review: check run concluded success but its summary has $candidate_count severity line candidate(s), $severity_line_count well-formed (expected exactly 1 of each) for PR #$pr_number (SHA=$current_sha)" >&2
+          print_kv RESULT escalate
+          print_kv REASON ronda_severity_unparseable
+          print_kv REVIEWED_HEAD "$current_sha"
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          return 2
+        fi
+        ronda_blocking="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)[[:space:]]*$/\1/')"
+        ronda_important="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)[[:space:]]*$/\2/')"
+        ronda_nit="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)[[:space:]]*$/\3/')"
+        ronda_blocking=$((10#$ronda_blocking))
+        ronda_important=$((10#$ronda_important))
+        ronda_nit=$((10#$ronda_nit))
+        local ronda_suggestions ronda_total
+        ronda_suggestions=$((ronda_important + ronda_nit))
+        ronda_total=$((ronda_blocking + ronda_suggestions))
+        if [ "$ronda_blocking" -eq 0 ]; then
+          print_kv RESULT clean
+          print_kv REVIEWED_HEAD "$current_sha"
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT "$ronda_total"
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT "$ronda_suggestions"
+          return 0
+        fi
+        print_kv RESULT needs_fixes
+        print_kv REVIEWED_HEAD "$current_sha"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REASON ronda_blocking_findings
+        print_kv COMMENT_COUNT "$ronda_total"
+        print_kv BLOCKING_COUNT "$ronda_blocking"
+        print_kv SUGGESTION_COUNT "$ronda_suggestions"
+        return 1
+        ;;
+      failure)
+        # The pass could not complete (Ronda contract §4) — an infrastructure
+        # failure, not a code finding. Escalate with the check-run title,
+        # which names the reason, instead of sending the fixer after
+        # findings that do not exist. The title is flattened to one line and
+        # length-capped so it cannot break the key=value output contract.
+        local ronda_title
+        ronda_title="$(printf '%s' "$fetch_output" | jq -r '.output.title // ""' 2>/dev/null)" || ronda_title=""
+        ronda_title="$(printf '%s' "$ronda_title" | tr '\r\n' '  ' | cut -c1-200)"
+        echo "WARN: run_ronda_review: Ronda pass failed for PR #$pr_number (SHA=$current_sha): ${ronda_title:-<no title>}" >&2
+        print_kv RESULT escalate
+        print_kv REASON ronda_pass_failed
+        print_kv RONDA_CHECK_TITLE "$ronda_title"
+        print_kv REVIEWED_HEAD "$current_sha"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        return 2
+        ;;
+      *)
+        # Unrecognized/unexpected terminal conclusion (e.g. action_required,
+        # neutral, cancelled, skipped, timed_out, stale) — Ronda's contract
+        # emits only success/failure, so fail closed rather than guess
+        # whether it means clean or blocking.
+        echo "WARN: run_ronda_review: unexpected check-run conclusion '$conclusion' for PR #$pr_number (SHA=$current_sha)" >&2
+        print_kv RESULT escalate
+        print_kv REASON ronda_unexpected_conclusion
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        return 2
+        ;;
+    esac
+  done
+
+  # Timeout — no completed check run observed within max_wait.
   print_kv RESULT escalate
   print_kv REASON timeout
   print_kv PLATFORM "$platform"
@@ -2526,13 +3241,13 @@ bugbot_cursor_check_run_count() {
   set +e
   count="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -se --arg name "$check_name" '
+      | jq -se --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
                 (.name == $name)
               )
-          ] | length
+          ] | dedupe_status_check_rollup | length
         ' 2>/dev/null
   )"
   set -e
@@ -2558,14 +3273,18 @@ bugbot_disabled_preflight_applies_for_head() {
   set +e
   fetch_output="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -se -r --arg name "$check_name" '
+      | jq -se -r --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
                 (.name == $name)
               )
           ]
-          | sort_by(.started_at) | last
+          # Every Cursor-app run is one logical Bugbot check: give them one
+          # key so the shared recency rule (a queued re-run is newest, #1559)
+          # picks the winner, not a started_at sort that puts it first.
+          | map(.name = "cursor-bugbot")
+          | dedupe_status_check_rollup | last
           | ((.status // "") + " " + (.conclusion // ""))
         ' 2>/dev/null
   )"
@@ -2639,10 +3358,16 @@ run_bugbot_review() {
   #
   # Exit code mapping:
   #   0 → RESULT=clean      (conclusion=success with no blocking comments, or
-  #                           neutral/cancelled/skipped informational)
-  #   1 → RESULT=needs_fixes (conclusion=failure/action_required, or existing
-  #                           blocking cursor[bot] findings on current head)
-  #   2 → RESULT=escalate   (timeout, unavailable, or head-sha-unavailable)
+  #                           neutral/cancelled/skipped with an affirmative
+  #                           no-issues output.summary and no cursor[bot]
+  #                           findings)
+  #   1 → RESULT=needs_fixes (conclusion=failure/action_required, neutral with
+  #                           retrievable findings, or existing blocking
+  #                           cursor[bot] findings on current head)
+  #   2 → RESULT=escalate   (timeout, unavailable, head-sha-unavailable, or a
+  #                           neutral conclusion whose verdict could not be
+  #                           established — see REASON=bugbot-unverified-verdict
+  #                           and REASON=bugbot-findings-not-retrievable)
   #
   # Env var overrides:
   #   BUGBOT_BOT_LOGIN        — override bot login (default: "cursor[bot]")
@@ -2905,13 +3630,13 @@ run_bugbot_review() {
   local _bb_run_count_rc=0
   _bb_run_count="$(
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
-      | jq -se --arg name "$check_name" '
+      | jq -se --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
           [ .[].check_runs[]
             | select(
                 ((.app.slug // "") | test("cursor"; "i")) or
                 (.name == $name)
               )
-          ] | length
+          ] | dedupe_status_check_rollup | length
         ' 2>/dev/null
   )"
   _bb_run_count_rc=$?
@@ -2965,6 +3690,12 @@ run_bugbot_review() {
   fi
 
   # --- Phase 3: Poll the "Cursor Bugbot" check run on the current head SHA ---
+  # Wrapped in a one-shot retry (issue #1390): Bugbot intermittently leaves its
+  # check run unfinished, and a single re-trigger with the trigger comment has
+  # been observed to recover it every time. A timeout is not a finding, so
+  # retry once before declaring the reviewer unavailable.
+  local bugbot_retry_attempted=0
+  while :; do
   while [ "$elapsed" -lt "$max_wait" ]; do
     # Re-resolve head SHA each iteration so a mid-review push retargets the filter.
     set +e
@@ -2997,15 +3728,18 @@ run_bugbot_review() {
     local _fetch_output
     _fetch_output="$(
       gh api "repos/$repo/commits/$_current_sha/check-runs" --paginate 2>/dev/null \
-        | jq -se -r --arg name "$check_name" '
-            [ .[].check_runs[]
-              | select(
-                  ((.app.slug // "") | test("cursor"; "i")) or
-                  (.name == $name)
-                )
-            ]
-            | sort_by(.started_at) | last
-            | ((.status // "") + " " + (.conclusion // "") + " " + (.started_at // ""))
+        | jq -se -r --arg name "$check_name" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+            ([ .[].check_runs[]
+               | select(
+                   ((.app.slug // "") | test("cursor"; "i")) or
+                   (.name == $name)
+                 )
+             ]
+             # One logical Bugbot check (see bugbot_disabled_preflight_applies_for_head).
+             | map(.name = "cursor-bugbot")
+             | dedupe_status_check_rollup | last) as $run
+            | (($run.status // "") + " " + ($run.conclusion // "") + " " + ($run.started_at // "")),
+              ($run.output.summary // "")
           ' 2>/dev/null
     )"
     _fetch_rc=$?
@@ -3024,10 +3758,16 @@ run_bugbot_review() {
       return 2
     fi
     local check_started_at=""
-    read -r status_val conclusion check_started_at <<< "$_fetch_output"
+    local _check_summary=""
+    read -r status_val conclusion check_started_at <<< "${_fetch_output%%$'\n'*}"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
     check_started_at="${check_started_at:-}"
+    # Line 2 of the jq output is the check run's output.summary (may be empty).
+    case "$_fetch_output" in
+      *$'\n'*) _check_summary="${_fetch_output#*$'\n'}" ;;
+      *) _check_summary="" ;;
+    esac
 
     if [ "$status_val" != "completed" ]; then
       set +e
@@ -3280,8 +4020,13 @@ run_bugbot_review() {
           ;;
 
         neutral|cancelled|skipped)
-          # A neutral check is clean only when Cursor did not also post an
-          # unavailable/quota issue comment for this head.
+          # A neutral conclusion is NOT a pass (issue #1390). Cursor concludes
+          # the check run `neutral` both for a review that found nothing and for
+          # one that found blocking issues, so the verdict has to come from
+          # output.summary and from the cursor[bot] findings themselves.
+          #
+          # A neutral check is only reachable at all when Cursor did not also
+          # post an unavailable/quota issue comment for this head.
           local _unavailable_since_iso="$_current_since_iso"
           if [ -n "$check_started_at" ] && [ "$check_started_at" \> "$_unavailable_since_iso" ]; then
             _unavailable_since_iso="$check_started_at"
@@ -3298,16 +4043,194 @@ run_bugbot_review() {
             return 0
           fi
 
-          # Non-blocking informational outcome — clean, no real findings.
+          # Parse the check-run summary for an explicit finding count. An empty
+          # result means the summary shape was not recognised — unknown, never
+          # clean.
+          local _bb_summary_count=""
+          set +e
+          _bb_summary_count="$(bugbot_summary_finding_count "$_check_summary")"
+          local _bb_summary_rc=$?
+          set -e
+          if [ "$_bb_summary_rc" -ne 0 ]; then
+            _bb_summary_count=""
+          fi
+
+          # Fetch the findings Cursor posted against this head — the summary is
+          # a count, not a location, so the comments are what a fix agent needs.
+          blocking_lines_file="$(mktemp)"
+          local neutral_explicit_skip_seen=0
+          local _neutral_comments_rc=0
+          local _neutral_reviews_rc=0
+          local _neutral_comments _neutral_reviews
+          set +e
+          _neutral_comments="$(
+            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+                  .[]
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
+                  | @json
+                ' 2>/dev/null
+          )"
+          _neutral_comments_rc=$?
+          _neutral_reviews="$(
+            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+                  .[]
+                  | select(
+                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+                      .submitted_at > $since and
+                      .commit_id == $sha and
+                      (
+                        .state == "CHANGES_REQUESTED" or
+                        .state == "COMMENTED"
+                      )
+                    )
+                  | { path: "", line: 0, body: (.body // "review without body"), state: .state, commit_id: (.commit_id // .commitId // "") }
+                  | @json
+                ' 2>/dev/null
+          )"
+          _neutral_reviews_rc=$?
+          set -e
+          if [ "$_neutral_comments_rc" -ne 0 ] || [ "$_neutral_reviews_rc" -ne 0 ]; then
+            echo "WARN: run_bugbot_review: neutral-conclusion finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            print_kv RESULT escalate
+            print_kv REASON fetch-failed
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            rm -f "$blocking_lines_file"
+            return 2
+          fi
+
+          local neutral_inline_count=0
+          while IFS= read -r comment_json; do
+            [ -z "${comment_json:-}" ] && continue
+            body="$(printf '%s\n' "$comment_json" | jq -r '.body')"
+            [ -z "$body" ] && continue
+            comment_count=$((comment_count + 1))
+            if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+            elif is_bugbot_explicit_skip_message "$body"; then
+              neutral_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
+            else
+              blocking_count=$((blocking_count + 1))
+              neutral_inline_count=$((neutral_inline_count + 1))
+              printf '%s\n' "$comment_json" >> "$blocking_lines_file"
+            fi
+          done <<< "${_neutral_comments:-}"
+
+          while IFS= read -r review_json; do
+            [ -z "${review_json:-}" ] && continue
+            body="$(printf '%s\n' "$review_json" | jq -r '.body')"
+            local _nrv_state
+            _nrv_state="$(printf '%s\n' "$review_json" | jq -r '.state // ""')"
+            if [ "$_nrv_state" = "CHANGES_REQUESTED" ]; then
+              : # requested changes are always blocking regardless of body text
+            elif [ -z "$body" ]; then
+              continue
+            elif is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
+            elif is_bugbot_explicit_skip_message "$body"; then
+              neutral_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
+            fi
+            if [ "$_nrv_state" = "COMMENTED" ]; then
+              if [ "$neutral_inline_count" -gt 0 ]; then
+                : # umbrella COMMENTED for inline findings — blocking
+              elif printf '%s\n' "$body" | grep -q "BUGBOT_REVIEW\|BUGBOT_BUG_ID\|LOCATIONS"; then
+                : # body carries Bugbot finding markers — blocking
+              else
+                suggestion_count=$((suggestion_count + 1))
+                comment_count=$((comment_count + 1))
+                continue
+              fi
+            fi
+            comment_count=$((comment_count + 1))
+            blocking_count=$((blocking_count + 1))
+            printf '%s\n' "$review_json" >> "$blocking_lines_file"
+          done <<< "${_neutral_reviews:-}"
+
+          if [ "$neutral_explicit_skip_seen" -eq 1 ] && [ "$blocking_count" -eq 0 ]; then
+            rm -f "$blocking_lines_file"
+            bugbot_return_explicit_skip "$pr_number" "$branch_name"
+            return 0
+          fi
+
+          if [ "$blocking_count" -gt 0 ]; then
+            print_kv RESULT needs_fixes
+      [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv REASON blocking_findings
+            print_kv COMMENT_COUNT "$comment_count"
+            print_kv BLOCKING_COUNT "$blocking_count"
+            print_kv SUGGESTION_COUNT "$suggestion_count"
+            while IFS= read -r blocking_json; do
+              [ -z "${blocking_json:-}" ] && continue
+              print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
+              print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
+              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              index=$((index + 1))
+            done < "$blocking_lines_file"
+            rm -f "$blocking_lines_file"
+            return 1
+          fi
+
+          rm -f "$blocking_lines_file"
+
+          # No blocking finding was retrievable. The summary now has to vouch
+          # for the head: an explicit zero is a pass, a positive count whose
+          # findings did not surface, and anything unparseable, are not.
+          if [ -n "$_bb_summary_count" ] && [ "$_bb_summary_count" -gt 0 ]; then
+            echo "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number reporting $_bb_summary_count finding(s), but none were retrievable — escalating" >&2
+            print_kv RESULT escalate
+            print_kv REASON bugbot-findings-not-retrievable
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 2
+          fi
+
+          if [ "$_bb_summary_count" != "0" ]; then
+            echo "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number with no recognisable no-issues summary — escalating rather than reporting clean" >&2
+            print_kv RESULT escalate
+            print_kv REASON bugbot-unverified-verdict
+            print_kv PLATFORM "$platform"
+            print_kv PR_NUMBER "$pr_number"
+            print_kv BRANCH "$branch_name"
+            print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+            print_kv COMMENT_COUNT 0
+            print_kv BLOCKING_COUNT 0
+            print_kv SUGGESTION_COUNT 0
+            return 2
+          fi
+
+          # Explicit no-issues summary and no findings posted — clean.
           print_kv RESULT clean
       [ -n "${_current_sha:-${head_sha:-}}" ] && print_kv REVIEWED_HEAD "${_current_sha:-$head_sha}"
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
           print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-          print_kv COMMENT_COUNT 0
+          print_kv COMMENT_COUNT "$comment_count"
           print_kv BLOCKING_COUNT 0
-          print_kv SUGGESTION_COUNT 0
+          print_kv SUGGESTION_COUNT "$suggestion_count"
           return 0
           ;;
 
@@ -3355,9 +4278,43 @@ run_bugbot_review() {
     elapsed=$(( elapsed + poll_interval ))
   done
 
-  # Poll budget exhausted.  Distinguish timeout (run appeared) from unavailable
-  # (no Cursor Bugbot check run ever appeared — Cursor app likely not installed).
-  # Either way, never report as clean (AC-5).
+    # Poll budget exhausted for this attempt. Retry once with the trigger comment
+    # before declaring the reviewer failed (issue #1390): an unfinished Bugbot run
+    # is a timeout, not a finding, and the stale reviewer-failed label it produces
+    # reads like one.
+    if [ "$bugbot_retry_attempted" -eq 0 ]; then
+      bugbot_retry_attempted=1
+      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${max_wait}s for PR #$pr_number — re-triggering once" >&2
+      set +e
+      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" > /dev/null 2>&1
+      local _bb_retry_rc=$?
+      set -e
+      if [ "$_bb_retry_rc" -ne 0 ]; then
+        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON trigger-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+      elapsed=0
+      check_appeared=0
+      status_val=""
+      conclusion=""
+      continue
+    fi
+    break
+  done
+
+  # Poll budget exhausted across both attempts.  Distinguish timeout (run
+  # appeared) from unavailable (no Cursor Bugbot check run ever appeared —
+  # Cursor app likely not installed). Either way, never report as clean (AC-5).
   if [ "$check_appeared" -eq 0 ]; then
     print_kv RESULT escalate
     print_kv REASON unavailable
@@ -3696,7 +4653,7 @@ emit_local_ai_strict_spec_keys() {
     [ -z "${line:-}" ] && continue
     key="${line%%=*}"
     case "$key" in
-      STRICT_SPEC_STATE|STRICT_SPEC_COUNT|STRICT_SPEC_CHECKS|STRICT_SPEC_UNKNOWN_COUNT|STRICT_SPEC_REASON)
+      STRICT_SPEC_STATE|STRICT_SPEC_COUNT|STRICT_SPEC_CHECKS|STRICT_SPEC_APPLIED|STRICT_SPEC_UNKNOWN_COUNT|STRICT_SPEC_REASON)
         print_kv "$key" "${line#*=}"
         ;;
       STRICT_PLAN_STATE|STRICT_PLAN_COUNT|STRICT_PLAN_CHECKS|STRICT_PLAN_APPLIED|STRICT_PLAN_UNKNOWN_COUNT|STRICT_PLAN_REASON)
@@ -3749,6 +4706,7 @@ capture_strict_spec_globals_from_output() {
   strict_spec_state="$state"
   strict_spec_count="$(kv_value_default STRICT_SPEC_COUNT "$script_output" "")"
   strict_spec_checks="$(kv_value_default STRICT_SPEC_CHECKS "$script_output" "")"
+  strict_spec_applied="$(kv_value_default STRICT_SPEC_APPLIED "$script_output" "")"
   strict_spec_unknown_count="$(kv_value_default STRICT_SPEC_UNKNOWN_COUNT "$script_output" "")"
   strict_spec_reason="$(kv_value_default STRICT_SPEC_REASON "$script_output" "")"
   strict_spec_summary_section=""
@@ -3906,11 +4864,14 @@ run_local_ai_reviewer_review() {
     2)
       local local_ai_reason
       local local_ai_display_result
+      local local_ai_quota_reset_at
       local_ai_reason="$(kv_value_default REASON "$script_output" malformed_output)"
       local_ai_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      local_ai_quota_reset_at="$(kv_value_default QUOTA_RESET_AT "$script_output" "")"
       print_kv RESULT escalate
       print_kv REASON "$local_ai_reason"
       [ -n "$local_ai_display_result" ] && print_kv DISPLAY_RESULT "$local_ai_display_result"
+      [ -n "$local_ai_quota_reset_at" ] && print_kv QUOTA_RESET_AT "$local_ai_quota_reset_at"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -4137,11 +5098,11 @@ run_devin_review() {
 
     read -r devin_any_check_count check_completed < <(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq -s -r '
-            [.[].check_runs[] | select(
+        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+            ([.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
-            )] as $runs
+            )] | dedupe_status_check_rollup) as $runs
             | ($runs | length),
               ($runs | map(select(.status == "completed")) | length)
             | tostring
@@ -4158,13 +5119,15 @@ run_devin_review() {
     #   for check_completed so a pending status never starts the grace timer prematurely.
     # Deduplicate by context (keep latest entry per context) to avoid double-counting
     # when the same context transitions through multiple states (e.g. pending → success).
+    # Shared dedupe (workflow-lib.sh, #1559); the REST list is newest-first, so it
+    # is reversed first and a same-second tie resolves to the newer status.
     read -r devin_status_count devin_completed_status_count < <(
       gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-        | jq -s -r '
+        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
             ( [.[].[] | select(.context | test("devin"; "i"))]
-              | group_by(.context) | map(max_by(.updated_at)) | length ),
+              | reverse | dedupe_status_check_rollup | length ),
             ( [.[].[] | select(.context | test("devin"; "i"))]
-              | group_by(.context) | map(max_by(.updated_at))
+              | reverse | dedupe_status_check_rollup
               | map(select(.state == "success" or .state == "failure" or .state == "error"))
               | length )
             | tostring
@@ -4505,7 +5468,7 @@ run_pr_agent_review() {
 
   _pr_agent_active_review_check_count() {
     gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-      | jq -rs '[.[].check_runs[]? | select(.name == "PR-Agent review" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending"))] | length' \
+      | jq -rs "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].check_runs[]? | select(.name == "PR-Agent review")] | dedupe_status_check_rollup | map(select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")) | length' \
       2>/dev/null \
       || printf '0'
   }
@@ -5504,9 +6467,10 @@ coderabbit_thread_gate_clean() {
 # call sites in run_coderabbit_review use this helper so the description guard
 # is applied identically at both sites.
 #
-# Deduplicates by context (keeping the latest entry per context via
-# max_by(.updated_at)) before checking state/description, so a superseded
-# status is not counted — same dedup pattern used before this fix existed.
+# Deduplicates by context (the shared dedupe_status_check_rollup from
+# workflow-lib.sh, #1559; the REST list is newest-first, so it is reversed
+# first and a same-second tie resolves to the newer status) before checking
+# state/description, so a superseded status is not counted.
 coderabbit_success_status_count() {
   local repo="$1" head_sha="$2"
   # Validate arguments before the API call: a missing repo or head_sha would
@@ -5524,10 +6488,10 @@ coderabbit_success_status_count() {
     return 0
   fi
   gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-    | jq -s '[.[].[] | select(
+    | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].[] | select(
               (.context // "" | ascii_downcase | test("coderabbit"))
             )]
-            | group_by(.context) | map(max_by(.updated_at))
+            | reverse | dedupe_status_check_rollup
             | map(select(
                 .state == "success"
                 and ((.description // "")
@@ -7023,6 +7987,7 @@ bot_login_for_platform() {
     copilot)             printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
     haystack)            printf '\n' ;;
     bugbot)              printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
+    ronda)               printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
     *)                   printf '\n' ;;
   esac
 }
@@ -7239,6 +8204,9 @@ run_platform_review() {
       ;;
     bugbot)
       run_bugbot_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    ronda)
+      run_ronda_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     *)
       print_kv RESULT skipped
@@ -7703,7 +8671,6 @@ restore_regression_label_if_missing() {
         # Gate the restore on current-head clean-loop evidence. A historical
         # clean summary on an older head must not resurrect a stale label after
         # a push that introduced reviewer findings.
-        local _rfr_repo=""
         # repo_slug failure is handled explicitly below: an empty slug falls
         # into the else branch (fail-open WARN + restore). Do not use || true
         # here — capture the exit code and let the if-condition detect the
@@ -7757,13 +8724,31 @@ restore_regression_label_if_missing() {
         fi
         if [ "${_rfr_restore_allowed:-0}" -eq 1 ]; then
           echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
-          # Do NOT redirect stderr here: surface gh errors so failures are observable
-          # rather than silently swallowed. The || branch handles the non-zero exit.
-          if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
-            echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
+          # Route the mutation through apply-readiness-labels.sh (#1408) so the
+          # reviewer/CI verdict gate runs on the label this path restores; a
+          # direct `gh pr edit --add-label` would bypass it. Helper failure
+          # keeps the pre-existing WARN-and-proceed behaviour (fail-open is the
+          # documented semantics of this summary-comment gate, #805).
+          # Do NOT redirect stderr here: surface errors so failures are
+          # observable rather than silently swallowed.
+          if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
+              --pr "$pr_number" --branch "$branch_name" --label "ready-for-regression"; then
+            echo "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
           fi
         else
           echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
+        fi
+      else
+        # Label already present (PR #1818 F1 round 10): do NOT skip the helper.
+        # Run it so it revalidates the label against the live head SHA and
+        # removes it on refusal — an already-present label is not proof it is
+        # still current. Helper failure keeps WARN-and-proceed (the label
+        # simply stays for the helper's own WARN output to address). Do NOT
+        # redirect stderr here: surface errors so failures are observable.
+        echo "INFO: ready-for-regression label already present on PR #${pr_number} (${branch_name}); revalidating through apply-readiness-labels.sh." >&2
+        if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
+            --pr "$pr_number" --branch "$branch_name" --label "ready-for-regression"; then
+          echo "WARN: apply-readiness-labels.sh refused or failed to revalidate the existing ready-for-regression on PR #${pr_number}; proceeding without change" >&2
         fi
       fi
       ;;
@@ -7831,6 +8816,8 @@ reviewer_loop_history_platforms_json() {
 reviewer_loop_path_is_normative_document() {
   case "${1:-}" in
     REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
+      return 0 ;;
+    .claude/*|.cursor/*|.codex/*|.agents/*)
       return 0 ;;
     docs/workflow/*|docs/best-practices/*|docs/specs/developments/*|docs/testing/workflow/*|docs/project/*)
       return 0 ;;
@@ -8035,6 +9022,7 @@ reviewer_loop_replace_current_round_platform_record() {
   local platform_name="${1:-}"
   local entry record kept_heads=() kept_records=() kept_peer=() kept_tokens=()
   local blocking_name kept_blocking=()
+  local kept_compare=() compare_idx compare_name compare_token
 
   [ -n "$platform_name" ] || return 0
 
@@ -8078,6 +9066,20 @@ reviewer_loop_replace_current_round_platform_record() {
     platform_result_tokens=("${kept_tokens[@]+"${kept_tokens[@]}"}")
   fi
 
+  if declare -p compare_verdicts >/dev/null 2>&1 \
+      && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+    compare_idx=0
+    while [ "$compare_idx" -lt "${#compare_verdicts[@]}" ]; do
+      compare_name="${compare_verdicts[$compare_idx]}"
+      compare_token="${compare_verdicts[$((compare_idx + 1))]:-}"
+      if [ "$compare_name" != "$platform_name" ]; then
+        kept_compare+=("$compare_name" "$compare_token")
+      fi
+      compare_idx=$((compare_idx + 2))
+    done
+    compare_verdicts=("${kept_compare[@]+"${kept_compare[@]}"}")
+  fi
+
   if declare -p platform_blocking_outputs >/dev/null 2>&1 \
       && [ "${#platform_blocking_outputs[@]}" -gt 0 ]; then
     for entry in "${platform_blocking_outputs[@]}"; do
@@ -8088,6 +9090,96 @@ reviewer_loop_replace_current_round_platform_record() {
     done
     platform_blocking_outputs=("${kept_blocking[@]+"${kept_blocking[@]}"}")
   fi
+}
+
+# reviewer_loop_recompute_current_round_aggregates
+#
+# Rebuild aggregate counters and reviewer-failed state from the current platform
+# records. This is needed after replacement flows such as the mandatory second
+# local pass: the first local pass may have contributed skipped/unavailable state
+# before being superseded by a clean retry.
+reviewer_loop_recompute_current_round_aggregates() {
+  local entry peer_result peer_reason
+  local output_blob platform_name platform_output
+  local platform_comment_count platform_blocking_count platform_suggestion_count
+  local platform_advisory_labels _blocking_path _blocking_finding
+
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  aggregate_advisory_labels=""
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+
+  if declare -p platform_peer_evidence >/dev/null 2>&1; then
+    for entry in "${platform_peer_evidence[@]:-}"; do
+      peer_result="${entry#*|}"
+      peer_reason="${peer_result#*|}"
+      peer_result="${peer_result%%|*}"
+      if reviewer_failed_label_required_for_result "$peer_result" "$peer_reason"; then
+        reviewer_failed_required=1
+      fi
+    done
+  fi
+
+  if declare -p platform_blocking_outputs >/dev/null 2>&1; then
+    for output_blob in "${platform_blocking_outputs[@]:-}"; do
+      platform_name="${output_blob%%$'\036'*}"
+      platform_output="${output_blob#*$'\036'}"
+      platform_comment_count="$(kv_value_default COMMENT_COUNT "$platform_output" 0)"
+      platform_blocking_count="$(kv_value_default BLOCKING_COUNT "$platform_output" 0)"
+      platform_suggestion_count="$(kv_value_default SUGGESTION_COUNT "$platform_output" 0)"
+      total_comment_count=$((total_comment_count + platform_comment_count))
+      total_blocking_count=$((total_blocking_count + platform_blocking_count))
+      total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+
+      platform_advisory_labels="$(kv_value_default ADVISORY_LABELS "$platform_output" "")"
+      if [ -n "$platform_advisory_labels" ]; then
+        if [ -n "$aggregate_advisory_labels" ]; then
+          aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
+        else
+          aggregate_advisory_labels="$platform_advisory_labels"
+        fi
+      fi
+
+      while IFS= read -r _blocking_path; do
+        [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
+      done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
+      unset _blocking_path
+      while IFS= read -r _blocking_finding; do
+        [ -n "$_blocking_finding" ] && aggregate_blocking_findings+=("$_blocking_finding")
+      done < <(reviewer_loop_blocking_findings_from_output "$platform_output" "$platform_blocking_count" "$platform_name")
+      unset _blocking_finding
+    done
+  fi
+}
+
+# reviewer_loop_retain_local_evidence_for_current_run <history_payload> <configured_platforms> <head_sha>
+#
+# When a platform-filtered ready-phase invocation reuses an existing clean local
+# review, hydrate the current-run evidence arrays consumed by the expensive gate.
+reviewer_loop_retain_local_evidence_for_current_run() {
+  local payload="${1:-}"
+  local configured="${2:-}"
+  local head_sha="${3:-}"
+  local verdict outcome reviewed_head reason
+
+  [ -n "$head_sha" ] || return 0
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")" || return 0
+  outcome="$(printf '%s\n' "$verdict" | jq -r '.outcome // ""' 2>/dev/null)" || return 0
+  reviewed_head="$(printf '%s\n' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)" || return 0
+  case "$outcome" in
+    clean|skipped) ;;
+    *) return 0 ;;
+  esac
+  [ "$reviewed_head" = "$head_sha" ] || return 0
+
+  reviewer_loop_replace_current_round_platform_record "local-ai-reviewer"
+  platform_reviewed_heads+=("local-ai-reviewer:${reviewed_head}")
+  reason="retained_history"
+  platform_peer_evidence+=("local-ai-reviewer|${outcome}|${reason}")
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json local-ai-reviewer "$outcome" "$reason")")
 }
 
 # reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
@@ -8280,6 +9372,283 @@ reviewer_loop_local_pass_required() {
   fi
 }
 
+# reviewer_loop_platform_clean_for_head <history_payload> <platform> <head_sha>
+#
+# Issue #1692: per-head reviewer staging. Reports whether <platform> already
+# has a recorded clean verdict for <head_sha> in the persisted
+# reviewer_loop_history.v1 ledger, so a later cycle on the same head does not
+# re-dispatch a reviewer that is already clean on that exact commit.
+#
+# Generalises the #1656 local-reviewer predicate to every configured platform:
+# the newest ledger entry that carries a platform_results record for
+# <platform> governs, and the reviewed head is read from that same entry's
+# reviewed_heads[] (the #1648 evidence field), never from a different entry.
+#
+# Prints exactly one of:
+#   clean_current — newest recorded result is "clean" AND that entry's
+#                   reviewed head for <platform> equals <head_sha>
+#   head_changed  — newest recorded result is "clean" but on another head, or
+#                   the entry records no reviewed head for <platform>
+#   not_clean     — newest recorded result is not "clean"
+#   no_evidence   — the ledger records no result for <platform>, the payload is
+#                   unreadable, or either argument is empty
+#
+# Fail-closed: every value other than clean_current means "dispatch". An
+# independent GitHub App/Actions check is never consulted here — only in-loop
+# ledger evidence counts.
+reviewer_loop_platform_clean_for_head() {
+  local payload="${1:-}" platform="${2:-}" head="${3:-}"
+  local verdict outcome verdict_head
+
+  if [ -z "$platform" ] || [ -z "$head" ] || [ -z "$payload" ]; then
+    printf 'no_evidence\n'
+    return 0
+  fi
+
+  verdict="$(printf '%s' "$payload" | jq -c --arg platform "$platform" '
+      (.entries // []) as $entries
+      | [ $entries[]
+          | . as $entry
+          | ((.platform_results // [])[]
+             | select(.platform == $platform)
+             | {outcome: (.result // "unknown"),
+                head_sha: (
+                  ($entry.reviewed_heads // [])
+                  | map(select(.platform == $platform))
+                  | last
+                  | .reviewed_head // ""
+                ),
+                iteration: ($entry.iteration // 0)})
+        ] as $verdicts
+      | if ($verdicts | length) > 0 then
+          ($verdicts | sort_by(.iteration) | last)
+        else
+          {outcome: "not_yet_run", head_sha: "", iteration: 0}
+        end' 2>/dev/null)" || verdict=""
+  if [ -z "$verdict" ]; then
+    printf 'no_evidence\n'
+    return 0
+  fi
+
+  outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"' 2>/dev/null)" || outcome="unknown"
+  verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)" || verdict_head=""
+
+  case "$outcome" in
+    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    clean) ;;
+    *) printf 'not_clean\n'; return 0 ;;
+  esac
+
+  if [ -n "$verdict_head" ] && [ "$verdict_head" = "$head" ]; then
+    printf 'clean_current\n'
+  else
+    printf 'head_changed\n'
+  fi
+}
+
+# reviewer_loop_platform_pre_dispatch <platform_name> <platform_index>
+#
+# The real per-platform pre-dispatch sequence, extracted from the platform loop
+# so its ordering is executable in tests rather than restated by them (#1692
+# Step 7a review). Sets reviewer_loop_pre_dispatch_action to one of:
+#   dispatch — run_platform_review must run for this platform
+#   replay   — the recorded current-head clean was replayed; the caller continues
+#   break    — a gate refused; aggregate_* is already set and the caller breaks
+# Always returns 0, so a `set -e` caller branches on the action rather than on
+# an exit status.
+reviewer_loop_platform_pre_dispatch() {
+  local platform_name="$1"
+  local platform_index="$2"
+  local stage_skip_replay=0
+  local stage_skip_gate_state="not_required"
+  local stage_skip_state=""
+  local expensive_gate_output expensive_gate_status _eg_escalation
+
+  reviewer_loop_pre_dispatch_action="dispatch"
+
+  # Issue #1692: decide whether this reviewer's recorded clean may be replayed
+  # instead of dispatched. The decision is taken here but ACTED ON below, after
+  # the #1649 gate: a recorded clean vouches only for the reviewer's own verdict
+  # on this head, never for the gate's live inputs (unresolved threads, baseline
+  # checks), so an expensive reviewer still owes its gate before anything —
+  # dispatch or replay — is allowed to report clean for it.
+  if [ "$stage_skip_enabled" -eq 1 ]; then
+    stage_skip_state="$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")"
+    if [ "$stage_skip_state" = "clean_current" ]; then
+      stage_skip_replay=1
+    fi
+  fi
+  if is_expensive_reviewer_platform "$platform_name"; then
+    stage_skip_gate_state="pending"
+  fi
+
+  # Issue #1649: expensive-reviewer gate — require current-head local clean,
+  # preceding peer evidence, resolved threads, and green baseline checks
+  # before dispatching. A defer sets needs_fixes and breaks so later platforms
+  # (including ready-phase) do not run.
+  if is_expensive_reviewer_platform "$platform_name"; then
+    set +e
+    expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")"
+    expensive_gate_status=$?
+    set -e
+    expensive_gate_sync_last_from_output "$expensive_gate_output"
+    if [ "$expensive_gate_status" -ne 0 ]; then
+      # Re-emit gate telemetry on the loop's stdout contract.
+      printf '%s\n' "$expensive_gate_output"
+      last_platform="$platform_name"
+      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+        aggregate_result="escalate"
+        _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
+        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
+          aggregate_reason="expensive_gate_deferral_budget_unreadable"
+        else
+          aggregate_reason="expensive_gate_deferral_cap"
+        fi
+        _eg_escalation=""
+        aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
+        aggregate_status=2
+        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
+      else
+        aggregate_result="needs_fixes"
+        aggregate_reason="expensive_gate_deferred"
+        aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=expensive_gate_deferred\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        aggregate_status=1
+        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
+      fi
+      reviewer_loop_pre_dispatch_action="break"
+      return 0
+    fi
+    stage_skip_gate_state="passed"
+    if [ "$stage_skip_replay" -eq 1 ]; then
+      # A passing gate that ends in a replay is not a dispatch and must not emit
+      # EXPENSIVE_GATE_RESULT=dispatched/forced into the machine-consumed stdout
+      # contract, summary, or history — the same rule the ready-phase preflight
+      # applies. The gate still ran: its live thread and baseline-check
+      # conditions were satisfied for this head before the replay was allowed.
+      echo "INFO: expensive-gate passed for ${platform_name}; replaying the recorded current-head clean instead of dispatching" >&2
+      expensive_gate_last_platform=""
+      expensive_gate_last_result=""
+      expensive_gate_last_reason=""
+      expensive_gate_last_head=""
+    else
+      # Re-emit gate telemetry on the loop's stdout contract.
+      printf '%s\n' "$expensive_gate_output"
+    fi
+    # forced / dispatched continue to run_platform_review. Clear rather than
+    # unset: these are function locals, and unset would unshadow the same-named
+    # globals the ready-phase preflight block uses.
+    expensive_gate_output=""
+    expensive_gate_status=0
+  fi
+
+  # Issue #1692: act on the replay decision, now that any expensive reviewer has
+  # cleared its #1649 gate on this head. The replayed verdict goes through
+  # reviewer_loop_process_platform_output, so the skipped platform contributes
+  # the same peer evidence, reviewed_heads[] entry, and ledger record a real
+  # dispatch would have contributed.
+  if [ "$stage_skip_replay" -eq 1 ] \
+      && reviewer_loop_stage_skip_allowed_now "$platform_name" "$stage_skip_gate_state"; then
+    echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
+    stage_skipped_platforms+=("$platform_name")
+    reviewer_loop_platform_loop_should_break=0
+    reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
+      "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
+    if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
+      reviewer_loop_pre_dispatch_action="break"
+    else
+      reviewer_loop_pre_dispatch_action="replay"
+    fi
+    return 0
+  fi
+  return 0
+}
+
+# reviewer_loop_stage_skip_allowed_now <platform> <gate_state>
+#
+# Issue #1692 x #1649: a recorded clean vouches for one reviewer's verdict on
+# one commit. It does not vouch for the expensive-reviewer gate's live inputs —
+# unresolved review threads and baseline check runs on that same head, which can
+# change after the verdict was recorded. So an expensive reviewer may only have
+# its verdict replayed once its gate has actually passed for this head; skipping
+# the gate to avoid a dispatch that will not happen would also skip the
+# readiness-withholding deferral the gate exists to produce.
+#
+# <gate_state> is "passed" once expensive_reviewer_gate returned success this
+# iteration, "pending" before that, and "not_required" for a platform with no
+# gate to owe. Anything other than those last two, or "passed", refuses.
+reviewer_loop_stage_skip_allowed_now() {
+  local platform="${1:-}" gate_state="${2:-}"
+
+  if is_expensive_reviewer_platform "$platform"; then
+    [ "$gate_state" = "passed" ]
+    return $?
+  fi
+  case "$gate_state" in
+    not_required|passed) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# reviewer_loop_stage_skip_resolve <pr_number>
+#
+# Issue #1692: decides whether per-head staging skips are possible this run and
+# loads the ledger they read. Sets stage_skip_enabled, stage_skip_disabled_reason
+# and stage_skip_history_payload.
+#
+# Skipping stands down whenever the run cannot prove what it would be skipping,
+# or whenever the caller asked for a dispatch:
+#   disabled_by_env             PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1
+#   compare_mode                --compare must run every platform to compare them
+#   explicit_platform_selection --platform names reviewers to run, so run them
+#   head_unknown                no platforms, no PR, or no readable loop head
+#   history_unavailable         the ledger for this PR could not be read
+reviewer_loop_stage_skip_resolve() {
+  local pr_number_arg="${1:-}"
+  local platform_count=0
+
+  stage_skip_enabled=0
+  stage_skip_history_payload=""
+  stage_skip_disabled_reason=""
+
+  if declare -p platforms >/dev/null 2>&1; then
+    platform_count="${#platforms[@]}"
+  fi
+
+  if [ "${PR_REVIEW_LOOP_DISABLE_STAGE_SKIP:-0}" = "1" ]; then
+    stage_skip_disabled_reason="disabled_by_env"
+  elif [ "${compare_mode:-0}" -eq 1 ]; then
+    stage_skip_disabled_reason="compare_mode"
+  elif [ "${platform_selection_explicit:-0}" -eq 1 ]; then
+    stage_skip_disabled_reason="explicit_platform_selection"
+  elif [ "$platform_count" -eq 0 ] || [ -z "$pr_number_arg" ] || [ -z "${loop_head_sha:-}" ]; then
+    stage_skip_disabled_reason="head_unknown"
+  else
+    stage_skip_history_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+    if [ "$(printf '%s' "$stage_skip_history_payload" | jq -r '.history_status // "available"' 2>/dev/null)" = "unavailable" ]; then
+      stage_skip_disabled_reason="history_unavailable"
+      stage_skip_history_payload=""
+    else
+      stage_skip_enabled=1
+    fi
+  fi
+}
+
+# reviewer_loop_stage_skip_output <head_sha>
+#
+# Issue #1692: the synthetic key=value block used when a platform is skipped
+# because the ledger already records it clean on the current head. It goes
+# through reviewer_loop_process_platform_output unchanged, so the skipped
+# platform contributes exactly the evidence a dispatch would have contributed:
+# peer evidence for the expensive gate (#1649), a reviewed_heads[] entry for
+# LOCAL_AI_HEAD_CURRENT / Protocol 91 Check 0.6 (#1648), and a
+# platform_results record for the ledger. The reviewed head is <head_sha> by
+# definition of the skip - it is the head the recorded clean verdict names.
+reviewer_loop_stage_skip_output() {
+  local head="${1:-}"
+  printf 'RESULT=clean\nREASON=%s\nDISPLAY_RESULT=clean (already clean on head)\nSTAGE_SKIP=1\nSTAGE_SKIP_REASON=%s\nREVIEWED_HEAD=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' \
+    "$REVIEWER_LOOP_STAGE_SKIP_REASON" "$REVIEWER_LOOP_STAGE_SKIP_REASON" "$head"
+}
+
 # reviewer_loop_second_local_pass_gate_result <pass_result> <pass_reason>
 # Prints tab-separated: aggregate_result<TAB>aggregate_reason
 reviewer_loop_second_local_pass_gate_result() {
@@ -8355,6 +9724,9 @@ reviewer_loop_second_local_pass_before_ready_gate() {
 
   if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
     if reviewer_loop_second_local_pass_confirm_live_head "$pr_number_arg"; then
+      if [ "$_sl_required" = "not_required" ]; then
+        reviewer_loop_retain_local_evidence_for_current_run "$_sl_composed" "$_sl_configured" "$loop_head_sha"
+      fi
       return 0
     fi
     return 1
@@ -8548,6 +9920,9 @@ reviewer_loop_process_platform_output() {
 
   if [ "$compare_mode" -eq 1 ]; then
     compare_verdicts+=("$platform_name" "$(normalize_platform_verdict "$platform_result" "$platform_output")")
+  fi
+  if [ "$platform_name" = "local-ai-reviewer" ]; then
+    reviewer_loop_recompute_current_round_aggregates
   fi
 
   reviewer_loop_last_platform_result="$platform_result"
@@ -9901,6 +11276,7 @@ reviewer_loop_history_build_entry() {
     --arg strictState "${strict_spec_state:-}" \
     --arg strictCount "${strict_spec_count:-}" \
     --arg strictChecks "${strict_spec_checks:-}" \
+    --arg strictApplied "${strict_spec_applied:-}" \
     --arg strictUnknown "${strict_spec_unknown_count:-}" \
     --arg strictReason "${strict_spec_reason:-}" \
     --argjson strictPlanRecorded "${strict_plan_recorded:-0}" \
@@ -9955,7 +11331,8 @@ reviewer_loop_history_build_entry() {
             | if $strictState == "applied" then
                 . + {
                   count: ($strictCount | tonumber),
-                  checks: ($strictChecks | if . == "" then [] else (split(",") | map(select(length > 0))) end)
+                  checks: ($strictChecks | if . == "" then [] else (split(",") | map(select(length > 0))) end),
+                  applied: ($strictApplied | if . == "" then [] else (split(",") | map(select(length > 0))) end)
                 }
                 | if ($strictUnknown | length) > 0 then
                     . + { unknown_count: ($strictUnknown | tonumber) }
@@ -10585,20 +11962,35 @@ reviewer_loop_resolve_max_total_cycles() {
 # Generic cap check reused for BOTH axes (call once with the per-run count
 # and per-run limit, and again with the lifetime count and lifetime limit).
 # Returns 0 (true — cap exceeded, caller should escalate) only when the loop
-# would otherwise keep going (result is needs_fixes or needs_rerun) and
-# cycle_count is known (>= 0) and has reached or passed max_cycles. A result
-# of "clean" is never overridden — a genuinely resolved PR is not escalated
-# just because it took many cycles to get there. An unknown cycle_count (-1,
-# from unreadable history) is handled separately by
-# reviewer_loop_cycle_count_unavailable_should_escalate below — this
-# function's job is strictly "is the known count at or past the cap".
+# would otherwise keep going (result is needs_fixes, needs_rerun, or
+# waiting_on_reviewer) and cycle_count is known (>= 0) and has reached or
+# passed max_cycles. A result of "clean" is never overridden — a genuinely
+# resolved PR is not escalated just because it took many cycles to get
+# there. An unknown cycle_count (-1, from unreadable history) is handled
+# separately by reviewer_loop_cycle_count_unavailable_should_escalate below
+# — this function's job is strictly "is the known count at or past the cap".
+#
+# #1757 (AC-5): waiting_on_reviewer added to the exceedable set. Spec
+# Business Rule 10: "The cycle-limit escalation takes precedence over the
+# cleared-findings retrigger path: when the allowance is exhausted and the
+# evaluation would require another review cycle — including a
+# cleared-findings retrigger — the loop escalates rather than emitting
+# waiting_on_reviewer." A cleared-findings-wait (Codex REASON=
+# codex-github-review-pending) is exactly this shape: the aggregate result
+# is waiting_on_reviewer, not needs_fixes, at the point this cap check
+# already runs (pr-review-loop.sh's reviewer-platform aggregation sets
+# aggregate_result=waiting_on_reviewer directly for that platform_result).
+# Any waiting_on_reviewer aggregate result means "the loop would otherwise
+# keep going" exactly as much as needs_fixes/needs_rerun do, so the same
+# cap applies uniformly across reviewer platforms rather than singling out
+# Codex.
 reviewer_loop_cap_exceeded() {
   local cycle_count="$1"
   local max_cycles="$2"
   local result="$3"
 
   case "$result" in
-    needs_fixes|needs_rerun) : ;;
+    needs_fixes|needs_rerun|waiting_on_reviewer) : ;;
     *) return 1 ;;
   esac
 
@@ -11132,6 +12524,7 @@ pr_number=""
 branch_name=""
 repo_selector=""
 repo_root="$(workflow_repo_root)"
+repo_root_explicit=0
 local_review_override_root=""
 review_policy_source="shared"
 poll_interval=120
@@ -11177,11 +12570,13 @@ while [ "$#" -gt 0 ]; do
     --repo-root)
       require_option_value "$@"
       repo_root="$2"
+      repo_root_explicit=1
       shift 2
       ;;
     --platform)
       require_option_value "$@"
       append_platforms "$2"
+      platform_selection_explicit=1
       shift 2
       ;;
     --phase-after-clean)
@@ -11277,6 +12672,144 @@ if [ -n "$repo_selector" ]; then
   export GH_REPO="$target_github_repo"
   print_kv REPO "$target_github_repo"
 fi
+
+# --- PR ownership guard (issue #1444) ---
+# This loop comments on, readies, and labels the PR by number. Under parallel
+# waves a transposed number would make it mutate a sibling's PR, so every run
+# proves the PR's head branch and head repository belong to the expected
+# branch before any side effect, and fails closed otherwise.
+#
+# Expected branch: --branch when given — it always wins, even over a
+# --repo-root checkout on another branch. Otherwise the branch checked out in
+# --repo-root (or, without --repo-root, the caller's working directory), and
+# only when it is a workflow branch (_is_trusted_workflow_branch). Detached
+# HEAD, develop, main, or any other branch cannot vouch for a PR number, so
+# the run stops with REASON=pr_ownership_branch_required.
+#
+# The check must inspect the repository the loop mutates, and the expected
+# branch and target repository must come from the same place. The target is
+# always passed as --repo (a bare lookup would read the caller's working
+# directory):
+#   --branch given: the explicit repository (--repo/--product-repo,
+#     WORKFLOW_TARGET_GITHUB_REPO, GH_REPO) when named, else the origin of the
+#     --repo-root the loop enters — the lock key's resolution.
+#   branch derived from checkout K: K's origin. When K is the working
+#     directory (no --repo-root), K's origin must also equal the origin of the
+#     --repo-root the loop enters; a named repository must equal K's origin.
+#     Otherwise the run fails closed rather than pick one.
+# Anything unresolvable, invalid, or contradictory fails closed as
+# pr_ownership_unverified. Once verified, the target is pinned in
+# WORKFLOW_TARGET_GITHUB_REPO and GH_REPO so every later gh call — including
+# the release guard's summary comment, which runs before the loop enters
+# --repo-root — acts on the repository that was verified, and a derived
+# branch becomes branch_name for the rest of the run.
+_ownership_expected_branch="$branch_name"
+_ownership_branch_source="argument"
+if [ -z "$_ownership_expected_branch" ]; then
+  _ownership_branch_source="checkout"
+  _ownership_checkout="$PWD"
+  if [ "$repo_root_explicit" -eq 1 ]; then
+    _ownership_checkout="$repo_root"
+  fi
+  _ownership_expected_branch="$(git -C "$_ownership_checkout" symbolic-ref --quiet --short HEAD 2>/dev/null)" \
+    || _ownership_expected_branch=""
+  if [ -z "$_ownership_expected_branch" ] || ! _is_trusted_workflow_branch "$_ownership_expected_branch"; then
+    print_kv RESULT escalate
+    print_kv REASON pr_ownership_branch_required
+    print_kv PR_OWNERSHIP_BRANCH_SOURCE "$_ownership_branch_source"
+    print_kv PR_OWNERSHIP_CHECKOUT_BRANCH "${_ownership_expected_branch:-<detached-or-unreadable>}"
+    print_kv PR_OWNERSHIP_REQUIRED_ACTION "Pass --branch <item-branch>, or run from the item's workflow-branch checkout (or pass its --repo-root)."
+    echo "STOP: no --branch was given and ${_ownership_checkout} is not on a workflow branch (${_ownership_expected_branch:-detached HEAD or not a checkout}), so PR #${pr_number} cannot be verified; no reviewer ran and the PR was not modified." >&2
+    exit 2
+  fi
+fi
+_ownership_repo=""
+_ownership_repo_source=""
+_ownership_repo_result=""
+_ownership_repo_problem=""
+_ownership_output=""
+_ownership_status=0
+_ownership_explicit_rc=0
+_ownership_explicit_repo="$(_resolve_explicit_target_repo_slug "$repo_selector" "$repo_root")" \
+  || _ownership_explicit_rc=$?
+_ownership_root_origin="$(_origin_repo_slug "$repo_root")" || _ownership_root_origin=""
+if [ "$_ownership_explicit_rc" -ge 2 ]; then
+  _ownership_repo_result="repo_unresolved"
+  _ownership_repo_problem="the named repository (--repo/--product-repo, WORKFLOW_TARGET_GITHUB_REPO, GH_REPO) is invalid or unresolvable, or WORKFLOW_TARGET_GITHUB_REPO and GH_REPO disagree"
+elif [ "$_ownership_branch_source" = "argument" ]; then
+  if [ "$_ownership_explicit_rc" -eq 0 ]; then
+    _ownership_repo="$_ownership_explicit_repo"
+    _ownership_repo_source="explicit"
+  elif [ -n "$_ownership_root_origin" ]; then
+    _ownership_repo="$_ownership_root_origin"
+    _ownership_repo_source="repo_root_origin"
+  else
+    _ownership_repo_result="repo_unresolved"
+    _ownership_repo_problem="no repository is named and ${repo_root} has no GitHub origin"
+  fi
+else
+  _ownership_checkout_origin="$(_origin_repo_slug "$_ownership_checkout")" || _ownership_checkout_origin=""
+  if [ -z "$_ownership_checkout_origin" ]; then
+    _ownership_repo_result="repo_unresolved"
+    _ownership_repo_problem="the branch came from ${_ownership_checkout}, which has no GitHub origin to tie it to a repository"
+  elif [ "$repo_root_explicit" -eq 0 ] \
+      && ! { [ -n "$_ownership_root_origin" ] && _repo_slug_eq "$_ownership_checkout_origin" "$_ownership_root_origin"; }; then
+    # The branch came from the working directory, but the loop's local work
+    # runs in --repo-root (default: the script checkout). A named repository
+    # cannot reconcile two different checkouts.
+    _ownership_repo_result="repo_conflict"
+    _ownership_repo_problem="the branch came from ${_ownership_checkout} (origin ${_ownership_checkout_origin}), but the loop enters ${repo_root} (origin ${_ownership_root_origin:-<none>}); pass --repo-root"
+  elif [ "$_ownership_explicit_rc" -eq 0 ]; then
+    if _repo_slug_eq "$_ownership_explicit_repo" "$_ownership_checkout_origin"; then
+      _ownership_repo="$_ownership_explicit_repo"
+      _ownership_repo_source="explicit_matches_checkout"
+    else
+      _ownership_repo_result="repo_conflict"
+      _ownership_repo_problem="the named repository ${_ownership_explicit_repo} differs from ${_ownership_checkout_origin}, the origin of ${_ownership_checkout} where the branch came from"
+    fi
+  else
+    _ownership_repo="$_ownership_checkout_origin"
+    _ownership_repo_source="checkout_origin"
+  fi
+fi
+# One ownership check per run covers every later PR write in this run: GitHub
+# fixes a PR's head branch and head repository at creation, and pr_number and
+# the verified repository (pinned below) are immutable for the rest of the run,
+# so the verification cannot go stale between here and a later mutation.
+if [ -n "$_ownership_repo" ]; then
+  _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" \
+    --expected-branch "$_ownership_expected_branch" --repo "$_ownership_repo" --repo-root "$repo_root" 2>&1)" \
+    || _ownership_status=$?
+else
+  _ownership_status=3
+  _ownership_output="RESULT=${_ownership_repo_result}
+REQUIRED_ACTION=Pass --branch and --repo-root for the item checkout (or --repo owner/name matching it); the branch and the repository must come from the same checkout.
+ERROR: could not resolve one target repository for the PR ownership check: ${_ownership_repo_problem}."
+fi
+print_kv PR_OWNERSHIP_BRANCH_SOURCE "$_ownership_branch_source"
+print_kv PR_OWNERSHIP_EXPECTED_BRANCH "$_ownership_expected_branch"
+print_kv PR_OWNERSHIP_REPO "$_ownership_repo"
+print_kv PR_OWNERSHIP_REPO_SOURCE "$_ownership_repo_source"
+if [ "$_ownership_status" -ne 0 ]; then
+  _ownership_reason="pr_ownership_unverified"
+  if [ "$_ownership_status" -eq 1 ]; then
+    _ownership_reason="pr_ownership_mismatch"
+  fi
+  print_kv RESULT escalate
+  print_kv REASON "$_ownership_reason"
+  print_kv PR_OWNERSHIP_GUARD_EXIT "$_ownership_status"
+  # awk, not grep: a guard usage error has no key lines, and a no-match
+  # grep would abort this block under `set -e` before the exit 2 below.
+  printf '%s\n' "$_ownership_output" \
+    | awk '/^(RESULT|PR_HEAD_BRANCH|PR_HEAD_REPO|MISMATCH|REQUIRED_ACTION)=/ { print "PR_OWNERSHIP_" $0 }'
+  echo "STOP: PR #${pr_number} was not verified as the PR of branch '${_ownership_expected_branch}'; no reviewer ran and the PR was not modified." >&2
+  printf '%s\n' "$_ownership_output" | awk '/^(REFUSED|ERROR):/' >&2
+  exit 2
+fi
+print_kv PR_OWNERSHIP_RESULT owned
+export WORKFLOW_TARGET_GITHUB_REPO="$_ownership_repo"
+export GH_REPO="$_ownership_repo"
+branch_name="$_ownership_expected_branch"
 
 # --- Reviewer-loop run identifier (#1502 follow-up: dual cap) ---
 # Resolved as early as possible (pr_number is now stable) so every code path
@@ -11728,6 +13261,23 @@ print_kv MAX_CYCLES "$max_cycles"
 print_kv TOTAL_CYCLE_COUNT "$lifetime_cycle_count"
 print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 
+
+# --- Per-head reviewer staging (issue #1692) ---
+# A reviewer that the persisted ledger already records clean on this exact head
+# is not re-dispatched on a later cycle of the same head; its recorded verdict
+# is replayed as this round's evidence instead. Skipping is only safe when the
+# ledger for THIS PR is readable, the loop knows which head it is reviewing, the
+# run is not comparing platforms, and the caller did not name platforms
+# explicitly. Every other case dispatches, because "unknown" must never read as
+# "clean". A new head clears every skip on its own: the recorded clean then
+# names a different commit, so #1656 still owns the local re-dispatch and #1649
+# still owns the expensive-reviewer gate.
+declare -a stage_skipped_platforms=()
+reviewer_loop_pre_dispatch_action="dispatch"
+reviewer_loop_stage_skip_resolve "$pr_number"
+print_kv STAGE_SKIP_ENABLED "$stage_skip_enabled"
+[ -n "$stage_skip_disabled_reason" ] && print_kv STAGE_SKIP_DISABLED_REASON "$stage_skip_disabled_reason"
+
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
@@ -11846,44 +13396,11 @@ for index in "${!platforms[@]}"; do
     fi
   fi
 
-  # Issue #1649: expensive-reviewer gate — require current-head local clean,
-  # preceding peer evidence, resolved threads, and green baseline checks
-  # before dispatching. A defer sets needs_fixes and breaks so later platforms
-  # (including ready-phase) do not run.
-  if is_expensive_reviewer_platform "$platform_name"; then
-    set +e
-    expensive_gate_output="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")"
-    expensive_gate_status=$?
-    set -e
-    expensive_gate_sync_last_from_output "$expensive_gate_output"
-    # Re-emit gate telemetry on the loop's stdout contract.
-    printf '%s\n' "$expensive_gate_output"
-    if [ "$expensive_gate_status" -ne 0 ]; then
-      last_platform="$platform_name"
-      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
-        aggregate_result="escalate"
-        _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
-        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
-          aggregate_reason="expensive_gate_deferral_budget_unreadable"
-        else
-          aggregate_reason="expensive_gate_deferral_cap"
-        fi
-        unset _eg_escalation
-        aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
-        aggregate_status=2
-        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
-      else
-        aggregate_result="needs_fixes"
-        aggregate_reason="expensive_gate_deferred"
-        aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=expensive_gate_deferred\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
-        aggregate_status=1
-        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
-      fi
-      break
-    fi
-    # forced / dispatched continue to run_platform_review
-    unset expensive_gate_output expensive_gate_status
-  fi
+  reviewer_loop_platform_pre_dispatch "$platform_name" "$platform_index"
+  case "$reviewer_loop_pre_dispatch_action" in
+    break) break ;;
+    replay) continue ;;
+  esac
 
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
@@ -12045,9 +13562,9 @@ _ADVISORY_ENTRY_LINES_
         if [ "${_has_regression_label:-}" = "false" ]; then
           regression_label_section="
 
-**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop):
+**Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop) — routed through the readiness-label gate, never a direct \`gh pr edit\` (which would bypass the reviewer/CI verdict gate; see #1408):
 \`\`\`
-gh pr edit ${pr_number} --add-label \"ready-for-regression\"
+bash scripts/development-workflow/apply-readiness-labels.sh --pr ${pr_number} --branch ${branch_name} --label \"ready-for-regression\"
 \`\`\`
 Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
         fi
@@ -12433,6 +13950,7 @@ EOF
 if [ -z "$last_platform" ]; then
   print_kv LOCAL_SECOND_PASS 0
   print_kv LOCAL_SECOND_PASS_REASON not_required
+  print_kv STAGE_SKIPPED_PLATFORMS ""
   print_kv RESULT skipped
   print_kv REASON not_configured
   print_kv PLATFORM ""
@@ -12998,6 +14516,11 @@ sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
 print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
 print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"
+# Issue #1692: which reviewers this run replayed from the ledger instead of
+# dispatching. Always emitted (empty when nothing was skipped) so a supervising
+# runner can tell "the reviewer was clean and re-run" apart from "the reviewer
+# was clean on this head already and was not re-run".
+print_kv STAGE_SKIPPED_PLATFORMS "$(IFS=,; printf '%s' "${stage_skipped_platforms[*]:-}")"
 print_kv RESULT "$aggregate_result"
 print_kv PLATFORM "$last_platform"
 [ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"

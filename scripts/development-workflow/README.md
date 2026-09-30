@@ -349,7 +349,9 @@ What it does:
 
 Renders deterministic component release evidence from an independent target
 binding and rejects mismatched repository identity, artifact owners,
-`release_correlation_key`, or `contract_revision`.
+`release_correlation_key`, or `contract_revision`. Field-level trust classes
+and consumer duties are documented in
+[`docs/workflow/development-workflow/component-release-evidence-contract.md`](../../docs/workflow/development-workflow/component-release-evidence-contract.md).
 
 Usage:
 
@@ -365,12 +367,30 @@ Usage:
   --cleanup-outcome not_started \
   --hub-tracker-ref "#123" \
   --output /tmp/component-release-evidence.json
+
+# After the product release completes, re-render with bound tag/version
+# (required before delivery-bundle-manifest.sh update-component):
+./scripts/development-workflow/component-release-evidence.sh \
+  --target-file /tmp/component-release-target.json \
+  --binding-file /tmp/component-release-target.json \
+  --release-branch mobile-app/release/v1.2.3 \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "#123" \
+  --component-tag mobile-v1.2.3 \
+  --component-version 1.2.3 \
+  --output /tmp/component-release-evidence.json
 ```
 
 ### `multi-repo-release-assurance.sh`
 
 Validates deterministic workflow-hub adoption fixtures before a
-multi-repository release is treated as adopted.
+multi-repository release is treated as adopted. Scenario evidence is classified
+as `trust_class: attestation` (`TRUST_CLASS=attestation` in key-value output);
+see
+[`docs/workflow/development-workflow/component-release-evidence-contract.md`](../../docs/workflow/development-workflow/component-release-evidence-contract.md).
 
 Usage:
 
@@ -388,6 +408,8 @@ Usage:
 What it does:
 
 - Emits `multi_repo_release_assurance.v1`.
+- Emits `trust_class: attestation` / `TRUST_CLASS=attestation` so operators know
+  scenario evidence is self-attested, not verified against a producer record.
 - Reads explicit fixture directories containing scenario inputs and historical
   before/after baselines.
 - Writes JSON to stdout; redirect it to the release runbook or self-review
@@ -410,6 +432,9 @@ bash scripts/development-workflow/tests/test-multi-repo-release-assurance.sh
 
 Creates and updates hub-owned delivery bundle manifests that compose
 independently released product components into one customer-facing delivery.
+`update-component` requires `--component-version` and require-and-matches it
+against the evidence file. Trust duties are documented in
+[`docs/workflow/development-workflow/component-release-evidence-contract.md`](../../docs/workflow/development-workflow/component-release-evidence-contract.md).
 
 Usage:
 
@@ -473,7 +498,7 @@ Usage:
 | --- | --- |
 | `create` | `--title`, `--purpose`, `--parent-ref`, `--component`, `--finalization-owner` |
 | `add-component` | `--expected-revision`, `--component-key` |
-| `update-component` | `--expected-revision`, `--component-key`, `--evidence-file`, `--component-tag`, `--source-pr`, `--release-pr`, `--child-item`, `--child-release-state` |
+| `update-component` | `--expected-revision`, `--component-key`, `--evidence-file`, `--component-tag`, `--component-version`, `--source-pr`, `--release-pr`, `--child-item`, `--child-release-state` |
 | `remove-component` | `--expected-revision`, `--component-key`, `--reason` |
 | `inspect` | none |
 | `finalize` | `--expected-revision` |
@@ -501,7 +526,10 @@ What it does:
 ### `component-milestone-reconciliation.sh`
 
 Reconciles hub-owned component release status after component evidence and,
-when present, delivery bundle evidence are available.
+when present, delivery bundle evidence are available. Hub-path callers must
+supply `--hub-tracker-reconciliation-outcome` and `--child-release-state` as
+flags (never from the evidence file). See
+[`docs/workflow/development-workflow/component-release-evidence-contract.md`](../../docs/workflow/development-workflow/component-release-evidence-contract.md).
 
 Usage:
 
@@ -513,6 +541,8 @@ Usage:
   --product-repo mobile-app \
   --component-tag mobile-v1.4.0 \
   --evidence-file /tmp/component-release-evidence.json \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-release-state released \
   --json
 
 ./scripts/development-workflow/component-milestone-reconciliation.sh apply-component \
@@ -521,6 +551,8 @@ Usage:
   --product-repo mobile-app \
   --component-tag mobile-v1.4.0 \
   --evidence-file /tmp/component-release-evidence.json \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-release-state released \
   --json
 
 ./scripts/development-workflow/component-milestone-reconciliation.sh inspect-parent \
@@ -625,6 +657,43 @@ Use this when:
 - A deliberate split needs explicit `--allow-split true` approval with the
   approved base recorded in the parent summary.
 
+### `pr-ownership-guard.sh`
+
+Refuses a PR mutation by number unless the PR belongs to the expected branch
+(issue #1444). `gh pr edit`, `gh pr comment`, `gh pr ready`, `gh pr close`, and
+label changes accept any PR number, so under parallel waves a transposed digit
+silently mutates a sibling's PR.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" \
+  --expected-branch "fix/1444-example" || exit 1
+gh pr edit "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-body-1444-$$.md"
+```
+
+What it does:
+
+- Resolves the PR's `headRefName`, head repository, and `isCrossRepository`
+  with one read-only `gh pr view` call. Ownership is branch **and** head
+  repository: a cross-repository (fork) PR is refused (`MISMATCH=head_repository`)
+  even when its branch name matches, unless `--expected-head-repo owner/name`
+  names that fork.
+- Defaults `--expected-branch` to the branch checked out in `--repo-root`
+  (default: the current directory); pass it explicitly when the caller is not
+  inside the item worktree. `--repo owner/name` is passed through to `gh`.
+- Exits `0` with `RESULT=owned` on a match, `1` with `RESULT=not_owned` on a
+  mismatch (`MISMATCH=branch` or `MISMATCH=head_repository`, including a
+  same-repository PR whose head is not the target repository: `--repo`, else
+  `GH_REPO`, else the `--repo-root` GitHub origin), `3` with
+  `RESULT=pr_unresolved` when `gh` or `jq` is missing, `gh` fails or times out,
+  or the response lacks the head branch, the cross-repository flag, or a valid
+  head repository, `4` with `RESULT=branch_unknown` when the
+  default expectation cannot be read (detached HEAD or not a checkout), and `2`
+  on usage errors. Every non-zero exit is a stop before mutation.
+
 ### `item-completion-self-check.sh`
 
 Builds the mandatory ground-truth verification section for Work Item Runner and
@@ -681,6 +750,9 @@ Usage:
 What it does:
 
 - Reads the PR's `statusCheckRollup` via `gh`
+- Judges only the latest run per check: the rollup keeps superseded runs, so it
+  collapses them first with `normalize_status_check_rollup` (`workflow-lib.sh`),
+  the one deduplication every rollup consumer shares (issue #1559)
 - Reports a stable `RESULT=green|red|timeout`
 - Emits parseable `key=value` lines for failing and pending checks
 
@@ -699,6 +771,13 @@ Usage:
 ```bash
 bash ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
+
+Pass `--branch` whenever the item branch is known. Every run first verifies
+that the PR belongs to `--branch` — or, without it, to the workflow branch
+checked out in `--repo-root` or the working directory — and otherwise stops
+with `RESULT=escalate` (`REASON=pr_ownership_branch_required`,
+`pr_ownership_mismatch`, or `pr_ownership_unverified`) before touching the PR
+(issue #1444).
 
 What it does:
 
@@ -1059,7 +1138,8 @@ Use this when:
 
 ### `prepare-release-post-merge-cleanup.sh`
 
-After both release PRs (`release/*` -> `main` and `release/*` -> `develop`) are merged, verify merge state, remove the release branch remotely and locally, and transition scoped tracker items from `Merged` to `Released`.
+After both release PRs (`release/*` -> `main` and `release/*` -> `develop`) are merged, verify merge state, remove the release branch remotely and locally, and transition scoped tracker items from `Merged` to `Released`. For workflow-hub component releases, the evidence file must carry non-empty identity fields, a non-empty `release_branch`, and a non-empty `cleanup_outcome` before cleanup mutates product-owned artifacts. See
+[`docs/workflow/development-workflow/component-release-evidence-contract.md`](../../docs/workflow/development-workflow/component-release-evidence-contract.md).
 
 Usage:
 

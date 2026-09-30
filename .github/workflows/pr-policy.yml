@@ -18,7 +18,9 @@
 #     - all canonical summary comments: refresh the PR-scoped guard status
 #
 # Fork-head PRs are skipped before any label or status mutation. This workflow
-# does not checkout PR code and does not execute untrusted fork content.
+# checks out the repository's default branch only — trusted, reviewed code — to
+# load the readiness-label helper; PR head code is never checked out and never
+# executed.
 name: PR policy
 
 on:
@@ -53,8 +55,25 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
+      # Trusted default-branch checkout of the readiness helper (#1408 round
+      # 13): contents: read is least privilege for it.
+      contents: read
+      # The readiness helper reads commits/<sha>/check-runs for check-run
+      # reviewers; without this the read is refused and every check-run
+      # reviewer escalates check-run-fetch-failed (#1408 round 29).
+      checks: read
 
     steps:
+      # Trusted default-branch checkout: load apply-readiness-labels.sh (and
+      # everything it sources) from reviewed code only. PR head code is never
+      # checked out, never executed (PR #1818 round 13, thread
+      # PRRT_kwDORWAxaM6m0pQc/Ql).
+      - name: Check out trusted default branch for readiness helper
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Apply PR policy
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,6 +270,32 @@ jobs:
             fi
           }
 
+          # The guard proves the loop COMPLETED for the live head (#1810):
+          # the mere presence of a summary is not enough. An escalated or
+          # otherwise non-clean result fails, and so does a clean result
+          # written against an older head. A `skipped` summary is a
+          # branch- or config-scoped decision (release/hotfix PRs to main, or
+          # no reviewers configured) that may carry no head history, so it
+          # is not head-bound.
+          reviewer_loop_guard_verdict() {
+            if [ "${FOUND:-0}" -le 0 ]; then
+              STATE="failure"
+              DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
+            elif [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; then
+              STATE="success"
+              DESCRIPTION="Reviewer loop intentionally skipped."
+            elif [ "$LATEST_SUMMARY_RESULT" != "clean" ]; then
+              STATE="failure"
+              DESCRIPTION="Latest reviewer-loop summary is not clean (escalated or incomplete)."
+            elif [ "$LATEST_SUMMARY_HEAD_MATCHES" != "true" ]; then
+              STATE="failure"
+              DESCRIPTION="Reviewer-loop clean summary does not cover the current head. Re-run the loop."
+            else
+              STATE="success"
+              DESCRIPTION="Reviewer loop ran clean for the current head."
+            fi
+          }
+
           reviewer_summary_allows_regression() {
             { [ "$LATEST_SUMMARY_RESULT" = "clean" ] ||
               [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; } &&
@@ -292,6 +337,21 @@ jobs:
               fi
             fi
 
+            # Readiness labels are merge-gate inputs (#1408): never applied by a
+            # direct `gh pr edit --add-label`. The helper runs from the trusted
+            # default-branch checkout above, so both it and workflow-lib.sh
+            # (which it sources) are on disk — loaded from reviewed code, never
+            # from the PR head revision, which this job must not execute. A
+            # failure to run the helper keeps the documented WARN-and-continue
+            # posture: the guard status below is never masked by label-policy
+            # trouble. WORKFLOW_TARGET_GITHUB_REPO points its repo-root
+            # resolution at the target repository. --branch "$BRANCH" is
+            # required (issue #1837): the helper's ownership guard otherwise
+            # defaults to the branch checked out in its repo root, which here
+            # is $GITHUB_WORKSPACE on the trusted DEFAULT branch, not the PR's
+            # branch — every PR would refuse `ownership-mismatch` without it.
+            # $BRANCH comes from the PR API read above, never from this
+            # checkout.
             if [ "$should_apply_regression_label" != "true" ]; then
               :
             elif ! ensure_regression_label_exists; then
@@ -299,13 +359,16 @@ jobs:
               LABEL_POLICY_FAILED=true
             elif ! refreshed_metadata_matches_current_head; then
               echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
-            elif ! gh pr edit "$PR_NUMBER" \
-              --repo "$REPO" \
-              --add-label "$LABEL_NAME"; then
-              echo "WARN: Failed to apply ${LABEL_NAME} to PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
-              LABEL_POLICY_FAILED=true
+            elif ! ( cd "$GITHUB_WORKSPACE" && WORKFLOW_TARGET_GITHUB_REPO="$REPO" \
+                bash "$GITHUB_WORKSPACE/scripts/development-workflow/apply-readiness-labels.sh" --pr "$PR_NUMBER" --repo "$REPO" --branch "$BRANCH" --label "$LABEL_NAME" ); then
+              # Exit 1 is the helper refusing (RESULT=refused): live
+              # reviewer/CI/head validation did not pass, so the label must not
+              # land. Exit 2 escalates (unreadable state). Either way this
+              # workflow never hard-fails on label policy; the guard status
+              # below still runs.
+              echo "WARN: apply-readiness-labels.sh refused to apply ${LABEL_NAME} to PR #${PR_NUMBER} (RESULT=refused) or its state read escalated. Continuing to reviewer-loop guard status." >&2
             else
-              echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
+              echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER} via apply-readiness-labels.sh."
             fi
           }
 
@@ -448,13 +511,8 @@ jobs:
 
           echo "Reviewer-loop summary comments found: ${FOUND}"
 
-          if [ "${FOUND:-0}" -gt 0 ]; then
-            STATE="success"
-            DESCRIPTION="Reviewer-loop summary present."
-          else
-            STATE="failure"
-            DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
-          fi
+          echo "Latest reviewer-loop summary result: ${LATEST_SUMMARY_RESULT}; head match: ${LATEST_SUMMARY_HEAD_MATCHES}."
+          reviewer_loop_guard_verdict
 
           gh api \
             --method POST \
@@ -471,8 +529,8 @@ jobs:
           fi
 
           if [ "$STATE" = "failure" ]; then
-            echo "Guard FAILED: the automated reviewer loop must run to completion before this PR is treated as ready."
+            echo "Guard FAILED: ${DESCRIPTION}"
             exit 1
           fi
 
-          echo "Guard PASSED: reviewer-loop summary is present."
+          echo "Guard PASSED: ${DESCRIPTION}"

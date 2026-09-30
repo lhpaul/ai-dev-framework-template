@@ -52,7 +52,11 @@ Before opening the draft PR, complete protocol 01's Document Quality Gate and
 include the gate log in the PR description. For tracker-backed items, follow
 protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note
 requirements as part of that gate. For complex workflow decision-gate specs,
-include protocol 01's consistency matrix or not-applicable rationale.
+include protocol 01's consistency matrix or not-applicable rationale. When the
+spec contains a decision matrix, state table, lifecycle, precedence rules, or
+similarly stateful contract, run protocol 01's matrix coherence preflight
+(six-check audit) before the first push and record the result as a `Matrix
+coherence preflight` row in the gate log.
 
 When creating the development folder, discover design assets per
 `docs/workflow/development-workflow/design-assets.md`. If confirmed tracker

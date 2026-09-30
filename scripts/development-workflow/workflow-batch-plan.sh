@@ -315,49 +315,73 @@ PYEOF
   done
 }
 
-# extract_github_issue_number <development-folder-path>
-#
-# Extracts the GitHub issue number from the spec or plan markdown files in a
-# development folder.  Looks for lines matching:
-#   **Issue**: #NNN
-#   **Issue**: [#NNN](...)
-# and also tries the folder slug prefix pattern (e.g. "291-some-slug" -> 291).
-#
-# Prints the bare numeric issue number, or an empty string when not found.
-extract_github_issue_number() {
-  local dev_path="$1"
-  local doc_files=() issue_number="" line
-
-  while IFS= read -r f; do
-    doc_files+=("$f")
-  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
-
-  # Scan markdown files for "**Issue**: #NNN" or "**Issue**: [#NNN](...)"
-  for f in "${doc_files[@]}"; do
-    while IFS= read -r line; do
-      # Match: **Issue**: #123  or  **Issue**: [#123](url)
-      if printf '%s\n' "$line" | grep -qE '^\*\*Issue\*\*:[[:space:]]*\[?#[0-9]+'; then
-        issue_number="$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
-        break 2
-      fi
-    done < "$f"
-  done
-
-  # Fallback: extract leading issue number from folder slug (e.g. "291-some-slug").
-  if [ -z "$issue_number" ]; then
-    local slug
-    slug="$(basename "$dev_path" | sed 's/^[0-9]\{14\}_//')"
-    if printf '%s\n' "$slug" | grep -qE '^[0-9]+-'; then
-      issue_number="$(printf '%s\n' "$slug" | grep -oE '^[0-9]+')"
-    fi
-  fi
-
-  printf '%s' "${issue_number:-}"
-}
+# extract_github_issue_number is defined in workflow-lib.sh (relocated
+# verbatim, #1583) so framework-mode-backlog-type-gate.sh's single-item
+# folder resolution reuses the same mapping. workflow-lib.sh is already
+# sourced above, so the call site below is unchanged.
 
 # Escape string for use in extended regular expressions.
 ere_escape() {
   printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
+}
+
+# _fm_gate_check <issue-number> <tracker-status> <tracker-status-deferred: yes|no> <artifact-stage> <github-repo>
+#
+# Framework-mode Backlog routing gate wiring (#1583). Consumer mode and a
+# blank issue number are no-ops. Populates FM_HOLD (0/1),
+# FM_MISCLASSIFIED_TYPE, FM_MISCLASSIFIED_TYPE_REASON, and
+# FM_MISCLASSIFIED_TYPE_CHECK (applied/deferred/not_applicable — a report
+# field only; it changes no routing decision). The gate itself reads Type
+# (the scan retains only the status string, not Type — see the plan's
+# "Tracker-read cost" accounting), so this helper never reads Type.
+#
+# Branch/PR evidence is only probed when the tracker status reconciles to
+# Backlog (order 0) AND the artifact stage is empty — exactly the
+# combination under which the gate's decision table actually consults it.
+# This bounds the extra `gh pr list` + `git show-ref` cost to genuine
+# no-work-yet Backlog folders instead of every scanned non-terminal folder.
+_fm_gate_check() {
+  FM_HOLD=0
+  FM_MISCLASSIFIED_TYPE=""
+  FM_MISCLASSIFIED_TYPE_REASON=""
+  FM_MISCLASSIFIED_TYPE_CHECK="not_applicable"
+
+  # workflow_template_is_template (no args) resolves relative to
+  # workflow-lib.sh's own location, not $repo_root — pass this scan's
+  # target repo config explicitly (same root cause as
+  # list_open_framework_items.sh and framework-mode-backlog-type-gate.sh;
+  # codex-github finding, #1583).
+  [ "$(workflow_template_is_template "$repo_root/.ai-dev-workflow.yaml")" = "true" ] || return 0
+
+  local _fm_issue="$1" _fm_status="$2" _fm_deferred="$3" _fm_artifact_stage="$4" _fm_github_repo="$5"
+  [ -n "$_fm_issue" ] || return 0
+
+  local _fm_branch_pr_evidence="none"
+  if [ "$(workflow_status_order "$_fm_status")" = "0" ] && [ -z "$_fm_artifact_stage" ]; then
+    _fm_branch_pr_evidence="$(workflow_branch_pr_evidence "$_fm_issue" "$_fm_github_repo")"
+  fi
+
+  local _fm_gate_output
+  _fm_gate_output="$("$SCRIPT_DIR/framework-mode-backlog-type-gate.sh" \
+    --issue "$_fm_issue" --status "$_fm_status" --artifact-stage "$_fm_artifact_stage" \
+    --branch-pr-evidence "$_fm_branch_pr_evidence" --caller scan --repo-root "$repo_root")"
+
+  local _fm_result _fm_check
+  _fm_result="$(printf '%s\n' "$_fm_gate_output" | awk -F= '$1=="RESULT"{print $2; exit}')"
+  _fm_check="$(printf '%s\n' "$_fm_gate_output" | awk -F= '$1=="MISCLASSIFIED_TYPE_CHECK"{print $2; exit}')"
+  if [ -n "$_fm_check" ]; then
+    FM_MISCLASSIFIED_TYPE_CHECK="$_fm_check"
+  elif [ "$_fm_deferred" = "yes" ]; then
+    FM_MISCLASSIFIED_TYPE_CHECK="deferred"
+  else
+    FM_MISCLASSIFIED_TYPE_CHECK="applied"
+  fi
+
+  if [ "$_fm_result" = "hold" ]; then
+    FM_HOLD=1
+    FM_MISCLASSIFIED_TYPE="Workflow"
+    FM_MISCLASSIFIED_TYPE_REASON="$(printf '%s\n' "$_fm_gate_output" | sed -n 's/^REASON_TEXT=//p')"
+  fi
 }
 
 # open_implementation_pr_metadata <issue-number> <slug> <github-repo>
@@ -551,6 +575,19 @@ for development_path in "${development_paths[@]}"; do
       tracker_status=""
       ;;
   esac
+  # #1583: any empty tracker-status read is "unreadable" for the
+  # misclassified-type check, not only the Linear-specific deferral signal
+  # above — get_tracker_status_for_issue also returns empty, silently and
+  # with no TRACKER_ACTION_REQUIRED marker, for a missing project number and
+  # a missing project item under github_projects (workflow-lib.sh's
+  # get_tracker_status_for_issue doc comment). Reusing only
+  # _tracker_status_deferred here would report MISCLASSIFIED_TYPE_CHECK=applied
+  # for those two silent-failure modes when the check never actually ran.
+  if [ -z "$tracker_status" ]; then
+    _fm_tracker_status_deferred=yes
+  else
+    _fm_tracker_status_deferred=no
+  fi
   if is_terminal_tracker_status "$tracker_status"; then
     echo "Skipping $development_path: tracker status is terminal ('$tracker_status') for issue #$issue_number" >&2
     continue
@@ -572,9 +609,28 @@ for development_path in "${development_paths[@]}"; do
     # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated
     # block so the orchestrator still sees TOOL_FIX for this folder.
     echo "Skipping $development_path: $next_action_output" >&2
+    # framework-mode-backlog-type-gate.sh wiring (#1583). This is the case
+    # the feature exists for: no folder artifacts (next-action just failed),
+    # so a genuinely no-work Backlog + Workflow item is caught here.
+    _fm_gate_check "$issue_number" "$tracker_status" "$_fm_tracker_status_deferred" "" ""
+    if [ "$FM_HOLD" -eq 1 ]; then
+      print_kv TARGET "development:$development_path"
+      print_kv DEVELOPMENT_PATH "$development_path"
+      print_kv SLUG "$slug"
+      print_kv STATUS "$tracker_status"
+      print_kv NEXT_ACTION "hold-misclassified-type"
+      print_kv MISCLASSIFIED_TYPE "$FM_MISCLASSIFIED_TYPE"
+      print_kv MISCLASSIFIED_TYPE_REASON "$FM_MISCLASSIFIED_TYPE_REASON"
+      print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
+      print_kv TOOL_FIX "$tool_fix"
+      [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+      echo
+      continue
+    fi
     print_kv TARGET "development:$development_path"
     print_kv DEVELOPMENT_PATH "$development_path"
     print_kv SLUG "$slug"
+    [ "$FM_MISCLASSIFIED_TYPE_CHECK" != "not_applicable" ] && print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
     print_kv TOOL_FIX "$tool_fix"
     [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
     echo
@@ -631,6 +687,29 @@ for development_path in "${development_paths[@]}"; do
       ;;
   esac
 
+  # framework-mode-backlog-type-gate.sh wiring (#1583). A stale Backlog with
+  # artifacts (status here is next-action's artifact-derived value, e.g.
+  # "Spec Ready") passes as stale_backlog_reconciled and this block is
+  # emitted unchanged — the gate only replaces the block below when it
+  # genuinely holds.
+  _fm_gate_check "$issue_number" "$tracker_status" "$_fm_tracker_status_deferred" "$status" "$action_github_repo"
+  if [ "$FM_HOLD" -eq 1 ]; then
+    print_kv TARGET "development:$development_path"
+    print_kv DEVELOPMENT_PATH "$development_path"
+    print_kv SLUG "$slug"
+    [ -n "$linear_issue" ] && print_kv LINEAR_ISSUE "$linear_issue"
+    [ "$_tracker_status_deferred" = "yes" ] && print_kv TRACKER_STATUS_DEFERRED "$issue_number"
+    print_kv STATUS "$tracker_status"
+    print_kv NEXT_ACTION "hold-misclassified-type"
+    print_kv MISCLASSIFIED_TYPE "$FM_MISCLASSIFIED_TYPE"
+    print_kv MISCLASSIFIED_TYPE_REASON "$FM_MISCLASSIFIED_TYPE_REASON"
+    print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
+    print_kv TOOL_FIX "$tool_fix"
+    [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
+    echo
+    continue
+  fi
+
   print_kv TARGET "development:$development_path"
   print_kv DEVELOPMENT_PATH "$development_path"
   print_kv SLUG "$slug"
@@ -650,5 +729,6 @@ for development_path in "${development_paths[@]}"; do
   [ "$tool_fix" = "yes" ] && print_kv TOOL_FIX_FILES "$tool_fix_files"
   [ -n "$file_set" ] && print_kv FILE_SET "$file_set"
   [ -n "$local_runtime" ] && print_kv LOCAL_RUNTIME "$local_runtime"
+  [ "$FM_MISCLASSIFIED_TYPE_CHECK" != "not_applicable" ] && print_kv MISCLASSIFIED_TYPE_CHECK "$FM_MISCLASSIFIED_TYPE_CHECK"
   echo
 done

@@ -1,6 +1,6 @@
 ---
 name: developer
-model: claude-sonnet-5
+model: opus
 description: In Development stage. Handles four paths — Full Pipeline (feature with spec+plan), Refactor (code restructuring with plan only, no spec), Fast Track (bug or simple change, no spec/plan needed), and Hotfix (critical production bug from main). Implements code, verifies build/lint/tests, opens PRs, and resolves reviewer / CI readiness.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
@@ -9,7 +9,7 @@ Follow the implementation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 
-That document is the single source of truth for this stage. It covers all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) and their specific requirements.
+That document is the single source of truth for this stage. It covers all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) and their specific requirements. The matrix coherence preflight (Protocol 01) gates spec and plan artifacts only; implementation PRs, including documentation-only ones, are out of its scope.
 
 **Repository mode context**: Before file edits, branch creation, commits, or
 implementation PR creation, resolve and state the workflow mode, artifact owner,
@@ -84,10 +84,26 @@ Key rules:
   work, produce and verify residual evidence with `scope-residual-gate.sh`
   before `ready-for-human-review`; block or escalate instead of silently
   deferring residuals.
+- When shipped test scaffolding removes at least one item the plan projected
+  (an addition-only delta does not trigger this): if the plan marked that
+  enumeration `**Binding enumeration**`, restore the listed item, or obtain
+  a human decision to amend the plan, before opening the PR, regardless of
+  a Coverage-Harm Statement. Otherwise, when the deviation is
+  coverage-equivalent, write a `## Test-Scope Deviation Record` in the PR
+  description before opening the PR — see
+  `docs/workflow/development-workflow/test-scope-proportionality.md` and
+  Protocol 03's `Test-Scope Deviation Record` section.
 - Implementation files belong on implementation branches, not `spec/*` or
   `implementation-plan/*` branches. If a documentation-stage PR is in scope,
   Protocol 91 Step 8a must run `check-documentation-stage-alignment.sh`; correct
   or escalate any mismatch before `ready-for-human-review`.
+- Before stopping under `architecture_decision`, run the per-axis coverage
+  analysis and produce the well-formed escalation report required by
+  `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+  axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+  `Departs` / `Not yet implemented` declaration, and a requested decision
+  scoped to genuinely open axes only. When citing a workflow specification
+  line as support in a review-thread reply, attach the same declaration.
 - Never bypass build/lint/test verification
 - Never force-push, force-with-lease, or otherwise rewrite a published workflow
   PR branch directly. Use follow-up commits; if a destructive branch update is

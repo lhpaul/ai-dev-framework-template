@@ -318,31 +318,10 @@ while :; do
     print_kv REVIEWER_CHECKS_JSON "[]"
     exit 1
   fi
-  # statusCheckRollup can include historical duplicates for the same check.
-  # Keep only the latest entry per check name to avoid stale conclusions.
+  # statusCheckRollup keeps superseded runs for the same check. Keep only the
+  # latest entry per check via the shared helper (workflow-lib.sh, #1559).
   if ! normalized_checks_json="$(
-    printf '%s\n' "$checks_json" | jq '
-      (.statusCheckRollup // [])
-      | map(
-          . + {
-            __check_key: (
-              if (.context // "") != "" then
-                "status:" + .context
-              elif (.workflowName // "") != "" and (.name // "") != "" then
-                "check:" + .workflowName + "/" + .name
-              elif (.name // "") != "" then
-                "check:" + .name
-              else
-                "unknown"
-              end
-            ),
-            __check_ts: (.startedAt // .completedAt // .createdAt // "")
-          }
-        )
-      | sort_by(.__check_key, .__check_ts)
-      | group_by(.__check_key)
-      | map(last | del(.__check_key, .__check_ts))
-    '
+    printf '%s\n' "$checks_json" | normalize_status_check_rollup
   )"; then
     print_kv RESULT red
     print_kv PR_NUMBER "$pr_number"

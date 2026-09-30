@@ -43,7 +43,7 @@ Note the **project number** returned — you will use it in all `gh project` com
 
 ### 2. Configure the Status Field
 
-GitHub Projects v2 creates a default **Status** single-select field. Configure it with the following options to match workflow stages:
+GitHub Projects v2 creates a default **Status** single-select field. Configure it with the following options to match workflow stages. Option names must match the canonical vocabulary in [`tracker-status-mapping.md`](../tracker-status-mapping.md) exactly. Add a `Cancelled` option as well for abandoned items.
 
 | Status Option         | Workflow Stage                                               |
 | --------------------- | ------------------------------------------------------------ |
@@ -104,10 +104,18 @@ then `Type`. If your board uses a different name, set
 - `Feature` routes through the full pipeline: spec, plan, implementation.
 - `Bug` routes through the fast-track fix path when the scope check allows it.
 - `Refactor` routes through the plan-only refactor path.
-- `Workflow` marks AI-development-framework/tooling work. In downstream product
-  repositories, reserve `Feature` and `Bug` for product work and use `Workflow`
-  for framework/process/tooling items. In this template repository, workflow
-  framework work also uses `Workflow`.
+- `Workflow` marks AI-development-framework/tooling work — in a **consumer
+  repository** (`template.is_template` not `true`): reserve `Feature` and
+  `Bug` for product work and use `Workflow` for framework/process/tooling
+  items. In a **framework-mode repository** (`template.is_template: true` —
+  this template repository is one), `Workflow` is refused before creation
+  and an existing Backlog item typed `Workflow` is stopped or held — not
+  routed to a pipeline — via a single-item run (`/run-item`) or a portfolio
+  scan (`/run-work`); `/run-items` and `/run-epic` are unchanged and do not
+  consult this gate (deferred to #1779), and a stale Backlog item that
+  already has development-folder artifacts or branch/PR evidence continues
+  unaffected (#1583). This repository's own framework/process/tooling items
+  are classified `Feature`, `Bug`, or `Refactor` instead.
 
 ### 4. Issue Labels (on the Repository)
 
@@ -135,7 +143,10 @@ Migration checklist:
 
 1. Add the `Workflow` option to the project **Type** field.
 2. Backfill Type values for open items from current labels and issue context.
-3. Verify open workflow/framework items have `Type = Workflow`.
+3. Verify open workflow/framework items have `Type = Workflow` in a
+   **consumer repository**; in a **framework-mode repository**
+   (`template.is_template: true`), verify they have `Type = Feature`,
+   `Type = Bug`, or `Type = Refactor` instead — never `Workflow` (#1583).
 4. Remove retired classification labels from open issues after Type is set.
 
 ---
@@ -177,16 +188,30 @@ The function is **fail-open**: if the issue is already on the board it returns 0
 
 Use the shared helper when a stage completes and the tracker status must advance. It performs a targeted `repository.issue(...).projectItems` lookup for the single issue and avoids `gh project item-list`, which paginates the whole board and can drain the GraphQL rate-limit bucket.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Source workflow-lib.sh to get the targeted GitHub Projects helpers.
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
 
-ISSUE_NUMBER=<ISSUE>                         # GitHub issue number to update
-TARGET_STATUS="Development in Review"        # Use a value from the table below
+ISSUE_NUMBER="${ISSUE_NUMBER:?set ISSUE_NUMBER to the GitHub issue number}"
+BRANCH="${BRANCH:?set BRANCH to the stage PR head branch}"
+# Resolve the Status from the canonical mapping (tracker-status-mapping.md)
+# rather than typing it; see "Status values by workflow stage" below.
+TARGET_STATUS="$(workflow_tracker_status_for_event ready-for-human-review \
+  "$(workflow_tracker_stage_for_branch "$BRANCH")")"
 
 update_tracker_status_best_effort "$ISSUE_NUMBER" "$TARGET_STATUS"
 ```
+
+Called this way, the helper stays best-effort. It still names the board's
+valid options when the Status is not one of them, but it returns `0`.
+Orchestrated runners (Protocols 90 and 91) should use
+`tracker-status-for.sh --apply` instead, or export
+`WORKFLOW_TRACKER_STATUS_STRICT=true`. Then an option the board lacks is a
+failure, which the run reports as a `missing_tracker_context` stop instead of
+silent drift. See
+[`tracker-status-mapping.md`](../tracker-status-mapping.md).
 
 For manual debugging, call `workflow_github_project_item_for_issue <issue> <project-number>` after sourcing `workflow-lib.sh`; it returns the project item ID, project ID, current Status, and current Type for exactly one issue.
 
@@ -194,11 +219,16 @@ For manual debugging, call `workflow_github_project_item_for_issue <issue> <proj
 
 Use the shared Type helpers when GitHub Projects is the configured tracker:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
 
 get_tracker_type_for_issue "$ISSUE_NUMBER"
+# "Workflow" is a consumer-repository value here. In a framework-mode
+# repository (template.is_template: true), pass "Feature", "Bug", or
+# "Refactor" instead — add-backlog-item.sh and this helper's callers refuse
+# Workflow in framework mode (#1583).
 update_tracker_type_best_effort "$ISSUE_NUMBER" "Workflow"
 list_open_workflow_type_issues
 ```
@@ -211,15 +241,29 @@ Type writes remain limited to configured project fields; this does not add
 native Issue Type mutation support.
 `list_open_workflow_type_issues` fetches open issues first and then
 cross-references a single project item-list result, so callers do not perform
-one full-board scan per issue.
+one full-board scan per issue. It keeps Workflow-only filtering in every
+repository mode and is unchanged by #1583; for release/retrospective "open
+framework items" reads, use `list_open_framework_items.sh` instead — the
+wrapper that returns every open item regardless of Type in a framework-mode
+repository (see `05-prepare-release-protocol.md` and
+`06-retrospective-protocol.md`).
 
 ### Status values by workflow stage (Step 8b targets)
 
-| PR type                                                                  | Target status string    |
-| ------------------------------------------------------------------------ | ----------------------- |
-| `spec/*` PR ready for human review                                       | `Spec in Review`        |
-| `implementation-plan/*` PR ready for human review                        | `Plan in Review`        |
-| `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PR ready for human review | `Development in Review` |
+Do not type a target Status by hand. The canonical mapping in
+[`tracker-status-mapping.md`](../tracker-status-mapping.md) defines it for every
+workflow event. `tracker-status-for.sh` resolves it, and with `--apply` it also
+performs the update above in strict mode:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tracker-status-for.sh \
+  --event ready-for-human-review --branch "$BRANCH" --apply --issue "$ISSUE_NUMBER"
+```
+
+When a requested Status is not one of the board's options, the helper prints
+the board's valid options and a
+`TRACKER_STATUS_UNRESOLVED ... reason=unknown_status_option` line.
 
 ### Caching field and option IDs
 
@@ -387,20 +431,12 @@ The `<slug>` is a short kebab-case description derived from the issue title.
 
 ## Workflow: Advancing Statuses
 
-The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the project item Status at each stage transition:
-
-| Action                                                                                          | Status transition                                                |
-| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `product-manager` | -> Writing Spec                                                  |
-| Spec PR is human-ready (automation clean; ready for humans)                                     | -> Spec in Review                                                |
-| Spec PR merged                                                                                  | -> Spec Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `tech-lead`       | -> Writing Plan (Refactor items skip directly here from Backlog) |
-| Plan PR is human-ready (automation clean)                                                       | -> Plan in Review                                                |
-| Plan PR merged                                                                                  | -> Plan Ready                                                    |
-| Human or Portfolio Orchestrator selects the item; Work Item Runner dispatches `developer`       | -> In Development                                                |
-| Feature/fix PR is human-ready (automation clean)                                                | -> Development in Review                                         |
-| Feature/fix PR merged to develop                                                                | -> Merged                                                        |
-| Release deployed to production                                                                  | -> Released                                                      |
+The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
+project item Status at each stage transition. The transitions are defined once
+in [`tracker-status-mapping.md`](../tracker-status-mapping.md): `dispatch`,
+`ready-for-human-review`, `merged`, and `released`, each mapped per stage.
+Resolve them with `scripts/development-workflow/tracker-status-for.sh`. Refactor
+items have no spec, so they move from Backlog straight to Writing Plan.
 
 ---
 
@@ -450,24 +486,56 @@ discovers slug/epic/deferral signals and invokes `graduation-closeout.sh`.
 
 ### Required configuration (GitHub Projects only)
 
-Set the following as **repository variables** (not secrets — these are not sensitive):
+This is a **bootstrap step**: a repository created from the template has none of
+these set. Configure them once, before the first merge to `develop`.
 
-| Variable                | Description                                                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `GITHUB_PROJECT_NUMBER` | The integer project number (e.g. `1`)                                                          |
-| `GITHUB_PROJECT_OWNER`  | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
+Two repository variables (not sensitive):
 
-To set them via CLI:
+| Variable         | Required | Description                                                                                    |
+| ---------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `PROJECT_NUMBER` | Yes      | The integer project number — the number in the project URL, e.g. `1` in `/users/<owner>/projects/1` |
+| `PROJECT_OWNER`  | No       | The GitHub user or org owning the project (falls back to `github.repository_owner` when unset) |
+
+<!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
-gh variable set GITHUB_PROJECT_NUMBER --body "1"
-gh variable set GITHUB_PROJECT_OWNER --body "<your-github-username-or-org>"
+gh variable set PROJECT_NUMBER --body "1"
+gh variable set PROJECT_OWNER --body "<your-github-username-or-org>"
 ```
+
+One repository secret:
+
+| Secret             | Required | Description                                                                          |
+| ------------------ | -------- | -------------------------------------------------------------------------------------- |
+| `GH_PROJECT_TOKEN` | Yes      | A personal access token with the `project` scope. The built-in `GITHUB_TOKEN` cannot write Projects v2 fields, so a PAT is required. |
+
+Create the token at **Settings → Developer settings → Personal access tokens**,
+then add it under **repository Settings → Secrets and variables → Actions → New
+repository secret**, named exactly `GH_PROJECT_TOKEN`:
+
+- **Classic token**: select the `project` scope (add `repo` if the repository is private).
+- **Fine-grained token**: grant the organization or user permission
+  **Projects: Read and write**, and scope it to this repository.
+
+Verify with `gh variable list` and `gh secret list` — all three names must appear.
+
+### Behavior when the project is not configured
+
+Not configuring a project is a supported state. When `GH_PROJECT_TOKEN` or
+`PROJECT_NUMBER` is missing, the workflow's `Check tracker configuration` step
+records the gap as a job warning and step-summary note, and the tracker-update
+and graduation-closeout steps are skipped — the merge check stays green.
+
+This check must remain a separate step. `github-token` is a **required input**
+of `actions/github-script`, so an empty `GH_PROJECT_TOKEN` makes the action fail
+with `Input required and not supplied: github-token` before any guard inside the
+`script:` body can run.
 
 ### Security model
 
-- Uses the built-in `GITHUB_TOKEN` — no personal access token (PAT) required
-- Minimum permissions: `pull-requests: read`, `issues: write`, `projects: write`
+- Projects v2 field writes use the `GH_PROJECT_TOKEN` PAT; everything else
+  (reading PR metadata, closing issues) uses the built-in `GITHUB_TOKEN`
+- Workflow permissions: `contents: read`, `pull-requests: read`, `issues: write`
 - All external action SHAs are pinned to exact commit hashes (no floating `@v7` tags)
 
 ### Relationship to `post-merge-cleanup` (GitHub Projects only)

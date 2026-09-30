@@ -49,29 +49,33 @@ schema_version: 2
 
 review:
   on_draft:
-    # Ordered list of in-runner internal reviewers for draft PRs (Step 7a).
+    # Ordered list of internal reviewers for draft PRs (Step 7a).
     # Supported values:
-    #   claude        — dispatches the stage-appropriate reviewer agent.
-    #   cursor        — dispatches the stage-appropriate Cursor reviewer agent.
-    #   codex         — dispatches the stage-appropriate Codex review skill.
-    #   coderabbit    — triggers CodeRabbit on the draft PR when reachable.
+    #   claude        — local-runtime reviewer.
+    #   cursor        — local-runtime reviewer.
+    #   codex         — local-runtime reviewer.
+    #   coderabbit    — hosted-service reviewer.
+    #   codex-github  — hosted-service reviewer.
     runner:
-      - codex
+      - claude
 
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
     # PRs. These run before the PR is converted to ready.
     # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
     # coderabbit-cli, local-ai-reviewer, pr-agent, codex-github,
-    # claude-code-action, haystack, copilot, bugbot.
+    # claude-code-action, haystack, copilot, bugbot, ronda.
     github:
-      - local-ai-reviewer
       - pr-agent
 
   on_ready:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
+    # local-ai-reviewer is the ready-phase reviewer for this repository
+    # (PR-Agent covers the draft phase). codex-github and bugbot are
+    # intentionally not listed here; restore either in this list to re-enable
+    # a hosted ready-phase reviewer.
     github:
-      - bugbot
+      - local-ai-reviewer
 
   # Optional: TWO independent reviewer-loop cycle caps enforced by
   # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
@@ -122,11 +126,19 @@ review:
   # Local AI reviewer platform options (local-only CLI reviewer; enabled first
   # in on_draft.github by default before PR-Agent and ready-phase reviewers):
   #   LOCAL_AI_REVIEWER_COMMAND        — optional override; when unset,
-  #                                      local-ai-reviewer.sh defaults to
-  #                                      scripts/development-workflow/local-codex-review-command.sh
-  #   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 — do not apply the bundled Codex preset
+  #                                      local-ai-reviewer.sh defaults from
+  #                                      LOCAL_AI_REVIEWER_BACKEND
+  #   LOCAL_AI_REVIEWER_BACKEND         — codex (default) or http (alias: openai_compat)
+  #   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 — do not apply a bundled preset default
   #   LOCAL_CODEX_REVIEWER_BIN         — Codex binary for the bundled preset (default: codex)
-  #   LOCAL_CODEX_REVIEWER_MODEL       — optional model for the bundled preset
+  #   LOCAL_CODEX_REVIEWER_MODEL       — optional model for the bundled Codex preset
+  #   LOCAL_AI_REVIEWER_MODEL           — model id for http
+  #                                      (example: deepseek-v4-pro)
+  #   LOCAL_AI_REVIEWER_API_BASE_URL   — Chat Completions API base URL for http
+  #                                      (example: https://api.deepseek.com;
+  #                                      falls back to OPENAI_BASE_URL when unset)
+  #   LOCAL_AI_REVIEWER_API_KEY         — API key for http (or DEEPSEEK_API_KEY /
+  #                                      OPENAI_API_KEY / LOCAL_AI_REVIEWER_API_KEY_COMMAND)
   #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout (default: 300)
   #   LOCAL_AI_REVIEWER_GRAPH_STRATEGY — none|auto|code-review-graph|graphify
   #   LOCAL_AI_REVIEWER_DISABLED=1     — intentionally skip with
@@ -162,21 +174,20 @@ review:
   #                             (default: "Cursor Bugbot")
   #   BUGBOT_TRIGGER_COMMENT  — override the trigger comment posted to start a run
   #                             (default: "bugbot run")
-
-  # Runner-context constraint:
-  #   This template defaults to 'codex' for Codex-first workflow runs. 'codex' as
-  #   a direct CLI reviewer is NOT reliably reachable from automated subagent
-  #   runners (Claude Code subagents, Cursor subagents, or any headless
-  #   environment). It is typically only reachable when Codex is the top-level
-  #   runner itself. Protocol 91 Step 7a will classify 'codex' as unreachable in
-  #   these contexts. Because 'codex' is the only default internal reviewer, that
-  #   means zero reviewers are reachable and the gate hard-fails until the run is
-  #   retried from Codex or a local override selects a reachable reviewer. This is
-  #   expected behaviour — not a misconfiguration.
   #
-  # Local override: developers who need a different top-level review runner can
-  # override this list locally with .ai-dev-workflow.local.yaml (gitignored).
-  # Example for Cursor in .ai-dev-workflow.local.yaml:
+  # Ronda platform options (GitHub-facing reviewer bot; place "ronda" in
+  # on_draft.github or on_ready.github). Ronda reacts to the PR automatically
+  # (no trigger comment) and posts a pull-request review plus a single check
+  # run per head SHA, created exactly once, already completed:
+  #   RONDA_BOT_LOGIN   — override the Ronda bot login
+  #                       (default: "ronda[bot]")
+  #   RONDA_CHECK_NAME  — override the check-run name to poll
+  #                       (default: "Ronda review")
+
+  # Each supported runner's own reviewer is reachable by construction. Other
+  # entries are probed against this machine at each gate run. A machine that
+  # intentionally lacks runtimes may narrow the list locally to avoid a
+  # reduced-coverage warning:
   #   review:
   #     on_draft:
   #       runner:
@@ -185,7 +196,7 @@ review:
   # See docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
   # Step 7a for the full multi-reviewer gate procedure.
 
-  # Optional: policy when a listed internal reviewer is unreachable from the current runner.
+  # Optional: policy for unavailable configured internal reviewers.
   # Protocol 91 Step 7a enforces this policy at runtime.
   #
   # Allowed values:
@@ -301,6 +312,7 @@ guardrails:
     - destructive_action
     - missing_tracker_context
     - missing_required_secret_or_permission
+    - push_verification_failed
 
   audit:
     pr_disposition_record: required

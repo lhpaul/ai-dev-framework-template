@@ -80,6 +80,30 @@ for the full routing specification.
 
 ---
 
+## Cursor dispatch profile (execution arrangement)
+
+Before dispatch (Step 4) or any mutation, establish the execution arrangement per `integrations/cursor-dispatch-profiles.md`. This explicit-list declaration checkpoint applies before item resolution and before the first mutation, for both the `/run-work` no_target_scan read-only checkpoint (always the observing posture) and the `/run-items` explicit_list mutating path.
+
+This protocol runs only in a Cursor environment; other runners are unchanged by this requirement -- Claude Code and Codex behavior is unaffected. Before any mutating action, declare which dispatch profile is in force per `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md` (the canonical, normative source): `cursor-native-handoff`, `cursor-parent-orchestrated`, or `cursor-inline-fallback`, naming the Portfolio Orchestrator (portfolio layer) as the accountable orchestration role.
+
+Evaluation order: initial handoff -- whether the current context can hand orchestration to the Portfolio Orchestrator at all -- is evaluated first; onward-handoff capability -- whether the Portfolio Orchestrator can hand stage work onward -- is evaluated only once initial handoff is confirmed. A profile decision never evaluates onward-handoff capability before initial handoff is confirmed.
+
+Unconfirmed-handoff outcomes: once initial handoff is confirmed available, onward-handoff capability that cannot be confirmed is treated as unavailable, and the run declares `cursor-parent-orchestrated` as the conservative default until confirmed. Separately, initial handoff availability that itself cannot be confirmed is treated the same as no handoff of any kind: the run declares `cursor-inline-fallback` and stays read-only for the remainder of the run. A later confirmation never upgrades a run in place; the next run declares afresh.
+
+Accountability postures: a declaration states exactly one of personally accountable (absorbed), handed off intact, or observing for the Portfolio Orchestrator role. Observing is valid only at a read-only checkpoint; a mutating action always declares absorbed or handed off. The required posture follows the run's current checkpoint, never its earlier mutation history; a mismatch in either direction is a missing declaration.
+
+Under `cursor-parent-orchestrated`: the current context absorbs the portfolio layer (Protocol 90) and, per item in turn, the item layer (Protocol 91), dispatches no Work Item Runner, runs the listed items one at a time, and delegates every stage of product work to its stage role with full handoff metadata -- never inline.
+
+Named stop conditions (exact strings): `dispatch_profile_declaration_missing`, `dispatch_handoff_unavailable`, and the reused `missing_required_secret_or_permission`.
+
+- `dispatch_profile_declaration_missing` -- affected work item: the branch, pull request, or development-folder path this invocation targets. For a pre-branch declaration stop on this command, before any item-scoped artifact exists, the affected work item is the single string `explicit_list_invocation_targets=<t1>,<t2>,...`, one `<ti>` per target of the router's normalized target list, rendered verbatim (no rewriting) and percent-encoded only for the defensive whitespace/control/`%` cases; report once for the whole invocation, never once per target. Human unblocking action: the stopped run is not resumed or corrected in place; start a fresh invocation supplying a valid profile, a named accountable role, a posture valid for the checkpoint, and, when rejected for a fact mismatch, the profile the known facts assign.
+- `dispatch_handoff_unavailable` -- affected work item: the branch, pull request, or development-folder path the mutating action would have applied to. For a pre-branch declaration stop on this command, before any item-scoped artifact exists, the affected work item is the single string `explicit_list_invocation_targets=<t1>,<t2>,...`, one `<ti>` per target of the router's normalized target list, rendered verbatim (no rewriting) and percent-encoded only for the defensive whitespace/control/`%` cases; report once for the whole invocation, never once per target. Human unblocking action: move to an environment where initial handoff is confirmed available and re-run, or explicitly accept the read-only result; for the parent-orchestrated stage-handoff-unavailable cause, first confirm the specific stage role the action needed is reachable in the target environment.
+- `missing_required_secret_or_permission` (reused) -- when a reachable stage role reports a specific delegated action refused for a missing credential, GitHub permission, or access token: grant the identified credential or permission and re-run the same delegated action, or, for a structural restriction, reassign to the same stage role in a different context or explicitly accept the action does not proceed; the absorbing context never performs the action inline. This path never extends to a harness tool or local file-path permission denial.
+
+No named stop for a harness or local-path denial: a reachable stage role's harness tool or local file-path permission denial on a delegated action is not a named stop condition; it is only observably similar to the `SUBAGENT_PERMISSION_DENIAL` contract (Work Item Runner to Portfolio Orchestrator only), and is Out of Scope, tracked as #1746.
+
+Invalid-declaration boundaries: an invalid profile value, an invalid accountable role (none named, including empty), an invalid posture for the checkpoint, and a coarse-fact mismatch in either direction (more permissive or less permissive than the assigned outcome) are each a missing declaration. The coarse check governs the initial declaration and coarse-fact re-declarations only; it does not govern the mid-run recovery transitions (stage-handoff loss, native-handoff mid-run failure), which remain valid re-declarations.
+
 ## Step 0: Load Effective Guardrails
 
 Before any tracker mutation, branch creation, PR operation, or Work Item Runner
@@ -446,7 +470,8 @@ When no dispatch-eligible work exists, the orchestrator must still evaluate prop
 | Backlog (Feature)                                                                   | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Feature | Work Item Runner on the tracker item / brief after approval (starts at spec stage) |
 | Backlog (Bug)                                                                       | Human explicitly requested it as a bug / fast-track item, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Bug | Work Item Runner on the tracker item / brief after approval (starts at fast-track scope check) |
 | Backlog (Refactor)                                                                  | Human explicitly requested it as a Refactor, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Refactor | Work Item Runner on the tracker item / brief after approval (starts at plan stage, skips spec) |
-| Backlog (Workflow)                                                                  | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Workflow | Work Item Runner on the tracker item / brief after approval (route by brief: full pipeline, refactor, or fast-track) |
+| Backlog (Workflow), consumer repository                                            | Human explicitly requested it, or unrestricted portfolio mode is building a proposed start batch and tracker Type/brief classifies it as Workflow | Work Item Runner on the tracker item / brief after approval (route per brief: full pipeline, refactor, or fast-track) |
+| Backlog (Workflow), framework-mode repository (`template.is_template: true`)       | Reconciled tracker status is Backlog and neither development-folder artifacts nor implementation branch/PR evidence exist for the item (`framework-mode-backlog-type-gate.sh`) | **Held** — `HELD - not included in proposed batch`, `NEXT_ACTION=hold-misclassified-type`. Framework-mode repositories do not route Workflow-typed items to a pipeline (#1583); `HOLD_REASON` names the item and its required re-classification. The scan continues and still proposes every other eligible item. A stale Backlog with artifacts or an in-flight branch/PR is unaffected and dispatches normally |
 | Writing Spec                                                                        | Tracker **Writing Spec**; spec PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
 | Writing Plan                                                                        | Tracker **Writing Plan**; plan PR not yet human-ready               | Work Item Runner on the tracker item / branch / PR                              |
 | In Development                                                                      | Tracker **In Development**; feature/fix PR not yet human-ready      | Work Item Runner on the tracker item / branch / PR                              |
@@ -633,6 +658,8 @@ After building the initial candidate list from the eligibility table above and a
 
 Before building parallel batches, update the tracker to reflect that eligible items are now actively being worked on. This step runs after Step 2 (eligibility determination) and before Step 3 (batch building).
 
+**Known limitation — this step runs before each item's own reviewer preflight**: this step's tracker status update happens before the dispatched Work Item Runner reaches Protocol 91's "Reviewer preflight before child dispatch" gate for that item. If that gate later returns `blocked` or `prerequisite-failed`, the item's tracker status already advanced here and needs the runner's own stop-and-report handling to surface the resulting stale state — a batch-level preflight that could run before this step is explicitly out of scope for issue #1561 (Decision 1: batch dispatch aggregation is tracked separately under #1743). Each item's own Protocol 91 execution still runs the preflight before its own branch/PR/tracker mutations.
+
 ### Purpose
 
 Without this step, items remain in a stale tracker status (e.g., `Backlog`, `Spec Ready`, `Plan Ready`) while agents are already working on them. The Batch 3 retro identified this as a source of confusion for humans monitoring portfolio progress and for Work Item Runners that check tracker status when resuming.
@@ -653,16 +680,23 @@ For each item that passed the Step 2 eligibility check:
 
    Where `$INITIAL_STATUS` is the in-flight status appropriate to the next action (e.g., `"Writing Spec"`, `"Writing Plan"`, or `"In Development"`). For resume items the call is still idempotent — the function detects the item is already on the board and returns without modifying the existing status.
 
-2. **Update tracker status to the appropriate in-flight value** based on the next action that will be dispatched:
+2. **Update tracker status to the appropriate in-flight value** for the stage
+   that will be dispatched. Take the value from the canonical `dispatch` row of
+   [`tracker-status-mapping.md`](../tracker-status-mapping.md): `Writing Spec`,
+   `Writing Plan`, or `In Development`. Resolve and apply it with the helper
+   instead of typing it:
 
-   | Next action to dispatch                                                                       | Tracker status to set |
-   | --------------------------------------------------------------------------------------------- | --------------------- |
-   | Write Spec                                                                                    | `Writing Spec`        |
-   | Write Plan                                                                                    | `Writing Plan`        |
-   | Implement (feature/fix/refactor/hotfix branch)                                                | `In Development`      |
-   | Resume in-progress stage (status already `Writing Spec`, `Writing Plan`, or `In Development`) | No change — skip      |
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   ./scripts/development-workflow/tracker-status-for.sh \
+     --event dispatch --stage <spec|plan|implementation> --apply --issue "$ISSUE_NUMBER"
+   ```
 
-   For resume items (the last row), the status is already correct — do not reset it. This keeps the update idempotent.
+   Resume items already have the correct in-flight Status, so do not reset
+   them. The helper never moves Status backward, which keeps the update
+   idempotent. Exit `3` means the board lacks the canonical Status, or has no
+   Status field. That is a `missing_tracker_context` stop for the item, as the
+   mapping page describes.
 
 3. **Log each result** for transparency:
 
@@ -689,7 +723,7 @@ How to perform tracker updates depends on the configured `issue_tracker.provider
 
 For issue tracker providers where no CLI equivalent exists (e.g., Linear via MCP), subagent Work Item Runners **cannot** update tracker status because MCP servers are not available in subagent execution contexts. In these cases:
 
-- The **Portfolio Orchestrator owns all tracker status transitions** for the batch — both pre-dispatch (this step) and post-readiness (the `Development in Review` / `Spec in Review` / `Plan in Review` transitions that happen after a PR reaches `ready-for-human-review`).
+- The **Portfolio Orchestrator owns all tracker status transitions** for the batch — both pre-dispatch (this step) and post-readiness (the `Development in Review` / `Spec in Review` / `Plan in Review` transitions that happen after a PR reaches `ready-for-human-review`, per the canonical mapping in [`tracker-status-mapping.md`](../tracker-status-mapping.md)).
 - Subagents will return a `TRACKER_UPDATE_REQUIRED:` line in their summary when they could not perform the update themselves (see Step 8b of `91-orchestrate-work-protocol.md`).
 - After each Work Item Runner returns, the Portfolio Orchestrator must scan its summary for `TRACKER_UPDATE_REQUIRED:` lines and apply those transitions via MCP before moving on to the next item.
 
@@ -1085,6 +1119,29 @@ mutating runners from sharing one checkout or silently mutating the main tree.
 The terminal batch summary must record whether the isolation manifest passed,
 failed before dispatch, or escalated after detecting possible out-of-worktree
 mutation.
+
+### Private scratch namespace and PR ownership (parallel dispatch)
+
+A worktree isolates the checkout, not files a runner writes outside it. In a
+parallel wave, sibling agents that share one scratch directory and generic
+filenames (for example `scratchpad/pr-body.md`) can inject a sibling's content
+into their own PR with a correct PR number (issue #1444). When dispatching
+concurrent mutating runners:
+
+- Pass each runner a private scratch directory in its handoff (for example one
+  `mktemp -d` per item), distinct from every sibling's, and instruct it to
+  write anything outside its own worktree only there.
+- Require collision-proof filenames that carry the item and process, for
+  example `pr-body-<item>-<pid>.md`; never a shared generic name such as
+  `pr-body.md` or `review.md`.
+- Require the PR Ownership Guard before every PR mutation by number, from the
+  runner or from this orchestrator: run
+  `scripts/development-workflow/pr-ownership-guard.sh --pr <n>
+  --expected-branch <item-branch>` and mutate only on exit 0. See Protocol 03
+  [PR Ownership Guard](./03-implement-development-protocol.md#pr-ownership-guard).
+- Mirror review-gate evidence (the `Document Quality Gate` log, the
+  Pre-Submission Self-Review log) as a PR comment, not only in the PR
+  description: a description can be silently overwritten; a comment cannot.
 
 ### Checkpoint-resume gate for batch redispatch
 
@@ -1502,6 +1559,8 @@ If the runner supports true concurrent subagents, launch the full batch in paral
 
 If the runner does **not** support Work Item Runner handoff natively, continue in the current session by following `91-orchestrate-work-protocol.md` for each item one at a time.
 
+When the declared dispatch profile is `cursor-parent-orchestrated` (see `integrations/cursor-dispatch-profiles.md`: a Work Item Runner can be reached but cannot hand stage work onward), do not dispatch Work Item Runners: the current context, having absorbed the portfolio layer, follows `91-orchestrate-work-protocol.md` for each item one at a time, absorbs the item layer for each item in turn, and hands every stage of product work to its stage role with the full handoff metadata (never inline). Under `cursor-native-handoff`, dispatch as above. Under `cursor-inline-fallback`, stop per the dispatch-profile decision gate. This paragraph applies only when a Cursor dispatch profile is declared; it does not alter the paragraph above.
+
 ---
 
 ## Step 4.1: Subagent Permission-Denial Detection and Inline Fallback
@@ -1532,6 +1591,12 @@ not substitute a generic path or continue from the main repository checkout.
 ```bash
 git worktree add <manifest-assigned-worktree-path> <branch>
 ```
+
+This form creates no tracking of its own, but `<branch>` may already carry an
+upstream pointing at the integration branch from an earlier creation. Run
+Protocol 91 Step 3's **Upstream verification** immediately after entering the
+worktree, and push with an explicit refspec, so a bare `git push` can neither
+silently no-op nor aim at the integration branch (issue #1593).
 
 Before any inline edit, branch-changing command, commit, push, PR mutation, or
 tracker mutation, run the same Protocol 91 pre-mutation isolation self-check:
@@ -1670,17 +1735,17 @@ Verify all of the following by querying artifact state directly. If any check fa
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Base branch                                     | `develop` (or `develop-<slug>` if the batch is targeting an integration branch) for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                          | Redispatch agent to rebase onto the correct base                                                                                                                                                                                                                                                  |
 | PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                          | Run `gh pr ready <pr_number>` directly; log as protocol deviation                                                                                                                                                                                                                                 |
-| `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
-| `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                 | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
+| `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply through the helper (issue #1408): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-human-review` (after all other checks pass). Never `gh pr edit --add-label ready-*` directly. A `refused` verdict means a gate is unmet — redispatch instead of labelling. |
+| `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                 | **Apply through the helper** (primary enforcement point, issue #1408): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-regression`. Never `gh pr edit --add-label ready-*` directly. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
 | No `needs-fixes` label                          | Absent from the `labels` array                                                                                                                                                                                                                                                                                                                                                                                            | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
 | Changelog artifact presence                     | A top-level path matching `changelog.d/<item>.<kind>.<slug>.md` appears in the `files` array for `feature/*`, `fix/*`, and `refactor/*` PRs, where `<kind>` is `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`; `changelog.d/README.md`, nested paths, and malformed names do not satisfy the gate. Exception: if the PR fixes or adjusts unreleased work and intentionally leaves an existing fragment unchanged because that fragment already describes the corrected behavior, the PR body or reviewer-loop summary must name that existing top-level fragment and the fragment must exist on the base branch. `bash scripts/development-workflow/changelog-fragments.sh validate` must also pass. `CHANGELOG.md` appears for `hotfix/*` PRs; neither is required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add the required changelog fragment or hotfix CHANGELOG entry and push, or to document the unchanged-existing-fragment exception with the fragment path and evidence that it exists on the base branch. Do not accept the PR as ready until the appropriate changelog artifact appears in the PR's file set, or the exception evidence is present, and fragment validation is clean.                                                                                                                                                              |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
 | Automated reviewer loop summary comment         | At least one latest PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" whose result is `clean` or `skipped` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on clean, needs-fixes, and escalate exits** — a missing comment, stale comment, or comment whose latest result is `needs_fixes`, `escalate`, `timeout`, `pending_timeout`, or any other non-clean terminal state means Step 7 is not complete | Redispatch agent to run Step 7 to completion or escalate the non-clean reviewer-loop result                                                                                                                                                                                                        |
-| CI checks                                       | All required status checks are green (`state: SUCCESS` or `conclusion: success`)                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |
+| CI checks                                       | The latest run of every required status check is green (`state: SUCCESS` or `conclusion: success`), after `normalize_status_check_rollup` (`workflow-lib.sh`) collapses superseded runs; a raw-rollup count of non-green entries is not readiness evidence (Protocol 91 Step 8, "Superseded runs")                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |
 
 **`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:
 
-1. Applies the label directly: `gh pr edit <pr_number> --add-label "ready-for-regression"`
+1. Applies the label through the helper (issue #1408 — never `gh pr edit --add-label ready-*` directly): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --branch <branch_name> --label ready-for-regression`. The helper runs the PR ownership guard itself before any other check (issue #1837, the same `pr-ownership-guard.sh` mechanism as #1444) — pass `--branch <branch_name>` explicitly so the check is against this item's branch rather than whatever the orchestrator's own working directory happens to be on. A `refused` verdict means a gate is unmet (`REASON=ownership-mismatch` means the PR number does not belong to this item — do not redispatch, re-resolve the correct PR): redispatch instead of labelling.
 2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> (<branch-type>) — applied by orchestrator Step 5.1`
 3. **Re-polls CI** — the label triggers configured real regression workflows,
    or an explicitly enabled placeholder. The CI check row in this verification
@@ -1693,11 +1758,11 @@ Verify all of the following by querying artifact state directly. If any check fa
 
 > **Graduation PRs are exempt**: PRs with a head branch matching `^develop-` and base branch `develop` (i.e., graduation PRs from `develop-<slug>` to `develop`) are explicitly exempt from the `ready-for-regression` requirement. Do not flag the absence of this label on a graduation PR as a protocol deviation. Graduation PRs carry no new implementation — all code was already tested via each sub-item's implementation PR. See `05b-graduate-development-protocol.md` Step 4 and BR-6 of the graduation spec.
 
-Do not redispatch the agent for a missing label alone — the label is applied directly here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI). A missing reviewer loop summary comment means `pr-review-loop.sh` did not run to completion — redispatch to resume from Step 7.
+Do not redispatch the agent for a missing label alone — the label is applied through the helper here. Redispatching is only required when there are substantive gaps (wrong base branch, unresolved review threads, missing reviewer loop summary, failing CI). A missing reviewer loop summary comment means `pr-review-loop.sh` did not run to completion — redispatch to resume from Step 7.
 
 If a check requires agent redispatch:
 
-1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
+1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below), then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` for the item's branch; stop on a non-zero exit (issue #1444).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must invoke `checkpoint-resume-gate.sh` before mutation. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
@@ -1790,12 +1855,12 @@ For the pre-label orphaned case (`isDraft=false`, no labels, no summary): the PR
 
 **Expected action when incomplete state is detected**:
 
-1. Log the incomplete PR in your retrospective notes.
+1. Log the incomplete PR in your retrospective notes, then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` for the item's branch; stop on a non-zero exit (issue #1444).
 2. Remove `ready-for-human-review` if present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7a (internal review gate).
 
-This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via `statusCheckRollup` entries in `ERROR` state, or `PENDING` state that has exceeded the configured max-wait threshold (see `pr-ci-loop.sh` timeout), and re-dispatch accordingly. Do not treat `PENDING` alone as a timeout signal — CI checks that are legitimately running will show as `PENDING` until they complete.
+This pattern also applies to PRs where an agent timed out mid-CI-loop: detect via the latest run per check (`normalize_status_check_rollup`; the rollup keeps superseded runs) being in `ERROR` state, or `PENDING` state that has exceeded the configured max-wait threshold (see `pr-ci-loop.sh` timeout), and re-dispatch accordingly. Do not treat `PENDING` alone as a timeout signal — CI checks that are legitimately running will show as `PENDING` until they complete.
 
 ### Step 5.2: Post-Agent Main Working Tree Verification (Parallel Batches Only)
 
@@ -1918,13 +1983,19 @@ For each PR identified in the detection step:
 
 1. **Remove `ready-for-human-review`** and **remove `ready-for-regression`** (if present — they will be re-applied after the re-triggered review passes):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr edit <pr_number> --remove-label "ready-for-human-review" --remove-label "ready-for-regression"
    ```
 
 2. **Post `@coderabbitai review`** to request a fresh CodeRabbit review:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit 1
    gh pr comment <pr_number> --body "@coderabbitai review"
    ```
 
@@ -2010,6 +2081,8 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   ./scripts/development-workflow/pr-ownership-guard.sh --pr <number> --expected-branch <branch_name> || exit $?
    ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <number> --reason risk_guardrail_hold --held-by "<who decided>"
    ```
 
@@ -2031,6 +2104,8 @@ state in the stable `reviewer-access-bypass` audit marker.
 | Parallel implementation batch (2+ PRs) | `batch-merge.sh` + Protocol 94 |
 | Single implementation PR               | `gh pr merge` is acceptable    |
 | Spec or plan PR (any count)            | `gh pr merge` is acceptable    |
+
+Run `pr-ownership-guard.sh` for the item's branch before a `gh pr merge` by number (issue #1444).
 
 Violating this rule causes CHANGELOG merge conflicts that must be resolved manually, as observed in the Batch 4 incident (2026-04-22).
 
@@ -2104,6 +2179,17 @@ Approval required before tracker status changes or branch/PR work starts for the
 
 This offer belongs only after the human confirms PRs have been merged.
 Adding it here is a protocol violation even when it feels like a natural closing.
+
+**`architecture_decision` stop reporting parity**: where a child item's stop
+condition is `architecture_decision`, the "Guardrails Stops" (or "Waiting on
+Human") entry for that item does not restate the whole question as
+undifferentiated open. It instead references that the child carried the
+canonical escalation report — axis-separated, per-citation conformance
+declarations, requested decision scoped to genuinely open axes — per
+[`architecture-decision-escalation.md`](../architecture-decision-escalation.md).
+Point the human at the child item's PR comment or Work Item Runner Summary
+`Stops:` line for the full report rather than duplicating it in the batch
+summary.
 
 Call out any sequential fallback caused by runner limitations so humans can distinguish a workflow constraint from a product dependency.
 

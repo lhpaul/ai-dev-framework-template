@@ -116,7 +116,11 @@ run summary.
 
 ## Step 7a — Internal Reviewer (Draft PRs)
 
-CodeRabbit can act as a Step 7a internal reviewer, running on a draft PR before it is converted to non-draft. This uses the same GitHub App auto-review mechanism as Step 7, but is triggered on a draft PR during the internal review gate.
+CodeRabbit can act as a Step 7a internal reviewer. Step 7a determines
+availability and applies policy while the PR is still draft, then converts a
+draft PR immediately before dispatch when CodeRabbit is configured. This keeps
+the availability decision read-only and prevents a blocked gate from changing
+the PR state.
 
 ### Configuration
 
@@ -130,13 +134,16 @@ review:
       - coderabbit
 ```
 
-All reviewers in the list must APPROVE before `gh pr ready` is called. Reviewers run sequentially in the listed order.
+The conditional draft conversion below enables CodeRabbit dispatch; it does not approve the gate. All selected reviewers must APPROVE before final advancement. Reviewers run sequentially in configured order.
 
-### Draft-PR Requirement
+### Draft conversion
 
-`reviews.auto_review.enabled: true` must be set in `.coderabbit.yaml` for CodeRabbit to auto-review draft PRs. If the CodeRabbit App configuration filters out draft PRs, the runner classifies `coderabbit` as unreachable in Step 7a (BR-5).
-
-Ensure your `.coderabbit.yaml` is configured to allow draft PR reviews:
+`reviews.auto_review.enabled: true` must be set in `.coderabbit.yaml`. Draft
+restriction is not an unreachability condition: after availability and policy
+permit dispatch, Step 7a converts a draft PR when CodeRabbit is configured so
+that it cannot review drafts (`reviews.auto_review.drafts: false`, or the
+absent default). When `drafts: true`, Step 7a preserves the draft state until
+normal approval.
 
 ```yaml
 reviews:
@@ -146,7 +153,11 @@ reviews:
 
 ### Invocation
 
-CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true`. No trigger comment is needed. The runner waits for a `coderabbitai[bot]` review posted after the HEAD commit timestamp. This is identical to the Step 7 mechanism but applied to a draft PR.
+After the proceed decision and any required conversion, CodeRabbit auto-reviews
+on push when `auto_review.enabled` is `true`. No trigger comment is needed.
+The runner waits for a `coderabbitai[bot]` review posted after the HEAD commit
+timestamp. This is the Step 7a dispatch path; the Step 7 external-review loop
+remains separate.
 
 ### Severity Classification
 
@@ -158,12 +169,41 @@ CodeRabbit as an internal reviewer is subject to the same `max_internal_review_c
 
 ### Availability Check
 
-Before dispatching, the runner performs a runtime availability check to classify `coderabbit` as `reachable` or `unreachable`:
+Step 7a workflow configuration validation requires PyYAML in the `python3`
+interpreter used by the gate for every reviewer. CodeRabbit enablement uses the
+same dependency. The workflow CI provisions `PyYAML==6.0.2`, and
+`scripts/cloud-agent-install.sh` provisions the distribution package. For local
+use, install that pinned version in a virtual environment and put its `bin`
+directory on PATH before running the gate. Missing PyYAML during workflow
+configuration parsing produces `policy-unreadable` with setup guidance. An
+isolated CodeRabbit parser import failure remains `check-inconclusive`. Neither
+path installs packages.
 
-1. **App installation signal**: Check whether `coderabbitai[bot]` has any prior activity on the repository via `gh api repos/{owner}/{repo}/installation` or by inspecting recent PR comments for `coderabbitai[bot]` posts.
-2. **Draft-PR configuration check**: Verify that `.coderabbit.yaml` sets `reviews.auto_review.enabled: true` and does not otherwise restrict reviews to non-draft PRs.
+The entire `.coderabbit.yaml` is validated with a safe YAML loader, including
+unrelated sections. Syntax errors, unsafe tags, and duplicate explicit mapping
+keys are rejected. Valid aliases, flow collections, multiline values, and merge
+defaults with explicit overrides are supported. Enablement accepts typed
+`true`/`True`/`TRUE` and `false`/`False`/`FALSE`; quoted spellings, numbers, and
+YAML 1.1 `yes`/`no`/`on`/`off` are not boolean enablement settings.
 
-If either check fails, `coderabbit` is classified as `unreachable`. The configured `internal_reviewers_unavailable_policy` then determines whether to proceed with the remaining reachable reviewers (`warn`, the default) or hard-fail the Step 7a gate (`fail-if-any-unavailable`).
+Step 7a calls `resolve-reviewer-availability.sh` once, under its fixed bounded
+budget, before dispatching anybody. For CodeRabbit the helper checks
+`reviews.auto_review.enabled: true` and reads the newest repository issue
+comments page for `coderabbitai[bot]`. Bot activity is a bounded
+repository-activity proxy, not proof of current installation or per-review
+enablement: a complete short unmatched page is `prerequisite-missing`, while a
+full unmatched page is `check-inconclusive`. The helper validates policy and configuration first and blocks invalid inputs
+before any probe. During the CodeRabbit probe, an unreadable or rejected
+`.coderabbit.yaml` is `check-inconclusive`: repair the file using the reported
+read or syntax error, then re-run. A missing file or a readable disabled setting
+is `prerequisite-missing`; a probe timeout remains `check-inconclusive` with
+execution guidance. For valid configuration it classifies capability, then applies
+the resolved reachability policy; the gate consumes that returned outcome.
+
+The proxy can be false Reachable after an App is removed and false Unreachable
+for a new or review-only installation. If CodeRabbit was classified reachable
+and dispatch then fails, errors, exhausts quota, or times out, report a review
+failure under either policy; do not reclassify it as unavailable.
 
 ### Troubleshooting
 
@@ -171,8 +211,8 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `coderabbit` classified as `unreachable` — warning comment posted       | CodeRabbit GitHub App is not installed on the repository                 | Install the CodeRabbit GitHub App at [coderabbit.ai](https://www.coderabbit.ai) and verify it has access to the repository                                                               |
 | `coderabbit` classified as `unreachable` — `auto_review.enabled: false` | `.coderabbit.yaml` has auto-review disabled                              | Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`                                                                                                                            |
-| `coderabbit` classified as `unreachable` — draft PRs not enabled        | CodeRabbit App configuration or `.coderabbit.yaml` filters out draft PRs | Confirm the CodeRabbit App settings permit draft PR reviews and that `.coderabbit.yaml` does not restrict to non-draft only                                                              |
-| All Step 7a reviewers unreachable — hard-fail                           | No reachable runner reviewers available                                  | Run Step 7a from a context where at least one reviewer is reachable, or temporarily override `review.on_draft.runner` via `.ai-dev-workflow.local.yaml` to remove unreachable reviewers |
+| CodeRabbit does not review a draft                                      | `drafts: false` is configured                                             | Step 7a converts the PR after availability and policy succeed, immediately before dispatch. `drafts: true` instead preserves draft state until normal approval. |
+| All Step 7a reviewers unreachable — hard-fail                           | Missing runtime or service prerequisite                                  | Make the missing runtime or prerequisite available, or narrow `review.on_draft.runner` locally. |
 | CodeRabbit does not post a review after push                            | App installed but auto-review trigger not firing                         | Push a new commit to the draft PR, confirm the App is active, and check the CodeRabbit dashboard for any rate limiting or quota issues                                                   |
 
 ---
@@ -231,6 +271,30 @@ If the first comment CodeRabbit posts is a "Review skipped" banner rather than a
 ### 5. Size the rate-limit tolerance for your plan
 
 CodeRabbit's quota resets on an **hourly** boundary. The loop waits `CODERABBIT_RATE_LIMIT_WAIT` seconds (default `900`) and retries up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times (default `4`), so the shipped defaults cover a full 60-minute reset window before escalating. Lower them only if you would rather escalate quickly than wait; raising them past an hour buys nothing, since a quota that has not reset in an hour indicates a spending cap rather than a rate limit.
+
+### 6. Branch-in-force configuration, and the reviewer preflight (#1561)
+
+**The configuration CodeRabbit actually reads for a pull request is the copy of `.coderabbit.yaml` on that pull request's own branch (its head), not the copy on the branch the pull request targets.** This is CodeRabbit's own resolution behavior, not something this workflow chooses — the same rule `pr-review-loop.sh` already assumes when it fetches the pull request's `baseRefName` before reading `.ai-dev-workflow.yaml` from `origin/<that base>`, so the *shared* reviewer list and each platform's *own* configuration can read from different refs by design.
+
+Two consequences follow directly:
+
+- **A fix takes effect on the very pull request that carries it.** If `.coderabbit.yaml` is broken or misconfigured on a branch, editing it on that same branch repairs that pull request's own review immediately — no merge to the integration branch is required first.
+- **A branch can silently carry a configuration that diverges from the repository's intended review policy.** Nothing else notices this on its own; a branch that edits `.coderabbit.yaml` (deliberately or by accident) gets that edited behavior for its own pull request, and only its own pull request, until it merges.
+
+This was confirmed live: PR #1532 edited `.coderabbit.yaml` on its own branch and observed CodeRabbit's review behavior change on that same PR before merge, establishing the branch-in-force rule empirically rather than by assumption.
+
+The **reviewer preflight** (`scripts/development-workflow/reviewer-preflight.sh`, invoked by Protocol 91 before an item's first mutation) cross-checks this configuration before dispatch rather than after a review silently declines. A preflight run before any branch exists is checked only against the base branch the run targets, and cannot see a divergence a not-yet-created branch will introduce; a preflight run against an existing branch or pull request reads CodeRabbit's own configuration from that branch's or pull request's own copy, exactly as CodeRabbit itself will. The preflight decides whether CodeRabbit *can* review — a configuration-coherence verdict — not whether its GitHub App installation is still live; see [`pr-review-platform.md`](pr-review-platform.md) for how that distinction relates to Step 7a's own reachability check.
+
+The preflight reports four distinct disagreement cases for CodeRabbit, each with its own remedy:
+
+| Case | `reviews.auto_review.*` setting | Remedy |
+| --- | --- | --- |
+| Automatic review turned off | `enabled: false` (or the key absent) | Set `enabled: true` in `.coderabbit.yaml`, or remove `coderabbit` from `review.on_draft.github` / `review.on_ready.github` in `.ai-dev-workflow.yaml`, and re-run. |
+| Stage not covered | `drafts: false` while `coderabbit` is listed as a draft-stage reviewer | Set `drafts: true` in `.coderabbit.yaml`, or move `coderabbit` to a stage its own configuration covers, and re-run. This case does not fire when an existing workflow adjustment (for example the internal review gate's draft-to-ready conversion) already resolves the mismatch before CodeRabbit is dispatched. |
+| Base branch not covered | The item's targeted base is not in `base_branches` | Add the targeted base to `base_branches` in `.coderabbit.yaml`, or narrow this machine's reviewer list through `.ai-dev-workflow.local.yaml` to exclude `coderabbit` for this item, and re-run. |
+| Not a supported reviewer | `coderabbit` misspelled or listed in a bucket that does not support it | Correct the value, or remove it from the bucket that names it, and re-run. |
+
+The preflight reports a disagreement; it never edits `.coderabbit.yaml` on the operator's behalf.
 
 ---
 

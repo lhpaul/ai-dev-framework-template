@@ -55,6 +55,23 @@ to commit immediately after each completed logical sub-part, avoid batching all
 completed sub-parts into one end-of-run commit, and never commit incomplete,
 failing, or incoherent edits only to satisfy this requirement.
 
+Before dispatching that same creator-stage or PR-opening child agent — before
+this item's own first mutation, not merely before Step 7a/Step 7 — run
+`reviewer-preflight.sh` with `--mode pre-dispatch|branch-resume|pr-resume`
+chosen from this item's already-resolved resume state (fresh, existing branch
+without a PR, or existing PR), `--target-base`, the matching `--branch` or
+`--pr`/`--owner`/`--repo`, `--remaining-stages`, and `--pr-state` for each
+listed stage. Print the full report — outcome, and every platform's verdict —
+before this item's own output. Stop before mutation on `blocked` (exit `1`)
+or `prerequisite-failed` (exit `2`); `passed`, `passed-unverified`, and
+`no-review-remaining` (all exit `0`) proceed, carrying any unverified-platform
+list into the Work Item Runner summary. Also stop before mutation on a
+tooling failure (exit `3`, no `OUTCOME` line) — the script itself failed
+rather than reaching a verdict; report this as a stop with the failure
+detail and re-run once the tooling problem is fixed, not as a `passed`
+proceed. See Protocol 91's "Reviewer preflight before child dispatch"
+section for the full outcome table and per-mode input resolution.
+
 After candidate discovery and a clean nested-artifact guard, run
 `validate-branch-reuse.sh` with the issue, exact expected branch, approved base,
 and artifact repo root. A matching item number alone is insufficient. Only
@@ -129,6 +146,14 @@ That document is the single source of truth for this supporting role. Key respon
   documentation-stage alignment checker before readiness. Include the alignment
   result in the runner summary when readiness is blocked; correct or escalate
   mismatches instead of applying `ready-for-human-review`.
+- Before stopping under `architecture_decision`, run the per-axis coverage
+  analysis and produce the well-formed escalation report required by
+  `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+  axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+  `Departs` / `Not yet implemented` declaration, and a requested decision
+  scoped to genuinely open axes only. Never describe such an escalation as
+  well-formed without that analysis. Upsert the PR marker comment per
+  Protocol 91.
 - Before emitting any terminal Work Item Runner Summary, run
   `scripts/development-workflow/item-completion-self-check.sh` for the claimed
   state and paste its `## Ground-Truth Completion Verification` section into the
@@ -137,11 +162,11 @@ That document is the single source of truth for this supporting role. Key respon
   `unavailable_required` result is non-terminal and must return to the relevant
   Protocol 91 gate.
 
-**A paused turn does not resume.** Ending a turn ends this agent; nothing external wakes it back up. If you background a long step and end your turn to "wait for the notification," the item parks permanently — indistinguishable from a dead runner, and recoverable only if a supervising parent happens to notice the report named no terminal state. This has happened in production: three runners in one overnight wave each backgrounded a step and ended their turn expecting to resume automatically; none did. For every long step, not only `pr-review-loop.sh` and `pr-ci-loop.sh`: run it in the foreground, or if backgrounded, poll it yourself in the same turn until it returns — capture `pgrep`'s status **inside** the loop (do not use `$?` after `while pgrep ...; do sleep; done`; that is the last body command / `0`, not `pgrep`). Use Protocol 91's "Execution Discipline" pattern (`while true; do pgrep -f "[p]r-review-loop.sh <PR>" >/dev/null; pgrep_rc=$?; case $pgrep_rc in 0) sleep 20 ;; 1) break ;; *) break ;; esac; done`, then inspect `$pgrep_rc`: `1` = done, `2`/`3`/`127` = polling failure; use `pgrep_rc` not `status` — zsh treats `status` as read-only). Keep `<cmd>` specific enough — e.g. the bracket trick plus PR number — that it cannot match an unrelated process or the polling shell itself; see Protocol 91 for why PID-capture-and-`wait` does not substitute here. Never end a turn while something you started is still in flight.
+**A paused turn does not resume.** Ending a turn ends this agent; nothing external wakes it back up. If you background a long step and end your turn to "wait for the notification," the item parks permanently — indistinguishable from a dead runner, and recoverable only if a supervising parent happens to notice the report named no terminal state. This has happened in production: three runners in one overnight wave each backgrounded a step and ended their turn expecting to resume automatically; none did. For every long step, not only `pr-review-loop.sh` and `pr-ci-loop.sh`: run it in the foreground, or if backgrounded, poll it yourself in the same turn until it returns — capture `pgrep`'s status **inside** the loop (do not use `$?` after `while pgrep ...; do sleep; done`; that is the last body command / `0`, not `pgrep`). Use Protocol 91's "Execution Discipline" pattern (`while true; do if pgrep -f "[p]r-review-loop.sh <PR>" >/dev/null; then pgrep_rc=0; else pgrep_rc=$?; fi; case $pgrep_rc in 0) sleep 20 ;; 1) break ;; *) break ;; esac; done`, then inspect `$pgrep_rc`: `1` = done, `2`/`3`/`127` = polling failure; use `pgrep_rc` not `status` — zsh treats `status` as read-only). Keep `<cmd>` specific enough — e.g. the bracket trick plus PR number — that it cannot match an unrelated process or the polling shell itself; see Protocol 91 for why PID-capture-and-`wait` does not substitute here. Never end a turn while something you started is still in flight.
 
 **Foreground loop execution — never background-and-yield**: Protocol 91 Step 7 and Step 8 define the mandatory foreground-execution rule for `pr-review-loop.sh` and `pr-ci-loop.sh` (run each to completion in-turn; never background one and end your turn to wait for it). That rule applies to every dispatch this agent makes exactly as written there.
 
-**Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.** It takes a per-PR single-instance lock; a second concurrent invocation exits 75 with `REASON=lock_contention` and tells you nothing about the PR's actual state. If you re-enter this item after a backgrounded or interrupted run, do not start a new one — poll for the earlier process to finish (or confirm it is genuinely gone), then read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, GraphQL review threads) instead of launching a duplicate run. Use `pr-review-loop.sh unlock <pr-number>` only once you have confirmed the recorded lock PID is no longer alive.
+**Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.** It takes a single-instance lock keyed by target repository and PR number; a second concurrent invocation exits 75 with `REASON=lock_contention` and tells you nothing about the PR's actual state. If you re-enter this item after a backgrounded or interrupted run, do not start a new one — poll for the earlier process to finish (or confirm it is genuinely gone), then read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, GraphQL review threads) instead of launching a duplicate run. Use `pr-review-loop.sh unlock <pr-number>` only once you have confirmed the recorded lock PID is no longer alive, and pass it the same `--repo`/`--product-repo`/`--repo-root` options the blocked run used — the contention message prints the exact recovery command and a `LOCK_REPO_KEY` naming the repository the lock belongs to.
 
 **Worktree git discipline** (`BATCH_CONTEXT=true` only): All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) must target the worktree path, not the main repo root. Never `cd` out of the worktree into the main repo root and then run branch-switching commands. Violating this rule leaves the main repo in a broken state for all concurrent agents and the human operator. Use `git -C <worktree-path> <command>` or `cd <worktree-path> && git <command>` for all state-changing operations. Read-only inspection of the main repo is always permitted via `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`.
 
@@ -202,7 +227,11 @@ resetting, restoring, stashing, committing, or deleting suspect changes.
 
 This rule prevents Protocol 90 Step 5.2 from firing the "wrong branch + clean" auto-correct on every item in a batch. Omitting this return step was the root cause of repeated Step 5.2 violations in serial batches.
 
-**`codex-github` runner reviewer dispatch**: When `codex-github` is listed in `review.on_draft.runner` (or the legacy `review.internal_reviewers` alias during the transition release), invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>` instead of dispatching a CLI-based reviewer agent. This script is universally reachable from all runner contexts (Claude Code, Cursor, Codex, headless CI) because it uses only `gh` CLI — no Codex CLI runtime is needed. Exit code semantics: `0` = APPROVED, `1` = NEEDS_REVISION (blocking findings in stdout), `2` = TIMED_OUT (treat as unavailable under `internal_reviewers_unavailable_policy`). Prerequisite: Codex GitHub App must be installed on the repository and configured to respond to the trigger phrase (default: `@codex review`).
+<!-- step7a-codex-github-availability:start -->
+`codex-github` needs no local Codex runtime, so no driving runner is inherently barred. Its bounded repository-activity proxy reports `prerequisite-missing` for no bot activity on a complete short page and `check-inconclusive` for a full unmatched page. Post-dispatch errors remain review failures, never unavailable reclassification.
+<!-- step7a-codex-github-availability:end -->
+
+**`codex-github` runner reviewer dispatch**: invoke `scripts/development-workflow/codex-github-reviewer.sh <pr_number> <owner> <repo>`. Exit `0` approves, `1` enters revision, `2` and `3` are review failures, and `4` remains waiting.
 
 **Permission-denial protocol (subagent runs only)**: If the `Edit` or `Write` tool is denied for **any path** — including `.claude/agents/**`, `.cursor/agents/**`, or any other file — the subagent MUST immediately stop all further work and return:
 
@@ -211,3 +240,28 @@ SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on <denied-target>. No partial wo
 ```
 
 Using `Bash`, Python subprocess, `gh api --method PUT`, or any other alternative mechanism to write the same file is **explicitly prohibited**. Silent workarounds bypass hook validation, break the orchestrator's fallback tracking, and violate the protocol contract. The denied target (file path for Edit/Write; command pattern for Bash) must be listed in `<denied-target>` so the orchestrator can resolve the permission gap before retrying. See Protocol 91 Step 3 for the complete permission-denial contract and `<denied-target>` encoding rules.
+
+---
+
+## Cursor dispatch profile
+
+In a Cursor environment only, declare the dispatch profile in force before any
+mutating action — `cursor-native-handoff`, `cursor-parent-orchestrated`, or
+`cursor-inline-fallback` — naming the Work Item Runner (item layer) as the
+accountable orchestration role, with a posture valid for the current checkpoint. Other runners are unaffected by
+this requirement.
+
+Evaluation order, unconfirmed-handoff outcomes, accountability postures, the
+named stop conditions and their human unblocking actions, and the
+invalid-declaration boundaries are defined once, normatively, in
+`docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
+Follow that document; this surface deliberately does not restate it.
+
+Stage-agent models in Cursor: before dispatching a stage subagent, read that
+agent's `model:` field from `.cursor/agents/<agent>.md` in the checkout being
+run and use it. Do not pick models from the template tables in
+`docs/workflow/development-workflow/agent-model-config.md`. Downstream
+repositories may pin other model families (for example Grok or Composer), and
+those pins are honored as written. See that document's "Cursor model source of
+truth" section.
+

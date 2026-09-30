@@ -1,0 +1,38 @@
+
+=== Multi-repository release assurance ===
+PASS: valid_schema
+PASS: valid_adoption_status
+PASS: valid_scenario_count
+PASS: valid_hub_history_unchanged
+PASS: valid_product_history_unchanged
+PASS: valid_skipped_has_rationale
+PASS: valid_rerun_has_step_identity
+PASS: blocked_adoption_status
+PASS: blocked_owner_action
+PASS: retryable_adoption_status
+PASS: retryable_outcome
+PASS: retryable_action
+PASS: history_mutation_blocks
+PASS: history_mutation_product_changed
+PASS: history_mutation_action
+PASS: repeated_side_effect_blocks
+PASS: repeated_side_effect_forces_fail
+PASS: repeated_side_effect_action
+PASS: missing_evidence_blocks
+PASS: missing_evidence_forces_fail
+PASS: missing_evidence_requires_supersedes
+PASS: missing_evidence_action
+PASS: garbage_evidence_blocks_adoption
+PASS: garbage_evidence_forces_component_routing_fail
+PASS: garbage_evidence_forces_milestone_fail
+PASS: garbage_evidence_flags_release_contract
+PASS: garbage_evidence_flags_component_evidence
+PASS: garbage_evidence_action
+PASS: bad_identity_blocks_adoption
+PASS: bad_identity_flags_field
+PASS: shell_output_status
+PASS: shell_output_history
+PASS: T21_trust_class_json
+PASS: T21_trust_class_shell
+PASS: T22_garbage_release_contract_blocked
+All multi-repository release assurance tests passed (35 assertions).

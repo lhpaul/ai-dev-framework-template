@@ -188,7 +188,11 @@ live_pr_state() {
     error_exit "failed to normalize changed files for PR #$number"
   fi
 
-  printf '%s\n' "$pr_json" | jq --argjson files "$files_json" '{
+  # The live rollup keeps superseded runs; collapse them with the shared
+  # definition (workflow-lib.sh, #1559) BEFORE projecting, and qualify a check
+  # run's name with its workflow so same-named jobs in two workflows are not
+  # merged by collect_check_blockers below.
+  printf '%s\n' "$pr_json" | jq --argjson files "$files_json" "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'{
     pr_number: .number,
     title: .title,
     base: .baseRefName,
@@ -206,10 +210,19 @@ live_pr_state() {
     labels: [.labels[]?.name],
     review_decision: (.reviewDecision // ""),
     status_checks: [
-      .statusCheckRollup[]? |
+      (.statusCheckRollup | dedupe_status_check_rollup | .[]) |
       if .__typename == "CheckRun" then
         {
-          name: .name,
+          name: (
+            if (.workflowName // "") != "" and .workflowName != .name
+            then .workflowName + " / " + .name
+            else .name
+            end
+          ),
+          # Identity fields ride along so the dedupe in collect_check_blockers
+          # keys this run by workflow + job and never merges it with a status
+          # context whose name happens to read "workflow / job".
+          workflowName: (.workflowName // ""),
           status: (.status // ""),
           conclusion: (.conclusion // ""),
           completed_at: (.completedAt // .startedAt // "")
@@ -217,6 +230,7 @@ live_pr_state() {
       else
         {
           name: .context,
+          context: .context,
           status: (if (.state // "") == "SUCCESS" then "COMPLETED" else (.state // "") end),
           conclusion: (.state // ""),
           completed_at: (.startedAt // "")
@@ -255,24 +269,12 @@ collect_check_blockers() {
     return 0
   fi
 
-  if ! checks_json="$(printf '%s\n' "$state_json" | jq -c '
+  # Superseded runs for the same check collapse to the latest one via the
+  # shared definition (workflow-lib.sh, #1559): newest timestamp when every
+  # duplicate carries one, otherwise the latest input entry.
+  if ! checks_json="$(printf '%s\n' "$state_json" | jq -c "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
     [.status_checks[]?, .required_checks[]?, .checks[]?]
-    | to_entries
-    | map(.value + {
-        __run_epic_idx: .key,
-        __run_epic_name: (.value.name // .value.context // "unnamed check"),
-        __run_epic_timestamp: (.value.completed_at // .value.completedAt // .value.startedAt // "")
-      })
-    | sort_by(.__run_epic_name, .__run_epic_idx)
-    | group_by(.__run_epic_name)
-    | map(
-        if length == 1 then .[0]
-        elif all(.__run_epic_timestamp != "") then max_by(.__run_epic_timestamp)
-        else max_by(.__run_epic_idx)
-        end
-        | . + {dedupe_policy: (if .__run_epic_timestamp == "" then "latest-input-entry" else "latest-timestamp" end)}
-        | del(.__run_epic_idx, .__run_epic_name, .__run_epic_timestamp)
-      )
+    | dedupe_status_check_rollup
   ')"; then
     error_exit "failed to normalize required CI checks"
   fi

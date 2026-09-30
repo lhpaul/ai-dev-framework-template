@@ -67,9 +67,10 @@ If the file is absent or the key is not present, CodeRabbit defaults to
 When a draft-restricting reviewer is listed in `review.on_ready.github`, the
 ready transition happens after the draft gate:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <number> --draft-github-only
-./scripts/development-workflow/pr-review-loop.sh <number>
+./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name> --draft-github-only
+./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name>
 ```
 
 The second command marks the PR ready immediately before the first ready-phase
@@ -119,7 +120,19 @@ platform as clean after Codex publishes evidence tied to the current PR head:
 - current-head Codex inline review comments, treated as findings.
 
 A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
-not SHA-pinned review evidence and must be treated as unavailable, not clean.
+not SHA-pinned review evidence and must be treated as `waiting_on_reviewer`
+(`REASON=codex-github-reaction-without-review`), not clean and not an
+escalation (#1757).
+
+A resolved Codex review conversation must not, by itself, count as a current
+blocker: `pr-review-loop.sh` and `codex-github-reviewer.sh` share one
+applicability-aware thread counter
+(`codex-github-evidence-lib.sh`'s `codex_review_thread_evidence_counts`) that
+excludes resolved, outdated, dismissed-review, and non-live-head-commit
+threads from blocker counts. See
+[`codex-github.md`](../integrations/codex-github.md#resolved-codex-findings-and-blocker-counting-1757)
+for the full counting contract, the removed `unresolved_count=1` floor, and
+this item's scope note.
 Codex-authored root PR comments without a current-head `Reviewed commit` marker
 are not SHA-pinned clean evidence; use them only for acknowledgement,
 usage-limit, and setup-failure detection.
@@ -160,7 +173,37 @@ plan). A bare, non-terminal acknowledgement comment is still routed to
 wait-for-more-evidence as before; that wait is gated on the evidence being
 non-terminal, so a footer-bearing near-miss on genuinely terminal evidence
 always reaches the `NEEDS_REVISION` safe-fail rather than being misrouted to
-a wait/timeout.
+a wait/timeout — **unless** that terminal evidence itself matches neither an
+approved template nor the documented blocking markers, in which case it now
+escalates rather than safe-failing (see the outcome table below, #1757).
+
+##### Codex phase outcomes (#1757)
+
+The Codex phase's normative outcome set — cross-linked to the spec's own
+decision-gate matrix rows in
+[`1_1757-resolved-codex-findings_specs.md`](../../../specs/developments/20260915075927_1757-resolved-codex-findings/1_1757-resolved-codex-findings_specs.md#complex-workflow-decision-gate-matrix)
+— is:
+
+| Outcome | `REASON=` | Meaning |
+| --- | --- | --- |
+| `clean` | — | Terminal clean evidence for the live head (submitted non-blocking review with the full head SHA and a clean body, or a fresh marker-pinned clean root comment) |
+| `needs_fixes` | `unresolved_review_threads` | An applicable unresolved live-head conversation, a `CHANGES_REQUESTED` review, or a terminal finding correlated to an unresolved conversation |
+| `waiting_on_reviewer` | `codex-github-review-pending` | No terminal live-head evidence yet, only stale/prior-revision evidence, or every current-head finding is cleared (resolved) with no other applicable unresolved conversation — the cleared-findings retrigger path |
+| `waiting_on_reviewer` | `codex-github-reaction-without-review` | Acknowledgement-only evidence (reaction, draft review, or a clean-looking comment with no reviewed-revision field) for the live-head attempt |
+| `escalate` | `codex_current_verdict_malformed_revision_marker` | A `Reviewed commit` marker is syntactically unusable (empty, non-hex, multiple tokens, or an interior-substring/superstring of the live head) and is the newest live-head evidence within the head's evidence window |
+| `escalate` | `codex_current_verdict_unrecognized` | A current terminal verdict reproduces neither an approved template nor the documented blocking markers, and is not a recognized availability response |
+| `escalate` | `codex_finding_thread_correlation_missing` | A current terminal finding has no stable review-thread identifier (a root-comment finding, or a review's own body finding) or no identifiable matching conversation |
+| `escalate` | `evidence_unavailable_codex_thread_state` | The bounded thread/correlation evidence query failed or was left indeterminate after retry |
+
+The four `escalate` reason codes are terminal for the current run and are
+never converted into `needs_fixes`, `waiting_on_reviewer`, or clean
+readiness by the loop or its callers. `reviewer_loop_cap_exceeded` treats an
+exhausted per-run or lifetime allowance the same way across all of
+`needs_fixes`, `needs_rerun`, and `waiting_on_reviewer`: when the evaluation
+would otherwise require another review cycle — including a cleared-findings
+retrigger — the loop escalates (`max_cycles_exceeded` /
+`max_total_cycles_exceeded`) instead. Canonical terminal clean evidence
+received in the final permitted cycle still proceeds to readiness.
 
 When both a SHA-pinned root comment and a submitted review qualify as terminal
 evidence, the strictly newer one wins. On an exact timestamp tie (GitHub
@@ -356,6 +399,73 @@ normal orchestrated path), the Step 7a pre-check and draft GitHub gate have
 already controlled the ready transition; this pre-flight check is a safety net
 for standalone invocations.
 
+### Per-head reviewer staging (#1692)
+
+The loop is staged **per current head**, for whatever multi-tool set the
+repository configures — not as a special case for one reviewer.
+
+1. `review.on_draft.github` platforms run until they are clean on
+   `loop_head_sha`. The loop stops at the first non-clean platform, so a
+   later-phase reviewer never runs on a head an earlier-phase reviewer has not
+   cleared.
+2. `review.on_ready.github` platforms run only after that gate, and only after
+   the #1656 second local pass confirms current-head local clean evidence and
+   `ensure_pr_ready_for_ready_phase` converts the PR.
+3. On a **later cycle of the same head**, a platform the persisted
+   `reviewer_loop_history.v1` ledger already records clean on that head is
+   **not re-dispatched**. Its recorded verdict is replayed as this round's
+   evidence instead.
+4. A **new head** clears every skip on its own: the recorded clean then names a
+   different commit, so the local reviewer runs again on the new head (#1656)
+   before ready-phase reviewers resume.
+
+A later tool being clean while an earlier tool is not clean on the same head is
+never a loop-complete signal, and an independent GitHub App or Actions check is
+never substitute evidence that an in-loop reviewer is clean on this head.
+
+**The governing verdict** is the newest ledger entry that carries a
+`platform_results` record for that platform, and the reviewed head is read from
+**that same entry's** `reviewed_heads[]` (the #1648 evidence field) — never
+borrowed from another entry. The predicate
+(`reviewer_loop_platform_clean_for_head`) prints `clean_current`,
+`head_changed`, `not_clean`, or `no_evidence`, and only `clean_current` skips:
+missing, unparseable, non-clean, and other-head evidence all dispatch.
+
+**The replay is not a shortcut past the evidence gates.** A skipped platform
+goes through the same `reviewer_loop_process_platform_output` path as a
+dispatch, so it contributes the same peer evidence for the expensive-reviewer
+gate (#1649), the same `reviewed_heads[]` entry behind `LOCAL_AI_HEAD_CURRENT`
+and Protocol 91 Step 8a Check 0.6 (#1648), and the same `platform_results`
+record in the ledger. The reviewed head it reports is the head the recorded
+clean verdict names, which is `loop_head_sha` by definition of the skip. The
+post-clean settle and the unresolved-thread gates are unaffected and still run.
+
+**An expensive reviewer still owes its #1649 gate before a replay.** The gate
+runs *before* the replay decision is acted on, never after and never instead.
+A recorded clean vouches for one reviewer's verdict on one commit; it does not
+vouch for the gate's **live** inputs — unresolved review threads and baseline
+check runs on that same head, which can change after the verdict was recorded.
+Skipping the gate to avoid a dispatch that will not happen would also skip the
+readiness-withholding deferral the gate exists to produce, so a deferring gate
+still yields `RESULT=needs_fixes REASON=expensive_gate_deferred` even when the
+ledger says that reviewer is clean on this head. A gate that passes and then
+ends in a replay is not a dispatch: it suppresses the
+`EXPENSIVE_GATE_RESULT=dispatched` telemetry exactly as the ready-phase
+preflight does.
+
+**Telemetry:**
+
+| Key | Meaning |
+| --- | --- |
+| `STAGE_SKIP_ENABLED=0\|1` | Whether staging skips were possible this run |
+| `STAGE_SKIP_DISABLED_REASON=<reason>` | Why not, when disabled: `disabled_by_env`, `compare_mode`, `explicit_platform_selection`, `head_unknown`, `history_unavailable` |
+| `STAGE_SKIPPED_PLATFORMS=<platforms>` | Comma-separated platforms replayed instead of dispatched; emitted alongside every `RESULT=` that follows the platform loop, empty when none. Guard exits that never reach the loop (`lock_contention`, `release_pr`, `truncated_run`, `pr_ownership_branch_required`, `pr_ownership_mismatch`, `pr_ownership_unverified`) emit none of these keys. The PR ownership check (`pr_ownership_*`, issue #1444) runs on every run: against `--branch` when given, else against the workflow branch checked out in `--repo-root` (or the working directory); with neither, the run fails closed as `pr_ownership_branch_required`. A branch taken from a checkout is checked in that checkout's origin repository; a named repository or a `--repo-root` origin that disagrees with it fails closed as `pr_ownership_unverified` (`PR_OWNERSHIP_RESULT=repo_conflict`; an unresolvable one is `repo_unresolved`) |
+
+Staging stands down when the caller names platforms with `--platform` (an
+explicit selection is an instruction to run those reviewers), in `--compare`
+runs, when the ledger for this PR is unreadable, when the loop cannot read its
+own head, and when `PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1` is set.
+
 ### Pre-flight: check for existing unresolved review findings
 
 Before running any scripts, inspect the PR's current review state:
@@ -459,17 +569,76 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    Use descriptive commit messages for the final local commit sequence.
    _(Push before resolving threads — if push fails, threads must not be falsely
    marked resolved.)_
+
+   Push with an explicit self-refspec. A bare `git push` depends on local
+   `push.default` and on an upstream that may point at the integration branch,
+   so it can either silently no-op or write the fix onto that branch
+   (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   # The checkout must be on the PR's own head branch. A self-refspec push is
+   # safe in the sense that it cannot hit the integration branch, but from an
+   # unrelated checkout it would publish that branch and only be caught by the
+   # SHA mismatch afterwards — after the push (issue #1593).
+   PR_HEAD_BRANCH="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || PR_HEAD_BRANCH=""
+   if [ "$FIX_BRANCH" != "$PR_HEAD_BRANCH" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number>."
+     echo "Cause: this checkout is on ${FIX_BRANCH}, but the PR's head branch is ${PR_HEAD_BRANCH:-<unreadable>}."
+     echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+     exit 1
+   fi
+   # Handle a failed push explicitly: under `set -e` a bare failure would abort
+   # before the verification below, so the contractual stop would never print.
+   if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number> on branch ${FIX_BRANCH}."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+   ```
 4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
-     git push
-     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     # Explicit refspec: a bare `git push` here depends on local push.default and
+     # on an upstream that may point at the integration branch (issue #1593).
+     # Handle its failure too: under `set -e` a bare failure would abort before
+     # the check below, so the contractual stop would never print.
+     RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     # Re-check the checkout here too: the retry runs after something already
+     # went wrong, which is exactly when the checkout may have moved.
+     RETRY_PR_HEAD="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || RETRY_PR_HEAD=""
+     if [ "$RETRY_BRANCH" != "$RETRY_PR_HEAD" ]; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number>."
+       echo "Cause: the retry would push ${RETRY_BRANCH}, but the PR's head branch is ${RETRY_PR_HEAD:-<unreadable>}."
+       echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+       exit 1
+     fi
+     if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
+       echo "Cause: git push failed on the retry. A refusal is multi-line and can be truncated to nothing."
+       echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+       exit 1
+     fi
+     REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-       echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
+       echo "Cause: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete."
+       echo "Human action: check the branch upstream and push permissions, push the branch"
+       echo "  with an explicit self-refspec, and confirm the PR head matches before resuming the loop."
        # Do not resolve threads or declare the fix pass complete. Report BLOCKED to the human.
        exit 1
      fi
@@ -511,18 +680,73 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
    partial progress survives runner interruption.
 4. **Push once after all addressable fixes** — push only after all addressable
    fixes for the current reviewer-loop cycle are complete. Do not push after
-   each individual fix or checkpoint commit.
+   each individual fix or checkpoint commit. Push with an explicit self-refspec
+   for the same reason as the inline path above (issue #1593):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   FIX_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   # The checkout must be on the PR's own head branch. A self-refspec push is
+   # safe in the sense that it cannot hit the integration branch, but from an
+   # unrelated checkout it would publish that branch and only be caught by the
+   # SHA mismatch afterwards — after the push (issue #1593).
+   PR_HEAD_BRANCH="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || PR_HEAD_BRANCH=""
+   if [ "$FIX_BRANCH" != "$PR_HEAD_BRANCH" ]; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number>."
+     echo "Cause: this checkout is on ${FIX_BRANCH}, but the PR's head branch is ${PR_HEAD_BRANCH:-<unreadable>}."
+     echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+     exit 1
+   fi
+   # Handle a failed push explicitly: under `set -e` a bare failure would abort
+   # before the verification below, so the contractual stop would never print.
+   if ! git push origin "${FIX_BRANCH}:${FIX_BRANCH}"; then
+     echo "STOP: guardrail 'push_verification_failed' halted this run."
+     echo "Item: PR <pr_number> on branch ${FIX_BRANCH}."
+     echo "Cause: git push failed. A refusal is multi-line and can be truncated to nothing."
+     echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+     exit 1
+   fi
+   ```
 5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    LOCAL_SHA=$(git rev-parse HEAD)
-   REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+   REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
      echo "Push verification failed: local HEAD $LOCAL_SHA != remote HEAD $REMOTE_SHA — retrying push"
-     git push
-     REMOTE_SHA=$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')
+     # Explicit refspec: a bare `git push` here depends on local push.default and
+     # on an upstream that may point at the integration branch (issue #1593).
+     # Handle its failure too: under `set -e` a bare failure would abort before
+     # the check below, so the contractual stop would never print.
+     RETRY_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+     # Re-check the checkout here too: the retry runs after something already
+     # went wrong, which is exactly when the checkout may have moved.
+     RETRY_PR_HEAD="$(gh pr view <pr_number> --json headRefName --jq '.headRefName')" || RETRY_PR_HEAD=""
+     if [ "$RETRY_BRANCH" != "$RETRY_PR_HEAD" ]; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number>."
+       echo "Cause: the retry would push ${RETRY_BRANCH}, but the PR's head branch is ${RETRY_PR_HEAD:-<unreadable>}."
+       echo "Human action: switch to the PR's head branch (or fix the PR read) and re-run this step."
+       exit 1
+     fi
+     if ! git push origin "${RETRY_BRANCH}:${RETRY_BRANCH}"; then
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch ${RETRY_BRANCH}."
+       echo "Cause: git push failed on the retry. A refusal is multi-line and can be truncated to nothing."
+       echo "Human action: read the full push output, fix the upstream or permissions, and re-run this step."
+       exit 1
+     fi
+     REMOTE_SHA="$(gh pr view <pr_number> --json headRefOid --jq '.headRefOid')" || REMOTE_SHA=""
      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-       echo "BLOCKED: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete"
+       echo "STOP: guardrail 'push_verification_failed' halted this run."
+       echo "Item: PR <pr_number> on branch $(git rev-parse --abbrev-ref HEAD)."
+       echo "Cause: push retry also failed (local $LOCAL_SHA != remote $REMOTE_SHA) — not marking fix complete."
+       echo "Human action: check the branch upstream and push permissions, push the branch"
+       echo "  with an explicit self-refspec, and confirm the PR head matches before resuming the loop."
        # Do not resolve threads or declare the fix pass complete. Report BLOCKED to the human.
        exit 1
      fi
@@ -817,6 +1041,46 @@ A missing, stale, or contradictory quality-gate log should be fixed before
 another automated review cycle unless the next action is an explicit human
 escalation.
 
+**Matrix coherence re-audit (same-matrix re-run rule)**: this rule applies to
+reviewer-loop cycles on `spec/*` and `implementation-plan/*` PRs only.
+Implementation PRs (`feature/*`, `refactor/*`, `fix/*`, `hotfix/*`) are out of
+scope even when their findings concern a referenced spec or plan; their
+existing Pass 1 spec-compliance check is unchanged. On an in-scope PR, when
+**two consecutive cycles' blocking findings implicate the same stateful
+contract**
+(decision matrix, state table, lifecycle, precedence rules, or similarly
+stateful construct) of the spec, the plan, or — for Refactor items — the work
+item brief under review, the loop runner must re-run the full six-check
+coherence audit (defined in Protocol 01's Document Quality Gate section,
+"Matrix coherence preflight") on that matrix before the next fix push, and
+record the audit result in the fix commit comment (`Matrix coherence
+re-audit:` line in the "Fix commit comment" template — Protocol 91).
+
+- **Matrix identity**: a matrix is identified by its normative location — the
+  section heading, table, or step anchor in the reviewed document (for a
+  Refactor brief, the brief's own section/table anchor, tracked with the same
+  counter and reset semantics as a spec or plan matrix).
+- **Implication**: a blocking finding implicates a matrix when it concerns
+  that matrix's stateful contract — its rows, states, outcomes,
+  evidence-currency rules, or precedence — including associated normative
+  prose, regardless of whether the fix lands in the matrix itself or in
+  surrounding text.
+- **Counter semantics**: the consecutive-cycle count for a given matrix
+  increments for each cycle whose blocking findings implicate that matrix,
+  resets to zero when a cycle's blocking findings do not implicate it, and
+  resets after the re-audit runs.
+- **Responsibility**: the re-audit is the loop runner's responsibility alone;
+  dispatched fixers receive its result with the fix dispatch rather than
+  performing it themselves.
+- **Gate ordering**: the stuck-loop escalation rules in "Detection rules"
+  below (no-progress after 2+ cycles, a second reappearance of a previously
+  fixed finding, `max_cycles`) are evaluated first and always win. The
+  re-audit is not an additional fix attempt and never extends any cap — it
+  runs only when the loop is otherwise proceeding to another fixer dispatch,
+  adding one audit step to that already-granted dispatch. The existing
+  no-progress/stuck-loop escalation path is unchanged and still applies when
+  the audit itself does not clear the loop.
+
 ### Re-query reviewThreads after each push (mandatory)
 
 **After every push that addresses reviewer feedback — including the final push before Step 8c — you MUST re-issue the GraphQL `reviewThreads` query (as defined in Protocol 91 Step 8c) before proceeding to check readiness.**
@@ -886,7 +1150,7 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
 
    | Finding path | Blocking finding is small? |
    | --- | --- |
-   | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever its wording |
+   | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `.claude/**`, `.cursor/**`, `.codex/**`, `.agents/**`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever its wording |
    | Any other non-shipped path — `CHANGELOG.md`, fixtures, snapshots, and other non-shipped `*.md` outside the normative set | Small **unless** its body touches a contract surface (acceptance criteria, decision gates/matrices, parser/input behavior, scope/coverage, fail-closed semantics, state/status models, telemetry/contracts, proof obligations). Matching is case-insensitive on POSIX word boundaries; bare common words such as `gate`, `scope`, or `state` alone do not match. |
    | A shipped path | Never |
 
@@ -1009,6 +1273,18 @@ Use `READY_PHASE_NET_NEW_BLOCKER` as the primary value signal:
 This signal is for tool-evaluation and graduation decisions. It does not weaken
 the normal merge gates: any net-new blocker still follows the standard
 `needs_fixes` loop.
+
+### Closing-keyword scope is advisory and outside this loop
+
+The `Closing-keyword scope` check (#1644) warns when a pull request declares a
+closing keyword for an issue a sibling pull request is carrying. It is **not a
+reviewer-loop platform** and never gates this loop: its conclusion is `success`
+for a conclusive run and `neutral` for one that could not read an input, so it
+cannot make a pull request non-mergeable and cannot make a loop iteration
+`needs_fixes`. Treat its comment the way a human would treat a note — read it,
+fix the description if it is right, apply `multi-issue-intentional` if the
+multi-issue scope is deliberate — and do not add it to `review.on_draft` or
+`review.on_ready`.
 
 ### PR-Agent "Possible Issue" advisory labels
 
@@ -1293,6 +1569,21 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
 - Maintain a PR feedback ledger tracking all blocking findings across cycles (keyed by `(platform, path, body_snippet)`).
 - After each fixer push, post a **fix commit comment** on the PR listing which findings that commit resolved and any remaining open findings. Apply the [Pre-post verification guard](#pre-post-verification-guard-mandatory-before-every-gh-pr-comment--gh-pr-review-call) before composing each fix commit comment.
 - After each fixer push, **reply to each addressed inline review comment** on the PR to mark it as resolved. This is mandatory. Follow Protocol 91 ("Resolve inline review comments") for the exact `gh api` command format and delegation requirements for fixer subagents.
+- **Conformance declaration on cited specification lines (as support)**: where a
+  reply on a review thread cites a workflow specification line **as support**
+  for the runner's behavior or for a decision the reviewer will weigh, the
+  reply carries the conformance declaration required by
+  [`architecture-decision-escalation.md`](../architecture-decision-escalation.md):
+  `Conforms`, `Departs`, or `Not yet implemented`. `Not yet implemented` is
+  never used for behavior that already exists in the cited surface. Where the
+  citation's conformance genuinely cannot be determined, the reply states this
+  plainly instead, using none of the three declarations, without alone opening
+  a full `architecture_decision` escalation for that citation. A citation
+  named only to identify a source, not offered as support, carries no
+  declaration. Where a reviewer finding would lead the runner to raise
+  `architecture_decision`, the reply points to Protocol 91 and the canonical
+  page for the full escalation report — this reply-level declaration is never
+  a lighter substitute for that full report.
 - When the loop terminates with `clean`, `needs_fixes`, or `escalate`, **`pr-review-loop.sh` automatically posts or updates the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. On `needs_fixes`, the script updates the existing summary in place so active findings are visible while the fixer loop continues. The script-posted comment satisfies the Step 8c `hasReviewSummary` check.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 

@@ -13,5 +13,13 @@ Recommended model tier: `economy`
 4. Run Step 7 (automated review), Step 7b (regression label for implementation PRs), and Step 8 (CI) using the scripts in `scripts/development-workflow/`. Run Step 7 to completion before Step 7b and Step 8. Run `pr-review-loop.sh` and `pr-ci-loop.sh` in the foreground — see `91-orchestrate-work-protocol.md` Step 7/Step 8 for the mandatory "run in the foreground, never background-and-yield" rule; it applies here exactly as written there.
 5. Dispatch the appropriate fixer agent when the loop returns `needs_fixes`; apply labels per `92-pr-readiness-signal-protocol.md` when clean or when escalating. For `spec/*` and `implementation-plan/*` PRs, route through Protocol 91 Step 8a so `check-documentation-stage-alignment.sh` runs before `ready-for-human-review`.
 6. When `BATCH_CONTEXT=true`, pass the full Protocol 90 isolation assignment to any fixer handoff: resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`.
-7. Track all blocking findings across cycles in an issue ledger. After each fixer push, post a fix commit comment listing resolved issues. When the loop terminates, post a final summary table on the PR using `gh pr comment`.
+7. Track all blocking findings across cycles in an issue ledger. After each fixer push, post a fix commit comment listing resolved issues. When the loop terminates, post a final summary table on the PR using `gh pr comment`. Run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` before each such comment and stop on a non-zero exit (issue #1444).
+7a. When a review-thread reply cites a workflow specification line as
+   support, attach the conformance declaration (`Conforms` / `Departs` /
+   `Not yet implemented`, or a plain undetermined statement) required by
+   `docs/workflow/development-workflow/architecture-decision-escalation.md`.
+   Where a finding would lead to a full `architecture_decision` escalation,
+   point to Protocol 91 and that canonical page rather than a lighter
+   requirement.
 8. Keep repository routing thin: in `workflow_hub`, pass selected product repository context through to shared reviewer and CI scripts for product implementation PRs; hub-owned spec, plan, and workflow PRs continue to target the hub.
+9. For `spec/*` and `implementation-plan/*` PRs, apply Protocol 93's matrix coherence re-audit rule: when two consecutive cycles' blocking findings implicate the same stateful contract (decision matrix, state table, lifecycle, precedence rules, or — for Refactor items — the work item brief), re-run the six-check audit before the next fix push and record the result in the fix commit comment's `Matrix coherence re-audit:` line. Stuck-loop escalation rules always evaluate first and win; the re-audit never extends a cycle cap.

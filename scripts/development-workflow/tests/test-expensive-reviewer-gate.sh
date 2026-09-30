@@ -357,6 +357,226 @@ _docs_has "1649_docs_p93_unreadable" "expensive_gate_deferral_budget_unreadable"
 _docs_has "1649_docs_cg_cap" "expensive_gate_deferral_cap" "$_cg"
 _docs_has "1649_docs_cg_unreadable" "expensive_gate_deferral_budget_unreadable" "$_cg"
 
+# --- Scenario 1692: per-head replay never bypasses the expensive gate ---
+# A recorded clean vouches for one reviewer's verdict on one commit. It does not
+# vouch for the gate's LIVE inputs — unresolved review threads and baseline
+# check runs on that same head, which can change after the verdict was
+# recorded. So an expensive reviewer with a clean ledger entry for the current
+# head must still clear its gate before anything reports clean for it.
+_1692_head="$_head"
+_1692_ledger_clean="$(jq -nc --arg head "$_1692_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [{platform: "codex-github", result: "clean", raw_result: "clean", raw_reason: ""}],
+    reviewed_heads: [{platform: "codex-github", reviewed_head: $head, state: "current", reason: ""}]
+  }]
+}')"
+run_test "1692_gate_ledger_says_clean_current" "clean_current" \
+  "$(reviewer_loop_platform_clean_for_head "$_1692_ledger_clean" codex-github "$_1692_head")"
+
+# The ordering predicate: an expensive reviewer owes its gate; nothing else does.
+run_test "1692_gate_expensive_pending_refused" "refused" \
+  "$(reviewer_loop_stage_skip_allowed_now codex-github pending && echo allowed || echo refused)"
+run_test "1692_gate_expensive_not_required_refused" "refused" \
+  "$(reviewer_loop_stage_skip_allowed_now codex-github not_required && echo allowed || echo refused)"
+run_test "1692_gate_expensive_passed_allowed" "allowed" \
+  "$(reviewer_loop_stage_skip_allowed_now codex-github passed && echo allowed || echo refused)"
+run_test "1692_gate_cheap_not_required_allowed" "allowed" \
+  "$(reviewer_loop_stage_skip_allowed_now local-ai-reviewer not_required && echo allowed || echo refused)"
+run_test "1692_gate_cheap_passed_allowed" "allowed" \
+  "$(reviewer_loop_stage_skip_allowed_now local-ai-reviewer passed && echo allowed || echo refused)"
+run_test "1692_gate_cheap_unknown_state_refused" "refused" \
+  "$(reviewer_loop_stage_skip_allowed_now local-ai-reviewer pending && echo allowed || echo refused)"
+
+# Composition through the REAL loop body. reviewer_loop_platform_pre_dispatch is
+# the function the platform loop calls, so these assertions fail if the ordering
+# or the telemetry suppression regresses in production code — they do not restate
+# it in the harness.
+_1692_ran=()
+# reviewer_loop_platform_pre_dispatch sets loop globals, so it must run in this
+# shell — capturing it with $( ) would run it in a subshell and lose every
+# assignment (the same trap expensive_gate_sync_last_from_output documents).
+_1692_tmp="$(mktemp)"
+trap 'rm -f "${_1692_tmp:-}"' EXIT
+run_platform_review() { _1692_ran+=("$1"); printf 'RESULT=clean\nREASON=\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'; return 0; }
+_1692_reset() {
+  _1692_ran=()
+  stage_skip_enabled=1
+  stage_skip_history_payload="$_1692_ledger_clean"
+  stage_skipped_platforms=()
+  reviewer_loop_pre_dispatch_action=""
+  platforms=(local-ai-reviewer codex-github)
+  repo_review_platforms=(local-ai-reviewer codex-github)
+  phase_after_clean_platforms=()
+  phase_after_clean_enabled=0
+  phase_after_clean_started=0
+  compare_mode=0
+  compare_verdicts=()
+  loop_head_sha="$_1692_head"
+  pr_number=1692
+  expensive_gate_max_deferrals=3
+  EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+  aggregate_result="skipped"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  aggregate_advisory_labels=""
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  last_platform=""
+  platform_peer_evidence=("local-ai-reviewer|clean|")
+  platform_result_records=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  platform_policy_status_notes=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  reviewer_loop_platform_loop_should_break=0
+  expensive_gate_last_platform=""
+  expensive_gate_last_result=""
+  expensive_gate_last_reason=""
+  expensive_gate_last_head=""
+  # Fresh local evidence by default; the deferring case overrides it.
+  platform_reviewed_heads=("local-ai-reviewer:$_1692_head")
+}
+
+# Case 1 — ledger says clean on this head, but the gate defers on stale live
+# local evidence. No replay, no dispatch, deferral reported.
+_1692_reset
+platform_reviewed_heads=("local-ai-reviewer:$_other")
+reviewer_loop_platform_pre_dispatch codex-github 1 >"$_1692_tmp" 2>/dev/null
+_1692_out="$(cat "$_1692_tmp")"
+run_test "1692_gate_defer_action" "break" "$reviewer_loop_pre_dispatch_action"
+run_test "1692_gate_defer_no_replay" "0" \
+  "$(printf '%s\n' "${stage_skipped_platforms[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_defer_no_dispatch" "0" \
+  "$(printf '%s\n' "${_1692_ran[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_defer_aggregate" "needs_fixes" "$aggregate_result"
+run_test "1692_gate_defer_reason" "expensive_gate_deferred" "$aggregate_reason"
+run_contains "1692_gate_defer_emits_gate_telemetry" "EXPENSIVE_GATE_RESULT=deferred" "$_1692_out"
+
+# Case 2 — same ledger, same head, gate passes. The replay fires, nothing is
+# dispatched, and the passing gate emits no dispatched/forced telemetry and
+# leaves no expensive_gate_last_* state behind for the summary or the ledger.
+_1692_reset
+reviewer_loop_platform_pre_dispatch codex-github 1 >"$_1692_tmp" 2>/dev/null
+_1692_out="$(cat "$_1692_tmp")"
+run_test "1692_gate_pass_action" "replay" "$reviewer_loop_pre_dispatch_action"
+run_test "1692_gate_pass_replays" "1" \
+  "$(printf '%s\n' "${stage_skipped_platforms[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_pass_no_dispatch" "0" \
+  "$(printf '%s\n' "${_1692_ran[@]:-}" | grep -c '^codex-github$' || true)"
+run_test "1692_gate_pass_no_gate_telemetry" "0" \
+  "$(printf '%s\n' "$_1692_out" | grep -c '^EXPENSIVE_GATE_RESULT=' || true)"
+run_test "1692_gate_pass_last_result_cleared" "" "$expensive_gate_last_result"
+run_test "1692_gate_pass_last_platform_cleared" "" "$expensive_gate_last_platform"
+run_test "1692_gate_pass_reviewed_head_recorded" "codex-github:${_1692_head}" \
+  "$(printf '%s\n' "${platform_reviewed_heads[@]}" | grep '^codex-github:' || true)"
+run_test "1692_gate_pass_peer_evidence" "clean|already_clean_current_head" \
+  "$(expensive_gate_lookup_peer_evidence codex-github)"
+
+# Case 3 — gate passes, ledger has no evidence: the reviewer is dispatched and
+# the gate telemetry IS emitted, because this run really is a dispatch.
+_1692_reset
+stage_skip_history_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+reviewer_loop_platform_pre_dispatch codex-github 1 >"$_1692_tmp" 2>/dev/null
+_1692_out="$(cat "$_1692_tmp")"
+run_test "1692_gate_pass_no_evidence_action" "dispatch" "$reviewer_loop_pre_dispatch_action"
+run_contains "1692_gate_pass_no_evidence_emits_telemetry" "EXPENSIVE_GATE_RESULT=" "$_1692_out"
+
+# Case 4 — a non-expensive reviewer has no gate to owe: clean ledger evidence
+# replays directly.
+_1692_reset
+stage_skip_history_payload="$(jq -nc --arg head "$_1692_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, state: "current", reason: ""}]
+  }]
+}')"
+reviewer_loop_platform_pre_dispatch local-ai-reviewer 1 >/dev/null 2>&1
+run_test "1692_cheap_replays" "replay" "$reviewer_loop_pre_dispatch_action"
+
+# Case 5 — staging disabled: everything dispatches, gate telemetry emitted.
+_1692_reset
+stage_skip_enabled=0
+reviewer_loop_platform_pre_dispatch codex-github 1 >"$_1692_tmp" 2>/dev/null
+_1692_out="$(cat "$_1692_tmp")"
+run_test "1692_disabled_dispatches" "dispatch" "$reviewer_loop_pre_dispatch_action"
+run_contains "1692_disabled_emits_telemetry" "EXPENSIVE_GATE_RESULT=" "$_1692_out"
+
+# Planted-violation proofs: the wrong orderings live only in this harness, and
+# the assertions above are what separates them from the shipped function.
+#
+# PV1 — act on the replay before the gate (the original #1692 defect): a stale
+# live-evidence state that must defer instead replays clean.
+_1692_pv_replay_before_gate() {
+  local platform_name="$1" platform_index="$2"
+  reviewer_loop_pre_dispatch_action="dispatch"
+  if [ "$stage_skip_enabled" -eq 1 ] \
+      && [ "$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")" = "clean_current" ]; then
+    stage_skipped_platforms+=("$platform_name")
+    reviewer_loop_pre_dispatch_action="replay"
+    return 0
+  fi
+  if is_expensive_reviewer_platform "$platform_name"; then
+    expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha" >/dev/null 2>&1 \
+      || { reviewer_loop_pre_dispatch_action="break"; return 0; }
+  fi
+  return 0
+}
+_1692_reset
+platform_reviewed_heads=("local-ai-reviewer:$_other")
+_1692_pv_replay_before_gate codex-github 1 >/dev/null 2>&1
+run_test "1692_pv1_plant_replays" "replay" "$reviewer_loop_pre_dispatch_action"
+_1692_reset
+platform_reviewed_heads=("local-ai-reviewer:$_other")
+reviewer_loop_platform_pre_dispatch codex-github 1 >/dev/null 2>&1
+run_test "1692_pv1_correct_breaks" "break" "$reviewer_loop_pre_dispatch_action"
+
+# PV2 — emit the gate telemetry unconditionally, before the replay branch. The
+# stdout contract then reports a dispatch that never happened.
+_1692_pv_emit_before_replay() {
+  local platform_name="$1" out
+  reviewer_loop_pre_dispatch_action="dispatch"
+  if is_expensive_reviewer_platform "$platform_name"; then
+    out="$(expensive_reviewer_gate "$pr_number" "$platform_name" "$loop_head_sha")" || { reviewer_loop_pre_dispatch_action="break"; printf '%s\n' "$out"; return 0; }
+    printf '%s\n' "$out"
+  fi
+  if [ "$stage_skip_enabled" -eq 1 ] \
+      && [ "$(reviewer_loop_platform_clean_for_head "$stage_skip_history_payload" "$platform_name" "$loop_head_sha")" = "clean_current" ]; then
+    reviewer_loop_pre_dispatch_action="replay"
+  fi
+  return 0
+}
+_1692_reset
+_1692_pv_emit_before_replay codex-github >"$_1692_tmp" 2>/dev/null
+_1692_out="$(cat "$_1692_tmp")"
+run_test "1692_pv2_plant_action" "replay" "$reviewer_loop_pre_dispatch_action"
+run_contains "1692_pv2_plant_emits_dispatched" "EXPENSIVE_GATE_RESULT=" "$_1692_out"
+_1692_reset
+reviewer_loop_platform_pre_dispatch codex-github 1 >"$_1692_tmp" 2>/dev/null
+_1692_out="$(cat "$_1692_tmp")"
+run_test "1692_pv2_correct_action" "replay" "$reviewer_loop_pre_dispatch_action"
+run_test "1692_pv2_correct_suppresses" "0" \
+  "$(printf '%s\n' "$_1692_out" | grep -c '^EXPENSIVE_GATE_RESULT=' || true)"
+
+rm -f "$_1692_tmp"
+unset _1692_out _1692_tmp
+trap - EXIT
+unset -f _1692_reset _1692_pv_replay_before_gate _1692_pv_emit_before_replay 2>/dev/null || true
+
+unset _1692_head _1692_ledger_clean _1692_ran
+unset -f run_platform_review 2>/dev/null || true
+
+_docs_has "1692_docs_p93_staging" "Per-head reviewer staging" "$_p93"
+_docs_has "1692_docs_p93_gate_owner" "#1649" "$_p93"
+
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]

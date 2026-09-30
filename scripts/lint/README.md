@@ -1,6 +1,7 @@
 # scripts/lint
 
-Lint helpers for spec, plan, and CHANGELOG markdown documents.
+Lint helpers for spec, plan, and CHANGELOG markdown documents, plus static
+checks over the workflow shell scripts themselves.
 
 ## markdown-heuristic-lint.py
 
@@ -101,8 +102,150 @@ python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop
 bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh
 ```
 
+**Exit 0 without an examined count is not evidence.** Every run prints a
+summary line — `examined=N files, M fences, K changed-lines (source: ...);
+findings=N` — precisely so a silent success cannot be mistaken for a real pass.
+If `examined=0`, no WS rule ran and the run proves nothing about WS001–WS006.
+
+The summary is printed before **every** exit, refusals included.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | The run examined its scope and found nothing. `examined=0 files` here means the diff was well formed but touched no in-scope guidance file — a legitimate "nothing to check", announced on stderr. |
+| `1` | Findings were reported. |
+| `2` | The run examined nothing and refuses to be read as a pass. |
+
+The four ways a run can examine nothing are reported distinctly, because they
+are different failures:
+
+| Condition | Message |
+| --- | --- |
+| `git diff` failed | `ERROR: <git stderr>` |
+| Input carries no `diff --git` line, no well-formed hunk header, and no `+++` target header (a path list, prose, a stray `@@` line) | `expects a unified diff` |
+| Changed lines the parser cannot attribute — a hunk with no `+++ b/<path>` header (a `--no-prefix` diff), or a `+++` header with no hunk behind it | `carries changed lines this parser cannot read` |
+| The diff is empty | `the diff under examination is empty` |
+
+`--input` / `--diff-file` takes a **unified diff**, not a path list. A path list
+was previously parsed as an empty diff and exited 0 while a real WS002 was still
+present (PR #1646); it is now an error. Produce the diff with
+`git diff --unified=0 <base>...HEAD` and keep the default `a/` and `b/`
+prefixes, or use `--base-ref` and let the script run `git diff` itself.
+
+What separates a legitimate zero from an unreadable input is whether the diff
+carries changed lines at all. A **hunk header** means it does: without a
+`+++ b/<path>` target header those lines cannot be attributed to a path, so the
+input is refused. A record with **no hunk and no `+++` header** but a `diff --git`
+line is a genuine Git change with no textual content — a mode-only change, a
+binary file, a pure rename — so zero examined is the right answer and the run
+passes, provided it carries the metadata git emits for one (`old mode`,
+`new file mode`, `index`, `similarity index`, `rename from`, `Binary files ...
+differ`, `GIT binary patch`). A bare `diff --git a b` line with nothing behind
+it is text shaped like a header, not a record. A `+++` header with no hunk
+behind it is a fragment either way: in real output a target header exists
+precisely to introduce a hunk.
+
+Every record is checked separately, and the text before the first `diff --git`
+header counts as one: validation covers exactly the bytes the parser reads, so a
+well-formed record cannot vouch for an unreadable neighbour. A deletion,
+whose target header is `+++ /dev/null`, is likewise a valid diff with a
+legitimate zero.
+
+`--base-ref` diffs **committed** history (`<base>...HEAD`), so uncommitted work
+is invisible to it: run it after committing, or the empty-diff refusal will
+tell you so. Pass `--allow-empty` only where an empty diff is genuinely
+expected. `--all` reads no diff and is exempt from the refusal.
+
 **Tests:**
 
 ```bash
 bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 ```
+
+## lint-graphql-query-literals.py
+
+Repo-wide static check for every `gh api graphql` query literal (`query='...'`,
+including one built via adjacent bash-quote concatenation such as
+`'...'"$var"'...'`) under a `scripts/` tree.
+
+**Why**: #1828 shipped a `gh api graphql` query in `apply-readiness-labels.sh`
+with one extra closing brace. The suite mocks `gh`, so a syntactically invalid
+query text stayed green until it hit GitHub live, escalating
+`codex-occupancy-timeline-fetch-failed` on every `codex-github` PR. This lint
+generalizes the tokenizer that fix proved (originally scoped to one file's test
+in `test-apply-readiness-labels.sh`) into a standalone, repo-wide check so the
+next unbalanced or misnested literal is caught in CI before merge, regardless
+of which script it lands in.
+
+**What it checks**: braces (`{}`), parens (`()`), and brackets (`[]`) nest
+correctly — order, not just totals (`query{a}}{` has equal counts but is not
+valid). Delimiters inside GraphQL string values (`"..."`, `"""..."""`, both
+with backslash escapes) and `#` comments are ignored, since they are data or
+prose, not syntax.
+
+**Scope**: files under any `tests/` directory are excluded — this checker's own
+test fixtures deliberately construct malformed and regex-shaped `query='...'`
+text to prove the tokenizer, and those are not production `gh api graphql`
+calls.
+
+**What counts as a GraphQL query literal** (all must hold):
+
+- The file mentions `graphql` at all.
+- `query='` begins a shell word: a flag argument (`-f query='`) or an
+  assignment to a variable whose name ends in `query` (`graphql_query='`,
+  `local _gql_items_query='`). `obj.query='` or a mid-word match is ignored.
+  `gh api graphql` need not appear on the same command, because real call sites
+  use wrappers (`gh "${gh_args[@]}"`, `workflow_run_gh_capture_stderr api
+  graphql`) or pass the variable to a helper.
+- The literal opens (after whitespace and `#` comments) with `query`,
+  `mutation`, `subscription`, `fragment`, or an anonymous `{` selection set, so
+  shell prose that happens to contain `query='` is ignored.
+- The match sits in executed shell code. A small shell-context lexer treats
+  double-quoted strings, `#` comments (whole-line or trailing), other
+  single-quoted and `$'...'` strings, and heredoc bodies as data, so
+  `echo "gh api graphql -f query='...'"` or `cmd # query='...'` is ignored. A
+  command substitution (`$( )` or legacy backticks) is code again even inside
+  double quotes, so the common real shape `var="$(gh api graphql -f query='...')"`
+  is still checked. Arithmetic `$(( ))` / `(( ))` is skipped so a left shift is
+  never read as a heredoc, and any valid heredoc delimiter is recognised.
+
+**Known limitations** (false-negative surfaces, not defects):
+
+- A query fragment held in a separate variable (e.g.
+  `pr_fields='commits(last:1){...}'` spliced into a larger query by
+  concatenation) is treated as an opaque, assumed-balanced blob at the splice
+  point rather than independently validated. Renaming it does not help (a
+  fragment does not open with an operation keyword). Inline the fragment into
+  the query literal to bring it into scope; otherwise it is covered only by the
+  live-validation requirement below.
+- Only single-quoted `query='...'` literals are linted for balance. A
+  double-quoted `query="..."` value that opens as GraphQL is **rejected** as a
+  finding (bash would expand GraphQL `$variables` inside it), while a plain
+  reference such as `query="$graphql_query"` is left alone. Heredoc-built
+  queries are not scanned; keep new queries in the single-quoted form.
+- An unquoted expansion between segments (`'a'$x'b'`) ends the join, so the
+  head segment alone is checked. Quote the expansion (`'a'"$x"'b'`).
+
+**Usage:**
+
+```bash
+python3 scripts/lint/lint-graphql-query-literals.py [<path> ...]  # default: scripts
+bash scripts/lint/tests/test-lint-graphql-query-literals.sh
+```
+
+Exit code `0` means no findings; exit code `1` means one or more unbalanced or
+misnested query literals were found; exit code `2` means a given path does not
+exist or the run examined no shell file at all. The `tests/` exclusion is
+evaluated relative to each scan root, and an explicitly named file is always
+scanned. Every run prints an `examined=<files>, queries=<count>, findings=<count>`
+summary line to stderr so a clean run can be told apart from a run that
+silently matched nothing.
+
+**Live-validate new or changed queries**: this lint proves delimiter *syntax*
+is well-formed; it cannot prove the query is accepted by the GitHub GraphQL
+schema (unknown fields, wrong argument types, etc. all pass a delimiter check).
+Any PR that adds or changes a `gh api graphql` query literal under `scripts/`
+must run that query live against a real GitHub repository/PR once (e.g. by
+exercising the calling script's normal path, or invoking the query directly
+with `gh api graphql -f query='...' -f ...`) before the PR is trusted on a
+green mocked suite alone. See
+[`docs/best-practices/3-testing.md`](../../docs/best-practices/3-testing.md#live-validate-new-or-changed-graphql-queries).

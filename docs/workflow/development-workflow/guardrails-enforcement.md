@@ -327,17 +327,144 @@ table is required for consistent stop reporting.
 | `security_sensitive_advisory_pending` | A security-sensitive advisory finding (per the classifier in `scripts/development-workflow/security-advisory-classifier.sh`) lacks a fixed commit or a verified human accept/reject decision at the PR's current head SHA. |
 | `graduation_approval_required` | A `develop-<slug>` -> `develop` graduation PR is the next merge candidate but explicit human graduation approval has not been recorded through `/graduate-development <slug>`. |
 | `missing_tracker_context` | A required tracker field (status, type, assignee, dependency link) is absent or unresolvable. |
-| `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
+| `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. Also reused, per `integrations/cursor-dispatch-profiles.md`, when a run declared `cursor-parent-orchestrated` delegates an action to a reachable stage role that receives the delegation but reports the action refused because a credential, GitHub permission, or access token it needs is absent (not an inability to reach the role at all, and not a harness tool or local file-path permission denial — see the Cursor dispatch-profile stop conditions subsection below). |
+| `dispatch_profile_declaration_missing` | A bounded Cursor run (`/run-item`, `/run-items`, `/run-epic`, or `/run-work`) reaches a mutating action, or a read-only checkpoint, without a valid dispatch-profile declaration on record — see the Cursor dispatch-profile stop conditions subsection below for the full set of causes and the unblocking action. |
+| `dispatch_handoff_unavailable` | A bounded Cursor run has no handoff of any kind available (or cannot confirm initial handoff availability) for the next mutating action, or a run declared `cursor-parent-orchestrated` or `cursor-native-handoff` discovers mid-run that stage or orchestration handoff has become unavailable — see the Cursor dispatch-profile stop conditions subsection below for the full set of causes and the unblocking action. |
+| `push_verification_failed` | A branch push could not be verified. Either the branch's upstream would send a bare `git push` somewhere other than its own remote branch on `origin`, or the commit the protocol pushed is not present on the remote afterwards. Silence is not success: a refused push prints a multi-line message that shell-output filtering can truncate to nothing. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
 | `missing_audit_evidence` | A delegated decision required an audit record but the record could not be produced or verified. |
 | `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object (`.policy`), or `.statusChecks` is missing, `null`, or not an array — which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state (unless `ciPolicy`/`ci_policy` is `none`, where `.statusChecks` is not required at all); fix the evidence file's shape before treating the result as a real denial or CI verdict. |
+| `reviewer_preflight_blocked` | The reviewer preflight (`reviewer-preflight.sh`, Protocol 91 § Reviewer preflight before child dispatch) found the shared reviewer configuration, the machine-local override, and a reviewer platform's own configuration disagree for a lifecycle stage still ahead of this item (`OUTCOME=blocked`). |
+| `reviewer_preflight_prerequisite_failed` | The reviewer preflight's own run inputs — target base, remaining-stage set, or per-stage pull-request state — are unresolved or malformed (`OUTCOME=prerequisite-failed`); a run-input failure, not a reviewer-configuration verdict. |
+| `reviewer_preflight_tooling_failed` | The reviewer preflight script itself failed before reaching any `OUTCOME` (exit `3`) — a helper crash, a git/gh operation that failed or could not complete within its bounded time budget, or a missing dependency. Distinct from `reviewer_preflight_prerequisite_failed`, which is reserved for `OUTCOME=prerequisite-failed`'s run-input failures; conflating the two misclassifies a tooling outage as bad item input in stop-condition consumers and audit summaries. |
+| `pr_ownership_refused` | A PR mutation by number was refused because the PR is not verified as the item's own: `pr-ownership-guard.sh` returned `RESULT=not_owned`, `pr_unresolved`, or `branch_unknown`, or `pr-review-loop.sh` stopped with `REASON=pr_ownership_mismatch`, `pr_ownership_unverified`, or `pr_ownership_branch_required` (issue #1444), and re-resolving the item's PR from its own branch did not yield an owned PR. Nothing on any PR was changed; the human confirms which PR belongs to the item branch. |
 
 **Additive rule**: These stop conditions may **add** to but may **never remove**
 the framework's baseline human-stop conditions. The baseline stops
 (`unclear_requirements`, `architecture_decision`, `failing_ci`,
 `unresolved_blocking_review`, `high_risk_change`, and `destructive_action`) hold
 in **all** modes, including `autonomous`. Guardrails may tighten the stop
-surface but may never loosen it below the baseline.
+surface but may never loosen it below the baseline. This section adds
+`dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable` under
+this additive rule, and reuses `missing_required_secret_or_permission`
+(already defined above) for one additional cause rather than inventing a
+third new string. It also adds `reviewer_preflight_blocked`,
+`reviewer_preflight_prerequisite_failed`, and `reviewer_preflight_tooling_failed`
+under this additive rule for the reviewer preflight gate (issue #1561). It adds `pr_ownership_refused` for the PR ownership guard
+(issue #1444).
+
+### Cursor dispatch-profile stop conditions
+
+This subsection applies **only in a Cursor environment**; **other runners are
+unchanged** by it — see `integrations/cursor-dispatch-profiles.md`, the
+canonical, normative source for the profile declaration gate these stops
+enforce. This subsection states the affected work item and the human
+unblocking action for each cause the stop can fire for, covering every
+cause, not only the most common one.
+
+**`dispatch_profile_declaration_missing`** — fires when: the declaration is
+missing at the first mutating action; the declared profile value is
+**invalid profile** (outside the three defined profiles); the declaration
+names no accountable orchestrator role (**invalid accountable role**,
+including an empty value); the declared posture does not match the run's
+checkpoint (**invalid posture** — `observing` at a mutating action, or
+`absorbed`/`handed off intact` at a read-only checkpoint); or the declared
+profile does not match the profile outcome the decision gate already assigns
+to the run's known handoff facts, in either direction (a **coarse-fact
+mismatch**, whether **more permissive** or **less permissive** than the
+assigned outcome). This coarse-facts check does not apply to a re-declaration
+produced by a mid-run recovery row (native-handoff mid-run failure, or
+parent-orchestrated stage-handoff-unavailable); those remain valid
+re-declarations.
+
+- **Affected work item**: the branch, pull request, or development-folder
+  path the bounded run was invoked against; for a read-only portfolio scan,
+  the scan invocation itself. For a pre-branch, explicit-list `/run-items`
+  invocation, before any item-scoped artifact exists, the affected work item
+  is the single string `explicit_list_invocation_targets=<t1>,<t2>,...`, one
+  `<ti>` per target of the router's normalized target list, rendered
+  **verbatim** (no rewriting of `#`, case, `/`, or a leading `./`) and
+  **percent-encoded** only for the defensive whitespace/control/`%` cases
+  documented in `integrations/cursor-dispatch-profiles.md`. Report this once
+  for the whole invocation, never once per target.
+- **Human unblocking action**: the stopped run is **not resumed or corrected
+  in place** — it stops with no profile in force and does not accept an
+  in-run correction. Invoke the command again as a **fresh invocation**,
+  supplying: a **valid profile** (one of `cursor-native-handoff`,
+  `cursor-parent-orchestrated`, or `cursor-inline-fallback`); a **named
+  accountable role**; a **posture valid for the checkpoint** (absorbed or
+  handed off intact for a mutating action, observing for a read-only
+  checkpoint); and, when the prior run's declaration was rejected for a
+  coarse-fact mismatch, the **profile the known facts assign**.
+
+**`dispatch_handoff_unavailable`** — fires when: no handoff of any kind is
+available (or initial handoff availability itself cannot be confirmed) and
+the command would mutate; a run declared `cursor-parent-orchestrated` whose
+stage handoff for a specific action proves unavailable mid-run (the stage
+role cannot be reached at all); or a run declared `cursor-native-handoff`
+whose orchestration-role handoff fails mid-run while the invoking context's
+own initial handoff capability is also lost or cannot be confirmed.
+
+- **Affected work item**: the branch, pull request, or development-folder
+  path the mutating action would have applied to (or the
+  `explicit_list_invocation_targets=<t1>,<t2>,...` form for a pre-branch
+  explicit-list stop, per the affected-item rule above).
+- **Human unblocking action**: move the run to an **environment where
+  initial handoff is confirmed available** (native-handoff or
+  parent-orchestrated capable) and re-run, or **explicitly accept the
+  read-only result** reported for this invocation. **Exception for the
+  parent-orchestrated stage-handoff-unavailable cause**: initial handoff was
+  already confirmed available, and it is one **specific stage role** (the
+  role the affected action needed — spec, plan, implementation, or review)
+  that became unreachable; moving to a merely parent-orchestrated-capable
+  environment does not by itself restore that role's reachability. Confirm
+  the specific stage role the affected action needed is **reachable** in the
+  target environment before re-running, or explicitly accept the read-only
+  result.
+
+**`missing_required_secret_or_permission` (reused, Cursor dispatch-profile
+cause)** — fires when a run declared `cursor-parent-orchestrated` delegates a
+specific action to the stage role that owns it, and that stage role is
+reachable and receives the delegation but reports that this specific action
+was refused because a credential, GitHub permission, or access token it
+needs is absent — not an inability to reach the role at all, and not a
+harness tool or local file-path permission denial (Out of Scope; tracked
+separately as issue #1746).
+
+- **Affected work item**: the branch, pull request, or development-folder
+  path the denied action would have applied to, and the denied target named
+  by the stage role's report.
+- **Human unblocking action**: **grant** the stage role the specific
+  credential, GitHub permission, or access token its report identified as
+  denied, then **re-run the same delegated action**. If the identified
+  permission is a structural restriction that will not be granted, the human
+  instead either reassigns the action to a different context that can act as
+  the **same stage role** the action already belongs to — never to a
+  different stage role — or explicitly accepts that this action **does not
+  proceed** under the current run and records that decision; the absorbing
+  context **never performs** the action inline in either case, and the
+  action's owning stage role is unchanged by the reassignment. This
+  reassignment path does not extend to a harness or local file-path
+  permission denial, which stays Out of Scope under issue #1746 with no
+  recovery path of any kind. The run remains declared parent-orchestrated
+  throughout; unlike `dispatch_handoff_unavailable`, no re-declaration or
+  environment change is required, because the stage role's onward-handoff
+  capability for other actions was never in question.
+
+**No named stop condition for a harness or local file-path denial.** A
+reachable stage role's harness tool (`Edit`, `Write`, or `Bash`) or local
+file-path permission denial on a specific delegated action, dispatched as a
+subagent under Protocol 90/91's batch dispatch mechanism, **is not a named
+stop condition** at all: `missing_required_secret_or_permission` does not
+apply because no credential, GitHub permission, or access token is missing,
+and `dispatch_handoff_unavailable` does not apply because the stage role was
+reached. This failure is only **observably similar** to the
+`SUBAGENT_PERMISSION_DENIAL` contract `91-orchestrate-work-protocol.md`
+defines, which governs solely a Work Item Runner subagent reporting that
+denial to the Portfolio Orchestrator; no corresponding contract exists today
+for a stage role dispatched by an item-orchestrator. This case is declared
+**Out of Scope** and tracked separately as **#1746**; the absorbing context
+never performs the action inline for it.
 
 ---
 
@@ -356,6 +483,34 @@ A stop is a **terminal condition** for the affected item in this run, not a
 silent skip. Every stop must appear in the run summary under a "Stops" or
 "Blocked" section with its named cause, the affected item, and the unblocking
 action.
+
+### `architecture_decision` escalation content
+
+When a stop's named cause is `architecture_decision`, the stop message's third
+element (the human action required to unblock) is additionally shaped by the
+axis-separated coverage analysis defined in the canonical page
+[`architecture-decision-escalation.md`](architecture-decision-escalation.md).
+The three baseline stop elements above are **unchanged and still required** —
+this shapes element 3 only, and is never a replacement for any of the three:
+
+- For a **complete** escalation report (no citation whose conformance or
+  substance could not be determined), the required human action names the
+  **genuinely open axes only** — never settled axes.
+- For an **incomplete** report under the canonical page's malformed-input
+  rows, the required human action instead supplies what that rule names: the
+  missing question or its source, a redone decomposition, the missing
+  conformance evidence, or confirmation of a citation's substance.
+- A **substance-confirmation** request is stated **only where a reviewer or a
+  human has actually raised** the citation's substance in question and the
+  runner genuinely cannot resolve it — internal runner uncertainty alone,
+  absent an actually raised question, does not trigger this request (the
+  canonical page's raised-question gate).
+- Where a malformed-input request is combined with genuinely open axes in the
+  same report, the required human action names both, and the report is
+  incomplete regardless of how many axes it also settles or leaves open.
+
+See the canonical page for the full vocabulary, mandatory report outline, and
+worked example; this section states the stop-message shaping rule only.
 
 ---
 

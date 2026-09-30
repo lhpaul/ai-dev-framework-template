@@ -237,13 +237,37 @@ bot_login_for_platform() {
     coderabbit) printf 'coderabbitai\n' ;;
     devin) printf 'devin-ai-integration\n' ;;
     greptile) printf 'greptile-apps\n' ;;
-    haystack) printf '%s\n' "${HAYSTACK_BOT_LOGIN:-haystack[bot]}" ;;
     codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
     copilot) printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
     bugbot) printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
+    ronda) printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
     *) printf '\n' ;;
   esac
+}
+
+# Platforms that never post GitHub review threads (local runtime / CLI only).
+platform_has_no_review_threads() {
+  case "$1" in
+    local-ai-reviewer|coderabbit-cli|pr-agent|haystack) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when at least one review platform is configured and every configured
+# platform is a no-thread platform, so the review-threads row cannot apply.
+configured_platforms_all_no_thread() {
+  local config_file=""
+  local platform=""
+  local seen=0
+
+  config_file="$(workflow_effective_config_file)"
+  while IFS= read -r platform; do
+    [ -n "$platform" ] || continue
+    platform_has_no_review_threads "$platform" || return 1
+    seen=1
+  done < <(configured_review_platforms "$config_file")
+  [ "$seen" -eq 1 ]
 }
 
 thread_bot_login_variants() {
@@ -460,6 +484,7 @@ reviewer_check_name_for_platform() {
   case "$1" in
     haystack) printf '%s\n' "${HAYSTACK_CHECK_NAME:-Haystack / Review}" ;;
     bugbot) printf '%s\n' "${BUGBOT_CHECK_NAME:-Cursor Bugbot}" ;;
+    ronda) printf '%s\n' "${RONDA_CHECK_NAME:-Ronda review}" ;;
     *) printf '\n' ;;
   esac
 }
@@ -673,28 +698,9 @@ if [ -n "$pr_number" ]; then
       fi
 
       reviewer_checks="$(reviewer_check_names_json)"
-      if normalized_checks="$(printf '%s\n' "$pr_json" | jq '
-        (.statusCheckRollup // [])
-        | map(
-            . + {
-              __check_key: (
-                if (.context // "") != "" then
-                  "status:" + .context
-                elif (.workflowName // "") != "" and (.name // "") != "" then
-                  "check:" + .workflowName + "/" + .name
-                elif (.name // "") != "" then
-                  "check:" + .name
-                else
-                  "unknown"
-                end
-              ),
-              __check_ts: (.startedAt // .completedAt // .createdAt // "")
-            }
-          )
-        | sort_by(.__check_key, .__check_ts)
-        | group_by(.__check_key)
-        | map(last | del(.__check_key, .__check_ts))
-      ' 2>&1)" \
+      # Superseded runs stay in the rollup; judge only the latest run per
+      # check (shared helper, workflow-lib.sh, #1559).
+      if normalized_checks="$(printf '%s\n' "$pr_json" | normalize_status_check_rollup 2>&1)" \
         && check_summary="$(printf '%s\n' "$normalized_checks" | jq -r --argjson reviewerChecks "$reviewer_checks" '
         .
         | map(select(([.name // "", .context // "", .workflowName // ""] | any(. as $n | ($reviewerChecks | index($n)) != null)) | not))
@@ -736,7 +742,7 @@ if [ -n "$pr_number" ]; then
       if latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
         if [ -n "$latest_review_summary" ]; then
           normalized_review_summary="$(printf '%s\n' "$latest_review_summary" | tr -d '*')"
-          if printf '%s\n' "$normalized_review_summary" | grep -Eq 'Result:[[:space:]]*(clean|skipped)|RESULT=(clean|skipped)|No blocking PR feedback'; then
+          if grep -Eq 'Result:[[:space:]]*(clean|skipped)|RESULT=(clean|skipped)|No blocking PR feedback' <<<"$normalized_review_summary"; then
             add_row "pull_request.review_summary" "verified" "clean_or_skipped" "paginated issue comments sorted by updated_at"
           elif is_true "$require_review_summary"; then
             add_row "pull_request.review_summary" "discrepancy" "summary present but not clean/skipped" "paginated issue comments sorted by updated_at"
@@ -766,11 +772,26 @@ if [ -n "$pr_number" ]; then
           if [ -z "$ledger_json" ] \
               || ! ledger_payload="$(printf '%s\n' "$ledger_json" | jq -c '.' 2>&1)"; then
             add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger unreadable" "reviewer_loop_history.v1 in summary comment"
-          elif ! printf '%s\n' "$ledger_payload" | jq -e '.entries[-1].reviewed_heads? | type == "array"' >/dev/null 2>&1; then
-            add_row "pull_request.local_reviewer_head" "unavailable_required" "pre-field ledger entry" "reviewed_heads missing from newest entry"
-          elif ledger_local_head="$(printf '%s\n' "$ledger_payload" | jq -r '.entries[-1].reviewed_heads[]? | select(.platform == "local-ai-reviewer") | .reviewed_head // ""' | head -n 1)"; then
-            if [ -z "$ledger_local_head" ]; then
-              add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "newest reviewed_heads entry"
+          elif ! printf '%s\n' "$ledger_payload" | jq -e '[.entries[]? | select(.reviewed_heads? | type == "array")] | length > 0' >/dev/null 2>&1; then
+            add_row "pull_request.local_reviewer_head" "unavailable_required" "pre-field ledger entry" "reviewed_heads missing from ledger entries"
+          elif ledger_local_record="$(printf '%s\n' "$ledger_payload" | jq -c '
+              [
+                .entries[]? as $entry
+                | select(($entry.reviewed_heads? | type) == "array")
+                | select(($entry.platform_results? | type) == "array")
+                | ($entry.platform_results[]? | select(.platform == "local-ai-reviewer")) as $local_result
+                | ($entry.reviewed_heads[]? | select(.platform == "local-ai-reviewer")) as $local_head
+                | {result: ($local_result.result // ""), reviewed_head: ($local_head.reviewed_head // "")}
+              ]
+              | last
+              | select(.result == "clean")
+              | {reviewed_head}
+              // empty
+            ')"; then
+            if [ -z "$ledger_local_record" ]; then
+              add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "latest local-ai-reviewer reviewed_heads entry"
+            elif ! ledger_local_head="$(printf '%s\n' "$ledger_local_record" | jq -r '.reviewed_head // ""')"; then
+              add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger parse failed" "reviewer_loop_history.v1 reviewed_heads"
             elif [ -z "${pr_head_oid:-}" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "live headRefOid unavailable" "gh pr view headRefOid"
             elif [ "$ledger_local_head" = "$pr_head_oid" ]; then
@@ -798,7 +819,11 @@ if [ -n "$pr_number" ]; then
         thread_count=""
         graph_thread_comment_ids="[]"
         if [ "$(printf '%s\n' "$thread_bot_logins_json" | jq -r 'length')" = "0" ]; then
-          add_row "pull_request.review_threads" "unavailable_required" "no configured bot logins" "configured review platforms"
+          if configured_platforms_all_no_thread; then
+            add_row "pull_request.review_threads" "not_applicable" "configured review platforms post no review threads" "configured review platforms"
+          else
+            add_row "pull_request.review_threads" "unavailable_required" "no configured bot logins" "configured review platforms"
+          fi
         elif threads_json="$(fetch_review_threads_json "$owner" "$name" "$pr_number" 2>&1)" \
           && thread_count="$(printf '%s\n' "$threads_json" | jq -r --argjson botLogins "$thread_bot_logins_json" '
             [

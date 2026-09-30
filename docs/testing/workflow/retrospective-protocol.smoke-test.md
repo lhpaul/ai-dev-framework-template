@@ -83,14 +83,14 @@ Before running this smoke test:
 
 **Maps to**: Acceptance Criteria 7, 12, 13
 
-1. Verify the findings presentation (protocol Step 4) includes a **"Related existing item"** field for each finding (`#NNN — [title]` or "No existing backlog item found")
+1. Verify the findings presentation (protocol Step 4) includes a **"Related existing item"** field for each finding (`#NNN — [title]` or "No existing backlog item found"). In a **framework-mode repository** (`template.is_template: true`), when `list_open_framework_items.sh` reports `FRAMEWORK_ITEMS_LOOKUP_STATUS=unavailable`, this field must instead say the lookup was unavailable (naming `FRAMEWORK_ITEMS_LOOKUP_REASON`) — never "No existing backlog item found", which would misreport an unperformed lookup as a clean negative result (#1583)
 2. From the findings, choose "Add to backlog" for one finding that has **no related existing item**
-3. Verify a new GitHub issue is created. For GitHub Projects, confirm it is added to the project with Type `Workflow`; for GitHub Issues-only setups, confirm the repository's workflow label/tag convention is applied.
+3. Verify a new GitHub issue is created. For GitHub Projects in a **consumer repository**, confirm its project Type is set to `Workflow`; in a **framework-mode repository**, confirm it is added with Type `Feature`, `Bug`, or `Refactor` instead — `Workflow` is refused before creation (#1583). For GitHub Issues-only setups, confirm the repository's workflow label/tag convention is applied.
 4. Verify the issue has a descriptive title and body
 5. Verify the agent returns the issue URL
 6. Inspect the created issue: confirm the body includes enough context to understand the problem without the original conversation
 
-**Expected result**: GitHub issue created with descriptive content and provider-appropriate workflow classification; URL returned.
+**Expected result**: GitHub issue created with descriptive content and provider-and-mode-appropriate workflow classification; URL returned.
 
 ### Step 5b: Add to Backlog — Expand Existing Issue
 

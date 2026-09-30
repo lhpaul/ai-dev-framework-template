@@ -86,6 +86,10 @@ write_evidence() {
   local deployment_outcome="${6:-recorded}"
   local cleanup_outcome="${7:-complete}"
   local component_tag="${8:-}"
+  local component_version="${9:-}"
+  if [ -z "$component_version" ] && [ -n "$component_tag" ]; then
+    component_version="${component_tag##*v}"
+  fi
   jq -cnS \
     --arg repo_key "$repo_key" \
     --arg identity "$identity" \
@@ -94,6 +98,7 @@ write_evidence() {
     --arg deployment_outcome "$deployment_outcome" \
     --arg cleanup_outcome "$cleanup_outcome" \
     --arg component_tag "$component_tag" \
+    --arg component_version "$component_version" \
     '{
       schema_version:"component_release_evidence.v1",
       target_binding:{
@@ -113,7 +118,8 @@ write_evidence() {
       deployment_outcome:$deployment_outcome,
       cleanup_outcome:$cleanup_outcome,
       hub_tracker_ref:"#1357",
-      component_tag:(if ($component_tag | length) > 0 then $component_tag else null end)
+      component_tag:(if ($component_tag | length) > 0 then $component_tag else null end),
+      component_version:(if ($component_version | length) > 0 then $component_version else null end)
     }' > "$path"
 }
 
@@ -413,6 +419,154 @@ run_fails_contains \
   "bundle_key_mismatch_rejected" \
   "ERROR_CODE=bundle_key_mismatch" \
   bash "$HELPER" inspect --manifest "$ready_bundle" --bundle-key other-bundle --json
+
+# --- #1529 trust-boundary bundle cases (T7-T11, T10a-d, T23) ---
+
+# T7: evidence component_version null + caller supplies version
+null_version_evidence="$TMP_ROOT/null-version-evidence.json"
+jq '.component_version = null' "$mobile_evidence" > "$null_version_evidence"
+t7_bundle="$TMP_ROOT/t7-bundle.json"
+create_bundle "$t7_bundle"
+run_fails_contains \
+  "T7_component_version_unbound" \
+  "ERROR_CODE=component_version_unbound" \
+  update_component "$t7_bundle" mobile-app "$null_version_evidence" mobile-v1.4.0 1.4.0 1411 1501 "#1356"
+
+# T8: mismatched component_version
+run_fails_contains \
+  "T8_component_version_mismatch" \
+  "ERROR_CODE=component_version_mismatch" \
+  update_component "$t7_bundle" mobile-app "$mobile_evidence" mobile-v1.4.0 99.0.0 1411 1501 "#1356"
+
+# T9: --component-version omitted (argparse)
+run_fails_contains \
+  "T9_component_version_required" \
+  "ERROR_CODE=invalid_arguments" \
+  bash "$HELPER" update-component \
+    --manifest "$t7_bundle" \
+    --bundle-key mobile-web-july-delivery \
+    --expected-revision "$(jq -r '.revision' "$t7_bundle")" \
+    --component-key mobile-app \
+    --evidence-file "$mobile_evidence" \
+    --component-tag mobile-v1.4.0 \
+    --source-pr 1411 \
+    --release-pr 1501 \
+    --hub-tracker-reconciliation-outcome complete \
+    --child-item "#1356" \
+    --child-release-state merged \
+    --json
+
+# T10: invalid child-release-state (may already exist as parse rejection)
+run_fails_contains \
+  "T10_child_release_state_invalid" \
+  "--child-release-state" \
+  bash "$HELPER" update-component \
+    --manifest "$t7_bundle" \
+    --bundle-key mobile-web-july-delivery \
+    --expected-revision "$(jq -r '.revision' "$t7_bundle")" \
+    --component-key mobile-app \
+    --evidence-file "$mobile_evidence" \
+    --component-tag mobile-v1.4.0 \
+    --component-version 1.4.0 \
+    --source-pr 1411 \
+    --release-pr 1501 \
+    --hub-tracker-reconciliation-outcome complete \
+    --child-item "#1356" \
+    --child-release-state shipped \
+    --json
+
+# T10a: invalid hub-tracker-reconciliation-outcome
+run_fails_contains \
+  "T10a_hub_reconciliation_invalid" \
+  "--hub-tracker-reconciliation-outcome" \
+  bash "$HELPER" update-component \
+    --manifest "$t7_bundle" \
+    --bundle-key mobile-web-july-delivery \
+    --expected-revision "$(jq -r '.revision' "$t7_bundle")" \
+    --component-key mobile-app \
+    --evidence-file "$mobile_evidence" \
+    --component-tag mobile-v1.4.0 \
+    --component-version 1.4.0 \
+    --source-pr 1411 \
+    --release-pr 1501 \
+    --hub-tracker-reconciliation-outcome garbage \
+    --child-item "#1356" \
+    --child-release-state released \
+    --json
+
+# T10b: child-release-state failed accepted (green-by-construction)
+t10b_out="$(bash "$HELPER" update-component \
+  --manifest "$t7_bundle" \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision "$(jq -r '.revision' "$t7_bundle")" \
+  --component-key mobile-app \
+  --evidence-file "$mobile_evidence" \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-item "#1356" \
+  --child-release-state failed \
+  --json)"
+run_test "T10b_child_release_state_failed_accepted" "failed" \
+  "$(jq -r '.manifest.components[] | select(.component_key == "mobile-app") | .child_release_state' <<< "$t10b_out")"
+
+# T10c / T10d: blocked and not_started accepted; update blocker + subsequent inspect short-circuit
+for state_case in "blocked:T10c" "not_started:T10d"; do
+  state="${state_case%%:*}"
+  label="${state_case##*:}"
+  case_bundle="$TMP_ROOT/${label}-bundle.json"
+  create_bundle "$case_bundle"
+  case_out="$(bash "$HELPER" update-component \
+    --manifest "$case_bundle" \
+    --bundle-key mobile-web-july-delivery \
+    --expected-revision "$(jq -r '.revision' "$case_bundle")" \
+    --component-key mobile-app \
+    --evidence-file "$mobile_evidence" \
+    --component-tag mobile-v1.4.0 \
+    --component-version 1.4.0 \
+    --source-pr 1411 \
+    --release-pr 1501 \
+    --hub-tracker-reconciliation-outcome complete \
+    --child-item "#1356" \
+    --child-release-state "$state" \
+    --json)"
+  run_test "${label}_child_release_state_recorded" "$state" \
+    "$(jq -r '.manifest.components[] | select(.component_key == "mobile-app") | .child_release_state' <<< "$case_out")"
+  run_contains "${label}_update_blocker_blocked_component_outcome" "blocked_component_outcome" \
+    "$(jq -c '.manifest.components[] | select(.component_key == "mobile-app") | .blockers' <<< "$case_out")"
+  inspect_out="$(bash "$HELPER" inspect --manifest "$case_bundle" --bundle-key mobile-web-july-delivery --json)"
+  run_contains "${label}_inspect_short_circuits_missing_evidence" "missing_component_evidence" \
+    "$(jq -c '.components[] | select(.component_key == "mobile-app") | .blockers' <<< "$inspect_out")"
+done
+
+# T11: release_branch recorded from evidence
+t11_bundle="$TMP_ROOT/t11-bundle.json"
+create_bundle "$t11_bundle"
+update_component "$t11_bundle" mobile-app "$mobile_evidence" mobile-v1.4.0 1.4.0 1411 1501 "#1356" >/dev/null
+run_test "T11_release_branch_recorded" "mobile-app/release/v1.0.0" \
+  "$(jq -r '.components[] | select(.component_key == "mobile-app") | .release_branch' "$t11_bundle")"
+
+# T23: ci_outcome skipped rejected on unfinalized bundle finalize
+t23_bundle="$TMP_ROOT/t23-bundle.json"
+create_bundle "$t23_bundle"
+update_component "$t23_bundle" mobile-app "$mobile_evidence" mobile-v1.4.0 1.4.0 1411 1501 "#1356" >/dev/null
+update_component "$t23_bundle" web-app "$web_evidence" web-v2.8.1 2.8.1 1414 1503 "#1357" >/dev/null
+jq '(.components[] | select(.component_key == "mobile-app")).ci_outcome = "skipped"' \
+  "$t23_bundle" > "$t23_bundle.tmp" && mv "$t23_bundle.tmp" "$t23_bundle"
+# ensure not finalized
+jq '.status = "open"' "$t23_bundle" > "$t23_bundle.tmp" && mv "$t23_bundle.tmp" "$t23_bundle"
+t23_rev="$(jq -r '.revision' "$t23_bundle")"
+run_fails_contains \
+  "T23_ci_outcome_skipped_rejected" \
+  "ERROR_CODE=blocked_component_outcome" \
+  bash "$HELPER" finalize \
+    --manifest "$t23_bundle" \
+    --bundle-key mobile-web-july-delivery \
+    --expected-revision "$t23_rev" \
+    --json
+run_test "T23_ci_skipped_preserves_revision" "$t23_rev" "$(jq -r '.revision' "$t23_bundle")"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAILURES: $FAIL_COUNT"

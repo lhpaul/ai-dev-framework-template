@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-09-30
+
+### Added
+
+- **Cursor dispatch profiles** (#1462): native-handoff, parent-orchestrated,
+  and inline-fallback profiles for Cursor bounded commands, with declaration
+  gates and named stop conditions.
+- **Plan authoring rigor rules** (#1496): six portable plan-authoring rules, a
+  reviewer backstop, and a per-rule outcome record on plan pull requests.
+- **Axis-separated architecture decision escalations** (#1515): per-axis
+  coverage analysis and conformance declarations are required before an
+  `architecture_decision` stop.
+- **Reviewer preflight before item dispatch** (#1561): shared, machine-local,
+  and per-platform reviewer configuration is cross-checked before Protocol 91
+  creates branches or PRs; contradictions report Blocked with details.
+- **Framework-mode work-item classification** (#1583): template repositories
+  refuse Type `Workflow` on backlog creation, hold misclassified Backlog items,
+  and discover open framework items across all Types.
+- **Cross-PR closing keyword validation** (#1644): an advisory warning when a
+  PR closes an issue that a sibling PR carries.
+- **HTTP Chat Completions backend for `local-ai-reviewer`** (#1711): use any
+  OpenAI-compatible API via `LOCAL_AI_REVIEWER_BACKEND=http`; Codex stays the
+  default.
+- **`ronda` reviewer platform** (#1786): supported in `pr-review-loop.sh`
+  through its single `Ronda review` check run per head.
+- **GraphQL query lint** (#1836): `lint-graphql-query-literals.py` checks
+  `gh api graphql` literals in `scripts/` for balanced braces, brackets, and
+  parens.
+
+### Changed
+
+- **Matrix coherence preflight** (#1759): specs, plans, and briefs with
+  decision matrices or state tables get a mandatory six-check coherence audit.
+- **Plan gate proportionality** (#1785): review gates weigh test-scope
+  proportionality; a test-scope delta blocks only when the reviewer names the
+  lost coverage and the defect class that escapes.
+- **Ready-phase reviewer is `codex-github`** (#1822): replaces `bugbot` while
+  its quota is exhausted, so readiness labels stop refusing every PR.
+
+### Fixed
+
+- **Readiness labels are helper-gated** (#1408): `apply-readiness-labels.sh`
+  is the only way to apply `ready-for-human-review` / `ready-for-regression`.
+  It requires every configured ready-phase reviewer to be complete and clean
+  for the current head, CI to be acceptable, and revalidates live state before
+  applying. Covers all documented reviewer platforms, head-bound evidence,
+  unresolved bot threads, and protocols 90/91/95/03/05. Adds
+  `--dry-run` and a PR ownership guard (#1837) and fixes a stray brace in the
+  Codex occupancy query (#1828).
+- **Reviewer-loop verdicts and evidence**: Bugbot `neutral` is no longer
+  treated as clean (#1390); Ronda verdicts come from the check-run summary
+  (#1849); resolved Codex findings and stale or reused-SHA evidence no longer
+  block or certify wrongly (#1757); the completion guard checks the loop's
+  verdict and head (#1810); reviewers already clean on the current head are not
+  re-run (#1692); the loop lock is scoped per repository and PR (#1713).
+- **Internal review gate** (#1445, #1495): verdicts bind to the reviewed
+  commit; reachability is decided from capability, not runner identity; strict
+  configuration uses a real YAML parser.
+- **Every CI consumer judges only the latest check run** (#1559): superseded
+  runs no longer block healthy PRs; deduplication lives in `workflow-lib.sh`.
+- **Tracker** (#1564, #1778, #1715): unknown Status values name the valid
+  options, one mapping page defines the Status vocabulary, project-field writes
+  are verified, and the tracker workflow skips cleanly when Projects is not
+  configured.
+- **Post-merge cleanup**: no longer deletes the caller's own worktree (#1386)
+  and no longer applies a product-repo PR's bare closing keywords to the hub
+  tracker (#1538).
+- **PR ownership guard** (#1444): agents can no longer silently edit a
+  sibling's PR in a parallel wave.
+- **Local reviewers**: Codex no longer hangs on stdin from a background
+  harness (#1843); quota exhaustion is classified distinctly (#1710) without
+  false positives (#1762); SSE proxy responses are normalized (#1758).
+- **Other fixes**: Cursor stage-agent models come from `.cursor/agents/*.md`
+  pins (#1378); delivery-bundle evidence trust boundary documented (#1529);
+  worktree branches no longer track the integration branch (#1593); snippet
+  lint fails when it examines nothing (#1658); generic fixes ported from a
+  consumer sync (#1708); the test harness matrix is sharded (#1722); the
+  self-check review-threads row is satisfiable for no-thread reviewers (#1847);
+  stale test assumptions about reviewer lists fixed (#1781, #1784).
+
 ## [0.44.0] - 2026-09-01
 
 ### Added
@@ -3136,7 +3216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...v0.43.0

@@ -887,7 +887,10 @@ Apply any blocking fixes, commit, and push before proceeding. Continue until all
 
 Once the Step 7a gate passes, ensure the PR is non-draft:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit 1
 gh pr ready "$PR_NUMBER"
 ```
 
@@ -895,8 +898,9 @@ gh pr ready "$PR_NUMBER"
 
 Run `scripts/development-workflow/pr-review-loop.sh` against the PR:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
+bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "feature/sync-template-v{TEMPLATE_VERSION}"
 ```
 
 Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
@@ -910,11 +914,34 @@ unresolved-thread, regression, and readiness gates remain mandatory.
 
 ### 6.3 — Apply readiness labels
 
-Once the reviewer loop exits clean:
+Once the reviewer loop exits clean, apply the regression label and wait for CI:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-gh pr edit "$PR_NUMBER" --add-label "ready-for-regression"
-gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+set -euo pipefail
+# Readiness labels are helper-applied only (issue #1408). The helper refuses
+# unless the ready-phase reviewer check run is completed for the live head SHA
+# and no non-reviewer check is pending or failing; a `refused` verdict is a stop.
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit $?
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr "$PR_NUMBER" --label ready-for-regression
+./scripts/development-workflow/pr-ci-loop.sh "$PR_NUMBER"
+```
+
+Do not apply `ready-for-human-review` or proceed to the terminal self-check
+until `pr-ci-loop.sh` exits with `RESULT=green` for the current PR head.
+Applying `ready-for-regression` can create or re-run regression checks
+asynchronously; the self-check is not a substitute for waiting through that
+CI loop.
+
+Once CI is green:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "feature/sync-template-v{TEMPLATE_VERSION}" || exit $?
+./scripts/development-workflow/apply-readiness-labels.sh \
+  --pr "$PR_NUMBER" --label ready-for-human-review
 ```
 
 Update the tracker status to `Development in Review` if an issue tracker is configured.
@@ -923,6 +950,7 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
@@ -935,7 +963,8 @@ ISSUE_NUMBER="${ISSUE_NUMBER:-$PR_NUMBER}"
 SYNC_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 WORKTREE_PATH=$(pwd -P)
 REVIEW_SELF_CHECK_REQUIRED=false
-if workflow_config_review_platforms | grep -q .; then
+REVIEW_PLATFORM_LIST="$(workflow_config_review_platforms)"
+if [ -n "$REVIEW_PLATFORM_LIST" ]; then
   REVIEW_SELF_CHECK_REQUIRED=true
 fi
 
@@ -950,6 +979,7 @@ fi
   --expected-label ready-for-regression \
   --forbid-label needs-fixes \
   --tracker-required false \
+  --require-ci-green true \
   --require-review-summary "$REVIEW_SELF_CHECK_REQUIRED" \
   --require-review-threads "$REVIEW_SELF_CHECK_REQUIRED"
 ```

@@ -37,6 +37,7 @@ Always refer to these docs for authoritative guidance:
 | [`docs/best-practices/3-testing.md`](docs/best-practices/3-testing.md)                                                                                         | Testing standards                                                                               |
 | [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFIC.md)                                                                               | Stack-specific conventions                                                                      |
 | [`REVIEW.md`](REVIEW.md)                                                                                                                                       | Canonical review contract for spec, plan, and code review gates                                 |
+| [`docs/workflow/development-workflow/plan-authoring-rigor-rules.md`](docs/workflow/development-workflow/plan-authoring-rigor-rules.md)                        | Canonical plan-authoring rigor rules, outcome labels, and plan review gate matrix                |
 | [`docs/workflow/development-workflow/README.md`](docs/workflow/development-workflow/README.md)                                                                 | AI development workflow (master doc)                                                            |
 | [`docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`](docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md) | Create backlog work items in a configured tracker (before spec/plan work)                       |
 | [`docs/workflow/development-workflow/agent-model-config.md`](docs/workflow/development-workflow/agent-model-config.md)                                         | Model assignments, tool restrictions, and override guide for all agents                         |
@@ -170,16 +171,37 @@ spaces before branch creation or push. To recover already started work, preserve
 the original branch, create a compliant replacement through the normal PR path,
 verify push-triggered checks start, and never force-push shared history.
 
+### Closing Keywords In A PR Description
+
+Declare `Closes #N` only for issues **this** pull request's work carries. If the
+issue belongs to a sibling pull request — one whose branch names it — the merge
+closes it on the wrong work, and the release is assembled around the wrong
+scope.
+
+An automated check warns when it sees that, naming the issue and the sibling.
+It is advisory and never blocks a merge. When a pull request deliberately
+closes several issues, apply the `multi-issue-intentional` label and the
+warning clears; the label is the only opt-out.
+
 ### Tracker Classification
 
 When `issue_tracker.provider: github_projects` is configured, the GitHub
 Projects **Type** field is the source of truth for work-item classification:
-`Feature`, `Bug`, `Refactor`, or `Workflow`. Use `Workflow` for
-AI-development-framework/process/tooling items. Do not use legacy repository
-classification labels (`workflow`, `bug`, `enhancement`, or `type:*`) for new
-automation; keep operational labels such as `ready-for-human-review`,
-`needs-fixes`, `ready-for-regression`, `reviewer-failed`, and
-`integration-branch:<slug>`.
+`Feature`, `Bug`, `Refactor`, or `Workflow`. In a **consumer repository**,
+classify AI-development-framework/process/tooling items as `Workflow`. In a
+**framework-mode repository** (`template.is_template: true` in
+`.ai-dev-workflow.yaml` — this template repository is one), `Workflow` is
+refused on backlog creation and an existing Backlog item typed `Workflow`
+is stopped or held rather than routed to a pipeline via a single-item run
+(`/run-item`) or a portfolio scan (`/run-work`) — the two scopes this item
+covers; `/run-items` and `/run-epic` are unchanged and do not consult this
+gate (deferred to #1779), and a stale Backlog item that already has
+development-folder artifacts (spec/plan) or branch/PR evidence continues
+unaffected. Classify this repository's own framework/process/tooling items
+as `Feature`, `Bug`, or `Refactor` instead (#1583). Do not use legacy repository classification labels (`workflow`,
+`bug`, `enhancement`, or `type:*`) for new automation; keep operational
+labels such as `ready-for-human-review`, `needs-fixes`,
+`ready-for-regression`, `reviewer-failed`, and `integration-branch:<slug>`.
 
 ### CHANGELOG & Versioning
 

@@ -169,10 +169,18 @@ After reviewing all pages:
 
 ## Step 7: Post PR Comment
 
-Post the design review comment to the PR via `gh`:
+Post the design review comment to the PR via `gh`. Write the comment body to
+`"$DESIGN_REVIEW_SCRATCH/design-review-comment-<PR_NUMBER>.md"`, where
+`DESIGN_REVIEW_SCRATCH` is a private directory created once for this review
+with `export DESIGN_REVIEW_SCRATCH="$(mktemp -d)"` — never a shared `/tmp` name
+a parallel agent could overwrite — and verify PR ownership first (issue #1444):
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-gh pr comment <PR_NUMBER> --body "$(cat /tmp/design-review-comment.md)"
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <PR_NUMBER> --expected-branch <branch_name> || exit $?
+gh pr comment <PR_NUMBER> \
+  --body-file "${DESIGN_REVIEW_SCRATCH:?create it with mktemp -d and write the comment there first}/design-review-comment-<PR_NUMBER>.md"
 ```
 
 ### PR Comment Format
@@ -252,8 +260,10 @@ To enable design review: <guidance specific to the skip reason>.
 
 ## Step 8: Clean Up Temp Files
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-rm -f /tmp/design-review-*.png /tmp/design-review-console.mjs /tmp/design-review-comment.md
+rm -f /tmp/design-review-*.png /tmp/design-review-console.mjs
+rm -rf "${DESIGN_REVIEW_SCRATCH:?}"
 ```
 
 ---

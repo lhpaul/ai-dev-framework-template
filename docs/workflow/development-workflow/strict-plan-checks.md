@@ -79,3 +79,19 @@ undone?
 
 **Finding shape:** a migration or contract change with no stated reversal and no
 statement that none exists.
+
+### test_scope_proportionality
+
+Source: not required
+
+**Question:** Does projected test scaffolding volume in the plan stay
+proportionate to the deliverable it protects, and does a prose-only or
+documentation-only deliverable avoid proposing a custom parser, scanner, or
+matcher to validate it? (Gate B, `test-scope-proportionality.md`; this
+question is exactly Gate B's two signals — it does not separately require a
+coverage rationale or a binding marker.)
+
+**Finding shape:** projected test scaffolding whose volume clearly exceeds
+the size of the deliverable it protects, or a prose-only/documentation-only
+deliverable that proposes a custom parser, scanner, or matcher to validate
+it. Neither signal present is not a finding.

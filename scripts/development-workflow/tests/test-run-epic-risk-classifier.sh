@@ -68,6 +68,26 @@ JSON
     fi
     printf '%s\n' 'docs/workflow/development-workflow/protocols/95-run-epic-protocol.md'
     ;;
+  pr\ view\ 44\ --json*)
+    # Issue #1559: the live rollup for PR 44 is supplied per test so the
+    # superseded-run and genuine-failure shapes share one mock.
+    jq -n --argjson rollup "${MOCK_ROLLUP_44:-[]}" '{
+      number: 44,
+      title: "Live rollup dedupe",
+      baseRefName: "develop",
+      headRefName: "docs/live-rollup",
+      headRefOid: "4444444444444444444444444444444444444444",
+      headRepository: {name: "ai-dev-framework-template", owner: {login: "lhpaul"}},
+      mergeStateStatus: "CLEAN",
+      isDraft: false,
+      reviewDecision: "APPROVED",
+      labels: [{name: "ready-for-human-review"}],
+      statusCheckRollup: $rollup
+    }'
+    ;;
+  pr\ diff\ 44\ --name-only)
+    printf '%s\n' 'docs/README.md'
+    ;;
   pr\ view\ 43\ --json*)
     cat <<'JSON'
 {
@@ -746,6 +766,41 @@ run_test "json_read_only_guarantee" "yes" "$(printf '%s\n' "$live_output" | jq -
 run_fails_contains "live_pr_view_failure_errors" "failed to read PR #42" env MOCK_GH_MODE=view-fail "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_empty_response_errors" "empty PR response for #42" env MOCK_GH_MODE=view-empty "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_diff_failure_errors" "failed to read changed files for PR #42" env MOCK_GH_MODE=diff-fail "$CLASSIFIER" --pr 42 --json
+
+# Issue #1559: the live rollup keeps superseded runs. A failure followed by a
+# passing re-run classifies as green (AC-2); a success followed by a current
+# failure still blocks (AC-3); same-named jobs in two workflows stay distinct,
+# so one workflow's failure is not hidden by the other's later success.
+superseded_rollup='[
+  {"__typename": "StatusContext", "context": "policy", "state": "FAILURE", "startedAt": "2026-06-01T05:26:31Z"},
+  {"__typename": "CheckRun", "name": "guard", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-06-01T05:26:31Z", "completedAt": "2026-06-01T05:27:00Z"},
+  {"__typename": "StatusContext", "context": "policy", "state": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z"},
+  {"__typename": "CheckRun", "name": "guard", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z", "completedAt": "2026-06-01T05:29:00Z"}
+]'
+live_superseded_output="$(env MOCK_ROLLUP_44="$superseded_rollup" "$CLASSIFIER" --pr 44 --max-risk low --json)"
+run_test "live_superseded_failure_is_green_1559" "true" "$(printf '%s\n' "$live_superseded_output" | jq -r '.merge_permitted')"
+current_failure_rollup='[
+  {"__typename": "StatusContext", "context": "policy", "state": "SUCCESS", "startedAt": "2026-06-01T05:26:31Z"},
+  {"__typename": "StatusContext", "context": "policy", "state": "FAILURE", "startedAt": "2026-06-01T05:28:16Z"}
+]'
+live_current_failure_output="$(env MOCK_ROLLUP_44="$current_failure_rollup" "$CLASSIFIER" --pr 44 --max-risk low --json)"
+run_test "live_current_failure_still_blocks_1559" "false" "$(printf '%s\n' "$live_current_failure_output" | jq -r '.merge_permitted')"
+two_workflow_rollup='[
+  {"__typename": "CheckRun", "name": "test", "workflowName": "unit", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-06-01T05:26:31Z", "completedAt": "2026-06-01T05:27:00Z"},
+  {"__typename": "CheckRun", "name": "test", "workflowName": "e2e", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z", "completedAt": "2026-06-01T05:29:00Z"}
+]'
+live_two_workflow_output="$(env MOCK_ROLLUP_44="$two_workflow_rollup" "$CLASSIFIER" --pr 44 --max-risk low --json)"
+run_test "live_same_name_other_workflow_failure_blocks_1559" "false" "$(printf '%s\n' "$live_two_workflow_output" | jq -r '.merge_permitted')"
+run_test "live_same_name_other_workflow_failure_named_1559" "yes" "$(printf '%s\n' "$live_two_workflow_output" | jq -e '.blockers[] | select(test("unit / test"))' >/dev/null && echo yes || echo no)"
+# A check run "test" of workflow "unit" projects to the name "unit / test";
+# a status context literally named "unit / test" must stay a separate check,
+# so its newer success cannot erase the run's failure.
+name_collision_rollup='[
+  {"__typename": "CheckRun", "name": "test", "workflowName": "unit", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-06-01T05:26:31Z", "completedAt": "2026-06-01T05:27:00Z"},
+  {"__typename": "StatusContext", "context": "unit / test", "state": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z"}
+]'
+live_name_collision_output="$(env MOCK_ROLLUP_44="$name_collision_rollup" "$CLASSIFIER" --pr 44 --max-risk low --json)"
+run_test "live_check_run_and_status_context_name_collision_blocks_1559" "false" "$(printf '%s\n' "$live_name_collision_output" | jq -r '.merge_permitted')"
 
 # --- issue #1497: --pr cannot attach why_safe_to_merge, so a medium-risk PR
 # --- classified via --pr always ends up "blocked" without --why-safe-file ---

@@ -585,6 +585,33 @@ run_test "needs_setup_requires_human" "human_required" "$(decision_for "$setup_f
 ci_failure_fixture="$(write_fixture ci-failure '.statusChecks[0].conclusion = "FAILURE"')"
 run_test "ci_failure_requires_fix" "fix_required" "$(decision_for "$ci_failure_fixture")"
 
+# Issue #1559: evidence copied from statusCheckRollup keeps superseded runs.
+# A failure followed by a passing re-run is green (AC-2); the PR #1547 shape
+# is a commit-status context that failed at 05:26:31 and passed at 05:28:16.
+# A success followed by a current failure stays a blocker (AC-3).
+superseded_ci_failure_fixture="$(write_fixture superseded-ci-failure '
+  .statusChecks = [
+    {"__typename": "CheckRun", "name": "guard", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-06-01T05:26:31Z"},
+    {"__typename": "StatusContext", "context": "policy", "state": "FAILURE", "startedAt": "2026-06-01T05:26:31Z"},
+    {"__typename": "StatusContext", "context": "policy", "state": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z"},
+    {"__typename": "CheckRun", "name": "guard", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z"}
+  ]')"
+run_test "superseded_ci_failure_is_green_1559" "merge_allowed" "$(decision_for "$superseded_ci_failure_fixture")"
+
+current_ci_failure_fixture="$(write_fixture current-ci-failure '
+  .statusChecks = [
+    {"__typename": "StatusContext", "context": "policy", "state": "SUCCESS", "startedAt": "2026-06-01T05:26:31Z"},
+    {"__typename": "StatusContext", "context": "policy", "state": "FAILURE", "startedAt": "2026-06-01T05:28:16Z"}
+  ]')"
+run_test "current_ci_failure_still_blocks_1559" "fix_required" "$(decision_for "$current_ci_failure_fixture")"
+
+requeued_ci_fixture="$(write_fixture requeued-ci '
+  .statusChecks = [
+    {"__typename": "CheckRun", "name": "guard", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-06-01T05:26:31Z"},
+    {"__typename": "CheckRun", "name": "guard", "workflowName": "CI", "status": "QUEUED", "conclusion": "", "startedAt": null}
+  ]')"
+run_test "requeued_ci_rerun_is_not_green_1559" "fix_required" "$(decision_for "$requeued_ci_fixture")"
+
 ci_reviewer_name_collision_fixture="$(write_fixture ci-reviewer-name-collision '
   .statusChecks = [
     {"name": "shared", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE"},

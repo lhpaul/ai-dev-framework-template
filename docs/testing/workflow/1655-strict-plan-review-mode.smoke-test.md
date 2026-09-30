@@ -72,9 +72,10 @@ The findings look like a plan with no coverage at all. Proof P2.
 2. Run one on a directory that does not.
 3. Read `STRICT_PLAN_APPLIED` in both.
 
-**Expected result**: step 1 reports all **seven** identifiers. Step 2 reports
-exactly `source_declaration`, `phase_ordering`, `dependency_state` and
-`reversal_risk`. In both, `STRICT_PLAN_APPLIED` is present and non-empty.
+**Expected result**: step 1 reports all **eight** identifiers. Step 2 reports
+exactly `source_declaration`, `phase_ordering`, `dependency_state`,
+`reversal_risk` and `test_scope_proportionality`. In both, `STRICT_PLAN_APPLIED`
+is present and non-empty.
 
 **A count without its denominator is not a rate**, and this step is where that
 becomes concrete. A count of one on a Refactor plan and a count of one on a
@@ -85,14 +86,14 @@ to tell them apart. Proof P3.
 alone: the sibling spec is supplied when `git show` retrieves it and not when it
 does not, and the plan's own text is never consulted. Whether the plan's
 declaration is valid is `source_declaration`'s answer, on its own axis — a plan
-that declares nothing with its spec beside it has all seven applied **and** the
+that declares nothing with its spec beside it has all eight applied **and** the
 finding. Step 8 is where that is exercised.
 
 ## Step 4: A finding for a check that was not applied is not counted
 
 **Maps to**: AC-19a.
 
-1. Run a review on a plan with no source, so the applied set is the four.
+1. Run a review on a plan with no source, so the applied set is the five.
 2. Return a strict response containing a finding whose `check` is
    `spec_traceability` — in the checklist, not in the applied set.
 
@@ -177,8 +178,8 @@ on a stage that should never see it.
 
 **Maps to**: AC-4 through AC-11, and the whole point of the checklist.
 
-1. Run the reviewer against each of the **eleven** fixture plans with the
-   checklist supplied: seven positives, one per check, each carrying exactly one
+1. Run the reviewer against each of the **twelve** fixture plans with the
+   checklist supplied: eight positives, one per check, each carrying exactly one
    planted instance of that check's shape; and four negatives — a step declared
    as an addition with its reason, an irreversible step declared irreversible, a
    plan whose every criterion has a falsifying test, and a Refactor plan
@@ -197,13 +198,13 @@ be to delete the suite. But a check that cannot demonstrate its pair does not
 ship: the repair is to sharpen its question in the checklist until it detects
 its own planted violation. A check that detects nothing produces a permanent
 zero in #1657's data, and a zero reads as *this does not happen* rather than
-*this check does not work*. Proofs P7 through P13.
+*this check does not work*. Proofs P7 through P14.
 
 ## Step 9: The checklist is what caused it
 
 **Maps to**: the same, negatively.
 
-1. Run the same eleven fixtures with the checklist **absent**.
+1. Run the same twelve fixtures with the checklist **absent**.
 
 **Expected result**: `STRICT_PLAN_STATE=unavailable` with
 `STRICT_PLAN_REASON=checklist_unreadable`, and no strict finding on any fixture.
@@ -226,13 +227,13 @@ Automated in `scripts/development-workflow/tests/test-local-ai-reviewer.sh`:
 | --- | --- | --- |
 | P1 | 1655_s8_git_show_text | `strict_git_show_at_head` returns committed bytes |
 | P2 | 1655_s9_whole_document | supplied `text` length equals full plan at HEAD, not diff size |
-| P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set7 | `STRICT_PLAN_APPLIED` present |
-| P3a | 1655_s7a_all_seven | all seven when spec sibling present despite Refactor declaration |
+| P3 | 1655_s7_partial_applied, 1655_s15_plan_applied_set8 | `STRICT_PLAN_APPLIED` present |
+| P3a | 1655_s7a_all_eight | all eight when spec sibling present despite Refactor declaration |
 | P4 | 1655_s17_unknown_detail | `STRICT_1_CHECK=unknown` for out-of-applied source-dependent finding |
 | P5 | 1655_s13_reason | `STRICT_PLAN_REASON=no_plan_document_changed` |
 | P6 | 1655_s11_no_count (via key absence) | no COUNT when unavailable |
 
-### Detection (P7–P13) — Codex fail/pass pair proof
+### Detection (P7–P14) — Codex fail/pass pair proof
 
 Command per check (fail then pass):
 
@@ -251,6 +252,7 @@ Parser regression (separate from planted-violation proof): scenarios 20/21 and 1
 | P11 | `phase_ordering/2_…md:7` | `STRICT_2_CHECK=phase_ordering` L7 (180s) | steps reordered | no `phase_ordering` (180s) |
 | P12 | `dependency_state/2_…md:7` | `STRICT_1_CHECK=dependency_state` L7 (180s) | state + start gate | no `dependency_state` (180s pass-only) |
 | P13 | `reversal_risk/2_…md:7` | `STRICT_2_CHECK=reversal_risk` L7 | `**cannot be undone**` | no `reversal_risk` |
+| P14 | `test_scope_proportionality/2_…md:11` | `STRICT_1_CHECK=test_scope_proportionality` L11 | 3-class coverage-intent rewrite | `STRICT_PLAN_COUNT=0` |
 
 **Recorded fail-side excerpts:**
 
@@ -262,6 +264,8 @@ P10: STRICT_1_CHECK=ac_test_coverage STRICT_1_LINE=11 (non-falsifying Scenario 1
 P11: STRICT_2_CHECK=phase_ordering STRICT_2_LINE=7 (step 1 before step 3)
 P12: STRICT_1_CHECK=dependency_state STRICT_1_LINE=7 (no state/consequence)
 P13: STRICT_2_CHECK=reversal_risk STRICT_2_LINE=7 (undeclared irreversibility)
+P14: STRICT_1_CHECK=test_scope_proportionality STRICT_1_LINE=11 (forty fixture
+     files disproportionate to a single renderer behavior)
 ```
 
 **Recorded pass-side excerpts:**
@@ -274,6 +278,7 @@ P10: STRICT_PLAN_COUNT=0; findings (none)
 P11: STRICT_PLAN_CHECKS=ac_test_coverage (phase_ordering absent)
 P12: STRICT_PLAN_CHECKS=ac_test_coverage (dependency_state absent)
 P13: STRICT_PLAN_CHECKS=ac_test_coverage (reversal_risk absent)
+P14: STRICT_PLAN_COUNT=0; findings (none)
 ```
 
 Negative controls (Step 9): `irreversible_declared` → no `reversal_risk`; `declared_addition` → no `unspecified_step` when Codex completes; `all_falsifying_tests` → zero strict findings for planted checks.

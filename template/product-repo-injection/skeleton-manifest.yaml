@@ -30,6 +30,31 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: resolves product repository mode and hub references
+  - group: Step 7a reviewer availability helper
+    path: scripts/development-workflow/resolve-reviewer-availability.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: resolves bounded reviewer availability for product-owned pull requests
+  - group: reviewer preflight
+    path: scripts/development-workflow/reviewer-preflight.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reviewer preflight cross-check CLI (#1561), invoked by Protocol 91 before an item's first mutation
+  - group: reviewer preflight engine
+    path: scripts/development-workflow/reviewer_preflight.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reviewer preflight cross-check engine, invoked by reviewer-preflight.sh
+  - group: reviewer preflight input builder
+    path: scripts/development-workflow/reviewer_preflight_build_input.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reviewer preflight input-JSON builder, invoked by reviewer-preflight.sh
+  - group: shared CodeRabbit configuration parser
+    path: scripts/development-workflow/reviewer_preflight_coderabbit.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: shared CodeRabbit own-configuration parser, used by both resolve-reviewer-availability.sh and reviewer-preflight.sh
   - group: workflow configuration validator
     path: scripts/development-workflow/validate-workflow-config.sh
     mode_scope: product_repo_injection
@@ -40,6 +65,16 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: shell helpers used by product-repo validation and PR readiness scripts
+  - group: shared Codex evidence helpers
+    path: scripts/development-workflow/codex-github-evidence-lib.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: applicability-aware Codex review-thread evidence helpers required by pr-review-loop.sh
+  - group: PR ownership guard
+    path: scripts/development-workflow/pr-ownership-guard.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: verifies a PR belongs to the expected branch and repository before pr-review-loop.sh mutates it (#1444)
   - group: PR reviewer loop
     path: scripts/development-workflow/pr-review-loop.sh
     mode_scope: product_repo_injection
@@ -60,6 +95,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: verifies product branch and PR cleanup evidence after product-owned release work
+  - group: readiness label gate
+    path: scripts/development-workflow/apply-readiness-labels.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: gates readiness-label application on reviewer and CI verdicts (#1408)
   - group: general best practices
     path: docs/best-practices/1-general.md
     mode_scope: product_repo_injection

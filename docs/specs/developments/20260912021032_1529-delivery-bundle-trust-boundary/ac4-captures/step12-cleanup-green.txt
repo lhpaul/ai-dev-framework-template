@@ -1,0 +1,134 @@
+
+=== Prepare-release tracker cleanup ===
+PASS: worktree_git_is_not_a_directory
+PASS: worktree_rev_parse_is_inside_work_tree
+PASS: worktree_git_dir_resolves_outside_worktree
+PASS: worktree_old_style_lock_mkdir_fails
+PASS: worktree_fixed_lock_mkdir_succeeds
+PASS: linear_from_changelog_exits_nonzero
+PASS: linear_from_changelog_action
+PASS: linear_from_changelog_incomplete
+PASS: linear_from_changelog_issues
+PASS: linear_best_effort_exits_zero
+PASS: linear_best_effort_still_reports_action
+PASS: custom_release_branch_exits_zero
+PASS: custom_release_branch_preserved
+PASS: custom_release_version_basename
+PASS: custom_release_backport_base
+PASS: custom_release_merged_prs
+PASS: nested_release_branch_exits_zero
+PASS: nested_release_branch_preserved
+PASS: nested_release_version_basename
+PASS: nested_release_merged_prs
+PASS: component_cleanup_exits_zero
+PASS: component_cleanup_target_logged
+PASS: component_cleanup_branch_from_evidence
+PASS: component_cleanup_product_prs
+PASS: component_cleanup_remote_delete
+PASS: component_cleanup_local_delete
+PASS: component_cleanup_linear_action
+PASS: component_cleanup_complete_exits_zero
+PASS: component_cleanup_complete_idempotent
+PASS: component_cleanup_complete_json
+PASS: component_cleanup_lock_exits_nonzero
+PASS: component_cleanup_lock_rejected
+DEBUG_OUTPUT: Component release cleanup lock is already held for sha256:6b2d0e439d7ba97956d74b91f9ede7de4e7d2d06aecc8770e46355963e83c504 at /private/var/folders/n9/67s9dcy562gbpkb_1xwddvg00000gn/T/tmp.cseugpzWdL/component-cleanup/.git/component-release-cleanup-locks/sha256_6b2d0e439d7ba97956d74b91f9ede7de4e7d2d06aecc8770e46355963e83c504.lock.
+KNOWN LIMITATION: this lock is local to the hub checkout at '/private/var/folders/n9/67s9dcy562gbpkb_1xwddvg00000gn/T/tmp.cseugpzWdL/component-cleanup'.
+It does not exclude a concurrent run from a different hub clone or linked worktree of the same hub repository.
+PASS: component_cleanup_shared_lock_exits_nonzero
+PASS: component_cleanup_shared_lock_rejected
+PASS: component_cleanup_branch_mismatch_exits_nonzero
+PASS: component_cleanup_branch_mismatch_rejected
+PASS: component_cleanup_invalid_identity_exits_nonzero
+PASS: component_cleanup_invalid_identity_rejected
+PASS: component_cleanup_mismatch_exits_nonzero
+PASS: component_cleanup_rejects_mismatch
+PASS: bad_backport_base_exits_usage
+PASS: bad_backport_base_rejected
+PASS: missing_scope_exits_nonzero
+PASS: missing_scope_signal
+PASS: missing_changelog_version_exits_nonzero
+PASS: missing_changelog_version_signal
+
+=== Issue loop / TRACKER_UPDATED counting (stub workflow-lib.sh) ===
+PASS: stub_updated_exits_zero
+PASS: stub_updated_counter
+PASS: stub_deferred_exits_zero
+PASS: stub_deferred_counter
+PASS: stub_skipped_exits_zero
+PASS: stub_skipped_counter
+
+=== Component cleanup --json (real end-to-end, not a fixture) ===
+PASS: e2e_json_exits_zero
+PASS: e2e_json_stdout_is_valid_json
+PASS: e2e_json_cleanup_outcome
+PASS: e2e_json_remote_branch_deleted
+PASS: e2e_json_local_branch_deleted
+PASS: e2e_json_tracker_after_product_cleanup
+PASS: e2e_json_tracker_repository_owner
+PASS: e2e_json_no_stray_stdout_text
+PASS: e2e_json_rerun_valid_json
+PASS: e2e_json_rerun_already_complete
+PASS: e2e_json_rerun_no_new_remote_delete
+=== Milestone stamping fix: uses API number not title ===
+PASS: milestone_stamp_exits_zero
+PASS: milestone_stamp_release_stamped
+
+=== Omitted merged items detection ===
+PASS: no_extra_merged_items_clean
+PASS: detect_omitted_items_detected_signal
+PASS: detect_shipped_item_reported
+PASS: detect_parent_epic_reported
+PASS: detect_parent_epic_label
+PASS: detect_shipped_item_auto_added
+PASS: detect_parent_epic_incomplete
+PASS: unshipped_item_is_reported
+PASS: unshipped_item_not_auto_added
+PASS: unshipped_item_not_in_shipped_section
+PASS: unshipped_item_marks_incomplete
+PASS: detect_parent_epic_issues_list
+PASS: T19_exits_nonzero
+PASS: T19_message
+PASS: T19_no_branch_delete
+PASS: T20_exits_nonzero
+PASS: T20_message
+PASS: T20_no_branch_delete
+PASS: T20b_exits_nonzero
+PASS: T20b_message
+PASS: T20b_no_branch_delete
+PASS: T20d_exits_nonzero
+PASS: T20d_message
+PASS: T20d_no_branch_delete
+PASS: T20e_exits_nonzero
+PASS: T20e_message
+PASS: T20e_no_branch_delete
+PASS: T20f_release_exits_nonzero
+PASS: T20f_release_message
+PASS: T20f_release_no_branch_delete
+PASS: T20f_ci_exits_nonzero
+PASS: T20f_ci_message
+PASS: T20f_ci_no_branch_delete
+PASS: T20f_github_release_exits_nonzero
+PASS: T20f_github_release_message
+PASS: T20f_github_release_no_branch_delete
+PASS: T20f_deployment_exits_nonzero
+PASS: T20f_deployment_message
+PASS: T20f_deployment_no_branch_delete
+PASS: T20f_cleanup_exits_nonzero
+PASS: T20f_cleanup_message
+PASS: T20f_cleanup_no_branch_delete
+PASS: T20f_tracker_exits_nonzero
+PASS: T20f_tracker_message
+PASS: T20f_tracker_no_branch_delete
+PASS: T20c_exits_nonzero
+PASS: T20c_missing_release_branch
+PASS: T20c_not_correlation_mismatch
+PASS: T20c_no_branch_delete
+PASS: T20g_empty_exits_nonzero
+PASS: T20g_empty_message
+PASS: T20g_empty_no_delete
+PASS: T20g_absent_exits_nonzero
+PASS: T20g_absent_message
+PASS: T20g_absent_no_delete
+
+Results: 120 passed, 0 failed

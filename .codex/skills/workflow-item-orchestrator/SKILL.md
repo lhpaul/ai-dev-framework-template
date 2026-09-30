@@ -64,6 +64,14 @@ Recommended model tier: `balanced`
     documentation-stage alignment checker before readiness. Include the
     alignment result in the runner summary when readiness is blocked; correct
     or escalate mismatches instead of applying `ready-for-human-review`.
+19a. Before stopping under `architecture_decision`, run the per-axis coverage
+     analysis and produce the well-formed escalation report required by
+     `docs/workflow/development-workflow/architecture-decision-escalation.md`:
+     axis decomposition, per-axis coverage verdict, per-citation `Conforms` /
+     `Departs` / `Not yet implemented` declaration, and a requested decision
+     scoped to genuinely open axes only. Never describe such an escalation as
+     well-formed without that analysis. Upsert the PR marker comment per
+     Protocol 91.
 20. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
     `escalated`, waiting on human, waiting on merge, or cleanup complete), run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
@@ -90,8 +98,9 @@ Recommended model tier: `balanced`
     — capture `pgrep`'s status **inside** the loop (do not use `$?` after
     `while pgrep ...; do sleep; done`; that is the last body command / `0`,
     not `pgrep`). Use Protocol 91's "Execution Discipline" pattern
-    (`while true; do pgrep -f "[p]r-review-loop.sh <PR>" >/dev/null;
-    pgrep_rc=$?; case $pgrep_rc in 0) sleep 20 ;; 1) break ;; *) break ;;
+    (`while true; do if pgrep -f "[p]r-review-loop.sh <PR>" >/dev/null;
+    then pgrep_rc=0; else pgrep_rc=$?; fi; case $pgrep_rc in 0) sleep 20 ;;
+    1) break ;; *) break ;;
     esac; done`, then inspect `$pgrep_rc`: `1` = done, `2`/`3`/`127` =
     polling failure; use `pgrep_rc` not `status` — zsh treats `status` as
     read-only). Keep `<cmd>` specific enough — e.g. the bracket trick
@@ -100,12 +109,41 @@ Recommended model tier: `balanced`
     does not substitute here. Never end a turn while something this run
     started is still in flight.
 23. **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already
-    running**: it takes a per-PR single-instance lock; a second concurrent
-    invocation exits 75 with `REASON=lock_contention` and reports nothing
-    about the PR's actual review state. If re-entering this item after a
-    backgrounded or interrupted run, do not start a new one — poll for the
-    earlier process to finish (or confirm it is genuinely gone), then read
-    the outcome from PR state directly (`gh pr view`, the reviewer-loop
-    summary comment, GraphQL review threads) instead of launching a duplicate
-    run. Use `pr-review-loop.sh unlock <pr-number>` only once the recorded
-    lock PID is confirmed no longer alive.
+    running**: it takes a single-instance lock keyed by target repository and
+    PR number; a second concurrent invocation exits 75 with
+    `REASON=lock_contention` and reports nothing about the PR's actual review
+    state. If re-entering this item after a backgrounded or interrupted run,
+    do not start a new one — poll for the earlier process to finish (or
+    confirm it is genuinely gone), then read the outcome from PR state
+    directly (`gh pr view`, the reviewer-loop summary comment, GraphQL review
+    threads) instead of launching a duplicate run. Use
+    `pr-review-loop.sh unlock <pr-number>` only once the recorded lock PID is
+    confirmed no longer alive, passing the same
+    `--repo`/`--product-repo`/`--repo-root` options the blocked run used — the
+    contention message prints the exact recovery command and a
+    `LOCK_REPO_KEY` naming the repository the lock belongs to.
+
+---
+
+## Cursor dispatch profile
+
+In a Cursor environment only, declare the dispatch profile in force before any
+mutating action — `cursor-native-handoff`, `cursor-parent-orchestrated`, or
+`cursor-inline-fallback` — naming the Work Item Runner (item layer) as the
+accountable orchestration role, with a posture valid for the current checkpoint. Other runners are unaffected by
+this requirement.
+
+Evaluation order, unconfirmed-handoff outcomes, accountability postures, the
+named stop conditions and their human unblocking actions, and the
+invalid-declaration boundaries are defined once, normatively, in
+`docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
+Follow that document; this surface deliberately does not restate it.
+
+Stage-agent models in Cursor: before dispatching a stage subagent, read that
+agent's `model:` field from `.cursor/agents/<agent>.md` in the checkout being
+run and use it. Do not pick models from the template tables in
+`docs/workflow/development-workflow/agent-model-config.md`. Downstream
+repositories may pin other model families (for example Grok or Composer), and
+those pins are honored as written. See that document's "Cursor model source of
+truth" section.
+

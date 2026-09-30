@@ -498,7 +498,8 @@ print_kv() {
 # configured_reviewer_check_names_json [config_file]
 #
 # Returns a JSON array of GitHub check-run names owned by configured review
-# platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot). Shared by
+# platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot, ronda →
+# Ronda review). Shared by
 # pr-ci-loop.sh (to exclude reviewer checks from the baseline CI set) and
 # pr-review-loop.sh (expensive-reviewer gate baseline-check classification).
 # Relocated from pr-ci-loop.sh (#1649) with no behavior change.
@@ -522,6 +523,9 @@ configured_reviewer_check_names_json() {
         bugbot)
           names+=("${BUGBOT_CHECK_NAME:-Cursor Bugbot}")
           ;;
+        ronda)
+          names+=("${RONDA_CHECK_NAME:-Ronda review}")
+          ;;
       esac
     done < <(
       if [ "$config_file" = "$(workflow_config_file)" ]; then
@@ -540,12 +544,203 @@ configured_reviewer_check_names_json() {
   printf '%s\n' "${names[@]}" | jq -R . | jq -s .
 }
 
+# STATUS_CHECK_ROLLUP_DEDUPE_JQ — the single statusCheckRollup deduplication
+#
+# GitHub's `statusCheckRollup` keeps EVERY check run and status for a head SHA,
+# including superseded ones: a check that failed and then passed on re-run
+# appears twice, once `FAILURE` and once `SUCCESS` (issue #1559, observed on PR
+# #1547). Counting non-green entries over the raw rollup therefore reports a
+# failure that is no longer true, so "0 non-green checks" is only meaningful
+# AFTER this deduplication.
+#
+# This jq definition is the one place that collapses the rollup. It defines
+# `dedupe_status_check_rollup`, which takes a rollup ARRAY and returns it with
+# one entry per check key — the most recent run:
+#
+#   - key: `.context` for status contexts; `.workflowName`/`.name` for check
+#     runs (so same-named jobs in two workflows stay distinct); else `.name`.
+#     An entry with none of those is never merged with another entry — two
+#     unidentifiable entries are not evidence that one supersedes the other.
+#   - recency: the first present of `.startedAt`, `.completedAt`,
+#     `.createdAt` (GraphQL) or `.started_at`, `.completed_at`, `.created_at`
+#     (REST and hand-assembled evidence), then `.updatedAt`/`.updated_at`
+#     (a commit status is immutable, so it equals `created_at`). An entry
+#     with no timestamp (or GitHub's zero time) in a recognized pending state
+#     (status QUEUED/IN_PROGRESS/WAITING/REQUESTED/PENDING/EXPECTED, or state
+#     PENDING/EXPECTED) — a queued re-run has not started yet — counts as the
+#     NEWEST entry, so a pending re-run is never hidden behind the result it
+#     supersedes. An empty or unrecognized status is not treated as pending.
+#   - winner: when every entry for a check has a recency value, the newest
+#     wins. Ties (timestamps have one-second resolution) go to the higher
+#     numeric `.id`/`.databaseId` — REST check-run and status ids increase
+#     with creation, and REST lists newest-first, so input order alone would
+#     keep the OLDER run — and only then to input order. When any entry
+#     lacks a recency value, order is unknown: an undated non-terminal entry
+#     (a queued re-run) still wins, so an unsettled check never reads as
+#     settled; otherwise the highest id wins, then the LAST input entry.
+#
+# Shell callers use normalize_status_check_rollup below. Callers that must
+# stay inside one jq program (a `gh pr list` array, a projection) prepend this
+# definition to their filter: `jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ ..."`. Do not
+# re-implement the grouping in a caller; test-status-check-rollup-dedupe.sh
+# fails when a copy appears outside this file.
+# shellcheck disable=SC2016  # jq program text, not a shell expansion.
+STATUS_CHECK_ROLLUP_DEDUPE_JQ='
+def dedupe_status_check_rollup:
+  (. // [])
+  | to_entries
+  | map(
+      .key as $idx
+      | .value
+      | . + {
+        __check_key: (
+          if (.context // "") != "" then
+            "status:" + .context
+          elif (.workflowName // "") != "" and (.name // "") != "" then
+            "check:" + .workflowName + "/" + .name
+          elif (.name // "") != "" then
+            "check:" + .name
+          else
+            "unnamed:" + ($idx | tostring)
+          end
+        ),
+        __check_idx: $idx,
+        __check_seq: ((.id // .databaseId) | if type == "number" then . else null end),
+        __check_ts: (
+          ([.startedAt, .completedAt, .createdAt,
+            .started_at, .completed_at, .created_at,
+            .updatedAt, .updated_at]
+            | map(select(type == "string" and . != ""
+                         and (startswith("0001-01-01") | not)))
+            | first) as $ts
+          | if $ts != null then $ts
+            elif ((.status // "") | ascii_upcase
+                  | IN("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED"))
+                 or ((.state // "") | ascii_upcase | IN("PENDING", "EXPECTED"))
+            then "9999-12-31T23:59:59Z"
+            else ""
+            end
+        )
+      }
+    )
+  | group_by(.__check_key)
+  | map(
+      (if all(.[]; .__check_ts != "")
+       then sort_by(.__check_ts, .__check_seq, .__check_idx)
+       elif any(.[]; .__check_ts == "9999-12-31T23:59:59Z")
+       then map(select(.__check_ts == "9999-12-31T23:59:59Z")) | sort_by(.__check_seq, .__check_idx)
+       else sort_by(.__check_seq, .__check_idx)
+       end)
+      | last
+      | del(.__check_key, .__check_idx, .__check_seq, .__check_ts)
+    );
+'
+
+# normalize_status_check_rollup
+#
+# Reads a `gh pr view --json statusCheckRollup` payload on stdin and prints one
+# JSON array with superseded runs collapsed to the latest entry per check (see
+# STATUS_CHECK_ROLLUP_DEDUPE_JQ above). Every single-PR rollup consumer calls
+# this instead of scanning `.statusCheckRollup` directly (issues #1408, #1559).
+normalize_status_check_rollup() {
+  jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+    .statusCheckRollup | dedupe_status_check_rollup
+  '
+}
+
+# latest_check_runs_for_sha <owner/repo> <sha>
+#
+# Prints one JSON array: the latest REST check run per check for <sha>, every
+# page read. Returns non-zero when either read fails, so a caller can fail
+# closed rather than judge CI on a partial read.
+#
+# REST `commits/<sha>/check-runs` keeps superseded runs as well (its default
+# filter=latest is per check SUITE, and another run of a workflow reports in a
+# new suite), and — unlike the GraphQL rollup — carries no workflow name. Keying
+# on the job name alone would merge same-named jobs of two different
+# workflows, hiding one workflow's failure behind the other's later success.
+# So each run first gets its workflow identity: the workflow file path of the
+# Actions run that owns its check suite (from `actions/runs?head_sha=`), or the
+# app slug for checks posted by a non-Actions app. An Actions (or app-less) run
+# whose suite has no listed workflow run gets its own suite as identity, so it
+# is never merged with another suite's run: that can only keep a stale result
+# visible (blocking), never hide a current one. Then the shared
+# dedupe_status_check_rollup keeps the latest run per workflow + job.
+latest_check_runs_for_sha() {
+  local repo="$1" sha="$2" check_pages="" workflow_pages=""
+  [ -n "$repo" ] && [ -n "$sha" ] || return 2
+  check_pages="$(gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  workflow_pages="$(gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  [ -n "$check_pages" ] && [ -n "$workflow_pages" ] || return 1
+  { printf '%s\n' "$check_pages"; printf '%s\n' "$workflow_pages"; } \
+    | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+        .[0] as $check_pages | .[1] as $workflow_pages
+        | ([$workflow_pages[].workflow_runs[]?
+            | select(.check_suite_id != null)
+            | {key: (.check_suite_id | tostring), value: (.path // .name // "")}]
+           | from_entries) as $workflow_by_suite
+        | [$check_pages[].check_runs[]?
+           | ((.check_suite.id // "") | tostring) as $suite
+           | . + {workflowName: (
+               $workflow_by_suite[$suite]
+               // (if (.app.slug // "") != "" and .app.slug != "github-actions"
+                   then .app.slug
+                   else "unmapped-suite:" + (if $suite != "" then $suite else ((.id // "") | tostring) end)
+                   end))}]
+        | dedupe_status_check_rollup
+      '
+}
+
+# bot_login_for_platform <platform>
+#
+# Prints the GitHub login a review platform posts as, or nothing for a platform
+# that has no GitHub review surface (haystack). Kept here so readiness-label
+# gating and the completion self-check resolve the same logins from one place.
+bot_login_for_platform() {
+  case "$1" in
+    coderabbit) printf 'coderabbitai\n' ;;
+    coderabbit-cli) printf '\n' ;;
+    local-ai-reviewer) printf '\n' ;;
+    devin) printf 'devin-ai-integration\n' ;;
+    greptile) printf 'greptile-apps\n' ;;
+    pr-agent) printf '%s\n' "${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" ;;
+    haystack) printf '\n' ;;
+    codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
+    claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
+    copilot) printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
+    bugbot) printf '%s\n' "${BUGBOT_BOT_LOGIN:-cursor[bot]}" ;;
+    ronda) printf '%s\n' "${RONDA_BOT_LOGIN:-ronda[bot]}" ;;
+    *) printf '\n' ;;
+  esac
+}
+
 print_kv_escaped() {
-  local value="$2"
+  local value="$2" control escaped code octal
+  local LC_ALL=C
   value="${value//\\/\\\\}"
   value="${value//$'\r'/\\r}"
   value="${value//$'\n'/\\n}"
   value="${value//$'\t'/\\t}"
+  # Bash values cannot contain NUL. Escape the other C0/DEL and UTF-8 C1
+  # controls so decoded YAML escapes cannot issue terminal commands. Keep the
+  # common printable path cheap and retain the existing CR/LF/tab spellings.
+  if [[ "$value" == *[$'\001'-$'\037'$'\177']* ]]; then
+    for ((code=1; code<=127; code++)); do
+      [ "$code" -le 31 ] || [ "$code" -eq 127 ] || continue
+      printf -v octal '\\%03o' "$code"
+      printf -v control '%b' "$octal"
+      printf -v escaped '\\x%02x' "$code"
+      value="${value//$control/$escaped}"
+    done
+  fi
+  if [[ "$value" == *$'\302'[$'\200'-$'\237']* ]]; then
+    for ((code=128; code<=159; code++)); do
+      printf -v octal '\\302\\%03o' "$code"
+      printf -v control '%b' "$octal"
+      printf -v escaped '\\u%04x' "$code"
+      value="${value//$control/$escaped}"
+    done
+  fi
   printf '%s=%s\n' "$1" "$value"
 }
 
@@ -602,6 +797,48 @@ is_soft_suggestion() {
   [ "$saw_content" -eq 1 ]
 }
 
+bugbot_summary_finding_count() {
+  # Parses a Bugbot check-run `output.summary` (or a Bugbot review body) for its
+  # verdict line and prints the number of findings it reports.
+  #
+  # Prints "0" for an affirmative no-issues verdict and "N" for a
+  # "... found N potential issues." verdict. Exits 1, printing nothing, when the
+  # text carries no recognisable verdict — callers must treat that as unknown
+  # and blocking, never as clean (issue #1390: Cursor concludes the check run
+  # `neutral` both for a review that found nothing and for a review that found
+  # blocking issues, so the conclusion alone is not a verdict).
+  if [ "$#" -ne 1 ]; then
+    echo "ERROR: bugbot_summary_finding_count requires exactly 1 argument." >&2
+    return 1
+  fi
+
+  local summary="$1"
+  local line
+  local lower
+
+  # Pass 1: an explicit finding count wins over anything else in the text.
+  while IFS= read -r line; do
+    lower="$(printf '%s' "${line%$'\r'}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$lower" =~ found[[:space:]]+([0-9]+)[[:space:]]+potential[[:space:]]+issue ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done <<< "$summary"
+
+  # Pass 2: affirmative no-issues phrasings.
+  while IFS= read -r line; do
+    lower="$(printf '%s' "${line%$'\r'}" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+      *"no issues found"*|*"found no issues"*|*"found no new issues"*|*"no new issues"*|*"no potential issues"*)
+        printf '0\n'
+        return 0
+        ;;
+    esac
+  done <<< "$summary"
+
+  return 1
+}
+
 is_bugbot_clean_review() {
   local body="$1"
   local line
@@ -610,17 +847,25 @@ is_bugbot_clean_review() {
   local review_footer_prefix='<sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit '
   local review_footer_suffix='. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>'
   local saw_clean_phrase=0
+  local _bb_body_count=""
 
   case "$body" in
     *BUGBOT_BUG_ID*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*'**High Severity**'*|*'**Medium Severity**'*|*'**Low Severity**'*)
       return 1
       ;;
   esac
-  case "$body" in
-    *"found 1 potential issue"*|*"found 2 potential issue"*|*"found 3 potential issue"*|*"found 4 potential issue"*|*"found 5 potential issue"*)
-      return 1
-      ;;
-  esac
+  # Any positive finding count, not just the 1–5 the first adapter enumerated
+  # (issue #1390) — a Bugbot body reporting 6+ findings is not a clean review.
+  if _bb_body_count="$(bugbot_summary_finding_count "$body")"; then
+    case "$_bb_body_count" in
+      ''|*[!0-9]*) : ;;
+      *)
+        if [ "$_bb_body_count" -gt 0 ]; then
+          return 1
+        fi
+        ;;
+    esac
+  fi
   while IFS= read -r line; do
     normalized_line="${line%$'\r'}"
     normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
@@ -1013,6 +1258,11 @@ workflow_config_review_github_reviewer_configured() {
 # check name — are only meaningful in the template itself. Downstream
 # consumers legitimately replace those files, so those suites must skip there
 # rather than report a red required check on a successful sync (#1631).
+#
+# "Framework mode" in specs/protocols (#1583) means exactly this: this helper
+# returns `true`. There is no second detector or alias — callers that need a
+# shorter name may wrap this function, but must delegate to it rather than
+# re-parsing `template.is_template` themselves.
 workflow_template_is_template() {
   local config_file="${1:-$(workflow_config_file)}"
   local value
@@ -1616,6 +1866,123 @@ is_terminal_tracker_status() {
   esac
 }
 
+# --- Canonical tracker status vocabulary and signal mapping (issue #1564) ---
+#
+# These three functions are the single machine-readable definition behind
+# docs/workflow/development-workflow/tracker-status-mapping.md. Protocols and
+# runners resolve a target Status through them (or through the
+# tracker-status-for.sh CLI wrapper) instead of re-deriving it from prose, so
+# two runners given the same instruction set the same Status.
+
+# workflow_canonical_tracker_statuses
+#
+# Prints the canonical Status vocabulary, one value per line: the workflow
+# progression in order (matching workflow_status_order), then the out-of-band
+# Cancelled status.
+workflow_canonical_tracker_statuses() {
+  printf '%s\n' \
+    "Backlog" \
+    "Writing Spec" \
+    "Spec in Review" \
+    "Spec Ready" \
+    "Writing Plan" \
+    "Plan in Review" \
+    "Plan Ready" \
+    "In Development" \
+    "Development in Review" \
+    "Merged" \
+    "Released" \
+    "Cancelled"
+}
+
+# workflow_tracker_stage_for_branch <branch>
+#
+# Prints the workflow stage (spec | plan | implementation) that owns a workflow
+# branch. Returns 1 with no output for any other branch (release/*,
+# backport/*, develop-<slug>, ...), which never drives an item's Status here.
+workflow_tracker_stage_for_branch() {
+  case "$1" in
+    spec/?*) printf 'spec\n' ;;
+    implementation-plan/?*) printf 'plan\n' ;;
+    feature/?*|fix/?*|refactor/?*|hotfix/?*) printf 'implementation\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# workflow_tracker_status_for_event <event> <stage>
+#
+# Prints the canonical target Status for a workflow event on a stage.
+#   event: dispatch | ready-for-human-review | merged | released, or one of the
+#          readiness labels that deliberately leave Status unchanged
+#          (needs-fixes, ready-for-regression, needs-setup,
+#          human-checkpoint-required) — those print nothing and return 0.
+#   stage: spec | plan | implementation
+# Returns 2 with an "Error:" line on stderr that names the valid values when
+# the event or stage is unknown, or the event does not apply to the stage.
+workflow_tracker_status_for_event() {
+  local event="${1:-}"
+  local stage="${2:-}"
+
+  case "$stage" in
+    spec|plan|implementation) ;;
+    *)
+      echo "Error: unknown workflow stage '${stage}'. Valid stages: spec, plan, implementation." >&2
+      return 2
+      ;;
+  esac
+
+  case "$event" in
+    dispatch)
+      case "$stage" in
+        spec) printf 'Writing Spec\n' ;;
+        plan) printf 'Writing Plan\n' ;;
+        implementation) printf 'In Development\n' ;;
+      esac
+      ;;
+    ready-for-human-review)
+      case "$stage" in
+        spec) printf 'Spec in Review\n' ;;
+        plan) printf 'Plan in Review\n' ;;
+        implementation) printf 'Development in Review\n' ;;
+      esac
+      ;;
+    merged)
+      case "$stage" in
+        spec) printf 'Spec Ready\n' ;;
+        plan) printf 'Plan Ready\n' ;;
+        implementation) printf 'Merged\n' ;;
+      esac
+      ;;
+    released)
+      if [ "$stage" != "implementation" ]; then
+        echo "Error: event 'released' applies only to the implementation stage, not '${stage}'." >&2
+        return 2
+      fi
+      printf 'Released\n'
+      ;;
+    needs-fixes|ready-for-regression|needs-setup|human-checkpoint-required)
+      return 0
+      ;;
+    *)
+      echo "Error: unknown tracker event '${event}'. Valid events: dispatch, ready-for-human-review, merged, released (Status-changing); needs-fixes, ready-for-regression, needs-setup, human-checkpoint-required (no Status change)." >&2
+      return 2
+      ;;
+  esac
+}
+
+# workflow_tracker_status_strict_enabled
+#
+# True when WORKFLOW_TRACKER_STATUS_STRICT is set to 1/true/yes. Orchestrated
+# runs enable it (tracker-status-for.sh --apply does) so that a requested
+# Status the board does not offer is a non-zero failure instead of silent
+# drift. Unset keeps update_tracker_status_best_effort fully best-effort.
+workflow_tracker_status_strict_enabled() {
+  case "${WORKFLOW_TRACKER_STATUS_STRICT:-}" in
+    1|true|TRUE|True|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Script-level cache for GitHub Projects Status field metadata.
 __workflow_github_project_id_cache_owner=""
 __workflow_github_project_id_cache_number=""
@@ -1752,7 +2119,13 @@ print(project.get('id') or '', end='')
 # workflow_github_project_item_for_issue <issue_number> <project_number>
 #
 # Prints compact JSON with project item details for one issue in one project:
-#   {"item_id":"...","project_id":"...","status":"...","type":"..."}
+#   {"item_id":"...","project_id":"...","status":"...","type":"...","priority":"...","size":"..."}
+#
+# priority/size are read from the board's "Priority"/"Size" single-select
+# fields by exact display name (no custom-name override — see
+# workflow_github_project_named_field_json for the write path, which
+# resolves the same literal names). Used by add-backlog-item.sh's
+# post-creation field verification (issue #1778) as well as status/type reads.
 #
 # This intentionally uses repository.issue(...).projectItems instead of
 # `gh project item-list` so single-item status reads/updates do not paginate the
@@ -1830,6 +2203,12 @@ workflow_github_project_item_for_issue() {
                   type: fieldValueByName(name: "Type") {
                     ... on ProjectV2ItemFieldSingleSelectValue { name }
                   }
+                  priority: fieldValueByName(name: "Priority") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                  size: fieldValueByName(name: "Size") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
                 }
                 pageInfo { hasNextPage endCursor }
               }
@@ -1885,11 +2264,15 @@ for item in project_items.get('nodes') or []:
         if not type_value.get('name'):
             missing.append('Type')
         missing_fields = ','.join(missing)
+        priority_value = item.get('priority') or {}
+        size_value = item.get('size') or {}
         match = json.dumps({
             'item_id': item.get('id') or '',
             'project_id': project.get('id') or '',
             'status': status_value.get('name') or '',
             'type': type_value.get('name') or '',
+            'priority': priority_value.get('name') or '',
+            'size': size_value.get('name') or '',
         }, separators=(',', ':'))
         break
 page_info = project_items.get('pageInfo') or {}
@@ -1927,7 +2310,16 @@ EOF
       esac
       case ",$missing_fields," in
         *",Type,"*)
-          echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Type'." >&2
+          # issue #1778: honour custom_fields.type_field instead of always
+          # naming the literal 'Type' field — a board configured with
+          # custom_fields.type_field: 'Work type' (or any other name) never
+          # has a field literally named 'Type', so hardcoding it here made
+          # this warning fire on every correctly configured board.
+          if [ -n "$type_field_name" ]; then
+            echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly '${type_field_name}' (issue_tracker.custom_fields.type_field), falling back to 'Custom Type', 'CustomType', or 'Type'." >&2
+          else
+            echo "Warning: project item for issue #${issue_number} has no Type value. The workflow expects a single-select field named exactly 'Custom Type', 'CustomType', or 'Type'." >&2
+          fi
           ;;
       esac
       printf '%s' "$item_json"
@@ -2019,9 +2411,11 @@ for field in fields:
 page_info = field_connection.get('pageInfo') or {}
 has_next = 'true' if page_info.get('hasNextPage') else 'false'
 end_cursor = page_info.get('endCursor') or ''
+fields_present = 'true' if isinstance(((data.get('data') or {}).get('node') or {}).get('fields'), dict) else 'false'
 print('FIELD_JSON=' + field_json)
 print('HAS_NEXT=' + has_next)
 print('END_CURSOR=' + end_cursor)
+print('FIELDS_PRESENT=' + fields_present)
 " 2>/dev/null)"; then
         echo "Warning: could not parse GraphQL project Status field response for project '${project_id}'." >&2
         printf ''
@@ -2031,17 +2425,25 @@ print('END_CURSOR=' + end_cursor)
       field_json=""
       has_next="false"
       end_cursor=""
+      fields_present="false"
       while IFS= read -r line; do
         case "$line" in
           FIELD_JSON=*) field_json="${line#FIELD_JSON=}" ;;
           HAS_NEXT=*) has_next="${line#HAS_NEXT=}" ;;
           END_CURSOR=*) end_cursor="${line#END_CURSOR=}" ;;
+          FIELDS_PRESENT=*) fields_present="${line#FIELDS_PRESENT=}" ;;
         esac
       done <<EOF
 $page_state
 EOF
       if [ -n "$field_json" ]; then
         __workflow_project_status_field_cache_json="$field_json"
+        break
+      fi
+      if [ "$has_next" != "true" ] && [ "$fields_present" = "true" ]; then
+        # Every page was read and none has a field named "Status": a
+        # permanent board-configuration error, not a failed lookup (#1564).
+        __workflow_project_status_field_cache_json='{"field_id":"","options":{},"status_field_missing":true}'
         break
       fi
       if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
@@ -2358,7 +2760,24 @@ ensure_on_project_board() {
 # Best-effort update for the configured issue tracker's Status field.
 # Supports GitHub Projects (provider: github_projects) and emits actionable
 # guidance for Linear (provider: linear), which requires MCP/API access.
-# - Returns 0 in all warning/failure cases to avoid blocking caller flows.
+# - Returns 0 in all warning/failure cases to avoid blocking caller flows,
+#   except the vocabulary errors: when WORKFLOW_TRACKER_STATUS_STRICT is
+#   enabled and the board has no Status field (reason=status_field_missing) or
+#   its Status field has no option named <status_label>
+#   (reason=unknown_status_option), it returns 2 (issue #1564).
+# - When the field or option cannot be resolved it prints a
+#   "TRACKER_STATUS_UNRESOLVED issue=... requested='...' reason=...
+#   valid_options='...'" line; for an unknown option the warning names the
+#   board's valid options.
+# - Machine-readable outcome markers (the contract tracker-status-for.sh keys
+#   on): "TRACKER_STATUS_APPLIED issue=... status='...'" after a successful
+#   write, "TRACKER_STATUS_UPDATE_FAILED ... reason=mutation_failed" when the
+#   write fails, and TRACKER_STATUS_UNRESOLVED above. Any other return means
+#   the update was skipped (not on the board, rollback guard, source-status
+#   mismatch) or deferred (Linear TRACKER_ACTION_REQUIRED).
+# - Resolve <status_label> from workflow_tracker_status_for_event (or
+#   tracker-status-for.sh) rather than typing it; see
+#   docs/workflow/development-workflow/tracker-status-mapping.md.
 # - Respects status progression ordering and never rolls status backward
 #   (GitHub Projects path only; ordering is not enforced for Linear).
 # - Owner is resolved via workflow_resolve_github_project_owner (see that function
@@ -2421,8 +2840,46 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$status_label" 2>/dev/null || true)
-  if [ -z "$field_id" ] || [ -z "$option_id" ]; then
-    echo "Warning: could not resolve Status field or option '${status_label}'; skipping tracker status update."
+  if [ -z "$field_id" ]; then
+    local status_field_missing
+    status_field_missing=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print('true' if data.get('status_field_missing') is True else 'false', end='')
+" 2>/dev/null || true)
+    if [ "$status_field_missing" = "true" ]; then
+      # Every field page was read and the board has no field named "Status":
+      # a permanent configuration error, like an unknown option, so it fails
+      # in strict (orchestrated) mode.
+      echo "Warning: project #${project_number} has no field named 'Status'; cannot set '${status_label}'. Add a single-select 'Status' field with the canonical options (docs/workflow/development-workflow/tracker-status-mapping.md). Skipping tracker status update."
+      echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=status_field_missing valid_options=''"
+      if workflow_tracker_status_strict_enabled; then
+        return 2
+      fi
+      return 0
+    fi
+    # The Status field could not be read (lookup failure, unparsable
+    # response, or pagination limit). This can be transient, so it stays
+    # best-effort even in strict mode.
+    echo "Warning: could not read the Status field of project #${project_number}; cannot set '${status_label}'. Skipping tracker status update."
+    echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=status_field_unavailable valid_options=''"
+    return 0
+  fi
+  if [ -z "$option_id" ]; then
+    # The field resolved but has no option with this exact name: a vocabulary
+    # error, never transient. Name the board's real options so the caller can
+    # self-correct (issue #1564), and fail in strict (orchestrated) mode.
+    local valid_options
+    valid_options=$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print(', '.join(name for name in (data.get('options') or {}) if name), end='')
+" 2>/dev/null || true)
+    echo "Warning: '${status_label}' is not an option of the Status field of project #${project_number}. Valid options: ${valid_options:-<none>}. Canonical mapping: docs/workflow/development-workflow/tracker-status-mapping.md. Skipping tracker status update."
+    echo "TRACKER_STATUS_UNRESOLVED issue=${issue_number} requested='${status_label}' reason=unknown_status_option valid_options='${valid_options}'"
+    if workflow_tracker_status_strict_enabled; then
+      return 2
+    fi
     return 0
   fi
 
@@ -2466,9 +2923,11 @@ print(item.get('status') or '', end='')
       }
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
+    printf '\nTRACKER_STATUS_APPLIED issue=%s status=%s\n' "$issue_number" "'${status_label}'"
   else
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker status not updated."
     workflow_print_captured_gh_stderr
+    echo "TRACKER_STATUS_UPDATE_FAILED issue=${issue_number} requested='${status_label}' reason=mutation_failed"
   fi
 }
 
@@ -2669,13 +3128,27 @@ finalize_release_marker_best_effort() {
   return 0
 }
 
-# update_tracker_type_best_effort <issue_number> <type_label>
+# update_tracker_type_best_effort <issue_number> <type_label> [required]
 #
-# Best-effort update for the GitHub Projects Type field. This intentionally
-# mirrors update_tracker_status_best_effort while avoiding status-order logic.
+# Update for the GitHub Projects Type field. This intentionally mirrors
+# update_tracker_status_best_effort while avoiding status-order logic, and
+# keeps its own field-resolution path (workflow_github_project_type_field_json)
+# rather than delegating to update_tracker_named_field_best_effort, because
+# Type resolution honours a preference chain (custom_fields.type_field, then
+# 'Custom Type', 'CustomType', 'Type' — see issue #1191) that the generic
+# named-field helper does not implement.
+#
+# When [required] is the literal string "required" (issue #1778: add-backlog-item.sh
+# always passes this so an explicitly-requested Type that fails to resolve or
+# write is a hard, non-zero failure rather than a silent "Warning:" line),
+# every failure below that is not a genuine provider/project mismatch becomes
+# an "Error:" message and a non-zero return. When [required] is omitted, all
+# failure branches remain best-effort (return 0), matching the pre-existing
+# behavior for callers that do not depend on this field landing.
 update_tracker_type_best_effort() {
   local issue_number="$1"
   local type_label="$2"
+  local required="${3:-}"
   local project_number project_id field_json field_id option_id item_json item_id
 
   local _uttbe_provider
@@ -2697,6 +3170,10 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project item ID for issue #${issue_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
@@ -2705,19 +3182,35 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project ID for issue #${issue_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
   if [ -z "$item_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: issue #${issue_number} not found in project #${project_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker Type update."
     return 0
   fi
   if [ -z "$project_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve project ID for issue #${issue_number}; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker Type update."
     return 0
   fi
 
   if ! field_json="$(workflow_github_project_type_field_json "$project_id")"; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not read project Type field metadata; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not read project Type field metadata; skipping tracker Type update."
     return 0
   fi
@@ -2726,6 +3219,10 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse Type field metadata; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse Type field metadata; skipping tracker Type update."
     return 0
   fi
@@ -2734,10 +3231,18 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$type_label"); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse Type option '${type_label}'; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse Type option '${type_label}'; skipping tracker Type update."
     return 0
   fi
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve Type field or option '${type_label}'; tracker Type not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve Type field or option '${type_label}'; skipping tracker Type update."
     return 0
   fi
@@ -2763,6 +3268,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
   else
+    if [ "$required" = "required" ]; then
+      echo "Error: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated." >&2
+      workflow_print_captured_gh_stderr
+      return 1
+    fi
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker Type not updated."
     workflow_print_captured_gh_stderr
   fi
@@ -3212,13 +3722,19 @@ update_tracker_priority_best_effort() {
 
 # update_tracker_size_best_effort <issue_number> <size_value>
 #
-# Best-effort update for the GitHub Projects Size field.
-# Valid values: XS, S, M, L, XL
-# Returns 0 in all failure cases (fail-open).
+# Update for the GitHub Projects Size field. Valid values: XS, S, M, L, XL.
+# Size is always explicitly requested by add-backlog-item.sh (only called
+# when --size was passed), so — matching update_tracker_priority_best_effort's
+# rationale — an unresolvable value or failed write is a hard error (non-zero
+# return) whenever the tracker provider and project are configured (issue
+# #1778: this previously always returned 0, so a dropped Size write was
+# indistinguishable from success). When the provider/project genuinely does
+# not apply, this remains best-effort (returns 0), matching
+# update_tracker_named_field_best_effort.
 update_tracker_size_best_effort() {
   local issue_number="$1"
   local size_value="$2"
-  update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value"
+  update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value" "required"
 }
 
 # list_open_workflow_type_issues
@@ -3389,6 +3905,256 @@ _workflow_lowti_candidate_keys_json() {
     return 0
   fi
   printf '%s\n' "${keys[@]}" | jq -R . | jq -sc .
+}
+
+# extract_github_issue_number <development-folder-path>
+#
+# Extracts the GitHub issue number from the spec or plan markdown files in a
+# development folder.  Looks for lines matching:
+#   **Issue**: #NNN
+#   **Issue**: [#NNN](...)
+# and also tries the folder slug prefix pattern (e.g. "291-some-slug" -> 291).
+#
+# Prints the bare numeric issue number, or an empty string when not found.
+#
+# Relocated verbatim from workflow-batch-plan.sh (#1583) so
+# framework-mode-backlog-type-gate.sh's single-item folder resolution can
+# reuse the same mapping without a second convention.
+extract_github_issue_number() {
+  local dev_path="$1"
+  local doc_files=() issue_number="" line
+
+  while IFS= read -r f; do
+    doc_files+=("$f")
+  done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
+
+  # Scan markdown files for "**Issue**: #NNN" or "**Issue**: [#NNN](...)"
+  for f in "${doc_files[@]}"; do
+    while IFS= read -r line; do
+      # Match: **Issue**: #123  or  **Issue**: [#123](url)
+      if printf '%s\n' "$line" | grep -qE '^\*\*Issue\*\*:[[:space:]]*\[?#[0-9]+'; then
+        issue_number="$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
+        break 2
+      fi
+    done < "$f"
+  done
+
+  # Fallback: extract leading issue number from folder slug (e.g. "291-some-slug").
+  if [ -z "$issue_number" ]; then
+    local slug
+    slug="$(basename "$dev_path" | sed 's/^[0-9]\{14\}_//')"
+    if printf '%s\n' "$slug" | grep -qE '^[0-9]+-'; then
+      issue_number="$(printf '%s\n' "$slug" | grep -oE '^[0-9]+')"
+    fi
+  fi
+
+  printf '%s' "${issue_number:-}"
+}
+
+# _workflow_ere_escape <string>
+#
+# Escape a string for use in an extended regular expression. Shared by the
+# branch/PR evidence helpers below.
+_workflow_ere_escape() {
+  printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
+}
+
+# workflow_branch_ref_evidence <issue_number>
+#
+# Probes LOCAL (refs/heads/) and REMOTE (refs/remotes/origin/) refs for a
+# live spec/implementation-plan/feature/fix/refactor/hotfix branch keyed to
+# <issue_number>, using the existing branch-name convention
+# (workflow-next-action.sh:102 — ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-))
+# widened two ways (codex-github findings, #1583):
+#   1. To the canonical alphanumeric team-prefix grammar
+#      (validate-workflow-branch-name.sh:30 — [A-Za-z][A-Za-z0-9]{0,7}-, e.g.
+#      "AB2-"), which workflow-next-action.sh's own letters-only regex does
+#      not accept even though the branch guard does.
+#   2. To include spec/ and implementation-plan/ prefixes, so a Workflow-
+#      typed item whose spec or plan is still an open PR (not yet merged,
+#      so no local development folder exists) is not read as "no evidence"
+#      and incorrectly stopped/held. run-epic-scope-resolver.sh's own PR
+#      selection regex (:397, :411) already matches these two prefixes.
+# A single `git show-ref` invocation already lists both namespaces, so
+# covering both costs nothing (#1583) — unlike workflow-next-action.sh's
+# origin-only probe, which misses a branch that has been cut but not pushed.
+# Prints one of: present | none | unavailable.
+workflow_branch_ref_evidence() {
+  local issue_number="$1"
+  local show_ref_output prefix ref status
+
+  if show_ref_output="$(git show-ref 2>/dev/null)"; then
+    :
+  else
+    status=$?
+    if [ "$status" -eq 1 ]; then
+      printf 'none\n'
+      return 0
+    fi
+    printf 'unavailable\n'
+    return 0
+  fi
+
+  for prefix in spec implementation-plan feature fix refactor hotfix; do
+    while IFS= read -r ref; do
+      [ -z "$ref" ] && continue
+      if printf '%s\n' "$ref" | grep -qE "^([A-Za-z][A-Za-z0-9]{0,7}-)?${issue_number}(-|\$)"; then
+        printf 'present\n'
+        return 0
+      fi
+    done < <(printf '%s\n' "$show_ref_output" | sed -n "s|.*refs/heads/${prefix}/||p; s|.*refs/remotes/origin/${prefix}/||p")
+  done
+  printf 'none\n'
+}
+
+# workflow_branch_pr_evidence_from_json <issue_number> <pull_requests_json>
+#
+# Given a `{open: [...], merged: [...]}` object (the shape
+# run-epic-scope-resolver.sh already emits per item), reports whether any PR
+# headRefName matches an implementation branch for <issue_number>. Used by
+# the single-item caller, which already holds this JSON in its resolved
+# scope and should not make an extra `gh` call for it. Prints one of:
+# present | none | unavailable.
+workflow_branch_pr_evidence_from_json() {
+  local issue_number="$1" prs_json="$2" count
+  if [ -z "$prs_json" ] || [ "$prs_json" = "null" ]; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
+    ((.open // []) + (.merged // []))
+    | map(.headRefName // "")
+    | map(select(test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")))
+    | length
+  ' 2>/dev/null)"; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ "${count:-0}" -gt 0 ] 2>/dev/null; then
+    printf 'present\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# workflow_gh_pr_evidence <issue_number> <state: open|merged> [github_repo]
+#
+# Runs `gh pr list --state <state>` and reports whether any PR head matches
+# an implementation branch for <issue_number>. Used by the scan caller,
+# which retains only tracker status (not a pre-fetched PR list) per item.
+#
+# Bounded, not exhaustive: `--limit` caps the number of most-recent PRs
+# fetched (`gh pr list --help`: "Maximum number of items to fetch" — it does
+# not search beyond the cap), so a `merged` PR older than the cap is
+# invisible to this probe and reads as `none` (codex-github finding, #1583).
+# 1000 matches this codebase's other bounded tracker reads
+# (list_open_workflow_type_issues's `issue list --limit 1000`) and is not a
+# full fix — a genuinely exhaustive search would need a head-ref-scoped
+# GitHub search query, which is a larger change out of this item's scope.
+# Prints one of: present | none | unavailable.
+workflow_gh_pr_evidence() {
+  local issue_number="$1" state="$2" github_repo="${3:-}"
+  local prs_json count
+
+  if ! gh_available; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ -n "$github_repo" ]; then
+    if ! prs_json="$(gh pr list --repo "$github_repo" --state "$state" --limit 1000 --json headRefName 2>/dev/null)"; then
+      printf 'unavailable\n'
+      return 0
+    fi
+  else
+    if ! prs_json="$(gh pr list --state "$state" --limit 1000 --json headRefName 2>/dev/null)"; then
+      printf 'unavailable\n'
+      return 0
+    fi
+  fi
+  if ! count="$(printf '%s\n' "$prs_json" | jq -r --arg issue "$issue_number" '
+    [ .[] | (.headRefName // "") | select(test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + $issue + "(-|$)")) ] | length
+  ' 2>/dev/null)"; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ "${count:-0}" -gt 0 ] 2>/dev/null; then
+    printf 'present\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# workflow_branch_pr_evidence <issue_number> [github_repo]
+#
+# Scan-path combiner: live branch (both ref namespaces) + open PR + merged
+# PR. `present` outranks `unavailable`, which outranks `none` — finding work
+# is conclusive, and a probe that could not run must not silently read as
+# "no work" (#1583). Prints one of: present | none | unavailable.
+workflow_branch_pr_evidence() {
+  local issue_number="$1" github_repo="${2:-}"
+  local ref_evidence open_evidence merged_evidence any_unavailable=0
+
+  ref_evidence="$(workflow_branch_ref_evidence "$issue_number")"
+  if [ "$ref_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+  [ "$ref_evidence" = "unavailable" ] && any_unavailable=1
+
+  open_evidence="$(workflow_gh_pr_evidence "$issue_number" "open" "$github_repo")"
+  if [ "$open_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+  [ "$open_evidence" = "unavailable" ] && any_unavailable=1
+
+  merged_evidence="$(workflow_gh_pr_evidence "$issue_number" "merged" "$github_repo")"
+  if [ "$merged_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+  [ "$merged_evidence" = "unavailable" ] && any_unavailable=1
+
+  if [ "$any_unavailable" -eq 1 ]; then
+    printf 'unavailable\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# workflow_branch_pr_evidence_single_item <issue_number> <tracker_read_deferred> <pull_requests_json>
+#
+# Single-item-path combiner: live branch (both ref namespaces, local `git
+# show-ref`, no API call) + the PR evidence already carried in the resolved
+# scope JSON. Costs no extra tracker/API call, per #1583's tracker-read-cost
+# accounting. A deferred (Linear placeholder) scope is always `unavailable`.
+# Prints one of: present | none | unavailable.
+workflow_branch_pr_evidence_single_item() {
+  local issue_number="$1" tracker_read_deferred="$2" prs_json="$3"
+  local ref_evidence json_evidence
+
+  if [ "$tracker_read_deferred" = "true" ]; then
+    printf 'unavailable\n'
+    return 0
+  fi
+
+  ref_evidence="$(workflow_branch_ref_evidence "$issue_number")"
+  if [ "$ref_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+
+  json_evidence="$(workflow_branch_pr_evidence_from_json "$issue_number" "$prs_json")"
+  if [ "$json_evidence" = "present" ]; then
+    printf 'present\n'
+    return 0
+  fi
+
+  if [ "$ref_evidence" = "unavailable" ] || [ "$json_evidence" = "unavailable" ]; then
+    printf 'unavailable\n'
+  else
+    printf 'none\n'
+  fi
 }
 
 # workflow_is_plan_document_path <path>

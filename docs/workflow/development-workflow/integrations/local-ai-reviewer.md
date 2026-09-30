@@ -32,6 +32,8 @@ When `LOCAL_AI_REVIEWER_COMMAND` is unset, `local-ai-reviewer.sh` defaults to
 the bundled Codex preset at
 `scripts/development-workflow/local-codex-review-command.sh` (requires the
 `codex` CLI on `PATH` and a working Codex login). Set
+`LOCAL_AI_REVIEWER_BACKEND=http` to use the HTTP Chat Completions preset at
+`scripts/development-workflow/local-http-review-command.sh` instead (`openai_compat` remains a deprecated alias). Set
 `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` to restore the old missing-command
 behavior for tests or minimal environments.
 
@@ -42,7 +44,15 @@ export LOCAL_CODEX_REVIEWER_BIN='codex'
 export LOCAL_CODEX_REVIEWER_MODEL='gpt-5.4'   # optional; codex uses its own default when omitted
 export LOCAL_AI_REVIEWER_TIMEOUT='900'
 
-# Custom command instead of the bundled Codex preset:
+# HTTP Chat Completions backend (DeepSeek, Qwen, GLM, OpenAI, or any /chat/completions API):
+export LOCAL_AI_REVIEWER_BACKEND='http'
+export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
+export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
+export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+# Prefer LOCAL_AI_REVIEWER_API_BASE_URL over a global OPENAI_BASE_URL fallback
+# so an unrelated OpenAI SDK env does not silently redirect review traffic.
+
+# Custom command instead of a bundled preset:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
 
@@ -70,6 +80,43 @@ The wrapper sets `LOCAL_AI_REVIEWER_COMMAND` to
 the companion script. Override `LOCAL_CODEX_REVIEWER_BIN`,
 `LOCAL_CODEX_REVIEWER_MODEL`, or `LOCAL_CODEX_REVIEWER_PROMPT` when a local
 machine needs a different Codex binary, model, or prompt.
+
+For an HTTP Chat Completions backend, use the matching wrapper. It inlines
+`REVIEW.md`, the context bundle, and a bounded unified diff because the remote
+model cannot read the local filesystem:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+export LOCAL_AI_REVIEWER_MODEL='deepseek-v4-pro'
+export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
+export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
+./scripts/development-workflow/local-http-reviewer.sh \
+  <pr-number> <owner> <repo> \
+  --repo-root "$PWD" \
+  --timeout 900 \
+  --evidence-file /tmp/local-ai-reviewer-evidence.json
+```
+
+The HTTP preset's fail-closed setup checks are proven by
+`scripts/development-workflow/tests/test-local-http-review-command.sh`
+(the unit tests plant the violation, assert the command fails, then restore
+the env so later assertions pass):
+
+| Check | Planted violation | Fail assertion | Guard / test lines |
+| --- | --- | --- | --- |
+| missing `BASE_BRANCH` | unset `BASE_BRANCH` | `http_missing_base_branch_exits` | command L101; test L298 |
+| `git diff` failure | `MOCK_GIT_FAIL=1` | `http_git_diff_failure_exits` | command L107; test L279 |
+| missing credentials | unset API key vars | `http_missing_credentials` | command L66; test L197 |
+| missing `REVIEW.md` | rename `REVIEW.md` | `http_missing_review_md` | command L74; test L232 |
+| missing model / base URL / context | unset the env var | `http_missing_model`, `http_missing_base_url`, `http_missing_context_bundle` | command L58 / L62 / L70; tests L206 / L215 / L224 |
+| HTTP 401 / non-200 | `MOCK_HTTP_CODE=401` or `500` | `http_status_401_exits`, `http_status_500_exits` | command L179 / L183; tests L241 / L248 |
+| curl non-zero exit | `MOCK_CURL_EXIT=28` | `http_curl_failure_exits` | command L173; test L257 |
+| empty message content | `MOCK_MODEL_CONTENT=''` | `http_empty_content_exits` | command L193; test L266 |
+
+This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
+unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture
+contract is not applicable (this template still uses the placeholder E2E job).
 
 The command runs under `sh -c` with these environment variables:
 
@@ -211,7 +258,7 @@ On `implementation-plan/*` branches, after the ordinary review completes, the
 plan registry entry may run a second `LOCAL_AI_REVIEWER_COMMAND` invocation
 with `LOCAL_AI_REVIEWER_MODE=strict` when the pull request changes at least one
 implementation-plan document. That pass reads
-`docs/workflow/development-workflow/strict-plan-checks.md` (seven closed-set
+`docs/workflow/development-workflow/strict-plan-checks.md` (eight closed-set
 identifiers with per-check `Source:` metadata) and must respond with:
 
 ```json
@@ -237,8 +284,9 @@ diff hunks alone.
 Checks marked `Source: required` apply only when an approved spec is present in
 that plan's development directory (presence alone — not what the plan declares).
 When no spec is present, the applied set is exactly
-`source_declaration`, `phase_ordering`, `dependency_state`, and `reversal_risk`.
-When a spec is present for at least one changed plan, all seven identifiers are
+`source_declaration`, `phase_ordering`, `dependency_state`, `reversal_risk`,
+and `test_scope_proportionality`.
+When a spec is present for at least one changed plan, all eight identifiers are
 admitted at review level; findings on a plan document without a sibling spec for
 source-dependent checks are filtered and counted in `STRICT_PLAN_UNKNOWN_COUNT`.
 
@@ -328,6 +376,7 @@ The local reviewer fails closed:
 | Missing `LOCAL_AI_REVIEWER_COMMAND` | `RESULT=escalate`, `REASON=missing_command` |
 | Missing model access | `RESULT=escalate`, `REASON=missing_model_access` |
 | Missing credentials or auth failure | `RESULT=escalate`, `REASON=missing_credentials` |
+| Provider usage/quota refusal (no verdict on stdout) | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
 | Checkout head mismatch | `RESULT=escalate`, `REASON=head_mismatch` |
 | Missing `REVIEW.md` | `RESULT=escalate`, `REASON=review_contract_missing` |
 | Timeout | `RESULT=escalate`, `REASON=timeout` |
@@ -336,6 +385,51 @@ The local reviewer fails closed:
 
 A skipped or escalated local result is availability evidence, not clean review
 evidence.
+
+### Setup-probe precedence (#1762)
+
+The `missing_model_access`, `missing_credentials`, and `quota_exhausted` reasons
+are derived from grep heuristics over the reviewer command's combined stdout and
+stderr. Because the underlying CLI echoes parts of the reviewed document into
+its log output, that text can contain quoted prose matching a heuristic (for
+example a spec section about "usage limits"). A verdict on stdout therefore
+outranks a heuristic match on stderr — but only a real verdict. The gate is
+fail-closed: when stdout is not a valid verdict object the probes run against
+the combined output on every exit code; when it is, the probes are cleared.
+
+A *valid verdict object* is the shape the parser accepts: stdout must contain
+exactly one JSON value — an object whose non-empty `result` is one of the
+underscore enum values above, or — when `result` is absent or empty — an object
+carrying an array in at least one of `findings`, `comments`, or `issues`.
+Emitters must keep using the underscore forms exactly as listed above; the guard
+and parser additionally tolerate case- and dash-variation (`NEEDS_FIXES`,
+`needs-fixes`) only so that a provider-side normalization quirk cannot
+masquerade as a setup failure.
+
+The full decision gate, evaluated in this precedence order (first match wins;
+rows are mutually exclusive):
+
+| # | Precondition | stdout shape | probe pattern in combined output | Outcome | Next action |
+| --- | --- | --- | --- | --- | --- |
+| 1 | command exit 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
+| 2 | any command exit | not exactly one valid verdict object (invalid JSON, empty, multiple JSON values, `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
+| 3 | any command exit | not a valid verdict object | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
+| 4 | any command exit | not a valid verdict object | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |
+| 5 | any command exit | valid verdict object with `reviewed_head` differing from the live head | — (probes cleared) | `escalate` / `head_mismatch` | rerun — a stale review is not trustworthy |
+| 6 | command exit non-zero | valid verdict object whose outcome is `clean` | — (probes cleared) | `escalate` / `malformed_output` | rerun — a clean verdict on a failed run is not trustworthy |
+| 7 | command exit 0 | valid verdict object whose outcome is `clean` | — (probes cleared) | parser outcome: `clean` | none |
+| 8 | any command exit | valid verdict object whose outcome is `needs_fixes` / `needs_rerun` / `skipped` / `escalate` | — (probes cleared) | that parser outcome | fix reported findings or act on the verdict |
+| 9 | any command exit | not a valid verdict object | none of the three patterns | `escalate` / `malformed_output` | inspect raw output |
+
+A `result` outside the accepted enum, or a mistyped findings alias, already
+fails rows 2-4/9: the gate never classifies such output as a valid verdict
+object, so it cannot reach the parser's own enum check (kept as a backstop).
+
+Genuine provider failures therefore keep their distinct reason codes on every
+exit path rather than degrading to an inferred clean verdict or a bare
+`malformed_output`. Non-verdict JSON that matches no probe pattern is rejected
+by row 9 before the parser runs, so an empty findings set can never be read
+back as clean.
 
 ---
 
@@ -384,6 +478,8 @@ The companion script emits:
 - `BLOCKING_COUNT`
 - `SUGGESTION_COUNT`
 - `REASON` when the result is not plain clean
+- `QUOTA_RESET_AT` when `REASON=quota_exhausted` and the provider stderr includes
+  a `try again at …` reset hint (`pr-review-loop.sh` forwards it on escalate)
 
 Use `scripts/development-workflow/local-ai-reviewer-findings.py` to normalize
 and compare local findings against ready-phase reviewer findings when measuring
