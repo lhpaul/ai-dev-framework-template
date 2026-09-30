@@ -15680,8 +15680,12 @@ _run_loop_derived() {
     PATH="$_integration_mock_bin:$TEST_PR_REVIEW_LOOP_REAL_PATH" \
     bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$@" 2>/dev/null
 }
+# _integ_head_json <branch> [<owner/repo>]: a same-repository PR head
+# (default repository: example/repo).
 _integ_head_json() {
-  printf '{"headRefName":"%s","headRepositoryOwner":{"login":"example"},"headRepository":{"name":"repo"},"isCrossRepository":false}' "$1"
+  local slug="${2:-example/repo}"
+  printf '{"headRefName":"%s","headRepositoryOwner":{"login":"%s"},"headRepository":{"name":"%s"},"isCrossRepository":false}' \
+    "$1" "${slug%%/*}" "${slug#*/}"
 }
 
 # Test 15.1: release/* head branch, no --branch → the expected branch is derived
@@ -15737,15 +15741,17 @@ unset INTEG_MOCK_HEAD_JSON
 # (expected branch derived from the working directory: no --repo-root). The
 # working directory is another checkout of this repository — same origin as
 # the checkout the loop enters, which is what makes it acceptable.
-INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1)"
+_integ_self_origin="$(PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" \
+  || _integ_self_origin="https://github.com/example/repo.git"
+_integ_self_slug="${_integ_self_origin%.git}"
+_integ_self_slug="${_integ_self_slug#*github.com[:/]}"
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1 "$_integ_self_slug")"
 export INTEG_MOCK_HEAD_JSON
 _integ_gh_log="$(mktemp)"
 export INTEG_MOCK_GH_LOG="$_integ_gh_log"
 _integ_out=""
 _integ_exit=0
 _integ_hotfix_dir="$(_integ_fixture h998 hotfix/v9.9.1)"
-_integ_self_origin="$(PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" \
-  || _integ_self_origin="https://github.com/example/repo.git"
 PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_integ_hotfix_dir" remote set-url origin "$_integ_self_origin"
 set +e
 _integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998)"
@@ -15877,7 +15883,8 @@ run_test "mainloop_ownership_repo_root_only_summary_pinned" "1" \
 rm -f "$_integ_gh_log" "$_integ_gh_env_log"
 
 # 15.8: WORKFLOW_TARGET_GITHUB_REPO only
-_own_run WORKFLOW_TARGET_GITHUB_REPO=acme/envonly -- 997 --branch release/v9.9.9
+_own_run INTEG_MOCK_HEAD_JSON='{"headRefName":"release/v9.9.9","headRepositoryOwner":{"login":"acme"},"headRepository":{"name":"envonly"},"isCrossRepository":false}' \
+  WORKFLOW_TARGET_GITHUB_REPO=acme/envonly -- 997 --branch release/v9.9.9
 run_test "mainloop_ownership_env_target_only_queries_env_repo" \
   "pr view 997 --repo acme/envonly $_own_view_args" "$(head -n 1 "$_integ_gh_log")"
 run_test "mainloop_ownership_env_target_only_owned" "PR_OWNERSHIP_RESULT=owned" \
@@ -16039,7 +16046,7 @@ rm -f "$_integ_gh_log"
 
 rm -rf "$_integ_fixtures"
 unset INTEG_MOCK_HEAD_JSON _integ_fixtures _integ_detached _integ_dir _integ_case _integ_hotfix_dir \
-  _integ_other _integ_noorigin _integ_self_origin
+  _integ_other _integ_noorigin _integ_self_origin _integ_self_slug
 
 _integration_cleanup
 unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON

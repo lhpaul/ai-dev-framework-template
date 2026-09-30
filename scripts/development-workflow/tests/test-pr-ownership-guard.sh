@@ -52,6 +52,18 @@ case "${MOCK_GH_MODE:-ok}" in
   null) printf 'null\n'; exit 0 ;;
   garbage) printf 'not json\n'; exit 0 ;;
   no_cross_flag) printf '{"headRefName":"spec/13-own-item"}\n'; exit 0 ;;
+  null_owner)
+    printf '{"headRefName":"spec/13-own-item","headRepositoryOwner":null,"headRepository":{"name":"repo"},"isCrossRepository":false}\n'
+    exit 0
+    ;;
+  missing_head_repo)
+    printf '{"headRefName":"spec/13-own-item","headRepositoryOwner":{"login":"example"},"isCrossRepository":false}\n'
+    exit 0
+    ;;
+  malformed_owner)
+    printf '{"headRefName":"spec/13-own-item","headRepositoryOwner":{"login":"bad owner!"},"headRepository":{"name":"repo"},"isCrossRepository":false}\n'
+    exit 0
+    ;;
   deleted_fork)
     printf '{"headRefName":"spec/13-own-item","headRepositoryOwner":null,"headRepository":null,"isCrossRepository":true}\n'
     exit 0
@@ -77,6 +89,9 @@ MOCK_GH
 chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_LOG="$GH_LOG"
+# The target repository the guard compares a same-repository PR's head with
+# (--repo, else GH_REPO, else the checkout origin). Cases below override it.
+export GH_REPO="example/repo"
 
 # Two sibling PRs from one parallel wave: #52 is item 10's, #53 is item 13's.
 # #54 is a fork PR that happens to use item 13's branch name.
@@ -209,9 +224,39 @@ run_contains "same_repo_pr_wrong_expected_head_repo_kind" "MISMATCH=head_reposit
 out="$(guard_output --pr 53 --expected-branch spec/13-own-item --expected-head-repo example/repo)"
 run_test "same_repo_pr_matching_expected_head_repo_exit_0" "0" "$(status_code "$out")"
 out="$(MOCK_GH_MODE=deleted_fork guard_output --pr 54 --expected-branch spec/13-own-item)"
-run_test "deleted_fork_refused_exit_1" "1" "$(status_code "$out")"
-run_contains "deleted_fork_kind" "MISMATCH=head_repository" "$(body "$out")"
+run_test "deleted_fork_fails_closed_exit_3" "3" "$(status_code "$out")"
+run_contains "deleted_fork_reports_unresolved" "RESULT=pr_unresolved" "$(body "$out")"
 run_contains "deleted_fork_cross_flag_parsed" "PR_IS_CROSS_REPOSITORY=true" "$(body "$out")"
+
+# --- Head repository is part of identity: absent or malformed fails closed. ---
+for mode in null_owner missing_head_repo malformed_owner; do
+  : > "$GH_LOG"
+  out="$(MOCK_GH_MODE="$mode" guard_output --pr 53 --expected-branch spec/13-own-item)"
+  run_test "head_repo_${mode}_fails_closed_exit_3" "3" "$(status_code "$out")"
+  run_contains "head_repo_${mode}_reports_unresolved" "RESULT=pr_unresolved" "$(body "$out")"
+  run_contains "head_repo_${mode}_names_cause" "no valid head repository" "$(body "$out")"
+done
+
+# --- A same-repository PR's head must be the target repository. ---
+out="$(guard_output --pr 53 --expected-branch spec/13-own-item --repo acme/other)"
+run_test "target_repo_flag_mismatch_exit_1" "1" "$(status_code "$out")"
+run_contains "target_repo_flag_mismatch_kind" "MISMATCH=head_repository" "$(body "$out")"
+out="$(GH_REPO=acme/other guard_output --pr 53 --expected-branch spec/13-own-item)"
+run_test "target_repo_env_mismatch_exit_1" "1" "$(status_code "$out")"
+run_contains "target_repo_env_mismatch_names_source" "GH_REPO" "$(body "$out")"
+out="$(guard_output --pr 53 --expected-branch spec/13-own-item --repo EXAMPLE/Repo)"
+run_test "target_repo_case_insensitive_exit_0" "0" "$(status_code "$out")"
+ORIGIN_FIXTURE="$TMP_ROOT/origin-fixture"
+git -c init.defaultBranch=main init -q "$ORIGIN_FIXTURE"
+git -C "$ORIGIN_FIXTURE" remote add origin git@github.com:acme/originrepo.git
+out="$(GH_REPO= guard_output --pr 53 --expected-branch spec/13-own-item --repo-root "$ORIGIN_FIXTURE")"
+run_test "target_repo_origin_mismatch_exit_1" "1" "$(status_code "$out")"
+run_contains "target_repo_origin_mismatch_names_origin" "acme/originrepo" "$(body "$out")"
+git -C "$ORIGIN_FIXTURE" remote set-url origin https://github.com/example/repo.git
+out="$(GH_REPO= guard_output --pr 53 --expected-branch spec/13-own-item --repo-root "$ORIGIN_FIXTURE")"
+run_test "target_repo_origin_match_exit_0" "0" "$(status_code "$out")"
+out="$(GH_REPO= guard_output --pr 53 --expected-branch spec/13-own-item --repo-root "$NON_GIT_DIR")"
+run_test "target_repo_unknown_still_owned_exit_0" "0" "$(status_code "$out")"
 
 # --- Default expectation: the checkout's current branch. ---
 out="$(guard_output --pr 53 --repo-root "$FIXTURE_REPO")"

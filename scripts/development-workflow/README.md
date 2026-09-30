@@ -685,9 +685,12 @@ What it does:
   (default: the current directory); pass it explicitly when the caller is not
   inside the item worktree. `--repo owner/name` is passed through to `gh`.
 - Exits `0` with `RESULT=owned` on a match, `1` with `RESULT=not_owned` on a
-  mismatch (`MISMATCH=branch` or `MISMATCH=head_repository`), `3` with
+  mismatch (`MISMATCH=branch` or `MISMATCH=head_repository`, including a
+  same-repository PR whose head is not the target repository: `--repo`, else
+  `GH_REPO`, else the `--repo-root` GitHub origin), `3` with
   `RESULT=pr_unresolved` when `gh` or `jq` is missing, `gh` fails or times out,
-  or the response lacks the head branch or the cross-repository flag, `4` with `RESULT=branch_unknown` when the
+  or the response lacks the head branch, the cross-repository flag, or a valid
+  head repository, `4` with `RESULT=branch_unknown` when the
   default expectation cannot be read (detached HEAD or not a checkout), and `2`
   on usage errors. Every non-zero exit is a stop before mutation.
 

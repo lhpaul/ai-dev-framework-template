@@ -33,7 +33,10 @@ Options:
   --expected-head-repo <owner/name>
                              Repository the PR head must live in. Default: the
                              PR's own (base) repository, so any
-                             cross-repository (fork) PR is refused.
+                             cross-repository (fork) PR is refused, and a
+                             same-repository PR's head must equal the target
+                             repository (--repo, else GH_REPO, else the
+                             --repo-root checkout's GitHub origin) when known.
   --repo <owner/name>        Passed through to `gh pr view --repo`.
   --repo-root <path>         Checkout whose branch is the default expectation.
                              Default: the current directory.
@@ -53,8 +56,9 @@ Exit codes:
                            do not mutate it.
   2  usage error.
   3  RESULT=pr_unresolved  gh or jq missing, gh failed or timed out, or the
-                           response lacks the head branch or the
-                           cross-repository flag; fail closed.
+                           response lacks the head branch, the
+                           cross-repository flag, or a valid head repository
+                           (owner/name); fail closed.
   4  RESULT=branch_unknown No --expected-branch and the checkout is detached
                            or its branch cannot be read; fail closed.
 USAGE
@@ -273,6 +277,48 @@ lowercase() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+# Ownership is branch AND head repository, so an absent or malformed head
+# repository cannot be owned: fail closed instead of treating it as a match.
+if [ -z "$PR_HEAD_REPO" ] \
+    || ! printf '%s\n' "$PR_HEAD_OWNER" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$' \
+    || ! printf '%s\n' "$PR_HEAD_NAME" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+  refuse 3 pr_unresolved "gh pr view returned no valid head repository (owner '${PR_HEAD_OWNER}', name '${PR_HEAD_NAME}')" \
+    "Confirm the PR still has a head repository, then re-run the guard before mutating the PR."
+fi
+
+# github_slug_from_url <remote-url> — owner/name for a GitHub remote, else "".
+github_slug_from_url() {
+  local url="$1"
+  case "$url" in
+    https://github.com/*) url="${url#https://github.com/}" ;;
+    http://github.com/*) url="${url#http://github.com/}" ;;
+    git@github.com:*) url="${url#git@github.com:}" ;;
+    ssh://git@github.com/*) url="${url#ssh://git@github.com/}" ;;
+    *) return 0 ;;
+  esac
+  url="${url%/}"
+  url="${url%.git}"
+  case "$url" in
+    */*/*|/*|*/) return 0 ;;
+    */*) printf '%s\n' "$url" ;;
+  esac
+}
+
+# The repository gh queried: --repo, else GH_REPO (which gh honours), else the
+# --repo-root checkout's GitHub origin. A same-repository PR's head lives in
+# that repository, so a disagreement means the lookup did not read the target.
+TARGET_REPO="$REPO_SLUG"
+TARGET_SOURCE="--repo"
+if [ -z "$TARGET_REPO" ] && [ -n "${GH_REPO:-}" ]; then
+  TARGET_REPO="$GH_REPO"
+  TARGET_SOURCE="GH_REPO"
+fi
+if [ -z "$TARGET_REPO" ]; then
+  ORIGIN_URL="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" || ORIGIN_URL=""
+  TARGET_REPO="$(github_slug_from_url "$ORIGIN_URL")"
+  TARGET_SOURCE="origin of $REPO_ROOT"
+fi
+
 if [ -n "$EXPECTED_HEAD_REPO" ]; then
   # GitHub owner and repository names are case-insensitive.
   if [ "$(lowercase "$PR_HEAD_REPO")" != "$(lowercase "$EXPECTED_HEAD_REPO")" ]; then
@@ -286,6 +332,11 @@ elif [ "$PR_IS_CROSS" = "true" ]; then
   refuse 1 not_owned \
     "it is a cross-repository PR from '${PR_HEAD_REPO:-<unknown>}' with the same branch name" \
     "Re-resolve this item's own PR number; pass --expected-head-repo only when this item's PR genuinely comes from that fork."
+elif [ -n "$TARGET_REPO" ] && [ "$(lowercase "$PR_HEAD_REPO")" != "$(lowercase "$TARGET_REPO")" ]; then
+  MISMATCH="head_repository"
+  refuse 1 not_owned \
+    "its head lives in '$PR_HEAD_REPO', not in the target repository '$TARGET_REPO' ($TARGET_SOURCE)" \
+    "Pass --repo for the repository that owns the PR; never mutate a PR in another repository."
 fi
 
 printf 'RESULT=owned\n'
