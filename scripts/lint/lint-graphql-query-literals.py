@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Lint `gh api graphql` query literals under scripts/ for balanced delimiters.
+
+#1828 shipped a `gh api graphql` query in `apply-readiness-labels.sh` with one
+extra closing brace. The test suite mocks `gh`, so a syntactically invalid
+query stayed green until it hit GitHub live and every `codex-github` readiness
+run escalated `codex-occupancy-timeline-fetch-failed`. That fix
+(`test-apply-readiness-labels.sh`) proved the tokenizer approach but scoped it
+to one file. This script generalizes the same check repo-wide across
+`scripts/`, so the next unbalanced query literal in any script is caught
+before merge regardless of which file it lands in.
+
+The check tokenizes each query as a GraphQL lexer would: `"..."` strings (with
+backslash escapes), `\"\"\"...\"\"\"` block strings, and `#` comments to end of
+line are skipped, so delimiters inside them are neither counted nor able to
+hide real ones. Nesting order is checked, not just totals — `query{a}}{` has
+equal counts of `{` and `}` but is not valid.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+QUERY_ASSIGNMENT_START = re.compile(r"query='")
+PAIRS = {"}": "{", ")": "(", "]": "["}
+OPENERS = set(PAIRS.values())
+
+# Paths under any `tests/` directory are excluded from the scan: fixtures in
+# this repo's own checker tests deliberately construct malformed query
+# literals (and, in test-protocol-91-readiness-checklist.sh, embed a Python
+# regex string that merely *looks* like `query='...'`) to prove the tokenizer
+# catches them. Those are not production `gh api graphql` calls.
+EXCLUDED_PATH_SEGMENT = "/tests/"
+
+
+def extract_concatenated_query(text: str, quote_pos: int) -> tuple[str, int] | None:
+    """Join adjacent quoted bash segments starting at an opening `'`.
+
+    Some queries are built via bash string concatenation, e.g.
+    `graphql_query='query{...'"$pr_fields"'more{...}}'` — adjacent quoted
+    segments with no operator between them are one logical string. Bash
+    single-quoted segments cannot contain an escaped quote (a `'` always
+    terminates them), so segment boundaries are unambiguous. Double-quoted
+    segments (typically a `"$variable"` interpolation) contribute unknown
+    content at compose time, so they are skipped rather than guessed at;
+    contiguous-quote parsing itself is not sensitive to shell metacharacters
+    since it only ever needs to find the next `'` or handle a `\"`-escaped
+    `"` inside a double-quoted run.
+
+    Returns (joined_query_text, end_index) or None if a segment is
+    unterminated.
+    """
+    parts: list[str] = []
+    pos = quote_pos
+    n = len(text)
+    while pos < n and text[pos] == "'":
+        end = text.find("'", pos + 1)
+        if end == -1:
+            return None
+        parts.append(text[pos + 1 : end])
+        pos = end + 1
+        if pos < n and text[pos] == '"':
+            j = pos + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" and j + 1 < n else 1
+            if j >= n:
+                return None
+            pos = j + 1
+    return "".join(parts), pos
+
+
+@dataclass
+class Finding:
+    path: str
+    line: int
+    query: str
+
+
+def well_nested(query: str) -> bool:
+    """Return True if a GraphQL query's delimiters are correctly nested.
+
+    Skips GraphQL string values (`"..."` and `\"\"\"...\"\"\"`, both with
+    backslash escapes) and `#` comments to end of line, since delimiters
+    inside them are data or prose, not syntax.
+    """
+    stack: list[str] = []
+    i, n = 0, len(query)
+    while i < n:
+        if query.startswith('"""', i):
+            j = i + 3
+            while j < n and not query.startswith('"""', j):
+                j += 4 if query.startswith('\\"""', j) else 1
+            if j >= n:
+                return False
+            i = j + 3
+            continue
+        char = query[i]
+        if char == '"':
+            j = i + 1
+            while j < n and query[j] not in '"\r\n':
+                j += 2 if query[j] == '\\' and j + 1 < n and query[j + 1] not in '\r\n' else 1
+            if j >= n or query[j] != '"':
+                return False
+            i = j + 1
+            continue
+        if char == '#':
+            while i < n and query[i] not in '\r\n':
+                i += 1
+            continue
+        if char in OPENERS:
+            stack.append(char)
+        elif char in PAIRS:
+            if not stack or stack.pop() != PAIRS[char]:
+                return False
+        i += 1
+    return not stack
+
+
+def find_unbalanced_in_text(path: str, text: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for match in QUERY_ASSIGNMENT_START.finditer(text):
+        quote_pos = match.end() - 1
+        extracted = extract_concatenated_query(text, quote_pos)
+        line = text.count("\n", 0, match.start()) + 1
+        if extracted is None:
+            findings.append(Finding(path=path, line=line, query="<unterminated literal>"))
+            continue
+        query, _end = extracted
+        if not well_nested(query):
+            findings.append(Finding(path=path, line=line, query=query))
+    return findings
+
+
+def count_query_literals(text: str) -> int:
+    return len(QUERY_ASSIGNMENT_START.findall(text))
+
+
+def is_excluded(path: Path) -> bool:
+    return EXCLUDED_PATH_SEGMENT in f"/{path.as_posix()}/"
+
+
+def discover_shell_files(root: Path) -> list[Path]:
+    if root.is_file():
+        return [] if is_excluded(root) else [root]
+    return sorted(p for p in root.rglob("*.sh") if not is_excluded(p))
+
+
+def format_findings(findings: list[Finding]) -> str:
+    lines = [
+        "lint-graphql-query-literals found unbalanced GraphQL query literals:",
+        "",
+    ]
+    for finding in findings:
+        lines.append(f"{finding.path}:{finding.line}: unbalanced or misnested delimiters")
+        lines.append(f"  query='{finding.query}'")
+    lines.append("")
+    lines.append(
+        "Braces, brackets, and parens must nest correctly (order, not just "
+        "totals). Delimiters inside GraphQL string values and # comments are "
+        "ignored. See scripts/lint/README.md."
+    )
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Lint every `gh api graphql` query='...' literal under a scripts/ "
+            "tree for balanced, correctly nested delimiters."
+        )
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        default=["scripts"],
+        help="files or directories to scan (default: scripts)",
+    )
+    args = parser.parse_args()
+
+    files: list[Path] = []
+    for raw_path in args.paths:
+        target = Path(raw_path)
+        if not target.exists():
+            print(f"ERROR: path not found: {target}", file=sys.stderr)
+            return 2
+        files.extend(discover_shell_files(target))
+
+    findings: list[Finding] = []
+    total_queries = 0
+    examined = 0
+    for file_path in files:
+        text = file_path.read_text(encoding="utf-8", errors="surrogateescape")
+        examined += 1
+        total_queries += count_query_literals(text)
+        findings.extend(find_unbalanced_in_text(str(file_path), text))
+
+    print(
+        f"lint-graphql-query-literals: examined={examined} files, "
+        f"queries={total_queries}, findings={len(findings)}",
+        file=sys.stderr,
+    )
+
+    if findings:
+        print(format_findings(findings), file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
