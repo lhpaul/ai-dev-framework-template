@@ -1762,7 +1762,7 @@ Do not redispatch the agent for a missing label alone — the label is applied t
 
 If a check requires agent redispatch:
 
-1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
+1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below), then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` for the item's branch; stop on a non-zero exit (issue #1444).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must invoke `checkpoint-resume-gate.sh` before mutation. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
@@ -1855,7 +1855,7 @@ For the pre-label orphaned case (`isDraft=false`, no labels, no summary): the PR
 
 **Expected action when incomplete state is detected**:
 
-1. Log the incomplete PR in your retrospective notes.
+1. Log the incomplete PR in your retrospective notes, then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` for the item's branch; stop on a non-zero exit (issue #1444).
 2. Remove `ready-for-human-review` if present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add `needs-fixes`: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 4. Redispatch the Work Item Runner with a resume hint to pick up from Step 7a (internal review gate).
@@ -2102,6 +2102,8 @@ state in the stable `reviewer-access-bypass` audit marker.
 | Parallel implementation batch (2+ PRs) | `batch-merge.sh` + Protocol 94 |
 | Single implementation PR               | `gh pr merge` is acceptable    |
 | Spec or plan PR (any count)            | `gh pr merge` is acceptable    |
+
+Run `pr-ownership-guard.sh` for the item's branch before a `gh pr merge` by number (issue #1444).
 
 Violating this rule causes CHANGELOG merge conflicts that must be resolved manually, as observed in the Batch 4 incident (2026-04-22).
 

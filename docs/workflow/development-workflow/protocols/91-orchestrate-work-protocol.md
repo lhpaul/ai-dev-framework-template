@@ -3665,7 +3665,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 
 If any check fails:
 
-1. Log the specific failure(s) — include the PR number, failed check name, and observed value.
+1. Log the specific failure(s) — include the PR number, failed check name, and observed value — then run `scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>`; stop on a non-zero exit (issue #1444).
 2. Apply `needs-fixes` if not already present: `gh pr edit <pr_number> --add-label "needs-fixes"`.
 3. Remove `ready-for-human-review` if it was already applied: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 4. Fix the root cause (wrong base branch, missing label, missing review comment, failing CI) and return to Step 7a.
