@@ -53,6 +53,26 @@ run_test() {
   fi
 }
 
+# path_without_timeout — PATH with every `timeout` binary hidden, so the
+# script under test takes its no-GNU-timeout fallback path (#1843). Symlink
+# farms go under PATH_FARM_ROOT, which the caller creates and removes.
+path_without_timeout() {
+  local dir entry name farm new_path=""
+  local IFS=:
+  for dir in $1; do
+    if [ -n "$dir" ] && [ -x "$dir/timeout" ]; then
+      farm="$(mktemp -d "${PATH_FARM_ROOT:?}/farm.XXXXXX")"
+      for entry in "$dir"/*; do
+        name="${entry##*/}"
+        [ "$name" = "timeout" ] || ln -s "$entry" "$farm/$name"
+      done
+      dir="$farm"
+    fi
+    new_path="${new_path:+$new_path:}$dir"
+  done
+  printf '%s\n' "$new_path"
+}
+
 install_gh_mock() {
   cat > "$1/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
@@ -88,6 +108,14 @@ fi
 if [ -n "${MOCK_CODERABBIT_SLEEP:-}" ]; then
   sleep "$MOCK_CODERABBIT_SLEEP"
 fi
+if [ "${MOCK_CODERABBIT_READ_STDIN:-0}" = "1" ]; then
+  read_status=0
+  IFS= read -r -t 5 _ || read_status=$?
+  if [ "$read_status" -gt 128 ]; then
+    echo "blocked on stdin" >&2
+    exit 3
+  fi
+fi
 if [ -n "${MOCK_CODERABBIT_STDOUT:-}" ]; then
   printf '%s\n' "$MOCK_CODERABBIT_STDOUT"
 fi
@@ -108,6 +136,7 @@ reset_mocks() {
   install_cli_mock coderabbit
   export MOCK_CALL_LOG
   unset MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT MOCK_CODERABBIT_SLEEP
+  unset MOCK_CODERABBIT_READ_STDIN
   unset MOCK_GH_PR_VIEW_FAIL
   unset CODERABBIT_CLI_RATE_LIMIT_POLICY CODERABBIT_CLI_REVIEW_TIMEOUT
   unset AI_DEV_WORKFLOW_CONFIG_FILE
@@ -452,6 +481,30 @@ export MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "unauthorized_result" "RESULT=skipped" "$(line_for RESULT)"
 run_test "unauthorized_reason" "REASON=unauthorized" "$(line_for REASON)"
+
+# #1843: an idle inherited stdin pipe must not reach the CLI, on either the
+# `timeout` path or the no-timeout fallback path. The fallback backgrounds the
+# CLI, which bash already gives /dev/null as stdin, so that case is a guard
+# against a future foreground refactor rather than a #1843 reproduction.
+PATH_FARM_ROOT="$(mktemp -d)"
+for stdin_path_mode in with_timeout without_timeout; do
+  reset_mocks
+  set_mock_stdout '{"findings":[]}'
+  MOCK_CODERABBIT_READ_STDIN=1
+  export MOCK_CODERABBIT_READ_STDIN
+  if [ "$stdin_path_mode" = "with_timeout" ]; then
+    stdin_path_value="$MOCK_BIN:$PATH"
+  else
+    stdin_path_value="$(path_without_timeout "$MOCK_BIN:$PATH")"
+  fi
+  stdin_start="$(date +%s)"
+  run_reviewer "$stdin_path_value" < <(sleep 8)
+  stdin_elapsed=$(( $(date +%s) - stdin_start ))
+  run_test "1843_${stdin_path_mode}_open_stdin_result" "RESULT=clean" "$(line_for RESULT)"
+  run_test "1843_${stdin_path_mode}_open_stdin_prompt" "yes" "$([ "$stdin_elapsed" -lt 5 ] && echo yes || echo no)"
+done
+rm -rf "$PATH_FARM_ROOT"
+unset stdin_path_mode stdin_path_value stdin_start stdin_elapsed
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
