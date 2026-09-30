@@ -5,6 +5,8 @@
 # covers: scripts/development-workflow/item-completion-self-check.sh scripts/development-workflow/batch-merge.sh
 # covers: scripts/development-workflow/discover-workflow-state.sh scripts/development-workflow/apply-readiness-labels.sh
 # covers: scripts/development-workflow/run-epic-risk-classifier.sh scripts/development-workflow/run-epic-delegated-gate.sh
+# covers: scripts/development-workflow/haystack-reviewer.sh
+# covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 #
 # A consumer added later is caught by the Part 2 scan on the next run that
 # selects this suite (any workflow-lib.sh change, or the scheduled full run).
@@ -14,11 +16,15 @@
 # over the raw rollup reports a failure that is no longer true.
 #
 #   Part 1 — the shared jq definition (AC-2, AC-3, and its edge rules).
-#   Part 2 — the inventory: every script that reads the rollup routes it
-#            through the shared definition (AC-1), and no script outside
+#   Part 2 — the inventory: every script that reads the rollup (or REST
+#            check-runs) routes it through the shared definition (AC-1), and
+#            no script outside
 #            workflow-lib.sh carries its own copy of the grouping (AC-4). This
 #            is what keeps a NEW consumer from silently scanning the raw rollup.
 #   Part 3 — discover-workflow-state.sh, the one list-view consumer, end to end.
+#   Part 4 — Protocol 91 Step 8a Check 0, the readiness gate's own CI count,
+#            extracted from the protocol and executed against REST check-run
+#            pages (the REST endpoint keeps superseded runs as well).
 #
 # The other consumers are exercised end to end in their own suites:
 # test-pr-ci-loop.sh, test-run-epic-risk-classifier.sh,
@@ -139,7 +145,22 @@ case " ${consumers[*]} " in
   *) consumers+=("run-epic-delegated-gate.sh") ;;
 esac
 
-run_test "consumer_inventory_nonempty" "yes" "$([ "${#consumers[@]}" -ge 7 ] && echo yes || echo no)"
+# REST `commits/<sha>/check-runs` has the same property: its default
+# filter=latest is latest per CHECK SUITE, and a re-run workflow is a new
+# suite, so PR #1547's head returns both `policy` runs from that endpoint too.
+# Every script reading it is a consumer, except validate-closing-keyword-scope.sh,
+# which lists filter=all on purpose to find duplicates of its OWN check run.
+while IFS= read -r path; do
+  case " ${consumers[*]} " in
+    *" $path "*) ;;
+    *) consumers+=("$path") ;;
+  esac
+done < <(
+  cd "$WF_DIR" && grep -lE 'commits/[^"]*/check-runs' -- *.sh 2>/dev/null \
+    | grep -vE '^(workflow-lib|validate-closing-keyword-scope)\.sh$' | sort
+)
+
+run_test "consumer_inventory_nonempty" "yes" "$([ "${#consumers[@]}" -ge 9 ] && echo yes || echo no)"
 for consumer in "${consumers[@]}"; do
   if grep -Eq 'normalize_status_check_rollup|dedupe_status_check_rollup' "$WF_DIR/$consumer"; then
     run_test "consumer_uses_shared_dedupe:${consumer}" "yes" "yes"
@@ -150,9 +171,10 @@ done
 
 # AC-4: the grouping lives in workflow-lib.sh only. These are the markers of
 # every copy that existed before #1559 (the __check_key/__check_ts copies, the
-# classifier's __run_epic_* copy, and batch-merge's check_key grouping).
+# classifier's __run_epic_* copy, batch-merge's check_key grouping, and the
+# REST statuses group_by(.context) | max_by(.updated_at) copies).
 copies="$(
-  cd "$WF_DIR" && grep -nE '__check_key|__check_ts|__run_epic_(name|timestamp)|group_by\(check_key\)' -- *.sh *.py 2>/dev/null \
+  cd "$WF_DIR" && grep -nE '__check_key|__check_ts|__run_epic_(name|timestamp)|group_by\(check_key\)|group_by\(\.context\)|max_by\(\.updated_at\)' -- *.sh *.py 2>/dev/null \
     | grep -v '^workflow-lib\.sh:' || true
 )"
 run_test "no_dedupe_copy_outside_workflow_lib" "" "$copies"
@@ -195,6 +217,54 @@ run_test "discover_superseded_failure_lists_success" "checks=SUCCESS" \
 # Entries are listed in check-key order: check runs, then status contexts.
 run_test "discover_current_failure_lists_pending_and_failure" "checks=IN_PROGRESS,FAILURE" \
   "$(printf '%s\n' "$discover_out" | awk -F'\t' '$1 == "#1548" {print $5}')"
+
+echo ""
+echo "=== Part 4: Protocol 91 Step 8a Check 0 (executed from the protocol) ==="
+
+# Check 0 is fenced bash in the protocol, not a script, so extract it and run
+# it: from its heading comment up to (not including) the verdict `if`. The
+# check-runs pages are the PR #1547 shape — the same `policy` check in two
+# suites, failure then success.
+P91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
+CHECK0="$TMP_ROOT/check0.sh"
+awk '/^# Check 0: CI must be green/{p=1} /^if \[ "\$CI_FAILING" -gt 0 \]/{p=0} p' "$P91" > "$CHECK0"
+run_test "check0_extracted" "yes" "$(grep -q 'dedupe_status_check_rollup' "$CHECK0" && grep -q '^CI_TOTAL=' "$CHECK0" && echo yes || echo no)"
+
+CHECK0_BIN="$TMP_ROOT/check0-bin"
+mkdir -p "$CHECK0_BIN"
+cat > "$CHECK0_BIN/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "pr view"*) printf '%s\n' 8aaf67859e8a6b2b2cc64b288b94f46019753f71 ;;
+  "repo view"*) printf '%s\n' owner/repo ;;
+  *"/check-runs"*) printf '%s\n' "$MOCK_CHECK_RUN_PAGES" ;;
+  *"/status"*) printf '%s\n' '[{"state":"success","statuses":[{"context":"Reviewer-loop completion guard","state":"success"}]}]' ;;
+  *) exit 64 ;;
+esac
+MOCK_GH
+chmod +x "$CHECK0_BIN/gh"
+
+run_check0() {
+  env PATH="$CHECK0_BIN:$PATH" MOCK_CHECK_RUN_PAGES="$1" bash -c '
+    set -euo pipefail
+    source "$1"
+    PR_NUMBER=1547
+    source "$2"
+    printf "%s %s %s\n" "$CI_FAILING" "$CI_PENDING" "$CI_TOTAL"
+  ' _ "$WF_DIR/workflow-lib.sh" "$CHECK0"
+}
+
+superseded_pages='[{"total_count":3,"check_runs":[
+  {"name":"policy","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":2}},
+  {"name":"ShellCheck","status":"completed","conclusion":"success","started_at":"2026-08-21T05:20:00Z","check_suite":{"id":3}}]},
+ {"total_count":3,"check_runs":[
+  {"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":1}}]}]'
+run_test "check0_superseded_failure_counts_green" "0 0 3" "$(run_check0 "$superseded_pages")"
+
+current_failure_pages='[{"total_count":2,"check_runs":[
+  {"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":2}},
+  {"name":"policy","status":"completed","conclusion":"success","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":1}}]}]'
+run_test "check0_current_failure_still_counts" "1 0 2" "$(run_check0 "$current_failure_pages")"
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

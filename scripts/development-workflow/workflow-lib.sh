@@ -563,7 +563,8 @@ configured_reviewer_check_names_json() {
 #     unidentifiable entries are not evidence that one supersedes the other.
 #   - recency: the first present of `.startedAt`, `.completedAt`,
 #     `.createdAt` (GraphQL) or `.started_at`, `.completed_at`, `.created_at`
-#     (REST and hand-assembled evidence). An entry with no timestamp (or
+#     (REST and hand-assembled evidence), then `.updatedAt`/`.updated_at`
+#     (a commit status is immutable, so it equals `created_at`). An entry with no timestamp (or
 #     GitHub's zero time) that is still non-terminal — a queued re-run has not
 #     started yet — counts as the NEWEST entry, so a pending re-run is never
 #     hidden behind the result it supersedes.
@@ -600,7 +601,8 @@ def dedupe_status_check_rollup:
         __check_idx: $idx,
         __check_ts: (
           ([.startedAt, .completedAt, .createdAt,
-            .started_at, .completed_at, .created_at]
+            .started_at, .completed_at, .created_at,
+            .updatedAt, .updated_at]
             | map(select(type == "string" and . != ""
                          and (startswith("0001-01-01") | not)))
             | first) as $ts

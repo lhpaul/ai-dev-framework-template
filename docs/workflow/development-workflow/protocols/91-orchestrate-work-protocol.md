@@ -2768,7 +2768,10 @@ it replaces. Read CI state through `pr-ci-loop.sh` or, for a raw
 first. That helper is the single deduplication every workflow script uses: it
 keeps the latest run per check (status context, or workflow plus check name)
 and treats a not-yet-started re-run as the latest. A failure that is still
-the latest run stays a failure.
+the latest run stays a failure. The REST `commits/<sha>/check-runs` endpoint
+has the same property: its default `filter=latest` means latest per check
+suite, and a re-run workflow is a new suite, so its pages are collapsed with the
+same definition (`STATUS_CHECK_ROLLUP_DEDUPE_JQ`) before anything is counted.
 
 Interpret the result as follows:
 
@@ -3031,9 +3034,19 @@ if ! STATUS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" -
   echo "ERROR: could not read commit statuses for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
-CI_FAILING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
-CI_PENDING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status != "completed")] | length')
-CI_TOTAL=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[]] | length')
+# Superseded runs (issue #1559): `filter=latest`, the check-runs default, is
+# latest per CHECK SUITE, and a re-run workflow is a new suite — PR #1547's
+# head returns both `policy failure 05:26:31` and `policy success 05:28:16`.
+# Count only the latest run per check, via the shared definition sourced from
+# workflow-lib.sh above. (The combined `/status` endpoint below already
+# reports only the latest status per context.)
+if ! CHECK_RUNS=$(printf '%s' "$CHECKS_PAGES" | jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].check_runs[]] | dedupe_status_check_rollup'); then
+  echo "ERROR: could not parse check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
+  exit 5
+fi
+CI_FAILING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+CI_PENDING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status != "completed")] | length')
+CI_TOTAL=$(printf '%s' "$CHECK_RUNS" | jq 'length')
 CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "failure" or .state == "error")] | length')))
 CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "pending")] | length')))
 CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]?] | length')))
