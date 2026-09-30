@@ -2286,7 +2286,10 @@ If 0 findings were resolved: post a shorter note — "Pushed fixes for cycle M. 
 
 After each fixer push, reply to each addressed inline review comment on the PR to mark it as resolved. Use `gh api` to post a reply to each comment whose ledger entry transitioned to `resolved`:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
 gh api "repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies" \
   -f body="Fixed in commit \`<short_sha>\`."
 ```
