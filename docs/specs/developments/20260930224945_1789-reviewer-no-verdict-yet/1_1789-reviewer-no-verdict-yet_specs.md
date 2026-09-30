@@ -387,10 +387,14 @@ belong to the **No verdict yet** class.
       reviewer** with the pending platform named. It does not apply
       `reviewer-failed`, does not report an escalation, and does not dispatch a
       fixer. This covers `local-ai-reviewer`, which is the configured
-      ready-phase reviewer, and `bugbot`.
+      ready-phase reviewer, and `bugbot`. The one exception is a platform
+      whose expired wait is kept as a non-blocking skip (Business Rule 4),
+      which is verified by AC-8 instead.
 - [ ] AC-2: For each supported platform, a simulated run with positive failure
       evidence reports **Reviewer failed**, escalates, and applies
-      `reviewer-failed`, as it does today.
+      `reviewer-failed`, as it does today. The exceptions are failure evidence
+      that already has its own existing handling, which keeps that handling
+      and is verified by AC-8 and AC-13 instead.
 - [ ] AC-3: Reproducing PR #1787 on an `implementation-plan/*` branch: a Bugbot
       review that answers clean 25 minutes or less after the request, with no
       explicit one-run override, is recorded as a clean verdict. It is not a
@@ -416,13 +420,13 @@ belong to the **No verdict yet** class.
       and after a non-blocking skip caused only by an expired wait. It is
       present after a run in which any platform is **Reviewer failed** or has
       a non-blocking skip whose reason is failure evidence, including a mixed
-      run whose overall result is needs fixes or clean. A platform whose expired wait is treated today as a
-      non-blocking skip (a CodeRabbit CLI review still running) keeps that non-blocking
-      progression, is reported as **No verdict yet**, and does not apply
-      `reviewer-failed`.
+      run whose overall result is needs fixes or clean. A platform whose
+      expired wait is treated today as a non-blocking skip (a CodeRabbit CLI
+      review still running) keeps that non-blocking progression, is reported
+      as **No verdict yet**, and does not apply `reviewer-failed`.
 - [ ] AC-9: When a run produces outcomes from several platforms, the overall
-      result follows Business Rule 5's order. Examples: one platform failed while another has
-      no verdict yet gives an escalation; findings on one platform while
+      result follows Business Rule 5's order. Examples: one platform failed
+      while another has no verdict yet gives an escalation; findings on one platform while
       another has no verdict yet gives needs fixes; no verdict yet on one
       platform while the others are clean gives waiting on reviewer.
 - [ ] AC-10: A verdict that covers an older revision is not accepted as the
