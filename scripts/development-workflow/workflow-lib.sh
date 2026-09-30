@@ -564,10 +564,12 @@ configured_reviewer_check_names_json() {
 #   - recency: the first present of `.startedAt`, `.completedAt`,
 #     `.createdAt` (GraphQL) or `.started_at`, `.completed_at`, `.created_at`
 #     (REST and hand-assembled evidence), then `.updatedAt`/`.updated_at`
-#     (a commit status is immutable, so it equals `created_at`). An entry with no timestamp (or
-#     GitHub's zero time) that is still non-terminal — a queued re-run has not
-#     started yet — counts as the NEWEST entry, so a pending re-run is never
-#     hidden behind the result it supersedes.
+#     (a commit status is immutable, so it equals `created_at`). An entry
+#     with no timestamp (or GitHub's zero time) in a recognized pending state
+#     (status QUEUED/IN_PROGRESS/WAITING/REQUESTED/PENDING/EXPECTED, or state
+#     PENDING/EXPECTED) — a queued re-run has not started yet — counts as the
+#     NEWEST entry, so a pending re-run is never hidden behind the result it
+#     supersedes. An empty or unrecognized status is not treated as pending.
 #   - winner: when every entry for a check has a recency value, the newest
 #     wins. Ties (timestamps have one-second resolution) go to the higher
 #     numeric `.id`/`.databaseId` — REST check-run and status ids increase
@@ -612,9 +614,9 @@ def dedupe_status_check_rollup:
                          and (startswith("0001-01-01") | not)))
             | first) as $ts
           | if $ts != null then $ts
-            elif ((.status // "COMPLETED") | ascii_upcase) != "COMPLETED"
-                 or ((.state // "") | ascii_upcase) == "PENDING"
-                 or ((.state // "") | ascii_upcase) == "EXPECTED"
+            elif ((.status // "") | ascii_upcase
+                  | IN("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED"))
+                 or ((.state // "") | ascii_upcase | IN("PENDING", "EXPECTED"))
             then "9999-12-31T23:59:59Z"
             else ""
             end

@@ -792,6 +792,15 @@ two_workflow_rollup='[
 live_two_workflow_output="$(env MOCK_ROLLUP_44="$two_workflow_rollup" "$CLASSIFIER" --pr 44 --max-risk low --json)"
 run_test "live_same_name_other_workflow_failure_blocks_1559" "false" "$(printf '%s\n' "$live_two_workflow_output" | jq -r '.merge_permitted')"
 run_test "live_same_name_other_workflow_failure_named_1559" "yes" "$(printf '%s\n' "$live_two_workflow_output" | jq -e '.blockers[] | select(test("unit / test"))' >/dev/null && echo yes || echo no)"
+# A check run "test" of workflow "unit" projects to the name "unit / test";
+# a status context literally named "unit / test" must stay a separate check,
+# so its newer success cannot erase the run's failure.
+name_collision_rollup='[
+  {"__typename": "CheckRun", "name": "test", "workflowName": "unit", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-06-01T05:26:31Z", "completedAt": "2026-06-01T05:27:00Z"},
+  {"__typename": "StatusContext", "context": "unit / test", "state": "SUCCESS", "startedAt": "2026-06-01T05:28:16Z"}
+]'
+live_name_collision_output="$(env MOCK_ROLLUP_44="$name_collision_rollup" "$CLASSIFIER" --pr 44 --max-risk low --json)"
+run_test "live_check_run_and_status_context_name_collision_blocks_1559" "false" "$(printf '%s\n' "$live_name_collision_output" | jq -r '.merge_permitted')"
 
 # --- issue #1497: --pr cannot attach why_safe_to_merge, so a medium-risk PR
 # --- classified via --pr always ends up "blocked" without --why-safe-file ---

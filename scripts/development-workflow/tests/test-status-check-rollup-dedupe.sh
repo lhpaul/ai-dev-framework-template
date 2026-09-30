@@ -101,6 +101,13 @@ run_test "undated_queued_rerun_wins_listed_first" "CI/lint=QUEUED" "$(latest '[
 run_test "undated_queued_rerun_wins_listed_last" "CI/lint=QUEUED" "$(latest '[
   {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS"},
   {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"QUEUED","conclusion":null}]')"
+# Only a RECOGNIZED pending state is "newest when undated". Empty-status
+# success evidence (accepted by the risk classifier) must not suppress a
+# later completed failure.
+run_test "empty_status_is_not_pending" "guard=FAILURE" "$(printf '%s\n' '[
+  {"name":"guard","status":"","conclusion":"SUCCESS"},
+  {"name":"guard","status":"COMPLETED","conclusion":"FAILURE","completed_at":"2026-06-12T10:05:00Z"}]' \
+  | jq -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"' dedupe_status_check_rollup | map(.name + "=" + .conclusion) | join(",")')"
 run_test "pending_status_context_supersedes_success" "policy=PENDING" "$(latest '[
   {"__typename":"StatusContext","context":"policy","state":"PENDING"},
   {"__typename":"StatusContext","context":"policy","state":"SUCCESS","startedAt":"2026-06-01T05:26:31Z"}]')"

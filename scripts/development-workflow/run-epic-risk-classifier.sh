@@ -219,6 +219,10 @@ live_pr_state() {
             else .name
             end
           ),
+          # Identity fields ride along so the dedupe in collect_check_blockers
+          # keys this run by workflow + job and never merges it with a status
+          # context whose name happens to read "workflow / job".
+          workflowName: (.workflowName // ""),
           status: (.status // ""),
           conclusion: (.conclusion // ""),
           completed_at: (.completedAt // .startedAt // "")
@@ -226,6 +230,7 @@ live_pr_state() {
       else
         {
           name: .context,
+          context: .context,
           status: (if (.state // "") == "SUCCESS" then "COMPLETED" else (.state // "") end),
           conclusion: (.state // ""),
           completed_at: (.startedAt // "")
