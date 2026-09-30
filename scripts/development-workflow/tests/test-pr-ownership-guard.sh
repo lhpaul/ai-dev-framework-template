@@ -257,6 +257,11 @@ out="$(GH_REPO= guard_output --pr 53 --expected-branch spec/13-own-item --repo-r
 run_test "target_repo_origin_match_exit_0" "0" "$(status_code "$out")"
 out="$(GH_REPO= guard_output --pr 53 --expected-branch spec/13-own-item --repo-root "$NON_GIT_DIR")"
 run_test "target_repo_unknown_still_owned_exit_0" "0" "$(status_code "$out")"
+# With no known target, the cross-repository flag alone must still refuse a
+# fork PR that reuses the branch name.
+out="$(GH_REPO= guard_output --pr 54 --expected-branch spec/13-own-item --repo-root "$NON_GIT_DIR")"
+run_test "fork_refused_without_known_target_exit_1" "1" "$(status_code "$out")"
+run_contains "fork_refused_without_known_target_kind" "cross-repository PR" "$(body "$out")"
 
 # --- Default expectation: the checkout's current branch. ---
 out="$(guard_output --pr 53 --repo-root "$FIXTURE_REPO")"
