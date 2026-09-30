@@ -237,8 +237,6 @@ bot_login_for_platform() {
     coderabbit) printf 'coderabbitai\n' ;;
     devin) printf 'devin-ai-integration\n' ;;
     greptile) printf 'greptile-apps\n' ;;
-    pr-agent) printf '%s\n' "${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" ;;
-    haystack) printf '%s\n' "${HAYSTACK_BOT_LOGIN:-haystack[bot]}" ;;
     codex-github) printf '%s\n' "${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}" ;;
     claude-code-action) printf '%s\n' "${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}" ;;
     copilot) printf '%s\n' "${COPILOT_BOT_LOGIN:-copilot-pull-request-reviewer[bot]}" ;;
@@ -251,7 +249,7 @@ bot_login_for_platform() {
 # Platforms that never post GitHub review threads (local runtime / CLI only).
 platform_has_no_review_threads() {
   case "$1" in
-    local-ai-reviewer|coderabbit-cli) return 0 ;;
+    local-ai-reviewer|coderabbit-cli|pr-agent|haystack) return 0 ;;
     *) return 1 ;;
   esac
 }
