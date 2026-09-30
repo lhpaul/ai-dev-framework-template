@@ -1,6 +1,7 @@
 # scripts/lint
 
-Lint helpers for spec, plan, and CHANGELOG markdown documents.
+Lint helpers for spec, plan, and CHANGELOG markdown documents, plus static
+checks over the workflow shell scripts themselves.
 
 ## markdown-heuristic-lint.py
 
@@ -159,3 +160,58 @@ expected. `--all` reads no diff and is exempt from the refusal.
 ```bash
 bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 ```
+
+## lint-graphql-query-literals.py
+
+Repo-wide static check for every `gh api graphql` query literal (`query='...'`,
+including one built via adjacent bash-quote concatenation such as
+`'...'"$var"'...'`) under a `scripts/` tree.
+
+**Why**: #1828 shipped a `gh api graphql` query in `apply-readiness-labels.sh`
+with one extra closing brace. The suite mocks `gh`, so a syntactically invalid
+query text stayed green until it hit GitHub live, escalating
+`codex-occupancy-timeline-fetch-failed` on every `codex-github` PR. This lint
+generalizes the tokenizer that fix proved (originally scoped to one file's test
+in `test-apply-readiness-labels.sh`) into a standalone, repo-wide check so the
+next unbalanced or misnested literal is caught in CI before merge, regardless
+of which script it lands in.
+
+**What it checks**: braces (`{}`), parens (`()`), and brackets (`[]`) nest
+correctly — order, not just totals (`query{a}}{` has equal counts but is not
+valid). Delimiters inside GraphQL string values (`"..."`, `"""..."""`, both
+with backslash escapes) and `#` comments are ignored, since they are data or
+prose, not syntax.
+
+**Scope**: files under any `tests/` directory are excluded — this checker's own
+test fixtures deliberately construct malformed and regex-shaped `query='...'`
+text to prove the tokenizer, and those are not production `gh api graphql`
+calls.
+
+**Known limitation**: a query fragment held in a variable that is not itself
+named `*query` (e.g. `pr_fields='commits(last:1){...}'` spliced into a larger
+query by concatenation) is treated as an opaque, assumed-balanced blob at the
+splice point rather than independently validated. Name query-fragment
+variables so they end in `query` (or inline them) to bring them into scope.
+
+**Usage:**
+
+```bash
+python3 scripts/lint/lint-graphql-query-literals.py [<path> ...]  # default: scripts
+bash scripts/lint/tests/test-lint-graphql-query-literals.sh
+```
+
+Exit code `0` means no findings; exit code `1` means one or more unbalanced or
+misnested query literals were found; exit code `2` means a given path does not
+exist. Every run prints an `examined=<files>, queries=<count>, findings=<count>`
+summary line to stderr so a clean run can be told apart from a run that
+silently matched nothing.
+
+**Live-validate new or changed queries**: this lint proves delimiter *syntax*
+is well-formed; it cannot prove the query is accepted by the GitHub GraphQL
+schema (unknown fields, wrong argument types, etc. all pass a delimiter check).
+Any PR that adds or changes a `gh api graphql` query literal under `scripts/`
+must run that query live against a real GitHub repository/PR once (e.g. by
+exercising the calling script's normal path, or invoking the query directly
+with `gh api graphql -f query='...' -f ...`) before the PR is trusted on a
+green mocked suite alone. See
+[`docs/best-practices/3-testing.md`](../../docs/best-practices/3-testing.md#live-validate-new-or-changed-graphql-queries).
