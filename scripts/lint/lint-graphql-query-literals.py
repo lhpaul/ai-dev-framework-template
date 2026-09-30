@@ -138,6 +138,7 @@ def well_nested(query: str) -> bool:
 
 
 WORD_BOUNDARY_BEFORE = " \t\r\n;&|()"
+CASE_KEYWORD = re.compile(r"(case|esac)(?=[\s;&|()]|\Z)")
 HEREDOC_OPERATOR = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
@@ -165,8 +166,10 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
     shape `var="$(gh api graphql -f query='...')"`.
     """
     starts: list[tuple[int, int]] = []
-    # Each frame: ["code", paren_depth] or ["dq", 0]. The bottom frame is code.
-    stack: list[list] = [["code", 0]]
+    # Each frame: ["code", paren_depth, case_depth] or ["dq", 0, 0]. The
+    # bottom frame is code. case_depth tracks open `case ... esac` blocks so a
+    # pattern terminator `)` is never mistaken for the `$(` closer.
+    stack: list[list] = [["code", 0, 0]]
     pending_heredocs: list[tuple[str, bool]] = []
     i, n = 0, len(text)
     while i < n:
@@ -179,7 +182,7 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
                 stack.pop()
                 i += 1
             elif text.startswith("$(", i):
-                stack.append(["code", 0])
+                stack.append(["code", 0, 0])
                 i += 2
             else:
                 i += 1
@@ -200,6 +203,14 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
                 end = text.find("\n", i)
                 i = end if end != -1 else n
                 continue
+            keyword = CASE_KEYWORD.match(text, i)
+            if keyword:
+                if keyword.group(1) == "case":
+                    frame[2] += 1
+                elif frame[2] > 0:
+                    frame[2] -= 1
+                i = keyword.end()
+                continue
         if c == "\\":
             i += 2
         elif c == "\n":
@@ -216,10 +227,10 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
             end = text.find("'", i + 1)
             i = end + 1 if end != -1 else n
         elif c == '"':
-            stack.append(["dq", 0])
+            stack.append(["dq", 0, 0])
             i += 1
         elif text.startswith("$(", i):
-            stack.append(["code", 0])
+            stack.append(["code", 0, 0])
             i += 2
         elif c == "(":
             frame[1] += 1
@@ -227,10 +238,15 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
         elif c == ")":
             if frame[1] > 0:
                 frame[1] -= 1
+            elif frame[2] > 0:
+                pass  # a `case` pattern terminator, not the `$(` closer
             elif len(stack) > 1:
                 stack.pop()
             i += 1
-        elif text.startswith("<<", i) and not text.startswith("<<<", i):
+        elif text.startswith("<<<", i):
+            # Here-string: the operand is an ordinary word, lexed normally.
+            i += 3
+        elif text.startswith("<<", i):
             heredoc = HEREDOC_OPERATOR.match(text, i)
             if heredoc:
                 pending_heredocs.append((heredoc.group(3), heredoc.group(1) == "-"))

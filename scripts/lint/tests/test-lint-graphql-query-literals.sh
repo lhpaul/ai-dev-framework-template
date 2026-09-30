@@ -240,6 +240,28 @@ write_fixture "$TMP_DIR/cmdsubst_in_dq.sh" \
   "result=\"\$(gh api graphql -f query='query{a{b}}}' --jq .data)\""
 run_test "command_substitution_in_double_quotes_caught" "fail" "$(run_linter "$TMP_DIR/cmdsubst_in_dq.sh")"
 
+# Lexer false-negative guards: constructs that must not make the lexer
+# swallow or misclassify a following real query.
+write_fixture "$TMP_DIR/herestring.sh" \
+  '#!/usr/bin/env bash' \
+  'cat <<< "x"' \
+  'grep y <<<foo' \
+  "gh api graphql -f query='query{a{b}}}'"
+run_test "here_string_does_not_swallow_following_query" "fail" "$(run_linter "$TMP_DIR/herestring.sh")"
+
+write_fixture "$TMP_DIR/case_in_cmdsubst.sh" \
+  '#!/usr/bin/env bash' \
+  "x=\"\$(case \$a in a) echo 1;; (b) echo 2;; esac; gh api graphql -f query='query{a{b}}}')\""
+run_test "case_pattern_paren_does_not_close_cmdsubst" "fail" "$(run_linter "$TMP_DIR/case_in_cmdsubst.sh")"
+
+write_fixture "$TMP_DIR/tabbed_heredoc.sh" \
+  '#!/usr/bin/env bash' \
+  'cat <<-EOF' \
+  "	it's a body line" \
+  '	EOF' \
+  "gh api graphql -f query='query{a{b}}}'"
+run_test "tab_stripped_heredoc_terminator_found" "fail" "$(run_linter "$TMP_DIR/tabbed_heredoc.sh")"
+
 # Real call-site shapes that do not spell `gh api graphql` on one command
 # are still recognised.
 write_fixture "$TMP_DIR/wrapper_form.sh" \
