@@ -211,7 +211,9 @@ path the clean run took to finish.
      verdict nor failure evidence for the current revision.
 
    Platforms that are skipped, not configured, or excluded keep their existing
-   handling and are outside these three classes.
+   handling and are outside these three classes. The one exception is the
+   expired-wait non-blocking skip in Business Rule 4, which keeps its skip
+   handling but is reported as **No verdict yet**.
 2. **Failure needs evidence.** Only positive evidence makes a platform
    **Reviewer failed**. Examples: a failed or errored review result, a review
    request that could not be posted, an authorization or permission refusal,
@@ -222,7 +224,10 @@ path the clean run took to finish.
    shows no sign of having started a review for the current revision when its
    budget ends is **No verdict yet** too, unless the platform itself reports
    that it is unavailable, for example because it is not installed or not
-   connected.
+   connected. Such a report is failure evidence: the platform keeps the
+   existing handling for that report where one exists (for example, an
+   unavailable non-blocking skip or the account-not-connected outcome), and is
+   **Reviewer failed** otherwise.
 3. **Same rule on every platform.** Rules 1 and 2 apply the same way to every
    supported platform: `greptile`, `devin`, `coderabbit`, `coderabbit-cli`,
    `local-ai-reviewer`, `pr-agent`, `codex-github`, `claude-code-action`,
@@ -254,7 +259,10 @@ path the clean run took to finish.
    exception in Business Rule 4 counts as skipped at step 4, not as waiting at
    step 3. Existing loop-level escalations keep their current precedence over
    all of these. Examples: ownership refusal, cycle-limit exhaustion, and a
-   lost summary record.
+   lost summary record. The order applies to the platform outcomes a run
+   actually produces. This feature does not change which platforms a run
+   evaluates or when a run stops evaluating further platforms after a
+   non-clean outcome.
 6. **Current-revision evidence only.** A verdict or failure that covers an
    older revision counts neither as an answer nor as a failure for the current
    revision.
@@ -277,10 +285,11 @@ path the clean run took to finish.
    3. That platform's built-in default.
 
    The shortened wait for documentation branches applies only to platforms
-   that do not review documentation branches. It never shortens the wait of a
-   platform that does review them. The same scoping applies to the existing
-   larger wait for large diffs: it may lengthen a platform's budget but never
-   shorten it.
+   that do not review documentation branches, and only to their built-in
+   default. It never shortens the wait of a platform that does review them.
+   The existing larger wait for large diffs may lengthen a platform's built-in
+   default or configured budget but never shortens it. Neither adjustment
+   changes an explicit one-run override, as today.
 9. **Minimum defaults.** No platform's built-in default may be shorter than
    the default wait that applied to it before this feature on implementation
    branches: 20 minutes in general, and 30 minutes for Codex GitHub.
@@ -291,22 +300,27 @@ path the clean run took to finish.
     posted, as today. A configured per-platform budget that is not a positive
     whole number of seconds is ignored with a visible warning, and the
     platform's built-in default applies.
-11. **The label follows the latest outcome.** After each loop run, the
-    `reviewer-failed` label is present on the pull request only when at least
-    one platform in that run carries failure evidence for the current
-    revision. That is a platform outcome of **Reviewer failed**, or a
-    non-blocking skip whose reason is failure evidence, such as an
-    unavailable, unauthorized, or forbidden platform, as today. This is judged
-    per platform, so it holds even when the run's overall result is needs
-    fixes or clean. The label is absent after a run in which no platform
-    carries failure evidence: every platform has a verdict, **No verdict yet**,
-    a non-blocking skip caused only by an expired wait, or another skip that is
-    not failure evidence. This holds on every exit path that evaluates reviewers for the current
-    revision. That includes a run that reuses a recorded verdict for the same
-    revision instead of reviewing it again. A run refused before any reviewer
-    is evaluated (for example, an ownership refusal or a concurrent-run lock)
-    leaves the label unchanged, as today. A failed attempt to add or remove the label
-    is reported as a warning. It does not change the run's result.
+11. **The label follows the latest outcome.** Two existing behaviors are
+    kept as they are and take precedence over this rule: the usage-limit,
+    spend-limit, account-not-connected, and rate-limit outcomes keep their
+    current label behavior (Use Case 3), and the existing loop-level
+    escalations (Business Rule 5) keep their current label behavior. Apart
+    from those, after each loop run the `reviewer-failed` label is present on
+    the pull request only when at least one platform in that run carries
+    failure evidence for the current revision. That is a platform outcome of
+    **Reviewer failed**, or a non-blocking skip whose reason is failure
+    evidence, such as an unavailable, unauthorized, or forbidden platform, as
+    today. This is judged per platform, so it holds even when the run's
+    overall result is needs fixes or clean. The label is absent after a run in
+    which no platform carries failure evidence: every platform has a verdict,
+    **No verdict yet**, a non-blocking skip caused only by an expired wait, or
+    another skip that is not failure evidence. This holds on every exit path
+    that evaluates reviewers for the current revision. That includes a run
+    that reuses a recorded verdict for the same revision instead of reviewing
+    it again. A run refused before any reviewer is evaluated (for example, an
+    ownership refusal or a concurrent-run lock) leaves the label unchanged, as
+    today. A failed attempt to add or remove the label is reported as a
+    warning. It does not change the run's result.
 12. **Latency is recorded.** For every platform that ran, the loop summary
     comment and the loop's run output record:
     - the platform's outcome;
@@ -333,7 +347,7 @@ feature affects are:
 | `waiting_on_reviewer` | Waiting on reviewer | Existing loop result, now used by every platform. At least one platform has **No verdict yet** (or an existing platform-specific wait outcome) and no platform has failed or reported findings |
 | `reviewer-no-verdict-yet` | No verdict yet | New platform-neutral reason. The platform's wait budget ran out with no verdict and no failure evidence for the current revision |
 | `escalate` | Escalated | Existing loop result. Used for **Reviewer failed** and for the existing loop-level escalations. It is no longer used when a platform simply ran out of wait budget |
-| `reviewer-failed` | Reviewer failed (PR label) | Existing label. Present only while at least one platform in the latest run carries failure evidence (Business Rule 11) |
+| `reviewer-failed` | Reviewer failed (PR label) | Existing label. Present only while at least one platform in the latest run carries failure evidence, apart from the kept existing label behaviors named in Business Rule 11 |
 
 Codex GitHub's existing wait reasons (`codex-github-review-pending` and
 `codex-github-reaction-without-review`) keep their names and meaning. They
@@ -406,8 +420,8 @@ belong to the **No verdict yet** class.
       non-blocking skip (a CodeRabbit CLI review still running) keeps that non-blocking
       progression, is reported as **No verdict yet**, and does not apply
       `reviewer-failed`.
-- [ ] AC-9: With several platforms configured, the overall result follows
-      Business Rule 5's order. Examples: one platform failed while another has
+- [ ] AC-9: When a run produces outcomes from several platforms, the overall
+      result follows Business Rule 5's order. Examples: one platform failed while another has
       no verdict yet gives an escalation; findings on one platform while
       another has no verdict yet gives needs fixes; no verdict yet on one
       platform while the others are clean gives waiting on reviewer.
@@ -427,6 +441,10 @@ belong to the **No verdict yet** class.
       as reused.
 - [ ] AC-13: Usage-limit, spend-limit, account-not-connected, and rate-limit
       outcomes keep their current results, reasons, and label behavior.
+      Existing loop-level escalations keep their current label behavior. A
+      platform that reports itself unavailable when its budget ends keeps its
+      existing handling for that report, or is **Reviewer failed** where none
+      exists; it is not reported as **No verdict yet**.
 - [ ] AC-14: The workflow documentation that describes reviewer-loop results
       and the `reviewer-failed` label states the three outcome classes, the
       precedence, the automatic re-wait, and the label rule. This covers the
@@ -478,7 +496,7 @@ belong to the **No verdict yet** class.
 | Brief objective | Coverage |
 | --- | --- |
 | 1. Per-platform or matched default wait | AC-3, AC-4, AC-5, AC-6; Business Rules 8-10; Use Case 1 |
-| 2. Distinct no-verdict-yet vocabulary, no label | AC-1, AC-2, AC-8, AC-9, AC-10, AC-11; Business Rules 1-7; Use Cases 2-3 |
+| 2. Distinct no-verdict-yet vocabulary, no label | AC-1, AC-2, AC-8, AC-9, AC-10, AC-11, AC-13; Business Rules 1-7; Use Cases 2-3 |
 | 3. No stale label after a clean run | AC-7, AC-8; Business Rule 11; Use Case 4 |
 | 4. Record latency per platform | AC-12; Business Rule 12; Use Case 5 |
 | 5. Reported distinctly, no label | AC-1, AC-2 |
@@ -502,7 +520,8 @@ contribute outcomes, and existing loop-level escalations stay above all rows.
 For a single platform, the non-blocking-skip row wins over the general
 no-verdict rows for the platforms it covers. The usage-limit and similar
 availability row wins over every other row for the platform whose outcome it
-describes.
+describes, and the self-reported-unavailability row wins over the general
+no-verdict rows. The loop-level escalation row wins over every platform row.
 
 | Gate input | Allowed outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
@@ -514,9 +533,11 @@ describes.
 | No verdict yet again after the automatic re-wait | Waiting on reviewer (stop) | Stop the run as a waiting state that names the pending platform and the human action (re-run later or investigate the platform). Not an escalation | Protocol 91 Step 7 and Work Item Runner summary, Protocol 93, reviewer-loop completion guard and readiness helpers (which already treat a non-clean result as not ready) | The platform is down with no error reported |
 | Only evidence for the platform covers an older revision | No verdict yet | Same as the no-verdict rows above. Never counted as clean or failed for the current revision | Reviewer loop, Protocol 93 | A clean verdict from before the last push |
 | Platform shows no sign of having started a review when its budget ends and reports no unavailability | No verdict yet | Same as the no-verdict rows above | Reviewer loop, Bugbot integration guide | No Bugbot check run has appeared yet for the current revision |
+| Platform reports that it is unavailable (for example, not installed or not connected) when its budget ends | Failure evidence: existing handling for that report, or Reviewer failed where none exists | Existing next action for that report, or escalate. Label per Business Rule 11 | Reviewer loop, integration guides | A local reviewer reports that its command is not installed |
 | Platform's own review run reports that it timed out or failed | Reviewer failed | Escalate and apply `reviewer-failed` | Reviewer loop, Bugbot integration guide | Bugbot's check run concludes as timed out |
 | Pull request revision changes during the wait | Existing head-moved handling | Re-run for the new revision, as today | Reviewer loop, Protocol 91 Step 7 | A fixer push lands while Bugbot is pending |
 | Platform returns a usage-limit, spend-limit, account-not-connected, or rate-limit outcome | Existing shipped handling, unchanged | Existing next action and label behavior, unchanged | Reviewer loop, integration guides | Bugbot posts a spend-limit notice |
+| Existing loop-level escalation (for example, ownership refusal, cycle-limit exhaustion, or a lost summary record) | Existing escalation, unchanged | Existing next action and label behavior, unchanged. A run refused before any reviewer is evaluated leaves the label unchanged | Reviewer loop, Protocol 93, Protocol 91 Step 7 | The reviewer loop's cycle cap is reached |
 | Several platforms contribute outcomes in one run | First match in Business Rule 5's order | Act on the overall result per its own row | Reviewer loop, Protocol 93 | One platform clean and one with no verdict yet gives waiting on reviewer |
 | Configured per-platform budget is missing | Built-in default applies | Continue | Reviewer loop, `.ai-dev-workflow.yaml` comments, integration guides | No per-platform value is configured for Bugbot |
 | Configured per-platform budget is invalid (not a positive whole number of seconds) | Built-in default applies, with a warning | Continue and show the warning in run output | Reviewer loop, integration guides | A configured wait of `abc` |
