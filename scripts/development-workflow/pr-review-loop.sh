@@ -8744,7 +8744,7 @@ restore_regression_label_if_missing() {
           # Do NOT redirect stderr here: surface errors so failures are
           # observable rather than silently swallowed.
           if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-              --pr "$pr_number" --label "ready-for-regression"; then
+              --pr "$pr_number" --branch "$branch_name" --label "ready-for-regression"; then
             echo "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
           fi
         else
@@ -8759,7 +8759,7 @@ restore_regression_label_if_missing() {
         # redirect stderr here: surface errors so failures are observable.
         echo "INFO: ready-for-regression label already present on PR #${pr_number} (${branch_name}); revalidating through apply-readiness-labels.sh." >&2
         if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-            --pr "$pr_number" --label "ready-for-regression"; then
+            --pr "$pr_number" --branch "$branch_name" --label "ready-for-regression"; then
           echo "WARN: apply-readiness-labels.sh refused or failed to revalidate the existing ready-for-regression on PR #${pr_number}; proceeding without change" >&2
         fi
       fi
@@ -13576,7 +13576,7 @@ _ADVISORY_ENTRY_LINES_
 
 **Step 7b WARNING: \`ready-for-regression\` label is missing.** Apply it now before entering Step 8 (CI loop) — routed through the readiness-label gate, never a direct \`gh pr edit\` (which would bypass the reviewer/CI verdict gate; see #1408):
 \`\`\`
-bash scripts/development-workflow/apply-readiness-labels.sh --pr ${pr_number} --label \"ready-for-regression\"
+bash scripts/development-workflow/apply-readiness-labels.sh --pr ${pr_number} --branch ${branch_name} --label \"ready-for-regression\"
 \`\`\`
 Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs after Step 7 completes clean."
         fi

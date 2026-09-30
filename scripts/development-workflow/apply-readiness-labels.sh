@@ -56,7 +56,8 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'USAGE'
 Usage: apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
-  --label <ready-for-human-review|ready-for-regression> [--json]
+  --label <ready-for-human-review|ready-for-regression> \
+  [--branch <branch>] [--dry-run] [--json]
 
 Refuses to apply the label unless every configured ready-phase reviewer check
 run is `completed` for the current head SHA, the reviewer posted no blocking
@@ -64,16 +65,46 @@ findings on that SHA, and no other check is pending or failing. A `neutral`
 reviewer check run with a Bugbot usage/spend-limit notice is refused as well:
 the reviewer never reviewed.
 
-Prints RESULT=<labeled|refused|escalate> and REASON=<slug>.
+Before reading any further PR state, an ownership guard (issue #1837, the
+same pr-ownership-guard.sh helper pr-review-loop.sh's --branch guard (#1444)
+calls) verifies the PR's head branch belongs to --branch (or, when omitted,
+the branch currently checked out in this repo root). This addresses a PR by
+number only; under parallel waves a wrong --pr would otherwise label a
+sibling's PR. A mismatch refuses `ownership-mismatch`; an unresolvable
+check (gh/jq failure, no --branch and a detached/non-workflow checkout)
+escalates `ownership-unverified` — never a silent pass.
+
+--dry-run prints the decision (RESULT/REASON and every other verdict field)
+and applies nothing: no label add, no stale-label removal, no `needs-fixes`
+annotation. RESULT is `would-label` in place of `labeled` when the gate
+would otherwise pass; `refused` and `escalate` verdicts are unchanged
+(neither mutates a passing PR) but DRY_RUN=true shows no removal ran even
+when the PR already carried the label.
+
+Ownership x dry-run outcome table (every combination the ownership guard and
+--dry-run introduce; the pre-existing reviewer/CI gate rows below are
+unchanged by either):
+  owned      + not dry-run -> labeled/refused/escalate (existing gate), mutates as before
+  owned      + --dry-run   -> would-label/refused/escalate (existing gate), never mutates
+  not_owned  + either      -> refused, REASON=ownership-mismatch, never mutates
+                              (branch mismatch OR cross-repository PR with the
+                              same branch name); re-resolve the PR number, do
+                              not redispatch a reviewer/CI fix
+  unresolved + either      -> escalate, REASON=ownership-unverified, never
+                              mutates (gh/jq failure, or no --branch on a
+                              non-workflow checkout); fix gh/jq or pass --branch
+
+Prints RESULT=<labeled|would-label|refused|escalate> and REASON=<slug>.
 Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
 reviewer-unavailable, reviewer-check-name-unresolved,
 reviewer-evidence-unreadable,
 reviewer-check-unknown-conclusion, reviewer-policy-empty, blocking-findings,
-reviewer-state-changed, ci-pending, ci-failing, head-changed-before-apply.
+reviewer-state-changed, ci-pending, ci-failing, head-changed-before-apply,
+ownership-mismatch.
 Escalation reasons:
 head-revalidate-failed, head-changed-after-apply, ready-config-unreadable,
-base-config-unreadable, revalidation-unreadable.
+base-config-unreadable, revalidation-unreadable, ownership-unverified.
 The ready-phase reviewer list is read from the PR head's own
 .ai-dev-workflow.yaml; an unreadable head configuration escalates (fail-closed)
 rather than falling back to this checkout's configuration. The required
@@ -92,6 +123,8 @@ pr_number=""
 repo=""
 label=""
 json_output="false"
+branch_name=""
+dry_run="false"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -113,6 +146,13 @@ while [ "$#" -gt 0 ]; do
       label="$2"
       shift 2
       ;;
+    --branch)
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --branch\n' >&2; exit 2; }
+      [ -z "$branch_name" ] || { printf 'ERROR: repeated option: --branch\n' >&2; exit 2; }
+      branch_name="$2"
+      shift 2
+      ;;
+    --dry-run) dry_run="true"; shift ;;
     --json) json_output="true"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -143,6 +183,11 @@ reviewer_report=""
 blocking_count=0
 pending_count=0
 failing_count=0
+# label_initially_present is read by refuse()/escalate() (defined below) even
+# when those functions fire before the PR-state read sets its real value
+# (e.g. the ownership guard, which runs before any label-presence capture) —
+# default "0" so an early refusal/escalation never attempts a removal.
+label_initially_present="0"
 
 # configured_ready_reviewer_platforms — the platforms whose check run gates
 # readiness. Mirrors item-completion-self-check.sh's configured_review_platforms:
@@ -1136,9 +1181,10 @@ emit_verdict() {
   print_kv BLOCKING_FINDING_COUNT "$blocking_count"
   print_kv PENDING_CHECK_COUNT "$pending_count"
   print_kv FAILING_CHECK_COUNT "$failing_count"
+  print_kv DRY_RUN "$dry_run"
   if [ "$json_output" = "true" ]; then
-    python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]))))' \
-      "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count"
+    python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \
+      "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run"
   fi
 }
 
@@ -1172,6 +1218,10 @@ escalate() {
 # completion-adapter rc=2 path in round 16). Best-effort: a failure here must
 # not mask the blocking verdict about to be emitted.
 annotate_needs_fixes_best_effort() {
+  if [ "$dry_run" = "true" ]; then
+    # --dry-run applies nothing, including this best-effort annotation.
+    return 0
+  fi
   if [ "$applied_notified" -eq 0 ]; then
     applied_notified=1
     applied_labels="$(printf '%s
@@ -1200,6 +1250,10 @@ refuse() {
 # WARN and the caller still escalates, so a human sees the problem either way.
 remove_readiness_label_best_effort() {
   local label_to_remove="$1"
+  if [ "$dry_run" = "true" ]; then
+    # --dry-run applies nothing, including stale-label removal.
+    return 0
+  fi
   if ! gh pr edit "$pr_number" --repo "$repo" --remove-label "$label_to_remove" >/dev/null 2>&1; then
     printf 'WARN: %s\n' "failed to remove $label_to_remove on PR #$pr_number — remove it manually" >&2
   fi
@@ -1439,6 +1493,29 @@ count_reviewer_blocking_findings() {
     scan_blocking_count="$_thread_count"
   fi
 }
+
+# --- 0. PR ownership guard (issue #1837) ------------------------------------
+# This helper mutates a PR by number (label add/remove). Under parallel waves
+# a wrong --pr labels a sibling's PR — the observed incident this issue files
+# (#1825 was labeled by a run meant for a different PR). Verify the PR's head
+# branch belongs to --branch (or, when omitted, the branch checked out in
+# this repo root) before reading any further PR state, the same
+# pr-ownership-guard.sh helper pr-review-loop.sh's --branch guard (#1444)
+# calls. Read-only: the guard itself performs one `gh pr view` and never
+# mutates anything.
+ownership_status=0
+ownership_cmd=("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" --repo "$repo" --repo-root "$PWD")
+if [ -n "$branch_name" ]; then
+  ownership_cmd+=(--expected-branch "$branch_name")
+fi
+ownership_output="$("${ownership_cmd[@]}" 2>&1)" || ownership_status=$?
+printf '%s\n' "$ownership_output" \
+  | awk '/^(RESULT|EXPECTED_BRANCH|EXPECTED_BRANCH_SOURCE|PR_HEAD_BRANCH|PR_HEAD_REPO|MISMATCH|REQUIRED_ACTION)=/ { print "OWNERSHIP_" $0 }'
+case "$ownership_status" in
+  0) ;;
+  1) refuse "ownership-mismatch" ;;
+  *) escalate "ownership-unverified" ;;
+esac
 
 # --- 1. PR state -----------------------------------------------------------
 pr_json=""
@@ -2017,6 +2094,16 @@ if [ -z "$current_head" ]; then
 fi
 if [ "$current_head" != "$head_sha" ]; then
   refuse "head-changed-before-apply"
+fi
+
+# --dry-run stops here: every check above (ownership, reviewer, CI, the final
+# head comparison) has already run against live state, so the verdict is
+# accurate, but nothing is mutated — no label add, no post-apply re-read.
+if [ "$dry_run" = "true" ]; then
+  result="would-label"
+  reason="gate-passed"
+  emit_verdict
+  exit 0
 fi
 
 if ! gh pr edit "$pr_number" --repo "$repo" --add-label "$label" >/dev/null 2>&1; then

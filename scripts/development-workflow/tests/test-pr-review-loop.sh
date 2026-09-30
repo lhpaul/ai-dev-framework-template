@@ -294,6 +294,29 @@ case "$*" in
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"
     exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
     ;;
+  # gh pr view --json headRefName,headRepositoryOwner,headRepository,isCrossRepository
+  # — pr-ownership-guard.sh's own read (issue #1837's apply-readiness-labels.sh
+  # ownership guard calls this before any other PR-state read). Tests set
+  # MOCK_GH_OWNERSHIP_BRANCH to the same branch they pass as this function's
+  # own --branch/second positional argument so the guard resolves `owned`; an
+  # unset value returns an empty headRefName, which mismatches any real
+  # --expected-branch and is the fail-closed default for tests that do not
+  # care about reaching the mutation.
+  *"headRefName,headRepositoryOwner,headRepository,isCrossRepository"*)
+    printf '{"headRefName":"%s","headRepositoryOwner":{"login":"acme"},"headRepository":{"name":"widgets"},"isCrossRepository":false}\n' \
+      "${MOCK_GH_OWNERSHIP_BRANCH:-}"
+    exit "${MOCK_GH_EXIT:-0}"
+    ;;
+  # gh repo view --json nameWithOwner --jq '.nameWithOwner' — apply-readiness-
+  # labels.sh's repo_slug() fallback (no --repo given), consulted by the
+  # ownership guard as its target repository. This mock does not apply --jq
+  # itself, so it must print the already-filtered bare slug a real `gh ...
+  # --jq` would, matching the ownership payload's acme/widgets above so the
+  # two agree by default with no per-test wiring.
+  *"repo view"*"nameWithOwner"*)
+    printf '%s\n' "${MOCK_GH_REPO_SLUG:-acme/widgets}"
+    exit "${MOCK_GH_EXIT:-0}"
+    ;;
   # gh pr view --json headRefOid — used by run_copilot_review to resolve head SHA.
   # Tests set MOCK_GH_HEAD_SHA to control the returned value; default empty string
   # triggers the head-sha-unavailable escalation path.
@@ -3750,11 +3773,12 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_HEAD_SHA="$_SUMMARY_CURRENT_HEAD_SHA"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
+export MOCK_GH_OWNERSHIP_BRANCH="fix/42-my-fix"
 restore_regression_label_if_missing "42" "fix/42-my-fix" 2>/dev/null
 _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_absent_current_head_clean_summary_calls_gh_edit" "1" "$_edit_calls"
 rm -f "$_call_log_11"
-unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH
 
 # Test 11.2: label already present on an implementation branch → the helper is
 # still invoked (revalidate-or-remove, PR #1818 F1 round 10): an already-present
@@ -3819,11 +3843,12 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_HEAD_SHA="$_SUMMARY_CURRENT_HEAD_SHA"
 export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
 export MOCK_GH_CALL_LOG="$_call_log_11"
+export MOCK_GH_OWNERSHIP_BRANCH="hotfix/99-critical"
 restore_regression_label_if_missing "99" "hotfix/99-critical" 2>/dev/null
 _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
 rm -f "$_call_log_11"
-unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH
 
 # Test 11.6: restore function is defined before the HARNESS_MODE return point
 # (source-level ordering check — ensures the function remains testable after
@@ -3893,6 +3918,7 @@ export MOCK_GH_OUTPUT="false"
 export MOCK_GH_HEAD_SHA="$_SUMMARY_CURRENT_HEAD_SHA"
 export MOCK_GH_COMMENTS_EXIT=1
 export MOCK_GH_CALL_LOG="$_call_log_11"
+export MOCK_GH_OWNERSHIP_BRANCH="fix/42-comments-fail"
 _warn_output="$(restore_regression_label_if_missing "42" "fix/42-comments-fail" 2>&1)"
 _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_comments_api_fail_failopen_calls_gh_edit" "1" "$_edit_calls"
@@ -3911,7 +3937,7 @@ else
 fi
 run_test "restore_label_comments_api_fail_logs_failopen_reason" "yes" "$_failopen_reason_ok"
 rm -f "$_call_log_11"
-unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT MOCK_GH_HEAD_SHA _warn_output _failopen_reason_ok
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH _warn_output _failopen_reason_ok
 
 # Reset mock state.
 export MOCK_GH_OUTPUT='[]'
