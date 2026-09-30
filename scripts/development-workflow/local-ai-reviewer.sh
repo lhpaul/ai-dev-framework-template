@@ -179,7 +179,9 @@ run_with_timeout() {
 
   if command -v timeout >/dev/null 2>&1 \
       && timeout --help 2>&1 | grep -q -- '--kill-after'; then
-    timeout --kill-after=2s "$timeout_seconds" "$@" >"$stdout_file" 2>"$stderr_file"
+    # Close stdin so reviewer CLIs cannot block reading an idle inherited
+    # pipe from a background harness (#1843).
+    timeout --kill-after=2s "$timeout_seconds" "$@" </dev/null >"$stdout_file" 2>"$stderr_file"
     return $?
   fi
 
@@ -187,10 +189,10 @@ run_with_timeout() {
   # descendant reviewer processes die with the leader (Codex P2 / #1635).
   local child_pid
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$@" >"$stdout_file" 2>"$stderr_file" &
+    setsid "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
     child_pid=$!
   else
-    perl -e 'setpgrp; exec @ARGV' -- "$@" >"$stdout_file" 2>"$stderr_file" &
+    perl -e 'setpgrp; exec @ARGV' -- "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
     child_pid=$!
   fi
   local elapsed=0

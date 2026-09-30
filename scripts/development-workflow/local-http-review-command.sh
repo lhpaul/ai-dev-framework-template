@@ -45,7 +45,7 @@ fi
 json_object="${LOCAL_AI_REVIEWER_JSON_OBJECT:-1}"
 
 if [ -z "$api_key" ] && [ -n "${LOCAL_AI_REVIEWER_API_KEY_COMMAND:-}" ]; then
-  api_key="$(sh -c "$LOCAL_AI_REVIEWER_API_KEY_COMMAND")"
+  api_key="$(sh -c "$LOCAL_AI_REVIEWER_API_KEY_COMMAND" </dev/null)"
 fi
 if [ -z "$api_key" ]; then
   api_key="${DEEPSEEK_API_KEY:-}"

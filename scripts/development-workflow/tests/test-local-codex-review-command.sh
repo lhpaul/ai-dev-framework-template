@@ -135,6 +135,61 @@ _1653_codex_line="$(grep -F "$_1653_policy_sentence" "$REPO_ROOT/.codex/skills/w
 run_test "1653_s8a_claude_cursor_match" "yes" "$([ "$_1653_claude_line" = "$_1653_cursor_line" ] && echo yes || echo no)"
 run_test "1653_s8a_claude_codex_match" "yes" "$([ "$_1653_claude_line" = "$_1653_codex_line" ] && echo yes || echo no)"
 
+# #1843: an idle inherited stdin pipe must not reach codex. The stub behaves
+# like `codex exec`: it reads extra input from stdin and blocks on an open pipe
+# (bounded here by `read -t`); /dev/null gives immediate EOF.
+STDIN_MOCK_BIN="$(mktemp -d)"
+cat > "$STDIN_MOCK_BIN/codex" <<'MOCK_CODEX_STDIN'
+#!/usr/bin/env bash
+output_file=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "-o" ]; then
+    output_file="$arg"
+  fi
+  previous="$arg"
+done
+[ -n "$output_file" ] || exit 2
+read_status=0
+IFS= read -r -t 5 _ || read_status=$?
+if [ "$read_status" -gt 128 ]; then
+  echo "Reading additional input from stdin... (blocked)" >&2
+  exit 3
+fi
+printf '{"result":"clean","reviewed_head":"%s","findings":[]}\n' "${REVIEWED_HEAD:?}" > "$output_file"
+MOCK_CODEX_STDIN
+chmod +x "$STDIN_MOCK_BIN/codex"
+
+# Hold stdin open with no data for longer than the stub's read timeout.
+stdin_start="$(date +%s)"
+stdin_exit=0
+PATH="$STDIN_MOCK_BIN:$PATH" "$COMMAND" >"$OUTPUT_FILE" 2>"$STDERR_FILE" < <(sleep 8) || stdin_exit=$?
+stdin_elapsed=$(( $(date +%s) - stdin_start ))
+run_test "1843_codex_open_stdin_exit" "0" "$stdin_exit"
+run_test "1843_codex_open_stdin_result" "clean" "$(jq -r '.result' "$OUTPUT_FILE" 2>/dev/null || echo invalid)"
+run_test "1843_codex_open_stdin_prompt" "yes" "$([ "$stdin_elapsed" -lt 5 ] && echo yes || echo no)"
+
+# local-ai-reviewer.sh must not hand an open stdin pipe to the reviewer command.
+cat > "$MOCK_BIN/local-ai-reviewer-stdin-probe" <<'MOCK_PROBE'
+#!/usr/bin/env bash
+read_status=0
+IFS= read -r -t 5 _ || read_status=$?
+if [ "$read_status" -gt 128 ]; then
+  echo "blocked on stdin" >&2
+  exit 3
+fi
+printf '%s\n' '{"result":"clean","reviewed_head":"abc123","findings":[]}'
+MOCK_PROBE
+chmod +x "$MOCK_BIN/local-ai-reviewer-stdin-probe"
+probe_start="$(date +%s)"
+LOCAL_AI_REVIEWER_COMMAND=local-ai-reviewer-stdin-probe \
+  PATH="$MOCK_BIN:$PATH" "$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh" \
+  123 owner repo >"$OUTPUT_FILE" 2>"$STDERR_FILE" < <(sleep 8) || true
+probe_elapsed=$(( $(date +%s) - probe_start ))
+run_test "1843_reviewer_open_stdin_prompt" "yes" "$([ "$probe_elapsed" -lt 5 ] && echo yes || echo no)"
+run_test "1843_reviewer_open_stdin_not_blocked" "no" "$(grep -q 'blocked on stdin' "$STDERR_FILE" "$OUTPUT_FILE" && echo yes || echo no)"
+rm -rf "$STDIN_MOCK_BIN"
+
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
   exit 1
