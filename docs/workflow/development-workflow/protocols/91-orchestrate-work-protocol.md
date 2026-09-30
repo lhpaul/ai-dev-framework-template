@@ -2770,8 +2770,10 @@ keeps the latest run per check (status context, or workflow plus check name)
 and treats a not-yet-started re-run as the latest. A failure that is still
 the latest run stays a failure. The REST `commits/<sha>/check-runs` endpoint
 has the same property: its default `filter=latest` means latest per check
-suite, and a re-run workflow is a new suite, so its pages are collapsed with the
-same definition (`STATUS_CHECK_ROLLUP_DEDUPE_JQ`) before anything is counted.
+suite, and another run of a workflow reports in a new suite. It also carries no
+workflow name, so `latest_check_runs_for_sha` (same file) first tags each run
+with its workflow — keeping same-named jobs of different workflows apart — and
+then applies the same definition before anything is counted.
 
 Interpret the result as follows:
 
@@ -3017,10 +3019,18 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 # `--slurp` cannot be combined with `--jq`, so each call returns an array of
 # whole pages and the aggregation is done by an external jq.
 #
+# Superseded runs (issue #1559): check-runs' default `filter=latest` is latest
+# per CHECK SUITE, and another run of a workflow reports in a new suite —
+# PR #1547's head returns both `policy failure 05:26:31` and
+# `policy success 05:28:16`. latest_check_runs_for_sha (workflow-lib.sh,
+# sourced above) reads every page, tags each run with its workflow so
+# same-named jobs of different workflows stay separate, and keeps only the
+# latest run per workflow + job via the shared dedupe.
+#
 # Both reads fail closed. If either endpoint cannot be read, the gate does not
 # know the CI state, and "unknown" must never be labelled as green — the same
 # rule the CI_TOTAL check below applies to an empty check set.
-if ! CHECKS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate --slurp); then
+if ! CHECK_RUNS=$(latest_check_runs_for_sha "$REPO" "$HEAD_SHA"); then
   echo "ERROR: could not read check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
@@ -3034,16 +3044,8 @@ if ! STATUS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" -
   echo "ERROR: could not read commit statuses for $HEAD_SHA — refusing to label on an incomplete CI read."
   exit 5
 fi
-# Superseded runs (issue #1559): `filter=latest`, the check-runs default, is
-# latest per CHECK SUITE, and a re-run workflow is a new suite — PR #1547's
-# head returns both `policy failure 05:26:31` and `policy success 05:28:16`.
-# Count only the latest run per check, via the shared definition sourced from
-# workflow-lib.sh above. (The combined `/status` endpoint below already
-# reports only the latest status per context.)
-if ! CHECK_RUNS=$(printf '%s' "$CHECKS_PAGES" | jq "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].check_runs[]] | dedupe_status_check_rollup'); then
-  echo "ERROR: could not parse check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
-  exit 5
-fi
+# (The combined `/status` endpoint above already reports only the latest
+# status per context.)
 CI_FAILING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
 CI_PENDING=$(printf '%s' "$CHECK_RUNS" | jq '[.[] | select(.status != "completed")] | length')
 CI_TOTAL=$(printf '%s' "$CHECK_RUNS" | jq 'length')

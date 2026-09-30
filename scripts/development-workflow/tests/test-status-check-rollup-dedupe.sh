@@ -228,7 +228,7 @@ echo "=== Part 4: Protocol 91 Step 8a Check 0 (executed from the protocol) ==="
 P91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
 CHECK0="$TMP_ROOT/check0.sh"
 awk '/^# Check 0: CI must be green/{p=1} /^if \[ "\$CI_FAILING" -gt 0 \]/{p=0} p' "$P91" > "$CHECK0"
-run_test "check0_extracted" "yes" "$(grep -q 'dedupe_status_check_rollup' "$CHECK0" && grep -q '^CI_TOTAL=' "$CHECK0" && echo yes || echo no)"
+run_test "check0_extracted" "yes" "$(grep -q 'latest_check_runs_for_sha' "$CHECK0" && grep -q '^CI_TOTAL=' "$CHECK0" && echo yes || echo no)"
 
 CHECK0_BIN="$TMP_ROOT/check0-bin"
 mkdir -p "$CHECK0_BIN"
@@ -238,14 +238,19 @@ case "$*" in
   "pr view"*) printf '%s\n' 8aaf67859e8a6b2b2cc64b288b94f46019753f71 ;;
   "repo view"*) printf '%s\n' owner/repo ;;
   *"/check-runs"*) printf '%s\n' "$MOCK_CHECK_RUN_PAGES" ;;
+  *"/actions/runs"*) printf '%s\n' "$MOCK_WORKFLOW_RUN_PAGES" ;;
   *"/status"*) printf '%s\n' '[{"state":"success","statuses":[{"context":"Reviewer-loop completion guard","state":"success"}]}]' ;;
   *) exit 64 ;;
 esac
 MOCK_GH
 chmod +x "$CHECK0_BIN/gh"
 
+# A ${VAR:-...} default containing braces does not survive parameter
+# expansion, so the empty workflow-run page is a plain variable.
+no_workflow_runs='[{"workflow_runs":[]}]'
 run_check0() {
-  env PATH="$CHECK0_BIN:$PATH" MOCK_CHECK_RUN_PAGES="$1" bash -c '
+  local workflow_pages="${2:-$no_workflow_runs}"
+  env PATH="$CHECK0_BIN:$PATH" MOCK_CHECK_RUN_PAGES="$1" MOCK_WORKFLOW_RUN_PAGES="$workflow_pages" bash -c '
     set -euo pipefail
     source "$1"
     PR_NUMBER=1547
@@ -265,6 +270,38 @@ current_failure_pages='[{"total_count":2,"check_runs":[
   {"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":2}},
   {"name":"policy","status":"completed","conclusion":"success","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":1}}]}]'
 run_test "check0_current_failure_still_counts" "1 0 2" "$(run_check0 "$current_failure_pages")"
+
+# REST check runs carry no workflow name. Two workflows that both have a job
+# named `test` are two checks: unit's failure must not disappear behind e2e's
+# later success. Runs of ONE workflow in two suites (policy, re-triggered)
+# still collapse to the latest.
+two_workflow_pages='[{"total_count":4,"check_runs":[
+  {"name":"test","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":11},"app":{"slug":"github-actions"}},
+  {"name":"test","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":12},"app":{"slug":"github-actions"}},
+  {"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":13},"app":{"slug":"github-actions"}},
+  {"name":"policy","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":14},"app":{"slug":"github-actions"}}]}]'
+two_workflow_runs='[{"workflow_runs":[
+  {"check_suite_id":11,"name":"unit","path":".github/workflows/unit.yml"},
+  {"check_suite_id":12,"name":"e2e","path":".github/workflows/e2e.yml"},
+  {"check_suite_id":13,"name":"PR policy","path":".github/workflows/pr-policy.yml"},
+  {"check_suite_id":14,"name":"PR policy","path":".github/workflows/pr-policy.yml"}]}]'
+run_test "check0_same_job_name_other_workflow_failure_counts" "1 0 4" "$(run_check0 "$two_workflow_pages" "$two_workflow_runs")"
+
+# Both reads fail closed.
+check0_fail_bin="$TMP_ROOT/check0-fail-bin"
+mkdir -p "$check0_fail_bin"
+cp "$CHECK0_BIN/gh" "$check0_fail_bin/gh"
+sed -i.bak 's#^  \*"/actions/runs"\*).*#  *"/actions/runs"*) exit 1 ;;#' "$check0_fail_bin/gh"
+run_test "check0_fail_mock_rewritten" "1" "$(grep -c '"/actions/runs"\*) exit 1' "$check0_fail_bin/gh")"
+check0_fail_out="$(env PATH="$check0_fail_bin:$PATH" MOCK_CHECK_RUN_PAGES="$superseded_pages" MOCK_WORKFLOW_RUN_PAGES="$no_workflow_runs" bash -c '
+  set -euo pipefail
+  source "$1"
+  PR_NUMBER=1547
+  source "$2"
+  echo "reached-counts"
+' _ "$WF_DIR/workflow-lib.sh" "$CHECK0" 2>&1; echo "status=$?")"
+run_test "check0_workflow_read_failure_fails_closed" "status=5" "$(printf '%s\n' "$check0_fail_out" | tail -1)"
+run_test "check0_workflow_read_failure_never_counts" "no" "$(grep -q 'reached-counts' <<<"$check0_fail_out" && echo yes || echo no)"
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

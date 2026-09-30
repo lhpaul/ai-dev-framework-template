@@ -639,6 +639,42 @@ normalize_status_check_rollup() {
   '
 }
 
+# latest_check_runs_for_sha <owner/repo> <sha>
+#
+# Prints one JSON array: the latest REST check run per check for <sha>, every
+# page read. Returns non-zero when either read fails, so a caller can fail
+# closed rather than judge CI on a partial read.
+#
+# REST `commits/<sha>/check-runs` keeps superseded runs as well (its default
+# filter=latest is per check SUITE, and another run of a workflow reports in a
+# new suite), and — unlike the GraphQL rollup — carries no workflow name. Keying
+# on the job name alone would merge same-named jobs of two different
+# workflows, hiding one workflow's failure behind the other's later success.
+# So each run first gets its workflow identity: the workflow file path of the
+# Actions run that owns its check suite (from `actions/runs?head_sha=`), or the
+# app slug for checks posted by a non-Actions app. Then the shared
+# dedupe_status_check_rollup keeps the latest run per workflow + job.
+latest_check_runs_for_sha() {
+  local repo="$1" sha="$2" check_pages="" workflow_pages=""
+  [ -n "$repo" ] && [ -n "$sha" ] || return 2
+  check_pages="$(gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  workflow_pages="$(gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  [ -n "$check_pages" ] && [ -n "$workflow_pages" ] || return 1
+  { printf '%s\n' "$check_pages"; printf '%s\n' "$workflow_pages"; } \
+    | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+        .[0] as $check_pages | .[1] as $workflow_pages
+        | ([$workflow_pages[].workflow_runs[]?
+            | select(.check_suite_id != null)
+            | {key: (.check_suite_id | tostring), value: (.path // .name // "")}]
+           | from_entries) as $workflow_by_suite
+        | [$check_pages[].check_runs[]?
+           | . + {workflowName: (
+               $workflow_by_suite[((.check_suite.id // "") | tostring)]
+               // .app.slug // "")}]
+        | dedupe_status_check_rollup
+      '
+}
+
 # bot_login_for_platform <platform>
 #
 # Prints the GitHub login a review platform posts as, or nothing for a platform
