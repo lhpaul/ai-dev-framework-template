@@ -208,11 +208,13 @@ calls.
 
 **Known limitations** (false-negative surfaces, not defects):
 
-- A query fragment held in a variable that is not itself named `*query` (e.g.
+- A query fragment held in a separate variable (e.g.
   `pr_fields='commits(last:1){...}'` spliced into a larger query by
   concatenation) is treated as an opaque, assumed-balanced blob at the splice
-  point rather than independently validated. Name query-fragment variables so
-  they end in `query` (or inline them) to bring them into scope.
+  point rather than independently validated. Renaming it does not help (a
+  fragment does not open with an operation keyword). Inline the fragment into
+  the query literal to bring it into scope; otherwise it is covered only by the
+  live-validation requirement below.
 - Only single-quoted `query='...'` literals are scanned. Double-quoted
   `query="..."` literals and heredoc-built queries are not; keep new queries in
   the single-quoted form.
