@@ -174,6 +174,7 @@ rationale for every `Not applicable` item:
 - Internal consistency: Checked - terminology and status labels are consistent.
 - Behavioral guarantees: Not applicable - this spec does not introduce guarantees beyond ACs.
 - Complex workflow decision-gate matrix: Not applicable - this spec does not add or modify workflow decision-gate behavior.
+- Matrix coherence preflight: Not applicable - no stateful contract.
 - Reviewer-risk categories: Checked - API surface, concurrency, snapshot semantics, edge cases, and template placeholders reviewed.
 ```
 
@@ -197,6 +198,40 @@ Before the PR is opened, verify:
   not change decision-gate behavior, record a short not-applicable rationale.
   If an expected input, outcome, example, or mirror surface is marked not
   applicable, include the rationale in the matrix row.
+- Matrix coherence preflight: when the spec contains a decision matrix, state
+  table, lifecycle, precedence rules, or similarly stateful contract, run this
+  six-check audit before the PR is first pushed (before the reviewer loop is
+  ever entered):
+  1. **Overlapping rows** — can two rows match the same input combination, and
+     if so, does the document state which wins?
+  2. **Missing states** — for every input combination the surrounding prose
+     admits, is there a row/branch, including malformed or unknown input
+     handling?
+  3. **Precedence / order ambiguity** — when rules or rows fire together, is
+     the ordering stated?
+  4. **Malformed / unknown input handling** — is the outcome defined for
+     missing, empty, invalid, or unrecognized inputs?
+  5. **Stale vs current evidence** — do the rules say which evidence
+     revision/currency governs, when recency decides?
+  6. **Terminal vs waiting vs escalation outcomes** — does every path end in
+     one of the stated outcome classes, with no gap where the loop could
+     neither proceed, wait, nor escalate?
+
+  This is the canonical, single normative definition of the six-check audit;
+  `review-doctrine.md`'s `Criteria/matrix mismatch` and `Trigger ambiguity`
+  patterns cover checks 1, 2, and 4, and its `Stateful-contract outcome gaps`
+  pattern covers checks 3, 5, and 6. Record the result as a `Matrix coherence
+  preflight` row in the Document Quality Gate log: `Checked` with a one-line
+  audit summary naming each check and its pass/fail, or `Not applicable — no
+  stateful contract` with the rationale. If the spec has no stateful contract,
+  no ceremony is added beyond that one reasoned row.
+
+  A failed check blocks the push: fix the matrix (or its governing prose),
+  re-run the audit, and push only when all six checks pass. A `Checked` row
+  is recorded only for a passing audit. If a failed check cannot be resolved
+  without a product or human decision, record the row as `Checked — gaps
+  found` listing each failed check, and stop for that decision instead of
+  entering the reviewer loop.
 - Reviewer-risk categories: common high-signal reviewer concerns are checked:
   API-surface completeness, concurrency correctness, single-snapshot or
   consistency semantics, missing edge cases, vague actors/triggers, untestable

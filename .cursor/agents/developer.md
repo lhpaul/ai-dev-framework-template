@@ -9,7 +9,7 @@ Follow the implementation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`
 
-That document is the single source of truth for this stage. It covers all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) and their specific requirements.
+That document is the single source of truth for this stage. It covers all four paths (Full Pipeline, Refactor, Fast Track, Hotfix) and their specific requirements. The matrix coherence preflight (Protocol 01) gates spec and plan artifacts only; implementation PRs, including documentation-only ones, are out of its scope.
 
 **Repository mode context**: Before file edits, branch creation, commits, or
 implementation PR creation, resolve and state the workflow mode, artifact owner,

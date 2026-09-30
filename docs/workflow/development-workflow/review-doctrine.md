@@ -97,3 +97,25 @@ exercised and the failure that now goes unnoticed? This question does not
 apply when the source document explicitly marked the list binding — a
 binding list's delta is blocking on its own terms, with no need to name what
 it protected.
+
+### Stateful-contract outcome gaps
+
+**Shape**: A decision matrix, state table, lifecycle, or precedence-rule set
+does not say which rule wins when several fire together, does not say which
+evidence revision governs when recency decides, or has a path that ends in
+none of the document's stated outcome classes (for example neither proceed,
+wait, nor escalate). See also `Criteria/matrix mismatch` and `Trigger
+ambiguity` for overlapping rows, missing states, and malformed or unknown
+input handling.
+
+**Example**: Two rules can both fire on the same input, and the document
+never states which one takes precedence; or a table cites "the latest
+evidence" without saying which of two conflicting timestamps counts as
+latest; or a row's next action is left unstated, so a reader cannot tell
+whether the case proceeds, waits, or escalates.
+
+**Detect**: When rules or rows can fire together, does the document state the
+order? When recency decides an outcome, does the document name which
+evidence revision or timestamp governs? Does every path end in one of the
+document's stated outcome classes, with no gap where it could neither
+proceed, wait, nor escalate?

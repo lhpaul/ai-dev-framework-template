@@ -94,7 +94,11 @@ index labels, file paths, directory names, and route/URL structures. For complex
 workflow decision-gate plans, include protocol 02's matrix classification and
 Document Quality Gate entry. Fix all inconsistencies before proceeding to the
 lint check, and include the Document Quality Gate log in the draft PR
-description.
+description. When the plan's own stateful contract, or the work item brief for
+Refactor items, contains a decision matrix, state table, lifecycle, or
+precedence rules, run protocol 02's matrix coherence preflight (the same
+six-check audit as protocol 01) and record the result as a `Matrix coherence
+preflight` row in the gate log.
 
 Before writing or updating the smoke runbook (protocol 02 Step 4), discover
 design assets per `docs/workflow/development-workflow/design-assets.md`. When

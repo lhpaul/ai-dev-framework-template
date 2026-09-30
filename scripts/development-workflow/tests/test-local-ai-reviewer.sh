@@ -1467,7 +1467,7 @@ _1654_independent_version() {
 _1654_install_doctrine "$_1654_doctrine_root" "$REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md"
 _1654_supplied="$(_1654_run_supply "$_1654_doctrine_root")"
 run_test "1654_s1_supplied_state" "supplied" "$(printf '%s\n' "$_1654_supplied" | jq -r '.state')"
-run_test "1654_s1_supplied_count" "6" "$(printf '%s\n' "$_1654_supplied" | jq -r '.pattern_count')"
+run_test "1654_s1_supplied_count" "7" "$(printf '%s\n' "$_1654_supplied" | jq -r '.pattern_count')"
 run_test "1654_s1_supplied_version_len" "12" "$(printf '%s\n' "$_1654_supplied" | jq -r '.version | length')"
 run_test "1654_s1_supplied_text_nonempty" "true" "$(printf '%s\n' "$_1654_supplied" | jq -r '.text | length > 0')"
 
@@ -1581,7 +1581,7 @@ for _1654_field in schema_version pr_number owner repo base_branch head_branch r
 done
 run_test "1654_s7a_bytes_match" "0" "$(jq -j -r '.review_doctrine' "$BUNDLE_DUMP" > /tmp/1654-doctrine-bytes.tmp && cmp -s "$VALID_REPO_ROOT/docs/workflow/development-workflow/review-doctrine.md" /tmp/1654-doctrine-bytes.tmp && echo 0 || echo 1)"
 run_test "1654_s8_state_kv" "REVIEW_DOCTRINE_STATE=supplied" "$(line_for REVIEW_DOCTRINE_STATE)"
-run_test "1654_s8_count_kv" "REVIEW_DOCTRINE_PATTERN_COUNT=6" "$(line_for REVIEW_DOCTRINE_PATTERN_COUNT)"
+run_test "1654_s8_count_kv" "REVIEW_DOCTRINE_PATTERN_COUNT=7" "$(line_for REVIEW_DOCTRINE_PATTERN_COUNT)"
 run_test "1654_s8_no_text_kv" "0" "$(grep -c '^REVIEW_DOCTRINE=' "$OUTPUT_FILE" 2>/dev/null || true)"
 _1654_emit_out="$(bash -c 'HARNESS_MODE=1 source "$1"; emit_prefixed_platform_output 1 "$(cat "$2")"' bash "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$OUTPUT_FILE")"
 run_test "1654_s8_platform_state" "1" "$(printf '%s\n' "$_1654_emit_out" | grep -c '^PLATFORM_1_REVIEW_DOCTRINE_STATE=' || true)"

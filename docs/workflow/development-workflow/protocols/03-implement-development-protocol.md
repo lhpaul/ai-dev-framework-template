@@ -17,6 +17,14 @@
 
 ---
 
+## Matrix coherence preflight — not applicable to implementation PRs
+
+The matrix coherence preflight (Protocol 01's Document Quality Gate section,
+"Matrix coherence preflight") gates spec and plan artifacts only. Implementation
+PRs — including documentation-only implementation PRs produced by this protocol
+— are out of its scope; documentation changes made here follow the existing
+Code Review Checklist review path unchanged.
+
 ## Pre-Edit Branch/Worktree Guard
 
 Before writing or editing any repository file for implementation work, verify
