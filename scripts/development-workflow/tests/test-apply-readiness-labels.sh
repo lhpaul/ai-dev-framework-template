@@ -281,6 +281,24 @@ case "$*" in
     emit "${MOCK_GREPTILE_REACTION:-[]}"
     exit 0
     ;;
+  *"pr view"*"--json headRefName,headRepositoryOwner,headRepository,isCrossRepository"*)
+    # PR ownership guard (#1837, pr-ownership-guard.sh via apply-readiness-labels.sh).
+    # MOCK_OWNERSHIP_PR_JSON overrides the whole payload for dedicated ownership
+    # tests; otherwise the default derives headRefName from MOCK_PR_JSON so every
+    # pre-existing readiness fixture's ownership check passes by construction
+    # (it reports the same branch the readiness fixture already declares) and
+    # the owning repository matches the default acme/widgets fixture repo.
+    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
+    if [ -n "${MOCK_OWNERSHIP_PR_JSON:-}" ]; then
+      emit "$MOCK_OWNERSHIP_PR_JSON"
+    else
+      _own_branch="$(printf '%s\n' "${MOCK_PR_JSON:-$pr_default}" | jq -r '.headRefName // empty' 2>/dev/null)"
+      [ -n "$_own_branch" ] || _own_branch='fix/1408-demo'
+      printf '{"headRefName":"%s","headRepositoryOwner":{"login":"acme"},"headRepository":{"name":"widgets"},"isCrossRepository":%s}\n' \
+        "$_own_branch" "${MOCK_OWNERSHIP_CROSS:-false}"
+    fi
+    exit 0
+    ;;
   *"pr view"*)
     emit "${MOCK_PR_JSON:-$pr_default}"
     exit 0
@@ -426,6 +444,18 @@ order_log() {
 run_helper() {
   local default_labels='{"labels":[]}'
   local label="${MOCK_LABEL:-ready-for-human-review}"
+  # Ownership branch: derived from MOCK_PR_JSON's own headRefName (falling
+  # back to $_BRANCH) so the ownership guard (#1837) matches every fixture's
+  # own PR state by construction — the gate this wrapper exercises is the
+  # reviewer/CI gate, not ownership. MOCK_OWNERSHIP_BRANCH overrides it for
+  # dedicated ownership-mismatch tests.
+  local _ownership_branch="${MOCK_OWNERSHIP_BRANCH:-}"
+  if [ -z "$_ownership_branch" ]; then
+    _ownership_branch="$(printf '%s\n' "${MOCK_PR_JSON:-}" | jq -r '.headRefName // empty' 2>/dev/null)"
+    [ -n "$_ownership_branch" ] || _ownership_branch="$_BRANCH"
+  fi
+  local _dry_run_flag=()
+  [ "${MOCK_DRY_RUN:-false}" = "true" ] && _dry_run_flag=(--dry-run)
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
   : >"$_CALL_LOG"
@@ -437,6 +467,7 @@ run_helper() {
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
     MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
+    MOCK_OWNERSHIP_PR_JSON="${MOCK_OWNERSHIP_PR_JSON:-}" \
     MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
     MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
     MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
@@ -471,7 +502,7 @@ run_helper() {
     MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
-    "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
+    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" "${_dry_run_flag[@]}" 2>/dev/null
   )"
   code=$?
   set -e
@@ -659,7 +690,7 @@ run_test "unknown_arg_exit" "2" "$code"
 # A failed state read escalates rather than labelling.
 set +e
 out="$(PATH="$_BIN:$PATH" AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/workflow.yaml" MOCK_GH_LOG="$_LABEL_LOG" MOCK_CHECK_RUNS_EXIT=1 \
-  MOCK_PR_JSON="$_empty_rollup" "$HELPER" --pr 42 --repo acme/widgets --label ready-for-human-review 2>/dev/null)"
+  MOCK_PR_JSON="$_empty_rollup" "$HELPER" --pr 42 --repo acme/widgets --branch "$_BRANCH" --label ready-for-human-review 2>/dev/null)"
 code=$?
 set -e
 run_test "check_run_fetch_failure_exit" "2" "$code"
@@ -838,7 +869,7 @@ out="$(
   AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/codex-config/workflow.yaml" \
   MOCK_GH_LOG="$_LABEL_LOG" MOCK_LABEL_STATE="$_LABEL_STATE" \
   MOCK_CHECK_RUNS='{"check_runs":[]}' MOCK_COMMENTS='[]' MOCK_REVIEWS='[]' \
-  "$HELPER" --pr 42 --repo acme/widgets --label ready-for-human-review 2>/dev/null
+  "$HELPER" --pr 42 --repo acme/widgets --branch "$_BRANCH" --label ready-for-human-review 2>/dev/null
 )"
 code=$?
 set -e
@@ -909,6 +940,11 @@ echo "=== Area 7: PR #1818 Codex findings, round 2 ==="
 # head-config path runs.
 run_helper_no_local_config() {
   local label="${MOCK_LABEL:-ready-for-human-review}"
+  local _ownership_branch="${MOCK_OWNERSHIP_BRANCH:-}"
+  if [ -z "$_ownership_branch" ]; then
+    _ownership_branch="$(printf '%s\n' "${MOCK_PR_JSON:-}" | jq -r '.headRefName // empty' 2>/dev/null)"
+    [ -n "$_ownership_branch" ] || _ownership_branch="$_BRANCH"
+  fi
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
   : >"$_CALL_LOG"
@@ -920,6 +956,7 @@ run_helper_no_local_config() {
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
     MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
+    MOCK_OWNERSHIP_PR_JSON="${MOCK_OWNERSHIP_PR_JSON:-}" \
     MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
     MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
     MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
@@ -944,7 +981,7 @@ run_helper_no_local_config() {
     MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
     MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
     MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
-    "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
+    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" 2>/dev/null
   )"
   code=$?
   set -e
@@ -1720,6 +1757,11 @@ YAML
 # reading the review surface.
 run_helper_platform() {
   local label="${MOCK_LABEL:-ready-for-human-review}"
+  local _ownership_branch="${MOCK_OWNERSHIP_BRANCH:-}"
+  if [ -z "$_ownership_branch" ]; then
+    _ownership_branch="$(printf '%s\n' "${MOCK_PR_JSON:-}" | jq -r '.headRefName // empty' 2>/dev/null)"
+    [ -n "$_ownership_branch" ] || _ownership_branch="$_BRANCH"
+  fi
   : >"$_LABEL_LOG"
   : >"$_LABEL_STATE"
   : >"$_CALL_LOG"
@@ -1732,6 +1774,7 @@ run_helper_platform() {
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
     MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
+    MOCK_OWNERSHIP_PR_JSON="${MOCK_OWNERSHIP_PR_JSON:-}" \
     MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
     MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
     MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
@@ -1770,7 +1813,7 @@ run_helper_platform() {
     MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
     MOCK_PERMS="${MOCK_PERMS:-}" \
     PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
-    "$HELPER" --pr 42 --repo acme/widgets --label "$label" 2>/dev/null
+    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" 2>/dev/null
   )"
   code=$?
   set -e
@@ -2426,6 +2469,107 @@ run_test "local_ai_reviewer_current_head_ledger_labels_result" "labeled" "$(fiel
 MOCK_ISSUE_COMMENTS='[]'
 MOCK_GH_USER=''
 MOCK_PERMS=''
+
+echo ""
+echo "=== Area 18: --dry-run and PR ownership guard (#1837) ==="
+
+# --dry-run: a clean gate reports the label it WOULD apply without applying
+# it — no `gh pr edit --add-label` call at all.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_DRY_RUN=true
+result="$(run_helper)"
+MOCK_DRY_RUN=false
+run_test "dry_run_clean_exit" "0" "${result%%|*}"
+run_test "dry_run_clean_result" "would-label" "$(field "$result" RESULT)"
+run_test "dry_run_clean_reason" "gate-passed" "$(field "$result" REASON)"
+run_test "dry_run_clean_dry_run_flag" "true" "$(field "$result" DRY_RUN)"
+run_test "dry_run_clean_applies_nothing" "0" "$(edit_count)"
+
+# --dry-run on a refusal path: the verdict (RESULT/REASON) is unchanged, and
+# still nothing is mutated.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_DRY_RUN=true
+result="$(run_helper)"
+MOCK_DRY_RUN=false
+run_test "dry_run_refused_exit" "1" "${result%%|*}"
+run_test "dry_run_refused_result" "refused" "$(field "$result" RESULT)"
+run_test "dry_run_refused_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "dry_run_refused_dry_run_flag" "true" "$(field "$result" DRY_RUN)"
+run_test "dry_run_refused_applies_nothing" "0" "$(edit_count)"
+
+# --dry-run must not even remove a STALE readiness label the PR already
+# carries on a refusal — applying nothing means nothing, not "nothing except
+# the removal this gate would otherwise do".
+MOCK_PR_JSON="$_label_present_pr"
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_DRY_RUN=true
+result="$(run_helper)"
+MOCK_DRY_RUN=false
+run_test "dry_run_refused_no_stale_label_removed" "0" \
+  "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
+run_test "dry_run_refused_with_stale_label_result" "refused" "$(field "$result" RESULT)"
+
+# A normal (non-dry-run) run reports DRY_RUN=false for symmetry.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper)"
+run_test "normal_run_dry_run_flag_false" "false" "$(field "$result" DRY_RUN)"
+run_test "normal_run_still_labels_result" "labeled" "$(field "$result" RESULT)"
+
+# --- PR ownership guard (#1837, mirrors #1444's pr-ownership-guard.sh) ------
+
+# Planted failing case: --branch names a different branch than the PR's own
+# head — the exact parallel-wave incident this issue files (a transposed
+# --pr labeling a sibling's PR). Must refuse before reading any reviewer/CI
+# state, and must not attempt any mutation.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_OWNERSHIP_BRANCH='fix/9999-someone-elses-branch'
+result="$(run_helper)"
+MOCK_OWNERSHIP_BRANCH=''
+run_test "ownership_mismatch_exit" "1" "${result%%|*}"
+run_test "ownership_mismatch_result" "refused" "$(field "$result" RESULT)"
+run_test "ownership_mismatch_reason" "ownership-mismatch" "$(field "$result" REASON)"
+run_test "ownership_mismatch_applies_nothing" "0" "$(edit_count)"
+run_test "ownership_mismatch_reports_pr_head_branch" "$_BRANCH" \
+  "$(field "$result" OWNERSHIP_PR_HEAD_BRANCH)"
+
+# A cross-repository PR (fork with the same branch name) is not owned either,
+# even when the branch name matches.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_OWNERSHIP_PR_JSON='{"headRefName":"'"$_BRANCH"'","headRepositoryOwner":{"login":"someone-else"},"headRepository":{"name":"widgets"},"isCrossRepository":true}'
+result="$(run_helper)"
+MOCK_OWNERSHIP_PR_JSON=''
+run_test "ownership_cross_repo_reason" "ownership-mismatch" "$(field "$result" REASON)"
+run_test "ownership_cross_repo_applies_nothing" "0" "$(edit_count)"
+
+# An unresolvable ownership check (the guard's own `gh pr view` response is
+# missing the cross-repository flag) escalates fail-closed, never a silent
+# pass.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_OWNERSHIP_PR_JSON='{"headRefName":"'"$_BRANCH"'"}'
+result="$(run_helper)"
+MOCK_OWNERSHIP_PR_JSON=''
+run_test "ownership_unresolved_exit" "2" "${result%%|*}"
+run_test "ownership_unresolved_result" "escalate" "$(field "$result" RESULT)"
+run_test "ownership_unresolved_reason" "ownership-unverified" "$(field "$result" REASON)"
+run_test "ownership_unresolved_applies_nothing" "0" "$(edit_count)"
+
+# The matching-branch case (every other test in this file) proves the
+# positive path: an explicit --branch that DOES match the PR's own head
+# branch proceeds to the reviewer/CI gate as before.
+MOCK_PR_JSON="$_empty_rollup"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_OWNERSHIP_BRANCH="$_BRANCH"
+result="$(run_helper)"
+MOCK_OWNERSHIP_BRANCH=''
+run_test "ownership_match_proceeds_result" "labeled" "$(field "$result" RESULT)"
+run_test "ownership_match_reports_owned" "owned" \
+  "$(field "$result" OWNERSHIP_RESULT)"
 
 # #1828: the helper's GraphQL is only ever exercised against a mocked `gh`,
 # which accepts any query text, so an unbalanced literal shipped and GitHub
