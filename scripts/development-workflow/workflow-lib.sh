@@ -3888,7 +3888,29 @@ WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS='
   def same_repo_item($item; $repoSlug):
     item_repo_slug($item) as $slug
     | $slug != "" and $slug == ($repoSlug | ascii_downcase);
+
+  # Open issues keyed by number, so the join is one lookup per board item
+  # rather than a scan of every open issue.
+  def issue_index:
+    map(select(.number != null) | {key: (.number | tostring), value: .})
+    | from_entries;
 '
+
+# workflow_json_to_tmpfile <json> — writes <json> to a new temp file and
+# prints its path. Large JSON (tens of thousands of open issues) must reach
+# jq through a file (--slurpfile), never as a single --argjson argument:
+# one argument that large exceeds the OS argument-size limit and jq fails
+# with "Argument list too long" (#1804). printf is a shell builtin, so it
+# is not subject to that limit. The caller removes the file.
+workflow_json_to_tmpfile() {
+  local json="$1" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/workflow-json.XXXXXX")" || return 1
+  if ! printf '%s' "$json" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  printf '%s\n' "$tmp"
+}
 
 # list_open_workflow_type_issues
 #
@@ -4000,9 +4022,18 @@ list_open_workflow_type_issues() {
   _lowti_preferred_field="$(workflow_issue_tracker_custom_field type_field "$(workflow_effective_config_file || true)")"
   _lowti_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$_lowti_preferred_field")"
 
+  # Open issues reach jq through a file, never one --argjson argument, which
+  # would exceed the OS argument-size limit for large repositories (#1804).
+  local _lowti_open_file _lowti_join_rc=0
+  if ! _lowti_open_file="$(workflow_json_to_tmpfile "$open_issues")"; then
+    echo "Warning: could not stage open GitHub issues for the project join; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+
   # Join by (repository, number), never by number alone — see
   # WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS (#1804).
-  if ! _lowti_result_json="$(printf '%s' "$project_items" | jq --argjson open "$open_issues" --argjson candidate_keys "$_lowti_candidate_keys_json" --arg repoSlug "$repo_slug" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
+  _lowti_result_json="$(printf '%s' "$project_items" | jq --slurpfile openDocs "$_lowti_open_file" --argjson candidate_keys "$_lowti_candidate_keys_json" --arg repoSlug "$repo_slug" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
@@ -4010,7 +4041,8 @@ list_open_workflow_type_issues() {
     def item_type($item):
       ( [ $candidate_keys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
 
-    ( [ .items[] | keys[] ] | unique ) as $item_keys
+    ($openDocs[0] | issue_index) as $openByNumber
+    | ( [ .items[] | keys[] ] | unique ) as $item_keys
     | ( [ $candidate_keys[] | select(. as $k | $item_keys | index($k) != null) ] ) as $matched_keys
     | {
         matched_keys: $matched_keys,
@@ -4020,7 +4052,7 @@ list_open_workflow_type_issues() {
           | select(item_type(.) == "Workflow")
           | . as $item
           | select(same_repo_item($item; $repoSlug))
-          | ($open[] | select(.number == $item.content.number)) as $issue
+          | ($openByNumber[($item.content.number | tostring)] // empty) as $issue
           | select(terminal($item.status) | not)
           | {
               number: $issue.number,
@@ -4033,7 +4065,9 @@ list_open_workflow_type_issues() {
             }
         ]
       }
-  ' 2>/dev/null)"; then
+  ' 2>/dev/null)" || _lowti_join_rc=$?
+  rm -f "$_lowti_open_file"
+  if [ "$_lowti_join_rc" -ne 0 ]; then
     echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
     printf '[]\n'
     return 0

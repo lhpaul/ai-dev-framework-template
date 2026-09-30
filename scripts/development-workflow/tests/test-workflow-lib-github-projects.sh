@@ -261,6 +261,11 @@ JSON
       cat <<'JSON'
 {"items":[{"content":{"number":824,"repository":"lhpaul/some-other-repo","type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Foreign 824"},{"content":{"number":824,"type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Foreign 824 by URL"},{"content":{"number":824},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Unidentified 824"}],"totalCount":3}
 JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "large_issue_join" ]; then
+      # Workflow item for open issue #11500 of a 12,000-issue list (#1804).
+      cat <<'JSON'
+{"items":[{"content":{"number":11500,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/11500"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Issue 11500"}],"totalCount":1}
+JSON
     elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "paged" ]; then
       # MOCK_ITEM_TOTAL board items; Workflow item #824 is record 1200.
       jq -cn --argjson limit "$mock_limit" --argjson total "${MOCK_ITEM_TOTAL:-1500}" '
@@ -766,6 +771,15 @@ workflow_issues_paged_issues="$(list_open_workflow_type_issues 2>/dev/null)"
 unset MOCK_ISSUE_LIST_MODE MOCK_ISSUE_TOTAL
 run_test "workflow_type_discovery_paginates_issue_list" "824" "$(printf '%s' "$workflow_issues_paged_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
 run_test "workflow_type_discovery_issue_list_rereads_with_larger_cap" "1" "$(count_log_matches 'issue list .* --limit 2000 ')"
+
+# A large, successfully fetched issue list must survive the final join; as
+# one jq --argjson argument it exceeds the OS argument-size limit
+# (local-ai-reviewer finding, #1804).
+reset_log
+export MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=12000 MOCK_ITEM_LIST_MODE=large_issue_join
+workflow_issues_large="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ISSUE_LIST_MODE MOCK_ISSUE_TOTAL MOCK_ITEM_LIST_MODE
+run_test "workflow_type_discovery_large_issue_list_join" "11500" "$(printf '%s' "$workflow_issues_large" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
 
 # Past the hard bound the primitive refuses a partial list and warns.
 reset_log

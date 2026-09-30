@@ -145,6 +145,13 @@ JSON
 {"items":[{"content":{"number":1400,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/1400"},"status":"Backlog","priority":"High","type":"Feature","title":"Issue 1400"}],"totalCount":1}
 JSON
         ;;
+      large_issue_join)
+        # Board item for open issue #11500 — joinable only when a
+        # 12,000-issue list survives the whole pipeline into jq (#1804).
+        cat <<'JSON'
+{"items":[{"content":{"number":11500,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/11500"},"status":"Backlog","priority":"High","type":"Feature","title":"Issue 11500"}],"totalCount":1}
+JSON
+        ;;
       renamed_type_field)
         cat <<'JSON'
 {"items":[{"content":{"number":900,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/900"},"status":"Backlog","priority":"High","title":"Feature helper issue"}],"totalCount":1}
@@ -406,6 +413,15 @@ paged_issues_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
 run_test "issue_list_paginates_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$paged_issues_out")"
 run_test "issue_list_paginates_joins_issue_past_first_page" "1" "$(printf '%s\n' "$paged_issues_out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":1400' | wc -l | tr -d ' ')"
 run_test "issue_list_paginates_rereads_with_larger_cap" "1" "$(grep -c 'issue list --repo lhpaul/ai-dev-framework-template --state open --limit 2000 ' "$CALL_LOG")"
+
+# A large, successfully fetched issue list must reach the final join: as a
+# single jq --argjson argument, 12,000 issues exceed the OS argument-size
+# limit and the join fails (local-ai-reviewer finding, #1804).
+reset_log
+MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=12000 MOCK_ITEM_LIST_MODE=large_issue_join run_wrapper_in_repo "$framework_config"
+large_issues_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "large_issue_list_join_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$large_issues_out")"
+run_test "large_issue_list_join_finds_item" "1" "$(printf '%s\n' "$large_issues_out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":11500' | wc -l | tr -d ' ')"
 
 echo ""
 echo "=== list_open_framework_items.sh: truncation past the hard bound is unavailable, never partial (#1804) ==="

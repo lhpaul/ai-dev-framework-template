@@ -232,7 +232,16 @@ fm_type_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$fm_type_pre
 # the live-verified content.repository ("owner/repo") or, failing that,
 # content.url; an item that identifies no repository is never joined
 # (fails closed, #1804). See WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS.
-if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$fm_open_issues" --arg repoSlug "$fm_repo_slug" --argjson candidateKeys "$fm_type_candidate_keys_json" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
+#
+# The open issues reach jq through a file (--slurpfile), never as one
+# --argjson argument: a large repository's issue list would exceed the OS
+# argument-size limit and fail the join (#1804).
+if ! fm_open_file="$(workflow_json_to_tmpfile "$fm_open_issues")"; then
+  _emit_unavailable "issue_list_failed"
+  exit 0
+fi
+trap 'rm -f "$fm_open_file"' EXIT
+if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --slurpfile openDocs "$fm_open_file" --arg repoSlug "$fm_repo_slug" --argjson candidateKeys "$fm_type_candidate_keys_json" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
   def terminal($status):
     ($status // "") as $s
     | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
@@ -240,10 +249,11 @@ if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$
   def item_type($item):
     ( [ $candidateKeys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
 
-  [ .items[]
+  ($openDocs[0] | issue_index) as $openByNumber
+  | [ .items[]
     | . as $item
     | select(same_repo_item($item; $repoSlug))
-    | ($open[] | select(.number == $item.content.number)) as $issue
+    | ($openByNumber[($item.content.number | tostring)] // empty) as $issue
     | select(terminal($item.status) | not)
     | {
         number: $issue.number,
