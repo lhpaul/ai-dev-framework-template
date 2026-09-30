@@ -3023,8 +3023,9 @@ run_ronda_review() {
         ronda_blocking=$((10#$ronda_blocking))
         ronda_important=$((10#$ronda_important))
         ronda_nit=$((10#$ronda_nit))
-        local ronda_suggestions=$((ronda_important + ronda_nit))
-        local ronda_total=$((ronda_blocking + ronda_suggestions))
+        local ronda_suggestions ronda_total
+        ronda_suggestions=$((ronda_important + ronda_nit))
+        ronda_total=$((ronda_blocking + ronda_suggestions))
         if [ "$ronda_blocking" -eq 0 ]; then
           print_kv RESULT clean
           print_kv REVIEWED_HEAD "$current_sha"
