@@ -414,6 +414,12 @@ unset _ronda_mock_38 actual_output actual_exit
 #   4.6  leading-zero counts       -> read as base 10 (08 is 8, not an octal
 #                                     arithmetic error)
 #   4.7  CRLF line endings         -> parsed (carriage returns stripped)
+#   4.8  valid + malformed line    -> escalate (candidates counted before
+#                                     syntax validation)
+#   4.9  valid + emphasized or
+#        lower-case Blocking line  -> escalate
+#   4.10 trailing whitespace       -> parsed
+#   4.11 sweep / context lines     -> not candidates, clean
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== Area 4: success conclusion — severity-line verdict ==="
@@ -510,6 +516,32 @@ run_test "ronda_success_leading_zero_exit_code" "EXIT=1" "$(_kv EXIT "$out")"
 out="$(_ronda_run_success_summary '"Model: m\r\nBlocking: 2, Important: 0, Nit: 0\r\n"')"
 run_test "ronda_success_crlf_blocking" "BLOCKING_COUNT=2" "$(_kv BLOCKING_COUNT "$out")"
 run_test "ronda_success_crlf_exit_code" "EXIT=1" "$(_kv EXIT "$out")"
+
+# --- Test 4.8: a valid clean line cannot mask a second, malformed line ---
+# Local-AI review finding on PR #1854: duplicate detection must count
+# candidate lines before validating syntax, or `Blocking: 1, Important: bad`
+# is discarded and the valid `Blocking: 0` line reads clean.
+out="$(_ronda_run_success_summary '"Blocking: 0, Important: 0, Nit: 0\nBlocking: 1, Important: bad, Nit: 0"')"
+run_test "ronda_success_valid_plus_malformed_result" "RESULT=escalate" "$(_kv RESULT "$out")"
+run_test "ronda_success_valid_plus_malformed_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+run_test "ronda_success_valid_plus_malformed_exit_code" "EXIT=2" "$(_kv EXIT "$out")"
+
+# --- Test 4.9: indented / emphasized / lower-case Blocking lines are candidates ---
+out="$(_ronda_run_success_summary '"Blocking: 0, Important: 0, Nit: 0\n  **Blocking**: 2"')"
+run_test "ronda_success_valid_plus_emphasized_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+out="$(_ronda_run_success_summary '"Blocking: 0, Important: 0, Nit: 0\nblocking: 2, important: 0, nit: 0"')"
+run_test "ronda_success_valid_plus_lowercase_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+
+# --- Test 4.10: trailing whitespace on the single valid line still parses ---
+out="$(_ronda_run_success_summary '"Model: m\nBlocking: 3, Important: 1, Nit: 0  \t"')"
+run_test "ronda_success_trailing_ws_blocking" "BLOCKING_COUNT=3" "$(_kv BLOCKING_COUNT "$out")"
+run_test "ronda_success_trailing_ws_suggestions" "SUGGESTION_COUNT=1" "$(_kv SUGGESTION_COUNT "$out")"
+run_test "ronda_success_trailing_ws_exit_code" "EXIT=1" "$(_kv EXIT "$out")"
+
+# --- Test 4.11: sweep / repository-context lines are not candidates ---
+out="$(_ronda_run_success_summary '"Model: m\nBlocking: 0, Important: 0, Nit: 0\nCategory-forced sweep:\n- blocking-io: clear\nRepository context: used"')"
+run_test "ronda_success_sweep_lines_result" "RESULT=clean" "$(_kv RESULT "$out")"
+run_test "ronda_success_sweep_lines_exit_code" "EXIT=0" "$(_kv EXIT "$out")"
 
 unset out
 unset -f _ronda_run_success_summary _kv

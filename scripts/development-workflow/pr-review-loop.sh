@@ -2986,18 +2986,28 @@ run_ronda_review() {
         # guessing clean. Counts are capped at 9 digits so the arithmetic
         # below cannot overflow, and forced to base 10 so a leading zero is
         # never read as octal.
-        local summary severity_lines severity_line_count
+        #
+        # Duplicate detection counts CANDIDATE lines (any line that starts
+        # with a "Blocking:" label, however malformed) before validating
+        # syntax, so a well-formed `Blocking: 0 ...` line cannot mask a
+        # second, malformed `Blocking: 1, Important: bad ...` line and read
+        # clean. Only trailing whitespace is tolerated on the valid line.
+        local summary summary_lines severity_lines
+        local candidate_count severity_line_count
         local ronda_blocking ronda_important ronda_nit
+        local severity_re='^Blocking: [0-9]{1,9}, Important: [0-9]{1,9}, Nit: [0-9]{1,9}[[:space:]]*$'
         summary="$(printf '%s' "$fetch_output" | jq -r '.output.summary // ""' 2>/dev/null)" || summary=""
-        severity_lines="$(printf '%s\n' "$summary" | tr -d '\r' \
-          | grep -E '^Blocking: [0-9]{1,9}, Important: [0-9]{1,9}, Nit: [0-9]{1,9}$')" || severity_lines=""
+        summary_lines="$(printf '%s\n' "$summary" | tr -d '\r')"
+        candidate_count="$(printf '%s\n' "$summary_lines" \
+          | grep -c -i -E '^[[:space:]]*[*_`]*Blocking[*_`]*[[:space:]]*:')" || candidate_count=0
+        severity_lines="$(printf '%s\n' "$summary_lines" | grep -E "$severity_re")" || severity_lines=""
         if [ -z "$severity_lines" ]; then
           severity_line_count=0
         else
           severity_line_count="$(printf '%s\n' "$severity_lines" | wc -l | tr -d ' ')"
         fi
-        if [ "$severity_line_count" -ne 1 ]; then
-          echo "WARN: run_ronda_review: check run concluded success but its summary has $severity_line_count parseable severity line(s) (expected exactly 1) for PR #$pr_number (SHA=$current_sha)" >&2
+        if [ "$candidate_count" -ne 1 ] || [ "$severity_line_count" -ne 1 ]; then
+          echo "WARN: run_ronda_review: check run concluded success but its summary has $candidate_count severity line candidate(s), $severity_line_count well-formed (expected exactly 1 of each) for PR #$pr_number (SHA=$current_sha)" >&2
           print_kv RESULT escalate
           print_kv REASON ronda_severity_unparseable
           print_kv REVIEWED_HEAD "$current_sha"
@@ -3007,9 +3017,9 @@ run_ronda_review() {
           print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
           return 2
         fi
-        ronda_blocking="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)$/\1/')"
-        ronda_important="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)$/\2/')"
-        ronda_nit="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)$/\3/')"
+        ronda_blocking="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)[[:space:]]*$/\1/')"
+        ronda_important="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)[[:space:]]*$/\2/')"
+        ronda_nit="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)[[:space:]]*$/\3/')"
         ronda_blocking=$((10#$ronda_blocking))
         ronda_important=$((10#$ronda_important))
         ronda_nit=$((10#$ronda_nit))

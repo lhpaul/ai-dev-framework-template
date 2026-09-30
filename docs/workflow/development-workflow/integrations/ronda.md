@@ -108,9 +108,11 @@ Blocking: 0, Important: 1, Nit: 0
 The helper reads the counts from that line of the same check run it polled
 — no review or review-comment lookup is involved in the verdict.
 `BLOCKING_COUNT` is the Blocking count, `SUGGESTION_COUNT` is Important +
-Nit, and `COMMENT_COUNT` is the total. Exactly one well-formed line is
-required; a missing, duplicated, or malformed line escalates rather than
-being guessed clean. If Ronda changes that line's format, the loop fails
+Nit, and `COMMENT_COUNT` is the total. Exactly one line may start with a
+`Blocking:` label (case-insensitive, even indented or emphasized), and that
+line must be well-formed; trailing whitespace is tolerated. A missing,
+duplicated, or malformed line escalates rather than being guessed clean, so
+a valid `Blocking: 0` line cannot mask a second malformed one. If Ronda changes that line's format, the loop fails
 closed (`ronda_severity_unparseable`) until the adapter is updated.
 
 ---
