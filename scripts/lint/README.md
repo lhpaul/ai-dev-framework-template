@@ -199,8 +199,12 @@ calls.
 - The literal opens (after whitespace and `#` comments) with `query`,
   `mutation`, `subscription`, `fragment`, or an anonymous `{` selection set, so
   shell prose that happens to contain `query='` is ignored.
-- The match is not on a line whose first non-blank character is `#` (a shell
-  comment).
+- The match sits in executed shell code. A small shell-context lexer treats
+  double-quoted strings, `#` comments (whole-line or trailing), other
+  single-quoted and `$'...'` strings, and heredoc bodies as data, so
+  `echo "gh api graphql -f query='...'"` or `cmd # query='...'` is ignored. A
+  command substitution is code again even inside double quotes, so the common
+  real shape `var="$(gh api graphql -f query='...')"` is still checked.
 
 **Known limitations** (false-negative surfaces, not defects):
 

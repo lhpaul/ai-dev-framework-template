@@ -211,6 +211,35 @@ nographql_rc=$?
 set -e
 run_test "file_without_graphql_has_no_findings" "0" "$nographql_rc"
 
+# Non-executed shell text: double-quoted strings, trailing comments, and
+# heredoc bodies are data, not a literal passed to `gh api graphql`.
+write_fixture "$TMP_DIR/fp_dq_echo.sh" \
+  '#!/usr/bin/env bash' \
+  "echo \"gh api graphql -f query='query{bad}}'\"" \
+  "gh api graphql -f query='query{ok}'"
+run_test "query_inside_double_quotes_ignored" "pass" "$(run_linter "$TMP_DIR/fp_dq_echo.sh")"
+
+write_fixture "$TMP_DIR/fp_inline_comment.sh" \
+  '#!/usr/bin/env bash' \
+  "true # gh api graphql -f query='query{bad}}'" \
+  "gh api graphql -f query='query{ok}'"
+run_test "query_in_trailing_comment_ignored" "pass" "$(run_linter "$TMP_DIR/fp_inline_comment.sh")"
+
+write_fixture "$TMP_DIR/fp_heredoc.sh" \
+  '#!/usr/bin/env bash' \
+  "cat <<'DOC'" \
+  "gh api graphql -f query='query{bad}}'" \
+  'DOC' \
+  "gh api graphql -f query='query{ok}'"
+run_test "query_in_heredoc_body_ignored" "pass" "$(run_linter "$TMP_DIR/fp_heredoc.sh")"
+
+# ...but a command substitution inside double quotes is code again: the
+# common real shape `var="$(gh api graphql -f query='...')"` is still caught.
+write_fixture "$TMP_DIR/cmdsubst_in_dq.sh" \
+  '#!/usr/bin/env bash' \
+  "result=\"\$(gh api graphql -f query='query{a{b}}}' --jq .data)\""
+run_test "command_substitution_in_double_quotes_caught" "fail" "$(run_linter "$TMP_DIR/cmdsubst_in_dq.sh")"
+
 # Real call-site shapes that do not spell `gh api graphql` on one command
 # are still recognised.
 write_fixture "$TMP_DIR/wrapper_form.sh" \

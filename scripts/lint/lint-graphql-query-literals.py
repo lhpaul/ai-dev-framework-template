@@ -137,10 +137,109 @@ def well_nested(query: str) -> bool:
     return not stack
 
 
-def in_shell_comment(text: str, index: int) -> bool:
-    """True when `index` sits on a line whose first non-blank char is `#`."""
-    line_start = text.rfind("\n", 0, index) + 1
-    return text[line_start:index].lstrip().startswith("#")
+WORD_BOUNDARY_BEFORE = " \t\r\n;&|()"
+HEREDOC_OPERATOR = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _skip_heredoc_bodies(text: str, pos: int, pending: list[tuple[str, bool]]) -> int:
+    """Skip heredoc bodies that start at `pos` (just after a newline)."""
+    n = len(text)
+    for word, strip_tabs in pending:
+        while pos < n:
+            end = text.find("\n", pos)
+            line = text[pos : end if end != -1 else n]
+            pos = end + 1 if end != -1 else n
+            if (line.lstrip("\t") if strip_tabs else line) == word:
+                break
+    return pos
+
+
+def executed_query_starts(text: str) -> list[tuple[int, int]]:
+    """Return (match_start, quote_pos) for `*query='` in executed shell code.
+
+    A small shell-context lexer: text inside double quotes, `#` comments
+    (whole-line or trailing), other single-quoted strings, `$'...'` strings,
+    and heredoc bodies is data, not code, so a `query='` there is never a
+    literal passed to `gh api graphql`. Command substitutions (`$( ... )`)
+    are code again even inside double quotes — most real call sites have the
+    shape `var="$(gh api graphql -f query='...')"`.
+    """
+    starts: list[tuple[int, int]] = []
+    # Each frame: ["code", paren_depth] or ["dq", 0]. The bottom frame is code.
+    stack: list[list] = [["code", 0]]
+    pending_heredocs: list[tuple[str, bool]] = []
+    i, n = 0, len(text)
+    while i < n:
+        frame = stack[-1]
+        c = text[i]
+        if frame[0] == "dq":
+            if c == "\\":
+                i += 2
+            elif c == '"':
+                stack.pop()
+                i += 1
+            elif text.startswith("$(", i):
+                stack.append(["code", 0])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        at_word_start = i == 0 or text[i - 1] in WORD_BOUNDARY_BEFORE
+        if at_word_start:
+            match = QUERY_ASSIGNMENT_START.match(text, i)
+            if match:
+                quote_pos = match.end() - 1
+                starts.append((i, quote_pos))
+                extracted = extract_concatenated_query(text, quote_pos)
+                if extracted is None:
+                    break  # unterminated: the rest of the file is swallowed
+                i = extracted[1]
+                continue
+            if c == "#":
+                end = text.find("\n", i)
+                i = end if end != -1 else n
+                continue
+        if c == "\\":
+            i += 2
+        elif c == "\n":
+            i += 1
+            if pending_heredocs:
+                i = _skip_heredoc_bodies(text, i, pending_heredocs)
+                pending_heredocs = []
+        elif text.startswith("$'", i):
+            j = i + 2
+            while j < n and text[j] != "'":
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+        elif c == "'":
+            end = text.find("'", i + 1)
+            i = end + 1 if end != -1 else n
+        elif c == '"':
+            stack.append(["dq", 0])
+            i += 1
+        elif text.startswith("$(", i):
+            stack.append(["code", 0])
+            i += 2
+        elif c == "(":
+            frame[1] += 1
+            i += 1
+        elif c == ")":
+            if frame[1] > 0:
+                frame[1] -= 1
+            elif len(stack) > 1:
+                stack.pop()
+            i += 1
+        elif text.startswith("<<", i) and not text.startswith("<<<", i):
+            heredoc = HEREDOC_OPERATOR.match(text, i)
+            if heredoc:
+                pending_heredocs.append((heredoc.group(3), heredoc.group(1) == "-"))
+                i = heredoc.end()
+            else:
+                i += 2
+        else:
+            i += 1
+    return starts
 
 
 def graphql_literals(text: str) -> list[tuple[int, str | None]]:
@@ -148,15 +247,12 @@ def graphql_literals(text: str) -> list[tuple[int, str | None]]:
     if GRAPHQL_FILE_MARKER not in text:
         return []
     literals: list[tuple[int, str | None]] = []
-    for match in QUERY_ASSIGNMENT_START.finditer(text):
-        if in_shell_comment(text, match.start()):
-            continue
-        quote_pos = match.end() - 1
+    for match_start, quote_pos in executed_query_starts(text):
         extracted = extract_concatenated_query(text, quote_pos)
         body = extracted[0] if extracted is not None else text[quote_pos + 1 :]
         if not GRAPHQL_OPENING.match(body):
             continue
-        line = text.count("\n", 0, match.start()) + 1
+        line = text.count("\n", 0, match_start) + 1
         literals.append((line, extracted[0] if extracted is not None else None))
     return literals
 
