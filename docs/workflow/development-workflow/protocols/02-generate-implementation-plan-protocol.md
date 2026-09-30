@@ -480,11 +480,9 @@ If no blocking human decision remains:
      precedence-rule set the plan itself defines — and, for Refactor items, to
      the work item brief. When the plan or brief contains a stateful contract,
      run the same six-check audit defined in Protocol 01's Document Quality
-     Gate section ("Matrix coherence preflight") before committing: overlapping
-     rows, missing states, precedence/order ambiguity, malformed/unknown input
-     handling, stale-vs-current evidence, and terminal vs waiting vs escalation
-     outcomes. Record the result as a `Matrix coherence preflight` row in the
-     Document Quality Gate log below.
+     Gate section ("Matrix coherence preflight", the canonical six-check
+     definition) before committing. Record the result as a `Matrix coherence
+     preflight` row in the Document Quality Gate log below.
 
 7. **Document Quality Gate (mandatory — do not skip)**:
 
