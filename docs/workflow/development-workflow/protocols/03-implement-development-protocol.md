@@ -148,6 +148,10 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   re-resolve this item's PR with `gh pr view --json number` on the item branch;
   never mutate the other PR. `RESULT=pr_unresolved` (exit 3) and
   `RESULT=branch_unknown` (exit 4) fail closed: stop before mutation.
+  When re-resolving does not yield an owned PR, stop with the named stop
+  condition `pr_ownership_refused` (`guardrails-enforcement.md` section 4),
+  naming the item, the PR number, the guard's `RESULT=` line, and the
+  human action: confirm which PR belongs to the item branch.
 - Write PR bodies, comments, and review evidence only to collision-proof files
   in a private scratch directory — the one the orchestrator assigned, or
   `mktemp -d` — named with the item and process, for example
