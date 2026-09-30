@@ -1040,8 +1040,13 @@ A missing, stale, or contradictory quality-gate log should be fixed before
 another automated review cycle unless the next action is an explicit human
 escalation.
 
-**Matrix coherence re-audit (same-matrix re-run rule)**: when **two
-consecutive cycles' blocking findings implicate the same stateful contract**
+**Matrix coherence re-audit (same-matrix re-run rule)**: this rule applies to
+reviewer-loop cycles on `spec/*` and `implementation-plan/*` PRs only.
+Implementation PRs (`feature/*`, `refactor/*`, `fix/*`, `hotfix/*`) are out of
+scope even when their findings concern a referenced spec or plan; their
+existing Pass 1 spec-compliance check is unchanged. On an in-scope PR, when
+**two consecutive cycles' blocking findings implicate the same stateful
+contract**
 (decision matrix, state table, lifecycle, precedence rules, or similarly
 stateful construct) of the spec, the plan, or — for Refactor items — the work
 item brief under review, the loop runner must re-run the full six-check
