@@ -3815,16 +3815,19 @@ workflow_gh_list_open_issues_exhaustive() {
 #
 # Completeness rule: gh reports the (query-filtered) board size as the
 # top-level `totalCount` — verified against a live
-# `gh project item-list --format json` call for #1804. When present, the
-# response is complete once it holds totalCount items; otherwise, or when gh
-# returned fewer items than the cap allowed, the same shorter-than-cap rule as
-# the issue read applies.
+# `gh project item-list --format json` call for #1804 (a full fetch returned
+# exactly totalCount items, filtered and unfiltered). When totalCount is
+# present it alone decides completeness: the response is complete once it
+# holds totalCount items, and a response shorter than both the cap and
+# totalCount is incomplete (exit 3), never accepted. Only when totalCount is
+# absent does the issue read's shorter-than-cap rule apply.
 #
 # Exit codes:
 #   0 — complete; stdout is gh's response
 #   1 — gh failed
 #   2 — the response is not a JSON object with an `items` array
-#   3 — still truncated at WORKFLOW_GH_LIST_MAX_RECORDS; nothing printed
+#   3 — incomplete: still truncated at WORKFLOW_GH_LIST_MAX_RECORDS, or gh
+#       returned fewer items than its own totalCount; nothing printed
 workflow_gh_project_items_exhaustive() {
   local project_number="$1" owner="$2" query="${3:-}"
   local limit="$WORKFLOW_GH_LIST_INITIAL_RECORDS" out counts count total
@@ -3846,11 +3849,18 @@ workflow_gh_project_items_exhaustive() {
     case "$total" in
       ''|*[!0-9]*) total="" ;;
     esac
-    if [ -n "$total" ] && [ "$count" -ge "$total" ]; then
-      printf '%s\n' "$out"
-      return 0
-    fi
-    if [ "$count" -lt "$limit" ]; then
+    if [ -n "$total" ]; then
+      # gh reported the board size: that alone decides completeness.
+      if [ "$count" -ge "$total" ]; then
+        printf '%s\n' "$out"
+        return 0
+      fi
+      # gh stopped short of its own reported total although the cap
+      # allowed more — a larger cap cannot help; refuse the partial list.
+      if [ "$count" -lt "$limit" ]; then
+        return 3
+      fi
+    elif [ "$count" -lt "$limit" ]; then
       printf '%s\n' "$out"
       return 0
     fi
@@ -4008,7 +4018,7 @@ list_open_workflow_type_issues() {
       return 0
       ;;
     3)
-      echo "Warning: GitHub Project ${project_number} has more than ${WORKFLOW_GH_LIST_MAX_RECORDS} items; refusing a truncated list, cannot discover Workflow Type issues." >&2
+      echo "Warning: GitHub Project ${project_number} item list is incomplete (more than ${WORKFLOW_GH_LIST_MAX_RECORDS} items, or fewer items than its reported totalCount); refusing a truncated list, cannot discover Workflow Type issues." >&2
       printf '[]\n'
       return 0
       ;;

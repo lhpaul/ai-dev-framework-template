@@ -253,10 +253,14 @@ Both reads are exhaustive (#1804). `gh issue list --limit` and
 shared helpers `workflow_gh_list_open_issues_exhaustive` and
 `workflow_gh_project_items_exhaustive` repeat the read with a larger cap until
 the result is complete. The project read uses the top-level `totalCount` that
-`gh project item-list --format json` reports. The hard bound is 64,000
-records. Past it, the wrapper reports `issue_list_truncated` or
-`item_list_truncated`, and `list_open_workflow_type_issues` warns and returns
-`[]`; neither returns a partial list. Board items join open issues by
+`gh project item-list --format json` reports. That count reflects `--query`,
+and a full fetch returns exactly that many items. When `totalCount` is
+present, only it decides completeness: a response with fewer items than
+`totalCount` is never accepted as complete. The hard bound is 64,000 records.
+Past it, or when gh returns fewer items than its own `totalCount`, the wrapper
+reports `issue_list_truncated` or `item_list_truncated`, and
+`list_open_workflow_type_issues` warns and returns `[]`. Neither returns a
+partial list. Board items join open issues by
 repository and number, never by number alone. The item's repository comes
 from `content.repository` (`owner/repo` in the live output), then from
 `content.url`. An item from another repository on a shared organization

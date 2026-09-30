@@ -57,7 +57,8 @@ item_list_failed, item_list_unparseable, item_list_truncated.
 Both reads are exhaustive: the open-issue list and the project item list
 are re-read with a larger fetch cap until complete. A repository or board
 still larger than the hard bound (64000 records) is reported as
-issue_list_truncated / item_list_truncated rather than a partial list.
+issue_list_truncated / item_list_truncated rather than a partial list; so
+is a project item list that returns fewer items than its own totalCount.
 Board items join open issues by repository AND number; an item from another
 repository, or one that identifies no repository, is never matched.
 

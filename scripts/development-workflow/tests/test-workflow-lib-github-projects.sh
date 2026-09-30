@@ -261,6 +261,9 @@ JSON
       cat <<'JSON'
 {"items":[{"content":{"number":824,"repository":"lhpaul/some-other-repo","type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Foreign 824"},{"content":{"number":824,"type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Foreign 824 by URL"},{"content":{"number":824},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Unidentified 824"}],"totalCount":3}
 JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "short_of_total" ]; then
+      # Fewer items than both the cap and gh's own totalCount (#1804).
+      printf '{"items":[],"totalCount":1500}\n'
     elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "large_issue_join" ]; then
       # Workflow item for open issue #11500 of a 12,000-issue list (#1804).
       cat <<'JSON'
@@ -780,6 +783,19 @@ export MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=12000 MOCK_ITEM_LIST_MODE=lar
 workflow_issues_large="$(list_open_workflow_type_issues 2>/dev/null)"
 unset MOCK_ISSUE_LIST_MODE MOCK_ISSUE_TOTAL MOCK_ITEM_LIST_MODE
 run_test "workflow_type_discovery_large_issue_list_join" "11500" "$(printf '%s' "$workflow_issues_large" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+
+# A response shorter than gh's own reported totalCount is incomplete: the
+# primitive refuses it rather than treating the board as empty
+# (local-ai-reviewer finding, #1804).
+reset_log
+export MOCK_ITEM_LIST_MODE=short_of_total
+workflow_issues_short_stderr="$(list_open_workflow_type_issues 2>&1 >/dev/null)"
+unset MOCK_ITEM_LIST_MODE
+case "$workflow_issues_short_stderr" in
+  *"refusing a truncated list"*) short_warning_result="warned" ;;
+  *) short_warning_result="$workflow_issues_short_stderr" ;;
+esac
+run_test "workflow_type_discovery_short_of_total_count_warns" "warned" "$short_warning_result"
 
 # Past the hard bound the primitive refuses a partial list and warns.
 reset_log

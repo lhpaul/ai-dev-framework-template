@@ -145,6 +145,11 @@ JSON
 {"items":[{"content":{"number":1400,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/1400"},"status":"Backlog","priority":"High","type":"Feature","title":"Issue 1400"}],"totalCount":1}
 JSON
         ;;
+      short_of_total)
+        # gh returns fewer items than both the cap and its own reported
+        # totalCount: incomplete, never "empty" (local-ai-reviewer, #1804).
+        printf '{"items":[],"totalCount":1500}\n'
+        ;;
       large_issue_join)
         # Board item for open issue #11500 — joinable only when a
         # 12,000-issue list survives the whole pipeline into jq (#1804).
@@ -433,6 +438,12 @@ run_test "lookup-unavailable-item-list-truncated_status" "unavailable" "$(kv FRA
 run_test "lookup-unavailable-item-list-truncated_reason" "item_list_truncated" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$truncated_items_out")"
 run_test "lookup-unavailable-item-list-truncated_json" "FRAMEWORK_ITEMS_JSON=[]" "$(printf '%s\n' "$truncated_items_out" | grep '^FRAMEWORK_ITEMS_JSON=')"
 run_test "item_list_truncation_stops_at_hard_bound" "1" "$(grep -c 'project item-list 1 --owner lhpaul --limit 64000 ' "$CALL_LOG")"
+
+reset_log
+MOCK_ITEM_LIST_MODE=short_of_total run_wrapper_in_repo "$framework_config"
+short_of_total_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "item_list_short_of_total_count_status" "unavailable" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$short_of_total_out")"
+run_test "item_list_short_of_total_count_reason" "item_list_truncated" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$short_of_total_out")"
 
 reset_log
 MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=100000 run_wrapper_in_repo "$framework_config"
