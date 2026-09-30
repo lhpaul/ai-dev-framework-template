@@ -25,7 +25,24 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-QUERY_ASSIGNMENT_START = re.compile(r"query='")
+# Shell shape: `query='` must begin a shell word — a flag argument such as
+# `-f query='` or an assignment to a variable whose name ends in `query`
+# (`query=`, `graphql_query=`, `local _gql_items_query=`). Text such as
+# `obj.query='`, or `query='` in the middle of a word, is not a query literal.
+# `gh api graphql` itself is not required on the same command: real call
+# sites go through wrappers (`gh "${gh_args[@]}"`,
+# `workflow_run_gh_capture_stderr api graphql`) or pass the variable to a
+# helper function.
+QUERY_ASSIGNMENT_START = re.compile(r"(?<![^\s;(])(?:[A-Za-z_][A-Za-z0-9_]*)?query='")
+# GraphQL content: the literal must open (after whitespace and # comments)
+# with an operation keyword or an anonymous `{` selection set. This keeps
+# shell prose or non-GraphQL strings that happen to use a `*query='` shape out
+# of scope.
+GRAPHQL_OPENING = re.compile(
+    r"\A(?:\s|#[^\r\n]*)*(?:query|mutation|subscription|fragment)\b|\A(?:\s|#[^\r\n]*)*\{"
+)
+# Files that never mention GraphQL cannot hold a `gh api graphql` literal.
+GRAPHQL_FILE_MARKER = "graphql"
 PAIRS = {"}": "{", ")": "(", "]": "["}
 OPENERS = set(PAIRS.values())
 
@@ -126,31 +143,36 @@ def in_shell_comment(text: str, index: int) -> bool:
     return text[line_start:index].lstrip().startswith("#")
 
 
-def query_starts(text: str) -> list[re.Match[str]]:
-    return [
-        match
-        for match in QUERY_ASSIGNMENT_START.finditer(text)
-        if not in_shell_comment(text, match.start())
-    ]
+def graphql_literals(text: str) -> list[tuple[int, str | None]]:
+    """Return (line, joined_query_or_None_if_unterminated) per GraphQL literal."""
+    if GRAPHQL_FILE_MARKER not in text:
+        return []
+    literals: list[tuple[int, str | None]] = []
+    for match in QUERY_ASSIGNMENT_START.finditer(text):
+        if in_shell_comment(text, match.start()):
+            continue
+        quote_pos = match.end() - 1
+        extracted = extract_concatenated_query(text, quote_pos)
+        body = extracted[0] if extracted is not None else text[quote_pos + 1 :]
+        if not GRAPHQL_OPENING.match(body):
+            continue
+        line = text.count("\n", 0, match.start()) + 1
+        literals.append((line, extracted[0] if extracted is not None else None))
+    return literals
 
 
 def find_unbalanced_in_text(path: str, text: str) -> list[Finding]:
     findings: list[Finding] = []
-    for match in query_starts(text):
-        quote_pos = match.end() - 1
-        extracted = extract_concatenated_query(text, quote_pos)
-        line = text.count("\n", 0, match.start()) + 1
-        if extracted is None:
+    for line, query in graphql_literals(text):
+        if query is None:
             findings.append(Finding(path=path, line=line, query="<unterminated literal>"))
-            continue
-        query, _end = extracted
-        if not well_nested(query):
+        elif not well_nested(query):
             findings.append(Finding(path=path, line=line, query=query))
     return findings
 
 
 def count_query_literals(text: str) -> int:
-    return len(query_starts(text))
+    return len(graphql_literals(text))
 
 
 def is_excluded(relative: Path) -> bool:

@@ -187,6 +187,44 @@ write_fixture "$TMP_DIR/shell_comment.sh" \
   "gh api graphql -f query='query{ok}'"
 run_test "query_in_shell_comment_ignored" "pass" "$(run_linter "$TMP_DIR/shell_comment.sh")"
 
+# --- Only GraphQL query literals are recognised (false-positive guards) -----
+# Each fixture also carries one balanced real query so the file is examined.
+
+write_fixture "$TMP_DIR/fp_prose.sh" \
+  '#!/usr/bin/env bash' \
+  "echo \"hint: set query='(unbalanced prose\" >&2" \
+  "gh api graphql -f query='query{ok}'"
+run_test "non_graphql_query_text_ignored" "pass" "$(run_linter "$TMP_DIR/fp_prose.sh")"
+
+write_fixture "$TMP_DIR/fp_midword.sh" \
+  '#!/usr/bin/env bash' \
+  "obj.query='query{a}}'" \
+  "gh api graphql -f query='query{ok}'"
+run_test "mid_word_query_text_ignored" "pass" "$(run_linter "$TMP_DIR/fp_midword.sh")"
+
+write_fixture "$TMP_DIR/fp_nographql.sh" \
+  '#!/usr/bin/env bash' \
+  "sql_query='query ( select'"
+set +e
+python3 "$LINTER" "$TMP_DIR/fp_nographql.sh" >/dev/null 2>&1
+nographql_rc=$?
+set -e
+run_test "file_without_graphql_has_no_findings" "0" "$nographql_rc"
+
+# Real call-site shapes that do not spell `gh api graphql` on one command
+# are still recognised.
+write_fixture "$TMP_DIR/wrapper_form.sh" \
+  '#!/usr/bin/env bash' \
+  'gh_args=(api graphql -f owner="$owner")' \
+  "gh \"\${gh_args[@]}\" -f query='query{a{b}}}'"
+run_test "wrapper_call_form_still_caught" "fail" "$(run_linter "$TMP_DIR/wrapper_form.sh")"
+
+write_fixture "$TMP_DIR/var_form.sh" \
+  '#!/usr/bin/env bash' \
+  "  local _gql_items_query='mutation{a(b:1){c}}}'" \
+  'gh api graphql -f query="$_gql_items_query"'
+run_test "variable_assignment_form_still_caught" "fail" "$(run_linter "$TMP_DIR/var_form.sh")"
+
 # --- Self-check: the real repo tree is currently clean ----------------------
 
 run_test "repo_scripts_tree_is_currently_clean" "pass" "$(run_linter "$REPO_ROOT/scripts")"

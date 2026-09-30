@@ -187,8 +187,20 @@ test fixtures deliberately construct malformed and regex-shaped `query='...'`
 text to prove the tokenizer, and those are not production `gh api graphql`
 calls.
 
-Matches on a line whose first non-blank character is `#` (shell comments) are
-not treated as query literals.
+**What counts as a GraphQL query literal** (all must hold):
+
+- The file mentions `graphql` at all.
+- `query='` begins a shell word: a flag argument (`-f query='`) or an
+  assignment to a variable whose name ends in `query` (`graphql_query='`,
+  `local _gql_items_query='`). `obj.query='` or a mid-word match is ignored.
+  `gh api graphql` need not appear on the same command, because real call sites
+  use wrappers (`gh "${gh_args[@]}"`, `workflow_run_gh_capture_stderr api
+  graphql`) or pass the variable to a helper.
+- The literal opens (after whitespace and `#` comments) with `query`,
+  `mutation`, `subscription`, `fragment`, or an anonymous `{` selection set, so
+  shell prose that happens to contain `query='` is ignored.
+- The match is not on a line whose first non-blank character is `#` (a shell
+  comment).
 
 **Known limitations** (false-negative surfaces, not defects):
 
