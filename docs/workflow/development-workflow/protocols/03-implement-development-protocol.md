@@ -322,6 +322,7 @@ Under `set -e`, any command that exits non-zero causes the script to abort — *
 
 Capture exit codes explicitly when the command can legitimately fail:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Wrong under set -e — aborts if gh pr view exits non-zero (e.g., PR not found):
 PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
@@ -2137,6 +2138,7 @@ Open a PR targeting `develop`:
 
 **Pre-PR-create base-branch guard (mandatory)**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 if [ -n "${ISSUE_NUMBER:-}" ]; then
   ./scripts/development-workflow/run-nested-artifact-guard.sh \

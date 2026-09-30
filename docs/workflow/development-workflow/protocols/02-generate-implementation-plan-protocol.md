@@ -638,6 +638,7 @@ If no blocking human decision remains:
 12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
     mode when a positive numeric issue number is available:
 
+    <!-- workflow-shell-contract: bash-zsh -->
     ```bash
     ./scripts/development-workflow/run-nested-artifact-guard.sh \
       --mode pre-pr \
