@@ -3753,9 +3753,9 @@ WORKFLOW_GH_LIST_MAX_RECORDS=64000
 
 # _workflow_gh_list_next_limit <current-limit> [<reported-total>]
 #
-# Prints the next fetch cap: the reported total when known and larger than
-# double the current cap would not reach, otherwise double the current cap —
-# always clamped to WORKFLOW_GH_LIST_MAX_RECORDS.
+# Prints the next fetch cap: double the current cap, or the reported total
+# when that is known and larger — always clamped to
+# WORKFLOW_GH_LIST_MAX_RECORDS.
 _workflow_gh_list_next_limit() {
   local current="$1" total="${2:-}" next
   next=$((current * 2))
