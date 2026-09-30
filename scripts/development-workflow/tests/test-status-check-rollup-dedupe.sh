@@ -93,6 +93,14 @@ run_test "queued_rerun_supersedes_success" "CI/lint=QUEUED" "$(latest '[
 run_test "zero_time_rerun_supersedes_success" "CI/lint=IN_PROGRESS" "$(latest '[
   {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"IN_PROGRESS","conclusion":"","startedAt":"0001-01-01T00:00:00Z"},
   {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-01T05:26:31Z"}]')"
+# With every timestamp missing, order is unknown: the queued re-run still
+# wins in either input order, so the check never reads as settled.
+run_test "undated_queued_rerun_wins_listed_first" "CI/lint=QUEUED" "$(latest '[
+  {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"QUEUED","conclusion":null},
+  {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS"}]')"
+run_test "undated_queued_rerun_wins_listed_last" "CI/lint=QUEUED" "$(latest '[
+  {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"QUEUED","conclusion":null}]')"
 run_test "pending_status_context_supersedes_success" "policy=PENDING" "$(latest '[
   {"__typename":"StatusContext","context":"policy","state":"PENDING"},
   {"__typename":"StatusContext","context":"policy","state":"SUCCESS","startedAt":"2026-06-01T05:26:31Z"}]')"
@@ -224,7 +232,8 @@ echo "=== Part 4: Protocol 91 Step 8a Check 0 (executed from the protocol) ==="
 # Check 0 is fenced bash in the protocol, not a script, so extract it and run
 # it: from its heading comment up to (not including) the verdict `if`. The
 # check-runs pages are the PR #1547 shape — the same `policy` check in two
-# suites, failure then success.
+# suites, failure then success. Every total also counts the one combined
+# commit status the mock returns.
 P91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
 CHECK0="$TMP_ROOT/check0.sh"
 awk '/^# Check 0: CI must be green/{p=1} /^if \[ "\$CI_FAILING" -gt 0 \]/{p=0} p' "$P91" > "$CHECK0"
@@ -264,12 +273,31 @@ superseded_pages='[{"total_count":3,"check_runs":[
   {"name":"ShellCheck","status":"completed","conclusion":"success","started_at":"2026-08-21T05:20:00Z","check_suite":{"id":3}}]},
  {"total_count":3,"check_runs":[
   {"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":1}}]}]'
-run_test "check0_superseded_failure_counts_green" "0 0 3" "$(run_check0 "$superseded_pages")"
+# The two `policy` runs sit in different suites; actions/runs maps both suites
+# to the same workflow file, which is what proves one supersedes the other.
+policy_workflow_runs='[{"workflow_runs":[
+  {"check_suite_id":1,"name":"PR policy","path":".github/workflows/pr-policy.yml"},
+  {"check_suite_id":2,"name":"PR policy","path":".github/workflows/pr-policy.yml"},
+  {"check_suite_id":3,"name":"ShellCheck","path":".github/workflows/shellcheck.yml"}]}]'
+run_test "check0_superseded_failure_counts_green" "0 0 3" "$(run_check0 "$superseded_pages" "$policy_workflow_runs")"
 
 current_failure_pages='[{"total_count":2,"check_runs":[
   {"name":"policy","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":2}},
   {"name":"policy","status":"completed","conclusion":"success","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":1}}]}]'
-run_test "check0_current_failure_still_counts" "1 0 2" "$(run_check0 "$current_failure_pages")"
+run_test "check0_current_failure_still_counts" "1 0 2" "$(run_check0 "$current_failure_pages" "$policy_workflow_runs")"
+
+# Without a workflow mapping for their suites, two Actions runs of a job named
+# `test` cannot be proven to be one check: they stay separate, so the older
+# failure keeps counting (blocking) instead of hiding behind the success.
+unmapped_pages='[{"total_count":2,"check_runs":[
+  {"id":501,"name":"test","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":21},"app":{"slug":"github-actions"}},
+  {"id":502,"name":"test","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":22},"app":{"slug":"github-actions"}}]}]'
+run_test "check0_unmapped_actions_suites_are_not_merged" "1 0 3" "$(run_check0 "$unmapped_pages")"
+# A non-Actions app re-posting its check in a new suite IS one check.
+app_repost_pages='[{"total_count":2,"check_runs":[
+  {"id":601,"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-08-21T05:26:31Z","check_suite":{"id":31},"app":{"slug":"cursor"}},
+  {"id":602,"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-08-21T05:28:16Z","check_suite":{"id":32},"app":{"slug":"cursor"}}]}]'
+run_test "check0_app_repost_is_superseded" "0 0 2" "$(run_check0 "$app_repost_pages")"
 
 # REST check runs carry no workflow name. Two workflows that both have a job
 # named `test` are two checks: unit's failure must not disappear behind e2e's

@@ -569,9 +569,10 @@ configured_reviewer_check_names_json() {
 #     started yet — counts as the NEWEST entry, so a pending re-run is never
 #     hidden behind the result it supersedes.
 #   - winner: when every entry for a check has a recency value, the newest
-#     wins (input order breaks ties); when any entry lacks one, the LAST entry
-#     in input order wins, because a missing timestamp cannot be ordered
-#     against a present one.
+#     wins (input order breaks ties). When any entry lacks one, order is
+#     unknown: an undated non-terminal entry (a queued re-run) still wins, so
+#     an unsettled check never reads as settled; otherwise the LAST entry in
+#     input order wins.
 #
 # Shell callers use normalize_status_check_rollup below. Callers that must
 # stay inside one jq program (a `gh pr list` array, a projection) prepend this
@@ -620,6 +621,8 @@ def dedupe_status_check_rollup:
   | map(
       (if all(.[]; .__check_ts != "")
        then sort_by(.__check_ts, .__check_idx)
+       elif any(.[]; .__check_ts == "9999-12-31T23:59:59Z")
+       then map(select(.__check_ts == "9999-12-31T23:59:59Z")) | sort_by(.__check_idx)
        else sort_by(.__check_idx)
        end)
       | last
@@ -652,7 +655,10 @@ normalize_status_check_rollup() {
 # workflows, hiding one workflow's failure behind the other's later success.
 # So each run first gets its workflow identity: the workflow file path of the
 # Actions run that owns its check suite (from `actions/runs?head_sha=`), or the
-# app slug for checks posted by a non-Actions app. Then the shared
+# app slug for checks posted by a non-Actions app. An Actions (or app-less) run
+# whose suite has no listed workflow run gets its own suite as identity, so it
+# is never merged with another suite's run: that can only keep a stale result
+# visible (blocking), never hide a current one. Then the shared
 # dedupe_status_check_rollup keeps the latest run per workflow + job.
 latest_check_runs_for_sha() {
   local repo="$1" sha="$2" check_pages="" workflow_pages=""
@@ -668,9 +674,13 @@ latest_check_runs_for_sha() {
             | {key: (.check_suite_id | tostring), value: (.path // .name // "")}]
            | from_entries) as $workflow_by_suite
         | [$check_pages[].check_runs[]?
+           | ((.check_suite.id // "") | tostring) as $suite
            | . + {workflowName: (
-               $workflow_by_suite[((.check_suite.id // "") | tostring)]
-               // .app.slug // "")}]
+               $workflow_by_suite[$suite]
+               // (if (.app.slug // "") != "" and .app.slug != "github-actions"
+                   then .app.slug
+                   else "unmapped-suite:" + (if $suite != "" then $suite else ((.id // "") | tostring) end)
+                   end))}]
         | dedupe_status_check_rollup
       '
 }
