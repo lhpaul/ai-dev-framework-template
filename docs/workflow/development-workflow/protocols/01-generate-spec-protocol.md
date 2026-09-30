@@ -225,6 +225,13 @@ Before the PR is opened, verify:
   audit summary naming each check and its pass/fail, or `Not applicable — no
   stateful contract` with the rationale. If the spec has no stateful contract,
   no ceremony is added beyond that one reasoned row.
+
+  A failed check blocks the push: fix the matrix (or its governing prose),
+  re-run the audit, and push only when all six checks pass. A `Checked` row
+  is recorded only for a passing audit. If a failed check cannot be resolved
+  without a product or human decision, record the row as `Checked — gaps
+  found` listing each failed check, and stop for that decision instead of
+  entering the reviewer loop.
 - Reviewer-risk categories: common high-signal reviewer concerns are checked:
   API-surface completeness, concurrency correctness, single-snapshot or
   consistency semantics, missing edge cases, vague actors/triggers, untestable
