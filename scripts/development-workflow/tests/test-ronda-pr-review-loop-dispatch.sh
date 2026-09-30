@@ -70,10 +70,12 @@ HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh
 #                                 clean/skipped; polling continues until a
 #                                 completed conclusion=success run appears
 #                                 -> RESULT=clean, exit 0
-#   3.3  needs_fixes           -> conclusion=failure, inline review comments
-#                                 counted -> BLOCKING_COUNT=2, exit 1
-#   3.4  needs_fixes floor     -> conclusion=action_required, no review found
-#                                 -> BLOCKING_COUNT floored to 1, exit 1
+#   3.3  pass failed           -> conclusion=failure (the pass could not
+#                                 complete) -> RESULT=escalate
+#                                 REASON=ronda_pass_failed, check-run title
+#                                 carried, no synthesized findings, exit 2
+#   3.4  action_required       -> outside Ronda's contract -> RESULT=escalate
+#                                 REASON=ronda_unexpected_conclusion, exit 2
 #   3.5  timeout                -> max_wait=0, no completed run observed
 #                                 -> RESULT=escalate REASON=timeout, exit 2
 #   3.6  fetch-failed           -> check-runs API call fails
@@ -145,7 +147,7 @@ case "$*" in
       # Absence: no "Ronda review" check run for this head SHA yet.
       printf '{"check_runs":[]}\n'
     else
-      printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+      printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z","output":{"title":"Review posted — no findings","summary":"Model: m\\nDuration: 1s\\nBlocking: 0, Important: 0, Nit: 0"}}]}\n'
     fi
     exit 0 ;;
   *)
@@ -176,7 +178,11 @@ run_test "ronda_absence_then_clean_polled_twice" "2" \
 rm -rf "$_ronda_mock_32"
 unset _ronda_mock_32 actual_output actual_exit
 
-# --- Test 3.3: needs_fixes — conclusion=failure, inline review comments counted ---
+# --- Test 3.3: pass failure — conclusion=failure is NOT blocking findings ---
+# Ronda's contract (#1849): `failure` means the pass could not complete
+# (credential missing, timeout, model unavailable, ...). It must escalate with
+# the check-run title as the reason, never report synthesized findings — even
+# when a review with inline comments exists for the head.
 _ronda_mock_33="$(mktemp -d)"
 cat > "$_ronda_mock_33/gh" <<'RONDA_GH_33'
 #!/usr/bin/env bash
@@ -184,7 +190,7 @@ case "$*" in
   *"headRefOid"*)
     printf 'abc33sha\n'; exit 0 ;;
   *"check-runs"*)
-    printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"failure","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"failure","started_at":"2020-01-01T00:00:00Z","output":{"title":"Review failed — credential missing or invalid","summary":"Model: m\\nDuration: 1s\\nReason: credential missing or invalid"}}]}\n'
     exit 0 ;;
   *"/comments"*)
     printf '[{"id":1,"body":"finding one"},{"id":2,"body":"finding two"}]\n'
@@ -204,21 +210,23 @@ actual_exit=0
 actual_output="$(
   eval "$_ronda_overrides"
   _ec=0
-  PATH="$_ronda_mock_33:$PATH" run_ronda_review "42" "feature/42-test" "1" "5" || _ec=$?
+  PATH="$_ronda_mock_33:$PATH" run_ronda_review "42" "feature/42-test" "1" "5" 2>/dev/null || _ec=$?
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "ronda_needs_fixes_result" "RESULT=needs_fixes" \
+run_test "ronda_pass_failed_result" "RESULT=escalate" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "ronda_needs_fixes_reason" "REASON=ronda_blocking_findings" \
+run_test "ronda_pass_failed_reason" "REASON=ronda_pass_failed" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-run_test "ronda_needs_fixes_blocking_count" "BLOCKING_COUNT=2" \
-  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
-run_test "ronda_needs_fixes_exit_code" "1" "$actual_exit"
+run_test "ronda_pass_failed_title" "RONDA_CHECK_TITLE=Review failed — credential missing or invalid" \
+  "$(printf '%s\n' "$actual_output" | grep "^RONDA_CHECK_TITLE=")"
+run_test "ronda_pass_failed_no_blocking_count" "" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=" || true)"
+run_test "ronda_pass_failed_exit_code" "2" "$actual_exit"
 rm -rf "$_ronda_mock_33"
 unset _ronda_mock_33 actual_output actual_exit
 
-# --- Test 3.4: needs_fixes floor — action_required conclusion, no review found ---
+# --- Test 3.4: action_required is outside Ronda's contract -> fail closed ---
 _ronda_mock_34="$(mktemp -d)"
 cat > "$_ronda_mock_34/gh" <<'RONDA_GH_34'
 #!/usr/bin/env bash
@@ -228,8 +236,6 @@ case "$*" in
   *"check-runs"*)
     printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"action_required","started_at":"2020-01-01T00:00:00Z"}]}\n'
     exit 0 ;;
-  *"pulls/"*"/reviews"*)
-    printf '[]\n'; exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
 esac
@@ -242,15 +248,15 @@ actual_exit=0
 actual_output="$(
   eval "$_ronda_overrides"
   _ec=0
-  PATH="$_ronda_mock_34:$PATH" run_ronda_review "42" "feature/42-test" "1" "5" || _ec=$?
+  PATH="$_ronda_mock_34:$PATH" run_ronda_review "42" "feature/42-test" "1" "5" 2>/dev/null || _ec=$?
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "ronda_needs_fixes_floor_result" "RESULT=needs_fixes" \
+run_test "ronda_action_required_result" "RESULT=escalate" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "ronda_needs_fixes_floor_blocking_count" "BLOCKING_COUNT=1" \
-  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
-run_test "ronda_needs_fixes_floor_exit_code" "1" "$actual_exit"
+run_test "ronda_action_required_reason" "REASON=ronda_unexpected_conclusion" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "ronda_action_required_exit_code" "2" "$actual_exit"
 rm -rf "$_ronda_mock_34"
 unset _ronda_mock_34 actual_output actual_exit
 
@@ -367,7 +373,7 @@ case "$*" in
       *) printf '\n'; exit 0 ;;
     esac ;;
   *"check-runs"*)
-    printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    printf '{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z","output":{"title":"Review posted — no findings","summary":"Model: m\\nDuration: 1s\\nBlocking: 0, Important: 0, Nit: 0"}}]}\n'
     exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
@@ -390,6 +396,123 @@ run_test "ronda_initial_lookup_repo_scoped_result" "RESULT=clean" \
 run_test "ronda_initial_lookup_repo_scoped_exit_code" "0" "$actual_exit"
 rm -rf "$_ronda_mock_38"
 unset _ronda_mock_38 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Area 4: conclusion=success — verdict read from the summary severity line
+# (#1849). A `success` conclusion only means the pass completed; the
+# `Blocking: N, Important: N, Nit: N` summary line carries the verdict.
+#
+#   4.1  Blocking: 1 (planted)     -> needs_fixes, BLOCKING_COUNT=1, exit 1
+#                                     (the case the pre-#1849 mapping reported
+#                                     clean); the review is authored by
+#                                     github-actions[bot] and no review lookup
+#                                     is required
+#   4.2  Blocking: 0 + suggestions -> clean, SUGGESTION_COUNT=Important+Nit
+#   4.3  severity line missing     -> escalate ronda_severity_unparseable
+#   4.4  severity line malformed   -> escalate ronda_severity_unparseable
+#   4.5  severity line duplicated  -> escalate ronda_severity_unparseable
+#   4.6  leading-zero counts       -> read as base 10 (08 is 8, not an octal
+#                                     arithmetic error)
+#   4.7  CRLF line endings         -> parsed (carriage returns stripped)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 4: success conclusion — severity-line verdict ==="
+
+# _ronda_run_success_summary <summary-json-string> — runs run_ronda_review
+# against a mock whose "Ronda review" check run concluded success with the
+# given JSON-encoded output.summary, and prints the key=value output plus
+# EXIT=<code>. The mock serves a github-actions[bot] review for the head and
+# counts every reviews/comments call so the tests can prove the verdict path
+# no longer depends on a review-author lookup.
+_ronda_run_success_summary() {
+  local summary_json="$1"
+  local mock_dir
+  mock_dir="$(mktemp -d)"
+  printf '0\n' > "$mock_dir/review_calls"
+  printf '%s' "{\"check_runs\":[{\"name\":\"Ronda review\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2020-01-01T00:00:00Z\",\"output\":{\"title\":\"Review posted\",\"summary\":$summary_json}}]}" \
+    > "$mock_dir/check_runs.json"
+  cat > "$mock_dir/gh" <<'RONDA_GH_4'
+#!/usr/bin/env bash
+dir="$(dirname "$0")"
+case "$*" in
+  *"headRefOid"*)
+    printf 'abc4sha\n'; exit 0 ;;
+  *"check-runs"*)
+    cat "$dir/check_runs.json"; printf '\n'; exit 0 ;;
+  *"/reviews"*|*"/comments"*)
+    n="$(cat "$dir/review_calls")"; printf '%s\n' "$((n + 1))" > "$dir/review_calls"
+    printf '[{"id":7,"user":{"login":"github-actions[bot]"},"commit_id":"abc4sha","state":"COMMENTED","body":"## Ronda review"}]\n'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+RONDA_GH_4
+  chmod +x "$mock_dir/gh"
+  (
+    eval "$_ronda_overrides"
+    unset RONDA_BOT_LOGIN RONDA_CHECK_NAME
+    _ec=0
+    PATH="$mock_dir:$PATH" run_ronda_review "42" "feature/42-test" "1" "5" 2>/dev/null || _ec=$?
+    printf 'EXIT=%s\n' "$_ec"
+  )
+  printf 'REVIEW_CALLS=%s\n' "$(cat "$mock_dir/review_calls")"
+  rm -rf "$mock_dir"
+}
+
+_kv() { printf '%s\n' "$2" | grep "^$1=" || true; }
+
+# --- Test 4.1: planted Blocking: 1 must be needs_fixes, not clean ---
+out="$(_ronda_run_success_summary '"Model: m\nDuration: 3s\nBlocking: 1, Important: 0, Nit: 0"')"
+run_test "ronda_success_blocking_result" "RESULT=needs_fixes" "$(_kv RESULT "$out")"
+run_test "ronda_success_blocking_reason" "REASON=ronda_blocking_findings" "$(_kv REASON "$out")"
+run_test "ronda_success_blocking_count" "BLOCKING_COUNT=1" "$(_kv BLOCKING_COUNT "$out")"
+run_test "ronda_success_blocking_comment_count" "COMMENT_COUNT=1" "$(_kv COMMENT_COUNT "$out")"
+run_test "ronda_success_blocking_reviewed_head" "REVIEWED_HEAD=abc4sha" "$(_kv REVIEWED_HEAD "$out")"
+run_test "ronda_success_blocking_exit_code" "EXIT=1" "$(_kv EXIT "$out")"
+run_test "ronda_success_blocking_no_review_lookup" "REVIEW_CALLS=0" "$(_kv REVIEW_CALLS "$out")"
+
+# --- Test 4.2: Blocking: 0 with Important/Nit findings is clean + suggestions ---
+out="$(_ronda_run_success_summary '"Model: m\nDuration: 3s\nBlocking: 0, Important: 1, Nit: 2\nCategory-forced sweep:\n- x: clear"')"
+run_test "ronda_success_suggestions_result" "RESULT=clean" "$(_kv RESULT "$out")"
+run_test "ronda_success_suggestions_blocking" "BLOCKING_COUNT=0" "$(_kv BLOCKING_COUNT "$out")"
+run_test "ronda_success_suggestions_count" "SUGGESTION_COUNT=3" "$(_kv SUGGESTION_COUNT "$out")"
+run_test "ronda_success_suggestions_comment_count" "COMMENT_COUNT=3" "$(_kv COMMENT_COUNT "$out")"
+run_test "ronda_success_suggestions_exit_code" "EXIT=0" "$(_kv EXIT "$out")"
+
+# --- Test 4.3: severity line missing -> fail closed ---
+out="$(_ronda_run_success_summary '"Model: m\nDuration: 3s"')"
+run_test "ronda_success_missing_line_result" "RESULT=escalate" "$(_kv RESULT "$out")"
+run_test "ronda_success_missing_line_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+run_test "ronda_success_missing_line_exit_code" "EXIT=2" "$(_kv EXIT "$out")"
+
+# --- Test 4.3b: no output.summary at all -> fail closed ---
+out="$(_ronda_run_success_summary 'null')"
+run_test "ronda_success_null_summary_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+run_test "ronda_success_null_summary_exit_code" "EXIT=2" "$(_kv EXIT "$out")"
+
+# --- Test 4.4: malformed severity line (non-numeric / reordered) -> fail closed ---
+out="$(_ronda_run_success_summary '"Blocking: one, Important: 0, Nit: 0\nImportant: 0, Blocking: 1, Nit: 0"')"
+run_test "ronda_success_malformed_line_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+run_test "ronda_success_malformed_line_exit_code" "EXIT=2" "$(_kv EXIT "$out")"
+
+# --- Test 4.5: two severity lines are ambiguous -> fail closed ---
+out="$(_ronda_run_success_summary '"Blocking: 0, Important: 0, Nit: 0\nBlocking: 2, Important: 0, Nit: 0"')"
+run_test "ronda_success_duplicate_line_reason" "REASON=ronda_severity_unparseable" "$(_kv REASON "$out")"
+run_test "ronda_success_duplicate_line_exit_code" "EXIT=2" "$(_kv EXIT "$out")"
+
+# --- Test 4.6: leading zeros are base 10 ---
+out="$(_ronda_run_success_summary '"Blocking: 08, Important: 09, Nit: 010"')"
+run_test "ronda_success_leading_zero_blocking" "BLOCKING_COUNT=8" "$(_kv BLOCKING_COUNT "$out")"
+run_test "ronda_success_leading_zero_suggestions" "SUGGESTION_COUNT=19" "$(_kv SUGGESTION_COUNT "$out")"
+run_test "ronda_success_leading_zero_exit_code" "EXIT=1" "$(_kv EXIT "$out")"
+
+# --- Test 4.7: CRLF line endings still parse ---
+out="$(_ronda_run_success_summary '"Model: m\r\nBlocking: 2, Important: 0, Nit: 0\r\n"')"
+run_test "ronda_success_crlf_blocking" "BLOCKING_COUNT=2" "$(_kv BLOCKING_COUNT "$out")"
+run_test "ronda_success_crlf_exit_code" "EXIT=1" "$(_kv EXIT "$out")"
+
+unset out
+unset -f _ronda_run_success_summary _kv
 
 unset _ronda_overrides
 

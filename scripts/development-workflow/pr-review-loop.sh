@@ -2855,20 +2855,35 @@ run_ronda_review() {
   # supersedes any in-flight pass — the loop keys on head SHA, not on a
   # review/check-run count.
   #
-  #   0 → RESULT=clean       (conclusion=success)
-  #   1 → RESULT=needs_fixes (conclusion=failure or action_required)
-  #   2 → RESULT=escalate    (timeout, head-sha-unavailable, fetch-failed, or
-  #                           an unrecognized terminal conclusion)
+  # Verdict source (#1849). Ronda's consumption contract
+  # (lhpaul/ronda docs/adoption/ronda-review-adoption.md §4) defines the
+  # check-run conclusion as "did the pass complete", NOT "were there blocking
+  # findings": `success` means the pass worked, with or without findings;
+  # `failure` means the pass could not complete (timeout, model unavailable,
+  # credential missing, changes too large, unusable output, unexpected
+  # error). The finding verdict lives in the successful check run's summary,
+  # which carries exactly one severity line of the form
+  #   Blocking: <n>, Important: <n>, Nit: <n>
+  # (lhpaul/ronda src/core/summary.ts buildCheckRunOutput). The verdict is
+  # read from that line, so no review-author lookup is needed — reviews
+  # posted through Ronda's reusable Actions workflow are authored by
+  # `github-actions[bot]`, not `ronda[bot]`.
+  #
+  #   0 → RESULT=clean       (conclusion=success, Blocking: 0)
+  #   1 → RESULT=needs_fixes (conclusion=success, Blocking: N ≥ 1)
+  #   2 → RESULT=escalate    (conclusion=success with a missing, duplicated,
+  #                           or unparseable severity line; conclusion=failure
+  #                           — a pass failure, not a code finding; any other
+  #                           terminal conclusion; timeout;
+  #                           head-sha-unavailable; fetch-failed)
   #
   # Env var overrides:
-  #   RONDA_BOT_LOGIN   — override bot login (default: "ronda[bot]")
   #   RONDA_CHECK_NAME  — override check-run name (default: "Ronda review")
   local pr_number="$1"
   local branch_name="$2"
   local poll_interval="$3"
   local max_wait="$4"
   local platform="ronda"
-  local bot_login="${RONDA_BOT_LOGIN:-ronda[bot]}"
   local check_name="${RONDA_CHECK_NAME:-Ronda review}"
   local repo owner repo_name
   local elapsed=0
@@ -2965,40 +2980,53 @@ run_ronda_review() {
 
     case "$conclusion" in
       success)
-        print_kv RESULT clean
-        print_kv REVIEWED_HEAD "$current_sha"
-        print_kv PLATFORM "$platform"
-        print_kv PR_NUMBER "$pr_number"
-        print_kv BRANCH "$branch_name"
-        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-        print_kv COMMENT_COUNT 0
-        print_kv BLOCKING_COUNT 0
-        print_kv SUGGESTION_COUNT 0
-        return 0
-        ;;
-      failure|action_required)
-        # Fetch the actual review-comment count so COMMENT_COUNT/BLOCKING_COUNT
-        # reflect how many inline findings Ronda posted, not just "at least 1".
-        local review_id comment_count
-        review_id=""
-        comment_count=0
-        set +e
-        review_id="$(gh api --paginate \
-          "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
-          | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
-            '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .id // empty')"
-        if [ -n "$review_id" ]; then
-          local _cnt
-          _cnt="$(gh api --paginate \
-            "repos/$owner/$repo_name/pulls/$pr_number/reviews/$review_id/comments" \
-            2>/dev/null | jq -rs '[ .[] | .[] ] | length' 2>/dev/null)"
-          [ -n "$_cnt" ] && [ "$_cnt" -gt 0 ] && comment_count="$_cnt"
+        # The pass completed; the verdict is the summary's severity line
+        # (#1849). Exactly one well-formed line is required — a missing,
+        # duplicated, or malformed line escalates (fail closed) rather than
+        # guessing clean. Counts are capped at 9 digits so the arithmetic
+        # below cannot overflow, and forced to base 10 so a leading zero is
+        # never read as octal.
+        local summary severity_lines severity_line_count
+        local ronda_blocking ronda_important ronda_nit
+        summary="$(printf '%s' "$fetch_output" | jq -r '.output.summary // ""' 2>/dev/null)" || summary=""
+        severity_lines="$(printf '%s\n' "$summary" | tr -d '\r' \
+          | grep -E '^Blocking: [0-9]{1,9}, Important: [0-9]{1,9}, Nit: [0-9]{1,9}$')" || severity_lines=""
+        if [ -z "$severity_lines" ]; then
+          severity_line_count=0
+        else
+          severity_line_count="$(printf '%s\n' "$severity_lines" | wc -l | tr -d ' ')"
         fi
-        set -e
-        # Ronda may place findings in the review body rather than as inline
-        # comments. Ensure BLOCKING_COUNT >= 1 so callers always see at least
-        # one blocking finding when the check run concludes failure.
-        [ "$comment_count" -eq 0 ] && comment_count=1
+        if [ "$severity_line_count" -ne 1 ]; then
+          echo "WARN: run_ronda_review: check run concluded success but its summary has $severity_line_count parseable severity line(s) (expected exactly 1) for PR #$pr_number (SHA=$current_sha)" >&2
+          print_kv RESULT escalate
+          print_kv REASON ronda_severity_unparseable
+          print_kv REVIEWED_HEAD "$current_sha"
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          return 2
+        fi
+        ronda_blocking="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)$/\1/')"
+        ronda_important="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)$/\2/')"
+        ronda_nit="$(printf '%s\n' "$severity_lines" | sed -E 's/^Blocking: ([0-9]+), Important: ([0-9]+), Nit: ([0-9]+)$/\3/')"
+        ronda_blocking=$((10#$ronda_blocking))
+        ronda_important=$((10#$ronda_important))
+        ronda_nit=$((10#$ronda_nit))
+        local ronda_suggestions=$((ronda_important + ronda_nit))
+        local ronda_total=$((ronda_blocking + ronda_suggestions))
+        if [ "$ronda_blocking" -eq 0 ]; then
+          print_kv RESULT clean
+          print_kv REVIEWED_HEAD "$current_sha"
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT "$ronda_total"
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT "$ronda_suggestions"
+          return 0
+        fi
         print_kv RESULT needs_fixes
         print_kv REVIEWED_HEAD "$current_sha"
         print_kv PLATFORM "$platform"
@@ -3006,15 +3034,36 @@ run_ronda_review() {
         print_kv BRANCH "$branch_name"
         print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
         print_kv REASON ronda_blocking_findings
-        print_kv COMMENT_COUNT "$comment_count"
-        print_kv BLOCKING_COUNT "$comment_count"
-        print_kv SUGGESTION_COUNT 0
+        print_kv COMMENT_COUNT "$ronda_total"
+        print_kv BLOCKING_COUNT "$ronda_blocking"
+        print_kv SUGGESTION_COUNT "$ronda_suggestions"
         return 1
         ;;
+      failure)
+        # The pass could not complete (Ronda contract §4) — an infrastructure
+        # failure, not a code finding. Escalate with the check-run title,
+        # which names the reason, instead of sending the fixer after
+        # findings that do not exist. The title is flattened to one line and
+        # length-capped so it cannot break the key=value output contract.
+        local ronda_title
+        ronda_title="$(printf '%s' "$fetch_output" | jq -r '.output.title // ""' 2>/dev/null)" || ronda_title=""
+        ronda_title="$(printf '%s' "$ronda_title" | tr '\r\n' '  ' | cut -c1-200)"
+        echo "WARN: run_ronda_review: Ronda pass failed for PR #$pr_number (SHA=$current_sha): ${ronda_title:-<no title>}" >&2
+        print_kv RESULT escalate
+        print_kv REASON ronda_pass_failed
+        print_kv RONDA_CHECK_TITLE "$ronda_title"
+        print_kv REVIEWED_HEAD "$current_sha"
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        return 2
+        ;;
       *)
-        # Unrecognized/unexpected terminal conclusion (e.g. neutral,
-        # cancelled, skipped, timed_out, stale) — fail closed rather than
-        # guess whether it means clean or blocking.
+        # Unrecognized/unexpected terminal conclusion (e.g. action_required,
+        # neutral, cancelled, skipped, timed_out, stale) — Ronda's contract
+        # emits only success/failure, so fail closed rather than guess
+        # whether it means clean or blocking.
         echo "WARN: run_ronda_review: unexpected check-run conclusion '$conclusion' for PR #$pr_number (SHA=$current_sha)" >&2
         print_kv RESULT escalate
         print_kv REASON ronda_unexpected_conclusion
