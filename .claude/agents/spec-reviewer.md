@@ -27,3 +27,9 @@ hub-owned in `workflow_hub` mode unless a future protocol explicitly changes
 that; missing mode or `single_repo` means the current repository owns the spec.
 
 That document is the single source of truth for this review stage. Apply fixes directly for issues you can resolve. If invoked during a reviewer loop, continue through commit / push until the protocol reaches approval or a real human decision is required.
+
+Check the PR's `Document Quality Gate` log for a `Matrix coherence preflight`
+row when the spec contains a stateful contract. On loop re-entry after two
+consecutive same-matrix review cycles, the loop runner (not this reviewer)
+re-runs the six-check audit per Protocol 93's re-run rule and passes its
+result to the dispatched fixer.

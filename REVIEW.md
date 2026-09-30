@@ -108,6 +108,13 @@ Check:
   the changed surface. Missing or contradictory matrix evidence is blocking
   before `ready-for-human-review`; for non-gate documentation changes, accept a
   concise not-applicable rationale.
+- When the spec contains a stateful contract (a decision matrix, state table,
+  lifecycle, precedence rules, or similarly stateful construct), the PR's
+  `Document Quality Gate` log carries a `Matrix coherence preflight` row with
+  the six-check audit summary or a reasoned `Not applicable`. A row that reads
+  `Not applicable — no stateful contract` when the spec actually contains one
+  is a blocking misclassification finding — the fixer runs the six-check audit
+  and replaces the row.
 - Spec PRs contain only expected spec-stage artifacts. Implementation files,
   migrations, product source files, workflow scripts, or unrelated docs on a
   `spec/*` branch are a workflow-stage blocker unless a human explicitly
@@ -157,6 +164,13 @@ Check:
   required next actions, mirror surfaces, and examples when examples are part of
   the changed surface. Missing rows, contradictory next actions, or unreasoned
   not-applicable entries are blocking before `ready-for-human-review`.
+- When the plan's own stateful contract (a decision matrix, state table,
+  lifecycle, or precedence rules) or, for Refactor items, the work item brief
+  contains one, the PR's `Document Quality Gate` log carries a `Matrix
+  coherence preflight` row with the six-check audit summary or a reasoned
+  `Not applicable`. A row that reads `Not applicable — no stateful contract`
+  when the plan or brief actually contains one is a blocking misclassification
+  finding — the fixer runs the six-check audit and replaces the row.
 - Plan PRs contain only expected plan-stage artifacts: the implementation plan
   and any plan-stage smoke-test runbook. Implementation files, migrations,
   product source files, workflow scripts, or unrelated docs on an

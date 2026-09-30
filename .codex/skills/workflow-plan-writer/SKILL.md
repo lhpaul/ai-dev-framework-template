@@ -46,7 +46,11 @@ Recommended model tier: `premium`
 14. Before opening the draft plan PR, complete Protocol 02's Document Quality
     Gate and include the gate log in the PR description. For complex workflow
     decision-gate plans, include Protocol 02's matrix classification and
-    Document Quality Gate entry.
+    Document Quality Gate entry. When the plan's own stateful contract, or the
+    work item brief for Refactor items, contains a decision matrix, state
+    table, lifecycle, or precedence rules, run Protocol 02's matrix coherence
+    preflight (the same six-check audit as Protocol 01) and record the result
+    as a `Matrix coherence preflight` row in the gate log.
 15. Before Document Quality Gate, read
     `docs/workflow/development-workflow/plan-authoring-rigor-rules.md` and
     follow its six plan-authoring rules. Record firing-rule evidence in the
