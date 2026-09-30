@@ -344,7 +344,7 @@ feature affects are:
 
 | Code value | Display label | Description |
 | --- | --- | --- |
-| `waiting_on_reviewer` | Waiting on reviewer | Existing loop result, now used by every platform. At least one platform has **No verdict yet** (or an existing platform-specific wait outcome) and no platform has failed or reported findings |
+| `waiting_on_reviewer` | Waiting on reviewer | Existing loop result, now used by every platform. At least one platform has **No verdict yet** (or an existing platform-specific wait outcome) that is not kept as a non-blocking skip under Business Rule 4, and no platform has failed or reported findings |
 | `reviewer-no-verdict-yet` | No verdict yet | New platform-neutral reason. The platform's wait budget ran out with no verdict and no failure evidence for the current revision |
 | `escalate` | Escalated | Existing loop result. Used for **Reviewer failed** and for the existing loop-level escalations. It is no longer used when a platform simply ran out of wait budget |
 | `reviewer-failed` | Reviewer failed (PR label) | Existing label. Present only while at least one platform in the latest run carries failure evidence, apart from the kept existing label behaviors named in Business Rule 11 |
