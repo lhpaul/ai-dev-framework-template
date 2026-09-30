@@ -3681,10 +3681,13 @@ first.
 
 A skipped bare reference names a product-repo issue, so it needs its own
 disposition (closed in the product repository, or confirmed non-closing) in the
-item report. See [`cross-repo-pr-flow.md`](../cross-repo-pr-flow.md#closing-keywords-in-product-prs). A "references issue(s) … without a closing
-keyword" warning is **non-terminal**: cleanup stays incomplete until every
-named issue has an explicit disposition — processed (closed and
-status-updated) or confirmed non-closing — recorded in the item report.
+item report. See
+[`cross-repo-pr-flow.md`](../cross-repo-pr-flow.md#closing-keywords-in-product-prs).
+
+A "references issue(s) … without a closing keyword" warning is
+**non-terminal**: cleanup stays incomplete until every named issue has an
+explicit disposition — processed (closed and status-updated) or confirmed
+non-closing — recorded in the item report.
 
 **Key rules:**
 
