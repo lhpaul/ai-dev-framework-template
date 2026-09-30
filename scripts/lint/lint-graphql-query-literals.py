@@ -138,7 +138,27 @@ def well_nested(query: str) -> bool:
 
 
 WORD_BOUNDARY_BEFORE = " \t\r\n;&|()"
-CASE_KEYWORD = re.compile(r"(case|esac)(?=[\s;&|()]|\Z)")
+# `case WORD in` / `esac` count only as the compound command, never as a plain
+# argument such as `echo case` (an unmatched count would stop a `$( )` from
+# closing and silently drop every later query).
+CASE_KEYWORD = re.compile(
+    r"(?:(case)[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;&|()'\"])+[ \t]+in(?=[\s;]|\Z)"
+    r"|(esac)(?=[\s;&|()]|\Z))"
+)
+COMMAND_POSITION_WORDS = ("then", "do", "else", "!")
+
+
+def at_command_position(text: str, i: int) -> bool:
+    """True when `i` starts a command: after a separator or a keyword like `then`."""
+    j = i - 1
+    while j >= 0 and text[j] in " \t":
+        j -= 1
+    if j < 0 or text[j] in "\n;&|({":
+        return True
+    word_end = j + 1
+    while j >= 0 and not text[j].isspace():
+        j -= 1
+    return text[j + 1 : word_end] in COMMAND_POSITION_WORDS
 HEREDOC_OPERATOR = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
@@ -204,12 +224,15 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
                 i = end if end != -1 else n
                 continue
             keyword = CASE_KEYWORD.match(text, i)
-            if keyword:
-                if keyword.group(1) == "case":
+            if keyword and at_command_position(text, i):
+                if keyword.group(1):
                     frame[2] += 1
-                elif frame[2] > 0:
-                    frame[2] -= 1
-                i = keyword.end()
+                    # Resume just after `case` so the subject word is lexed.
+                    i += len("case")
+                else:
+                    if frame[2] > 0:
+                        frame[2] -= 1
+                    i = keyword.end()
                 continue
         if c == "\\":
             i += 2

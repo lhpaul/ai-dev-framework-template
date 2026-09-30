@@ -254,6 +254,21 @@ write_fixture "$TMP_DIR/case_in_cmdsubst.sh" \
   "x=\"\$(case \$a in a) echo 1;; (b) echo 2;; esac; gh api graphql -f query='query{a{b}}}')\""
 run_test "case_pattern_paren_does_not_close_cmdsubst" "fail" "$(run_linter "$TMP_DIR/case_in_cmdsubst.sh")"
 
+# The bare word `case`/`esac` as an argument is not the compound command, so
+# it must not stop the enclosing `$( )` from closing.
+write_fixture "$TMP_DIR/case_as_argument.sh" \
+  '#!/usr/bin/env bash' \
+  'x="$(echo case)"' \
+  'y="$(echo esac; printf %s case; )"' \
+  "gh api graphql -f query='query{a{b}}}'"
+run_test "case_word_as_argument_does_not_drop_query" "fail" "$(run_linter "$TMP_DIR/case_as_argument.sh")"
+
+# A case subject that itself holds a command substitution still opens a case.
+write_fixture "$TMP_DIR/case_subject_cmdsubst.sh" \
+  '#!/usr/bin/env bash' \
+  "x=\"\$(case \"\$(uname)\" in Darwin) echo m;; esac; gh api graphql -f query='query{a{b}}}')\""
+run_test "case_subject_with_cmdsubst_still_tracked" "fail" "$(run_linter "$TMP_DIR/case_subject_cmdsubst.sh")"
+
 write_fixture "$TMP_DIR/tabbed_heredoc.sh" \
   '#!/usr/bin/env bash' \
   'cat <<-EOF' \
