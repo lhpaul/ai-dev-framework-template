@@ -158,7 +158,11 @@ gh pr comment "$PR_NUMBER" --body-file "$PRIVATE_SCRATCH_DIR/pr-comment-[item]-$
   `pr-body-<item>-<pid>.md`. A shared generic file such as `pr-body.md` lets a
   sibling's content reach this PR with a correct PR number.
 - `pr-review-loop.sh` runs this guard itself on every run, before any side
-  effect. The expected branch is `--branch` when given (it wins over any
+  effect. One check per run is enough: GitHub fixes a PR's head branch and
+  head repository at creation, and the loop's PR number and verified repository
+  do not change within the run, so later writes in the same run act on the
+  already-verified PR. Callers that issue separate mutations outside the loop
+  still run the guard before each one. The expected branch is `--branch` when given (it wins over any
   checkout); otherwise the workflow branch checked out in `--repo-root` (or the
   working directory). It stops with `RESULT=escalate`, exit `2`, and
   `REASON=pr_ownership_branch_required` (no `--branch` and the checkout is

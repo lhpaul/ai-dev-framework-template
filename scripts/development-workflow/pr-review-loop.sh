@@ -12724,6 +12724,10 @@ else
     _ownership_repo_source="checkout_origin"
   fi
 fi
+# One ownership check per run covers every later PR write in this run: GitHub
+# fixes a PR's head branch and head repository at creation, and pr_number and
+# the verified repository (pinned below) are immutable for the rest of the run,
+# so the verification cannot go stale between here and a later mutation.
 if [ -n "$_ownership_repo" ]; then
   _ownership_output="$("$SCRIPT_DIR/pr-ownership-guard.sh" --pr "$pr_number" \
     --expected-branch "$_ownership_expected_branch" --repo "$_ownership_repo" --repo-root "$repo_root" 2>&1)" \
