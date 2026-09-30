@@ -915,6 +915,23 @@ pr_repo_is_hub_tracker_repo() {
   return 1
 }
 
+# pr_close_label <pr_repo> <pr_number>
+# Echoes how a close comment names the merged PR: "PR #N" when it lives in the
+# hub tracker's own repository, else "<pr_repo>#N" so a product-repo PR number
+# is not read as a hub PR number (#1538). An undeterminable hub is treated as
+# "not the hub" (the qualified form is never wrong; the bare one can be).
+pr_close_label() {
+  local pr_repo="$1" pr_number="$2" status=0
+  if [ -n "$pr_repo" ]; then
+    pr_repo_is_hub_tracker_repo "$pr_repo" || status=$?
+    if [ "$status" -ne 0 ]; then
+      printf '%s#%s\n' "$pr_repo" "$pr_number"
+      return 0
+    fi
+  fi
+  printf 'PR #%s\n' "$pr_number"
+}
+
 # fetch_hub_tracker_closing_issues <pr_repo> <pr_number>
 # Like fetch_pr_closing_issues, but only returns issue numbers that belong to
 # the hub tracker (#1538). A bare "Fixes #NNN" in a PR is numbered in the
@@ -967,16 +984,12 @@ close_issues_from_pr() {
   local pr_number="${1:-}"
   local issue_list="${2:-}"
   local pr_repo="${3:-}"
-  local issue_num issue_state view_failures=0 pr_ref_status=0 close_pr_label
+  local issue_num issue_state view_failures=0 close_pr_label
   if { [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; } || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     echo "ERROR: close_issues_from_pr requires <pr_number> (numeric) <issue_numbers_newline_list> [<pr_repo>]." >&2
     return 2
   fi
-  close_pr_label="PR #${pr_number}"
-  if [ -n "$pr_repo" ]; then
-    pr_repo_is_hub_tracker_repo "$pr_repo" || pr_ref_status=$?
-    [ "$pr_ref_status" -eq 0 ] || close_pr_label="${pr_repo}#${pr_number}"
-  fi
+  close_pr_label="$(pr_close_label "$pr_repo" "$pr_number")"
   while IFS= read -r issue_num; do
     [ -z "$issue_num" ] && continue
     echo "Processing issue #${issue_num} from PR #${pr_number} closing keywords..."
@@ -1172,10 +1185,10 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
       fi
       if [ "$ISSUE_STATE" = "OPEN" ]; then
         if [ -n "$MERGED_PR" ]; then
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          CLOSE_COMMENT="Closed by $(pr_close_label "$merged_pr_repo" "$MERGED_PR")."
         elif [ -n "$VERIFIED_MERGED_PR" ]; then
           MERGED_PR="$VERIFIED_MERGED_PR"
-          CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
+          CLOSE_COMMENT="Closed by $(pr_close_label "$merged_pr_repo" "$MERGED_PR")."
         fi
         if [ -n "$MERGED_PR" ]; then
           echo "Closing issue #$ISSUE_NUMBER..."

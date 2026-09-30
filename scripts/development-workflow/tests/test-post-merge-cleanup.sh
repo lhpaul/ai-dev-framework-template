@@ -1542,6 +1542,8 @@ h1538g_branch="fix/1538-hub1538-extra-closes"
 h1538g_hub="$(make_hub_fixture extracloses "$h1538g_branch")"
 h1538g_out="$(run_hub_cleanup "$h1538g_hub" "$h1538g_branch" 97 'Fixes #1538
 Also Fixes #601')"
+run_contains "hub_numeric_branch_close_comment_names_product_repo" \
+  "1538 --comment Closed by example/repo#97." "$h1538g_out"
 run_test "hub_numeric_branch_extra_bare_ref_not_closed" "yes" "$(lacks "also closes" "$h1538g_out")"
 run_test "hub_numeric_branch_extra_bare_ref_no_tracker_update" "yes" "$(lacks "Processing issue #601" "$h1538g_out")"
 
