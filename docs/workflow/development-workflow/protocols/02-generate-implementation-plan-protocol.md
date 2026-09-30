@@ -475,6 +475,17 @@ If no blocking human decision remains:
 
    Fix all inconsistencies found before moving to the lint check. Do not proceed to commit with known cross-section contradictions.
 
+   - **Matrix coherence preflight**: this check also extends to the plan's own
+     stateful contracts — a decision matrix, state table, lifecycle, or
+     precedence-rule set the plan itself defines — and, for Refactor items, to
+     the work item brief. When the plan or brief contains a stateful contract,
+     run the same six-check audit defined in Protocol 01's Document Quality
+     Gate section ("Matrix coherence preflight") before committing: overlapping
+     rows, missing states, precedence/order ambiguity, malformed/unknown input
+     handling, stale-vs-current evidence, and terminal vs waiting vs escalation
+     outcomes. Record the result as a `Matrix coherence preflight` row in the
+     Document Quality Gate log below.
+
 7. **Document Quality Gate (mandatory — do not skip)**:
 
    Run this gate after the cross-section consistency self-check and before
@@ -493,6 +504,7 @@ If no blocking human decision remains:
    - Implementation-order consistency: Checked - file list and order agree.
    - Verification support: Checked - broad claims cite Verification Log evidence.
    - Complex workflow decision-gate matrix: Not applicable - this plan does not add or modify workflow decision-gate behavior.
+   - Matrix coherence preflight: Not applicable - no stateful contract in the plan or brief.
    - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
 
    ### Plan authoring rigor — per-rule outcome record
@@ -542,6 +554,13 @@ If no blocking human decision remains:
      decision-gate behavior, record a short not-applicable rationale. If an
      expected input, outcome, example, or mirror surface is marked not
      applicable, include the rationale in the matrix row.
+   - Matrix coherence preflight: when the plan's own stateful contract or, for
+     Refactor items, the work item brief contains a decision matrix, state
+     table, lifecycle, or precedence rules, the six-check audit from Step 6 was
+     run and the Document Quality Gate log carries a `Matrix coherence
+     preflight` row: `Checked` with a one-line audit summary naming each check
+     and its pass/fail, or `Not applicable — no stateful contract` with the
+     rationale.
    - Parser/API/concurrency checklist completeness: when parser-risk,
      API-surface, single-snapshot or consistency-semantics, or
      concurrent-event-source signals apply, the required checklist sections are
