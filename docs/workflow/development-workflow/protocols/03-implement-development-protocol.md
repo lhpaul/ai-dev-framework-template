@@ -643,7 +643,8 @@ Complete all applicable checks:
    `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
    current PR is a documentation-stage PR, run
    `scripts/development-workflow/check-documentation-stage-alignment.sh --pr <pr_number>`
-   before readiness. A mismatch must be corrected by moving/removing
+   (it posts a PR comment, so run the [PR Ownership Guard](#pr-ownership-guard)
+   first) before readiness. A mismatch must be corrected by moving/removing
    implementation files from the documentation-stage PR or escalated for a
    human workflow-stage decision.
 5. **Complex workflow decision-gate matrix check**: when the implementation adds

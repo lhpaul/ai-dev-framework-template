@@ -1745,7 +1745,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 
 **`ready-for-regression` direct-apply rule**: This label is the primary enforcement point for the regression CI gate. It applies to **all** implementation PR types: `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*`. If the agent applied `ready-for-human-review` but omitted `ready-for-regression` on any of these branch types, the orchestrator:
 
-1. Applies the label through the helper (issue #1408 — never `gh pr edit --add-label ready-*` directly): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-regression`. A `refused` verdict means a gate is unmet: redispatch instead of labelling.
+1. Applies the label through the helper (issue #1408 — never `gh pr edit --add-label ready-*` directly), after `pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name>` passes (issue #1444): `./scripts/development-workflow/apply-readiness-labels.sh --pr <pr_number> --label ready-for-regression`. A `refused` verdict means a gate is unmet: redispatch instead of labelling.
 2. Logs the deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> (<branch-type>) — applied by orchestrator Step 5.1`
 3. **Re-polls CI** — the label triggers configured real regression workflows,
    or an explicitly enabled placeholder. The CI check row in this verification
