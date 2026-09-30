@@ -315,6 +315,21 @@ write_fixture "$TMP_DIR/backtick_then_query.sh" \
   "gh api graphql -f query='query{a{b}}}'"
 run_test "backtick_substitution_does_not_drop_following_query" "fail" "$(run_linter "$TMP_DIR/backtick_then_query.sh")"
 
+# Double-quoted GraphQL literals are rejected (only the single-quoted form is
+# supported; bash would expand GraphQL $variables inside double quotes), even
+# when balanced. A plain variable reference is not a literal and passes.
+write_fixture "$TMP_DIR/dq_literal.sh" \
+  '#!/usr/bin/env bash' \
+  'gh api graphql -f query="query{viewer{login}}"'
+run_test "double_quoted_graphql_literal_rejected" "fail" "$(run_linter "$TMP_DIR/dq_literal.sh")"
+
+write_fixture "$TMP_DIR/dq_reference.sh" \
+  '#!/usr/bin/env bash' \
+  "graphql_query='query{viewer{login}}'" \
+  'gh api graphql -f query="$graphql_query"' \
+  'gh api graphql -f query="${graphql_query}" -f other="$(date)"'
+run_test "double_quoted_variable_reference_passes" "pass" "$(run_linter "$TMP_DIR/dq_reference.sh")"
+
 # Real call-site shapes that do not spell `gh api graphql` on one command
 # are still recognised.
 write_fixture "$TMP_DIR/wrapper_form.sh" \

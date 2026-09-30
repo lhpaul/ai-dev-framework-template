@@ -34,6 +34,15 @@ from pathlib import Path
 # `workflow_run_gh_capture_stderr api graphql`) or pass the variable to a
 # helper function.
 QUERY_ASSIGNMENT_START = re.compile(r"(?<![^\s;(])(?:[A-Za-z_][A-Za-z0-9_]*)?query='")
+# The same shape with a double-quoted value. A double-quoted GraphQL literal
+# is rejected outright rather than linted: bash would expand GraphQL
+# `$variable` references inside it, and only the single-quoted form is
+# supported. A plain reference such as `query="$graphql_query"` does not open
+# with GraphQL and is left alone (its definition site is linted instead).
+DQ_QUERY_START = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*)?query=\"")
+DOUBLE_QUOTED_REASON = (
+    "double-quoted GraphQL query literal; use a single-quoted query='...' literal"
+)
 # GraphQL content: the literal must open (after whitespace and # comments)
 # with an operation keyword or an anonymous `{` selection set. This keeps
 # shell prose or non-GraphQL strings that happen to use a `*query='` shape out
@@ -95,6 +104,7 @@ class Finding:
     path: str
     line: int
     query: str
+    reason: str = "unbalanced or misnested delimiters"
 
 
 def well_nested(query: str) -> bool:
@@ -202,8 +212,11 @@ def _skip_heredoc_bodies(text: str, pos: int, pending: list[tuple[str, bool]]) -
     return pos
 
 
-def executed_query_starts(text: str) -> list[tuple[int, int]]:
-    """Return (match_start, quote_pos) for `*query='` in executed shell code.
+def executed_query_starts(text: str) -> list[tuple[int, int, str]]:
+    """Return (match_start, quote_pos, kind) for `*query='` / `*query="` starts.
+
+    `kind` is "single" or "double" (the quote that opens the value), and only
+    starts in executed shell code are returned.
 
     A small shell-context lexer: text inside double quotes, `#` comments
     (whole-line or trailing), other single-quoted strings, `$'...'` strings,
@@ -213,7 +226,7 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
     shape `var="$(gh api graphql -f query='...')"` — and so are legacy
     backtick substitutions (`` var="`gh api graphql ...`" ``).
     """
-    starts: list[tuple[int, int]] = []
+    starts: list[tuple[int, int, str]] = []
     # Each frame: ["code", paren_depth, case_depth], ["bt", paren_depth,
     # case_depth] (a backtick substitution: code that closes on a backtick), or
     # ["dq", 0, 0]. The bottom frame is code. case_depth tracks open `case ... esac` blocks so a
@@ -247,11 +260,17 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
             match = QUERY_ASSIGNMENT_START.match(text, i)
             if match:
                 quote_pos = match.end() - 1
-                starts.append((i, quote_pos))
+                starts.append((i, quote_pos, "single"))
                 extracted = extract_concatenated_query(text, quote_pos)
                 if extracted is None:
                     break  # unterminated: the rest of the file is swallowed
                 i = extracted[1]
+                continue
+            dq_match = DQ_QUERY_START.match(text, i)
+            if dq_match:
+                quote_pos = dq_match.end() - 1
+                starts.append((i, quote_pos, "double"))
+                i = quote_pos  # the `"` is then lexed normally (dq frame)
                 continue
             if c == "#":
                 end = text.find("\n", i)
@@ -326,25 +345,43 @@ def executed_query_starts(text: str) -> list[tuple[int, int]]:
     return starts
 
 
-def graphql_literals(text: str) -> list[tuple[int, str | None]]:
-    """Return (line, joined_query_or_None_if_unterminated) per GraphQL literal."""
+def _double_quoted_value(text: str, quote_pos: int) -> str:
+    """Raw content of a double-quoted value starting at `quote_pos`."""
+    j, n = quote_pos + 1, len(text)
+    while j < n and text[j] != '"':
+        j += 2 if text[j] == "\\" else 1
+    return text[quote_pos + 1 : j]
+
+
+def graphql_literals(text: str) -> list[tuple[int, str | None, str]]:
+    """Return (line, joined_query_or_None_if_unterminated, kind) per literal."""
     if GRAPHQL_FILE_MARKER not in text:
         return []
-    literals: list[tuple[int, str | None]] = []
-    for match_start, quote_pos in executed_query_starts(text):
+    literals: list[tuple[int, str | None, str]] = []
+    for match_start, quote_pos, kind in executed_query_starts(text):
+        if kind == "double":
+            value = _double_quoted_value(text, quote_pos)
+            if GRAPHQL_OPENING.match(value):
+                line = text.count("\n", 0, match_start) + 1
+                literals.append((line, value, "double"))
+            continue
         extracted = extract_concatenated_query(text, quote_pos)
         body = extracted[0] if extracted is not None else text[quote_pos + 1 :]
         if not GRAPHQL_OPENING.match(body):
             continue
         line = text.count("\n", 0, match_start) + 1
-        literals.append((line, extracted[0] if extracted is not None else None))
+        literals.append((line, extracted[0] if extracted is not None else None, "single"))
     return literals
 
 
 def find_unbalanced_in_text(path: str, text: str) -> list[Finding]:
     findings: list[Finding] = []
-    for line, query in graphql_literals(text):
-        if query is None:
+    for line, query, kind in graphql_literals(text):
+        if kind == "double":
+            findings.append(
+                Finding(path=path, line=line, query=query or "", reason=DOUBLE_QUOTED_REASON)
+            )
+        elif query is None:
             findings.append(Finding(path=path, line=line, query="<unterminated literal>"))
         elif not well_nested(query):
             findings.append(Finding(path=path, line=line, query=query))
@@ -372,12 +409,12 @@ def discover_shell_files(root: Path) -> list[Path]:
 
 def format_findings(findings: list[Finding]) -> str:
     lines = [
-        "lint-graphql-query-literals found unbalanced GraphQL query literals:",
+        "lint-graphql-query-literals found invalid GraphQL query literals:",
         "",
     ]
     for finding in findings:
-        lines.append(f"{finding.path}:{finding.line}: unbalanced or misnested delimiters")
-        lines.append(f"  query='{finding.query}'")
+        lines.append(f"{finding.path}:{finding.line}: {finding.reason}")
+        lines.append(f"  query: {finding.query}")
     lines.append("")
     lines.append(
         "Braces, brackets, and parens must nest correctly (order, not just "

@@ -217,9 +217,11 @@ calls.
   fragment does not open with an operation keyword). Inline the fragment into
   the query literal to bring it into scope; otherwise it is covered only by the
   live-validation requirement below.
-- Only single-quoted `query='...'` literals are scanned. Double-quoted
-  `query="..."` literals and heredoc-built queries are not; keep new queries in
-  the single-quoted form.
+- Only single-quoted `query='...'` literals are linted for balance. A
+  double-quoted `query="..."` value that opens as GraphQL is **rejected** as a
+  finding (bash would expand GraphQL `$variables` inside it), while a plain
+  reference such as `query="$graphql_query"` is left alone. Heredoc-built
+  queries are not scanned; keep new queries in the single-quoted form.
 - An unquoted expansion between segments (`'a'$x'b'`) ends the join, so the
   head segment alone is checked. Quote the expansion (`'a'"$x"'b'`).
 
