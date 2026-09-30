@@ -81,6 +81,19 @@ would otherwise pass; `refused` and `escalate` verdicts are unchanged
 (neither mutates a passing PR) but DRY_RUN=true shows no removal ran even
 when the PR already carried the label.
 
+Ownership x dry-run outcome table (every combination the ownership guard and
+--dry-run introduce; the pre-existing reviewer/CI gate rows below are
+unchanged by either):
+  owned      + not dry-run -> labeled/refused/escalate (existing gate), mutates as before
+  owned      + --dry-run   -> would-label/refused/escalate (existing gate), never mutates
+  not_owned  + either      -> refused, REASON=ownership-mismatch, never mutates
+                              (branch mismatch OR cross-repository PR with the
+                              same branch name); re-resolve the PR number, do
+                              not redispatch a reviewer/CI fix
+  unresolved + either      -> escalate, REASON=ownership-unverified, never
+                              mutates (gh/jq failure, or no --branch on a
+                              non-workflow checkout); fix gh/jq or pass --branch
+
 Prints RESULT=<labeled|would-label|refused|escalate> and REASON=<slug>.
 Exit codes: 0 labeled, 1 refused, 2 escalate (state could not be read).
 Refusal reasons: reviewer-check-absent, reviewer-check-not-completed,
