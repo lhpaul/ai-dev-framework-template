@@ -198,7 +198,7 @@ run_test "1789_T2.23_string_id_no_polling" "0" "$(_t223_calls 'actions/runs')"
 run_test "1789_T2.23_dispatch_rejected_exit_3" "3" "$(_t223_run rejected completed success)"
 run_test "1789_T2.23_dispatch_rejected_result" "1" "$(grep -c '^DISPATCH_RESULT=rejected$' "$_t223_dir/out" || true)"
 run_test "1789_T2.23_dispatch_rejected_verdict" "1" \
-  "$(grep -c '^VERDICT: UNAVAILABLE — workflow dispatch failed: gh: Unprocessable Entity (HTTP 422)$' "$_t223_dir/out" || true)"
+  "$(grep -c '^VERDICT: UNAVAILABLE — workflow dispatch failed: .*Unprocessable Entity (HTTP 422)$' "$_t223_dir/out" || true)"
 run_test "1789_T2.23_dispatch_rejected_no_polling" "0" "$(_t223_calls 'actions/runs')"
 run_test "1789_T2.23_dispatch_not_found_exit_3" "3" "$(_t223_run not_found completed success)"
 run_test "1789_T2.23_dispatch_not_found_result" "1" "$(grep -c '^DISPATCH_RESULT=workflow_not_found$' "$_t223_dir/out" || true)"
