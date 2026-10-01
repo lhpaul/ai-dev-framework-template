@@ -1993,7 +1993,7 @@ run_greptile_review() {
   local repo
   local review_comment_id=""
   local review_window_start=""
-  local recent_trigger_comment
+  local recent_trigger_comment=""
   local existing_thumbs_up
   local head_sha=""
   local since_iso=""
@@ -2026,22 +2026,46 @@ run_greptile_review() {
     trigger_author_login="$(gh api user --jq '.login')"
   fi
 
-  recent_trigger_comment="$(
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq --arg author "$trigger_author_login" \
-          --arg trigger "$trigger_comment" \
-          --argjson max_wait "$max_wait" \
-          '
-            .[]
-            | select(
-                .user.login == $author and
-                .body == $trigger and
-                ((now - (.created_at | fromdateiso8601)) <= $max_wait)
-              )
-            | {id, created_at}
-          ' \
-      | jq -s 'sort_by(.created_at) | last // empty'
-  )"
+  # #1789 (plan D11 Greptile row): in re-wait mode, reuse the recorded trigger
+  # comment regardless of the reuse window when its reactions can be read; a
+  # bot thumbs-up on it is that request's answer. An empty ref or an
+  # unreadable comment is no observable outstanding request: post as fresh.
+  local greptile_adopted=0
+  if reviewer_loop_rewait_adopts_recorded_request; then
+    local _gr_reactions=""
+    if [ -n "$reviewer_loop_recorded_request_ref" ] \
+        && _gr_reactions="$(gh api "repos/$repo/issues/comments/$reviewer_loop_recorded_request_ref/reactions" 2>/dev/null)" \
+        && printf '%s' "$_gr_reactions" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      greptile_adopted=1
+      review_comment_id="$reviewer_loop_recorded_request_ref"
+      review_window_start="${reviewer_loop_recorded_requested_at:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+      echo "INFO: re-wait: adopting the recorded greptile request ${review_comment_id}; not posting a new trigger" >&2
+      print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+    else
+      echo "WARN: recorded greptile request ${reviewer_loop_recorded_request_ref:-<empty>} on ${loop_head_sha:-the current head} is not readable; requesting a review" >&2
+    fi
+  else
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
+  fi
+
+  if [ "$greptile_adopted" -eq 0 ]; then
+    recent_trigger_comment="$(
+      gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        | jq --arg author "$trigger_author_login" \
+            --arg trigger "$trigger_comment" \
+            --argjson max_wait "$max_wait" \
+            '
+              .[]
+              | select(
+                  .user.login == $author and
+                  .body == $trigger and
+                  ((now - (.created_at | fromdateiso8601)) <= $max_wait)
+                )
+              | {id, created_at}
+            ' \
+        | jq -s 'sort_by(.created_at) | last // empty'
+    )"
+  fi
 
   if [ -n "$recent_trigger_comment" ]; then
     review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
@@ -2134,7 +2158,16 @@ run_greptile_review() {
 
     rm -f "$existing_blocking_file"
     review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    review_comment_id="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment" --jq '.id')"
+    local _gr_post_json=""
+    _gr_post_json="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment")" || _gr_post_json=""
+    review_comment_id="$(printf '%s' "$_gr_post_json" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null)" || review_comment_id=""
+    if [ -n "$review_comment_id" ]; then
+      # #1789 (plan D12): the request this invocation posted — the trigger
+      # comment's server created_at and id.
+      print_review_request_keys \
+        "$(printf '%s' "$_gr_post_json" | jq -r '.created_at // empty' 2>/dev/null || true)" \
+        "$review_comment_id"
+    fi
   fi
 
   if [ -z "$review_comment_id" ]; then
@@ -2347,6 +2380,12 @@ EOF
   case "$max_retriggers" in
     ''|*[!0-9]*) max_retriggers=1 ;;
   esac
+  # #1789 (plan D5, D11): in re-wait mode the companion must not post any new
+  # trigger — --max-retriggers 0 also disables its async-arrival trigger, and
+  # its own duplicate guard keeps the outstanding current-head trigger.
+  if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ]; then
+    max_retriggers=0
+  fi
 
   # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
   # when a caller provides poll_interval > max_wait.
@@ -2369,6 +2408,9 @@ EOF
   script_output="$("$reviewer_script" "${reviewer_args[@]}" 2>&1)"
   script_exit=$?
   set -e
+  # #1789 (plan D12): forward the companion's request time (its TRIGGER_TIME)
+  # on every arm.
+  print_review_request_keys "$(kv_value REVIEW_REQUESTED_AT "$script_output")" ""
 
   case "$script_exit" in
     0)
@@ -2603,13 +2645,37 @@ run_claude_code_action_review() {
   if [ "$effective_poll_interval" -gt "$max_wait" ]; then
     effective_poll_interval="$max_wait"
   fi
+  local claude_args=(
+    "$pr_number" "$owner" "$repo_name"
+    --bot-login "$bot_login"
+    --poll-interval "$effective_poll_interval"
+    --max-wait "$max_wait"
+  )
+  # #1789 (plan D11 Claude row): in re-wait mode, hand the recorded run to the
+  # companion to adopt. An accepted fresh dispatch always yields a run id, so a
+  # recorded requested_at with an empty request_ref is not an outstanding run:
+  # pass neither flag and let the companion dispatch.
+  if reviewer_loop_rewait_adopts_recorded_request \
+      && [ -n "$reviewer_loop_recorded_request_ref" ] \
+      && [ -n "$reviewer_loop_recorded_requested_at" ]; then
+    claude_args+=(
+      --adopt-run-id "$reviewer_loop_recorded_request_ref"
+      --adopt-requested-at "$reviewer_loop_recorded_requested_at"
+    )
+  else
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
+  fi
+  # #1789 (plan D12): capture the companion's stdout (stderr stays discarded)
+  # so its REVIEW_REQUESTED_AT / REVIEW_REQUEST_REF reach the ledger; without
+  # them no Claude request is recorded and every re-wait would re-dispatch.
+  local script_output=""
   set +e
-  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
-    --bot-login "$bot_login" \
-    --poll-interval "$effective_poll_interval" \
-    --max-wait "$max_wait" >/dev/null 2>&1
+  script_output="$("$reviewer_script" "${claude_args[@]}" 2>/dev/null)"
   script_exit=$?
   set -e
+  print_review_request_keys \
+    "$(kv_value REVIEW_REQUESTED_AT "$script_output")" \
+    "$(kv_value REVIEW_REQUEST_REF "$script_output")"
 
   case "$script_exit" in
     0)
@@ -2732,6 +2798,8 @@ run_copilot_review() {
 
   # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
   # deduplicates reviewer requests if Copilot is already requested).
+  local copilot_requested_at
+  copilot_requested_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   set +e
   gh api "repos/$owner/$repo_name/pulls/$pr_number/requested_reviewers" \
     --method POST \
@@ -2749,6 +2817,9 @@ run_copilot_review() {
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     return 2
   fi
+  # #1789 (plan D12): the time of the reviewer request (the request API
+  # returns no comment, so no request ref).
+  print_review_request_keys "$copilot_requested_at" ""
 
   # Step 2: Poll the pull-request reviews endpoint until Copilot posts a review.
   local effective_poll_interval="$poll_interval"
@@ -3706,6 +3777,19 @@ run_bugbot_review() {
   fi
   _bb_run_count="${_bb_run_count:-0}"
 
+  # #1789 (plan D11 Bugbot row): in re-wait mode the recorded request is the
+  # outstanding one, whether or not its ref is empty or the comment still
+  # exists — the verdict is read from current-head check runs, not from the
+  # trigger comment. Do not post; carry the recorded request forward (D12).
+  local bugbot_adopted=0
+  if reviewer_loop_rewait_adopts_recorded_request; then
+    bugbot_adopted=1
+    echo "INFO: re-wait: adopting the recorded bugbot request ${reviewer_loop_recorded_request_ref:-<no ref>} (requested ${reviewer_loop_recorded_requested_at:-at an unknown time}); not posting a new trigger" >&2
+    print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+  else
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "$head_sha"
+  fi
+
   if [ "$_bb_run_count" -eq 0 ]; then
     set +e
     bugbot_escalate_if_disabled_without_check_run \
@@ -3718,12 +3802,22 @@ run_bugbot_review() {
     if [ "$_bb_disabled_rc" -eq "$BUGBOT_HANDLED_SKIP_RC" ]; then
       return 0
     fi
-    # No Cursor Bugbot check run for this head — post the trigger comment.
-    set +e
-    gh api "repos/$repo/issues/$pr_number/comments" --method POST \
-      --raw-field body="$trigger_comment" > /dev/null 2>&1
-    local _bb_trigger_rc=$?
-    set -e
+    # No Cursor Bugbot check run for this head — post the trigger comment,
+    # unless re-wait mode adopted the recorded one above.
+    local _bb_trigger_rc=0 _bb_trigger_json=""
+    if [ "$bugbot_adopted" -eq 0 ]; then
+      set +e
+      _bb_trigger_json="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" 2>/dev/null)"
+      _bb_trigger_rc=$?
+      set -e
+      if [ "$_bb_trigger_rc" -eq 0 ]; then
+        # #1789 (plan D12): the trigger comment's server created_at and id.
+        print_review_request_keys \
+          "$(printf '%s' "$_bb_trigger_json" | jq -r 'if type == "object" then (.created_at // empty) else empty end' 2>/dev/null || true)" \
+          "$(printf '%s' "$_bb_trigger_json" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null || true)"
+      fi
+    fi
     if [ "$_bb_trigger_rc" -ne 0 ]; then
       echo "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number" >&2
       print_kv RESULT escalate
@@ -3752,6 +3846,11 @@ run_bugbot_review() {
   bugbot_retrigger_margin=$(( max_wait / 2 ))
   [ "$bugbot_retrigger_margin" -gt 600 ] && bugbot_retrigger_margin=600
   bugbot_retrigger_at=$(( max_wait - bugbot_retrigger_margin ))
+  # #1789 (plan D3, D11): the #1390 re-trigger is skipped in re-wait mode — the
+  # re-wait never posts a new request while one is outstanding.
+  if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ]; then
+    bugbot_retry_attempted=1
+  fi
   while [ "$elapsed" -lt "$max_wait" ]; do
     if [ "$bugbot_retry_attempted" -eq 0 ] && [ "$elapsed" -gt 0 ] \
         && [ "$elapsed" -ge "$bugbot_retrigger_at" ]; then
@@ -5550,10 +5649,10 @@ run_pr_agent_review() {
   local comment_body=""
   local trigger_body="/review"
   # #1789 (plan D8 failure-type completion signals, PR-Agent row). An
-  # outstanding request is one this invocation posted or a recent /review
-  # trigger it reused; it stays 0 when posting was skipped only because a
-  # PR-Agent review run on the head was already active. (The D11 re-wait
-  # adopted-request variant is added with re-wait mode.)
+  # outstanding request is one this invocation posted, a recent /review
+  # trigger it reused, or the recorded request it adopted in re-wait mode
+  # (D11); it stays 0 when posting was skipped only because a PR-Agent review
+  # run on the head was already active.
   local pr_agent_outstanding_request=0
   # Conclusion of the newest PR-Agent review run on the head when it is
   # completed and failure-type; empty otherwise. A failed read keeps the last
@@ -5659,6 +5758,20 @@ run_pr_agent_review() {
     local active_check_count
     local recent_trigger_created_at
 
+    # #1789 (plan D11 PR-Agent row): in re-wait mode the recorded request is
+    # already pending — adopt it instead of the reuse-window search, even with
+    # an empty ref (the pending check needs no comment id). It is this
+    # invocation's outstanding request even when a run on the head is also
+    # active, so a failed run is reported only at budget end (D8 path (2)).
+    if reviewer_loop_rewait_adopts_recorded_request; then
+      print_kv PR_AGENT_TRIGGER_SKIPPED recorded_request_adopted
+      print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+      echo "INFO: re-wait: adopting the recorded pr-agent request ${reviewer_loop_recorded_request_ref:-<no ref>}; not posting /review" >&2
+      pr_agent_outstanding_request=1
+      return 0
+    fi
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "$head_sha"
+
     active_check_count="$(_pr_agent_active_review_check_count)"
     if [ "${active_check_count:-0}" -gt 0 ] 2>/dev/null; then
       print_kv PR_AGENT_TRIGGER_SKIPPED active_review_in_progress
@@ -5714,11 +5827,14 @@ run_pr_agent_review() {
       return 1
     fi
     if [ -n "$trigger_response" ]; then
-      local trigger_created_at
+      local trigger_created_at trigger_comment_id
       trigger_created_at="$(printf '%s\n' "$trigger_response" | jq -r '.created_at // empty' 2>/dev/null || true)"
       if [ -n "$trigger_created_at" ]; then
         print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$trigger_created_at"
       fi
+      trigger_comment_id="$(printf '%s\n' "$trigger_response" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null || true)"
+      # #1789 (plan D12): the request this invocation posted.
+      print_review_request_keys "$trigger_created_at" "$trigger_comment_id"
     fi
     print_kv PR_AGENT_TRIGGER_COMMENT "$trigger_body"
     pr_agent_outstanding_request=1
@@ -7500,6 +7616,19 @@ run_coderabbit_review() {
   local coderabbit_no_trigger_timeout
   coderabbit_no_trigger_timeout="$(coderabbit_resolve_no_trigger_timeout "$max_wait")"
   local coderabbit_no_trigger_retriggers=0
+  # #1789 (plan D11 CodeRabbit row): in re-wait mode with a recorded request,
+  # the conditional `@coderabbitai review` re-trigger is not posted; the
+  # recorded request is carried forward (D12). coderabbit_request_recorded
+  # makes REVIEW_REQUESTED_AT print once, for the first request this run
+  # posts or adopts.
+  local coderabbit_rewait_adopted=0
+  local coderabbit_request_recorded=0
+  if reviewer_loop_rewait_adopts_recorded_request; then
+    coderabbit_rewait_adopted=1
+    echo "INFO: re-wait: a recorded coderabbit request exists; not posting the conditional @coderabbitai review re-trigger" >&2
+    print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+    coderabbit_request_recorded=1
+  fi
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 4" >&2
     coderabbit_rate_limit_max_retries=4
@@ -7628,6 +7757,7 @@ run_coderabbit_review() {
     # cap so callers have a single knob for total retrigger attempts across
     # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
+        && [ "$coderabbit_rewait_adopted" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
         && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
@@ -7679,6 +7809,10 @@ run_coderabbit_review() {
           coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          if [ "$coderabbit_request_recorded" -eq 0 ]; then
+            print_review_request_keys "$coderabbit_last_trigger_iso" ""
+            coderabbit_request_recorded=1
+          fi
           echo "INFO: @coderabbitai review trigger posted" >&2
         else
           echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
@@ -7740,6 +7874,10 @@ run_coderabbit_review() {
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
               coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
               coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              if [ "$coderabbit_request_recorded" -eq 0 ]; then
+                print_review_request_keys "$coderabbit_last_trigger_iso" ""
+                coderabbit_request_recorded=1
+              fi
               echo "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
             else
               echo "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
@@ -7854,6 +7992,10 @@ run_coderabbit_review() {
             coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            if [ "$coderabbit_request_recorded" -eq 0 ]; then
+              print_review_request_keys "$coderabbit_last_trigger_iso" ""
+              coderabbit_request_recorded=1
+            fi
             echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
           else
             echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
@@ -8770,6 +8912,24 @@ print_no_verdict_yet() {
   print_kv COMMENT_COUNT 0
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
+# print_review_request_keys <requested_at> <request_ref>
+#
+# #1789 (plan D12): a handler that posted, or adopted in re-wait mode, a review
+# request prints REVIEW_REQUESTED_AT (and REVIEW_REQUEST_REF when it has the
+# request's comment or run id) once, right after the request, so every later
+# output arm carries it. Empty values are omitted.
+print_review_request_keys() {
+  local requested_at="${1:-}"
+  local request_ref="${2:-}"
+  if [ -n "$requested_at" ]; then
+    print_kv REVIEW_REQUESTED_AT "$requested_at"
+  fi
+  if [ -n "$request_ref" ]; then
+    print_kv REVIEW_REQUEST_REF "$request_ref"
+  fi
   return 0
 }
 
@@ -10635,6 +10795,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   local _sl_max_wait _sl_poll_interval
   read -r _sl_max_wait _ _ < <(reviewer_wait_budget_for_platform "local-ai-reviewer")
   _sl_poll_interval="$(reviewer_poll_interval_resolve "local-ai-reviewer" "$_sl_max_wait")"
+  reviewer_loop_rewait_prepare_platform "local-ai-reviewer"
   set +e
   _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$_sl_poll_interval" "$_sl_max_wait")"
   _sl_status=$?
@@ -12780,6 +12941,213 @@ reviewer_loop_history_entries_count() {
   printf '%s %s %s\n' "$lifetime_count" "$run_count" available
 }
 
+# --- Automatic re-wait state and recorded requests (#1789, plan D11) ---
+#
+# REVIEWER_LOOP_INVOCATION_HEAD_JQ defines `invocation_head_matches($head)`
+# over one ledger entry. An entry's invocation head is its classification_head
+# (the loop head that invocation read before dispatching any platform), never
+# its persistence-time head_sha (V39). The match is case-insensitive and an
+# entry whose classification_head is missing or not a full SHA never matches
+# (the reviewer_loop_head_is_unknown_or_invalid rule, in jq).
+REVIEWER_LOOP_INVOCATION_HEAD_JQ='
+def invocation_head_matches($head):
+  ((.classification_head // "") | if type == "string" then . else "" end) as $ch
+  | ($ch | test("^[0-9a-fA-F]{40}$"))
+    and (($ch | ascii_downcase) == ($head | ascii_downcase));
+'
+
+# reviewer_loop_rewait_payload_usable <history_payload>
+# True when the payload is a readable reviewer_loop_history.v1 ledger.
+reviewer_loop_rewait_payload_usable() {
+  local payload="${1:-}"
+  [ -n "$payload" ] || return 1
+  printf '%s' "$payload" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" '
+      .schema == $schema
+      and ((.entries | type) == "array")
+      and ((.history_status // "available") == "available")
+    ' >/dev/null 2>&1
+}
+
+# reviewer_loop_no_verdict_rewait_state <history_payload> <head_sha>
+#
+# Prints fresh, rewait, or untracked (plan D11):
+#   untracked — PR_REVIEW_LOOP_RUN_ID is unset (the run id is a per-invocation
+#               auto-… id), the loop head is unknown or not a full SHA, or the
+#               ledger is unavailable or unreadable;
+#   rewait    — the ledger holds an entry with this run_id, an invocation head
+#               equal to the loop head, result waiting_on_reviewer, and a reason
+#               in REVIEWER_LOOP_NO_VERDICT_REASONS;
+#   fresh     — otherwise.
+reviewer_loop_no_verdict_rewait_state() {
+  local payload="${1:-}"
+  local head="${2:-}"
+  local run_id="${PR_REVIEW_LOOP_RUN_ID:-}"
+  local reasons_json count
+
+  if [ -z "$run_id" ] || reviewer_loop_head_is_unknown_or_invalid "$head" \
+      || ! reviewer_loop_rewait_payload_usable "$payload"; then
+    printf 'untracked\n'
+    return 0
+  fi
+  reasons_json="$(printf '%s\n' "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}" | jq -R . | jq -sc .)" || reasons_json='[]'
+  if ! count="$(printf '%s' "$payload" | jq -r --arg rid "$run_id" --arg head "$head" \
+      --argjson reasons "$reasons_json" "$REVIEWER_LOOP_INVOCATION_HEAD_JQ"'
+        [ (.entries // [])[]
+          | select(type == "object")
+          | select((.run_id // "") == $rid)
+          | select(invocation_head_matches($head))
+          | select((.result // "") == "waiting_on_reviewer")
+          | select((.reason // "") as $r | any($reasons[]; . == $r))
+        ] | length' 2>/dev/null)" || ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf 'untracked\n'
+    return 0
+  fi
+  if [ "$count" -gt 0 ]; then
+    printf 'rewait\n'
+  else
+    printf 'fresh\n'
+  fi
+}
+
+# reviewer_loop_rewait_recorded_request <history_payload> <head_sha> <platform>
+#
+# The outstanding request this loop recorded for <platform> (plan D11): the
+# platform's platform_results[] record, with requested_at_source "request", in
+# the newest ledger entry that makes the state rewait (same run_id, invocation
+# head equal to <head_sha>, waiting_on_reviewer with a No verdict yet reason).
+# Prints two key lines, RECORDED_REQUEST_REF=<ref> and
+# RECORDED_REQUESTED_AT=<time> (either value may be empty), or nothing. Key
+# lines, not a space-separated pair, so an empty ref cannot shift the time.
+reviewer_loop_rewait_recorded_request() {
+  local payload="${1:-}"
+  local head="${2:-}"
+  local platform="${3:-}"
+  local run_id="${PR_REVIEW_LOOP_RUN_ID:-}"
+  local reasons_json out=""
+
+  [ -n "$run_id" ] && [ -n "$platform" ] || return 0
+  reviewer_loop_head_is_unknown_or_invalid "$head" && return 0
+  reviewer_loop_rewait_payload_usable "$payload" || return 0
+  reasons_json="$(printf '%s\n' "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}" | jq -R . | jq -sc .)" || return 0
+  out="$(printf '%s' "$payload" | jq -r --arg rid "$run_id" --arg head "$head" \
+      --arg platform "$platform" --argjson reasons "$reasons_json" "$REVIEWER_LOOP_INVOCATION_HEAD_JQ"'
+        def oneline: (. // "") | tostring | gsub("[\r\n]"; "");
+        [ (.entries // [])[]
+          | select(type == "object")
+          | select((.run_id // "") == $rid)
+          | select(invocation_head_matches($head))
+          | select((.result // "") == "waiting_on_reviewer")
+          | select((.reason // "") as $r | any($reasons[]; . == $r))
+        ]
+        | last
+        | if . == null then empty else
+            [ (.platform_results // [])[]
+              | select(type == "object" and .platform == $platform
+                       and (.requested_at_source // "") == "request") ]
+            | last
+            | if . == null then empty else
+                "RECORDED_REQUEST_REF=\(.request_ref | oneline)\nRECORDED_REQUESTED_AT=\(.requested_at | oneline)"
+              end
+          end' 2>/dev/null)" || out=""
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+
+# reviewer_loop_no_verdict_rewait_value <state> <post_summary_status>
+#
+# The NO_VERDICT_REWAIT value for a waiting_on_reviewer result with a No
+# verdict yet reason (plan D11): `used` in re-wait state; `available` only in
+# fresh state when this invocation's _post_review_summary returned 0 (the
+# waiting entry the next invocation needs to see state rewait was written);
+# `untracked` otherwise, so a ledger that can be read but not written never
+# turns the single re-wait into an unbounded series.
+reviewer_loop_no_verdict_rewait_value() {
+  local state="${1:-untracked}"
+  local post_status="${2:-1}"
+  case "$state" in
+    rewait) printf 'used\n' ;;
+    fresh)
+      if [ "$post_status" = "0" ]; then
+        printf 'available\n'
+      else
+        printf 'untracked\n'
+      fi
+      ;;
+    *) printf 'untracked\n' ;;
+  esac
+}
+
+# reviewer_loop_rewait_resolve <pr_number>
+#
+# Runs once per invocation after loop_head_sha is read (plan D11). Sets
+# reviewer_loop_rewait_state (fresh|rewait|untracked), reviewer_loop_rewait_mode
+# (1 only for rewait), and reviewer_loop_rewait_history_payload (the ledger the
+# handlers' recorded-request lookups read). The ledger is read only when the
+# state could be anything but untracked.
+reviewer_loop_rewait_resolve() {
+  local pr_number_arg="${1:-}"
+
+  reviewer_loop_rewait_state="untracked"
+  reviewer_loop_rewait_mode=0
+  reviewer_loop_rewait_history_payload=""
+  if [ -z "${PR_REVIEW_LOOP_RUN_ID:-}" ] || [ -z "$pr_number_arg" ] \
+      || reviewer_loop_head_is_unknown_or_invalid "${loop_head_sha:-}"; then
+    return 0
+  fi
+  if [ "${stage_skip_enabled:-0}" -eq 1 ] && [ -n "${stage_skip_history_payload:-}" ]; then
+    reviewer_loop_rewait_history_payload="$stage_skip_history_payload"
+  else
+    reviewer_loop_rewait_history_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+  fi
+  reviewer_loop_rewait_state="$(reviewer_loop_no_verdict_rewait_state "$reviewer_loop_rewait_history_payload" "$loop_head_sha")"
+  if [ "$reviewer_loop_rewait_state" = "rewait" ]; then
+    reviewer_loop_rewait_mode=1
+    echo "INFO: re-wait mode — this run id already waited on ${loop_head_sha} with no verdict; recorded outstanding requests are adopted, not re-posted" >&2
+  fi
+  return 0
+}
+
+# reviewer_loop_rewait_prepare_platform <platform>
+#
+# Called immediately before each dispatch. In re-wait mode, loads the
+# platform's recorded outstanding request into
+# reviewer_loop_recorded_request_found / _ref / reviewer_loop_recorded_requested_at
+# for the handler (plan D11 adoption table); clears them otherwise.
+reviewer_loop_rewait_prepare_platform() {
+  local platform="${1:-}"
+  local recorded=""
+
+  reviewer_loop_recorded_request_found=0
+  reviewer_loop_recorded_request_ref=""
+  reviewer_loop_recorded_requested_at=""
+  [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] || return 0
+  recorded="$(reviewer_loop_rewait_recorded_request "${reviewer_loop_rewait_history_payload:-}" "${loop_head_sha:-}" "$platform")"
+  [ -n "$recorded" ] || return 0
+  reviewer_loop_recorded_request_found=1
+  reviewer_loop_recorded_request_ref="$(kv_value RECORDED_REQUEST_REF "$recorded")"
+  reviewer_loop_recorded_requested_at="$(kv_value RECORDED_REQUESTED_AT "$recorded")"
+  return 0
+}
+
+# reviewer_loop_rewait_adopts_recorded_request
+# True in re-wait mode when a recorded request was loaded for this dispatch.
+reviewer_loop_rewait_adopts_recorded_request() {
+  [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] \
+    && [ "${reviewer_loop_recorded_request_found:-0}" -eq 1 ]
+}
+
+# reviewer_loop_rewait_log_no_recorded_request <platform> <head>
+# In re-wait mode with nothing recorded, the handler requests a review as in a
+# fresh run and says so (plan D11).
+reviewer_loop_rewait_log_no_recorded_request() {
+  local platform="${1:-}" head="${2:-}"
+  if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] \
+      && [ "${reviewer_loop_recorded_request_found:-0}" -ne 1 ]; then
+    echo "INFO: no recorded outstanding request for ${platform} on ${head:-the current head}; requesting a review" >&2
+  fi
+  return 0
+}
+
 # reviewer_loop_resolve_max_cycles <config_value>
 #
 # Resolves the effective PER-RUN cap (Protocol 91:1719's `max_cycles`).
@@ -14166,6 +14534,16 @@ reviewer_loop_stage_skip_resolve "$pr_number"
 print_kv STAGE_SKIP_ENABLED "$stage_skip_enabled"
 [ -n "$stage_skip_disabled_reason" ] && print_kv STAGE_SKIP_DISABLED_REASON "$stage_skip_disabled_reason"
 
+# --- Automatic re-wait state (#1789, plan D11) ---
+# Once per invocation, after loop_head_sha is read: fresh, rewait (this run id
+# already waited on this head with no verdict), or untracked. In rewait mode
+# the handlers adopt the request this loop recorded instead of posting a new
+# one (reviewer_loop_rewait_prepare_platform runs before each dispatch).
+reviewer_loop_recorded_request_found=0
+reviewer_loop_recorded_request_ref=""
+reviewer_loop_recorded_requested_at=""
+reviewer_loop_rewait_resolve "$pr_number"
+
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
@@ -14293,6 +14671,7 @@ for index in "${!platforms[@]}"; do
   # Per-platform budget and poll interval (#1789, plan D7/D14).
   read -r platform_max_wait _ _ < <(reviewer_wait_budget_for_platform "$platform_name")
   platform_poll_interval="$(reviewer_poll_interval_resolve "$platform_name" "$platform_max_wait")"
+  reviewer_loop_rewait_prepare_platform "$platform_name"
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$platform_poll_interval" "$platform_max_wait")"
   platform_status=$?
@@ -15422,6 +15801,13 @@ print_kv PLATFORM "$last_platform"
 print_kv COMMENT_COUNT "$total_comment_count"
 print_kv BLOCKING_COUNT "$total_blocking_count"
 print_kv SUGGESTION_COUNT "$total_suggestion_count"
+# #1789 (plan D11): whether the runner may re-run Step 7 once, immediately,
+# for this No verdict yet result (available), already did (used), or cannot
+# bound the re-wait (untracked).
+if [ "$aggregate_result" = "waiting_on_reviewer" ] \
+    && reviewer_loop_reason_in_list "$aggregate_reason" "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}"; then
+  print_kv NO_VERDICT_REWAIT "$(reviewer_loop_no_verdict_rewait_value "${reviewer_loop_rewait_state:-untracked}" "${_post_summary_exit:-1}")"
+fi
 
 if [ -n "$aggregate_output" ]; then
   review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"

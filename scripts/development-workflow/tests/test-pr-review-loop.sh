@@ -22449,12 +22449,17 @@ case "$*" in
   "pr view"*) out="$(fixture pr-view "{\"headRefOid\":\"$head\"}")" ;;
   *"/check-runs"*)
     [ "$(fixture check-runs-fail 0)" = "0" ] || exit 1
-    sha="${*#*commits/}"; sha="${sha%%/*}"
+    all_args="$*"; sha="${all_args#*commits/}"; sha="${sha%%/*}"
     if [ -e "$d/check-runs.$sha" ]; then out="$(cat "$d/check-runs.$sha")"
     else out="$(fixture check-runs '{"check_runs":[]}')"; fi
     ;;
   *"/statuses"*) out="$(fixture statuses '[]')" ;;
-  *"/reactions"*) out="$(fixture reactions '[]')" ;;
+  *"/reactions"*)
+    all_args="$*"; cid="${all_args#*comments/}"; cid="${cid%%/*}"
+    [ -e "$d/reactions-fail.$cid" ] && exit 1
+    if [ -e "$d/reactions.$cid" ]; then out="$(cat "$d/reactions.$cid")"
+    else out="$(fixture reactions '[]')"; fi
+    ;;
   *"/pulls/42/comments"*) out="$(fixture review-comments '[]')" ;;
   *"/pulls/42/reviews"*) out="$(fixture reviews '[]')" ;;
   *"/issues/42/comments"*) out="$(fixture issue-comments '[]')" ;;
@@ -22494,7 +22499,7 @@ _1789_run_gh() {
     }
     export MOCK_1789_GH_DIR="$_1789_gh_dir"
     export PATH="$_1789_gh_bin:$PATH"
-    export CODERABBIT_NO_TRIGGER_TIMEOUT=999999 FALLBACK_THREAD_SETTLE_WAIT=0
+    export CODERABBIT_NO_TRIGGER_TIMEOUT="${_1789_cr_no_trigger_timeout:-999999}" FALLBACK_THREAD_SETTLE_WAIT=0
     unset PR_REVIEW_TRIGGER_AUTHOR_LOGIN COPILOT_BOT_LOGIN BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME
     unset BUGBOT_TRIGGER_COMMENT PR_AGENT_BOT_LOGIN RONDA_CHECK_NAME PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS
     loop_head_sha="$_1789_H"
@@ -23074,6 +23079,329 @@ run_test "1789_T3.8_precedence_helpers_before_harness_return" "yes" \
   "$(_1789_a="$(grep -n '^reviewer_loop_precedence_select()' "$_1789_loop_src" | cut -d: -f1)"; \
      _1789_b="$(grep -n '^reviewer_loop_compare_restore_aggregate()' "$_1789_loop_src" | cut -d: -f1)"; \
      [ -n "$_1789_a" ] && [ -n "$_1789_b" ] && [ "$_1789_a" -lt "$_1789_ret_line" ] && [ "$_1789_b" -lt "$_1789_ret_line" ] && echo yes || echo no)"
+# ---------------------------------------------------------------------------
+# Phase 4b — automatic re-wait and recorded-request adoption (plan D5, D11):
+# the re-wait state, the recorded-request lookup (both matched by invocation
+# head), the handlers' adoption rows, and NO_VERDICT_REWAIT (T2.12, T4.1–T4.4,
+# T4.6, T4.9, the state half of T4.10). Ledger payloads are built directly so
+# these rows do not depend on the D12 timing commit.
+# ---------------------------------------------------------------------------
+_1789_RUN="run-1789"
+_1789_H1="$(printf '1789%036d' 0 | tr 0 f)"
+# _1789_entry <run_id> <classification_head> <head_sha> <result> <reason> [platform_results_json]
+_1789_entry() {
+  jq -nc --arg run "$1" --arg ch "$2" --arg hs "$3" --arg r "$4" --arg why "$5" \
+    --argjson pr "${6:-[]}" '
+      {iteration: 1, run_id: $run, head_sha: $hs, result: $r, reason: $why, platform_results: $pr}
+      | if $ch == "__missing__" then . else . + {classification_head: $ch} end'
+}
+# _1789_ledger <entry_json...>: a reviewer_loop_history.v1 payload.
+_1789_ledger() {
+  printf '%s\n' "$@" | jq -sc '{schema: "reviewer_loop_history.v1", entries: (. | to_entries | map(.value + {iteration: (.key + 1)}))}'
+}
+# _1789_req_rec <platform> <source> <ref> <requested_at>: a platform_results record.
+_1789_req_rec() {
+  jq -nc --arg p "$1" --arg s "$2" --arg ref "$3" --arg at "$4" \
+    '{platform: $p, result: "no_verdict_yet", raw_result: "waiting_on_reviewer", raw_reason: "reviewer-no-verdict-yet", requested_at: $at, requested_at_source: $s, request_ref: $ref}'
+}
+_1789_state() { PR_REVIEW_LOOP_RUN_ID="${3-$_1789_RUN}" reviewer_loop_no_verdict_rewait_state "$1" "$2"; }
+_1789_recorded() { PR_REVIEW_LOOP_RUN_ID="${4-$_1789_RUN}" reviewer_loop_rewait_recorded_request "$1" "$2" "$3"; }
+_1789_wait_entry="$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet)"
+
+# --- T4.1: re-wait state (D11)
+run_test "1789_T4.1_no_prior_entry_fresh" "fresh" "$(_1789_state "$(_1789_ledger)" "$_1789_H")"
+run_test "1789_T4.1_prior_waiting_same_run_head_rewait" "rewait" "$(_1789_state "$(_1789_ledger "$_1789_wait_entry")" "$_1789_H")"
+run_test "1789_T4.1_other_head_fresh" "fresh" "$(_1789_state "$(_1789_ledger "$_1789_wait_entry")" "$_1789_H1")"
+run_test "1789_T4.1_other_run_fresh" "fresh" "$(_1789_state "$(_1789_ledger "$(_1789_entry other-run "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet)")" "$_1789_H")"
+run_test "1789_T4.1_unset_run_id_untracked" "untracked" "$(_1789_state "$(_1789_ledger "$_1789_wait_entry")" "$_1789_H" "")"
+run_test "1789_T4.1_unavailable_ledger_untracked" "untracked" \
+  "$(_1789_state '{"schema":"reviewer_loop_history.v1","history_status":"unavailable","entries":[]}' "$_1789_H")"
+run_test "1789_T4.1_unreadable_ledger_untracked" "untracked" "$(_1789_state 'not json' "$_1789_H")"
+run_test "1789_T4.1_unknown_head_untracked" "untracked" "$(_1789_state "$(_1789_ledger "$_1789_wait_entry")" "")"
+run_test "1789_T4.1_head_case_insensitive" "rewait" \
+  "$(_1789_state "$(_1789_ledger "$_1789_wait_entry")" "$(printf '%s' "$_1789_H" | tr 'a-f' 'A-F')")"
+for _1789_reason in codex-github-review-pending codex-github-reaction-without-review; do
+  run_test "1789_T4.1_codex_reason_${_1789_reason}_rewait" "rewait" \
+    "$(_1789_state "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer "$_1789_reason")")" "$_1789_H")"
+done
+run_test "1789_T4.1_needs_fixes_entry_fresh" "fresh" \
+  "$(_1789_state "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" needs_fixes blocking)")" "$_1789_H")"
+run_test "1789_T4.1_other_waiting_reason_fresh" "fresh" \
+  "$(_1789_state "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer something-else)")" "$_1789_H")"
+# NO_VERDICT_REWAIT: available only for fresh + a persisted summary (status 0);
+# a failing _post_review_summary in fresh state prints untracked, never available.
+run_test "1789_T4.1_rewait_value_fresh_persisted" "available" "$(reviewer_loop_no_verdict_rewait_value fresh 0)"
+run_test "1789_T4.1_rewait_value_fresh_persist_failed" "untracked" "$(reviewer_loop_no_verdict_rewait_value fresh 1)"
+run_test "1789_T4.1_rewait_value_rewait" "used" "$(reviewer_loop_no_verdict_rewait_value rewait 0)"
+run_test "1789_T4.1_rewait_value_untracked" "untracked" "$(reviewer_loop_no_verdict_rewait_value untracked 0)"
+run_test "1789_T4.1_rewait_value_unknown_state" "untracked" "$(reviewer_loop_no_verdict_rewait_value bogus 0)"
+# The main flow prints it only for a No verdict yet waiting result, from the
+# summary-persistence status of this invocation.
+run_test "1789_T4.1_main_flow_prints_from_persist_status" "1" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /print_kv NO_VERDICT_REWAIT "\$\(reviewer_loop_no_verdict_rewait_value "\$\{reviewer_loop_rewait_state:-untracked\}" "\$\{_post_summary_exit:-1\}"\)"/' "$_1789_loop_src" | grep -c . || true)"
+run_test "1789_T4.1_rewait_print_after_persistence" "yes" \
+  "$(_1789_pl="$(awk -v start="$_1789_ret_line" 'NR > start && /print_kv NO_VERDICT_REWAIT/ {print NR; exit}' "$_1789_loop_src")"; \
+     [ -n "$_1789_pl" ] && [ "$_1789_pl" -gt "$_1789_persist_line" ] && echo yes || echo no)"
+# The state is resolved once, in the main flow, after the loop head is read
+# and before the platform loop; each dispatch prepares its recorded request.
+run_test "1789_T4.1_resolve_called_once_before_loop" "yes" \
+  "$(_1789_rl="$(awk -v start="$_1789_ret_line" 'NR > start && /^reviewer_loop_rewait_resolve "\$pr_number"$/ {print NR}' "$_1789_loop_src")"; \
+     _1789_hl="$(awk -v start="$_1789_ret_line" 'NR > start && /^loop_head_sha=""$/ {print NR; exit}' "$_1789_loop_src")"; \
+     [ "$(printf '%s\n' "$_1789_rl" | grep -c .)" = "1" ] && [ "$_1789_rl" -gt "$_1789_hl" ] && [ "$_1789_rl" -lt "$_1789_loop_start" ] && echo yes || echo no)"
+run_test "1789_T4.1_prepare_before_both_dispatch_sites" "2" \
+  "$(grep -c '^ *reviewer_loop_rewait_prepare_platform "' "$_1789_loop_src" || true)"
+
+# --- T4.2: a re-wait (waiting) entry adds nothing to the cycle counts.
+_1789_count_body() { printf '%s\n```json\n%s\n```\n' "$REVIEWER_LOOP_HISTORY_MARKER" "$1"; }
+_1789_nf_entry="$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" needs_fixes blocking)"
+run_test "1789_T4.2_waiting_entries_not_counted" \
+  "$(reviewer_loop_history_entries_count "$(_1789_count_body "$(_1789_ledger "$_1789_nf_entry")")" "$_1789_RUN")" \
+  "$(reviewer_loop_history_entries_count "$(_1789_count_body "$(_1789_ledger "$_1789_nf_entry" "$_1789_wait_entry" "$_1789_wait_entry")")" "$_1789_RUN")"
+
+# --- T4.6: the recorded-request lookup (invocation head, run, waiting, source)
+_1789_rec_bb="$(_1789_req_rec bugbot request 9300 2020-01-01T00:00:02Z)"
+_1789_rw="$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$_1789_rec_bb]")")"
+run_test "1789_T4.6_match_prints_key_lines" "RECORDED_REQUEST_REF=9300|RECORDED_REQUESTED_AT=2020-01-01T00:00:02Z" \
+  "$(_1789_recorded "$_1789_rw" "$_1789_H" bugbot | paste -sd '|' -)"
+run_test "1789_T4.6_empty_ref_keeps_time" "RECORDED_REQUEST_REF=|RECORDED_REQUESTED_AT=2020-01-01T00:00:02Z" \
+  "$(_1789_recorded "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_req_rec bugbot request "" 2020-01-01T00:00:02Z)]")")" "$_1789_H" bugbot | paste -sd '|' -)"
+run_test "1789_T4.6_empty_ref_read_by_kv_value" "|2020-01-01T00:00:02Z" \
+  "$(_1789_k="$(_1789_recorded "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_req_rec bugbot request "" 2020-01-01T00:00:02Z)]")")" "$_1789_H" bugbot)"; \
+     printf '%s|%s' "$(kv_value RECORDED_REQUEST_REF "$_1789_k")" "$(kv_value RECORDED_REQUESTED_AT "$_1789_k")")"
+run_test "1789_T4.6_other_head_nothing" "" "$(_1789_recorded "$_1789_rw" "$_1789_H1" bugbot)"
+run_test "1789_T4.6_other_run_nothing" "" "$(_1789_recorded "$_1789_rw" "$_1789_H" bugbot other-run)"
+run_test "1789_T4.6_unset_run_nothing" "" "$(_1789_recorded "$_1789_rw" "$_1789_H" bugbot "")"
+run_test "1789_T4.6_wait_start_source_nothing" "" \
+  "$(_1789_recorded "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_req_rec bugbot wait_start "" 2020-01-01T00:00:02Z)]")")" "$_1789_H" bugbot)"
+run_test "1789_T4.6_no_platform_record_nothing" "" "$(_1789_recorded "$_1789_rw" "$_1789_H" greptile)"
+run_test "1789_T4.6_not_waiting_entry_nothing" "" \
+  "$(_1789_recorded "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" needs_fixes blocking "[$_1789_rec_bb]")")" "$_1789_H" bugbot)"
+run_test "1789_T4.6_unavailable_ledger_nothing" "" \
+  "$(_1789_recorded '{"schema":"reviewer_loop_history.v1","history_status":"unavailable","entries":[]}' "$_1789_H" bugbot)"
+# The newest entry that makes the state rewait governs: an older entry's
+# request is not used when the newest waiting entry lacks the platform.
+run_test "1789_T4.6_newest_waiting_entry_governs" "" \
+  "$(_1789_recorded "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$_1789_rec_bb]")" "$_1789_wait_entry")" "$_1789_H" bugbot)"
+run_test "1789_T4.6_newest_record_in_entry_governs" "RECORDED_REQUEST_REF=9301" \
+  "$(_1789_recorded "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$_1789_rec_bb,$(_1789_req_rec bugbot request 9301 2020-01-01T00:00:04Z)]")")" "$_1789_H" bugbot | head -1)"
+
+# --- T4.10 (state half): a push between request posting and ledger
+# persistence. The waiting entry was written with classification_head H0 (the
+# invocation's loop head) and head_sha H1 (the head re-read at persistence).
+# The next invocation on H1 is fresh, finds no recorded request for H1, and
+# keeps H1's single re-wait unspent; the entry still counts for H0. An entry
+# with no classification_head never matches, whatever its head_sha.
+_1789_push_entry="$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H1" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_req_rec greptile request 9001 2020-01-01T00:00:05Z)]")"
+run_test "1789_T4.10_new_head_is_fresh" "fresh" "$(_1789_state "$(_1789_ledger "$_1789_push_entry")" "$_1789_H1")"
+run_test "1789_T4.10_new_head_rewait_unspent" "available" \
+  "$(reviewer_loop_no_verdict_rewait_value "$(_1789_state "$(_1789_ledger "$_1789_push_entry")" "$_1789_H1")" 0)"
+run_test "1789_T4.10_no_recorded_request_for_new_head" "" "$(_1789_recorded "$(_1789_ledger "$_1789_push_entry")" "$_1789_H1" greptile)"
+run_test "1789_T4.10_entry_counts_for_invocation_head" "rewait" "$(_1789_state "$(_1789_ledger "$_1789_push_entry")" "$_1789_H")"
+run_test "1789_T4.10_missing_classification_head_never_matches" "fresh" \
+  "$(_1789_state "$(_1789_ledger "$(_1789_entry "$_1789_RUN" __missing__ "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet)")" "$_1789_H")"
+run_test "1789_T4.10_invalid_classification_head_never_matches" "fresh" \
+  "$(_1789_state "$(_1789_ledger "$(_1789_entry "$_1789_RUN" "unknown-1-2-3" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet)")" "$_1789_H")"
+
+# --- Handler adoption rows (D11 adoption table). _1789_rewait <ref> <at> sets
+# re-wait mode with a recorded request; _1789_rewait_none sets re-wait mode
+# with nothing recorded; _1789_rewait_off restores a fresh run.
+_1789_rewait() {
+  reviewer_loop_rewait_mode=1; reviewer_loop_recorded_request_found=1
+  reviewer_loop_recorded_request_ref="$1"; reviewer_loop_recorded_requested_at="$2"
+}
+_1789_rewait_none() {
+  reviewer_loop_rewait_mode=1; reviewer_loop_recorded_request_found=0
+  reviewer_loop_recorded_request_ref=""; reviewer_loop_recorded_requested_at=""
+}
+_1789_rewait_off() {
+  reviewer_loop_rewait_mode=0; reviewer_loop_recorded_request_found=0
+  reviewer_loop_recorded_request_ref=""; reviewer_loop_recorded_requested_at=""
+}
+_1789_stderr_has() { grep -Fc -- "$1" "$_1789_gh_dir/stderr" || true; }
+_1789_keys() {
+  printf '%s|%s' "$(kv_value_default REVIEW_REQUESTED_AT "$1" "")" "$(kv_value_default REVIEW_REQUEST_REF "$1" "")"
+}
+
+# T2.12 — Bugbot re-wait with a recorded request: adopt it, post no comment
+# (no trigger and no #1390 re-trigger), and print the recorded request
+# unchanged (D12 carry-forward).
+_1789_gh_reset
+_1789_rewait 9300 2020-01-01T00:00:02Z
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.12_bugbot_rewait_posts_nothing" "0" "$(_1789_posts)"
+run_test "1789_T2.12_bugbot_rewait_carries_request" "2020-01-01T00:00:02Z|9300" "$(_1789_keys "$_1789_out")"
+run_test "1789_T2.12_bugbot_rewait_still_waiting" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+run_test "1789_T2.12_bugbot_rewait_bounded_by_budget" "4" "$(_1789_tick)"
+# A recorded run that completes on the head is the verdict, with no post.
+_1789_gh_reset
+_1789_fx check-runs@2 "$(printf '{"check_runs":[{"id":27,"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:03Z"}]}')"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.12_bugbot_rewait_verdict_no_post" "clean||0|0" "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+# An empty recorded ref still adopts: no comment, the time carried forward.
+_1789_gh_reset
+_1789_rewait "" 2020-01-01T00:00:02Z
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.12_bugbot_rewait_empty_ref_posts_nothing" "0" "$(_1789_posts)"
+run_test "1789_T2.12_bugbot_rewait_empty_ref_keys" "2020-01-01T00:00:02Z|" "$(_1789_keys "$_1789_out")"
+# Re-wait with nothing recorded: post as fresh, log the D11 INFO line, but the
+# #1390 re-trigger stays skipped (D3: skipped in re-wait mode).
+_1789_gh_reset
+_1789_rewait_none
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.12_bugbot_rewait_nothing_recorded_posts_once" "1" "$(_1789_posts)"
+run_test "1789_T2.12_bugbot_rewait_nothing_recorded_info" "1" \
+  "$(_1789_stderr_has "INFO: no recorded outstanding request for bugbot on $_1789_H; requesting a review")"
+run_test "1789_T2.12_bugbot_fresh_post_records_request" "2020-01-01T00:00:05Z|9001" "$(_1789_keys "$_1789_out")"
+_1789_rewait_off
+# T4.6 — outside re-wait mode Bugbot posts its own trigger even when a
+# `bugbot run` comment newer than the head commit time exists (no
+# timestamp-based adoption).
+_1789_gh_reset
+_1789_fx issue-comments '[{"id":8800,"user":{"login":"runner"},"created_at":"2020-01-01T00:00:03Z","body":"bugbot run"}]'
+# Budget 1: the D3 re-trigger point (1 s) is never reached inside the wait, so
+# the only POST is the initial trigger.
+_1789_out="$(_1789_run_gh run_bugbot_review 1)"
+run_test "1789_T4.6_bugbot_fresh_posts_own_trigger" "1" "$(_1789_posts)"
+run_test "1789_T4.6_bugbot_fresh_records_own_trigger" "2020-01-01T00:00:05Z|9001" "$(_1789_keys "$_1789_out")"
+
+# T4.4 — Greptile re-wait reuses the recorded trigger comment (its reactions
+# are readable), posts nothing, and carries the recorded request forward.
+_1789_gh_reset
+_1789_rewait 9100 2020-01-01T00:00:03Z
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T4.4_greptile_rewait_posts_nothing" "0" "$(_1789_posts)"
+run_test "1789_T4.4_greptile_rewait_carries_request" "2020-01-01T00:00:03Z|9100" "$(_1789_keys "$_1789_out")"
+run_test "1789_T4.4_greptile_rewait_polls_recorded_comment" "yes" \
+  "$( [ "$(grep -c 'issues/comments/9100/reactions' "$_1789_gh_dir/calls.log")" -ge 2 ] && echo yes || echo no)"
+run_test "1789_T4.4_greptile_rewait_waiting" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+# A bot thumbs-up on the recorded comment is that request's answer.
+_1789_gh_reset
+_1789_fx reactions.9100 '[{"content":"+1","user":{"login":"greptile-apps[bot]"}}]'
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T4.4_greptile_rewait_answer_clean" "clean||0|0" "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+# An empty recorded ref → the D11 WARN, then one post as in a fresh run.
+_1789_gh_reset
+_1789_rewait "" 2020-01-01T00:00:03Z
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T4.4_greptile_empty_ref_posts_once" "1" "$(_1789_posts)"
+run_test "1789_T4.4_greptile_empty_ref_warns" "1" \
+  "$(_1789_stderr_has "WARN: recorded greptile request <empty> on $_1789_H is not readable; requesting a review")"
+run_test "1789_T4.4_greptile_empty_ref_records_new_post" "2020-01-01T00:00:05Z|9001" "$(_1789_keys "$_1789_out")"
+# A recorded comment whose reactions read fails (deleted, 404) → WARN, one post.
+_1789_gh_reset
+_1789_rewait 9100 2020-01-01T00:00:03Z
+_1789_fx reactions-fail.9100 1
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T4.4_greptile_unreadable_posts_once" "1" "$(_1789_posts)"
+run_test "1789_T4.4_greptile_unreadable_warns" "1" \
+  "$(_1789_stderr_has "WARN: recorded greptile request 9100 on $_1789_H is not readable; requesting a review")"
+# Re-wait with nothing recorded → the D11 INFO line, one post.
+_1789_gh_reset
+_1789_rewait_none
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T4.4_greptile_nothing_recorded_posts_once" "1" "$(_1789_posts)"
+run_test "1789_T4.4_greptile_nothing_recorded_info" "1" \
+  "$(_1789_stderr_has "INFO: no recorded outstanding request for greptile on $_1789_H; requesting a review")"
+_1789_rewait_off
+
+# T4.4 — PR-Agent re-wait treats the recorded request as pending: no /review,
+# the recorded request carried forward; an empty ref still adopts.
+_1789_gh_reset
+_1789_rewait 9200 2020-01-01T00:00:04Z
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T4.4_pr_agent_rewait_posts_nothing" "0" "$(_1789_posts)"
+run_test "1789_T4.4_pr_agent_rewait_carries_request" "2020-01-01T00:00:04Z|9200" "$(_1789_keys "$_1789_out")"
+run_test "1789_T4.4_pr_agent_rewait_skip_reason" "recorded_request_adopted" "$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")"
+_1789_gh_reset
+_1789_rewait "" 2020-01-01T00:00:04Z
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T4.4_pr_agent_empty_ref_posts_nothing" "0" "$(_1789_posts)"
+run_test "1789_T4.4_pr_agent_empty_ref_keys" "2020-01-01T00:00:04Z|" "$(_1789_keys "$_1789_out")"
+_1789_gh_reset
+_1789_rewait_none
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T4.4_pr_agent_nothing_recorded_posts_once" "1" "$(_1789_posts)"
+run_test "1789_T4.4_pr_agent_nothing_recorded_info" "1" \
+  "$(_1789_stderr_has "INFO: no recorded outstanding request for pr-agent on $_1789_H; requesting a review")"
+run_test "1789_T4.4_pr_agent_fresh_post_records_request" "2020-01-01T00:00:05Z|9001" "$(_1789_keys "$_1789_out")"
+_1789_rewait_off
+
+# T4.9 — PR-Agent failed run in re-wait mode (D8 path (2) through adoption):
+# an adopted request is outstanding, so no poll returns before the budget,
+# and the failure-type newest run on H gives pr_agent_run_failed at the budget.
+_1789_gh_reset
+_1789_rewait 9200 2020-01-01T00:00:04Z
+_1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10)")"
+_1789_out="$(_1789_run_gh run_pr_agent_review 5)"
+run_test "1789_T4.9_pre_failed_run_failed_at_budget" "escalate|pr_agent_run_failed|2" "$(_1789_rre "$_1789_out")"
+run_test "1789_T4.9_pre_failed_waits_full_budget" "5" "$(_1789_tick)"
+run_test "1789_T4.9_pre_failed_posts_nothing" "0" "$(_1789_posts)"
+# Adopted while a run on H is active at the pending check, which then
+# completes cancelled: still outstanding, so failure only at the budget.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 in_progress null 10)")"
+_1789_fx check-runs@1 "$(_1789_pra_runs "$(_1789_pra 10 completed '"cancelled"' 10)")"
+_1789_out="$(_1789_run_gh run_pr_agent_review 5)"
+run_test "1789_T4.9_active_then_cancelled_failed_at_budget" "escalate|pr_agent_run_failed|2" "$(_1789_rre "$_1789_out")"
+run_test "1789_T4.9_active_then_cancelled_waits_full_budget" "5" "$(_1789_tick)"
+run_test "1789_T4.9_active_then_cancelled_posts_nothing" "0" "$(_1789_posts)"
+_1789_rewait_off
+
+# T4.4 — CodeRabbit: in re-wait mode with a recorded request the conditional
+# `@coderabbitai review` re-trigger is not posted; a fresh run posts it.
+_1789_cr_no_trigger_timeout=1
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T4.4_coderabbit_fresh_posts_conditional_retrigger" "yes" \
+  "$( [ "$(grep -c 'pr comment 42 --body @coderabbitai review' "$_1789_gh_dir/posts.log")" -ge 1 ] && echo yes || echo no)"
+run_test "1789_T4.4_coderabbit_fresh_records_request" "yes" \
+  "$( [ -n "$(kv_value_default REVIEW_REQUESTED_AT "$_1789_out" "")" ] && echo yes || echo no)"
+_1789_gh_reset
+_1789_rewait "" 2020-01-01T00:00:04Z
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T4.4_coderabbit_rewait_no_retrigger" "0" "$(_1789_posts)"
+run_test "1789_T4.4_coderabbit_rewait_carries_request" "2020-01-01T00:00:04Z|" "$(_1789_keys "$_1789_out")"
+_1789_rewait_off
+unset _1789_cr_no_trigger_timeout
+
+# T4.10 (handler half): the H1 invocation is fresh (no recorded request for
+# H1), so Greptile posts its own trigger; a bot thumbs-up on the H0-era trigger
+# R0 neither ends H1's wait nor gives a clean verdict.
+_1789_gh_reset
+_1789_fx reactions.8700 '[{"content":"+1","user":{"login":"greptile-apps[bot]"}}]'
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T4.10_greptile_posts_new_trigger" "1" "$(_1789_posts)"
+run_test "1789_T4.10_old_trigger_thumbs_up_not_verdict" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+run_test "1789_T4.10_old_trigger_never_polled" "0" "$(grep -c 'issues/comments/8700/reactions' "$_1789_gh_dir/calls.log" || true)"
+
+# T4.3 — Codex in re-wait mode receives --max-retriggers 0; a fresh run keeps
+# its configured value. The companion's REVIEW_REQUESTED_AT is forwarded.
+_1789_codex_args="$_1789_dir/codex-args.log"
+cat > "$_1789_stub_root/scripts/development-workflow/codex-github-reviewer.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$_1789_codex_args"
+printf 'VERDICT: APPROVED\nREVIEW_REQUESTED_AT=2020-01-01T00:00:06Z\nREVIEWED_HEAD=1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+exit 0
+STUB
+chmod +x "$_1789_stub_root/scripts/development-workflow/codex-github-reviewer.sh"
+_1789_handler_overrides_saved="$_1789_handler_overrides"
+_1789_handler_overrides="${_1789_handler_overrides}
+  codex_review_thread_evidence_counts() { printf '0\t0\t0\n'; }
+"
+_1789_rewait_none
+_1789_out="$(_1789_run_handler run_codex_github_review 30)"
+run_test "1789_T4.3_codex_rewait_max_retriggers_0" "1" "$(grep -c -- '--max-retriggers 0' "$_1789_codex_args" || true)"
+run_test "1789_T4.3_codex_forwards_requested_at" "2020-01-01T00:00:06Z" "$(kv_value_default REVIEW_REQUESTED_AT "$_1789_out" "")"
+_1789_rewait_off
+_1789_out="$(_1789_run_handler run_codex_github_review 30)"
+run_test "1789_T4.3_codex_fresh_keeps_max_retriggers" "1" "$(grep -c -- '--max-retriggers 1' "$_1789_codex_args" || true)"
+_1789_handler_overrides="$_1789_handler_overrides_saved"
+unset _1789_handler_overrides_saved _1789_codex_args
+
+_1789_rewait_off
+unset _1789_wait_entry _1789_rec_bb _1789_rw _1789_push_entry _1789_nf_entry _1789_k _1789_pl _1789_rl _1789_hl
+unset -f _1789_rewait _1789_rewait_none _1789_rewait_off _1789_stderr_has _1789_count_body
+
 unset _1789_rec_log _1789_main_calls _1789_loop_start _1789_persist_line _1789_rc _1789_err
 unset -f _1789_o _1789_reconcile 2>/dev/null || true
 
@@ -23087,6 +23415,8 @@ unset -f _1789_gh_reset _1789_fx _1789_tick _1789_posts _1789_run_gh _1789_rre _
 run_test "1789_T2_summary_result_line_wording" "1" \
   "$(grep -c 'has not returned a verdict for \${_nvy_head:-the current head} within its wait budget' "$_1789_loop_src" || true)"
 
+unset _1789_RUN _1789_H1
+unset -f _1789_entry _1789_ledger _1789_req_rec _1789_state _1789_recorded _1789_keys 2>/dev/null || true
 unset _1789_ret_line _1789_helpers_ok _1789_fn _1789_fn_line _1789_case _1789_r _1789_reason _1789_flag _1789_expected
 unset _1789_nvy_payload _1789_out _1789_stub_root _1789_body _1789_tag _1789_expected_result _1789_expected_detail _1789_expected_exit
 unset _1789_cr_repo _1789_cr_bin _1789_cr_head _1789_cr_out _1789_handler_overrides
