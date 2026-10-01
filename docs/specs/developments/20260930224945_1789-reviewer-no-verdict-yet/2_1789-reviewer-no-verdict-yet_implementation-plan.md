@@ -554,6 +554,20 @@ re-wait adoption keeps `reviewer_loop_rewait_recorded_request` (D11). The
 loop calls it for Greptile and PR-Agent and hands the list and
 `loop_head_sha` to the handler alongside the D11 values.
 
+The binding governs verdict, finding, and completion evidence only. Platform
+state notices that handlers read from issue comments by time — Bugbot's
+disabled, usage-limit, and explicit-skip comments
+(`bugbot_check_disabled_issue_comments`, `:3154`, read by
+`bugbot_escalate_for_unavailable_issue_comments`, `:3186`) and CodeRabbit's
+pause and rate-limit comments (`coderabbit_newest_rate_limit_comment`,
+`:6935`) and its `review_skipped_banner` (`:7802`) — report the platform's
+own availability, not a verdict on a revision, and keep their existing
+reads: spec BR 2 keeps a self-reported unavailability on its existing
+handling, and AC-13 keeps usage-limit and rate-limit outcomes unchanged.
+Search, at `13bf4c7f`:
+`grep -n '^bugbot_check_disabled_issue_comments\|^bugbot_escalate_for_unavailable_issue_comments\|^coderabbit_newest_rate_limit_comment\|REASON review_skipped_banner' scripts/development-workflow/pr-review-loop.sh`
+(four hits, at the lines cited).
+
 **Binding enumeration** — per platform, line numbers at `13bf4c7f` (V28):
 
 | Platform | Evidence read today | Gap | Change |
@@ -1342,6 +1356,6 @@ SHA).
 | Rule 1 | Satisfied | D15's PR-Agent rule (a) depends on the summary body naming the head SHA; V30 records 30 located occurrences, two variants, and the adequacy rationale, and D15 states the tolerant path (see Factual claim evidence). |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D15 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. The D15 site counts (four Bugbot review-comment filters, four `codex_inline_review_comment_count_since` callers) carry V28's commands and their enumerated line numbers. |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table. |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15. |
 | Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, `codex_inline_review_comment_count_since`, the Claude companion review count, the new head-recorded request helper) (V12, V13, V17, V19, V20, V21, V23, V24, V28). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
