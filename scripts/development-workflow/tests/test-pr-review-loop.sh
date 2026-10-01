@@ -10776,6 +10776,63 @@ run_test "codex_stale_inline_not_needs_revision" "no" "$_codex_stale_inline_need
 rm -rf "$_codex_stale_inline_mock_dir"
 unset _codex_stale_inline_mock_dir _codex_stale_inline_output _codex_stale_inline_exit _codex_stale_inline_needs_revision
 
+# #1789 T2.16 (plan D15, codex-github row): codex_inline_review_comment_count_since
+# binds an inline review comment by original_commit_id. GitHub moves a review
+# comment's commit_id to the newest head while the commented line is
+# unchanged, so an older head's comment created after the trigger carries
+# commit_id == the current head but original_commit_id == the older head; it
+# is not counted and the companion does not return NEEDS_REVISION. A comment
+# whose original_commit_id is the current head is counted.
+_codex_drift_mock_dir="$(mktemp -d)"
+cat > "$_codex_drift_mock_dir/gh" <<'CODEX_DRIFT_INLINE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcd178900000000000000000000000000000001\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":113,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"created_at":"2026-01-01T00:00:01Z","commit_id":"abcd178900000000000000000000000000000001","original_commit_id":"%s","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issue."}]\n' "$CODEX_DRIFT_ORIGINAL"
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DRIFT_INLINE_GH
+chmod +x "$_codex_drift_mock_dir/gh"
+for _codex_drift_case in drifted bound; do
+  if [ "$_codex_drift_case" = "drifted" ]; then
+    _codex_drift_original="abcd178900000000000000000000000000000002"
+  else
+    _codex_drift_original="abcd178900000000000000000000000000000001"
+  fi
+  _codex_drift_exit=0
+  CODEX_DRIFT_ORIGINAL="$_codex_drift_original" PATH="$_codex_drift_mock_dir:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+    42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+    >"$_codex_drift_mock_dir/output.txt" 2>&1 || _codex_drift_exit=$?
+  _codex_drift_verdict="$(grep -c '^VERDICT: NEEDS_REVISION' "$_codex_drift_mock_dir/output.txt" || true)"
+  if [ "$_codex_drift_case" = "drifted" ]; then
+    run_test "1789_T2.16_codex_drifted_inline_comment_not_counted_exit" "4" "$_codex_drift_exit"
+    run_test "1789_T2.16_codex_drifted_inline_comment_not_needs_revision" "0" "$_codex_drift_verdict"
+  else
+    run_test "1789_T2.16_codex_bound_inline_comment_counted_needs_revision" "1|1" "${_codex_drift_verdict}|${_codex_drift_exit}"
+  fi
+done
+rm -rf "$_codex_drift_mock_dir"
+unset _codex_drift_mock_dir _codex_drift_case _codex_drift_original _codex_drift_exit _codex_drift_verdict
+
 _codex_head_changed_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_head_changed_mock_dir/head_calls"
 cat > "$_codex_head_changed_mock_dir/gh" <<'CODEX_HEAD_CHANGED_GH'

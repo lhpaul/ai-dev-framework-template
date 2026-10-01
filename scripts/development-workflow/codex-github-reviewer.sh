@@ -299,6 +299,12 @@ codex_trigger_approval_reaction_count() {
   rm -f "$reaction_tmpfile"
 }
 
+# codex_inline_review_comment_count_since <trigger_time>
+# Counts Codex inline review comments created at or after the trigger and
+# bound to the current head. #1789 (plan D15): a review comment is bound by
+# original_commit_id (the revision it was written against), never by
+# commit_id, which GitHub moves to the newest head while the commented line is
+# unchanged — so an older head's comment is not counted for this head.
 codex_inline_review_comment_count_since() {
   local trigger_time="$1"
   [ -z "$trigger_time" ] && { printf '0\n'; return 0; }
@@ -307,7 +313,7 @@ codex_inline_review_comment_count_since() {
   review_comment_tmpfile=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA_FULL" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.commit_id // "") == $sha))] | length' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.original_commit_id // "") == $sha))] | length' \
     > "$review_comment_tmpfile"; then
     cat "$review_comment_tmpfile"
   else
