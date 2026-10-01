@@ -2031,7 +2031,10 @@ run_greptile_review() {
   # none. With neither, nothing can be bound: escalate before posting.
   head_sha="${loop_head_sha:-}"
   if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
-    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha' 2>/dev/null || true)"
+    if ! head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha' 2>/dev/null)"; then
+      # A failed read leaves no head to bind to: the escalation below.
+      head_sha=""
+    fi
   fi
   if [ -z "$head_sha" ] || [ "$head_sha" = "null" ]; then
     print_kv RESULT escalate
