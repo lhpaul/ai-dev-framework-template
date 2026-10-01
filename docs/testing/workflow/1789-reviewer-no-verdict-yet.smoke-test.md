@@ -11,8 +11,11 @@
 ## Scope of this smoke test
 
 Steps 1–3 need no live reviewer vendor and run against the harness or a
-throwaway PR with a mocked reviewer. Steps 4–7 use a live disposable PR and
-the platforms named in each step. Decision labels (D1–D14) refer to the plan.
+throwaway PR with a mocked reviewer. Steps 4–8 use a live disposable PR and
+the platforms named in each step. Decision labels (D1–D15) refer to the plan.
+Step 8 is required: it is the only live confirmation of the Claude Code
+Action dispatch response the plan's D15 relies on (plan V31 rests on
+GitHub's REST reference alone).
 No UI is involved and no design assets exist for this item, so there is no
 design-fidelity step.
 
@@ -27,6 +30,9 @@ design-fidelity step.
 - [ ] For Steps 4–6: a repository where Bugbot (Cursor GitHub App) is installed
 - [ ] For Step 7: `local-ai-reviewer` configured in `review.on_ready.github`
       (this repository's default)
+- [ ] For Step 8: `.github/workflows/claude-code-review.yml` present on the
+      default branch with its Claude credentials configured, and `gh`
+      allowed to dispatch workflows (`actions: write`)
 
 ---
 
@@ -173,6 +179,27 @@ increase across the two runs.
 return `escalate` within a few seconds and apply `reviewer-failed` (an early
 exit with status 124 is a failure, not a stopped reviewer, D4).
 
+### Step 8: Claude Code Action dispatch returns the bound run id
+
+**Maps to**: AC-10 (plan D15 Claude dispatch rule, V31)
+
+1. Run
+   `bash scripts/development-workflow/claude-code-action-reviewer.sh <pr> <owner> <repo> --head-sha "$(gh pr view <pr> --json headRefOid --jq .headRefOid)" --max-wait 900`
+   against the implementation-branch PR and keep its full output.
+2. Run
+   `gh api "repos/<owner>/<repo>/actions/workflows/claude-code-review.yml/runs?event=workflow_dispatch&per_page=5" --jq '.workflow_runs[] | [.id,.name,.created_at,.status]'`.
+
+**Expected result**: the companion prints `REVIEW_REQUEST_REF=<integer id>`
+(the dispatch response's `workflow_run_id`) and no `VERDICT: UNAVAILABLE`
+line, and its polling reads only `actions/runs/<that id>`; the id appears in
+the step 2 list with this PR's `PR #<n>` in its name. The companion exits 0
+or 1 from that run's result, or 4 if the run is still going at 900 s. If the dispatch answers `204` or carries no
+integer `workflow_run_id`, the companion must print the D15
+`VERDICT: UNAVAILABLE — dispatch response carried no workflow_run_id`
+line and exit 3. That is a blocking defect for this item: record the
+response status and body and escalate. Do not restore the time-window run
+selection.
+
 ### Last Step: Validate and clean up
 
 - Verify every assertion below.
@@ -191,7 +218,7 @@ exit with status 124 is a failure, not a stopped reviewer, D4).
 - [ ] AC-7: a later clean run removes the label on both the re-review and the reuse paths (Step 5)
 - [ ] AC-8: no label after needs-fixes or waiting runs without failure evidence, or after an expired-wait kept skip; label present when any platform carries failure evidence (Steps 1, 5)
 - [ ] AC-9: precedence across several platform outcomes (Step 1)
-- [ ] AC-10: older-revision verdicts are not accepted (Step 1)
+- [ ] AC-10: older-revision verdicts are not accepted (Steps 1, 8)
 - [ ] AC-11: one automatic re-wait per revision with no duplicate request, then a waiting stop that does not count toward cycle caps (Step 6)
 - [ ] AC-12: run output and summary record outcome, budget and source, request time, and latency or waited time; reused verdicts marked reused (Steps 4, 5)
 - [ ] AC-13: usage, spend, account, and rate-limit outcomes unchanged (Step 1)
@@ -203,7 +230,7 @@ exit with status 124 is a failure, not a stopped reviewer, D4).
 
 | Entity | Scenario | How to load |
 | --- | --- | --- |
-| Disposable PRs | Steps 2–7 | Create `implementation-plan/smoke-1789-*` and `fix/smoke-1789-*` branches with a one-line change and open draft PRs |
+| Disposable PRs | Steps 2–8 | Create `implementation-plan/smoke-1789-*` and `fix/smoke-1789-*` branches with a one-line change and open draft PRs |
 
 ---
 
@@ -220,6 +247,8 @@ exit with status 124 is a failure, not a stopped reviewer, D4).
 
 ## Known Limitations
 
+- Step 8 starts a real Claude review run on the disposable PR, so it costs
+  one review; it runs once per smoke pass.
 - Steps 4–6 depend on live vendor latency; a vendor outage turns Step 4 into
   a Waiting on reviewer result, which is itself the correct behavior.
 - Latency is measured to the observing poll, so it can exceed the vendor's
