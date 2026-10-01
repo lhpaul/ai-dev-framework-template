@@ -28,11 +28,15 @@
 #   0 — APPROVED       (Actions run completed successfully, no new blocking review
 #                       threads posted by the bot)
 #   1 — NEEDS_REVISION (Actions run completed, bot posted new blocking review threads)
-#   2 — TIMED_OUT      (Actions run did not complete within max-wait, dispatch failed,
-#                       or workflow file absent; treat as unavailable under configured
-#                       internal_reviewers_unavailable_policy)
-#   3 — UNAVAILABLE    (workflow file absent or dispatch rejected — distinguishes from
-#                       a true run timeout so callers can map to REASON=unavailable)
+#   2 — FAILED         (Actions run completed with a conclusion other than 'success',
+#                       or invalid arguments; pr-review-loop.sh maps this to
+#                       RESULT=escalate / REASON=claude_code_action_run_failed)
+#   3 — UNAVAILABLE    (workflow file absent, dispatch rejected, or the run did not
+#                       execute a review — callers map to REASON=unavailable)
+#   4 — NO_VERDICT_YET (no run completed within max-wait: the reviewer has not
+#                       answered yet; pr-review-loop.sh maps this to
+#                       RESULT=waiting_on_reviewer / REASON=reviewer-no-verdict-yet,
+#                       not a failure — #1789)
 
 set -euo pipefail
 
@@ -175,7 +179,7 @@ done
 
 # ── Validate numeric options ──────────────────────────────────────────────────
 # POLL_INTERVAL and MAX_WAIT are used in 'sleep' and arithmetic. Validate them
-# here so a non-numeric value exits with code 2 (TIMED_OUT) instead of
+# here so a non-numeric value exits with code 2 (FAILED) instead of
 # silently causing 'sleep' to fail under set -e with code 1 (NEEDS_REVISION).
 
 case "$POLL_INTERVAL" in
@@ -304,6 +308,7 @@ echo "INFO: polling for workflow run created after $DISPATCH_TIME..."
 
 TOTAL_ELAPSED=0
 RUN_URL=""
+RUN_STATUS=""
 RUN_CONCLUSION=""
 
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
@@ -396,14 +401,22 @@ done
 
 # ── Phase 3: Parse result ─────────────────────────────────────────────────────
 
+if [ "$RUN_STATUS" != "completed" ]; then
+  # #1789 (plan D8 Claude row): the budget ran out before any run completed.
+  # No verdict yet, not a failure.
+  echo "VERDICT: NO_VERDICT_YET — no run completed within ${MAX_WAIT}s (run URL: ${RUN_URL:-unknown})"
+  echo "INFO: re-run the reviewer loop later on the same revision; if the run never completes, verify the '$WORKFLOW_FILE' workflow is present and configured in $OWNER/$REPO."
+  exit 4
+fi
+
 if [ -z "$RUN_CONCLUSION" ] || [ "$RUN_CONCLUSION" = "null" ]; then
-  echo "VERDICT: TIMED_OUT — no run completed within ${MAX_WAIT}s (run URL: ${RUN_URL:-unknown})"
-  echo "INFO: remediation — verify the '$WORKFLOW_FILE' workflow is present and configured in $OWNER/$REPO."
+  echo "VERDICT: FAILED — run completed without a conclusion (run URL: ${RUN_URL:-unknown})"
+  echo "INFO: remediation — check the Actions run log at ${RUN_URL:-the run page} for details."
   exit 2
 fi
 
 if [ "$RUN_CONCLUSION" != "success" ]; then
-  echo "VERDICT: TIMED_OUT — run completed with conclusion '$RUN_CONCLUSION' (not 'success'): $RUN_URL"
+  echo "VERDICT: FAILED — run completed with conclusion '$RUN_CONCLUSION' (not 'success'): $RUN_URL"
   echo "INFO: remediation — check the Actions run log at $RUN_URL for details."
   exit 2
 fi

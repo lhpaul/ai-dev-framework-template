@@ -510,6 +510,69 @@ fi
 unset _workflow_file _has_prompt _has_plugin
 
 # ---------------------------------------------------------------------------
+# Area 9 (#1789, plan D8 Claude row, T2.8): companion exit codes for a run
+# that never completes within the budget (exit 4, No verdict yet) and a run
+# that completed with a non-success conclusion (exit 2, failure).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 9: no verdict yet vs failed run exit codes (#1789) ==="
+
+_cca_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_cca_mock_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"/dispatches"*) exit 0 ;;
+  *"actions/runs?event=workflow_dispatch"*)
+    conclusion_json=null
+    [ -n "${MOCK_CCA_RUN_CONCLUSION:-}" ] && conclusion_json="\"${MOCK_CCA_RUN_CONCLUSION}\""
+    printf '{"workflow_runs":[{"id":901,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","created_at":"2999-01-01T00:00:00Z","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/901"}]}\n' \
+      "${MOCK_CCA_RUN_STATUS:-in_progress}" "$conclusion_json"
+    exit 0
+    ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_cca_mock_dir/gh"
+
+_cca_run() {
+  local status=0
+  PATH="$_cca_mock_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 >"$_cca_mock_dir/out" 2>"$_cca_mock_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+
+MOCK_CCA_RUN_STATUS=in_progress MOCK_CCA_RUN_CONCLUSION=""
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_not_completed_exit_4" "4" "$(_cca_run)"
+run_test "1789_run_not_completed_verdict" "1" \
+  "$(grep -c '^VERDICT: NO_VERDICT_YET' "$_cca_mock_dir/out" || true)"
+
+MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=failure
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_completed_failure_exit_2" "2" "$(_cca_run)"
+run_test "1789_run_completed_failure_verdict" "1" \
+  "$(grep -c "^VERDICT: FAILED — run completed with conclusion 'failure'" "$_cca_mock_dir/out" || true)"
+
+MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=timed_out
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_completed_timed_out_exit_2" "2" "$(_cca_run)"
+
+MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=""
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_completed_without_conclusion_exit_2" "2" "$(_cca_run)"
+
+_cca_usage="$(sed -n '1,45p' "$REVIEWER_SCRIPT")"
+run_test "1789_header_documents_exit_4" "1" \
+  "$(grep -c '^#   4 — NO_VERDICT_YET' <<<"$_cca_usage" || true)"
+
+unset MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION _cca_usage
+rm -rf "$_cca_mock_dir"
+unset _cca_mock_dir
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

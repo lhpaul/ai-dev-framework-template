@@ -4045,7 +4045,9 @@ _reviewer_failed_required() {
   fi
 }
 
-run_test "reviewer_failed_escalate_timeout" "yes" "$(_reviewer_failed_required escalate timeout)"
+# #1789: an expired wait is no longer reported as escalate/timeout; the escalate
+# rule is exercised with a failure-only reason instead.
+run_test "reviewer_failed_escalate_run_failed" "yes" "$(_reviewer_failed_required escalate claude_code_action_run_failed)"
 run_test "reviewer_failed_escalate_empty_reason" "yes" "$(_reviewer_failed_required escalate '')"
 run_test "reviewer_failed_escalate_pending_timeout" "yes" "$(_reviewer_failed_required escalate pending_timeout)"
 run_test "reviewer_failed_skipped_unavailable" "yes" "$(_reviewer_failed_required skipped unavailable)"
@@ -20980,6 +20982,7 @@ run_platform_review() {
     needs_fixes) printf 'RESULT=needs_fixes\nREASON=blocking\nBLOCKING_COUNT=1\n' ;;
     needs_rerun) printf 'RESULT=needs_rerun\nREASON=stale_verdict\n' ;;
     escalate_pass) printf 'RESULT=escalate\nREASON=timeout\n' ;;
+    waiting_pass) printf 'RESULT=waiting_on_reviewer\nREASON=reviewer-no-verdict-yet\nNO_VERDICT_YET=1\nWAIT_EXPIRED_DETAIL=stopped_at_budget\nPENDING_REVIEWER=local-ai-reviewer\nPENDING_REVIEW_HEAD_SHA=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${loop_head_sha:-}"; return 4 ;;
     unparseable) printf 'not-key=value-garbage\n' ;;
     *) printf 'RESULT=escalate\nREASON=unknown\n' ;;
   esac
@@ -21147,6 +21150,26 @@ run_test "1656_s7c_guard_escalate" "escalate" "$aggregate_result"
 run_test "1656_s7c_guard_timeout" "timeout" "$aggregate_reason"
 run_test "1656_s7c_guard_telemetry" "local_pass_unavailable" "$local_second_pass_reason"
 run_test "1656_s7c_phase_not_started" "0" "$phase_after_clean_started"
+
+# #1789 (T2.9): a second local pass with no verdict yet — aggregate waiting,
+# no failed-for-head record, not local_pass_unavailable, label not required.
+_1656_reset_guard_globals
+_1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_1656_stub_pass_result="waiting_pass"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1789_T2.9_second_pass_waiting_blocked" "1" "$_st"
+run_test "1789_T2.9_second_pass_waiting_aggregate" "waiting_on_reviewer" "$aggregate_result"
+run_test "1789_T2.9_second_pass_waiting_reason" "reviewer-no-verdict-yet" "$aggregate_reason"
+run_test "1789_T2.9_second_pass_waiting_status" "4" "$aggregate_status"
+run_test "1789_T2.9_second_pass_waiting_pending_reviewer" "local-ai-reviewer" \
+  "$(kv_value_default PENDING_REVIEWER "$aggregate_output" "")"
+run_test "1789_T2.9_second_pass_waiting_no_failed_head" "" "$local_second_pass_failed_head_record"
+run_test "1789_T2.9_second_pass_waiting_label_not_required" "0" "$reviewer_failed_required"
+run_test "1789_T2.9_second_pass_waiting_ledger_no_verdict_yet" "no_verdict_yet" \
+  "$(printf '%s\n' "${platform_result_records[@]:-}" | jq -sr 'map(select(.platform == "local-ai-reviewer")) | last | .result // ""')"
+run_test "1789_T2.9_second_pass_waiting_phase_not_started" "0" "$phase_after_clean_started"
+run_test "1789_T2.9_gate_result_waiting" "waiting_on_reviewer|reviewer-no-verdict-yet" \
+  "$(reviewer_loop_second_local_pass_gate_result waiting_on_reviewer reviewer-no-verdict-yet | tr '\t' '|')"
 
 # Unparseable pass output — unavailable escalation (P15 / scenario 7b shape)
 _1656_reset_guard_globals
@@ -21911,6 +21934,391 @@ run_test "1789_T1.10_keys_in_file_order_unique" "bugbot,pr-agent,bogus" \
     pr-agent: 2
     bugbot: 3
     bogus: 4')" | paste -sd, -)"
+
+# ---------------------------------------------------------------------------
+# Phase 2a — outcome helpers (plan D8), the label function (D9), the companion
+# watchdog/exit-4 contracts as seen by the loop handlers (D4, D8 Claude and
+# Haystack rows), the CodeRabbit CLI kept skip, and the Rule 5 consumers of
+# no_verdict_yet. Tests: T2.1 (local-ai-reviewer, claude-code-action,
+# haystack rows), T2.4 (CodeRabbit CLI kept skip), T2.6 (availability class),
+# T2.8 (loop mapping), T2.10, T2.27 (loop arm), T2.28.
+# ---------------------------------------------------------------------------
+
+# --- D8 helper definitions sit before the harness return point
+_1789_ret_line="$(grep -n '^\[ "\$_HARNESS_MODE_EFFECTIVE" -eq 1 \] && return 0' "$_1789_loop_src" | head -n 1 | cut -d: -f1)"
+_1789_helpers_ok="yes"
+for _1789_fn in print_no_verdict_yet print_no_verdict_yet_kept_skip_keys reviewer_loop_platform_outcome_class reviewer_loop_reason_in_list reviewer_loop_build_failed_completion_jq; do
+  _1789_fn_line="$(grep -n "^${_1789_fn}() {" "$_1789_loop_src" | head -n 1 | cut -d: -f1)"
+  if [ -z "$_1789_fn_line" ] || [ -z "$_1789_ret_line" ] || [ "$_1789_fn_line" -ge "$_1789_ret_line" ]; then
+    _1789_helpers_ok="no:${_1789_fn}"
+  fi
+done
+run_test "1789_T2_helpers_before_harness_return" "yes" "$_1789_helpers_ok"
+
+# --- print_no_verdict_yet block (D8)
+run_test "1789_T2_print_no_verdict_yet_block" \
+  "RESULT=waiting_on_reviewer|REASON=reviewer-no-verdict-yet|NO_VERDICT_YET=1|WAIT_EXPIRED_DETAIL=check_not_completed|PENDING_REVIEWER=bugbot|PENDING_REVIEW_HEAD_SHA=abc123|REVIEW_REQUESTED_AT=2026-09-23T12:35:16Z|COMMENT_COUNT=0|BLOCKING_COUNT=0|SUGGESTION_COUNT=0" \
+  "$(print_no_verdict_yet bugbot check_not_completed abc123 2026-09-23T12:35:16Z | paste -sd'|' -)"
+run_test "1789_T2_print_no_verdict_yet_omits_unknown_requested_at" "0" \
+  "$(print_no_verdict_yet bugbot check_not_completed abc123 "" | grep -c '^REVIEW_REQUESTED_AT=' || true)"
+run_test "1789_T2_kept_skip_keys" "NO_VERDICT_YET=1|DISPLAY_RESULT=no verdict yet (non-blocking skip: timeout)" \
+  "$(print_no_verdict_yet_kept_skip_keys timeout | paste -sd'|' -)"
+
+# --- reviewer_loop_platform_outcome_class (D8 table, T2.6 availability rows)
+for _1789_case in \
+    "clean||0|verdict_received" \
+    "needs_fixes|blocking|0|verdict_received" \
+    "needs_rerun|stale_verdict|0|verdict_received" \
+    "waiting_on_reviewer|reviewer-no-verdict-yet|1|no_verdict_yet" \
+    "waiting_on_reviewer|codex-github-review-pending|0|no_verdict_yet" \
+    "skipped|timeout|1|no_verdict_yet" \
+    "skipped|no_review|1|no_verdict_yet" \
+    "skipped|no_output|0|skipped_failure_evidence" \
+    "skipped|unavailable|0|skipped_failure_evidence" \
+    "skipped|cli_failed|0|skipped_failure_evidence" \
+    "skipped|explicit-skip|0|skipped" \
+    "skipped|timeout|0|skipped" \
+    "escalate|rate_limited|0|existing_handling" \
+    "escalate|rate_limit_max_retries|0|existing_handling" \
+    "escalate|codex-github-usage-limit|0|existing_handling" \
+    "escalate|codex-github-account-not-connected|0|existing_handling" \
+    "escalate|bugbot-usage-limit|0|existing_handling" \
+    "escalate|quota_exhausted|0|existing_handling" \
+    "escalate|claude_code_action_run_failed|0|reviewer_failed" \
+    "escalate|timeout|0|reviewer_failed" \
+    "bogus|whatever|0|reviewer_failed"; do
+  IFS='|' read -r _1789_r _1789_reason _1789_flag _1789_expected <<<"$_1789_case"
+  run_test "1789_T2_class_${_1789_r}_${_1789_reason:-none}_${_1789_flag}" "$_1789_expected" \
+    "$(reviewer_loop_platform_outcome_class "$_1789_r" "$_1789_reason" "$_1789_flag")"
+done
+
+# --- reason lists (D8)
+run_test "1789_T2_no_verdict_reasons" "reviewer-no-verdict-yet codex-github-review-pending codex-github-reaction-without-review" \
+  "${REVIEWER_LOOP_NO_VERDICT_REASONS[*]}"
+run_test "1789_T2_failure_skip_reasons" "unavailable thread-check-failed forbidden unauthorized no_output invalid_json ambiguous_output cli_failed" \
+  "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[*]}"
+run_test "1789_T2_failure_skip_reasons_exclude_expired_waits" "no" \
+  "$(if reviewer_loop_reason_in_list timeout "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[@]}" \
+      || reviewer_loop_reason_in_list pending_timeout "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[@]}"; then echo yes; else echo no; fi)"
+run_test "1789_T2_failed_check_conclusions" "failure timed_out cancelled action_required startup_failure stale" \
+  "${REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS[*]}"
+run_test "1789_T2_reason_in_list_empty_needle" "no" \
+  "$(reviewer_loop_reason_in_list "" "" a && echo yes || echo no)"
+
+# --- REVIEWER_FAILED_COMPLETION_JQ predicate (D8 failure-type completion signals)
+_1789_fc() { jq -nc "$REVIEWER_FAILED_COMPLETION_JQ"' '"$1"' | reviewer_failed_completion'; }
+run_test "1789_T2_fc_check_timed_out" "true" "$(_1789_fc '{status:"completed",conclusion:"timed_out"}')"
+run_test "1789_T2_fc_check_cancelled" "true" "$(_1789_fc '{status:"completed",conclusion:"cancelled"}')"
+run_test "1789_T2_fc_check_stale" "true" "$(_1789_fc '{status:"completed",conclusion:"stale"}')"
+run_test "1789_T2_fc_check_success" "false" "$(_1789_fc '{status:"completed",conclusion:"success"}')"
+run_test "1789_T2_fc_check_neutral" "false" "$(_1789_fc '{status:"completed",conclusion:"neutral"}')"
+run_test "1789_T2_fc_check_in_progress" "false" "$(_1789_fc '{status:"in_progress",conclusion:null}')"
+run_test "1789_T2_fc_graphql_check_uppercase" "true" "$(_1789_fc '{__typename:"CheckRun",status:"COMPLETED",conclusion:"STARTUP_FAILURE"}')"
+run_test "1789_T2_fc_status_failure" "true" "$(_1789_fc '{context:"Devin",state:"failure"}')"
+run_test "1789_T2_fc_status_error" "true" "$(_1789_fc '{context:"Devin",state:"error"}')"
+run_test "1789_T2_fc_graphql_status_uppercase" "true" "$(_1789_fc '{__typename:"StatusContext",context:"Devin",state:"ERROR"}')"
+run_test "1789_T2_fc_status_success" "false" "$(_1789_fc '{context:"Devin",state:"success"}')"
+run_test "1789_T2_fc_status_pending" "false" "$(_1789_fc '{context:"Devin",state:"pending"}')"
+run_test "1789_T2_fc_non_object" "false" "$(_1789_fc 'null')"
+run_test "1789_T2_fc_newest_per_key_governs" "false" \
+  "$(jq -nc "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'[
+      {name:"Devin Review",id:1,started_at:"2026-01-01T00:00:00Z",status:"completed",conclusion:"timed_out"},
+      {name:"Devin Review",id:2,started_at:"2026-01-01T00:05:00Z",status:"completed",conclusion:"success"}
+    ] | dedupe_status_check_rollup | last | reviewer_failed_completion')"
+run_test "1789_T2_fc_newest_failed_governs" "true" \
+  "$(jq -nc "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'[
+      {name:"Devin Review",id:1,started_at:"2026-01-01T00:00:00Z",status:"completed",conclusion:"success"},
+      {name:"Devin Review",id:2,started_at:"2026-01-01T00:05:00Z",status:"completed",conclusion:"cancelled"}
+    ] | dedupe_status_check_rollup | last | reviewer_failed_completion')"
+
+# --- D9 label function (T2.28 label-function rows)
+_1789_label() { if reviewer_failed_label_required_for_result "$1" "${2:-}"; then echo yes; else echo no; fi; }
+for _1789_reason in no_output invalid_json ambiguous_output cli_failed unavailable thread-check-failed forbidden unauthorized; do
+  run_test "1789_T2.28_label_skipped_${_1789_reason}_required" "yes" "$(_1789_label skipped "$_1789_reason")"
+done
+for _1789_reason in timeout pending_timeout rate_limited analysis_skipped_file_limit explicit-skip disabled_by_config no_review no_check_run not_configured; do
+  run_test "1789_T2.28_label_skipped_${_1789_reason}_not_required" "no" "$(_1789_label skipped "$_1789_reason")"
+done
+run_test "1789_T2_label_waiting_not_required" "no" "$(_1789_label waiting_on_reviewer reviewer-no-verdict-yet)"
+run_test "1789_T2_label_escalate_claude_run_failed" "yes" "$(_1789_label escalate claude_code_action_run_failed)"
+run_test "1789_T2.6_label_escalate_rate_limited_unchanged" "no" "$(_1789_label escalate rate_limited)"
+run_test "1789_T2.6_label_escalate_quota_exhausted_unchanged" "yes" "$(_1789_label escalate quota_exhausted)"
+
+# --- Rule 5 consumers of no_verdict_yet (T2.10)
+run_test "1789_T2.10_normalize_waiting" "no_verdict_yet" \
+  "$(reviewer_loop_normalize_platform_outcome waiting_on_reviewer reviewer-no-verdict-yet)"
+run_test "1789_T2.10_normalize_codex_wait_reason" "no_verdict_yet" \
+  "$(reviewer_loop_normalize_platform_outcome waiting_on_reviewer codex-github-review-pending)"
+run_test "1789_T2.10_normalize_kept_skip_flag" "no_verdict_yet" \
+  "$(reviewer_loop_normalize_platform_outcome skipped timeout 1)"
+run_test "1789_T2.10_normalize_skip_without_flag" "skipped" \
+  "$(reviewer_loop_normalize_platform_outcome skipped timeout)"
+run_test "1789_T2.10_normalize_unavailable_unchanged" "unavailable" \
+  "$(reviewer_loop_normalize_platform_outcome skipped unavailable 0)"
+run_test "1789_T2.10_record_json_forwards_flag" "no_verdict_yet|skipped|no_review" \
+  "$(reviewer_loop_platform_result_record_json pr-agent skipped no_review 1 | jq -r '[.result,.raw_result,.raw_reason] | join("|")')"
+run_test "1789_T2.10_record_json_default_flag" "skipped" \
+  "$(reviewer_loop_platform_result_record_json pr-agent skipped no_review | jq -r '.result')"
+_1789_nvy_head="1789dddddddddddddddddddddddddddddddddddd"
+_1789_nvy_payload="$(jq -nc --arg head "$_1789_nvy_head" '{
+  schema: "reviewer_loop_history.v1",
+  entries: [{
+    iteration: 1,
+    platform_results: [{platform: "local-ai-reviewer", result: "no_verdict_yet", raw_result: "waiting_on_reviewer", raw_reason: "reviewer-no-verdict-yet"}],
+    reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, classification: "current"}]
+  }]
+}')"
+run_test "1789_T2.10_local_pass_required_no_evidence" "no_evidence" \
+  "$(reviewer_loop_local_pass_required "$_1789_nvy_payload" "$_1789_nvy_head" "local-ai-reviewer")"
+run_test "1789_T2.10_local_evidence_state" "no_verdict_yet" \
+  "$(reviewer_loop_local_evidence_state '{"outcome":"no_verdict_yet","head_sha":""}' "$_1789_nvy_head")"
+run_test "1789_T2.10_local_evidence_state_label" "No verdict yet" \
+  "$(reviewer_loop_local_evidence_state_label no_verdict_yet)"
+run_test "1789_T2.10_local_evidence_not_a_miss" "not_a_miss" \
+  "$(reviewer_loop_missed_finding_classification no_verdict_yet)"
+
+# --- Loop handler composition helpers
+_1789_reset_processing_globals() {
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  compare_mode=0
+  compare_verdicts=()
+  compare_first_blocking_result=""
+  compare_first_blocking_reason=""
+  compare_first_blocking_output=""
+  compare_first_blocking_status=0
+  platform_peer_evidence=()
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  aggregate_result="skipped"
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  aggregate_advisory_labels=""
+  phase_after_clean_enabled=0
+  phase_after_clean_started=0
+  reviewer_loop_platform_loop_should_break=0
+  loop_head_sha="1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+_1789_handler_overrides='
+  require_gh() { :; }
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  reviewer_for_branch() { printf "developer\n"; }
+  check_unresolved_threads() { printf "0\n"; }
+'
+# _1789_stub_companion <script-name> <stdout> <exit>: a stub companion under a
+# fake workflow root (the Area 1710 pattern).
+_1789_stub_root="$_1789_dir/stub-root"
+mkdir -p "$_1789_stub_root/scripts/development-workflow"
+_1789_stub_companion() {
+  printf '#!/usr/bin/env bash\nprintf %%s %q\nexit %s\n' "$2" "$3" \
+    > "$_1789_stub_root/scripts/development-workflow/$1"
+  chmod +x "$_1789_stub_root/scripts/development-workflow/$1"
+}
+# _1789_run_handler <handler> <max_wait>: runs a loop handler against the stub
+# root and prints its output followed by EXIT=<return status>.
+_1789_run_handler() {
+  (
+    eval "$_1789_handler_overrides"
+    workflow_repo_root() { printf '%s\n' "$_1789_stub_root"; }
+    repo_root="$_1789_stub_root"
+    loop_head_sha="1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    export MOCK_GH_OUTPUT="false"
+    _ec=0
+    "$1" "42" "feature/1789-x" "1" "${2:-30}" 2>/dev/null || _ec=$?
+    printf 'EXIT=%s\n' "$_ec"
+  )
+}
+
+# --- T2.1 local-ai-reviewer: companion exit 4 → No verdict yet stopped_at_budget
+_1789_stub_companion local-ai-reviewer.sh "$(printf 'REVIEWED_HEAD=1789bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nRESULT=waiting_on_reviewer\nREASON=reviewer-no-verdict-yet\nNO_VERDICT_YET=1\nWAIT_EXPIRED_DETAIL=stopped_at_budget\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')" 4
+_1789_out="$(_1789_run_handler run_local_ai_reviewer_review 30)"
+run_test "1789_T2.1_local_ai_result" "waiting_on_reviewer" "$(kv_value_default RESULT "$_1789_out" "")"
+run_test "1789_T2.1_local_ai_reason" "reviewer-no-verdict-yet" "$(kv_value_default REASON "$_1789_out" "")"
+run_test "1789_T2.1_local_ai_flag" "1" "$(kv_value_default NO_VERDICT_YET "$_1789_out" "")"
+run_test "1789_T2.1_local_ai_detail" "stopped_at_budget" "$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+run_test "1789_T2.1_local_ai_pending_reviewer" "local-ai-reviewer" "$(kv_value_default PENDING_REVIEWER "$_1789_out" "")"
+run_test "1789_T2.1_local_ai_pending_head" "1789bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$(kv_value_default PENDING_REVIEW_HEAD_SHA "$_1789_out" "")"
+run_test "1789_T2.1_local_ai_exit" "4" "$(kv_value_default EXIT "$_1789_out" "")"
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "local-ai-reviewer" 1 "$_1789_out" 4 1 >/dev/null 2>&1
+run_test "1789_T2.1_local_ai_aggregate_waiting" "waiting_on_reviewer" "$aggregate_result"
+run_test "1789_T2.1_local_ai_aggregate_reason" "reviewer-no-verdict-yet" "$aggregate_reason"
+run_test "1789_T2.1_local_ai_breaks" "1" "$reviewer_loop_platform_loop_should_break"
+run_test "1789_T2.1_local_ai_label_not_required" "0" "$reviewer_failed_required"
+run_test "1789_T2.10_local_ai_record_no_verdict_yet" "no_verdict_yet" \
+  "$(printf '%s\n' "${platform_result_records[@]}" | jq -sr 'last | .result')"
+
+# Exit 2 from the companion (a real failure) still escalates.
+_1789_stub_companion local-ai-reviewer.sh "$(printf 'RESULT=escalate\nREASON=malformed_output\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')" 2
+_1789_out="$(_1789_run_handler run_local_ai_reviewer_review 30)"
+run_test "1789_T2.3_local_ai_failure_escalates" "escalate|malformed_output|2" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default REASON "$_1789_out" "")|$(kv_value_default EXIT "$_1789_out" "")"
+
+# --- T2.1/T2.8 claude-code-action: companion exit 4 → run_not_completed; exit 2 → run failed
+_1789_stub_companion claude-code-action-reviewer.sh 'VERDICT: NO_VERDICT_YET' 4
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T2.8_claude_exit4_result" "waiting_on_reviewer" "$(kv_value_default RESULT "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit4_reason" "reviewer-no-verdict-yet" "$(kv_value_default REASON "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit4_detail" "run_not_completed" "$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit4_pending_reviewer" "claude-code-action" "$(kv_value_default PENDING_REVIEWER "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit4_pending_head" "1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$(kv_value_default PENDING_REVIEW_HEAD_SHA "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit4_return" "4" "$(kv_value_default EXIT "$_1789_out" "")"
+_1789_stub_companion claude-code-action-reviewer.sh 'VERDICT: FAILED' 2
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T2.8_claude_exit2_result" "escalate" "$(kv_value_default RESULT "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit2_reason" "claude_code_action_run_failed" "$(kv_value_default REASON "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit2_return" "2" "$(kv_value_default EXIT "$_1789_out" "")"
+run_test "1789_T2.8_claude_exit2_label_required" "yes" "$(_1789_label escalate claude_code_action_run_failed)"
+_1789_stub_companion claude-code-action-reviewer.sh 'VERDICT: UNAVAILABLE' 3
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T2.8_claude_exit3_unavailable" "escalate|unavailable" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default REASON "$_1789_out" "")"
+
+# --- T2.27 haystack exit-2 arm
+for _1789_case in \
+    "timeout|0|waiting_on_reviewer|timeout|4" \
+    "pending_timeout|0|waiting_on_reviewer|pending_timeout|4" \
+    "pending_check_run|1|waiting_on_reviewer|pending_check_run|4" \
+    "pending_check_run|0|escalate||2" \
+    "check_run_timed_out|0|escalate||2" \
+    "check_run_cancelled|0|escalate||2" \
+    "check_run_stale|0|escalate||2" \
+    "check_run_unknown|0|escalate||2"; do
+  IFS='|' read -r _1789_reason _1789_flag _1789_expected_result _1789_expected_detail _1789_expected_exit <<<"$_1789_case"
+  _1789_body="RESULT=skipped
+REVIEWED_HEAD=1789cccccccccccccccccccccccccccccccccccc
+REASON=${_1789_reason}
+BLOCKING_COUNT=0
+SUGGESTION_COUNT=0
+COMMENT_COUNT=0"
+  [ "$_1789_flag" = "1" ] && _1789_body="${_1789_body}
+HAYSTACK_BUDGET_EXPIRED=1"
+  _1789_stub_companion haystack-reviewer.sh "${_1789_body}
+" 2
+  _1789_out="$(_1789_run_handler run_haystack_review 30)"
+  _1789_tag="${_1789_reason}_key${_1789_flag}"
+  run_test "1789_T2.27_haystack_${_1789_tag}_result" "$_1789_expected_result" "$(kv_value_default RESULT "$_1789_out" "")"
+  run_test "1789_T2.27_haystack_${_1789_tag}_exit" "$_1789_expected_exit" "$(kv_value_default EXIT "$_1789_out" "")"
+  if [ "$_1789_expected_result" = "waiting_on_reviewer" ]; then
+    run_test "1789_T2.27_haystack_${_1789_tag}_reason" "reviewer-no-verdict-yet" "$(kv_value_default REASON "$_1789_out" "")"
+    run_test "1789_T2.27_haystack_${_1789_tag}_detail" "$_1789_expected_detail" "$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+    run_test "1789_T2.27_haystack_${_1789_tag}_pending_head" "1789cccccccccccccccccccccccccccccccccccc" \
+      "$(kv_value_default PENDING_REVIEW_HEAD_SHA "$_1789_out" "")"
+    run_test "1789_T2.27_haystack_${_1789_tag}_label" "no" "$(_1789_label waiting_on_reviewer reviewer-no-verdict-yet)"
+  else
+    run_test "1789_T2.27_haystack_${_1789_tag}_reason" "$_1789_reason" "$(kv_value_default REASON "$_1789_out" "")"
+    run_test "1789_T2.27_haystack_${_1789_tag}_label" "yes" "$(_1789_label escalate "$_1789_reason")"
+  fi
+done
+_1789_stub_companion haystack-reviewer.sh "$(printf 'RESULT=skipped\nBLOCKING_COUNT=0\n')" 2
+_1789_out="$(_1789_run_handler run_haystack_review 30)"
+run_test "1789_T2.27_haystack_missing_reason_fails_closed" "escalate|2" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default EXIT "$_1789_out" "")"
+
+# --- T2.28 / T2.4 CodeRabbit CLI composed from the real companion through the
+# loop handler: an immediate CLI exit 124 with empty stdout is no_output
+# (failure evidence, label required, non-blocking); a CLI that sleeps past the
+# budget is the kept `timeout` skip reported as No verdict yet.
+_1789_cr_repo="$_1789_dir/cr-repo"
+_1789_cr_bin="$_1789_dir/cr-bin"
+mkdir -p "$_1789_cr_repo" "$_1789_cr_bin"
+# The harness PATH carries a strict git mock; the fixture and the real
+# companion need the genuine git.
+_1789_real_git() { PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_1789_cr_repo" "$@"; }
+_1789_real_git init -q
+_1789_real_git config user.email "test@example.com"
+_1789_real_git config user.name "Test User"
+printf 'fixture\n' > "$_1789_cr_repo/README.md"
+_1789_real_git add README.md
+_1789_real_git commit -q -m fixture
+_1789_real_git remote add origin "git@github.com:owner/repo.git"
+_1789_cr_head="$(_1789_real_git rev-parse HEAD)"
+cat > "$_1789_cr_bin/gh" <<MOCK_GH
+#!/usr/bin/env bash
+case "\$*" in
+  *"pr view 42"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"feature/1789-x","headRefOid":"%s"}\n' "$_1789_cr_head"
+    exit 0
+    ;;
+esac
+exit 1
+MOCK_GH
+cat > "$_1789_cr_bin/cr" <<'MOCK_CR'
+#!/usr/bin/env bash
+if [ -n "${MOCK_1789_CR_SLEEP:-}" ]; then
+  sleep "$MOCK_1789_CR_SLEEP"
+fi
+exit "${MOCK_1789_CR_EXIT:-0}"
+MOCK_CR
+chmod +x "$_1789_cr_bin/gh" "$_1789_cr_bin/cr"
+_1789_run_cr_cli() {
+  (
+    eval "$_1789_handler_overrides"
+    workflow_repo_root() { printf '%s\n' "$REPO_ROOT"; }
+    repo_root="$_1789_cr_repo"
+    unset AI_DEV_WORKFLOW_CONFIG_FILE
+    config_file=""
+    PATH="$_1789_cr_bin:$TEST_PR_REVIEW_LOOP_REAL_PATH"
+    export CODERABBIT_CLI_RATE_LIMIT_POLICY=warn
+    export MOCK_1789_CR_EXIT="${1:-0}" MOCK_1789_CR_SLEEP="${2:-}"
+    _ec=0
+    run_coderabbit_cli_review "42" "feature/1789-x" "1" "${3:-30}" 2>/dev/null || _ec=$?
+    printf 'EXIT=%s\n' "$_ec"
+  )
+}
+
+_1789_cr_out="$(_1789_run_cr_cli 124 "" 30)"
+run_test "1789_T2.28_cli_exit124_result" "skipped" "$(kv_value_default RESULT "$_1789_cr_out" "")"
+run_test "1789_T2.28_cli_exit124_reason" "no_output" "$(kv_value_default REASON "$_1789_cr_out" "")"
+run_test "1789_T2.28_cli_exit124_no_flag" "" "$(kv_value_default NO_VERDICT_YET "$_1789_cr_out" "")"
+run_test "1789_T2.28_cli_exit124_handler_return" "0" "$(kv_value_default EXIT "$_1789_cr_out" "")"
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "coderabbit-cli" 1 "$_1789_cr_out" 0 1 >/dev/null 2>&1
+run_test "1789_T2.28_cli_exit124_label_required" "1" "$reviewer_failed_required"
+run_test "1789_T2.28_cli_exit124_class" "skipped_failure_evidence" \
+  "$(reviewer_loop_platform_outcome_class skipped "$(kv_value_default REASON "$_1789_cr_out" "")" "$(kv_value_default NO_VERDICT_YET "$_1789_cr_out" 0)")"
+run_test "1789_T2.28_cli_exit124_no_break" "0" "$reviewer_loop_platform_loop_should_break"
+reviewer_loop_process_platform_output "pr-agent" 2 "$(printf 'RESULT=clean\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')" 0 1 >/dev/null 2>&1
+run_test "1789_T2.28_cli_exit124_clean_peer_keeps_clean" "clean" "$aggregate_result"
+run_test "1789_T2.28_cli_exit124_label_still_required" "1" "$reviewer_failed_required"
+
+_1789_cr_out="$(_1789_run_cr_cli 0 4 1)"
+run_test "1789_T2.4_cli_timeout_result" "skipped" "$(kv_value_default RESULT "$_1789_cr_out" "")"
+run_test "1789_T2.4_cli_timeout_reason" "timeout" "$(kv_value_default REASON "$_1789_cr_out" "")"
+run_test "1789_T2.4_cli_timeout_flag" "1" "$(kv_value_default NO_VERDICT_YET "$_1789_cr_out" "")"
+run_test "1789_T2.4_cli_timeout_display" "no verdict yet (non-blocking skip: timeout)" \
+  "$(kv_value_default DISPLAY_RESULT "$_1789_cr_out" "")"
+run_test "1789_T2.4_cli_timeout_display_once" "1" "$(printf '%s\n' "$_1789_cr_out" | grep -c '^DISPLAY_RESULT=' || true)"
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "coderabbit-cli" 1 "$_1789_cr_out" 0 1 >/dev/null 2>&1
+run_test "1789_T2.4_cli_timeout_label_not_required" "0" "$reviewer_failed_required"
+run_test "1789_T2.4_cli_timeout_aggregate_clean" "clean" "$aggregate_result"
+run_test "1789_T2.4_cli_timeout_no_break" "0" "$reviewer_loop_platform_loop_should_break"
+run_test "1789_T2.4_cli_timeout_class" "no_verdict_yet" \
+  "$(reviewer_loop_platform_outcome_class skipped timeout "$(kv_value_default NO_VERDICT_YET "$_1789_cr_out" 0)")"
+run_test "1789_T2.10_cli_timeout_record_no_verdict_yet" "no_verdict_yet" \
+  "$(printf '%s\n' "${platform_result_records[@]}" | jq -sr 'last | .result')"
+run_test "1789_T2.4_cli_timeout_token" "coderabbit-cli:no verdict yet (non-blocking skip: timeout)" \
+  "$(printf '%s\n' "${platform_result_tokens[@]}" | tail -n 1)"
+
+# --- Summary result line for reviewer-no-verdict-yet (partial D12 wording)
+run_test "1789_T2_summary_result_line_wording" "1" \
+  "$(grep -c 'has not returned a verdict for \${_nvy_head:-the current head} within its wait budget' "$_1789_loop_src" || true)"
+
+unset _1789_ret_line _1789_helpers_ok _1789_fn _1789_fn_line _1789_case _1789_r _1789_reason _1789_flag _1789_expected
+unset _1789_nvy_payload _1789_out _1789_stub_root _1789_body _1789_tag _1789_expected_result _1789_expected_detail _1789_expected_exit
+unset _1789_cr_repo _1789_cr_bin _1789_cr_head _1789_cr_out _1789_handler_overrides
+unset _1789_nvy_head
+unset -f _1789_fc _1789_label _1789_reset_processing_globals _1789_stub_companion _1789_run_handler _1789_run_cr_cli _1789_real_git 2>/dev/null || true
 
 rm -rf "$_1789_dir"
 branch_name="$_1789_saved_branch"

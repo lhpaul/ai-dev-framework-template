@@ -286,27 +286,56 @@ print_kv CLI_COMMAND "$CODERABBIT_CMD"
 print_kv BASE_BRANCH "$BASE_BRANCH"
 [ -n "$HEAD_BRANCH" ] && print_kv HEAD_BRANCH "$HEAD_BRANCH"
 
+# run_with_timeout <seconds> <stdout_file> <stderr_file> <command...>
+#
+# Same watchdog contract as local-ai-reviewer.sh (#1789, plan D4): the return
+# status is the CLI's own status, or 124 when the watchdog stopped it, and is
+# never evidence of expiry on its own (a CLI can itself exit 124 or 137).
+# RUN_WITH_TIMEOUT_EXPIRED is 0 on entry and becomes 1 only when the budget
+# was reached while the CLI was still running. GNU timeout is not used; the
+# CLI runs in a new process group (setsid or perl setpgrp) so the TERM, 2 s
+# grace, KILL sequence reaches its descendants too.
+RUN_WITH_TIMEOUT_EXPIRED=0
 run_with_timeout() {
   local timeout_seconds="$1"
   local stdout_file="$2"
   local stderr_file="$3"
   shift 3
 
-  if command -v timeout >/dev/null 2>&1; then
-    # Close stdin so the CLI cannot block reading an idle inherited pipe (#1843).
-    timeout "$timeout_seconds" "$@" </dev/null >"$stdout_file" 2>"$stderr_file"
-    return $?
-  fi
+  RUN_WITH_TIMEOUT_EXPIRED=0
 
-  "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
-  local child_pid=$!
+  # Close stdin so the CLI cannot block reading an idle inherited pipe (#1843).
+  local child_pid
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
+    child_pid=$!
+  else
+    perl -e 'setpgrp; exec @ARGV' -- "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
+    child_pid=$!
+  fi
   local elapsed=0
   while kill -0 "$child_pid" 2>/dev/null && [ "$elapsed" -lt "$timeout_seconds" ]; do
     sleep 1
     elapsed=$((elapsed + 1))
   done
-  if [ "$elapsed" -ge "$timeout_seconds" ]; then
-    kill "$child_pid" 2>/dev/null || true
+  # Alive check at the deadline: only a CLI still running when the budget is
+  # reached is stopped and reported as expired.
+  if [ "$elapsed" -ge "$timeout_seconds" ] && kill -0 "$child_pid" 2>/dev/null; then
+    RUN_WITH_TIMEOUT_EXPIRED=1
+    kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
+    local terminate_elapsed=0
+    local terminate_grace_seconds=2
+    while kill -0 "$child_pid" 2>/dev/null && [ "$terminate_elapsed" -lt "$terminate_grace_seconds" ]; do
+      sleep 1
+      terminate_elapsed=$((terminate_elapsed + 1))
+    done
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL -- "-$child_pid" 2>/dev/null || kill -KILL "$child_pid" 2>/dev/null || true
+    else
+      # The group leader can exit on TERM while descendants remain; always
+      # send a process-group KILL after the grace period so they cannot leak.
+      kill -KILL -- "-$child_pid" 2>/dev/null || true
+    fi
     wait "$child_pid" 2>/dev/null || true
     return 124
   fi
@@ -336,7 +365,11 @@ cli_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
 combined_output="${cli_stdout}
 ${cli_stderr}"
 
-if [ "$cli_exit" -eq 124 ]; then
+# #1789 (plan D4/D8): only the watchdog flag means the budget ran out while the
+# CLI was still running (the kept non-blocking `timeout` skip). A CLI that
+# itself exited 124 before the budget leaves the flag at 0 and reaches the
+# no_output / invalid_json / cli_failed handling below (failure evidence).
+if [ "${RUN_WITH_TIMEOUT_EXPIRED:-0}" = "1" ]; then
   echo "WARN: CodeRabbit CLI timed out after ${TIMEOUT}s" >&2
   print_result skipped 0 0 0 timeout "timeout"
   exit 3

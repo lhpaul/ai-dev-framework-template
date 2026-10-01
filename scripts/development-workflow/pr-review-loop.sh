@@ -2645,13 +2645,25 @@ run_claude_code_action_review() {
       return 1
       ;;
     2)
+      # #1789 (plan D8 Claude row): the companion exits 2 for a completed run
+      # whose conclusion is not success (and for argument validation), never
+      # for an expired wait. Failure evidence.
       print_kv RESULT escalate
-      print_kv REASON timeout
+      print_kv REASON claude_code_action_run_failed
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
       return 2
+      ;;
+    4)
+      # #1789 (plan D8 Claude row): no run completed within the budget.
+      print_no_verdict_yet "$platform" run_not_completed "${loop_head_sha:-}" ""
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 4
       ;;
     *)
       print_kv RESULT escalate
@@ -4374,9 +4386,13 @@ run_haystack_review() {
   # Exit code mapping from haystack-reviewer.sh:
   #   0 → RESULT=clean    (no blocking findings)
   #   1 → RESULT=needs_fixes (one or more blocking findings)
-  #   2 → RESULT=escalate; REASON forwarded from companion script:
-  #         REASON=timeout         — per-call OS timeout exhausted budget
-  #         REASON=pending_timeout — analysis stayed pending past timeout budget
+  #   2 → REASON forwarded from companion script (#1789, plan D8):
+  #         REASON=timeout, REASON=pending_timeout, or REASON=pending_check_run
+  #           with HAYSTACK_BUDGET_EXPIRED=1 — the wait budget ran out with no
+  #           verdict: RESULT=waiting_on_reviewer / reviewer-no-verdict-yet
+  #           (WAIT_EXPIRED_DETAIL = the companion reason), return 4
+  #         REASON=check_run_<conclusion>, or pending_check_run without the
+  #           key — RESULT=escalate (failure evidence), return 2
   #   3 → RESULT=skipped; REASON and DISPLAY_RESULT forwarded
   #         (unavailable, unauthorized, forbidden,
   #          analysis_skipped_file_limit, …)
@@ -4505,8 +4521,40 @@ run_haystack_review() {
     2)
       # Forward the REASON from the companion script (timeout or pending_timeout).
       local haystack_reason
+      local haystack_reported_reason
       haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
+      haystack_reported_reason="$haystack_reason"
       haystack_reason="${haystack_reason:-timeout}"  # default to timeout if missing
+      # #1789 (plan D8 Haystack row): the companion's budget-expiry reasons
+      # are No verdict yet, with the companion reason as detail. A pending
+      # check run counts only when the companion marked it as observed after
+      # the budget ran out (HAYSTACK_BUDGET_EXPIRED=1). check_run_<conclusion>
+      # (the platform's own run timed out, was cancelled, ...) and a
+      # pending_check_run without the key stay escalate. A missing REASON is
+      # not a reported budget expiry and keeps escalate.
+      local haystack_no_verdict=0
+      case "$haystack_reported_reason" in
+        timeout|pending_timeout)
+          haystack_no_verdict=1
+          ;;
+        pending_check_run)
+          if [ "$(kv_value_default HAYSTACK_BUDGET_EXPIRED "$script_output" 0)" = "1" ]; then
+            haystack_no_verdict=1
+          fi
+          ;;
+      esac
+      if [ "$haystack_no_verdict" -eq 1 ]; then
+        local haystack_pending_head
+        haystack_pending_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+        [ -n "$haystack_pending_head" ] || haystack_pending_head="${loop_head_sha:-}"
+        print_no_verdict_yet "$platform" "$haystack_reported_reason" "$haystack_pending_head" ""
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+        return 4
+      fi
       print_kv RESULT escalate
       print_kv REASON "$haystack_reason"
       print_kv PLATFORM "$platform"
@@ -4655,7 +4703,15 @@ run_coderabbit_cli_review() {
       coderabbit_cli_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
       print_kv RESULT skipped
       print_kv REASON "$coderabbit_cli_reason"
-      [ -n "$coderabbit_cli_display_result" ] && print_kv DISPLAY_RESULT "$coderabbit_cli_display_result"
+      if [ "$coderabbit_cli_reason" = "timeout" ]; then
+        # #1789 (plan D8): the companion emits `timeout` only when its
+        # watchdog stopped a CLI still running at the budget. That expired
+        # wait stays a non-blocking skip but is reported as No verdict yet,
+        # never as failure evidence.
+        print_no_verdict_yet_kept_skip_keys "$coderabbit_cli_reason"
+      elif [ -n "$coderabbit_cli_display_result" ]; then
+        print_kv DISPLAY_RESULT "$coderabbit_cli_display_result"
+      fi
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -4909,6 +4965,24 @@ run_local_ai_reviewer_review() {
       emit_local_ai_review_stage_keys "$script_output"
       emit_local_ai_review_doctrine_keys "$script_output"
       return 2
+      ;;
+    4)
+      # #1789 (plan D4/D8): the companion's watchdog stopped a reviewer that
+      # was still running at the budget. No verdict yet, not a failure.
+      local local_ai_pending_head
+      local_ai_pending_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      [ -n "$local_ai_pending_head" ] || local_ai_pending_head="${loop_head_sha:-}"
+      print_no_verdict_yet "$platform" stopped_at_budget "$local_ai_pending_head" ""
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      emit_local_ai_strict_spec_keys "$script_output"
+      emit_local_ai_review_stage_keys "$script_output"
+      emit_local_ai_review_doctrine_keys "$script_output"
+      return 4
       ;;
     *)
       local local_ai_reason
@@ -8370,6 +8444,168 @@ run_project_advisory_checks() {
   return 0
 }
 
+# --- Reviewer outcome classes (#1789, plan D8) ---
+# Defined before the harness return point so the test harness can call them.
+
+# Escalate reasons that report the platform's own availability (usage, spend,
+# account, rate limit). A reporting label only: these outcomes keep their
+# result, reason, exit code, and label behavior unchanged (AC-13).
+REVIEWER_LOOP_AVAILABILITY_REASONS=(
+  rate_limited
+  rate_limit_max_retries
+  codex-github-usage-limit
+  codex-github-account-not-connected
+  bugbot-usage-limit
+  quota_exhausted
+)
+
+# Non-blocking skips whose reason is failure evidence (BR 11). They keep
+# RESULT=skipped and their progression, but require reviewer-failed (D9). The
+# expired-wait kept skips (CodeRabbit CLI `timeout` among them) are never here.
+REVIEWER_LOOP_FAILURE_SKIP_REASONS=(
+  unavailable
+  thread-check-failed
+  forbidden
+  unauthorized
+  no_output
+  invalid_json
+  ambiguous_output
+  cli_failed
+)
+
+# waiting_on_reviewer reasons in the No verdict yet class (D5, D11). Read by
+# the re-wait state and waiting-output keys (plan D11/D12).
+# shellcheck disable=SC2034
+REVIEWER_LOOP_NO_VERDICT_REASONS=(
+  reviewer-no-verdict-yet
+  codex-github-review-pending
+  codex-github-reaction-without-review
+)
+
+# Check-run conclusions that report a reviewer's own run as failed or timed
+# out (D8 failure-type completion signals).
+REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS=(
+  failure
+  timed_out
+  cancelled
+  action_required
+  startup_failure
+  stale
+)
+
+# reviewer_loop_reason_in_list <reason> <list...>
+# Returns 0 when <reason> is a non-empty exact member of the list.
+reviewer_loop_reason_in_list() {
+  local needle="${1:-}"
+  shift
+  local item
+  [ -n "$needle" ] || return 1
+  for item in "$@"; do
+    [ "$item" = "$needle" ] && return 0
+  done
+  return 1
+}
+
+# REVIEWER_FAILED_COMPLETION_JQ defines `reviewer_failed_completion`, a jq
+# predicate over one check run or commit status entry (REST or GraphQL
+# shape). True for a check run whose status is completed and whose conclusion
+# is in REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS, or for a commit status whose
+# state is failure or error. Prepend it like STATUS_CHECK_ROLLUP_DEDUPE_JQ and
+# apply it to the newest entry per check key after dedupe_status_check_rollup.
+reviewer_loop_build_failed_completion_jq() {
+  local conclusions_json="" item
+  for item in "${REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS[@]}"; do
+    conclusions_json="${conclusions_json:+${conclusions_json},}\"${item}\""
+  done
+  printf '%s\n' "
+def reviewer_failed_completion:
+  if type != \"object\" then false
+  elif (has(\"state\") and ((has(\"conclusion\") or has(\"status\")) | not)) then
+    ((.state // \"\") | tostring | ascii_downcase) as \$s
+    | (\$s == \"failure\" or \$s == \"error\")
+  else
+    (((.status // \"\") | tostring | ascii_downcase) == \"completed\")
+    and (((.conclusion // \"\") | tostring | ascii_downcase) as \$c
+         | [${conclusions_json}] | any(. == \$c))
+  end;
+"
+}
+# Prepended to handler jq programs that read Devin and CodeRabbit completion
+# signals (plan D8 failure-type completion signals).
+# shellcheck disable=SC2034
+REVIEWER_FAILED_COMPLETION_JQ="$(reviewer_loop_build_failed_completion_jq)"
+
+# print_no_verdict_yet <platform> <detail> <head_sha> <requested_at>
+#
+# Prints the standard No verdict yet block (D8): the platform's wait ran out
+# with neither a verdict nor failure evidence. REVIEW_REQUESTED_AT is omitted
+# when unknown. The caller adds PLATFORM/PR_NUMBER/BRANCH/FIX_AGENT and
+# returns 4.
+print_no_verdict_yet() {
+  local platform="${1:-}"
+  local detail="${2:-}"
+  local head_sha="${3:-}"
+  local requested_at="${4:-}"
+
+  print_kv RESULT waiting_on_reviewer
+  print_kv REASON reviewer-no-verdict-yet
+  print_kv NO_VERDICT_YET 1
+  print_kv WAIT_EXPIRED_DETAIL "$detail"
+  print_kv PENDING_REVIEWER "$platform"
+  print_kv PENDING_REVIEW_HEAD_SHA "$head_sha"
+  [ -n "$requested_at" ] && print_kv REVIEW_REQUESTED_AT "$requested_at"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
+# print_no_verdict_yet_kept_skip_keys <reason>
+#
+# Extra keys for a kept expired-wait skip (BR 4 exception): RESULT=skipped and
+# its REASON stay as they are; the skip is reported as No verdict yet.
+print_no_verdict_yet_kept_skip_keys() {
+  local reason="${1:-}"
+  print_kv NO_VERDICT_YET 1
+  print_kv DISPLAY_RESULT "no verdict yet (non-blocking skip: ${reason})"
+}
+
+# reviewer_loop_platform_outcome_class <result> <reason> <no_verdict_flag>
+# Prints the D8 reporting class of one platform outcome.
+reviewer_loop_platform_outcome_class() {
+  local result="${1:-}"
+  local reason="${2:-}"
+  local no_verdict_flag="${3:-0}"
+
+  case "$result" in
+    clean|needs_fixes|needs_rerun)
+      printf 'verdict_received\n'
+      ;;
+    waiting_on_reviewer)
+      printf 'no_verdict_yet\n'
+      ;;
+    skipped)
+      if [ "$no_verdict_flag" = "1" ]; then
+        printf 'no_verdict_yet\n'
+      elif reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[@]}"; then
+        printf 'skipped_failure_evidence\n'
+      else
+        printf 'skipped\n'
+      fi
+      ;;
+    escalate)
+      if reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_AVAILABILITY_REASONS[@]}"; then
+        printf 'existing_handling\n'
+      else
+        printf 'reviewer_failed\n'
+      fi
+      ;;
+    *)
+      printf 'reviewer_failed\n'
+      ;;
+  esac
+}
+
 # --- Compare-mode helpers ---
 # These functions are defined here (before the main execution block) so that
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
@@ -8430,11 +8666,12 @@ reviewer_failed_label_required_for_result() {
       return 0
       ;;
     skipped)
-      case "$reason" in
-        unavailable|timeout|thread-check-failed|pending_timeout|forbidden|unauthorized)
-          return 0
-          ;;
-      esac
+      # #1789 (plan D8/D9): only skips whose reason is failure evidence
+      # require the label. An expired wait (timeout, pending_timeout, or any
+      # kept skip carrying NO_VERDICT_YET=1) is No verdict yet, not a failure.
+      if reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[@]}"; then
+        return 0
+      fi
       ;;
   esac
 
@@ -9231,15 +9468,27 @@ reviewer_loop_commit_ancestry() {
 }
 
 # Normalize a companion-script RESULT/REASON pair into the stored platform_results
-# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|unknown
+# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|
+# no_verdict_yet|unknown
+#
+# #1789 (plan Rule 5 normalizer row): waiting_on_reviewer and a kept
+# expired-wait skip (optional third argument, the platform's NO_VERDICT_YET
+# flag) normalize to no_verdict_yet. The kept skip is recognized from the
+# flag, never from its reason.
 reviewer_loop_normalize_platform_outcome() {
   local raw_result="${1:-}"
   local raw_reason="${2:-}"
+  local no_verdict_flag="${3:-0}"
 
   case "$raw_result" in
     clean) printf 'clean\n' ;;
     needs_fixes) printf 'needs_fixes\n' ;;
+    waiting_on_reviewer) printf 'no_verdict_yet\n' ;;
     skipped)
+      if [ "$no_verdict_flag" = "1" ]; then
+        printf 'no_verdict_yet\n'
+        return 0
+      fi
       case "$raw_reason" in
         unavailable) printf 'unavailable\n' ;;
         not_configured) printf 'not_configured\n' ;;
@@ -9252,13 +9501,15 @@ reviewer_loop_normalize_platform_outcome() {
 }
 
 # Build one compact platform_results JSON object from raw RESULT/REASON.
+# Optional fourth argument: the platform output's NO_VERDICT_YET flag (#1789).
 reviewer_loop_platform_result_record_json() {
   local platform="${1:-}"
   local raw_result="${2:-}"
   local raw_reason="${3:-}"
+  local no_verdict_flag="${4:-0}"
   local normalized
 
-  normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason")"
+  normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason" "$no_verdict_flag")"
   jq -nc \
     --arg platform "$platform" \
     --arg result "$normalized" \
@@ -9613,7 +9864,9 @@ reviewer_loop_local_pass_required() {
 
   case "$outcome" in
     not_configured) printf 'no_local_reviewer\n'; return 0 ;;
-    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    # #1789: a local reviewer with no verdict yet left no evidence; a fresh
+    # local pass runs (not prior_findings).
+    not_yet_run|unknown|no_verdict_yet) printf 'no_evidence\n'; return 0 ;;
     clean) ;;
     *) printf 'prior_findings\n'; return 0 ;;
   esac
@@ -9911,6 +10164,9 @@ reviewer_loop_second_local_pass_gate_result() {
     clean) printf 'proceed\t\n' ;;
     needs_fixes) printf 'needs_fixes\t%s\n' "${pass_reason:-}" ;;
     escalate) printf 'escalate\t%s\n' "${pass_reason:-}" ;;
+    # #1789 (plan Rule 5): a second pass with no verdict yet is waiting, not
+    # local_pass_unavailable, and is not recorded as failed for the head.
+    waiting_on_reviewer) printf 'waiting_on_reviewer\treviewer-no-verdict-yet\n' ;;
     skipped|needs_rerun|*)
       printf 'escalate\tlocal_pass_unavailable\n' ;;
   esac
@@ -10050,6 +10306,14 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   if [ "$_sl_gate_result" = "escalate" ]; then
     local_second_pass_reason="local_pass_unavailable"
   fi
+  if [ "$_sl_gate_result" = "waiting_on_reviewer" ]; then
+    # #1789: no failed-for-head record, so the next run on this head runs a
+    # fresh local pass instead of being refused as failed_for_head.
+    aggregate_output="$_sl_pass_output"
+    aggregate_status="$_sl_pass_status"
+    last_platform="local-ai-reviewer"
+    return 1
+  fi
   local_second_pass_failed_head_record="$loop_head_sha"
   if [ "$_sl_gate_result" = "needs_fixes" ]; then
     aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
@@ -10149,7 +10413,7 @@ reviewer_loop_process_platform_output() {
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
-  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)")")
   platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
@@ -10296,6 +10560,7 @@ reviewer_loop_local_evidence_state() {
     unavailable) printf 'unavailable\n' ;;
     not_yet_run) printf 'not_yet_run\n' ;;
     not_configured) printf 'not_configured\n' ;;
+    no_verdict_yet) printf 'no_verdict_yet\n' ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -10321,6 +10586,7 @@ reviewer_loop_local_evidence_state_label() {
     unavailable) printf 'Unavailable\n' ;;
     not_yet_run) printf 'Not yet run\n' ;;
     not_configured) printf 'Not configured\n' ;;
+    no_verdict_yet) printf 'No verdict yet\n' ;;
     *) printf 'Unknown\n' ;;
   esac
 }
@@ -13731,7 +13997,16 @@ _post_review_summary() {
       result_line="escalated (${reason:-unknown})"
       ;;
     waiting_on_reviewer)
-      result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
+      if [ "$reason" = "reviewer-no-verdict-yet" ]; then
+        # #1789 (plan D12, partial): the budget and waited-seconds clause and
+        # the failure-evidence clause are added with the timing keys.
+        local _nvy_platform _nvy_head
+        _nvy_platform="$(kv_value_default PENDING_REVIEWER "${aggregate_output:-}" "")"
+        _nvy_head="$(kv_value_default PENDING_REVIEW_HEAD_SHA "${aggregate_output:-}" "")"
+        result_line="waiting_on_reviewer (reviewer-no-verdict-yet) — ${_nvy_platform:-a reviewer} has not returned a verdict for ${_nvy_head:-the current head} within its wait budget"
+      else
+        result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
+      fi
       ;;
     skipped)
       result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"
