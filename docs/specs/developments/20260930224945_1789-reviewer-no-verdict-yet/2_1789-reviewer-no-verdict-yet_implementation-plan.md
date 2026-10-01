@@ -196,10 +196,10 @@ is the newest current-head trigger; a newer, still-unanswered trigger is kept
   and takes precedence over `review.wait_budgets.codex-github` (the same
   env-over-file order `reviewer_loop_resolve_max_cycles` uses). No other new
   environment variable is added.
-- Validation: a configured value must match `^[1-9][0-9]{0,5}$`. Anything
-  else (empty, `0`, negative, decimal, exponent, non-numeric, seven or more
-  digits) prints
-  `WARN: review.wait_budgets.<platform> value '<v>' is not a positive whole number of seconds; using the built-in default`
+- Validation: a configured value must match `^[1-9][0-9]{0,5}$` (the D13
+  upper bound applies here too). Anything else (empty, `0`, negative,
+  decimal, exponent, non-numeric, seven or more digits) prints
+  `WARN: review.wait_budgets.<platform> value '<v>' is not a positive whole number of seconds (1-999999); using the built-in default`
   to stderr and the platform falls back to its built-in default with source
   `default`. An invalid `CODEX_GITHUB_MAX_WAIT` keeps its existing warning and
   then falls through to the YAML value or default.
@@ -262,7 +262,7 @@ classifies each platform outcome for reporting:
 | `clean`, `needs_fixes`, `needs_rerun` | `verdict_received` |
 | `waiting_on_reviewer` (any reason) | `no_verdict_yet` |
 | `skipped` with `NO_VERDICT_YET=1` | `no_verdict_yet` (kept skip) |
-| `skipped` with reason `unavailable`, `thread-check-failed`, `forbidden`, `unauthorized` | `skipped_failure_evidence` |
+| `skipped` with a reason in `REVIEWER_LOOP_FAILURE_SKIP_REASONS` | `skipped_failure_evidence` |
 | other `skipped` | `skipped` |
 | `escalate` with a reason in `REVIEWER_LOOP_AVAILABILITY_REASONS` | `existing_handling` |
 | any other `escalate`, or an unrecognized result | `reviewer_failed` |
@@ -273,6 +273,18 @@ classifies each platform outcome for reporting:
 (V11). It is a reporting label only: those outcomes keep their result,
 reason, exit code, and label behavior byte-for-byte (AC-13).
 
+`REVIEWER_LOOP_FAILURE_SKIP_REASONS` is `unavailable`, `thread-check-failed`,
+`forbidden`, `unauthorized`, and the CodeRabbit CLI reasons `no_output`,
+`invalid_json`, `ambiguous_output`, and `cli_failed` (V40). These are the
+non-blocking skips whose reason is failure evidence (BR 11): the four CLI
+reasons are a local reviewer ending with an error or with output the loop
+cannot read (BR 2), including a CLI that itself exits 124 before the budget
+(D4, T2.7). Each keeps `RESULT=skipped`, its reason, the companion's exit 3,
+and its non-blocking progression (D10 rank 4); only the class and the D9
+label decision change. No other platform's kept skip reason is failure
+evidence (V40 sweep), and the expired-wait kept skips (CodeRabbit CLI
+`timeout` among them) are never in this list.
+
 **Binding enumeration** — the budget-expiry paths each handler changes, and
 the failure-evidence paths it keeps (line numbers at `13bf4c7f`, V2):
 
@@ -281,7 +293,7 @@ the failure-evidence paths it keeps (line numbers at `13bf4c7f`, V2):
 | `greptile` | `escalate`/`timeout`, no bot thumbs-up by budget end (`pr-review-loop.sh:2130-2139`) | No verdict yet, detail `no_acknowledgement` | missing trigger comment id (`:2113-2115`); new `head-sha-unavailable` (D15) |
 | `devin` | `escalate`/`timeout`, check seen but not completed (`:5236-5244`); `skipped`/`no_check_run`, no check ever seen (`:5225-5235`) | No verdict yet, detail `check_not_completed`, unless a failure-type signal was recorded during the grace (failure-type completion signals, below); kept skip | stale-findings `needs_fixes` (`:5200-5221`); new `devin_run_failed` (failure-type completion signals, below) |
 | `coderabbit` | `escalate`/`timeout`, activity seen (`:7846-7855`); `skipped`/`no_review`, no activity (`:7832-7844`) | No verdict yet, detail `review_not_submitted`; kept skip | `review_skipped_banner` (platform declined; `:7799-7814`), `rate_limit_max_retries`; new `coderabbit_status_failed` (failure-type completion signals, below) |
-| `coderabbit-cli` | companion `skipped`/`timeout` on wrapper status 124 (`coderabbit-cli-reviewer.sh:339-342`) forwarded by the loop's skip arm (`:4627-4644`) | kept skip, emitted only when `RUN_WITH_TIMEOUT_EXPIRED=1` (D4 watchdog contract) | `unavailable`, `unauthorized`, `invalid_json`, `ambiguous_output`, `no_output`, `cli_failed` skips (a CLI that itself exits 124 before the budget now reaches these, V23); escalate reasons |
+| `coderabbit-cli` | companion `skipped`/`timeout` on wrapper status 124 (`coderabbit-cli-reviewer.sh:339-342`) forwarded by the loop's skip arm (`:4627-4644`) | kept skip, emitted only when `RUN_WITH_TIMEOUT_EXPIRED=1` (D4 watchdog contract) | `unavailable`, `unauthorized`, `invalid_json`, `ambiguous_output`, `no_output`, `cli_failed` skips (a CLI that itself exits 124 before the budget now reaches these, V23), all class `skipped_failure_evidence` with the label required (D9); `rate_limited` skip (AC-13); escalate reasons |
 | `local-ai-reviewer` | companion `escalate`/`timeout` on wrapper status 124/137 (`local-ai-reviewer.sh:1321-1324`) forwarded by the loop's exit-2 arm (`:4864-4888`) | D4: companion exit 4 only when `RUN_WITH_TIMEOUT_EXPIRED=1`; new loop exit-4 arm → No verdict yet, detail `stopped_at_budget` | every other companion escalate reason, including a reviewer command that itself exits 124 or 137 before the budget (D4); `quota_exhausted` |
 | `pr-agent` | `skipped`/`no_review` (`:5801-5812`) | kept skip | `pr_agent_trigger_failed`, `pr_agent_ambiguous_review`; new `pr_agent_run_failed` (failure-type completion signals, below) |
 | `codex-github` | companion exit 4 (`codex-github-review-pending`, `codex-github-reaction-without-review`) | existing wait reasons kept, class `no_verdict_yet` (D5) | companion exit 2 and 3 reasons |
@@ -341,10 +353,13 @@ yet row above (or its kept skip) rather than in a verdict or a failure.
 
 ### D9 — `reviewer-failed` label reconciliation (BR 11, AC-7, AC-8, AC-13)
 
-- `reviewer_failed_label_required_for_result` drops `timeout` and
-  `pending_timeout` from its `skipped` list; the remaining `skipped` reasons
-  (`unavailable`, `thread-check-failed`, `forbidden`, `unauthorized`) and the
-  `escalate` rule (every reason except `rate_limited`) are unchanged.
+- `reviewer_failed_label_required_for_result`'s `skipped` list becomes
+  `REVIEWER_LOOP_FAILURE_SKIP_REASONS` (D8): it drops `timeout` and
+  `pending_timeout` and adds the four CodeRabbit CLI failure reasons, so a
+  CodeRabbit CLI `no_output`, `invalid_json`, `ambiguous_output`, or
+  `cli_failed` skip requires the label while its result stays `skipped`
+  (today it does not, `pr-review-loop.sh:8408-8414`, V40). The `escalate`
+  rule (every reason except `rate_limited`) is unchanged.
   `waiting_on_reviewer` never requires the label (unchanged).
 - New `reviewer_loop_reconcile_reviewer_failed_label <pr> <aggregate_result> <aggregate_reason>`
   (defined before the harness return point) computes
@@ -450,7 +465,10 @@ Loop side:
   fix. Its entry counts for `H0` only. A runner re-wait triggered by its
   `NO_VERDICT_REWAIT=available` reads `H1` as the loop head, finds no entry
   for `H1`, and runs as a fresh `H1` invocation: it adopts no `H0` request,
-  posts `H1`'s own requests, and leaves `H1`'s single re-wait unspent.
+  posts `H1`'s own requests, and leaves `H1`'s single re-wait unspent. With
+  `NO_VERDICT_REWAIT=used` or `untracked` after such a push, the runner stops
+  as Waiting on reviewer for `H0` as today, and the next Step 7 run on `H1`
+  starts fresh.
 - The re-wait never counts toward the cycle caps: the per-run and lifetime
   counts are taken only from `needs_fixes`/`needs_rerun` entries
   (`reviewer_loop_history_entries_count`, `:11797-11830`), and Protocol 91
@@ -528,7 +546,7 @@ Latency is measured to the poll that observed the verdict, so it overstates
 the vendor's latency by at most one poll interval; the summary says so once.
 Handlers that post or adopt a request print `REVIEW_REQUESTED_AT` (a reused
 request is only one D15 binds to the current head, so an older head's
-trigger is never recorded under the new head): Greptile
+trigger is never recorded for the new head, the D11 invocation head): Greptile
 and Bugbot (trigger comment `created_at`), PR-Agent and CodeRabbit (their
 trigger `created_at` when they posted or reused one), Copilot (time of the
 reviewer request), `codex-github-reviewer.sh` (its `TRIGGER_TIME`, printed by
@@ -587,9 +605,22 @@ script has no such check today (V6): `--max-wait 0` currently posts triggers
 and then times out immediately. The plan adds the check: right after argument
 parsing and before any `gh` call, a `--max-wait` value that does not match
 `^[1-9][0-9]{0,5}$` prints
-`--max-wait must be a positive whole number of seconds (got '<value>').` plus
-the usage text to stderr and exits 64, the exit code the script already uses
-for invalid arguments.
+`--max-wait must be a positive whole number of seconds (1-999999) (got '<value>').`
+plus the usage text to stderr and exits 64, the exit code the script already
+uses for invalid arguments.
+
+**Upper bound (plan addition beyond BR 10).** BR 10 and AC-5 require only
+positive whole seconds; this plan also rejects values above 999999 (about
+11.6 days), for the one-run override here and for configured budgets (D6).
+Reason: the budget feeds bash integer tests and arithmetic in every handler's
+wait loop, and an unbounded digit string breaks them — `[ 1 -lt
+99999999999999999999 ]` fails with status 2 and `$(( … ))` wraps silently
+(V41), so an oversized value would end or distort a wait instead of
+lengthening it. The range is the one the loop already enforces for its other
+integer settings (`review.max_cycles`, `review.max_total_cycles`, expensive
+deferrals; V41), and no D2 default comes near it. A value inside the range
+but above the Claude companion's own 3600 s `--max-wait` cap still reaches
+that companion's existing argument check (exit 2, D8 Claude row), as today.
 
 ### D14 — Poll interval per platform
 
@@ -620,7 +651,7 @@ in an entry whose invocation head (D11) is `H`, with `requested_at_source`
 `request` (D12). New
 `reviewer_loop_head_recorded_request_refs <history_payload> <head_sha> <platform>`
 prints, one per line, every non-empty `request_ref` from such records in any
-ledger entry for that head and platform, whatever its `run_id` or result, and
+ledger entry whose invocation head (D11) is that head, for that platform, whatever its `run_id` or result, and
 prints nothing when the ledger is unavailable. It serves fresh-mode reuse;
 re-wait adoption keeps `reviewer_loop_rewait_recorded_request` (D11). The
 loop calls it for Greptile and PR-Agent and hands the list and
@@ -819,6 +850,8 @@ cite is identical at `13bf4c7f`.
 | V37 | Durable captures of the 30 V30 occurrences and where a 40-hex SHA appears in them (reviewer-loop finding on revision `a3ca7d3d`) | For each V30 comment id, `gh api repos/lhpaul/ai-dev-framework-template/issues/comments/<id>` (fields `user.login`, `created_at`, `updated_at`, `issue_url`, `body`) and `gh pr view <n> --json headRefOid`. Then, per body: compare lines 1–5 with the shared shape; list every `\b[0-9a-f]{40}\b` match before and after `<!-- pr-agent-review-state:v1`; read the block's top-level `head_sha` and `run_id`; and check which of the block's keys hold the head. Run 2026-10-01T09:52Z | All 30 resolve, with author `github-actions[bot]`. The embedded captures are the V30 occurrence captures under Factual claim evidence. Lines 1–4 are identical in all 30. Line 5 is the marker in 25 bodies, and in each it names the PR's head. In the other 5 it is the observations line, and those bodies contain no `Review updated until commit` text. Before the review-state block, no body has any 40-hex string other than its marker SHA. The block ends 23 bodies (22 of variant 1, plus #1866) and holds the remaining SHAs: its `head_sha`, a `run_id` that is the commit URL of that same SHA, and per-finding `last_seen_head_sha` and `resolved_head_sha` values. The block's `head_sha` is the head in 20 bodies; 19 of those also carry the marker for the head, and the other is #1866, a first summary bound to a run on its head (V32). In #1827, #1818, and #1802, the block names an earlier revision and no block key holds the head, while the marker names the head. The block's SHAs can therefore name a revision other than the visible review's (and a head that returns to an earlier revision would find it there), so the design relies only on the marker line, the sampled stable part, and D15 rule (a) never reads the block. The #1872 comment was edited after the V30 run (marker `44973096` then, `a3ca7d3d` now) |
 | V38 | Callers of `_pr_agent_latest_comment_field` and its `strict_sha` matcher (Rule 5; reviewer-loop finding on revision `0cc01f35`, whose script and workflow files equal `13bf4c7f`: `git diff --stat 13bf4c7f HEAD -- scripts .github` is empty) | `git grep -n "_pr_agent_latest_comment" -- scripts .github .claude .cursor .codex .agents docs/workflow`, run 2026-10-01 | Defined only in `pr-review-loop.sh` (`:5438`, wrappers `:5461`, `:5465`); `strict_sha` is `.body \| contains($sha)` at `:5449`. Four call sites, all in `run_pr_agent_review`: Phase 1 `:5706`, `:5715` (`strict_sha`) and Phase 2 `:5794`, `:5825` (`recent_or_sha`). No test, workflow, or guidance file calls it |
 | V39 | Ledger entry head fields and the head-move guard's scope (reviewer-loop finding on revision `cb1411af`, whose script files equal `13bf4c7f`: `git diff --stat 13bf4c7f HEAD -- scripts` is empty) | `git grep -n 'reviewer_loop_history_current_head_sha\|classification_head' -- scripts`; read `pr-review-loop.sh:11153-11175`, `:11186-11300`, `:13178-13181`, `:14340-14356`; `git grep -n '\.head_sha' -- scripts/development-workflow/pr-review-loop.sh`, run 2026-10-01 | `reviewer_loop_history_build_entry` sets entry `head_sha` from `reviewer_loop_history_current_head_sha` (`:11203`), which reads `gh pr view … headRefOid` at persistence time (`:11156`; a failed read yields an `unknown-…` placeholder, `:11171`); its only non-test caller is `:11203`. The same entry's `classification_head` is `loop_head_sha` (`--arg classificationHead "${loop_head_sha:-}"`, `:11266`; key at `:11296`), read once before dispatch (`:13178-13181`). Non-test readers of `classification_head`: only the small-findings counter (`:10739-10745`, skipping unknown or invalid heads via `reviewer_loop_head_is_unknown_or_invalid`, `:10681`). In-loop readers of entry `head_sha`: `:8712` (latest summary head) and the cap counts (`:11873`, `:11877`); the other `.head_sha` hits read platform verdict records or API objects. The head-move guard (`:14345-14356`) runs only when `aggregate_result` is `clean`, so a waiting result whose PR head moved during the run keeps its result and is persisted with the moved head as `head_sha` — the finding is valid |
+| V40 | Failure-evidence skip reasons and the label function (reviewer-loop finding on revision `aa0749ef`, whose script files equal `13bf4c7f`) | Read `pr-review-loop.sh:8391-8418` and `:4627-4644`; `grep -n "skipped" scripts/development-workflow/coderabbit-cli-reviewer.sh`; `grep -n -e no_output -e invalid_json -e ambiguous_output -e cli_failed scripts/development-workflow/pr-review-loop.sh`; the sweep `grep -n -A2 "print_kv RESULT skipped" scripts/development-workflow/pr-review-loop.sh`, then read each hit, the Haystack exit-3 arm (`:4495-4510`) with `grep -n -A3 "RESULT=skipped" scripts/development-workflow/haystack-reviewer.sh`, and the local-ai `*)` arm (`:4889-4896`) with `local-ai-reviewer.sh:1073`, `:1702-1705`; `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS` at `:1106`, run 2026-10-01 | The label function's `skipped` list is `unavailable\|timeout\|thread-check-failed\|pending_timeout\|forbidden\|unauthorized` (`:8410`). The CodeRabbit CLI companion emits `skipped` with `no_output` (`:352`, empty stdout, including a CLI's own early exit), `cli_failed` (`:525`, non-zero exit after non-blocking JSON), `invalid_json` (`:539`, `:556`), `ambiguous_output` (`:545`), `unauthorized` (`:350`, `:508`, `:536`, `:553`), `unavailable` (`:282`), `timeout` (`:341`), and `rate_limited` (`:53`), all exit 3; the loop's skip arm forwards the reason (default `unavailable`), so the four failure reasons reach the label function and do not require the label today — the finding is valid. None of the four strings appears in `pr-review-loop.sh`, so no other platform emits them. Sweep of every other skip reason: Bugbot `explicit-skip` (`:3124`, the platform's own skip), Haystack `pr-is-draft` (`:4404`), Devin `no_check_run` (`:5226`), PR-Agent and CodeRabbit `no_review` (`:5803`, `:7833`, kept expiry skips), `unsupported-platform` (`:8217`), `release_pr` (`:12945`), `not_configured` (`:13955`); the Haystack companion's exit-3 skips are `unavailable`, `unauthorized`/`forbidden` (already in the list) and `analysis_skipped_file_limit` (the platform declining by its own file limit, like CodeRabbit's `review_skipped_banner`), and its `pending_check_run` and `check_run_<conclusion>` exit 2 to `escalate`; the local-ai companion's skips are `disabled_by_config` and a reviewer's own `skipped` verdict. None of these is failure evidence, so the list adds only the four CLI reasons. The expensive-gate accepted list (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`) holds none of them |
+| V41 | Integer range behind the D13 cap (reviewer-loop finding on revision `aa0749ef`) | `grep -n '{0,5}' scripts/development-workflow/pr-review-loop.sh`; read `claude-code-action-reviewer.sh:191-200`; `bash -c '[ 1 -lt 99999999999999999999 ]; echo $?; echo $(( 99999999999999999999 + 0 ))'` (bash 3.2.57), run 2026-10-01 | The loop's existing integer settings accept `^[1-9][0-9]{0,5}$`, documented as the range 1–999999 (`:1223`, `:11922`, `:11953`). The Claude companion refuses a `--max-wait` above 3600 (`:197-200`, exit 2). `[ 1 -lt 99999999999999999999 ]` fails with "integer expression expected" (status 2), and `$(( 99999999999999999999 + 0 ))` prints `7766279631452241919` (silent wrap) |
 
 ### Factual claim evidence
 
@@ -828,9 +861,9 @@ cite is identical at `13bf4c7f`.
 
 | Consumer | Path | Outcome after the change |
 | --- | --- | --- |
-| `expensive_gate_peer_evidence_acceptable` (`:1342`) | expensive-gate peer check, reached only for `skipped` peers whose reason is in `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS` (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`) | Unchanged: a kept no-verdict skip has a reason outside that list (`no_check_run`, `no_review`, `timeout`) and is still not acceptable, so the gate still defers |
-| `reviewer_loop_recompute_current_round_aggregates` (`:9120`) | recompute after a local-reviewer record replacement | A CodeRabbit CLI `skipped`/`timeout` peer no longer sets `reviewer_failed_required` |
-| `reviewer_loop_process_platform_output` (`:9840`) | every dispatched or replayed platform | Same as above; `waiting_on_reviewer` platforms never set it |
+| `expensive_gate_peer_evidence_acceptable` (`:1342`) | expensive-gate peer check, reached only for `skipped` peers whose reason is in `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS` (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`) | Unchanged: a kept no-verdict skip has a reason outside that list (`no_check_run`, `no_review`, `timeout`) and is still not acceptable, so the gate still defers; the four CodeRabbit CLI failure reasons are outside that list too, so this path never reaches the label function for them (V40) |
+| `reviewer_loop_recompute_current_round_aggregates` (`:9120`) | recompute after a local-reviewer record replacement | A CodeRabbit CLI `skipped`/`timeout` peer no longer sets `reviewer_failed_required`; a CodeRabbit CLI `no_output`, `invalid_json`, `ambiguous_output`, or `cli_failed` peer now sets it (V40) |
+| `reviewer_loop_process_platform_output` (`:9840`) | every dispatched or replayed platform | Same as above; `waiting_on_reviewer` platforms never set it; the skip's result, aggregate, and loop progression are unchanged |
 | post-loop aggregate (`:14512`, moved into `reviewer_loop_reconcile_reviewer_failed_label`) | final label decision | Loop-level escalations still require the label; a `waiting_on_reviewer` aggregate does not |
 
 `RESULT=waiting_on_reviewer` from the new No verdict yet paths (V13):
@@ -938,7 +971,7 @@ only caller (`:11203`) are unchanged.
 | Bugbot #1390 re-trigger fires (D3) | fresh (non-re-wait) Bugbot runs whose latest current-head check run is not completed at the re-trigger point | `run_bugbot_review`; tests T2.11–T2.12 |
 | Runner re-waits (D11) | Step 7 results with `NO_VERDICT_REWAIT=available`, once per invocation head (D11) per `PR_REVIEW_LOOP_RUN_ID`; a waiting entry persisted after a push counts only for the head its invocation read | Protocol 91 Step 7 table; tests T4.1–T4.2, T4.10 and smoke Step 6 |
 | A failure-type completion signal is Reviewer failed (D8) | the Devin, CodeRabbit, and PR-Agent handlers and the loop's Haystack exit-2 arm, for a signal on `H` with no verdict bound to `H`, under each row's conditions in the D8 failure-type completion-signal table (Devin: the wait ended on a check or status, including a budget end inside the grace; PR-Agent: the newest run on `H` is failure-type, immediately when this invocation has no outstanding request and at budget end otherwise) | each handler's Phase 3 or poll step and the Haystack exit-2 arm; tests T2.24–T2.27 and T4.9 |
-| Label required (D9) | each invocation that reaches the post-loop path; per-platform failure evidence or a loop-level escalation in that invocation | `reviewer_loop_reconcile_reviewer_failed_label`; tests T3.1–T3.6 |
+| Label required (D9) | each invocation that reaches the post-loop path; per-platform failure evidence (an `escalate` other than `rate_limited`, or a `skipped` result whose reason is in `REVIEWER_LOOP_FAILURE_SKIP_REASONS`, which stays a non-blocking skip) or a loop-level escalation in that invocation | `reviewer_failed_label_required_for_result` and `reviewer_loop_reconcile_reviewer_failed_label`; tests T2.28, T3.1–T3.6 |
 
 **Rule 1** fires once: D15's PR-Agent rule (a) relies on the summary
 comment's marker line naming the current head SHA. V30 is the sampling record
@@ -1064,7 +1097,8 @@ harness can call them.
   its own resolved budget and poll interval.
 - [ ] Outcome helpers (D8): `print_no_verdict_yet`,
   `reviewer_loop_platform_outcome_class`, `REVIEWER_LOOP_AVAILABILITY_REASONS`,
-  `REVIEWER_LOOP_NO_VERDICT_REASONS`.
+  `REVIEWER_LOOP_FAILURE_SKIP_REASONS` (read by both the class function and
+  the D9 label function), `REVIEWER_LOOP_NO_VERDICT_REASONS`.
 - [ ] Handler changes exactly as the D8 binding table and the D11 adoption
   table say, including: Greptile, Devin, CodeRabbit, Copilot, Ronda, Bugbot
   budget-expiry paths → `print_no_verdict_yet`; Devin, CodeRabbit, PR-Agent,
@@ -1204,12 +1238,12 @@ resolver is a single function.
 | --- | --- | --- |
 | T1.1 | Resolver: no override, no config → D2 value and source `default` for each of the twelve platforms | AC-6 |
 | T1.2 | Resolver: valid `review.wait_budgets.bugbot` → `configured`; `--max-wait` override wins over it for every platform | AC-5 |
-| T1.3 | Resolver: invalid configured values (`abc`, `0`, `-5`, `1.5`, empty, seven digits) → default plus the D6 warning; unsupported key and flow mapping warnings | AC-5 |
+| T1.3 | Resolver: invalid configured values (`abc`, `0`, `-5`, `1.5`, empty, `1000000`, the first value above the D13 bound) → default plus the D6 warning naming the 1-999999 range; `999999` → `configured`; unsupported key and flow mapping warnings | AC-5 |
 | T1.4 | Resolver on `implementation-plan/x`: Devin gets the documentation value with adjustment `documentation_branch`; Bugbot and `local-ai-reviewer` keep their D2 values | AC-4 |
 | T1.5 | Resolver on `spec/x` with a configured Devin value: configured value, no shortening | AC-4, AC-5 |
 | T1.6 | Resolver: `PR_REVIEW_LOOP_DOC_MAX_WAIT` override and invalid value keep today's behavior for Devin only | AC-4 |
 | T1.7 | Resolver: large diff lengthens a 1200 default to 2400, leaves Bugbot's 2400 and an override untouched, never shortens | AC-5 |
-| T1.8 | Full-script runs with `--max-wait 0`, `abc`, `-5`, `1.5` exit 64 with the D13 message and the mock `gh` log is empty | AC-5 |
+| T1.8 | Full-script runs with `--max-wait 0`, `abc`, `-5`, `1.5`, `1000000` exit 64 with the D13 message (including its 1-999999 range) and the mock `gh` log is empty | AC-5 |
 | T1.9 | Poll resolver: explicit, Codex default, documentation 30, default 120, clamp below budget | AC-4 |
 | T1.10 | Config reader edge cases (parser-risk addendum) | AC-5 |
 | T2.1 | Each of the nine handlers with a No verdict yet path in D8 returns `waiting_on_reviewer`/`reviewer-no-verdict-yet` with its detail when its mock never answers; `reviewer_loop_process_platform_output` sets the aggregate to waiting, does not set `reviewer_failed_required`, and breaks | AC-1 |
@@ -1234,6 +1268,7 @@ resolver is a single function.
 | T2.25 | CodeRabbit failure status (D8 failure-type completion signals): a CodeRabbit status on `H` in `failure` (and one in `error`) with no `H`-bound review or finding ends the wait and returns `escalate`/`coderabbit_status_failed` with the label required; with an `H`-bound finding → `needs_fixes`; a `failure` status whose description matches the #1437 rate/review-limit pattern is not counted, and the rate-limit path's outcome is unchanged | AC-2, AC-13 |
 | T2.26 | PR-Agent failed run (D8 failure-type completion signals): Phase 1 finds a `PR-Agent review` run on `H` in progress (no `/review` posted), and it then completes `cancelled` (and, separately, `timed_out`) with no bound summary → `escalate`/`pr_agent_run_failed` on that poll and the label required. **Regression — a run on `H` that already completed `timed_out` before Phase 1** (the finding at `b92b4ee9`): the handler posts `/review`, no newer run on `H` and no bound summary appear, and the result at the budget is `escalate`/`pr_agent_run_failed`, never the kept skip; before the budget no poll returns. The re-wait-mode variants are T4.9. Supersession variants for the pre-failed run: a newer `PR-Agent review` run on `H` (later `started_at` and higher `id`) appears `in_progress` and completes `success` with no bound summary → the `no_review` kept skip; the summary is then edited to carry the `H` marker → rule (a) verdict; a failure-type `/review` (`issue_comment`) run on the default-branch tip is never read as failure. A per-poll read that fails on every poll gives the kept skip; one failing poll after a failure-type read keeps `pr_agent_run_failed` at the budget | AC-2, AC-8 |
 | T2.27 | Haystack exit-2 arm: companion exit 2 with `check_run_timed_out` or `check_run_cancelled` → `escalate` with that reason and the label required, never No verdict yet; `pending_check_run` with `HAYSTACK_BUDGET_EXPIRED=1` → No verdict yet; `pending_check_run` without the key → `escalate` as today. In `test-haystack-reviewer.sh`, the `timeout` and `pending_timeout` paths whose fallback check run is pending print the key, and the CLI-missing path does not | AC-1, AC-2 |
+| T2.28 | **Regression — a CodeRabbit CLI failure skip requires the label** (D8 `REVIEWER_LOOP_FAILURE_SKIP_REASONS`, D9, V40), composed from the real companion through the loop handler: `run_coderabbit_cli_review` with a fake CLI that exits 124 immediately with empty stdout → companion `skipped`/`no_output` exit 3 → handler `RESULT=skipped`, `REASON=no_output` → `reviewer_loop_process_platform_output` sets `reviewer_failed_required=1`, class `skipped_failure_evidence`, and the run continues to the next platform (a clean peer keeps the aggregate clean). Variant: a fake CLI that sleeps past the budget → `skipped`/`timeout` with `NO_VERDICT_YET=1`, `reviewer_failed_required` stays 0. Label-function rows: `skipped` with `invalid_json`, `ambiguous_output`, or `cli_failed` → required; `skipped` with `rate_limited`, `analysis_skipped_file_limit`, `explicit-skip`, or `disabled_by_config` → not required | AC-2, AC-8 |
 | T2.8 | `claude-code-action-reviewer.sh`: run never completes → exit 4; completed `failure` → exit 2; loop maps 4 and 2 per D8 | AC-1, AC-2 |
 | T2.9 | Second local pass returning waiting → aggregate waiting, no `failed_for_head` record | AC-1 |
 | T2.10 | Ledger normalization `no_verdict_yet` for a waiting record and for a kept skip recorded through `reviewer_loop_process_platform_output` (the `platform_result_records` entry, not only the normalizer called directly); `apply-readiness-labels.sh` refuses it as `reviewer-check-absent` (extend `test-apply-readiness-labels.sh`) | AC-1 |
@@ -1242,7 +1277,7 @@ resolver is a single function.
 | T3.1 | Reconcile: PR carries `reviewer-failed`, run re-reviews and is clean → `--remove-label` issued | AC-7 |
 | T3.2 | Reconcile: same, but every platform replayed from a clean ledger (#1692) → `--remove-label` issued | AC-7 |
 | T3.3 | Reconcile: needs-fixes or waiting run with no failure evidence → label removed / not added | AC-8 |
-| T3.4 | Reconcile: mixed compare run, one failed platform plus one clean, and a needs-fixes run with a `skipped`/`unavailable` peer → label added | AC-8 |
+| T3.4 | Reconcile: mixed compare run, one failed platform plus one clean, a needs-fixes run with a `skipped`/`unavailable` peer, and a clean run with a CodeRabbit CLI `skipped`/`no_output` peer (the T2.28 composed path) → label added; the same clean run with a CodeRabbit CLI `skipped`/`timeout` kept skip instead → label removed | AC-8 |
 | T3.5 | Add/remove failure prints the WARN and does not change the exit code | AC-8 |
 | T3.6 | Source-order check: the post-loop path calls the reconcile function once after the persistence step; pre-loop refusal exits do not | AC-7, AC-13 |
 | T3.7 | Precedence function: failed + waiting → escalate; findings + waiting → needs_fixes; waiting + clean → waiting; kept skip + clean → clean; tie → earliest platform | AC-9 |
@@ -1371,15 +1406,15 @@ spec's examples unless stated.
 | --- | --- | --- | --- |
 | Clean verdict within budget | Handler `clean`; D12 latency; D9 removes label | Protocol 93, Protocol 91 Step 7, summary | T2.2, T3.1, T5.1 |
 | Findings within budget | Existing needs-fixes path; D9 no label | Protocol 93, Protocol 91 Step 7 | T3.3 |
-| Positive failure evidence | D8 kept failure paths, including an early command exit 124/137 (D4) and the failure-type completion signals; D9 label | Protocol 93, Protocol 91 Step 7, guides | T2.3, T2.7, T2.13, T2.24–T2.27 |
+| Positive failure evidence | D8 kept failure paths, including an early command exit 124/137 (D4), the CodeRabbit CLI failure skips (`REVIEWER_LOOP_FAILURE_SKIP_REASONS`, still non-blocking), and the failure-type completion signals; D9 label | Protocol 93, Protocol 91 Step 7, guides | T2.3, T2.7, T2.13, T2.24–T2.28, T3.4 |
 | Budget ran out, first time for this revision | D8 No verdict yet (local reviewers: D4 watchdog flag); D11 `available` → runner re-wait | Protocol 91 Step 7, Protocol 93, guides | T2.1, T2.7, T2.13, T4.1 |
-| Expired wait kept as non-blocking skip | D8 kept skips; D9 no label | Protocol 93, CodeRabbit, Devin, PR-Agent guides | T2.4 |
+| Expired wait kept as non-blocking skip | D8 kept skips; D9 no label | Protocol 93, CodeRabbit, Devin, PR-Agent guides | T2.4, T2.28 |
 | No verdict yet again after re-wait | D11 `used` → runner stops as Waiting on reviewer | Protocol 91 Step 7, Protocol 93 | T4.1, smoke Step 6 |
 | Only older-revision evidence | D15 bindings for every platform → No verdict yet (D8) or, for PR-Agent, its kept skip; fresh-mode reuse and re-wait adoption bound to a request recorded for the current head (D15, D11); PR-Agent summaries by D15 rules (a) and (b); fresh Claude runs by the D15 Claude dispatch rule | Protocol 93, Greptile, Devin, CodeRabbit, PR-Agent, Bugbot, Codex GitHub, and Claude Code Action guides | T2.5, T2.14–T2.23, T4.5, T4.6 |
 | No sign of a started review, no unavailability report | D8 Bugbot `check_not_started`, Devin kept skip | Protocol 93, Bugbot guide | T2.1, T2.4 |
 | Platform reports itself unavailable | D8 kept failure paths (Bugbot disabled, Copilot request failure, Haystack `unavailable`) | guides | T2.6 |
 | Platform's own run timed out or failed | D8 failure-type completion signals for every platform: `devin_run_failed`, `coderabbit_status_failed`, `pr_agent_run_failed` (new), Haystack `check_run_<conclusion>` kept as failure, `bugbot-run-timed-out`, `claude_code_action_run_failed`, `ronda_pass_failed`, `ronda_unexpected_conclusion`; a bound verdict wins over the signal | Bugbot, Claude Code Action, Ronda, Devin, CodeRabbit, PR-Agent, Haystack guides | T2.3, T2.8, T2.24–T2.27, T4.9 |
-| Revision changes during the wait | Existing head-moved handling, unchanged | Protocol 91 Step 7 (unchanged row) | existing #1574 tests |
+| Revision changes during the wait | Existing head-moved handling, unchanged; waiting result: D11 invocation head — it stays waiting and counts for the head the invocation read | Protocol 91 Step 7 (unchanged row) | existing #1574 tests, T4.10 |
 | Usage, spend, account, rate-limit outcomes | Unchanged paths; D8 `existing_handling` reporting label | guides (unchanged text) | T2.6 |
 | Loop-level escalation | Unchanged; D10 precedence | Protocol 93, Protocol 91 Step 7 | existing cap tests, T3.6 |
 | Several platforms contribute outcomes | D10 | Protocol 93 | T3.7, T3.8 |
@@ -1507,7 +1542,9 @@ These are executed in the implementation PR.
   no findings is `devin_run_failed` (D8 failure-type completion signals).
 - [ ] `docs/workflow/development-workflow/integrations/coderabbit.md` — App
   timeout row → No verdict yet, `no_review` kept skip; CLI `timeout` kept skip
-  without `reviewer-failed`; the App wait ends only on a current-head review
+  without `reviewer-failed`; CLI `no_output`, `invalid_json`,
+  `ambiguous_output`, and `cli_failed` skips stay non-blocking but apply
+  `reviewer-failed` (D9); the App wait ends only on a current-head review
   or success status, not on a walkthrough edit alone (D15); a `failure` or
   `error` CodeRabbit status that is not a rate/review-limit notice is
   `coderabbit_status_failed` (D8 failure-type completion signals).
@@ -1641,10 +1678,10 @@ the behavior they cover.
    re-trigger point, the D4 watchdog contract in both `run_with_timeout`
    copies, companion exit 4 for `local-ai-reviewer.sh` and
    `claude-code-action-reviewer.sh`, Rule 5 consumer updates, label-function
-   change, the D8 failure-type completion signals (Devin, CodeRabbit,
-   PR-Agent, the Haystack exit-2 arm and companion key); T2.1–T2.11, T2.13,
-   and T2.24–T2.27; update the existing timeout rows listed in
-   Testing Strategy. Phase 2 tests use only what Phases 1–2 introduce: no
+   change (including `REVIEWER_LOOP_FAILURE_SKIP_REASONS`), the D8
+   failure-type completion signals (Devin, CodeRabbit, PR-Agent, the Haystack
+   exit-2 arm and companion key); T2.1–T2.11, T2.13, and T2.24–T2.28;
+   update the existing timeout rows listed in Testing Strategy. Phase 2 tests use only what Phases 1–2 introduce: no
    re-wait mode, adoption, or D12 ledger field (those variants are Phase 4b
    tests, such as T4.9), and every "bound to `H`" verdict mock satisfies
    both today's filters and D15 (`commit_id` or `original_commit_id` `H`,
@@ -1702,8 +1739,10 @@ the behavior they cover.
      `bugbot-run-timed-out`, a failed Claude Code Action run as
      `claude_code_action_run_failed`, a Devin, CodeRabbit, or PR-Agent
      review run that itself failed or timed out is reported as a failed
-     reviewer instead of clean or skipped, and `--max-wait` rejects values
-     that are not positive whole seconds.
+     reviewer instead of clean or skipped, a CodeRabbit CLI run that ends
+     with an error or unreadable output now applies `reviewer-failed` while
+     staying a non-blocking skip, and `--max-wait` rejects values that are
+     not whole seconds from 1 to 999999.
    ```
 
    The budget values in this literal must match D2 at implementation time;
@@ -1736,7 +1775,7 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V39.
+  V1–V41.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
   query keyed on `run_id` and the entry's invocation head
   (`classification_head`, V39; regression T4.10) and the persist-success gate on
@@ -1754,7 +1793,10 @@ SHA).
   completion-signal table (V33), rule (b)'s `success` requirement (V34), the
   newest-run-on-the-head ordering that keeps an earlier failure in force
   until a newer run on that head or a bound verdict supersedes it (V35), and
-  the regression tests T2.24–T2.27 and T4.9.
+  the regression tests T2.24–T2.27 and T4.9; "a non-blocking skip whose
+  reason is failure evidence applies the label" cites
+  `REVIEWER_LOOP_FAILURE_SKIP_REASONS` (D8), its skip-reason sweep (V40),
+  and regression T2.28.
 - Complex workflow decision-gate matrix: Checked — plan mirror table above.
 - Matrix coherence preflight: Checked — six checks pass (see the preflight
   list above); re-audited at `81977c6b`/`d708592d` for the D11 Codex
@@ -1766,7 +1808,14 @@ SHA).
   invocation head: it changes only which ledger entries match a head (an
   entry persisted after a push no longer matches the newer head), so check 5
   is tightened while the waiting result, its precedence, and the D11 runner
-  rows stay as they were; all checks still pass.
+  rows stay as they were; all checks still pass; re-audited at `aa0749ef`
+  (reviewer-loop cycle 4) for `REVIEWER_LOOP_FAILURE_SKIP_REASONS` (D8, D9)
+  and the D13 upper bound: the four CodeRabbit CLI reasons move from the
+  `skipped` class to `skipped_failure_evidence` and now require the label,
+  while their result, rank (D10 rank 4), and progression are unchanged; the
+  `skipped` rows stay disjoint (the kept `timeout` skip is not in the list,
+  V40), and values above 999999 join the existing invalid-budget rows (check
+  4); all checks still pass.
 - Parser/API/concurrency checklist: Checked — parser-risk addendum for the
   config reader; concurrency not applicable with rationale.
 - Reversal: Checked — Rollback states the one-unit revert, the reverted
@@ -1780,6 +1829,6 @@ SHA).
 | Rule 1 | Satisfied | D15's PR-Agent rule (a) depends only on the marker line (`Review updated until commit …/commit/<H>)`), the sampled stable part, naming the head SHA; the review-state block is excluded because its SHAs can lag the marker (V37); V30 records 30 located occurrences, two variants, and the adequacy rationale, and D15 states the tolerant path (see Factual claim evidence). The comment locators point to editable, deletable sources, so the V30 occurrence captures under Factual claim evidence embed every occurrence's redacted text (V37). Each capture keeps the comment id, `created_at`, `updated_at`, verbatim line 5 (the marker, or its absence), and the review-state block's `head_sha`, and elides the rest as `…`. The durability requirement therefore holds even if a locator stops resolving. Rule (b) reads no body text; its run binding is checked against the five marker-free variant occurrences in V32. |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D15 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. The D15 site counts (four Bugbot review-comment filters, four `codex_inline_review_comment_count_since` callers) carry V28's commands and their enumerated line numbers. The D8 failure-type completion-signal table covers all twelve platforms from V33's recorded search (loop hits by handler and companion counts). |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29, V31–V36, V38, V39; which handlers read a failure-type completion signal, and which read none, is V33; the V32 binding runs' `success` conclusions are V34; the newest-run ordering on one head, the absence of a completed-run time filter in every handler that reads check runs or statuses, and PR-Agent's no-post path are V35; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the dispatch response's `workflow_run_id` and the dispatched run's `head_sha` are V31 (the response shape from the REST reference, confirmed live by smoke Step 8); the PR-Agent run-window, branch-run, and `issue_comment` run fields are V32; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15; the Codex cleared-findings flag's single set and read sites, the absence of a `MAX_RETRIGGERS` term in that guard, and the reproduced duplicate post are V36; where a 40-hex SHA appears in the sampled PR-Agent summaries (only the marker and the review-state block) is V37; the rollback readers' field-by-name parsing and schema-only validation are cited by line in Rollback. |
-| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, the new `_pr_agent_first_summary_bound_to_head`, `codex_inline_review_comment_count_since`, the Claude companion review count and its fresh run selection and dispatch response, the new head-recorded request helper), the new failure reasons and Haystack companion key from the D8 failure-type completion signals, and the Codex cleared-findings flag and `CLEARED_FINDINGS_REVIEW_TIME` (V12, V13, V17, V19, V20, V21, V23, V24, V28, V31, V33, V36, V38, V39), and the ledger invocation head (`classification_head` readers and the unchanged `head_sha` readers). |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29, V31–V36, V38–V41; which skip reasons are failure evidence, and that no platform other than CodeRabbit CLI emits the four added reasons, is V40; the integer-range behavior behind the D13 bound is V41; which handlers read a failure-type completion signal, and which read none, is V33; the V32 binding runs' `success` conclusions are V34; the newest-run ordering on one head, the absence of a completed-run time filter in every handler that reads check runs or statuses, and PR-Agent's no-post path are V35; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the dispatch response's `workflow_run_id` and the dispatched run's `head_sha` are V31 (the response shape from the REST reference, confirmed live by smoke Step 8); the PR-Agent run-window, branch-run, and `issue_comment` run fields are V32; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15; the Codex cleared-findings flag's single set and read sites, the absence of a `MAX_RETRIGGERS` term in that guard, and the reproduced duplicate post are V36; where a 40-hex SHA appears in the sampled PR-Agent summaries (only the marker and the review-state block) is V37; the rollback readers' field-by-name parsing and schema-only validation are cited by line in Rollback. |
+| Rule 5 | Satisfied | Consumer tables for the label function (including the `REVIEWER_LOOP_FAILURE_SKIP_REASONS` change at each of its four consumers, V40), the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, the new `_pr_agent_first_summary_bound_to_head`, `codex_inline_review_comment_count_since`, the Claude companion review count and its fresh run selection and dispatch response, the new head-recorded request helper), the new failure reasons and Haystack companion key from the D8 failure-type completion signals, and the Codex cleared-findings flag and `CLEARED_FINDINGS_REVIEW_TIME` (V12, V13, V17, V19, V20, V21, V23, V24, V28, V31, V33, V36, V38, V39, V40), and the ledger invocation head (`classification_head` readers and the unchanged `head_sha` readers). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
