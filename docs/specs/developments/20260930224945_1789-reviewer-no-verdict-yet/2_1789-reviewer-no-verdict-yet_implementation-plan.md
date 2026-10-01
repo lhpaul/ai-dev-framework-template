@@ -547,6 +547,7 @@ cite is identical at `13bf4c7f`.
 | V23 | `run_with_timeout` forwards a command's own 124/137 (reviewer-loop finding, revision `06d435e7`, whose script files equal `13bf4c7f`) | Extract the function with `sed -n '/^run_with_timeout() {/,/^}/p' scripts/development-workflow/local-ai-reviewer.sh`, source it, and call `run_with_timeout 3 <out> <err> sh -c '<cmd>'` for `exit 124`, `exit 137`, `sleep 6`; read both copies (`local-ai-reviewer.sh:174-223`, `coderabbit-cli-reviewer.sh:289-314`), their callers (`grep -n run_with_timeout` → `local-ai-reviewer.sh:696`, `:1314`; `coderabbit-cli-reviewer.sh:325`, `:328`), and the non-zero handling (`grep -n "malformed_output\|no_output\|cli_failed"`) | This host has no GNU `timeout` with `--kill-after`, so the fallback path ran: `exit 124` → 124 after 1 s, `exit 137` → 137 after 2 s, `sleep 6` → 124 after 4 s (budget 3). The fallback returns 124 itself only in its watchdog branch (`:203-220`) and otherwise forwards the child status through `wait` (`:222`); the GNU branch (`:180-186`) returns `timeout`'s status, which GNU documents as 124 on expiry and otherwise the command's own status (not reproducible on this host). The CodeRabbit CLI copy has the same status forwarding (its watchdog branch returns 124 at `:308-311`, otherwise `wait` at `:313`), but its fallback starts no process group and sends a single `TERM` to the direct child with no `KILL` (`:301-310`), and its GNU branch is plain `timeout` without `--kill-after` (`:295-298`). `batch-merge.sh:152` defines an unrelated `run_with_timeout` (no reviewer, different signature). Early non-zero exits with unreadable stdout reach `malformed_output` (`local-ai-reviewer.sh:1392`) and `no_output` / `cli_failed` (`coderabbit-cli-reviewer.sh:346-352`, `:523-525`). The strict pass (`:696-704`) treats any non-zero status as `strict_pass_failed` |
 | V24 | Claude companion run selection and review boundary (reviewer-loop finding, revision `06d435e7`) | Read `claude-code-action-reviewer.sh:247-455` and `.github/workflows/claude-code-review.yml:11-58`; `grep -c "head_sha\|HEAD_SHA" scripts/development-workflow/claude-code-action-reviewer.sh` | The companion selects the newest `workflow_dispatch` run whose `path` ends with the workflow file, whose name carries `PR #<this PR>`, and whose `created_at >= POLL_AFTER_TIME` (`DISPATCH_TIME` minus 10 s; `:336-353`); the grep returns 0, so it has no head SHA input or check; a completed `success` run then reads bot reviews with `.submitted_at >= DISPATCH_TIME` (`:429-434`) and returns clean unless one requested changes (`:449-455`). The workflow takes only `pr_number` (`:16-21`), reviews the PR at execution time (`:58`), and cancels an in-progress run for the same PR when a new one is dispatched (`:26-28`). The loop handler invokes the companion with `>/dev/null 2>&1` (`grep -nF 'max-wait "$max_wait" >/dev/null 2>&1' scripts/development-workflow/pr-review-loop.sh` → `:2582`, the end of the `:2579` invocation in `run_claude_code_action_review`), so none of the companion's stdout reaches the loop today; `run_codex_github_review` captures its companion's output (`script_output=…2>&1`, `:2341`) and re-prints keys with `kv_value_default` |
 | V25 | Request identifiers the request-posting handlers can record (revision `06d435e7`) | `grep -nF -e 'issues/$pr_number/comments" --method POST' -e '-X POST "repos/$repo/issues/$pr_number/comments"' scripts/development-workflow/pr-review-loop.sh` (hits `:2110`, `:3673`, `:4289`, `:5528`) and `grep -n "@coderabbitai review" scripts/development-workflow/pr-review-loop.sh`, then read the hits | Greptile captures the trigger comment `id` (`:2110`, `--jq '.id'`); Bugbot posts with output discarded (`:3673-3674`, `:4289-4290`); PR-Agent keeps the POST response and reads its `created_at` (`:5528-5533`); CodeRabbit posts with `gh pr comment` (`:7405`, `:7465`) and needs only the recorded `requested_at` under D11 |
+| V26 | CodeRabbit CLI test PATH that runs the CLI without GNU `timeout` (revision `74d82039`, whose script files equal `13bf4c7f`) | `grep -n 'NO_CLI_BIN' scripts/development-workflow/tests/test-coderabbit-cli-reviewer.sh`, read the symlink loop at `:34-37`; then link the same ten commands into an empty directory, source the function extracted with V23's `sed` from `local-ai-reviewer.sh`, and call `run_with_timeout 2 <out> <err> sleep 5` with only that directory on `PATH` | The loop links `awk bash cat dirname grep jq mktemp rm sleep tr` (no `perl`, no `setsid`); the CLI runs under `$MOCK_BIN:$NO_CLI_BIN` at `:420` (`fallback_timeout_*`) and `:466` (`fallback_coderabbit_*`). The probe on this host (macOS, no `setsid`) returned status 127 after 1 s with `perl: command not found` on stderr |
 
 ### Factual claim evidence
 
@@ -850,7 +851,14 @@ and confirms each hit is either updated or still correct. In
 and bounded-time assertions stay), and removes the two rows that pin the GNU
 branch: `timeout_kill_after_137_*` (a fake `timeout` on `PATH`, no longer
 consulted) and `s9d_gnu_timeout_has_kill_after` (asserts the removed
-`timeout --kill-after=2s` line).
+`timeout --kill-after=2s` line). In `test-coderabbit-cli-reviewer.sh`, the
+restricted `NO_CLI_BIN` PATH gains `perl` (and `setsid` where the host has
+it): the replaced CodeRabbit CLI wrapper, like the local reviewer's, starts
+the CLI through `setsid` or `perl setpgrp`, and that PATH provides neither,
+so without the addition the wrapper's launch exits 127 and the
+`fallback_timeout_*` rows (expected `skipped`/`timeout`) and the
+`fallback_coderabbit_*` rows (expected `clean`) both read `no_output`
+instead (V26). Their expected values are otherwise unchanged.
 
 **Regression suites to run before pushing**: `test-pr-review-loop.sh`,
 `test-local-ai-reviewer.sh`, `test-local-ai-reviewer-pr-review-loop-dispatch.sh`,
@@ -1159,7 +1167,7 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V25.
+  V1–V26.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
   query keyed on `run_id` and `head_sha` (D11); "never shortens" cites the
   D7 comparison; "no duplicate request" cites the D11 adoption table and
@@ -1179,6 +1187,6 @@ SHA).
 | Rule 1 | Not applicable | No new design depends on externally produced free text (see Factual claim evidence). |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D14 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V25. |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V26. |
 | Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, and the loop handler that consumes the Claude companion's new output keys (V12, V13, V17, V19, V20, V21, V23, V24). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
