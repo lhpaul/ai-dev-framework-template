@@ -106,23 +106,43 @@ The #1390 re-trigger is skipped in re-wait mode (D11).
   budget through `--timeout "$max_wait"`. The loop keeps passing the resolved
   budget as `--timeout`; `LOCAL_AI_REVIEWER_TIMEOUT` keeps applying only to
   standalone companion runs, as today.
-- **No verdict yet**: `run_with_timeout` returned 124 or 137, which is the
-  companion's existing signal that it stopped the reviewer process at the end
-  of the budget while it was still running (`local-ai-reviewer.sh`
-  `run_with_timeout` and the 124/137 branch, V9). The companion then prints
-  `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`,
-  `NO_VERDICT_YET=1` and exits **4**. The partial output of a stopped process
-  is not inspected: a process that was still running when stopped had not
-  reported an error by exiting, and this keeps the design free of any match on
-  reviewer free text.
+- **Expiry signal (watchdog contract)**: the exit status of
+  `run_with_timeout` is not evidence of expiry. Both of its paths forward a
+  reviewer command's own exit status, so a command that exits 124 or 137 on
+  its own before the budget is indistinguishable from a stopped one (V23).
+  The wrapper therefore reports expiry out of band: it sets the global
+  `RUN_WITH_TIMEOUT_EXPIRED` to `0` on entry and to `1` only in the branch
+  where its own watchdog reached the budget **and** `kill -0` shows the
+  reviewer process still running at that moment; only then does it signal the
+  process group. A process that exited during the final poll second takes the
+  normal `wait` path and keeps its own status and flag `0`. The GNU `timeout`
+  branch is removed and the wrapper's own watchdog (the current `setsid` /
+  `perl setpgrp` process-group path, already the macOS production path) runs
+  on every host, because GNU `timeout` reports expiry only through the same
+  124/137 statuses it also forwards from the command (V23). The `</dev/null`
+  stdin (#1843) and the TERM-grace-KILL process-group sequence are kept. The
+  same contract applies to the separate copy of `run_with_timeout` in
+  `coderabbit-cli-reviewer.sh` (V23), whose `skipped`/`timeout` result becomes
+  the D8 kept skip.
+- **No verdict yet**: `RUN_WITH_TIMEOUT_EXPIRED=1` after the ordinary review
+  command. The companion then prints `RESULT=waiting_on_reviewer`,
+  `REASON=reviewer-no-verdict-yet`, `NO_VERDICT_YET=1` and exits **4**. The
+  partial output of a stopped process is not inspected: a process that was
+  still running when stopped had not reported an error by exiting, and this
+  keeps the design free of any match on reviewer free text.
 - **Reviewer failed**: every existing non-timeout `escalate` path in the
   companion is unchanged — a non-zero command exit before the budget, output
   the loop cannot read (`malformed_output`), credential, model-access,
-  repository, head, and contract failures. `quota_exhausted` keeps its
-  existing handling (BR 11 / AC-13).
+  repository, head, and contract failures. A command that itself exits 124
+  or 137 before the budget is one of these non-zero exits: it leaves the flag
+  at `0` and reaches the existing probes and `malformed_output` handling
+  (`local-ai-reviewer.sh:1392`, V23), never No verdict yet.
+  `quota_exhausted` keeps its existing handling (BR 11 / AC-13).
 - The strict spec/plan second pass inside the companion keeps its existing
   `strict_pass_failed` non-blocking `unavailable` state when it runs out of
-  the shared budget; it never changes the ordinary verdict.
+  the shared budget; it never changes the ordinary verdict. It treats any
+  non-zero wrapper status as `strict_pass_failed` (`local-ai-reviewer.sh:704`)
+  and does not read the flag.
 
 ### D5 — Codex GitHub wait reasons and the automatic re-wait (spec plan note 4; BR 7, AC-11)
 
@@ -247,8 +267,8 @@ the failure-evidence paths it keeps (line numbers at `13bf4c7f`, V2):
 | `greptile` | `escalate`/`timeout`, no bot thumbs-up by budget end (`pr-review-loop.sh:2130-2139`) | No verdict yet, detail `no_acknowledgement` | missing trigger comment id (`:2113-2115`) |
 | `devin` | `escalate`/`timeout`, check seen but not completed (`:5236-5244`); `skipped`/`no_check_run`, no check ever seen (`:5225-5235`) | No verdict yet, detail `check_not_completed`; kept skip | stale-findings `needs_fixes` (`:5200-5221`) |
 | `coderabbit` | `escalate`/`timeout`, activity seen (`:7846-7855`); `skipped`/`no_review`, no activity (`:7832-7844`) | No verdict yet, detail `review_not_submitted`; kept skip | `review_skipped_banner` (platform declined; `:7799-7814`), `rate_limit_max_retries` |
-| `coderabbit-cli` | companion `skipped`/`timeout` (`coderabbit-cli-reviewer.sh:339-342`) forwarded by the loop's skip arm (`:4627-4644`) | kept skip | `unavailable`, `unauthorized`, `invalid_json`, `ambiguous_output`, `no_output`, `cli_failed` skips; escalate reasons |
-| `local-ai-reviewer` | companion `escalate`/`timeout` on exit 124/137 (`local-ai-reviewer.sh:1321-1324`) forwarded by the loop's exit-2 arm (`:4864-4888`) | D4: companion exit 4; new loop exit-4 arm → No verdict yet, detail `stopped_at_budget` | every other companion escalate reason; `quota_exhausted` |
+| `coderabbit-cli` | companion `skipped`/`timeout` on wrapper status 124 (`coderabbit-cli-reviewer.sh:339-342`) forwarded by the loop's skip arm (`:4627-4644`) | kept skip, emitted only when `RUN_WITH_TIMEOUT_EXPIRED=1` (D4 watchdog contract) | `unavailable`, `unauthorized`, `invalid_json`, `ambiguous_output`, `no_output`, `cli_failed` skips (a CLI that itself exits 124 before the budget now reaches these, V23); escalate reasons |
+| `local-ai-reviewer` | companion `escalate`/`timeout` on wrapper status 124/137 (`local-ai-reviewer.sh:1321-1324`) forwarded by the loop's exit-2 arm (`:4864-4888`) | D4: companion exit 4 only when `RUN_WITH_TIMEOUT_EXPIRED=1`; new loop exit-4 arm → No verdict yet, detail `stopped_at_budget` | every other companion escalate reason, including a reviewer command that itself exits 124 or 137 before the budget (D4); `quota_exhausted` |
 | `pr-agent` | `skipped`/`no_review` (`:5801-5812`) | kept skip | `pr_agent_trigger_failed`, `pr_agent_ambiguous_review` |
 | `codex-github` | companion exit 4 (`codex-github-review-pending`, `codex-github-reaction-without-review`) | existing wait reasons kept, class `no_verdict_yet` (D5) | companion exit 2 and 3 reasons |
 | `claude-code-action` | companion exit 2 when no run completed within the budget (`claude-code-action-reviewer.sh:397-401`), mapped to `escalate`/`timeout` (`:2623-2631`) | companion exits **4** for that case; new loop exit-4 arm → No verdict yet, detail `run_not_completed` | companion exit 2 for a completed run whose conclusion is not `success` → loop `escalate`/`claude_code_action_run_failed` (the companion's argument-validation exits, `claude-code-action-reviewer.sh:125-199`, also exit 2 and share that reason; still failure evidence); exit 3 → `unavailable` |
@@ -265,7 +285,10 @@ Current-revision evidence (BR 6, AC-10) is unchanged and relied on: every
 handler that can see an older-revision verdict already filters by the current
 head (Bugbot and Copilot by `commit_id`, Ronda and Bugbot by check runs on the
 current head SHA, Codex by the `Reviewed commit` marker); such evidence keeps
-the platform polling and therefore ends in the No verdict yet row above.
+the platform polling and therefore ends in the No verdict yet row above. The
+Claude Code Action companion has no head check of its own (V24); the only new
+path that could hand it an older-revision run, re-wait adoption, is bound to
+the request recorded for the current head (D11).
 
 ### D9 — `reviewer-failed` label reconciliation (BR 11, AC-7, AC-8, AC-13)
 
@@ -450,7 +473,9 @@ configured; afterwards it applies to Codex only.
 
 All commands were run in the plan worktree at repository revision
 `13bf4c7f` (`git rev-parse --short HEAD`), the merge of spec PR #1869, on
-2026-10-01.
+2026-10-01, except rows that name a later plan-branch revision; those
+revisions change only this plan and its runbook, so every script line they
+cite is identical at `13bf4c7f`.
 
 | ID | Check | Command / query | Result |
 | --- | --- | --- | --- |
@@ -462,7 +487,7 @@ All commands were run in the plan worktree at repository revision
 | V6 | Existing `--max-wait` validation | `grep -n 'max_wait" =~\|--max-wait value\|max-wait must' scripts/development-workflow/pr-review-loop.sh` | Only `:6559` (`coderabbit_no_trigger_timeout_default` input check) and `:13081` (`LARGE_DIFF_MAX_WAIT`); the `--max-wait` parser at `:12606-12611` stores the value unchecked |
 | V7 | Bugbot trigger-to-completion latency sample (PR #1787) | `gh api repos/lhpaul/ai-dev-framework-template/commits/<sha>/check-runs --jq '.check_runs[] \| select(.name=="Cursor Bugbot") \| [.status,.conclusion,.started_at,.completed_at]'` for heads `909ab08a`, `e9ba0f4b`, `62dc8eb5`, `6e62224e`, `fa2fa9c9`, paired with the `bugbot run` comment times from `gh api repos/lhpaul/ai-dev-framework-template/issues/1787/comments` | triggers 12:35:16, 12:43:30, 12:50:07, 12:56:10, 13:07:28 → completions 12:40:32, 12:46:44, 12:53:06, 13:00:44, 13:10:37 (2026-09-23 UTC): 5 min 16 s, 3 min 14 s, 2 min 59 s, 4 min 34 s, 3 min 9 s |
 | V8 | Exit paths and label calls | `grep -nE '^\s*exit [0-9]+\|^\s*exit "' scripts/development-workflow/pr-review-loop.sh` (main section) and `grep -n sync_reviewer_failed_label scripts/development-workflow/pr-review-loop.sh` | Pre-loop exits at `:12520-12829` and the repository-root / head-branch resolution failure exit at `:13032` never call the label sync; label sync at `:12936` (release guard), `:13962` (not configured), `:14515` (post-loop); all platform-evaluating runs reach `:14515` |
-| V9 | `local-ai-reviewer.sh` timeout path | `grep -n "timeout\|TIMEOUT" scripts/development-workflow/local-ai-reviewer.sh` | `run_with_timeout` returns 124 (GNU `timeout` or the fallback kill path); the caller treats 124/137 as timeout at `:1321-1324` and checks it before any output probe |
+| V9 | `local-ai-reviewer.sh` timeout path | `grep -n "timeout\|TIMEOUT" scripts/development-workflow/local-ai-reviewer.sh` | `run_with_timeout` returns 124 (GNU `timeout` or the fallback kill path); the caller treats 124/137 as timeout at `:1321-1324` and checks it before any output probe. V23 shows that status is not expiry evidence |
 | V10 | Codex duplicate-trigger guard | `grep -n "skipping duplicate post\|MAX_RETRIGGERS=0" scripts/development-workflow/codex-github-reviewer.sh` | `:2077` skips a duplicate trigger for a pending current-head trigger; `:2482` skips the async-arrival trigger when `MAX_RETRIGGERS=0` |
 | V11 | Availability reasons emitted today | `grep -n "bugbot-usage-limit\|codex-github-usage-limit\|codex-github-account-not-connected\|rate_limit_max_retries\|quota_exhausted\|REASON=rate_limited\|REASON rate_limited" scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/codex-github-reviewer.sh scripts/development-workflow/local-ai-reviewer.sh scripts/development-workflow/coderabbit-cli-reviewer.sh` | Each reason in `REVIEWER_LOOP_AVAILABILITY_REASONS` (D8) is emitted by at least one of those files |
 | V12 | Consumers of `reviewer_failed_label_required_for_result` (Rule 5) | `grep -rn "reviewer_failed_label_required_for_result" scripts docs .claude .cursor .codex .agents` | Code consumers `pr-review-loop.sh:1342`, `:9120`, `:9840`, `:14512`; tests in `test-pr-review-loop.sh`; prose in `codex-github.md:51`, Protocol 93 `:293`, and a #1649 smoke runbook; remaining hits are merged historical spec/plan documents under `docs/specs/developments/` (not consumers) |
@@ -476,6 +501,7 @@ All commands were run in the plan worktree at repository revision
 | V20 | Readiness-gate outcome arms for ledger `platform_results[].result` | `grep -n '_adapter_refusal_reason="reviewer-' scripts/development-workflow/apply-readiness-labels.sh` (the `case "$outcome"` arms are the hits at `:759` and `:760`) and read `reviewer_loop_normalize_platform_outcome` (`pr-review-loop.sh:8982-8999`) | `:759` maps `not_yet_run\|unknown` to `reviewer-check-absent`; `:760` maps every other non-`clean` value to `reviewer-evidence-unreadable`; the normalizer maps `waiting_on_reviewer` to `unknown` and `escalate` to `unavailable` |
 | V21 | In-loop readers of the normalized ledger outcome (Rule 5) | `grep -n '\.result //' scripts/development-workflow/pr-review-loop.sh`, then `grep -n 'reviewer_loop_local_latest_verdict\|reviewer_loop_platform_clean_for_head' scripts/development-workflow/pr-review-loop.sh` for the callers | Platform-record readers: `:9210` in `reviewer_loop_local_latest_verdict` (callers `reviewer_loop_retain_local_evidence_for_current_run` `:9169`, `reviewer_loop_local_pass_required` `:9357`, `reviewer_loop_missed_finding_records` `:10363`), `:9414` in `reviewer_loop_platform_clean_for_head` (caller `:9476`, #1692 stage skip), and `:10374` (missed-finding walk); the other hits (`:1708`, `:8710`, `:11867-11877`, `:14112`) read entry-level or gate fields, not `platform_results[].result`. Cross-script readers are V13's. Writers: `grep -rn 'reviewer_loop_normalize_platform_outcome\|reviewer_loop_platform_result_record_json' scripts \| grep -v '/tests/'` finds the normalizer's only caller in `reviewer_loop_platform_result_record_json` (`:9008`) and that function's three callers `:9182`, `:9894`, `:10266`, all in `pr-review-loop.sh` |
 | V22 | Documentation surfaces that restate reviewer-loop timeout, wait, or label semantics | `grep -rln -i 'times out\|REASON=timeout\|~20 min\|(20 min)\|1200 s\|reviewer-failed' docs/workflow docs/project REVIEW.md AGENTS.md .claude .cursor .codex .agents` | Every hit is in Documentation Updates except: `retro-metrics.md` (historical batch records), `provider-contingency-runner-failover.md` and Protocol 90 (agent stream timeouts, not reviewer waits), and `github-projects.md`, `AGENTS.md`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md` (list `reviewer-failed` as an operational label only) |
+| V23 | `run_with_timeout` forwards a command's own 124/137 (reviewer-loop finding, revision `06d435e7`, whose script files equal `13bf4c7f`) | Extract the function with `sed -n '/^run_with_timeout() {/,/^}/p' scripts/development-workflow/local-ai-reviewer.sh`, source it, and call `run_with_timeout 3 <out> <err> sh -c '<cmd>'` for `exit 124`, `exit 137`, `sleep 6`; read both copies (`local-ai-reviewer.sh:174-223`, `coderabbit-cli-reviewer.sh:289-314`), their callers (`grep -n run_with_timeout` → `local-ai-reviewer.sh:696`, `:1314`; `coderabbit-cli-reviewer.sh:325`, `:328`), and the non-zero handling (`grep -n "malformed_output\|no_output\|cli_failed"`) | This host has no GNU `timeout` with `--kill-after`, so the fallback path ran: `exit 124` → 124 after 1 s, `exit 137` → 137 after 2 s, `sleep 6` → 124 after 4 s (budget 3). The fallback returns 124 itself only in its watchdog branch (`:203-220`) and otherwise forwards the child status through `wait` (`:222`); the GNU branch (`:180-186`) returns `timeout`'s status, which GNU documents as 124 on expiry and otherwise the command's own status (not reproducible on this host). The CodeRabbit CLI copy has the same shape. Early non-zero exits with unreadable stdout reach `malformed_output` (`local-ai-reviewer.sh:1392`) and `no_output` / `cli_failed` (`coderabbit-cli-reviewer.sh:346-352`, `:523-525`). The strict pass (`:696-704`) treats any non-zero status as `strict_pass_failed` |
 
 ### Factual claim evidence
 
@@ -528,6 +554,16 @@ their standalone callers; the companion's usage text and
 
 `claude-code-action-reviewer.sh` exit 4 (new): the only invoker is the loop
 handler (V17).
+
+`run_with_timeout` expiry semantics (D4 watchdog contract; V23): in
+`local-ai-reviewer.sh`, the ordinary review call (`:1314`) reads
+`RUN_WITH_TIMEOUT_EXPIRED` instead of the status for the exit-4 decision, and
+the strict pass (`:696`) keeps treating any non-zero status as
+`strict_pass_failed`; in `coderabbit-cli-reviewer.sh`, both calls
+(`:325`, `:328`) feed one `cli_exit` whose `timeout` skip (`:339`) reads the
+flag. An early command exit 124 or 137 therefore reaches the existing
+non-zero handling in both companions. No other script defines or calls these
+two copies (V23).
 
 **Rule 6 — scoped conditional obligations.**
 
@@ -639,8 +675,13 @@ harness can call them.
 
 ### Layer 3 — Companion scripts and the readiness helper
 
-- [ ] `scripts/development-workflow/local-ai-reviewer.sh`: D4 exit 4 on
-  124/137; usage text lists exit 4.
+- [ ] `scripts/development-workflow/local-ai-reviewer.sh`: D4 watchdog
+  contract in `run_with_timeout` (`RUN_WITH_TIMEOUT_EXPIRED`, GNU branch
+  removed, alive check at the deadline); the `:1321` branch tests the flag
+  instead of the status and exits 4; usage text lists exit 4.
+- [ ] `scripts/development-workflow/coderabbit-cli-reviewer.sh`: the same D4
+  watchdog contract in its own `run_with_timeout` (`:289-314`); the `:339`
+  `timeout` skip tests the flag instead of status 124.
 - [ ] `scripts/development-workflow/claude-code-action-reviewer.sh`: exit 4
   when no run completed within the budget; `--adopt-existing-run` flag (D11);
   print `REVIEW_REQUESTED_AT`; exit-code header comment updated.
@@ -678,7 +719,8 @@ manual smoke runbook for live platforms.
 
 **Harness**: `scripts/development-workflow/tests/test-pr-review-loop.sh`, new
 area `=== Area 1789: reviewer no verdict yet ===` (runnable alone with
-`--area 1789`); `test-local-ai-reviewer.sh` for D4;
+`--area 1789`); `test-local-ai-reviewer.sh` and
+`test-coderabbit-cli-reviewer.sh` for D4;
 `test-claude-code-action-reviewer.sh` for the companion exit 4 and adoption.
 All wait-path tests use budgets of 1–2 s and poll 1 s so the area adds
 seconds, not minutes, to the suite (the #1562 measurement shows Area 13
@@ -709,7 +751,8 @@ resolver is a single function.
 | T2.4 | Kept skips (Devin `no_check_run`, CodeRabbit `no_review`, CodeRabbit CLI `timeout`, PR-Agent `no_review`): `skipped`, `NO_VERDICT_YET=1`, class `no_verdict_yet`, aggregate stays clean, label not required | AC-8 |
 | T2.5 | Older-revision evidence only (Bugbot completed check on another SHA; Copilot review on another `commit_id`) → No verdict yet, never clean or failed | AC-10 |
 | T2.6 | Availability reasons in `REVIEWER_LOOP_AVAILABILITY_REASONS` keep result, reason, exit code, and label decision; Bugbot "disabled" self-report and Copilot request failure keep their existing failure handling | AC-13 |
-| T2.7 | `local-ai-reviewer.sh` with a command that sleeps past `--timeout`: exit 4 and the D4 keys; command exiting 1 before the budget, and unreadable output, keep `escalate` | AC-1, AC-2 |
+| T2.7 | `local-ai-reviewer.sh` with a command that sleeps past `--timeout`: exit 4 and the D4 keys; commands exiting 1, 124, and 137 immediately with a 30 s budget, and unreadable output, keep `escalate` (never exit 4); `coderabbit-cli-reviewer.sh` with a CLI that exits 124 immediately reports `no_output`, not the `timeout` kept skip, and one that sleeps past the budget reports the kept skip (extend `test-coderabbit-cli-reviewer.sh`) | AC-1, AC-2 |
+| T2.13 | `run_with_timeout` unit (both companions): early `exit 124` and `exit 137` → status forwarded and `RUN_WITH_TIMEOUT_EXPIRED=0`; command sleeping past the budget → `RUN_WITH_TIMEOUT_EXPIRED=1`; command finishing inside the final poll second → its own status and flag `0` | AC-1, AC-2 |
 | T2.8 | `claude-code-action-reviewer.sh`: run never completes → exit 4; completed `failure` → exit 2; loop maps 4 and 2 per D8 | AC-1, AC-2 |
 | T2.9 | Second local pass returning waiting → aggregate waiting, no `failed_for_head` record | AC-1 |
 | T2.10 | Ledger normalization `no_verdict_yet` for a waiting record and for a kept skip recorded through `reviewer_loop_process_platform_output` (the `platform_result_records` entry, not only the normalizer called directly); `apply-readiness-labels.sh` refuses it as `reviewer-check-absent` (extend `test-apply-readiness-labels.sh`) | AC-1 |
@@ -747,7 +790,7 @@ and confirms each hit is either updated or still correct.
 
 **Regression suites to run before pushing**: `test-pr-review-loop.sh`,
 `test-local-ai-reviewer.sh`, `test-local-ai-reviewer-pr-review-loop-dispatch.sh`,
-`test-coderabbit-cli-pr-review-loop-dispatch.sh`,
+`test-coderabbit-cli-reviewer.sh`, `test-coderabbit-cli-pr-review-loop-dispatch.sh`,
 `test-ronda-pr-review-loop-dispatch.sh`, `test-claude-code-action-reviewer.sh`,
 `test-haystack-reviewer.sh`, `test-expensive-reviewer-gate.sh`,
 `test-apply-readiness-labels.sh`, `test-item-completion-self-check.sh`,
@@ -790,7 +833,10 @@ directives.
 ### Concurrent-event-source addendum
 
 Not applicable. The loop polls each platform sequentially in one process; no
-listener, callback, or timer runs concurrently with another. Two loop
+listener, callback, or timer runs concurrently with another. The one
+watchdog-versus-process race, a local reviewer exiting in the same second its
+budget ends, is settled inside `run_with_timeout` by the alive check at the
+deadline (D4), and nothing else shares state with the child process. Two loop
 invocations for the same PR cannot overlap because of the existing per-PR
 lock (`REASON=lock_contention`, exit 75), which is also what serializes the
 ledger read that decides re-wait state (D11) against the ledger write of the
@@ -810,8 +856,8 @@ spec's examples unless stated.
 | --- | --- | --- | --- |
 | Clean verdict within budget | Handler `clean`; D12 latency; D9 removes label | Protocol 93, Protocol 91 Step 7, summary | T2.2, T3.1, T5.1 |
 | Findings within budget | Existing needs-fixes path; D9 no label | Protocol 93, Protocol 91 Step 7 | T3.3 |
-| Positive failure evidence | D8 kept failure paths; D9 label | Protocol 93, Protocol 91 Step 7, guides | T2.3 |
-| Budget ran out, first time for this revision | D8 No verdict yet; D11 `available` → runner re-wait | Protocol 91 Step 7, Protocol 93, guides | T2.1, T4.1 |
+| Positive failure evidence | D8 kept failure paths, including an early command exit 124/137 (D4); D9 label | Protocol 93, Protocol 91 Step 7, guides | T2.3, T2.7, T2.13 |
+| Budget ran out, first time for this revision | D8 No verdict yet (local reviewers: D4 watchdog flag); D11 `available` → runner re-wait | Protocol 91 Step 7, Protocol 93, guides | T2.1, T2.7, T2.13, T4.1 |
 | Expired wait kept as non-blocking skip | D8 kept skips; D9 no label | Protocol 93, CodeRabbit, Devin, PR-Agent guides | T2.4 |
 | No verdict yet again after re-wait | D11 `used` → runner stops as Waiting on reviewer | Protocol 91 Step 7, Protocol 93 | T4.1, smoke Step 6 |
 | Only older-revision evidence | Existing head filters → No verdict yet (D8) | Protocol 93 | T2.5 |
@@ -913,7 +959,9 @@ These are executed in the implementation PR.
   stale "skipped / continue / apply `reviewer-failed`" text for `timeout` and
   `pending_timeout`: they are No verdict yet and stop as waiting.
 - [ ] `docs/workflow/development-workflow/integrations/local-ai-reviewer.md` —
-  D4 budget, exit 4, timeout table rows.
+  D4 budget, exit 4 (only when the watchdog stopped a still-running
+  reviewer; a command's own early exit 124/137 is a failure), timeout table
+  rows.
 - [ ] `docs/workflow/development-workflow/integrations/pr-agent.md` —
   `no_review` kept skip reported as No verdict yet.
 - [ ] `docs/workflow/development-workflow/integrations/ronda.md` — timeout row
@@ -977,10 +1025,12 @@ the behavior they cover.
    and confirm all pass.
 2. **Phase 2 — Outcome classes (D3, D4, D8, D9 label function).** Helpers,
    handler edits per the D8 binding table, Bugbot budget bounding and
-   re-trigger point, companion exit 4 for `local-ai-reviewer.sh` and
+   re-trigger point, the D4 watchdog contract in both `run_with_timeout`
+   copies, companion exit 4 for `local-ai-reviewer.sh` and
    `claude-code-action-reviewer.sh`, Rule 5 consumer updates, label-function
-   change; T2.1–T2.11; update the existing timeout rows listed in Testing
-   Strategy. Run the full `test-pr-review-loop.sh`, `test-local-ai-reviewer.sh`,
+   change; T2.1–T2.11 and T2.13; update the existing timeout rows listed in
+   Testing Strategy. Run the full `test-pr-review-loop.sh`,
+   `test-local-ai-reviewer.sh`, `test-coderabbit-cli-reviewer.sh`,
    `test-claude-code-action-reviewer.sh`, `test-haystack-reviewer.sh`, and
    `test-apply-readiness-labels.sh`.
 3. **Phase 3 — Label reconciliation and precedence (D9, D10).** Reconcile
@@ -1039,11 +1089,12 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V22.
+  V1–V23.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
   query keyed on `run_id` and `head_sha` (D11); "never shortens" cites the
   D7 comparison; "no duplicate request" cites the D11 adoption table and
-  V10.
+  V10; "stopped at the budget" cites the D4 watchdog flag and V23, not the
+  wrapper's exit status.
 - Complex workflow decision-gate matrix: Checked — plan mirror table above.
 - Matrix coherence preflight: Checked — six checks pass (see the preflight
   list above).
@@ -1057,6 +1108,6 @@ SHA).
 | Rule 1 | Not applicable | No new design depends on externally produced free text (see Factual claim evidence). |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D14 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22. |
-| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, and both companion exit codes (V12, V13, V17, V19, V20, V21). |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22, V23. |
+| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, and `run_with_timeout` expiry semantics (V12, V13, V17, V19, V20, V21, V23). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |

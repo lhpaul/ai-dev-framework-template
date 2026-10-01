@@ -158,10 +158,13 @@ increase across the two runs.
    `--platform local-ai-reviewer --max-wait 5` and a slow
    `LOCAL_AI_REVIEWER_COMMAND` (for example `sleep 30`).
 2. Run again with a command that exits 1 immediately.
+3. Run again with a command that exits 124 immediately (`exit 124`), the
+   status a stopped reviewer used to be recognized by.
 
 **Expected result**: run 1 returns `waiting_on_reviewer` /
-`reviewer-no-verdict-yet` and no `reviewer-failed` label; run 2 returns
-`escalate` and applies `reviewer-failed`.
+`reviewer-no-verdict-yet` and no `reviewer-failed` label; runs 2 and 3 each
+return `escalate` within a few seconds and apply `reviewer-failed` (an early
+exit with status 124 is a failure, not a stopped reviewer, D4).
 
 ### Last Step: Validate and clean up
 
