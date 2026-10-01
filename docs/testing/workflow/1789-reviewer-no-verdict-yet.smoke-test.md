@@ -134,7 +134,8 @@ run):
 
 - Step 2: `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`,
   `PENDING_REVIEWER=bugbot`, `PENDING_REVIEW_WAITED_SECONDS` present,
-  `NO_FAILURE_DETECTED=1`, `NO_VERDICT_REWAIT=available`,
+  `NO_FAILURE_DETECTED=1` (no `FAILED_PEER_PLATFORMS` key),
+  `NO_VERDICT_REWAIT=available`,
   `PLATFORM_1_REQUEST_REF` equal to the id of the `bugbot run` comment it
   posted, exit 4. The `reviewer-failed` label is removed (no platform carried
   failure evidence). The summary says no reviewer failure was detected.
