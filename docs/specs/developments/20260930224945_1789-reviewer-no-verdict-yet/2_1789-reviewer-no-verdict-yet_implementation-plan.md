@@ -401,7 +401,7 @@ Loop side:
     `auto-…` per-invocation id), the loop head is unknown, or the ledger is
     unavailable;
   - `rewait` when the ledger holds at least one entry with this `run_id`,
-    `head_sha` equal to the loop head, `result` `waiting_on_reviewer`, and a
+    an invocation head (below) equal to the loop head, `result` `waiting_on_reviewer`, and a
     reason in `REVIEWER_LOOP_NO_VERDICT_REASONS`
     (`reviewer-no-verdict-yet`, `codex-github-review-pending`,
     `codex-github-reaction-without-review`);
@@ -420,12 +420,37 @@ Loop side:
   unbounded series (`reviewer_loop_persist_failure_should_escalate` escalates
   only `needs_fixes`/`needs_rerun`, `:12047-12063`, so a waiting result is not
   escalated on a persistence failure today; V27).
-- Ledger entries carry `run_id`, `head_sha`, `result`, and `reason` today, and
-  `waiting_on_reviewer` runs already persist an entry (`_post_review_summary`
-  runs for every non-`skipped` result, `:14470-14486`), so the state needs no
-  new ledger field. Adoption (below) reads the D12 additive keys
-  `requested_at`, `requested_at_source`, and `request_ref` from that entry's
-  platform record.
+- Ledger entries carry `run_id`, `classification_head`, `result`, and
+  `reason` today, and `waiting_on_reviewer` runs already persist an entry
+  (`_post_review_summary` runs for every non-`skipped` result,
+  `:14470-14486`), so the state needs no new ledger field. Adoption (below)
+  reads the D12 additive keys `requested_at`, `requested_at_source`, and
+  `request_ref` from that entry's platform record.
+- **Invocation head.** An entry's invocation head is its
+  `classification_head`, which `reviewer_loop_history_build_entry` writes
+  from `loop_head_sha` (`:11266`, `:11296`), the head this invocation read
+  before dispatching any platform (`:13178-13181`). The entry's `head_sha` is
+  not used: it is the PR head read again at persistence time
+  (`reviewer_loop_history_current_head_sha`, `:11153-11175`, called at
+  `:11203`), so a push between a request and the ledger write records that
+  request's entry under the newer head (V39). Every ledger match in D11 and
+  D15 (`reviewer_loop_no_verdict_rewait_state`,
+  `reviewer_loop_rewait_recorded_request`,
+  `reviewer_loop_head_recorded_request_refs`) compares the invocation head,
+  case-insensitively, with the loop head, and skips an entry whose
+  `classification_head` is missing or fails
+  `reviewer_loop_head_is_unknown_or_invalid` (the small-findings counter
+  applies the same rule, `:10739-10745`). No field is added and `head_sha`
+  keeps its meaning, so its readers (the cap counts at `:11873` and
+  `:11877`, and the latest-summary head at `:8712`) are unchanged. When a
+  push lands while a waiting invocation runs (loop head `H0`, PR head `H1`
+  at persistence), the result stays `waiting_on_reviewer`: the existing
+  head-move guard (`:14345-14356`) converts only a clean aggregate to
+  `needs_fixes`/`head_moved_during_run`, and a fixer would have nothing to
+  fix. Its entry counts for `H0` only. A runner re-wait triggered by its
+  `NO_VERDICT_REWAIT=available` reads `H1` as the loop head, finds no entry
+  for `H1`, and runs as a fresh `H1` invocation: it adopts no `H0` request,
+  posts `H1`'s own requests, and leaves `H1`'s single re-wait unspent.
 - The re-wait never counts toward the cycle caps: the per-run and lifetime
   counts are taken only from `needs_fixes`/`needs_rerun` entries
   (`reviewer_loop_history_entries_count`, `:11797-11830`), and Protocol 91
@@ -435,7 +460,7 @@ Outstanding-request adoption in re-wait mode (no duplicate request while one
 is outstanding). The **outstanding request** is the one this loop recorded,
 not one inferred from timestamps: the platform's `platform_results[]` record
 in the newest ledger entry that made the state `rewait` (same `run_id`,
-`head_sha` equal to the current loop head, `waiting_on_reviewer`), when that
+invocation head equal to the current loop head, `waiting_on_reviewer`), when that
 record has `requested_at_source` `request`. Its `request_ref` and
 `requested_at` (D12) identify the request. One exception sits inside the
 Codex GitHub companion: its cleared-findings guard (Codex row below) compares
@@ -445,9 +470,9 @@ decides only whether to post, never a verdict. The head commit's committer time
 is never used: it does not establish when that revision became the PR head,
 so a request or run created after it can still belong to the previous head.
 The binding is sound because the recording invocation read the loop head
-before posting the request, and its entry's `head_sha` equals the current
-head; a request posted then was posted while the current head was already
-the PR head. New `reviewer_loop_rewait_recorded_request <history_payload> <head_sha> <platform>`
+before posting the request, and its entry's invocation head (not its
+persistence-time `head_sha`) equals the current head; a request posted then
+was posted while the current head was already the PR head. New `reviewer_loop_rewait_recorded_request <history_payload> <head_sha> <platform>`
 prints two key lines, `RECORDED_REQUEST_REF=<ref>` and
 `RECORDED_REQUESTED_AT=<time>` (either value may be empty), read with the
 loop's `kv_value` helper, or prints nothing. Key lines rather than one
@@ -591,7 +616,8 @@ through one of these bindings:
 
 A **request recorded for `H`** is a request this invocation posted after
 reading `H` as the loop head, or one whose id a ledger platform record holds
-under `head_sha` `H` with `requested_at_source` `request` (D12). New
+in an entry whose invocation head (D11) is `H`, with `requested_at_source`
+`request` (D12). New
 `reviewer_loop_head_recorded_request_refs <history_payload> <head_sha> <platform>`
 prints, one per line, every non-empty `request_ref` from such records in any
 ledger entry for that head and platform, whatever its `run_id` or result, and
@@ -792,6 +818,7 @@ cite is identical at `13bf4c7f`.
 | V36 | Codex cleared-findings re-trigger drops a newer outstanding trigger (reviewer-loop finding on revision `81977c6b`, whose script files equal `13bf4c7f`) | `git diff --stat 13bf4c7f HEAD -- scripts` (empty); `grep -n "FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS\|MAX_RETRIGGERS" scripts/development-workflow/codex-github-reviewer.sh`; read `:1863-1867`, `:1944-1951`, `:2017-2079`; then run the companion with the `codex_resolved_changes_requested` mock `gh` from `test-pr-review-loop.sh` (head `ffff…`, resolved thread, cleared review submitted `00:00:01Z`) changed only so `issues/<n>/comments` returns one runner trigger for that head created `00:00:05Z`, with `--poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0`, run 2026-10-01 | The flag is set only at `:1949` and read only at `:2070`; that branch has no `MAX_RETRIGGERS` term (the variable's reads are `:2422`, `:2425`, `:2431`, `:2464`, `:2915` and option parsing). The cleared review is the newest current-head review after the occupancy boundary (`:1863-1867`), with no trigger-time bound; the guard picks the newest current-head trigger by `created_at` (`:2022`). The run printed "existing trigger … already produced only cleared Codex findings — posting a fresh trigger", posted once (posts log 1 line), and exited 4, so the `00:00:05Z` trigger posted after the review was replaced. The test file's `codex_addressed_changes_requested` case has its trigger (`00:00:00Z`) before its cleared review (`00:00:01Z`), so it keeps its expected single post under D11; the `codex_provisional_changes_requested` and `codex_resolved_changes_requested` cases return no trigger comment and also keep theirs |
 | V37 | Durable captures of the 30 V30 occurrences and where a 40-hex SHA appears in them (reviewer-loop finding on revision `a3ca7d3d`) | For each V30 comment id, `gh api repos/lhpaul/ai-dev-framework-template/issues/comments/<id>` (fields `user.login`, `created_at`, `updated_at`, `issue_url`, `body`) and `gh pr view <n> --json headRefOid`. Then, per body: compare lines 1–5 with the shared shape; list every `\b[0-9a-f]{40}\b` match before and after `<!-- pr-agent-review-state:v1`; read the block's top-level `head_sha` and `run_id`; and check which of the block's keys hold the head. Run 2026-10-01T09:52Z | All 30 resolve, with author `github-actions[bot]`. The embedded captures are the V30 occurrence captures under Factual claim evidence. Lines 1–4 are identical in all 30. Line 5 is the marker in 25 bodies, and in each it names the PR's head. In the other 5 it is the observations line, and those bodies contain no `Review updated until commit` text. Before the review-state block, no body has any 40-hex string other than its marker SHA. The block ends 23 bodies (22 of variant 1, plus #1866) and holds the remaining SHAs: its `head_sha`, a `run_id` that is the commit URL of that same SHA, and per-finding `last_seen_head_sha` and `resolved_head_sha` values. The block's `head_sha` is the head in 20 bodies; 19 of those also carry the marker for the head, and the other is #1866, a first summary bound to a run on its head (V32). In #1827, #1818, and #1802, the block names an earlier revision and no block key holds the head, while the marker names the head. The block's SHAs can therefore name a revision other than the visible review's (and a head that returns to an earlier revision would find it there), so the design relies only on the marker line, the sampled stable part, and D15 rule (a) never reads the block. The #1872 comment was edited after the V30 run (marker `44973096` then, `a3ca7d3d` now) |
 | V38 | Callers of `_pr_agent_latest_comment_field` and its `strict_sha` matcher (Rule 5; reviewer-loop finding on revision `0cc01f35`, whose script and workflow files equal `13bf4c7f`: `git diff --stat 13bf4c7f HEAD -- scripts .github` is empty) | `git grep -n "_pr_agent_latest_comment" -- scripts .github .claude .cursor .codex .agents docs/workflow`, run 2026-10-01 | Defined only in `pr-review-loop.sh` (`:5438`, wrappers `:5461`, `:5465`); `strict_sha` is `.body \| contains($sha)` at `:5449`. Four call sites, all in `run_pr_agent_review`: Phase 1 `:5706`, `:5715` (`strict_sha`) and Phase 2 `:5794`, `:5825` (`recent_or_sha`). No test, workflow, or guidance file calls it |
+| V39 | Ledger entry head fields and the head-move guard's scope (reviewer-loop finding on revision `cb1411af`, whose script files equal `13bf4c7f`: `git diff --stat 13bf4c7f HEAD -- scripts` is empty) | `git grep -n 'reviewer_loop_history_current_head_sha\|classification_head' -- scripts`; read `pr-review-loop.sh:11153-11175`, `:11186-11300`, `:13178-13181`, `:14340-14356`; `git grep -n '\.head_sha' -- scripts/development-workflow/pr-review-loop.sh`, run 2026-10-01 | `reviewer_loop_history_build_entry` sets entry `head_sha` from `reviewer_loop_history_current_head_sha` (`:11203`), which reads `gh pr view … headRefOid` at persistence time (`:11156`; a failed read yields an `unknown-…` placeholder, `:11171`); its only non-test caller is `:11203`. The same entry's `classification_head` is `loop_head_sha` (`--arg classificationHead "${loop_head_sha:-}"`, `:11266`; key at `:11296`), read once before dispatch (`:13178-13181`). Non-test readers of `classification_head`: only the small-findings counter (`:10739-10745`, skipping unknown or invalid heads via `reviewer_loop_head_is_unknown_or_invalid`, `:10681`). In-loop readers of entry `head_sha`: `:8712` (latest summary head) and the cap counts (`:11873`, `:11877`); the other `.head_sha` hits read platform verdict records or API objects. The head-move guard (`:14345-14356`) runs only when `aggregate_result` is `clean`, so a waiting result whose PR head moved during the run keeps its result and is persisted with the moved head as `head_sha` — the finding is valid |
 
 ### Factual claim evidence
 
@@ -889,6 +916,14 @@ at `44973096`, scripts equal to `13bf4c7f`):
 | `claude-code-action-reviewer.sh` fresh run selection (`:336-353`) and dispatch response (`:277-297`) | the loop handler, its only invoker (V17); the selection tests in `test-claude-code-action-reviewer.sh` that copy the list filter | The run is the dispatch response's `workflow_run_id` (D15 Claude dispatch rule) for standalone and loop use alike; a response without it exits 3, which the loop's existing non-0/1/2/4 arm maps to `escalate`/`unavailable`; the copied-filter tests are replaced (Testing Strategy) |
 | `reviewer_loop_head_recorded_request_refs` (new) | Greptile and PR-Agent fresh-mode reuse (D15) | Only consumer; an unavailable ledger yields an empty list, so the handler posts a new request |
 
+Ledger invocation head (D11, V39): the re-wait state, the re-wait recorded
+request, and `reviewer_loop_head_recorded_request_refs` are new readers of
+the existing entry key `classification_head`; its one existing reader, the
+small-findings counter (`:10739-10745`), is unchanged because the writer is
+unchanged. Entry `head_sha` keeps its writer and meaning, so its readers
+(`:8712`, `:11873`, `:11877`) and `reviewer_loop_history_current_head_sha`'s
+only caller (`:11203`) are unchanged.
+
 **Rule 6 — scoped conditional obligations.**
 
 | Obligation | Governed scope | Discharge point |
@@ -901,7 +936,7 @@ at `44973096`, scripts equal to `13bf4c7f`):
 | PR-Agent rule (b) accepts an unedited summary (D15) | Phase 2 polls of `run_pr_agent_review` whose latest summary comment carries no `H` marker, only when all four rule (b) conditions hold | `_pr_agent_first_summary_bound_to_head`; tests T2.18, T2.22 |
 | Claude run is bound by the dispatch response (D15) | every fresh (non-adopting) `claude-code-action-reviewer.sh` dispatch; a response without `workflow_run_id` exits 3 | the companion's Phase 1/2; tests T2.19, T2.23; smoke Step 8 (live response on this host, V31) |
 | Bugbot #1390 re-trigger fires (D3) | fresh (non-re-wait) Bugbot runs whose latest current-head check run is not completed at the re-trigger point | `run_bugbot_review`; tests T2.11–T2.12 |
-| Runner re-waits (D11) | Step 7 results with `NO_VERDICT_REWAIT=available`, once per head per `PR_REVIEW_LOOP_RUN_ID` | Protocol 91 Step 7 table; tests T4.1–T4.2 and smoke Step 6 |
+| Runner re-waits (D11) | Step 7 results with `NO_VERDICT_REWAIT=available`, once per invocation head (D11) per `PR_REVIEW_LOOP_RUN_ID`; a waiting entry persisted after a push counts only for the head its invocation read | Protocol 91 Step 7 table; tests T4.1–T4.2, T4.10 and smoke Step 6 |
 | A failure-type completion signal is Reviewer failed (D8) | the Devin, CodeRabbit, and PR-Agent handlers and the loop's Haystack exit-2 arm, for a signal on `H` with no verdict bound to `H`, under each row's conditions in the D8 failure-type completion-signal table (Devin: the wait ended on a check or status, including a budget end inside the grace; PR-Agent: the newest run on `H` is failure-type, immediately when this invocation has no outstanding request and at budget end otherwise) | each handler's Phase 3 or poll step and the Haystack exit-2 arm; tests T2.24–T2.27 and T4.9 |
 | Label required (D9) | each invocation that reaches the post-loop path; per-platform failure evidence or a loop-level escalation in that invocation | `reviewer_loop_reconcile_reviewer_failed_label`; tests T3.1–T3.6 |
 
@@ -1064,7 +1099,8 @@ harness can call them.
 - [ ] `reviewer_loop_precedence_select` (D10) used by the compare-mode
   aggregate restore; update the `--compare` help text.
 - [ ] `reviewer_loop_no_verdict_rewait_state`, `reviewer_loop_rewait_mode`,
-  `reviewer_loop_rewait_recorded_request` and the per-handler adoption of the
+  `reviewer_loop_rewait_recorded_request` (both matching entries by their
+  invocation head, D11) and the per-handler adoption of the
   recorded request (D11 adoption table), the `NO_VERDICT_REWAIT` /
   `PENDING_REVIEW_*` / `NO_FAILURE_DETECTED` keys, and `--max-retriggers 0`
   for Codex in re-wait mode (D5, D11).
@@ -1185,7 +1221,7 @@ resolver is a single function.
 | T2.7 | `local-ai-reviewer.sh` with a command that sleeps past `--timeout`: exit 4 and the D4 keys; commands exiting 1, 124, and 137 immediately with a 30 s budget, and unreadable output, keep `escalate` (never exit 4); `coderabbit-cli-reviewer.sh` with a CLI that exits 124 immediately reports `no_output`, not the `timeout` kept skip, and one that sleeps past the budget reports the kept skip (extend `test-coderabbit-cli-reviewer.sh`) | AC-1, AC-2 |
 | T2.13 | `run_with_timeout` unit (both companions): early `exit 124` and `exit 137` → status forwarded and `RUN_WITH_TIMEOUT_EXPIRED=0`; command sleeping past the budget → `RUN_WITH_TIMEOUT_EXPIRED=1`; command finishing inside the final poll second → its own status and flag `0`; for the CodeRabbit CLI copy, a CLI that leaves a background descendant and one that ignores `TERM` are both gone and the wrapper returns within the budget plus the 2 s grace (the local reviewer's existing `fallback_timeout_kills_*` and `fallback_timeout_ignores_term_*` cases, mirrored) | AC-1, AC-2 |
 | T2.14 | **Regression — a previous-head request answers after the new-head invocation begins** (Greptile, D15): a trigger `T0` posted for head `H0` sits inside the `max_wait` reuse window and no ledger record holds it for `H1`; the invocation on `H1` posts `T1` instead of reusing `T0`; the mock then adds the bot thumbs-up to `T0` and a Greptile review comment with `original_commit_id` `H0` (and `commit_id` moved to `H1`) created after `T1`. With no thumbs-up on `T1` by the budget → No verdict yet `no_acknowledgement`, never clean or `needs_fixes`, and the printed `REVIEW_REQUEST_REF` is `T1`'s id. Variant: `T1` is thumbs-upped too → `clean`, the `H0` comment not counted; with an `H1` comment as well → `needs_fixes` listing only the `H1` finding | AC-10 |
-| T2.15 | Greptile fresh-mode reuse (D15): an age-window trigger whose id the helper lists for `H1` (recorded by another run) is reused with no post; the same trigger recorded only for `H0` is not reused; an unavailable ledger posts a new trigger; no `loop_head_sha` and an empty `.head.sha` → `escalate`/`head-sha-unavailable` with no post | AC-10, AC-11 |
+| T2.15 | Greptile fresh-mode reuse (D15): an age-window trigger whose id the helper lists for `H1` (recorded by another run) is reused with no post; the same trigger recorded only for `H0` is not reused; a trigger recorded in an entry whose `classification_head` is `H0` and `head_sha` is `H1` (a push before persistence, D11 invocation head) is not listed for `H1` and not reused; an unavailable ledger posts a new trigger; no `loop_head_sha` and an empty `.head.sha` → `escalate`/`head-sha-unavailable` with no post | AC-10, AC-11 |
 | T2.16 | Review-comment drift (D15): Bugbot, Devin, and CodeRabbit collection paths and the Greptile, Devin, and CodeRabbit pre-trigger findings each ignore a bot comment with `commit_id` `H1` but `original_commit_id` `H0` created after the time filter, and count one with `original_commit_id` `H1`; `codex_inline_review_comment_count_since` returns 0 for the drifted comment, so the companion does not return `NEEDS_REVISION` | AC-10 |
 | T2.17 | Completion signals (D15): a Devin summary review with `commit_id` `H0` submitted after the committer time does not end the wait (expiry → D8 Devin row); a CodeRabbit review with `commit_id` `H0` does not end the wait; a walkthrough comment edited after the committer time with no `H1` review and no success status keeps polling and expires as No verdict yet `review_not_submitted`; a CodeRabbit success status on `H1` ends the wait | AC-10 |
 | T2.18 | PR-Agent (D15): a summary edited after the committer time whose body names `H0` is not accepted (expiry → `no_review` kept skip); one naming `H1` is accepted; an unedited summary created inside a completed `PR-Agent review` check run window on `H1`, with no active check run on `H1`, no overlapping branch run on another head, and no earlier `/review`, is accepted (the V32 shape); each single failed rule (b) condition — edited, outside the window, a window run on `H1` that concluded `failure` or `cancelled` instead of `success`, an active `H1` check run, an overlapping branch run on `H0`, an earlier `/review`, or a failing check-run or run-list read — leaves it unaccepted; **regression — block-only head SHA** (rule (a) reads only the marker line): (i) a Phase 2 summary whose marker names `H0` while its review-state block's `head_sha` or a per-finding `last_seen_head_sha` is `H1` (the current head) is not accepted, and expiry gives the `no_review` kept skip, never a verdict; (ii) Phase 1 with the same body returns no verdict; (iii) an unedited marker-free first summary whose block holds `H1` is accepted only through rule (b), and with a rule (b) condition false it is not accepted; a `/review` trigger inside the reuse window that the helper does not list for `H1` does not suppress the new request | AC-10 |
@@ -1220,6 +1256,7 @@ resolver is a single function.
 | T4.7 | Loop-side Claude handler with a mock companion: a fresh run that exits 4 after printing `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` yields `PLATFORM_<n>_REQUEST_REF` and a ledger `request_ref`; the following re-wait invocation (same run id and head) passes `--adopt-run-id`/`--adopt-requested-at` with those values, and its own ledger record carries the same `request_ref` and `requested_at`; with only a recorded `requested_at` it passes neither | AC-11, AC-12 |
 | T4.8 | **Regression — an older cleared Codex review plus a newer unanswered trigger** (D11 Codex row, V36): `codex-github-reviewer.sh` with `--max-retriggers 0`, a resolved current-head thread, a cleared review submitted at `t`, and a runner trigger for the head created after `t` posts nothing, logs the D11 `INFO` line, and polls with that trigger's time; the same mock with the trigger created at or before `t` posts exactly once, as today | AC-11 |
 | T4.9 | PR-Agent failed run in re-wait mode (D8 failure-type completion signals, path (2) through D11 adoption; split from T2.26 because adoption lands in Phase 4b): with an adopted recorded request (no post) and a run on `H` that already completed `timed_out` → no poll returns before the budget, `escalate`/`pr_agent_run_failed` at the budget; with an adopted recorded request while a run on `H` is active at the pending check and then completes `cancelled` → no poll returns before the budget, `pr_agent_run_failed` at the budget | AC-2, AC-8, AC-11 |
+| T4.10 | **Regression — a push between request posting and ledger persistence** (D11 invocation head, V39): a fresh invocation reads loop head `H0`, Greptile posts trigger `R0` and no verdict arrives, and the mock moves the PR head to `H1` before persistence, so the waiting entry has `classification_head` `H0` and `head_sha` `H1` and the result stays `waiting_on_reviewer` (not `head_moved_during_run`). The next invocation with the same run id on `H1`: `reviewer_loop_no_verdict_rewait_state` → `fresh`, and if it waits again it prints `NO_VERDICT_REWAIT=available` (`H1`'s re-wait unspent); `reviewer_loop_rewait_recorded_request` for `H1` prints nothing, so Greptile does not adopt `R0` and posts a new trigger, and a bot thumbs-up on `R0` neither ends `H1`'s wait nor gives a clean verdict. An entry whose `classification_head` is missing never matches. The fresh-mode half (`reviewer_loop_head_recorded_request_refs`) is T2.15 | AC-10, AC-11 |
 | T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start`; `REQUEST_REF` printed and recorded only when the handler printed one | AC-12 |
 | T5.2 | Summary "Reviewer timing" section lines and the `reviewer-no-verdict-yet` result line; reused marked reused | AC-12 |
 | T5.3 | Ledger `platform_results[]` additive fields present; existing readers (`reviewer_loop_platform_clean_for_head`, #1692) still pass | AC-12 |
@@ -1391,7 +1428,9 @@ no reviewer-loop result or wait-budget text affected by this change.
    on that head with no other revision's run overlapping (PR-Agent rule (b)),
    or by the run id of this invocation's own dispatch (Claude), and reuses a
    trigger in fresh mode only when it is recorded for that head; D11 keys
-   re-wait state on `loop_head_sha` and `run_id`, and adopts only the request
+   re-wait state on `loop_head_sha` and `run_id`, matched against each ledger
+   entry's invocation head (`classification_head`), never its
+   persistence-time `head_sha` (V39), and adopts only the request
    recorded for that head and run. No binding rests on comparing a comment,
    review, or run time with a request time or with the head commit's
    committer time, except the Codex cleared-findings guard (D11 Codex row),
@@ -1631,7 +1670,7 @@ the behavior they cover.
    - **4b — Re-wait and timing.** Re-wait state, re-wait mode in handlers
      and companions (including the D11 Codex cleared-findings guard), waiting
      output keys, timing capture, summary section, ledger fields; T2.12,
-     T4.1–T4.9, T5.1–T5.4.
+     T4.1–T4.10, T5.1–T5.4.
 5. **Phase 5 — Current-revision binding (rest of D15).** After Phase 4,
    because fresh-mode reuse reads the D12 `request_ref` ledger key:
    `reviewer_loop_head_recorded_request_refs`, every remaining row of the
@@ -1697,9 +1736,10 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V38.
+  V1–V39.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
-  query keyed on `run_id` and `head_sha` and the persist-success gate on
+  query keyed on `run_id` and the entry's invocation head
+  (`classification_head`, V39; regression T4.10) and the persist-success gate on
   `available` (D11); "never shortens" cites the
   D7 comparison; "no duplicate request" cites the D11 adoption table, V10,
   and, for Codex's cleared-findings path, V36 and regression test T4.8, and
@@ -1722,7 +1762,11 @@ SHA).
   comparison; re-audited at `0cc01f35` (internal review cycle 2) for D15
   rule (a)'s narrowing to the marker line: it only removes acceptances, so
   no state, outcome, or precedence row changes and the six checks still
-  pass.
+  pass; re-audited at `cb1411af` (reviewer-loop cycle 3) for D11's
+  invocation head: it changes only which ledger entries match a head (an
+  entry persisted after a push no longer matches the newer head), so check 5
+  is tightened while the waiting result, its precedence, and the D11 runner
+  rows stay as they were; all checks still pass.
 - Parser/API/concurrency checklist: Checked — parser-risk addendum for the
   config reader; concurrency not applicable with rationale.
 - Reversal: Checked — Rollback states the one-unit revert, the reverted
@@ -1736,6 +1780,6 @@ SHA).
 | Rule 1 | Satisfied | D15's PR-Agent rule (a) depends only on the marker line (`Review updated until commit …/commit/<H>)`), the sampled stable part, naming the head SHA; the review-state block is excluded because its SHAs can lag the marker (V37); V30 records 30 located occurrences, two variants, and the adequacy rationale, and D15 states the tolerant path (see Factual claim evidence). The comment locators point to editable, deletable sources, so the V30 occurrence captures under Factual claim evidence embed every occurrence's redacted text (V37). Each capture keeps the comment id, `created_at`, `updated_at`, verbatim line 5 (the marker, or its absence), and the review-state block's `head_sha`, and elides the rest as `…`. The durability requirement therefore holds even if a locator stops resolving. Rule (b) reads no body text; its run binding is checked against the five marker-free variant occurrences in V32. |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D15 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. The D15 site counts (four Bugbot review-comment filters, four `codex_inline_review_comment_count_since` callers) carry V28's commands and their enumerated line numbers. The D8 failure-type completion-signal table covers all twelve platforms from V33's recorded search (loop hits by handler and companion counts). |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29, V31–V36, V38; which handlers read a failure-type completion signal, and which read none, is V33; the V32 binding runs' `success` conclusions are V34; the newest-run ordering on one head, the absence of a completed-run time filter in every handler that reads check runs or statuses, and PR-Agent's no-post path are V35; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the dispatch response's `workflow_run_id` and the dispatched run's `head_sha` are V31 (the response shape from the REST reference, confirmed live by smoke Step 8); the PR-Agent run-window, branch-run, and `issue_comment` run fields are V32; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15; the Codex cleared-findings flag's single set and read sites, the absence of a `MAX_RETRIGGERS` term in that guard, and the reproduced duplicate post are V36; where a 40-hex SHA appears in the sampled PR-Agent summaries (only the marker and the review-state block) is V37; the rollback readers' field-by-name parsing and schema-only validation are cited by line in Rollback. |
-| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, the new `_pr_agent_first_summary_bound_to_head`, `codex_inline_review_comment_count_since`, the Claude companion review count and its fresh run selection and dispatch response, the new head-recorded request helper), the new failure reasons and Haystack companion key from the D8 failure-type completion signals, and the Codex cleared-findings flag and `CLEARED_FINDINGS_REVIEW_TIME` (V12, V13, V17, V19, V20, V21, V23, V24, V28, V31, V33, V36, V38). |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29, V31–V36, V38, V39; which handlers read a failure-type completion signal, and which read none, is V33; the V32 binding runs' `success` conclusions are V34; the newest-run ordering on one head, the absence of a completed-run time filter in every handler that reads check runs or statuses, and PR-Agent's no-post path are V35; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the dispatch response's `workflow_run_id` and the dispatched run's `head_sha` are V31 (the response shape from the REST reference, confirmed live by smoke Step 8); the PR-Agent run-window, branch-run, and `issue_comment` run fields are V32; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15; the Codex cleared-findings flag's single set and read sites, the absence of a `MAX_RETRIGGERS` term in that guard, and the reproduced duplicate post are V36; where a 40-hex SHA appears in the sampled PR-Agent summaries (only the marker and the review-state block) is V37; the rollback readers' field-by-name parsing and schema-only validation are cited by line in Rollback. |
+| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, the new `_pr_agent_first_summary_bound_to_head`, `codex_inline_review_comment_count_since`, the Claude companion review count and its fresh run selection and dispatch response, the new head-recorded request helper), the new failure reasons and Haystack companion key from the D8 failure-type completion signals, and the Codex cleared-findings flag and `CLEARED_FINDINGS_REVIEW_TIME` (V12, V13, V17, V19, V20, V21, V23, V24, V28, V31, V33, V36, V38, V39), and the ledger invocation head (`classification_head` readers and the unchanged `head_sha` readers). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
