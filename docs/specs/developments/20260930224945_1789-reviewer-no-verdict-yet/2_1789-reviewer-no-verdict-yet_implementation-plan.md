@@ -169,10 +169,11 @@ already skips a new trigger while a current-head trigger is pending
 (`codex-github-reviewer.sh` "trigger comment already posted for commit …
 skipping duplicate post", V10), and in re-wait mode (D11) the loop passes
 `--max-retriggers 0`, which also disables the async-arrival trigger (the
-companion only posts it when `MAX_RETRIGGERS > 0`). The cleared-findings path
-(`codex-github-review-pending` after every current-head finding was resolved)
-still posts a fresh trigger, because the earlier request was answered and is
-no longer outstanding.
+companion only posts it when `MAX_RETRIGGERS > 0`). The cleared-findings
+path (`codex-github-review-pending` after every current-head finding was
+resolved) posts a fresh trigger only when the request that review answered
+is the newest current-head trigger; a newer, still-unanswered trigger is kept
+(D11 Codex row, V36).
 
 ### D6 — Where configured per-platform budgets live (BR 8, BR 10, AC-5)
 
@@ -455,7 +456,7 @@ behaves as in a fresh run and logs
 | Platform | Re-wait behavior with a recorded request |
 | --- | --- |
 | `bugbot` | Do not post; the recorded request is the outstanding one whether or not its `request_ref` is empty or the comment still exists, because Bugbot's verdict is read from current-head check runs, not from the trigger comment. The #1390 re-trigger is skipped. Outside re-wait mode the handler posts as today; no timestamp-based adoption |
-| `codex-github` | `--max-retriggers 0` (D5); no recorded request needed, the companion's own duplicate guard applies (V10) |
+| `codex-github` | `--max-retriggers 0` (D5); no recorded request needed, the companion's own duplicate guard applies (V10). That guard must also hold on the cleared-findings path. Today a current-head review whose findings were all cleared sets `FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS` (`codex-github-reviewer.sh:1944-1950`), and the guard then drops the newest current-head trigger (`:2069-2075`) whatever its age and whatever `MAX_RETRIGGERS` is. So the fresh invocation's replacement trigger, posted after that review and still unanswered, is posted again on re-wait (V36). Change: at `:1949` the companion also records the cleared review's `submitted_at` (`EXISTING_BOT_RESPONSE_TIME`) as `CLEARED_FINDINGS_REVIEW_TIME`. At `:2070` it drops the found trigger only when that trigger's `created_at` is not later than `CLEARED_FINDINGS_REVIEW_TIME` (the review answered it; same-second counts as answered, as today). A strictly later trigger is the outstanding replacement: the companion logs `INFO: trigger for commit <sha> posted after the cleared Codex review is still outstanding — not posting a duplicate`, keeps `TRIGGER_TIME` and `TRIGGER_COMMENT_ID`, and polls it. Both values are GitHub ISO-8601 UTC strings, so a string comparison orders them. The rule does not depend on mode: the companion has no re-wait input, and a trigger newer than the cleared review is unanswered in every mode, so fresh runs gain the same protection. The #1526 refusal recovery (`:2044-2068`) runs first and is unchanged |
 | `greptile` | When `request_ref` is non-empty and its reactions can be read, reuse that trigger comment regardless of the `max_wait` reuse window; a bot thumbs-up on it is that request's answer. When `request_ref` is empty or the reactions read fails (for example, the comment was deleted), there is no observable outstanding request: the handler prints `WARN: recorded greptile request <ref> on <head> is not readable; requesting a review` and posts as in a fresh run. Outside re-wait mode, trigger reuse follows D15 |
 | `pr-agent` | Treat the recorded request as already pending (the handler's pending check before posting, `_pr_agent_trigger_already_pending` at `:5778`, returns pending) instead of the reuse-window search; an empty `request_ref` still adopts, because the pending check needs no comment id. Outside re-wait mode, trigger reuse follows D15 |
 | `coderabbit` | No conditional `@coderabbitai review` re-trigger (a recorded request exists) |
@@ -779,6 +780,7 @@ cite is identical at `13bf4c7f`.
 | V33 | Failure-type completion signals per handler (reviewer-loop finding on revision `b1880dcf`, whose script and workflow files equal `13bf4c7f`) | `grep -nE 'check-runs\|/statuses\|actions/runs\|\.conclusion\|conclusion"' scripts/development-workflow/pr-review-loop.sh`, keeping hits inside the handler ranges `:1957-8166` (V28's `grep -n '^run_[a-z_]*_review()'`); `grep -cE 'check-runs\|/statuses\|actions/runs\|conclusion'` over `codex-github-reviewer.sh`, `codex-github-evidence-lib.sh`, `local-ai-reviewer.sh`, `coderabbit-cli-reviewer.sh`, `claude-code-action-reviewer.sh`, and `haystack-reviewer.sh`; then read every hit and the outcome arms each one feeds, run 2026-10-01T06:00Z | Loop hits, by handler: Ronda `:2833` (comment), `:2920`, `:2950`, `:2960`; Bugbot `:3243` (run count), `:3275-3302` (a completed `success` run makes disabled comments stale), `:3632` (trigger decision), `:3730`, `:3741`, `:3788` (verdict), `:4036`; Devin `:5100`, `:5125`; PR-Agent `:5470` (active states only); CodeRabbit `:6490` (`coderabbit_success_status_count`, `success` only). No hit in the Greptile, Codex, Claude, Copilot, Haystack, CodeRabbit CLI, or local-ai handler ranges. Companions: 0 in both Codex files, `local-ai-reviewer.sh`, and `coderabbit-cli-reviewer.sh`; 9 in `claude-code-action-reviewer.sh` (run `conclusion`; non-`success` exits 2 at `:405-408`); 14 in `haystack-reviewer.sh` (check-run fallback `:309-465`). The outcome of each failure-type value per platform is the D8 failure-type completion-signal table |
 | V34 | Conclusion of the five V32 binding runs (D15 rule (b) condition 2) | `gh api repos/lhpaul/ai-dev-framework-template/check-runs/<id> --jq '[.id,.name,.status,.conclusion,.head_sha[0:8]] \| @tsv'` for `110072627980`, `110072606697`, `110041365380`, `110037812568`, `109448862127`, run 2026-10-01T06:02Z | All five are `PR-Agent review`, `completed`, `success`, on `f8deabb6`, `f8deabb6`, `6dfeee7c`, `c019ce64`, and `36e2ae49` |
 | V35 | Newest-run ordering on one head and the PR-Agent no-post path (reviewer-loop finding on revision `b92b4ee9`, whose script files equal `13bf4c7f`) | `git diff --stat 13bf4c7f HEAD -- scripts` (empty); read `scripts/development-workflow/workflow-lib.sh:588-636`; `grep -n 'dedupe_status_check_rollup' scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/haystack-reviewer.sh`; read `pr-review-loop.sh:5469-5523`; run 2026-10-01T06:43Z | `dedupe_status_check_rollup` groups by check name or status context and keeps, per group, the entry with the latest timestamp (first non-empty of `started_at`, `completed_at`, `created_at`, `updated_at`), then the highest `id`; an active entry with no timestamp sorts as newest. The Ronda (`:2922`), Bugbot (`:3250`, `:3287`, `:3639`, `:3740`), Devin (`:5105`, `:5128-5130`), PR-Agent active-count (`:5471`), CodeRabbit (`:6494`), and Haystack companion (`haystack-reviewer.sh:257`) reads all use it, with no time filter that drops a completed entry. `_pr_agent_trigger_already_pending` returns pending without posting and prints `PR_AGENT_TRIGGER_SKIPPED active_review_in_progress` when a run on `H` is active (`:5504-5513`), and prints `recent_review_trigger` when it reuses a trigger (`:5515-5519`) |
+| V36 | Codex cleared-findings re-trigger drops a newer outstanding trigger (reviewer-loop finding on revision `81977c6b`, whose script files equal `13bf4c7f`) | `git diff --stat 13bf4c7f HEAD -- scripts` (empty); `grep -n "FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS\|MAX_RETRIGGERS" scripts/development-workflow/codex-github-reviewer.sh`; read `:1863-1867`, `:1944-1951`, `:2017-2079`; then run the companion with the `codex_resolved_changes_requested` mock `gh` from `test-pr-review-loop.sh` (head `ffff…`, resolved thread, cleared review submitted `00:00:01Z`) changed only so `issues/<n>/comments` returns one runner trigger for that head created `00:00:05Z`, with `--poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0`, run 2026-10-01 | The flag is set only at `:1949` and read only at `:2070`; that branch has no `MAX_RETRIGGERS` term (the variable's reads are `:2422`, `:2425`, `:2431`, `:2464`, `:2915` and option parsing). The cleared review is the newest current-head review after the occupancy boundary (`:1863-1867`), with no trigger-time bound; the guard picks the newest current-head trigger by `created_at` (`:2022`). The run printed "existing trigger … already produced only cleared Codex findings — posting a fresh trigger", posted once (posts log 1 line), and exited 4, so the `00:00:05Z` trigger posted after the review was replaced. The test file's `codex_addressed_changes_requested` case has its trigger (`00:00:00Z`) before its cleared review (`00:00:01Z`), so it keeps its expected single post under D11; the `codex_provisional_changes_requested` and `codex_resolved_changes_requested` cases return no trigger comment and also keep theirs |
 
 ### Factual claim evidence
 
@@ -846,6 +848,12 @@ normalizer maps `escalate` to `unavailable` (V20). No consumer matches these
 names, because they are new. The Haystack companion key
 `HAYSTACK_BUDGET_EXPIRED` has one reader, the loop's Haystack exit-2 arm.
 
+`FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS` and the new
+`CLEARED_FINDINGS_REVIEW_TIME` (D11 Codex row): both are set at `:1949` and
+read only by the idempotency guard at `:2070` (V36). The guard's outcome
+feeds the existing post step (`:2083`) and polling, which already handle a
+reused trigger through the `:2077` path, so no other consumer changes.
+
 `run_with_timeout` expiry semantics (D4 watchdog contract; V23): in
 `local-ai-reviewer.sh`, the ordinary review call (`:1314`) reads
 `RUN_WITH_TIMEOUT_EXPIRED` instead of the status for the exit-4 decision, and
@@ -877,6 +885,7 @@ at `44973096`, scripts equal to `13bf4c7f`):
 | Documentation-branch shortening applies (D7) | platforms in D1, source `default`, branches `spec/*` and `implementation-plan/*` | `reviewer_wait_budget_resolve`; tests T1.4–T1.6 |
 | Large-diff lengthening applies (D7) | non-documentation branches, no `--max-wait`, changed files above threshold, value below `LARGE_DIFF_MAX_WAIT` | `reviewer_wait_budget_resolve`; test T1.7 |
 | Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the request-posting handlers with a changed row in the D11 adoption table (Bugbot, Codex GitHub, Greptile, PR-Agent, CodeRabbit, Claude Code Action); only when `reviewer_loop_rewait_recorded_request` returns a recorded request for that platform (Codex excepted), and further only under that platform's own row conditions in the D11 adoption table (Greptile: a non-empty, readable `request_ref`; Claude: a `request_ref` whose run passes the checks) | each handler's request step; tests T2.12, T4.3–T4.7 |
+| Codex cleared-findings re-trigger posts (D11 Codex row) | `codex-github-reviewer.sh` invocations in any mode whose newest current-head review has only cleared findings, only when the newest current-head runner trigger was created at or before that review | the idempotency guard at `:2070`; test T4.8 and the existing `codex_*_changes_requested` cases (V36) |
 | A trigger is reused only when recorded for the current head (D15) | fresh-mode (state `fresh` or `untracked`) Greptile and PR-Agent invocations that find a trigger inside their reuse window; re-wait mode is governed by the D11 row above | `run_greptile_review` reuse step and `_pr_agent_recent_trigger_comment_created_at`; tests T2.14, T2.15, T2.18 |
 | PR-Agent rule (b) accepts an unedited summary (D15) | Phase 2 polls of `run_pr_agent_review` whose latest summary comment does not contain the head SHA, only when all four rule (b) conditions hold | `_pr_agent_first_summary_bound_to_head`; tests T2.18, T2.22 |
 | Claude run is bound by the dispatch response (D15) | every fresh (non-adopting) `claude-code-action-reviewer.sh` dispatch; a response without `workflow_run_id` exits 3 | the companion's Phase 1/2; tests T2.19, T2.23; smoke Step 8 (live response on this host, V31) |
@@ -1031,7 +1040,9 @@ harness can call them.
   `REVIEW_REQUESTED_AT=$TRIGGER_TIME` from `emit_reviewed_head_if_known` and
   on the pending exit when a trigger time is known;
   `codex_inline_review_comment_count_since` filters on `original_commit_id`
-  (D15); no other verdict-logic change.
+  (D15); the cleared-findings re-trigger keeps a trigger newer than the
+  cleared review (`CLEARED_FINDINGS_REVIEW_TIME`, D11 Codex row); no other
+  verdict-logic change.
 - [ ] `scripts/development-workflow/haystack-reviewer.sh`:
   `emit_check_run_fallback_or_skip` takes the `after_budget` argument from
   the `timeout` and `pending_timeout` paths and prints
@@ -1137,6 +1148,7 @@ resolver is a single function.
 | T4.5 | Claude companion with `--adopt-run-id`/`--adopt-requested-at`: polls only that run and does not dispatch; a bot review submitted before the recorded `requested_at` is not counted (boundary preserved); a completed `success` run for this PR that is **not** the recorded run and was created after the head commit's committer time (an older-head run) is never read, so the result follows the recorded run (still running → exit 4, never clean); a recorded run whose `path` or `PR #<n>` does not match is not adopted and the companion dispatches | AC-10, AC-11 |
 | T4.6 | `reviewer_loop_rewait_recorded_request`: matching run, head, waiting entry, and platform with source `request` → `RECORDED_REQUEST_REF` and `RECORDED_REQUESTED_AT` lines; a record with an empty ref → an empty `RECORDED_REQUEST_REF` line and the time intact in `RECORDED_REQUESTED_AT`; other head, other run, `wait_start` source, or no platform record → nothing; Bugbot outside re-wait mode posts its own trigger even when a `bugbot run` comment newer than the head commit time exists | AC-10, AC-11 |
 | T4.7 | Loop-side Claude handler with a mock companion: a fresh run that exits 4 after printing `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` yields `PLATFORM_<n>_REQUEST_REF` and a ledger `request_ref`; the following re-wait invocation (same run id and head) passes `--adopt-run-id`/`--adopt-requested-at` with those values, and its own ledger record carries the same `request_ref` and `requested_at`; with only a recorded `requested_at` it passes neither | AC-11, AC-12 |
+| T4.8 | **Regression — an older cleared Codex review plus a newer unanswered trigger** (D11 Codex row, V36): `codex-github-reviewer.sh` with `--max-retriggers 0`, a resolved current-head thread, a cleared review submitted at `t`, and a runner trigger for the head created after `t` posts nothing, logs the D11 `INFO` line, and polls with that trigger's time; the same mock with the trigger created at or before `t` posts exactly once, as today | AC-11 |
 | T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start`; `REQUEST_REF` printed and recorded only when the handler printed one | AC-12 |
 | T5.2 | Summary "Reviewer timing" section lines and the `reviewer-no-verdict-yet` result line; reused marked reused | AC-12 |
 | T5.3 | Ledger `platform_results[]` additive fields present; existing readers (`reviewer_loop_platform_clean_for_head`, #1692) still pass | AC-12 |
@@ -1442,6 +1454,36 @@ These are executed in the implementation PR.
 | A GitHub host whose dispatch endpoint returns no `workflow_run_id` even with `return_run_details=true` (for example, an older GitHub Enterprise Server answering `204`) makes Claude Code Action report `unavailable` on every run | Low | Med | The failure names the cause in the companion's `VERDICT` line and never yields clean; the Claude Code Action guide documents the requirement (D15, V31); smoke Step 8 confirms the `200` response on this repository's host before merge, since V31 rests on the REST reference alone |
 | Large test-harness edits collide with the #1562 snapshot runner | Low | Low | New tests live in one new area appended before the footer; run with `--area 1789` while iterating |
 
+### Rollback
+
+Reversal is a revert of the implementation PR as one unit: scripts,
+companions, `apply-readiness-labels.sh`, Protocols 91 and 93, the guides,
+tests, and the changelog fragment together. A partial revert is not
+supported, because Protocol 91's D11 rows read loop keys
+(`NO_VERDICT_REWAIT`, `reviewer-no-verdict-yet`) and companion exit 4 that
+only the new scripts produce. The renamed reasons
+(`bugbot-run-timed-out`, `claude_code_action_run_failed`) and the companion
+exit codes revert with the scripts. No data migration is needed, in either
+direction:
+
+- Ledger records written before the rollback stay in place. The schema
+  string is unchanged (D12), and the pre-change validators check only
+  `.schema` and that `entries` is an array (`pr-review-loop.sh:9323`,
+  `:11416`). Every pre-change reader picks fields by name with jq
+  (`pr-review-loop.sh:9210`, `:9414`; `apply-readiness-labels.sh:739`;
+  `item-completion-self-check.sh:787`), so the D12 keys are ignored.
+- A record whose normalized `result` is the new `no_verdict_yet` falls into
+  each pre-change reader's non-clean arm: `prior_findings`
+  (`pr-review-loop.sh:9365`, a fresh local pass runs), `not_clean` (`:9439`,
+  the platform is dispatched again), `reviewer-evidence-unreadable`
+  (`apply-readiness-labels.sh:760`, readiness refused), and no match for
+  `item-completion-self-check.sh:787` (accepts only `clean`). None reads it
+  as a pass, and the next run's record supersedes it by iteration.
+- A `review.wait_budgets` block left in a consumer's `.ai-dev-workflow.yaml`
+  is ignored, because no config tool rejects unknown `review` keys (V15).
+- The `reviewer-failed` label is reconciled on the next post-rollback run by
+  the pre-change rules, as today.
+
 ---
 
 ## Code Samples
@@ -1495,16 +1537,27 @@ the behavior they cover.
 3. **Phase 3 — Label reconciliation and precedence (D9, D10).** Reconcile
    function and call sites, precedence function and compare-mode use,
    `--compare` help text; T3.1–T3.8.
-4. **Phase 4 — Re-wait and timing (D5, D11, D12).** Re-wait state, re-wait
-   mode in handlers and companions, waiting output keys, timing capture,
-   summary section, ledger fields; T2.12, T4.1–T4.7, T5.1–T5.4.
-5. **Phase 5 — Current-revision binding (D15).** After Phase 4, because
-   fresh-mode reuse reads the D12 `request_ref` ledger key:
-   `reviewer_loop_head_recorded_request_refs`, every row of the D15 binding
-   enumeration in `pr-review-loop.sh`, `codex-github-reviewer.sh`, and
-   `claude-code-action-reviewer.sh` (including the PR-Agent rule (b) helper
-   and the Claude dispatch-response binding), and the D15 mock and test
-   updates named in Testing Strategy; T2.14–T2.23. Run the full
+4. **Phase 4 — Re-wait and timing (D5, D11, D12)**, in two ordered
+   substeps:
+   - **4a — Claude dispatch-response binding (D15 Claude dispatch rule).**
+     First, because D12 records the Claude `request_ref` from the run id
+     this binding produces, and D11 adoption and T4.5/T4.7 consume it: the
+     companion's `return_run_details=true` dispatch, `workflow_run_id`
+     capture, polling of `actions/runs/<workflow_run_id>` only, the exit 3
+     on a missing id, and the replacement of the copied run-selection tests
+     (Testing Strategy); T2.23. Run `test-claude-code-action-reviewer.sh`.
+   - **4b — Re-wait and timing.** Re-wait state, re-wait mode in handlers
+     and companions (including the D11 Codex cleared-findings guard), waiting
+     output keys, timing capture, summary section, ledger fields; T2.12,
+     T4.1–T4.8, T5.1–T5.4.
+5. **Phase 5 — Current-revision binding (rest of D15).** After Phase 4,
+   because fresh-mode reuse reads the D12 `request_ref` ledger key:
+   `reviewer_loop_head_recorded_request_refs`, every remaining row of the
+   D15 binding enumeration in `pr-review-loop.sh`, `codex-github-reviewer.sh`,
+   and `claude-code-action-reviewer.sh` (including the PR-Agent rule (b)
+   helper and the Claude `--head-sha` review `commit_id` term; the
+   dispatch-response binding landed in 4a), and the D15 mock and test
+   updates named in Testing Strategy; T2.14–T2.22. Run the full
    `test-pr-review-loop.sh` and `test-claude-code-action-reviewer.sh`.
 6. **Phase 6 — Documentation.** Every item in Documentation Updates, the
    `--help` text, and T6.1. Run
@@ -1562,12 +1615,13 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V35.
+  V1–V36.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
   query keyed on `run_id` and `head_sha` and the persist-success gate on
   `available` (D11); "never shortens" cites the
-  D7 comparison; "no duplicate request" cites the D11 adoption table and
-  V10, and adoption binds to the recorded request id, time, and head (D11,
+  D7 comparison; "no duplicate request" cites the D11 adoption table, V10,
+  and, for Codex's cleared-findings path, V36 and regression test T4.8, and
+  adoption binds to the recorded request id, time, and head (D11,
   V24, V25), not to the head commit time; "stopped at the budget" cites the
   D4 watchdog flag and V23, not the wrapper's exit status; "older-revision
   evidence is never an answer" cites the D15 per-platform binding table
@@ -1584,6 +1638,9 @@ SHA).
   list above).
 - Parser/API/concurrency checklist: Checked — parser-risk addendum for the
   config reader; concurrency not applicable with rationale.
+- Reversal: Checked — Rollback states the one-unit revert, the reverted
+  reasons and exit codes, and how pre-change readers treat records written
+  after the change (no migration).
 - CHANGELOG literal format: Checked — Phase 7 literal uses the
   `**Bold Title** (#1789):` form.
 
@@ -1592,6 +1649,6 @@ SHA).
 | Rule 1 | Satisfied | D15's PR-Agent rule (a) depends on the summary body naming the head SHA; V30 records 30 located occurrences, two variants, and the adequacy rationale, and D15 states the tolerant path (see Factual claim evidence). Rule (b) reads no body text; its run binding is checked against the five marker-free variant occurrences in V32. |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D15 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. The D15 site counts (four Bugbot review-comment filters, four `codex_inline_review_comment_count_since` callers) carry V28's commands and their enumerated line numbers. The D8 failure-type completion-signal table covers all twelve platforms from V33's recorded search (loop hits by handler and companion counts). |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29, V31–V35; which handlers read a failure-type completion signal, and which read none, is V33; the V32 binding runs' `success` conclusions are V34; the newest-run ordering on one head, the absence of a completed-run time filter in every handler that reads check runs or statuses, and PR-Agent's no-post path are V35; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the dispatch response's `workflow_run_id` and the dispatched run's `head_sha` are V31 (the response shape from the REST reference, confirmed live by smoke Step 8); the PR-Agent run-window, branch-run, and `issue_comment` run fields are V32; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15. |
-| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, the new `_pr_agent_first_summary_bound_to_head`, `codex_inline_review_comment_count_since`, the Claude companion review count and its fresh run selection and dispatch response, the new head-recorded request helper), and the new failure reasons and Haystack companion key from the D8 failure-type completion signals (V12, V13, V17, V19, V20, V21, V23, V24, V28, V31, V33). |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V29, V31–V36; which handlers read a failure-type completion signal, and which read none, is V33; the V32 binding runs' `success` conclusions are V34; the newest-run ordering on one head, the absence of a completed-run time filter in every handler that reads check runs or statuses, and PR-Agent's no-post path are V35; the "already head-bound" and "not head-bound" claims for every platform are V28, row by row in the D15 binding table; the dispatch response's `workflow_run_id` and the dispatched run's `head_sha` are V31 (the response shape from the REST reference, confirmed live by smoke Step 8); the PR-Agent run-window, branch-run, and `issue_comment` run fields are V32; the platform state-notice readers D15 leaves unchanged carry their own recorded search in D15; the Codex cleared-findings flag's single set and read sites, the absence of a `MAX_RETRIGGERS` term in that guard, and the reproduced duplicate post are V36; the rollback readers' field-by-name parsing and schema-only validation are cited by line in Rollback. |
+| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, the loop handler that consumes the Claude companion's new output keys, and the D15 changed units (`_pr_agent_latest_comment_field`, the new `_pr_agent_first_summary_bound_to_head`, `codex_inline_review_comment_count_since`, the Claude companion review count and its fresh run selection and dispatch response, the new head-recorded request helper), the new failure reasons and Haystack companion key from the D8 failure-type completion signals, and the Codex cleared-findings flag and `CLEARED_FINDINGS_REVIEW_TIME` (V12, V13, V17, V19, V20, V21, V23, V24, V28, V31, V33, V36). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
