@@ -456,12 +456,12 @@ All commands were run in the plan worktree at repository revision
 | --- | --- | --- | --- |
 | V1 | Supported platform count | `sed -n '/^run_platform_review()/,/^}/p' scripts/development-workflow/pr-review-loop.sh \| grep -cE '^    [a-z-]+\)$'` | 12 (`greptile`, `devin`, `coderabbit`, `coderabbit-cli`, `local-ai-reviewer`, `pr-agent`, `codex-github`, `claude-code-action`, `copilot`, `haystack`, `bugbot`, `ronda`) |
 | V2 | Budget-expiry and unavailable emit sites in the loop | `grep -nE 'print_kv REASON (timeout\|no_check_run\|no_review\|unavailable)$' scripts/development-workflow/pr-review-loop.sh` | lines 2133, 2625, 2634, 2703, 2812, 3071, 4240, 4320, 4332, 5226, 5238, 5803, 7833, 7847; each is classified in the D8 table (2634 and 2703 are kept failure paths) |
-| V3 | Code that names a non-reviewing platform for documentation branches | `grep -n 'spec/\*\|implementation-plan/\*' scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/*-reviewer.sh scripts/development-workflow/local-*.sh` | Devin statement at `pr-review-loop.sh:750-751` and comment `:13037-13039`; other hits are the doc-branch budget blocks (`:13045`, `:13089`), compare-metrics branch typing (`:8497-8498`), and `local-ai-reviewer.sh:875-876` (selects `spec`/`plan` checklists, i.e. it does review them) |
+| V3 | Code that names a non-reviewing platform for documentation branches | `grep -n 'spec/\*\|implementation-plan/\*' scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/*-reviewer.sh scripts/development-workflow/local-*.sh` | Devin statement at `pr-review-loop.sh:750-751` and comment `:13037-13039`; every other hit names no non-reviewing platform: the `--help` poll-interval sentence (`:754-755`), the CodeRabbit no-trigger-timeout comment citing the 180 s doc-branch budget (`:6516`), the large-diff comment (`:13072-13073`), the doc-branch budget blocks (`:13045`, `:13089`), compare-metrics branch typing (`:8497-8498`), and `local-ai-reviewer.sh:872` (comment) and `:875-876` (selects `spec`/`plan` checklists, i.e. it does review them) |
 | V4 | Branch filters in reviewer workflows | Read `.github/workflows/pr-agent.yml` (`on: pull_request` with no `branches` filter; same-repository condition only) and `.github/workflows/claude-code-review.yml` (`workflow_dispatch` only) | No documentation-branch exclusion |
 | V5 | Integration guides naming documentation-branch non-review | `grep -n "spec/\|implementation-plan/\|doc-branch\|DOC_MAX_WAIT\|documentation branch" docs/workflow/development-workflow/integrations/*.md` | Only `local-ai-reviewer.md` (checklist selection for those branches) among reviewer guides; no guide states a platform skips them |
 | V6 | Existing `--max-wait` validation | `grep -n 'max_wait" =~\|--max-wait value\|max-wait must' scripts/development-workflow/pr-review-loop.sh` | Only `:6559` (`coderabbit_no_trigger_timeout_default` input check) and `:13081` (`LARGE_DIFF_MAX_WAIT`); the `--max-wait` parser at `:12606-12611` stores the value unchecked |
 | V7 | Bugbot trigger-to-completion latency sample (PR #1787) | `gh api repos/lhpaul/ai-dev-framework-template/commits/<sha>/check-runs --jq '.check_runs[] \| select(.name=="Cursor Bugbot") \| [.status,.conclusion,.started_at,.completed_at]'` for heads `909ab08a`, `e9ba0f4b`, `62dc8eb5`, `6e62224e`, `fa2fa9c9`, paired with the `bugbot run` comment times from `gh api repos/lhpaul/ai-dev-framework-template/issues/1787/comments` | triggers 12:35:16, 12:43:30, 12:50:07, 12:56:10, 13:07:28 → completions 12:40:32, 12:46:44, 12:53:06, 13:00:44, 13:10:37 (2026-09-23 UTC): 5 min 16 s, 3 min 14 s, 2 min 59 s, 4 min 34 s, 3 min 9 s |
-| V8 | Exit paths and label calls | `grep -nE '^\s*exit [0-9]+\|^\s*exit "' scripts/development-workflow/pr-review-loop.sh` (main section) and `grep -n sync_reviewer_failed_label scripts/development-workflow/pr-review-loop.sh` | Pre-loop exits at `:12520-12829` never call the label sync; label sync at `:12936` (release guard), `:13962` (not configured), `:14515` (post-loop); all platform-evaluating runs reach `:14515` |
+| V8 | Exit paths and label calls | `grep -nE '^\s*exit [0-9]+\|^\s*exit "' scripts/development-workflow/pr-review-loop.sh` (main section) and `grep -n sync_reviewer_failed_label scripts/development-workflow/pr-review-loop.sh` | Pre-loop exits at `:12520-12829` and the repository-root / head-branch resolution failure exit at `:13032` never call the label sync; label sync at `:12936` (release guard), `:13962` (not configured), `:14515` (post-loop); all platform-evaluating runs reach `:14515` |
 | V9 | `local-ai-reviewer.sh` timeout path | `grep -n "timeout\|TIMEOUT" scripts/development-workflow/local-ai-reviewer.sh` | `run_with_timeout` returns 124 (GNU `timeout` or the fallback kill path); the caller treats 124/137 as timeout at `:1321-1324` and checks it before any output probe |
 | V10 | Codex duplicate-trigger guard | `grep -n "skipping duplicate post\|MAX_RETRIGGERS=0" scripts/development-workflow/codex-github-reviewer.sh` | `:2077` skips a duplicate trigger for a pending current-head trigger; `:2482` skips the async-arrival trigger when `MAX_RETRIGGERS=0` |
 | V11 | Availability reasons emitted today | `grep -n "bugbot-usage-limit\|codex-github-usage-limit\|codex-github-account-not-connected\|rate_limit_max_retries\|quota_exhausted\|REASON=rate_limited\|REASON rate_limited" scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/codex-github-reviewer.sh scripts/development-workflow/local-ai-reviewer.sh scripts/development-workflow/coderabbit-cli-reviewer.sh` | Each reason in `REVIEWER_LOOP_AVAILABILITY_REASONS` (D8) is emitted by at least one of those files |
@@ -470,10 +470,12 @@ All commands were run in the plan worktree at repository revision
 | V14 | Mirror agent, skill, and command surfaces that restate loop results | `grep -n -i "timeout\|waiting_on\|exit code 4\|reviewer-failed\|max-wait" .claude/agents/automated-reviewer-loop.md .claude/agents/item-orchestrator.md .claude/commands/run-reviewer-loop.md .cursor/agents/automated-reviewer-loop.md .cursor/agents/item-orchestrator.md .cursor/commands/run-reviewer-loop.md .codex/skills/workflow-item-orchestrator/SKILL.md .codex/skills/workflow-reviewer-loop/SKILL.md .agents/skills/*/SKILL.md .cursor/rules/workflow.mdc` | No surface restates timeout, waiting, label, or wait-budget semantics; they delegate result interpretation to Protocol 91/93 (the command returns no matches; a separate `grep -n "timed out" .claude/commands/run-reviewer-loop.md` finds one line mentioning "a previous run timed out" as pre-flight context only) |
 | V15 | Config tools with an allowed-key list for `review` | `grep -c "ALLOWED\|allowed_keys\|KNOWN_" scripts/development-workflow/workflow-config-resolver.py scripts/development-workflow/validate-workflow-config.sh` | 0 and 0 — a new `review.wait_budgets` key is not rejected |
 | V16 | Second local pass gate | Read `reviewer_loop_second_local_pass_gate_result` (`:9654-9664`) and `reviewer_loop_local_pass_required` (`:9346-9373`) | A `waiting_on_reviewer` second pass currently maps to `escalate`/`local_pass_unavailable`; a non-clean prior local outcome maps to `prior_findings` |
-| V17 | Claude companion consumers | `grep -rln "claude-code-action-reviewer.sh" scripts docs/workflow .github .claude .cursor .codex .agents` | Only `pr-review-loop.sh` invokes it; other hits are comments, its test, and its guide |
+| V17 | Claude companion consumers | `grep -rln "claude-code-action-reviewer.sh" scripts docs/workflow .github .claude .cursor .codex .agents` | Only `pr-review-loop.sh` invokes it; other hits are comments (`claude-code-action-reviewer.sh` itself, `apply-readiness-labels.sh`, `.github/workflows/claude-code-review.yml`), its test, its guide, and a historical anecdote in Protocol 03 (`:591`) |
 | V18 | Open same-surface PRs | `gh pr list --state open --json number --jq length` at 2026-10-01T02:21:56Z | 0 |
 | V19 | Consumers of `local-ai-reviewer.sh` exit codes (Rule 5) | `grep -rln "local-ai-reviewer.sh" scripts docs/workflow .github .claude .cursor .codex .agents \| grep -v '/tests/'` and `grep -n "local-ai-reviewer.sh" scripts/development-workflow/workflow-lib.sh scripts/development-workflow/apply-readiness-labels.sh scripts/development-workflow/local-http-reviewer.sh scripts/development-workflow/local-codex-reviewer.sh` | Invokers: `pr-review-loop.sh` (`run_local_ai_reviewer_review`, exit arms `:4840-4911`), `local-http-reviewer.sh:60` and `local-codex-reviewer.sh:42` (`exec`); `workflow-lib.sh:4388` and `apply-readiness-labels.sh:843` are comments; the two integration guides are prose |
 | V20 | Readiness-gate outcome arms for ledger `platform_results[].result` | `grep -n '_adapter_refusal_reason="reviewer-' scripts/development-workflow/apply-readiness-labels.sh` (the `case "$outcome"` arms are the hits at `:759` and `:760`) and read `reviewer_loop_normalize_platform_outcome` (`pr-review-loop.sh:8982-8999`) | `:759` maps `not_yet_run\|unknown` to `reviewer-check-absent`; `:760` maps every other non-`clean` value to `reviewer-evidence-unreadable`; the normalizer maps `waiting_on_reviewer` to `unknown` and `escalate` to `unavailable` |
+| V21 | In-loop readers of the normalized ledger outcome (Rule 5) | `grep -n '\.result //' scripts/development-workflow/pr-review-loop.sh`, then `grep -n 'reviewer_loop_local_latest_verdict\|reviewer_loop_platform_clean_for_head' scripts/development-workflow/pr-review-loop.sh` for the callers | Platform-record readers: `:9210` in `reviewer_loop_local_latest_verdict` (callers `reviewer_loop_retain_local_evidence_for_current_run` `:9169`, `reviewer_loop_local_pass_required` `:9357`, `reviewer_loop_missed_finding_records` `:10363`), `:9414` in `reviewer_loop_platform_clean_for_head` (caller `:9476`, #1692 stage skip), and `:10374` (missed-finding walk); the other hits (`:1708`, `:8710`, `:11867-11877`, `:14112`) read entry-level or gate fields, not `platform_results[].result`. Cross-script readers are V13's |
+| V22 | Documentation surfaces that restate reviewer-loop timeout, wait, or label semantics | `grep -rln -i 'times out\|REASON=timeout\|~20 min\|(20 min)\|1200 s\|reviewer-failed' docs/workflow docs/project REVIEW.md AGENTS.md .claude .cursor .codex .agents` | Every hit is in Documentation Updates except: `retro-metrics.md` (historical batch records), `provider-contingency-runner-failover.md` and Protocol 90 (agent stream timeouts, not reviewer waits), and `github-projects.md`, `AGENTS.md`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md` (list `reviewer-failed` as an operational label only) |
 
 ### Factual claim evidence
 
@@ -496,10 +498,13 @@ All commands were run in the plan worktree at repository revision
 | `reviewer_loop_cap_exceeded` (`:11986-11996`) | post-loop cap check | At the per-run or lifetime cap the aggregate still becomes `escalate`/`max_cycles_exceeded` or `max_total_cycles_exceeded` (loop-level escalation precedence, D10) |
 | `normalize_platform_verdict` (`:8358-8385`) | compare-mode verdict tokens | `waiting`; the renamed `bugbot-run-timed-out` is added to the `timed out` token list |
 | `reviewer_loop_second_local_pass_gate_result` (`:9654-9664`) | second local pass before the ready gate | New arm: `waiting_on_reviewer` → `waiting_on_reviewer`/`reviewer-no-verdict-yet` (instead of `escalate`/`local_pass_unavailable`), and `local_second_pass_failed_head_record` is not set for it, so the next run on the same head is not refused as `failed_for_head` |
-| `reviewer_loop_normalize_platform_outcome` (`:8982-8999`) | ledger `platform_results[].result` | New normalized value `no_verdict_yet` for `waiting_on_reviewer` and for kept skips |
+| `reviewer_loop_normalize_platform_outcome` (`:8982-8999`) | ledger `platform_results[].result` | New normalized value `no_verdict_yet` for `waiting_on_reviewer` and for kept skips; it gains an optional third argument, the platform's `NO_VERDICT_YET` flag, so a kept skip is recognized from the flag rather than from its reason. Its in-loop readers are the next four rows and the local-evidence row (V21) |
 | `reviewer_loop_local_pass_required` (`:9346-9373`) | #1656 second-pass decision | `no_verdict_yet` maps to `no_evidence` (a fresh local pass runs), not `prior_findings` |
+| `reviewer_loop_retain_local_evidence_for_current_run` (`:9158-9183`, V21) | platform-filtered ready-phase run reusing local evidence | Unchanged: it retains only `clean` or `skipped`; `no_verdict_yet` falls to its `*)` arm and is not retained, as the `unavailable` value of a local `escalate`/`timeout` record was not retained before |
+| `reviewer_loop_platform_clean_for_head` (`:9399-9446`, V21) | #1692 stage-skip replay decision | `no_verdict_yet` returns `not_clean` (previously `unknown` → `no_evidence` for a waiting record); the caller (`:9476-9477`) replays only on `clean_current`, so both values dispatch the platform and nothing changes |
+| `reviewer_loop_missed_finding_records` walk (`:10372-10383`, V21) | missed-finding telemetry over the current round's records | Unchanged: it considers only `needs_fixes` records |
 | `reviewer_loop_local_evidence_state` and its label (`:10017-10067`) | missed-finding telemetry | New state `no_verdict_yet`, label "No verdict yet", classification `not_a_miss` |
-| `apply-readiness-labels.sh` `coderabbit_cli_local_ai_ledger_verdict` (`:757-761`, V20) | readiness label gate | Requires the Layer 3 edit: without it, the new `no_verdict_yet` value falls into the `*)` arm and refuses as `reviewer-evidence-unreadable`; with `no_verdict_yet` added to the `not_yet_run\|unknown` arm it refuses as `reviewer-check-absent`. Before this change a `waiting_on_reviewer` record normalized to `unknown` (also `reviewer-check-absent`) and a local-reviewer `escalate`/`timeout` record normalized to `unavailable` (`reviewer-evidence-unreadable`). Never a pass |
+| `apply-readiness-labels.sh` `coderabbit_cli_local_ai_ledger_verdict` (`:757-761`, V20) | readiness label gate | Requires the Layer 3 edit: without it, the new `no_verdict_yet` value falls into the `*)` arm and refuses as `reviewer-evidence-unreadable`; with `no_verdict_yet` added to the `not_yet_run\|unknown` arm it refuses as `reviewer-check-absent`. Before this change a `waiting_on_reviewer` record normalized to `unknown` (also `reviewer-check-absent`), a local-reviewer `escalate`/`timeout` record normalized to `unavailable` (`reviewer-evidence-unreadable`), and a CodeRabbit CLI `skipped`/`timeout` record normalized to `skipped` (`reviewer-evidence-unreadable`). Never a pass |
 | `item-completion-self-check.sh` (`:781-787`) | completion self-check | Unchanged: accepts only `clean` |
 | `reviewer-effectiveness-report.sh` (`:129-177`) | effectiveness report | Unchanged: counts only `needs_fixes` and Codex presence |
 | `_post_review_summary` result line (`:13477-13479`) | summary comment | New `reviewer-no-verdict-yet` wording (D12); Codex wording unchanged |
@@ -515,8 +520,8 @@ rewritten to call `reviewer_wait_budget_resolve` and
 budget as their existing fourth argument and need no signature change.
 
 `local-ai-reviewer.sh` exit 4 (new): consumers (V19) are the loop handler
-(new arm; today its `*)` arm would map an unknown exit 4 to
-`skipped`/`disabled_by_config`) and the exec wrappers `local-codex-reviewer.sh`
+(new arm; today its `*)` arm would map an unknown exit 4 to `skipped`
+with the companion's `REASON`, defaulting to `disabled_by_config`) and the exec wrappers `local-codex-reviewer.sh`
 and `local-http-reviewer.sh`, which pass the exit code through unchanged to
 their standalone callers; the companion's usage text and
 `local-ai-reviewer.md` document exit 4.
@@ -864,8 +869,23 @@ These are executed in the implementation PR.
   configuration, D7 order, D10 precedence, D9 label rule, D11 re-wait
   contract, D12 timing keys, and the rule that a run's worst-case wait is the
   sum of its platforms' budgets plus one re-wait; update "Stuck-loop detection" ("per-platform
-  timeouts … (20 min)" → per-platform budgets) and "Codex phase outcomes"
-  (both wait reasons are in the No verdict yet class and get the re-wait).
+  timeouts … (20 min)" → per-platform budgets), "Codex phase outcomes"
+  (both wait reasons are in the No verdict yet class and get the re-wait),
+  and "CodeRabbit silence patterns" (`:877-966`), whose "the loop times out
+  and exits `escalate`" ending and "When to escalate vs. wait" rule become No
+  verdict yet and the D11 waiting stop, and whose effective-timeout table
+  examples cite the old 1200 s global and 180 s documentation-branch
+  defaults.
+- [ ] `docs/workflow/development-workflow/integrations/pr-review-platform.md`
+  — "Aggregation Rules" and "Review Model": a reviewer whose wait runs out
+  with no verdict gives `waiting_on_reviewer`, not `escalate`, with the D10
+  precedence; the `.ai-dev-workflow.yaml` example comment for
+  `local-ai-reviewer` no longer lists "timeout" among the escalating causes
+  (D4).
+- [ ] `docs/workflow/development-workflow/agent-model-config.md` — "Expected
+  Run Durations": the `automated-reviewer-loop` row's "~20 min" threshold
+  points to the per-platform budgets in Protocol 93 and the one automatic
+  re-wait instead of the old single 20-minute wait.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
   — Step 7 result table: the three D11 rows replacing the single
   `waiting_on_reviewer` row; the settle-forward snippet's non-zero branch
@@ -900,9 +920,9 @@ These are executed in the implementation PR.
   reviewer-loop failure symptom list adds `waiting_on_reviewer` (no verdict
   yet: re-run later) next to `escalate` and `reviewer-failed`.
 - [ ] `.ai-dev-workflow.yaml` — Layer 4 comment.
-- `docs/project/*`, `AGENTS.md`, `REVIEW.md`: no change — none describes
-  reviewer-loop results, wait budgets, or the label rule beyond listing
-  `reviewer-failed` as an operational label.
+- `docs/project/*`, `AGENTS.md`, `REVIEW.md`, and the other V22 hits: no
+  change — none describes reviewer-loop results, wait budgets, or the label
+  rule beyond listing `reviewer-failed` as an operational label (V22).
 
 ---
 
@@ -1017,7 +1037,7 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V20.
+  V1–V22.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
   query keyed on `run_id` and `head_sha` (D11); "never shortens" cites the
   D7 comparison; "no duplicate request" cites the D11 adoption table and
@@ -1035,6 +1055,6 @@ SHA).
 | Rule 1 | Not applicable | No new design depends on externally produced free text (see Factual claim evidence). |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D14 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20. |
-| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result, the global budget, and both companion exit codes (V12, V13, V17, V19, V20). |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22. |
+| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, and both companion exit codes (V12, V13, V17, V19, V20, V21). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
