@@ -190,15 +190,20 @@ exit with status 124 is a failure, not a stopped reviewer, D4).
    `gh api "repos/<owner>/<repo>/actions/workflows/claude-code-review.yml/runs?event=workflow_dispatch&per_page=5" --jq '.workflow_runs[] | [.id,.name,.created_at,.status]'`.
 
 **Expected result**: the companion prints `REVIEW_REQUEST_REF=<integer id>`
-(the dispatch response's `workflow_run_id`) and no `VERDICT: UNAVAILABLE`
-line, and its polling reads only `actions/runs/<that id>`; the id appears in
-the step 2 list with this PR's `PR #<n>` in its name. The companion exits 0
-or 1 from that run's result, or 4 if the run is still going at 900 s. If the dispatch answers `204` or carries no
-integer `workflow_run_id`, the companion must print the D15
-`VERDICT: UNAVAILABLE — dispatch response carried no workflow_run_id`
-line and exit 3. That is a blocking defect for this item: record the
-response status and body and escalate. Do not restore the time-window run
-selection.
+(the dispatch response's `workflow_run_id`), every `found run — id=` line
+it prints names that same id, and the id appears in the step 2 list with
+this PR's `PR #<n>` in its name. That confirms plan V31. The pass criterion
+is the dispatch binding, not the review outcome: the exit code then reflects
+the bound run as plan D8 states (0 clean, 1 findings, 2 run failed, 3 for an
+unavailable result after the run such as log verification, 4 still running
+at 900 s), and any of these passes this step.
+
+The D15 defect is specifically the D15 `VERDICT: UNAVAILABLE` line for a
+dispatch response without `workflow_run_id` (plan D15 Claude dispatch rule),
+with exit 3 and no `REVIEW_REQUEST_REF`. That is a blocking defect for this
+item: record the response status and body and escalate. Do not restore the
+time-window run selection. An exit 3 before the dispatch (authentication or
+base-branch resolution) is a setup failure: fix it and re-run the step.
 
 ### Last Step: Validate and clean up
 
