@@ -110,21 +110,27 @@ summary's "Reviewer timing" section shows the same values. No
    push, so Bugbot cannot finish in time.
 3. Wait until Bugbot's check run completes, then run the loop again with the
    same run id and no `--max-wait`.
-4. Run the loop a third time on the same head without pushing.
+4. Re-add the `reviewer-failed` label, then run the loop a fourth time on the
+   same head without pushing and **without `--platform`**, in a test
+   repository whose PR-base `.ai-dev-workflow.yaml` lists `bugbot` as the
+   only configured reviewer for the PR's phase. An explicit `--platform`
+   disables the #1692 verdict reuse (`explicit_platform_selection`), so this
+   run must take the platforms from configuration.
 
-**Expected result**:
+**Expected result** (each bullet names the numbered step that produced the
+run):
 
-- Run 2: `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`,
+- Step 2: `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`,
   `PENDING_REVIEWER=bugbot`, `PENDING_REVIEW_WAITED_SECONDS` present,
   `NO_FAILURE_DETECTED=1`, `NO_VERDICT_REWAIT=available`, exit 4. The
   `reviewer-failed` label is removed (no platform carried failure evidence).
   The summary says no reviewer failure was detected.
-- Run 3: `RESULT=clean`; no new `bugbot run` comment was posted (the
+- Step 3: `RESULT=clean`; no new `bugbot run` comment was posted (the
   outstanding one was adopted, D11).
-- Run 4: `STAGE_SKIPPED_PLATFORMS=bugbot`,
+- Step 4: `STAGE_SKIPPED_PLATFORMS=bugbot`,
   `PLATFORM_1_VERDICT_REUSED=1`, no latency key; the summary marks Bugbot
-  as reused. Re-add the label before this run to confirm it is removed on
-  the reuse path too.
+  as reused, and the re-added `reviewer-failed` label is removed on this
+  reuse path too.
 
 ### Step 6: Automatic re-wait once, then a waiting stop
 
@@ -196,7 +202,8 @@ increase across the two runs.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `NO_VERDICT_REWAIT=untracked` | `PR_REVIEW_LOOP_RUN_ID` not exported | Export a stable run id before each scenario |
-| A second `bugbot run` comment appears in Step 5 run 3 | Adoption not applied | Check that the earlier trigger is newer than the head commit time |
+| A second `bugbot run` comment appears in Step 5, step 3 | Adoption not applied | Check that the earlier trigger is newer than the head commit time |
+| Step 5, step 4 shows no `STAGE_SKIPPED_PLATFORMS` | `--platform` was passed, or `PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1` is set | Re-run with platforms taken from configuration and the variable unset |
 | Step 4 times out | Bugbot slower than its budget on this repository | Record the waited seconds and compare with the D3 rationale; raise `review.wait_budgets.bugbot` if the data supports it |
 
 ---
