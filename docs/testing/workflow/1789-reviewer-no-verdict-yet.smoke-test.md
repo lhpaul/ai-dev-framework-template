@@ -49,8 +49,13 @@ design-fidelity step.
 
 1. Run `bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1789`.
 2. Run `bash scripts/development-workflow/tests/test-local-ai-reviewer.sh`,
-   `bash scripts/development-workflow/tests/test-coderabbit-cli-reviewer.sh`, and
-   `bash scripts/development-workflow/tests/test-claude-code-action-reviewer.sh`.
+   `bash scripts/development-workflow/tests/test-coderabbit-cli-reviewer.sh`,
+   `bash scripts/development-workflow/tests/test-claude-code-action-reviewer.sh`, and
+   `bash scripts/development-workflow/tests/test-haystack-reviewer.sh`.
+   The area includes the failure-type completion-signal cases: a timed-out
+   Devin check with no findings, a failed CodeRabbit status, a failed
+   PR-Agent run, and a timed-out Haystack check run each escalate with
+   `reviewer-failed` required.
 
 **Expected result**: every test passes; the area finishes in seconds.
 
