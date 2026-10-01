@@ -756,7 +756,9 @@ coderabbit_cli_local_ai_ledger_verdict() {
   verdict_head="$(printf '%s\n' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)"
   case "$outcome" in
     clean) ;;
-    not_yet_run|unknown) _adapter_refusal_reason="reviewer-check-absent"; return ;;
+    # #1789: no_verdict_yet (a waiting record or a kept expired-wait skip) is
+    # an absent verdict, never a pass.
+    not_yet_run|unknown|no_verdict_yet) _adapter_refusal_reason="reviewer-check-absent"; return ;;
     *) _adapter_refusal_reason="reviewer-evidence-unreadable"; return ;;
   esac
   if [ -z "$verdict_head" ] || [ "$verdict_head" != "$head_sha" ]; then
