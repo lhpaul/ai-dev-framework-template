@@ -667,6 +667,99 @@ rm -rf "$_cca_mock_dir"
 unset _cca_mock_dir
 
 # ---------------------------------------------------------------------------
+# Area 10 (#1789, spec BR 2): a failed read of the bound run during polling.
+# Only positive evidence makes a reviewer failed: a 401/403 permission refusal
+# or a 404 for the bound run id is exit 3 (UNAVAILABLE), never exit 4; a rate
+# limit (also HTTP 403) and a transient 5xx keep polling; a run that could not
+# be read on any poll within the budget fails closed (exit 3); a transient 502
+# followed by a completed run gives the normal verdict.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10: polling read failures are not No verdict yet (#1789 BR 2) ==="
+
+_pf_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_pf_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"/dispatches"*) printf '{"workflow_run_id":931}\n'; exit 0 ;;
+  *"actions/runs/931"*)
+    _n=0
+    [ -f "$MOCK_PF_COUNT" ] && _n="$(cat "$MOCK_PF_COUNT")"
+    _n=$((_n + 1)); printf '%s' "$_n" > "$MOCK_PF_COUNT"
+    _ok='{"id":931,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"completed","conclusion":"success","html_url":"https://example.invalid/runs/931"}'
+    case "$MOCK_PF_MODE" in
+      denied403) echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1 ;;
+      denied401) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
+      notfound) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      ratelimit) echo "gh: API rate limit exceeded for user (HTTP 403)" >&2; exit 1 ;;
+      always502) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;;
+      flaky)
+        if [ "$_n" -eq 1 ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi
+        printf '%s\n' "$_ok"; exit 0 ;;
+      ratelimit_then_inprogress)
+        if [ "$_n" -eq 1 ]; then echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1; fi
+        printf '{"id":931,"status":"in_progress","conclusion":null,"html_url":"https://example.invalid/runs/931"}\n'; exit 0 ;;
+    esac
+    ;;
+  "run view 931 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review owner/repo/pull/42'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*) echo '[]'; exit 0 ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_pf_dir/gh"
+MOCK_PF_COUNT="$_pf_dir/count"
+export MOCK_PF_COUNT
+
+_pf_run() {
+  local status=0
+  rm -f "$MOCK_PF_COUNT"
+  MOCK_PF_MODE="$1" PATH="$_pf_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 3 --poll-interval 1 >"$_pf_dir/out" 2>"$_pf_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+_pf_out() { grep -c -- "$1" "$_pf_dir/out" || true; }
+
+run_test "1789_poll_403_exit_3" "3" "$(_pf_run denied403)"
+run_test "1789_poll_403_verdict_unavailable" "1" "$(_pf_out '^VERDICT: UNAVAILABLE')"
+run_test "1789_poll_403_no_no_verdict_yet" "0" "$(_pf_out '^VERDICT: NO_VERDICT_YET')"
+run_test "1789_poll_403_stops_at_first_read" "1" "$(cat "$MOCK_PF_COUNT")"
+run_test "1789_poll_401_exit_3" "3" "$(_pf_run denied401)"
+run_test "1789_poll_401_verdict_unavailable" "1" "$(_pf_out '^VERDICT: UNAVAILABLE')"
+run_test "1789_poll_404_bound_run_exit_3" "3" "$(_pf_run notfound)"
+run_test "1789_poll_404_result_run_not_found" "1" "$(_pf_out '^POLL_RESULT=run_not_found')"
+run_test "1789_poll_always_502_fails_closed_exit_3" "3" "$(_pf_run always502)"
+run_test "1789_poll_always_502_result_run_unreadable" "1" "$(_pf_out '^POLL_RESULT=run_unreadable')"
+run_test "1789_poll_always_502_no_no_verdict_yet" "0" "$(_pf_out '^VERDICT: NO_VERDICT_YET')"
+run_test "1789_poll_always_rate_limit_fails_closed_exit_3" "3" "$(_pf_run ratelimit)"
+run_test "1789_poll_rate_limit_keeps_polling" "yes" \
+  "$([ "$(cat "$MOCK_PF_COUNT")" -gt 1 ] && echo yes || echo no)"
+run_test "1789_poll_rate_limit_then_in_progress_exit_4" "4" "$(_pf_run ratelimit_then_inprogress)"
+run_test "1789_poll_transient_502_then_success_exit_0" "0" "$(_pf_run flaky)"
+run_test "1789_poll_transient_502_then_success_verdict" "1" "$(_pf_out '^VERDICT: APPROVED')"
+
+# The classifier itself.
+run_test "1789_classify_403_denied" "denied" "$(claude_code_action_classify_poll_error 'gh: Forbidden (HTTP 403)')"
+run_test "1789_classify_401_denied" "denied" "$(claude_code_action_classify_poll_error 'gh: Unauthorized (HTTP 401)')"
+run_test "1789_classify_404_gone" "gone" "$(claude_code_action_classify_poll_error 'gh: Not Found (HTTP 404)')"
+run_test "1789_classify_403_rate_limit_transient" "transient" \
+  "$(claude_code_action_classify_poll_error 'gh: API rate limit exceeded (HTTP 403)')"
+run_test "1789_classify_secondary_rate_limit_transient" "transient" \
+  "$(claude_code_action_classify_poll_error 'You have exceeded a secondary rate limit (HTTP 403)')"
+run_test "1789_classify_502_transient" "transient" "$(claude_code_action_classify_poll_error 'gh: Bad Gateway (HTTP 502)')"
+run_test "1789_classify_empty_transient" "transient" "$(claude_code_action_classify_poll_error '')"
+
+unset MOCK_PF_COUNT
+rm -rf "$_pf_dir"
+unset _pf_dir
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

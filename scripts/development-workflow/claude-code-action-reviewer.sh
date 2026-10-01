@@ -52,8 +52,10 @@
 #                       or invalid arguments; pr-review-loop.sh maps this to
 #                       RESULT=escalate / REASON=claude_code_action_run_failed)
 #   3 — UNAVAILABLE    (workflow file absent, dispatch rejected by the API, a
-#                       dispatch response without an integer workflow_run_id, or
-#                       the run did not execute a review — callers map to
+#                       dispatch response without an integer workflow_run_id,
+#                       the run did not execute a review, or the bound run could
+#                       not be read while polling: a 401/403 refusal, a 404, or
+#                       no successful read on any poll — callers map to
 #                       REASON=unavailable; never clean, never No verdict yet)
 #   4 — NO_VERDICT_YET (the dispatched run did not complete within max-wait: the
 #                       reviewer has not answered yet; pr-review-loop.sh maps this
@@ -161,6 +163,30 @@ verify_claude_code_action_run_log() {
       return 3
       ;;
   esac
+}
+
+# claude_code_action_classify_poll_error <gh-stderr-text>
+#
+# #1789 (spec BR 2): classify a failed read of actions/runs/<id> from gh's
+# error output. Prints one of:
+#   transient  rate limit (primary or secondary), 5xx, network, or no/unknown
+#              error text - keep polling
+#   denied     401/403 authorization or permission refusal - positive failure
+#              evidence
+#   gone       404 / not found for the bound run id - positive failure evidence
+# A 403 that is a rate limit is transient, so rate-limit text is checked first.
+# Always returns 0.
+claude_code_action_classify_poll_error() {
+  local err="${1:-}"
+  if printf '%s' "$err" | grep -qiE 'rate limit|abuse detection|retry-after'; then
+    echo transient
+  elif printf '%s' "$err" | grep -qiE 'HTTP 40[13]|forbidden|unauthorized|bad credentials|resource not accessible|requires authentication'; then
+    echo denied
+  elif printf '%s' "$err" | grep -qiE 'HTTP 404|not found'; then
+    echo gone
+  else
+    echo transient
+  fi
 }
 
 # claude_code_action_dispatch_run_id <response_file>
@@ -488,6 +514,9 @@ TOTAL_ELAPSED=0
 RUN_URL=""
 RUN_STATUS=""
 RUN_CONCLUSION=""
+POLL_READ_OK=0
+POLL_READ_FAILED=0
+POLL_LAST_ERR=""
 
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
@@ -508,6 +537,24 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
     POLL_ERR=$(cat "$RUN_POLL_STDERR")
     rm -f "$RUN_POLL_STDERR" "$RUN_POLL_TMPFILE"
     echo "WARNING: could not read workflow run $RUN_ID during polling: ${POLL_ERR:-unreadable response}" >&2
+    # #1789 (spec BR 2): only positive evidence makes a reviewer failed. A
+    # permission refusal (401/403) or a missing bound run (404) is that
+    # evidence, so it is unavailable (exit 3), never No verdict yet. A
+    # transient failure (5xx, network, rate limit) keeps polling.
+    case "$(claude_code_action_classify_poll_error "$POLL_ERR")" in
+      denied)
+        echo "POLL_RESULT=read_denied"
+        echo "VERDICT: UNAVAILABLE — workflow run $RUN_ID could not be read: authorization or permission refused (${POLL_ERR})"
+        exit 3
+        ;;
+      gone)
+        echo "POLL_RESULT=run_not_found"
+        echo "VERDICT: UNAVAILABLE — bound workflow run $RUN_ID was not found (${POLL_ERR})"
+        exit 3
+        ;;
+    esac
+    POLL_READ_FAILED=$((POLL_READ_FAILED + 1))
+    POLL_LAST_ERR="${POLL_ERR:-unreadable response}"
     sleep "$POLL_INTERVAL"
     TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
     continue
@@ -516,6 +563,7 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
 
   RUN_INFO=$(cat "$RUN_POLL_TMPFILE")
   rm -f "$RUN_POLL_TMPFILE"
+  POLL_READ_OK=$((POLL_READ_OK + 1))
 
   if [ -z "$RUN_INFO" ]; then
     echo "INFO: workflow run $RUN_ID not readable yet..."
@@ -547,7 +595,15 @@ done
 
 if [ "$RUN_STATUS" != "completed" ]; then
   # #1789 (plan D8 Claude row): the budget ran out before any run completed.
-  # No verdict yet, not a failure.
+  # No verdict yet, not a failure - but only when the run was actually seen.
+  # If every read of the bound run failed (transient errors for the whole
+  # budget), the reviewer was unreachable: that is positive evidence under
+  # spec BR 2, so fail closed (exit 3) instead of reporting "no failure".
+  if [ "$POLL_READ_OK" -eq 0 ] && [ "$POLL_READ_FAILED" -gt 0 ]; then
+    echo "POLL_RESULT=run_unreadable"
+    echo "VERDICT: UNAVAILABLE — workflow run $RUN_ID could not be read on any of $POLL_READ_FAILED polls within ${MAX_WAIT}s (last error: $POLL_LAST_ERR)"
+    exit 3
+  fi
   echo "VERDICT: NO_VERDICT_YET — no run completed within ${MAX_WAIT}s (run URL: ${RUN_URL:-unknown})"
   echo "INFO: re-run the reviewer loop later on the same revision; if the run never completes, verify the '$WORKFLOW_FILE' workflow is present and configured in $OWNER/$REPO."
   exit 4

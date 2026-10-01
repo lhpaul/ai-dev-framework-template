@@ -198,6 +198,7 @@ The companion prints machine-readable dispatch lines on stdout:
 | Bound run not completed at `elapsed >= max_wait` | **No verdict yet** — companion exit 4; the loop reports `waiting_on_reviewer` / `reviewer-no-verdict-yet` (detail `run_not_completed`), not an escalation |
 | Bound run completed with any other conclusion    | **Reviewer failed** — companion exit 2; the loop reports `escalate` / `claude_code_action_run_failed` |
 | Workflow file absent, dispatch rejected, or no `workflow_run_id` | Unavailable — companion exit 3; the loop reports `escalate` / `unavailable`, never clean and never No verdict yet |
+| Reading the bound run while polling is refused (401/403) or the run is not found (404), or no poll read the run within the budget | Unavailable — companion exit 3 (`POLL_RESULT=read_denied`, `run_not_found`, or `run_unreadable`); positive failure evidence (spec BR 2), never No verdict yet. A rate limit (including a 403 rate limit) or a transient 5xx keeps polling |
 
 **Current-revision binding (`--head-sha`).** The loop passes its head as
 `--head-sha <40-hex sha>` (omitted when the loop head is unknown). A
