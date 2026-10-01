@@ -1609,10 +1609,12 @@ run_test "copilot_needs_fixes_blocking_count" "BLOCKING_COUNT=1" \
   "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
 run_test "copilot_needs_fixes_exit_code" "1" "$actual_exit"
 
-# Test 8.3: escalate (timeout) path — no review posted within max_wait
+# Test 8.3: No verdict yet path — no review posted within max_wait
 # POST succeeds; GET returns empty array (no reviews yet); max_wait=0 so the
-# while loop body never executes and execution falls through to the timeout block.
-# MOCK_GH_HEAD_SHA is set so the SHA check passes and the timeout block is reached.
+# while loop body never executes and execution falls through to the expiry block.
+# MOCK_GH_HEAD_SHA is set so the SHA check passes and the expiry block is reached.
+# #1789 (plan D8 Copilot row): an expired wait is No verdict yet
+# (waiting_on_reviewer / reviewer-no-verdict-yet, exit 4), not escalate/timeout.
 export MOCK_GH_POST_OUTPUT='{}'
 export MOCK_GH_HEAD_SHA='abc123sha'
 export MOCK_GH_OUTPUT='[]'
@@ -1626,11 +1628,15 @@ actual_output="$(
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "copilot_timeout_result" "RESULT=escalate" \
+run_test "copilot_timeout_result" "RESULT=waiting_on_reviewer" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "copilot_timeout_reason" "REASON=timeout" \
+run_test "copilot_timeout_reason" "REASON=reviewer-no-verdict-yet" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-run_test "copilot_timeout_exit_code" "2" "$actual_exit"
+run_test "copilot_timeout_detail" "WAIT_EXPIRED_DETAIL=review_not_submitted" \
+  "$(printf '%s\n' "$actual_output" | grep "^WAIT_EXPIRED_DETAIL=")"
+run_test "copilot_timeout_pending_head" "PENDING_REVIEW_HEAD_SHA=abc123sha" \
+  "$(printf '%s\n' "$actual_output" | grep "^PENDING_REVIEW_HEAD_SHA=")"
+run_test "copilot_timeout_exit_code" "4" "$actual_exit"
 
 # Test 8.4: escalate (unavailable) path — reviewer request API call fails
 # POST fails (non-zero exit); function must return RESULT=escalate REASON=unavailable.
@@ -16107,10 +16113,13 @@ unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 #         comments → RESULT=clean, exit 0
 #   16.2  needs_fixes path: check run completes with conclusion=failure, blocking
 #         cursor[bot] review body → RESULT=needs_fixes, exit 1
-#   16.3  escalate (timeout) path: check run in_progress, budget exhausted with
-#         check_appeared=1 → RESULT=escalate, REASON=timeout, exit 2
-#   16.4  escalate (unavailable) path: no check run appears within budget
-#         (check_appeared=0) → RESULT=escalate, REASON=unavailable, exit 2
+#   16.3  No verdict yet: check run in_progress, budget exhausted with
+#         check_appeared=1 → RESULT=waiting_on_reviewer,
+#         REASON=reviewer-no-verdict-yet, detail check_not_completed, exit 4
+#         (#1789; was escalate/timeout)
+#   16.4  No verdict yet: no check run appears within budget
+#         (check_appeared=0) → RESULT=waiting_on_reviewer, detail
+#         check_not_started, exit 4 (#1789; was escalate/unavailable)
 #   16.5  escalate (head-sha-unavailable): pulls API returns empty head SHA
 #         → RESULT=escalate, REASON=head-sha-unavailable, exit 2
 #   16.6  idempotency fast-path: existing blocking cursor[bot] finding on HEAD
@@ -16134,8 +16143,9 @@ unset _integ_out _integ_exit INTEG_MOCK_HEAD_JSON
 #         retrievable → RESULT=escalate REASON=bugbot-findings-not-retrievable
 #   16.9d neutral conclusion whose summary is unparseable
 #         → RESULT=escalate REASON=bugbot-unverified-verdict, exit 2
-#   16.13 retry-once: an unfinished check run is re-triggered once before the
-#         loop declares REASON=timeout
+#   16.13 retry-once: an unfinished check run is re-triggered once, at the
+#         plan D3 point inside the budget, before the loop reports No verdict
+#         yet (#1789; was REASON=timeout after a second full budget)
 #   16.14 is_bugbot_clean_review rejects finding counts above 5
 #   16.10 run_platform_review routes "bugbot" to run_bugbot_review
 #
@@ -16599,9 +16609,10 @@ rm -rf "$_bugbot_mock_dir_162c"
 unset _bugbot_mock_dir_162c actual_output actual_exit
 
 # ---------------------------------------------------------------------------
-# Test 16.3: escalate (timeout) — run appeared but never completed
-# poll_interval=1, max_wait=2: loop runs once (sets check_appeared=1 via
-# in_progress status), then budget exhausted → REASON=timeout
+# Test 16.3: No verdict yet — run appeared but never completed
+# poll_interval=1, max_wait=1: loop runs once (sets check_appeared=1 via
+# in_progress status), then budget exhausted → No verdict yet,
+# check_not_completed (#1789, plan D8 Bugbot row; was REASON=timeout)
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_163="$(mktemp -d)"
 cat > "$_bugbot_mock_dir_163/gh" <<'BUGBOT_GH_163'
@@ -16639,17 +16650,20 @@ actual_output="$(
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "bugbot_timeout_result" "RESULT=escalate" \
+run_test "bugbot_timeout_result" "RESULT=waiting_on_reviewer" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "bugbot_timeout_reason" "REASON=timeout" \
+run_test "bugbot_timeout_reason" "REASON=reviewer-no-verdict-yet" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-run_test "bugbot_timeout_exit_code" "2" "$actual_exit"
+run_test "bugbot_timeout_detail" "WAIT_EXPIRED_DETAIL=check_not_completed" \
+  "$(printf '%s\n' "$actual_output" | grep "^WAIT_EXPIRED_DETAIL=")"
+run_test "bugbot_timeout_exit_code" "4" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_163"
 unset _bugbot_mock_dir_163 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
-# Test 16.4: escalate (unavailable) — no check run appeared within budget
-# max_wait=0: poll loop never executes, check_appeared=0 → REASON=unavailable
+# Test 16.4: No verdict yet — no check run appeared within budget
+# max_wait=0: poll loop never executes, check_appeared=0 → No verdict yet,
+# check_not_started (#1789, plan D8 Bugbot row; was REASON=unavailable)
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_164="$(mktemp -d)"
 cat > "$_bugbot_mock_dir_164/gh" <<'BUGBOT_GH_164'
@@ -16686,11 +16700,13 @@ actual_output="$(
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "bugbot_unavailable_result" "RESULT=escalate" \
+run_test "bugbot_unavailable_result" "RESULT=waiting_on_reviewer" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "bugbot_unavailable_reason" "REASON=unavailable" \
+run_test "bugbot_unavailable_reason" "REASON=reviewer-no-verdict-yet" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-run_test "bugbot_unavailable_exit_code" "2" "$actual_exit"
+run_test "bugbot_unavailable_detail" "WAIT_EXPIRED_DETAIL=check_not_started" \
+  "$(printf '%s\n' "$actual_output" | grep "^WAIT_EXPIRED_DETAIL=")"
+run_test "bugbot_unavailable_exit_code" "4" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_164"
 unset _bugbot_mock_dir_164 actual_output actual_exit
 
@@ -17371,8 +17387,10 @@ unset bugbot_clean_phrase_with_count actual
 # Test 16.13: retry-once — an unfinished check run is re-triggered once
 #
 # Bugbot intermittently leaves its check run unfinished. A timeout is not a
-# finding: the loop posts the trigger comment once more before declaring the
-# reviewer failed (issue #1390).
+# finding: the loop posts the trigger comment once more (issue #1390). #1789
+# (plan D3): the re-trigger fires inside the budget at
+# budget - min(600, floor(budget / 2)), which for max_wait=2 is elapsed 1, and
+# the budget then ends as No verdict yet rather than a second full wait.
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_1613="$(mktemp -d)"
 cat > "$_bugbot_mock_dir_1613/gh" <<'BUGBOT_GH_1613'
@@ -17407,22 +17425,22 @@ actual_exit=0
 actual_output="$(
   eval "$_bugbot_overrides"
   _ec=0
-  PATH="$_bugbot_mock_dir_1613:$PATH" run_bugbot_review "42" "feature/42-test" "1" "1" || _ec=$?
+  PATH="$_bugbot_mock_dir_1613:$PATH" run_bugbot_review "42" "feature/42-test" "1" "2" || _ec=$?
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-# One POST from the Phase 2 trigger guard (in_progress run still counts as
-# appeared, so the guard may or may not post) plus the retry POST from the
-# exhausted poll budget. Assert at least the retry happened.
+# The Phase 2 trigger guard does not post (an in_progress run is present), so
+# the only POST is the one-shot re-trigger inside the budget.
 _bugbot_post_lines="$(grep -c '' "$_bugbot_posts_file" 2>/dev/null || printf '0')"
 unset BUGBOT_1613_POSTS
 run_test "bugbot_timeout_retriggered_at_least_once" "yes" \
   "$([ "${_bugbot_post_lines:-0}" -ge 1 ] && printf 'yes' || printf 'no')"
-run_test "bugbot_timeout_after_retry_result" "RESULT=escalate" \
+run_test "bugbot_timeout_retriggered_exactly_once" "1" "${_bugbot_post_lines:-0}"
+run_test "bugbot_timeout_after_retry_result" "RESULT=waiting_on_reviewer" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "bugbot_timeout_after_retry_reason" "REASON=timeout" \
+run_test "bugbot_timeout_after_retry_reason" "REASON=reviewer-no-verdict-yet" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-run_test "bugbot_timeout_after_retry_exit_code" "2" "$actual_exit"
+run_test "bugbot_timeout_after_retry_exit_code" "4" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_1613"
 rm -f "$_bugbot_posts_file"
 unset _bugbot_mock_dir_1613 _bugbot_posts_file _bugbot_post_lines actual_output actual_exit
@@ -22309,6 +22327,447 @@ run_test "1789_T2.10_cli_timeout_record_no_verdict_yet" "no_verdict_yet" \
   "$(printf '%s\n' "${platform_result_records[@]}" | jq -sr 'last | .result')"
 run_test "1789_T2.4_cli_timeout_token" "coderabbit-cli:no verdict yet (non-blocking skip: timeout)" \
   "$(printf '%s\n' "${platform_result_tokens[@]}" | tail -n 1)"
+
+# ---------------------------------------------------------------------------
+# Phase 2b — in-loop GitHub-platform handlers (plan D3, D8): Greptile, Devin,
+# CodeRabbit, Copilot, Ronda, Bugbot, PR-Agent (T2.1–T2.6, T2.11, T2.24–T2.26).
+#
+# One endpoint-aware mock gh serves fixtures from a directory. A fixture named
+# `<name>@<n>` takes effect once the elapsed counter reaches <n>; the counter
+# only advances through the mocked _interruptible_sleep, so budgets of
+# thousands of seconds run instantly (time-scaled, T2.2/T2.11). Every "bound to
+# H" verdict mock satisfies both today's filters and D15: review comments carry
+# commit_id and original_commit_id H, reviews carry commit_id H, everything is
+# created after the head commit and the request, and the PR-Agent summary
+# carries the H marker line.
+# ---------------------------------------------------------------------------
+_1789_H="$(printf '1789%036d' 0 | tr 0 d)"
+_1789_OLD="$(printf '1789%036d' 0 | tr 0 e)"
+_1789_gh_bin="$_1789_dir/gh-bin"
+_1789_gh_dir="$_1789_dir/gh-fx"
+mkdir -p "$_1789_gh_bin"
+cat > "$_1789_gh_bin/gh" <<'MOCK_1789_GH'
+#!/usr/bin/env bash
+d="${MOCK_1789_GH_DIR:?}"
+tick="$(cat "$d/tick" 2>/dev/null || printf '0')"
+printf 'tick=%s %s\n' "$tick" "$*" >> "$d/calls.log"
+# fixture <name> <fallback>: the newest <name>@<n> with n <= tick, else <name>,
+# else the fallback.
+fixture() {
+  local name="$1" fallback="$2" best="" best_n=-1 f n
+  for f in "$d/$name"@*; do
+    [ -e "$f" ] || continue
+    n="${f##*@}"
+    if [ "$n" -le "$tick" ] && [ "$n" -gt "$best_n" ]; then best="$f"; best_n="$n"; fi
+  done
+  if [ -n "$best" ]; then cat "$best"
+  elif [ -e "$d/$name" ]; then cat "$d/$name"
+  else printf '%s\n' "$fallback"; fi
+}
+jq_expr=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "--jq" ] && jq_expr="$a"
+  prev="$a"
+done
+head="$(cat "$d/head")"
+case "$*" in
+  *"--method POST"*|*"-X POST"*|"pr comment"*)
+    printf 'tick=%s %s\n' "$tick" "$*" >> "$d/posts.log"
+    [ "$(fixture post-exit 0)" = "0" ] || exit 1
+    out="$(fixture post-body '{"id":9001,"created_at":"2020-01-01T00:00:05Z"}')"
+    ;;
+  "api user"*) out='{"login":"runner"}' ;;
+  "pr view"*) out="$(fixture pr-view "{\"headRefOid\":\"$head\"}")" ;;
+  *"/check-runs"*)
+    [ "$(fixture check-runs-fail 0)" = "0" ] || exit 1
+    sha="${*#*commits/}"; sha="${sha%%/*}"
+    if [ -e "$d/check-runs.$sha" ]; then out="$(cat "$d/check-runs.$sha")"
+    else out="$(fixture check-runs '{"check_runs":[]}')"; fi
+    ;;
+  *"/statuses"*) out="$(fixture statuses '[]')" ;;
+  *"/reactions"*) out="$(fixture reactions '[]')" ;;
+  *"/pulls/42/comments"*) out="$(fixture review-comments '[]')" ;;
+  *"/pulls/42/reviews"*) out="$(fixture reviews '[]')" ;;
+  *"/issues/42/comments"*) out="$(fixture issue-comments '[]')" ;;
+  *"/pulls/42"*) out="{\"head\":{\"sha\":\"$head\"}}" ;;
+  *"/commits/"*) out='{"commit":{"committer":{"date":"2020-01-01T00:00:00Z"}}}' ;;
+  *) out='[]' ;;
+esac
+if [ -n "$jq_expr" ]; then
+  printf '%s\n' "$out" | jq -r "$jq_expr"
+else
+  printf '%s\n' "$out"
+fi
+MOCK_1789_GH
+chmod +x "$_1789_gh_bin/gh"
+
+_1789_gh_reset() {
+  rm -rf "$_1789_gh_dir"
+  mkdir -p "$_1789_gh_dir"
+  printf '0\n' > "$_1789_gh_dir/tick"
+  printf '%s\n' "$_1789_H" > "$_1789_gh_dir/head"
+  : > "$_1789_gh_dir/calls.log"
+  : > "$_1789_gh_dir/posts.log"
+}
+# _1789_fx <name[@tick]> <json>
+_1789_fx() { printf '%s\n' "$2" > "$_1789_gh_dir/$1"; }
+_1789_tick() { cat "$_1789_gh_dir/tick"; }
+_1789_posts() { grep -c '' "$_1789_gh_dir/posts.log" || true; }
+# _1789_run_gh <handler> <budget> [poll]: runs a handler against the fixture
+# mock and prints its output followed by EXIT=<return status>.
+_1789_run_gh() {
+  (
+    eval "$_1789_handler_overrides"
+    _interruptible_sleep() {
+      local _t
+      _t="$(cat "$_1789_gh_dir/tick")"
+      printf '%s\n' "$(( _t + ${1:-0} ))" > "$_1789_gh_dir/tick"
+    }
+    export MOCK_1789_GH_DIR="$_1789_gh_dir"
+    export PATH="$_1789_gh_bin:$PATH"
+    export CODERABBIT_NO_TRIGGER_TIMEOUT=999999 FALLBACK_THREAD_SETTLE_WAIT=0
+    unset PR_REVIEW_TRIGGER_AUTHOR_LOGIN COPILOT_BOT_LOGIN BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME
+    unset BUGBOT_TRIGGER_COMMENT PR_AGENT_BOT_LOGIN RONDA_CHECK_NAME PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS
+    loop_head_sha="$_1789_H"
+    _ec=0
+    "$1" "42" "feature/1789-x" "${3:-1}" "$2" 2>"$_1789_gh_dir/stderr" || _ec=$?
+    printf 'EXIT=%s\n' "$_ec"
+  )
+}
+_1789_rre() {
+  printf '%s|%s|%s' "$(kv_value_default RESULT "$1" "")" "$(kv_value_default REASON "$1" "")" "$(kv_value_default EXIT "$1" "")"
+}
+# _1789_assert_waiting <tag> <platform> <output> <detail> <head>: the D8 No
+# verdict yet block, and the loop records it as waiting, breaks, and does not
+# require reviewer-failed (T2.1).
+_1789_assert_waiting() {
+  local tag="$1" platform="$2" out="$3" detail="$4" head="$5"
+  run_test "1789_${tag}_result" "waiting_on_reviewer|reviewer-no-verdict-yet|4|1" \
+    "$(_1789_rre "$out")|$(kv_value_default NO_VERDICT_YET "$out" "")"
+  run_test "1789_${tag}_detail" "$detail" "$(kv_value_default WAIT_EXPIRED_DETAIL "$out" "")"
+  run_test "1789_${tag}_pending" "${platform}|${head}" \
+    "$(kv_value_default PENDING_REVIEWER "$out" "")|$(kv_value_default PENDING_REVIEW_HEAD_SHA "$out" "")"
+  _1789_reset_processing_globals
+  reviewer_loop_process_platform_output "$platform" 1 "$out" 4 1 >/dev/null 2>&1
+  run_test "1789_${tag}_aggregate_waiting_breaks_no_label" "waiting_on_reviewer|reviewer-no-verdict-yet|1|0" \
+    "${aggregate_result}|${aggregate_reason}|${reviewer_loop_platform_loop_should_break}|${reviewer_failed_required}"
+  run_test "1789_${tag}_ledger_no_verdict_yet" "no_verdict_yet" \
+    "$(printf '%s\n' "${platform_result_records[@]}" | jq -sr 'last | .result')"
+}
+# _1789_assert_kept_skip <tag> <platform> <output> <reason> (T2.4)
+_1789_assert_kept_skip() {
+  local tag="$1" platform="$2" out="$3" reason="$4"
+  run_test "1789_${tag}_result" "skipped|${reason}|0|1" \
+    "$(_1789_rre "$out")|$(kv_value_default NO_VERDICT_YET "$out" "")"
+  run_test "1789_${tag}_display" "no verdict yet (non-blocking skip: ${reason})" \
+    "$(kv_value_default DISPLAY_RESULT "$out" "")"
+  run_test "1789_${tag}_class" "no_verdict_yet" \
+    "$(reviewer_loop_platform_outcome_class skipped "$reason" "$(kv_value_default NO_VERDICT_YET "$out" 0)")"
+  _1789_reset_processing_globals
+  reviewer_loop_process_platform_output "$platform" 1 "$out" 0 1 >/dev/null 2>&1
+  run_test "1789_${tag}_aggregate_clean_no_break_no_label" "clean|0|0" \
+    "${aggregate_result}|${reviewer_loop_platform_loop_should_break}|${reviewer_failed_required}"
+  run_test "1789_${tag}_ledger_no_verdict_yet" "no_verdict_yet" \
+    "$(printf '%s\n' "${platform_result_records[@]}" | jq -sr 'last | .result')"
+}
+# _1789_assert_failed <tag> <platform> <output> <reason>: failure evidence
+# stays escalate, class reviewer_failed, and requires the label (T2.3).
+_1789_assert_failed() {
+  local tag="$1" platform="$2" out="$3" reason="$4"
+  run_test "1789_${tag}_result" "escalate|${reason}|2" "$(_1789_rre "$out")"
+  run_test "1789_${tag}_class" "reviewer_failed" "$(reviewer_loop_platform_outcome_class escalate "$reason" 0)"
+  run_test "1789_${tag}_label_required" "yes" "$(_1789_label escalate "$reason")"
+  _1789_reset_processing_globals
+  reviewer_loop_process_platform_output "$platform" 1 "$out" 2 1 >/dev/null 2>&1
+  run_test "1789_${tag}_process_requires_label" "1" "$reviewer_failed_required"
+}
+
+# --- Greptile
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+_1789_assert_waiting T2.1_greptile greptile "$_1789_out" no_acknowledgement "$_1789_H"
+run_test "1789_T2.1_greptile_posted_once" "1" "$(_1789_posts)"
+run_test "1789_T2.1_greptile_bounded_by_budget" "2" "$(_1789_tick)"
+# Kept failure path: no trigger comment id from the POST → exit 2, never waiting.
+_1789_gh_reset
+_1789_fx post-body ''
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.3_greptile_missing_trigger_id_exit2" "2|" \
+  "$(kv_value_default EXIT "$_1789_out" "")|$(kv_value_default NO_VERDICT_YET "$_1789_out" "")"
+
+# --- Copilot
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_copilot_review 2)"
+_1789_assert_waiting T2.1_copilot copilot "$_1789_out" review_not_submitted "$_1789_H"
+# T2.5: an APPROVED review on another revision is not evidence for H.
+_1789_gh_reset
+_1789_fx reviews "[{\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"state\":\"APPROVED\",\"commit_id\":\"$_1789_OLD\",\"submitted_at\":\"2020-01-01T00:00:09Z\"}]"
+_1789_out="$(_1789_run_gh run_copilot_review 2)"
+run_test "1789_T2.5_copilot_older_review_no_verdict_yet" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+# The same review bound to H is today's verdict.
+_1789_fx reviews "[{\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"state\":\"APPROVED\",\"commit_id\":\"$_1789_H\",\"submitted_at\":\"2020-01-01T00:00:09Z\"}]"
+_1789_out="$(_1789_run_gh run_copilot_review 2)"
+run_test "1789_T2.5_copilot_bound_review_clean" "clean||0" "$(_1789_rre "$_1789_out")"
+# T2.6: the reviewer request failing keeps its failure handling.
+_1789_gh_reset
+_1789_fx post-exit 1
+_1789_out="$(_1789_run_gh run_copilot_review 2)"
+_1789_assert_failed T2.6_copilot_request_failure copilot "$_1789_out" unavailable
+
+# --- Ronda
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_ronda_review 2)"
+_1789_assert_waiting T2.1_ronda ronda "$_1789_out" check_not_completed "$_1789_H"
+_1789_gh_reset
+_1789_fx check-runs '{"check_runs":[{"id":31,"name":"Ronda review","status":"completed","conclusion":"failure","started_at":"2020-01-01T00:00:02Z","output":{"title":"model unavailable"}}]}'
+_1789_out="$(_1789_run_gh run_ronda_review 2)"
+_1789_assert_failed T2.3_ronda_pass_failed ronda "$_1789_out" ronda_pass_failed
+
+# --- Bugbot
+_1789_bb_run() {
+  printf '{"check_runs":[{"id":%s,"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"%s","conclusion":%s,"started_at":"2020-01-01T00:00:0%s"}]}' "$1" "$2" "$3" "$4"
+}
+# T2.1: a run appears but never completes → check_not_completed, the one
+# re-trigger fires inside the budget, and the wait is bounded by the budget.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_run 21 in_progress null 1)"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+_1789_assert_waiting T2.1_bugbot_not_completed bugbot "$_1789_out" check_not_completed "$_1789_H"
+run_test "1789_T2.1_bugbot_not_completed_one_retrigger" "1" "$(_1789_posts)"
+run_test "1789_T2.1_bugbot_not_completed_bounded" "4" "$(_1789_tick)"
+# T2.1: no run ever appears → check_not_started (initial trigger + one re-trigger).
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+_1789_assert_waiting T2.1_bugbot_not_started bugbot "$_1789_out" check_not_started "$_1789_H"
+run_test "1789_T2.1_bugbot_not_started_trigger_and_retrigger" "2" "$(_1789_posts)"
+run_test "1789_T2.1_bugbot_not_started_retrigger_at_d3_point" "tick=2" \
+  "$(sed -n '2p' "$_1789_gh_dir/posts.log" | cut -d' ' -f1)"
+# T2.11: default budget 2400, poll 120: exactly one re-trigger, at elapsed
+# 1800 (= 2400 - min(600, 1200)), and the total wait ends at the budget.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_run 22 in_progress null 1)"
+_1789_out="$(_1789_run_gh run_bugbot_review 2400 120)"
+run_test "1789_T2.11_bugbot_result" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+run_test "1789_T2.11_bugbot_exactly_one_retrigger" "1" "$(_1789_posts)"
+run_test "1789_T2.11_bugbot_retrigger_at_1800" "tick=1800" "$(cut -d' ' -f1 "$_1789_gh_dir/posts.log")"
+run_test "1789_T2.11_bugbot_total_wait_bounded" "2400" "$(_1789_tick)"
+# Small budgets: the re-trigger point is budget - min(600, floor(budget/2)).
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_run 23 in_progress null 1)"
+_1789_out="$(_1789_run_gh run_bugbot_review 1000 100)"
+run_test "1789_T2.11_bugbot_retrigger_point_1000" "tick=500" "$(cut -d' ' -f1 "$_1789_gh_dir/posts.log")"
+# T2.2: implementation-plan branch, no override → budget 2400 (D2) and poll 30
+# (D14); a run that completes success at elapsed 1500 is clean, and no
+# re-trigger is posted (the only POST is the initial request at elapsed 0).
+_1789_saved_t22_branch="$branch_name"
+branch_name="implementation-plan/1789-x"
+config_file="$_1789_none_cfg"
+read -r _1789_t22_budget _1789_t22_src _1789_t22_adj <<<"$(reviewer_wait_budget_resolve bugbot)"
+_1789_t22_poll="$(reviewer_poll_interval_resolve bugbot "$_1789_t22_budget")"
+branch_name="$_1789_saved_t22_branch"
+run_test "1789_T2.2_bugbot_budget_and_poll" "2400 default none 30" \
+  "$_1789_t22_budget $_1789_t22_src $_1789_t22_adj $_1789_t22_poll"
+_1789_gh_reset
+_1789_fx check-runs@30 "$(_1789_bb_run 24 in_progress null 1)"
+_1789_fx check-runs@1500 "$(_1789_bb_run 24 completed '"success"' 1)"
+_1789_out="$(_1789_run_gh run_bugbot_review "$_1789_t22_budget" "$_1789_t22_poll")"
+run_test "1789_T2.2_bugbot_clean_at_1500" "clean||0" "$(_1789_rre "$_1789_out")"
+run_test "1789_T2.2_bugbot_observed_at_1500" "1500" "$(_1789_tick)"
+run_test "1789_T2.2_bugbot_no_retrigger" "1|tick=0" \
+  "$(_1789_posts)|$(cut -d' ' -f1 "$_1789_gh_dir/posts.log")"
+# T2.3: Bugbot's own timed_out run → escalate/bugbot-run-timed-out.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_run 25 completed '"timed_out"' 1)"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+_1789_assert_failed T2.3_bugbot_run_timed_out bugbot "$_1789_out" bugbot-run-timed-out
+run_test "1789_T2.3_bugbot_run_timed_out_compare_token" "timed out" \
+  "$(normalize_platform_verdict escalate "REASON=bugbot-run-timed-out")"
+# T2.5: a completed success run on another revision is never H's verdict.
+_1789_gh_reset
+_1789_fx "check-runs.$_1789_OLD" "$(_1789_bb_run 26 completed '"success"' 1)"
+_1789_out="$(_1789_run_gh run_bugbot_review 2)"
+run_test "1789_T2.5_bugbot_other_revision_run_no_verdict_yet" "waiting_on_reviewer|reviewer-no-verdict-yet|4|check_not_started" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+# T2.6: Bugbot's own "disabled" self-report keeps its failure handling.
+_1789_gh_reset
+_1789_fx issue-comments '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:02Z","body":"Bugbot is disabled for this repository."}]'
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+_1789_assert_failed T2.6_bugbot_disabled bugbot "$_1789_out" bugbot-disabled
+
+# --- Devin (T2.1, T2.4, T2.24)
+_1789_dv_run() {
+  printf '{"check_runs":[{"id":41,"name":"Devin Review","app":{"slug":"devin-ai-integration"},"status":"%s","conclusion":%s,"started_at":"2020-01-01T00:00:01Z"}]}' "$1" "$2"
+}
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run in_progress null)"
+_1789_out="$(_1789_run_gh run_devin_review 2)"
+_1789_assert_waiting T2.1_devin devin "$_1789_out" check_not_completed "$_1789_H"
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_devin_review 2)"
+_1789_assert_kept_skip T2.4_devin_no_check_run devin "$_1789_out" no_check_run
+# T2.24: a timed-out Devin check with no findings → devin_run_failed after the grace.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"timed_out"')"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+_1789_assert_failed T2.24_devin_timed_out_check devin "$_1789_out" devin_run_failed
+run_test "1789_T2.24_devin_timed_out_check_after_grace" "120" "$(_1789_tick)"
+# Variant: a Devin status in `error` with no findings.
+_1789_gh_reset
+_1789_fx statuses '[{"id":3,"context":"Devin Review","state":"error","created_at":"2020-01-01T00:00:02Z"}]'
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+_1789_assert_failed T2.24_devin_error_status devin "$_1789_out" devin_run_failed
+# Variant: a failure check with a finding bound to H → needs_fixes.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"failure"')"
+_1789_fx review-comments@60 "[{\"id\":77,\"user\":{\"login\":\"devin-ai-integration[bot]\"},\"created_at\":\"2020-01-01T00:01:00Z\",\"in_reply_to_id\":null,\"path\":\"a.sh\",\"line\":3,\"body\":\"Bug: off-by-one in the loop bound\",\"commit_id\":\"$_1789_H\",\"original_commit_id\":\"$_1789_H\"}]"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.24_devin_failure_check_with_finding_needs_fixes" "needs_fixes||1" "$(_1789_rre "$_1789_out")"
+# Variant: a bound "No Issues Found" review plus a timed_out check → today's clean.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"timed_out"')"
+_1789_fx reviews "[{\"id\":5,\"user\":{\"login\":\"devin-ai-integration[bot]\"},\"state\":\"COMMENTED\",\"submitted_at\":\"2020-01-01T00:00:30Z\",\"commit_id\":\"$_1789_H\",\"body\":\"No Issues Found\"}]"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.24_devin_bound_review_keeps_clean" "clean||0" "$(_1789_rre "$_1789_out")"
+# Variant: a success check with no findings → clean as today.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"success"')"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.24_devin_success_check_clean" "clean||0" "$(_1789_rre "$_1789_out")"
+# Variant: the budget ends inside the 120 s grace after a timed_out check →
+# devin_run_failed, never No verdict yet.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"timed_out"')"
+_1789_out="$(_1789_run_gh run_devin_review 60 30)"
+_1789_assert_failed T2.24_devin_expiry_inside_grace devin "$_1789_out" devin_run_failed
+# Contrast: the budget ends inside the grace after a success check → No verdict yet.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"success"')"
+_1789_out="$(_1789_run_gh run_devin_review 60 30)"
+run_test "1789_T2.24_devin_success_inside_grace_no_verdict_yet" "waiting_on_reviewer|reviewer-no-verdict-yet|4|check_not_completed" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+
+# --- CodeRabbit (T2.4, T2.25)
+_1789_cr_status() {
+  printf '[{"id":%s,"context":"CodeRabbit","state":"%s","description":"%s","created_at":"2020-01-01T00:00:0%s"}]' "$1" "$2" "$3" "$4"
+}
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+_1789_assert_kept_skip T2.4_coderabbit_no_review coderabbit "$_1789_out" no_review
+# T2.25: a failure (and an error) status on H with no bound review or finding.
+for _1789_state in failure error; do
+  _1789_gh_reset
+  _1789_fx statuses "$(_1789_cr_status 8 "$_1789_state" "Review failed" 3)"
+  _1789_out="$(_1789_run_gh run_coderabbit_review 5)"
+  _1789_assert_failed "T2.25_coderabbit_status_${_1789_state}" coderabbit "$_1789_out" coderabbit_status_failed
+  run_test "1789_T2.25_coderabbit_status_${_1789_state}_ends_wait" "0" "$(_1789_tick)"
+done
+# With an H-bound finding → needs_fixes.
+_1789_gh_reset
+_1789_fx statuses@1 "$(_1789_cr_status 8 failure "Review failed" 3)"
+_1789_fx review-comments@1 "[{\"id\":78,\"user\":{\"login\":\"coderabbitai[bot]\"},\"created_at\":\"2020-01-01T00:00:20Z\",\"in_reply_to_id\":null,\"path\":\"a.sh\",\"line\":4,\"body\":\"🔴 Critical: unquoted expansion\",\"commit_id\":\"$_1789_H\",\"original_commit_id\":\"$_1789_H\"}]"
+_1789_out="$(_1789_run_gh run_coderabbit_review 5)"
+run_test "1789_T2.25_coderabbit_failed_status_with_finding_needs_fixes" "needs_fixes||1" "$(_1789_rre "$_1789_out")"
+# A review bound to H (commit_id == H) keeps today's verdict.
+_1789_gh_reset
+_1789_fx statuses "$(_1789_cr_status 8 failure "Review failed" 3)"
+_1789_fx reviews "[{\"id\":6,\"user\":{\"login\":\"coderabbitai[bot]\"},\"state\":\"COMMENTED\",\"submitted_at\":\"2020-01-01T00:00:00Z\",\"commit_id\":\"$_1789_H\",\"body\":\"Summary\"}]"
+_1789_out="$(_1789_run_gh run_coderabbit_review 5)"
+run_test "1789_T2.25_coderabbit_failed_status_bound_review_keeps_verdict" "clean||0" "$(_1789_rre "$_1789_out")"
+# A failure status in the #1437 rate/review-limit wording is not counted.
+_1789_gh_reset
+_1789_fx statuses "$(_1789_cr_status 8 failure "Review limit reached. Next review available in: 30 minutes" 3)"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.25_coderabbit_rate_limit_failure_status_not_counted" "skipped|no_review|0" "$(_1789_rre "$_1789_out")"
+# Unit rows for the counter (newest state per context governs).
+_1789_cr_count() {
+  (
+    export MOCK_1789_GH_DIR="$_1789_gh_dir"
+    export PATH="$_1789_gh_bin:$PATH"
+    coderabbit_failed_status_count "$@"
+  )
+}
+_1789_gh_reset
+_1789_fx statuses "$(_1789_cr_status 8 failure "Review failed" 3)"
+run_test "1789_T2.25_failed_status_count_failure" "1" "$(_1789_cr_count owner/repo "$_1789_H")"
+_1789_fx statuses "$(_1789_cr_status 8 failure "Rate limit exceeded" 3)"
+run_test "1789_T2.25_failed_status_count_rate_limit_excluded" "0" "$(_1789_cr_count owner/repo "$_1789_H")"
+_1789_fx statuses '[{"id":9,"context":"CodeRabbit","state":"success","description":"Review completed","created_at":"2020-01-01T00:00:09Z"},{"id":8,"context":"CodeRabbit","state":"failure","description":"Review failed","created_at":"2020-01-01T00:00:03Z"}]'
+run_test "1789_T2.25_failed_status_count_newer_success_governs" "0" "$(_1789_cr_count owner/repo "$_1789_H")"
+_1789_fx statuses '[{"id":9,"context":"CodeRabbit","state":"error","description":"Review errored","created_at":"2020-01-01T00:00:09Z"},{"id":8,"context":"CodeRabbit","state":"success","description":"Review completed","created_at":"2020-01-01T00:00:03Z"}]'
+run_test "1789_T2.25_failed_status_count_newer_error_governs" "1" "$(_1789_cr_count owner/repo "$_1789_H")"
+_1789_fx statuses 'not json'
+run_test "1789_T2.25_failed_status_count_unreadable_is_zero" "0" "$(_1789_cr_count owner/repo "$_1789_H")"
+run_test "1789_T2.25_failed_status_count_missing_args_zero" "0" "$(_1789_cr_count "" "")"
+
+# --- PR-Agent (T2.4, T2.26)
+_1789_pra() {
+  printf '{"id":%s,"name":"PR-Agent review","status":"%s","conclusion":%s,"started_at":"2020-01-01T00:00:%s"}' "$1" "$2" "$3" "$4"
+}
+_1789_pra_runs() { printf '{"check_runs":[%s]}' "$1"; }
+_1789_gh_reset
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+_1789_assert_kept_skip T2.4_pr_agent_no_review pr-agent "$_1789_out" no_review
+run_test "1789_T2.4_pr_agent_posted_request" "1" "$(_1789_posts)"
+# T2.26: a run on H active at Phase 1 (no /review posted), then it completes
+# cancelled (and, separately, timed_out) → pr_agent_run_failed on that poll.
+for _1789_concl in cancelled timed_out; do
+  _1789_gh_reset
+  _1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 in_progress null 10)")"
+  _1789_fx check-runs@1 "$(_1789_pra_runs "$(_1789_pra 10 completed "\"$_1789_concl\"" 10)")"
+  _1789_out="$(_1789_run_gh run_pr_agent_review 5)"
+  _1789_assert_failed "T2.26_pr_agent_active_then_${_1789_concl}" pr-agent "$_1789_out" pr_agent_run_failed
+  run_test "1789_T2.26_pr_agent_active_then_${_1789_concl}_no_post" "0" "$(_1789_posts)"
+  run_test "1789_T2.26_pr_agent_active_then_${_1789_concl}_returns_on_that_poll" "1" "$(_1789_tick)"
+  run_test "1789_T2.26_pr_agent_active_then_${_1789_concl}_conclusion" "$_1789_concl" \
+    "$(kv_value_default PR_AGENT_RUN_CONCLUSION "$_1789_out" "")"
+done
+# Regression: a run on H that already completed timed_out before Phase 1. The
+# handler posts /review (an outstanding request), no poll returns before the
+# budget, and the result at the budget is pr_agent_run_failed, never the kept skip.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10)")"
+_1789_out="$(_1789_run_gh run_pr_agent_review 5)"
+_1789_assert_failed T2.26_pr_agent_pre_failed pr-agent "$_1789_out" pr_agent_run_failed
+run_test "1789_T2.26_pr_agent_pre_failed_posted_request" "1" "$(_1789_posts)"
+run_test "1789_T2.26_pr_agent_pre_failed_waits_full_budget" "5" "$(_1789_tick)"
+# Supersession: a newer run on H (later started_at, higher id) appears and
+# completes success with no bound summary → the no_review kept skip.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10)")"
+_1789_fx check-runs@2 "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10),$(_1789_pra 11 in_progress null 20)")"
+_1789_fx check-runs@3 "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10),$(_1789_pra 11 completed '"success"' 20)")"
+_1789_out="$(_1789_run_gh run_pr_agent_review 5)"
+run_test "1789_T2.26_pr_agent_superseded_by_newer_run_kept_skip" "skipped|no_review|0|1" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default NO_VERDICT_YET "$_1789_out" "")"
+# ...and a summary that then carries the H marker is the verdict.
+_1789_fx issue-comments@4 "[{\"id\":501,\"user\":{\"login\":\"github-actions[bot]\"},\"created_at\":\"2020-01-01T00:00:30Z\",\"updated_at\":\"2020-01-01T00:00:40Z\",\"html_url\":\"https://github.com/owner/repo/pull/42#issuecomment-501\",\"body\":\"## PR Reviewer Guide 🔍\\n\\n#### (Review updated until commit https://github.com/owner/repo/commit/$_1789_H)\\n\\nNo major issues detected\"}]"
+_1789_out="$(_1789_run_gh run_pr_agent_review 6)"
+run_test "1789_T2.26_pr_agent_bound_summary_is_verdict" "clean||0" "$(_1789_rre "$_1789_out")"
+# A failure-type run on another revision (the default-branch tip an
+# issue_comment run reports) is never read: only commits/H/check-runs is read.
+_1789_gh_reset
+_1789_fx "check-runs.$_1789_OLD" "$(_1789_pra_runs "$(_1789_pra 12 completed '"failure"' 10)")"
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T2.26_pr_agent_other_revision_failure_not_read" "skipped|no_review|0" "$(_1789_rre "$_1789_out")"
+run_test "1789_T2.26_pr_agent_reads_only_head_check_runs" "0" \
+  "$(grep 'check-runs' "$_1789_gh_dir/calls.log" | grep -vc "commits/$_1789_H/check-runs" || true)"
+# A per-poll read that fails on every poll gives the kept skip.
+_1789_gh_reset
+_1789_fx check-runs-fail 1
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T2.26_pr_agent_read_always_fails_kept_skip" "skipped|no_review|0" "$(_1789_rre "$_1789_out")"
+# One failing poll after a failure-type read keeps pr_agent_run_failed at the budget.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10)")"
+_1789_fx check-runs-fail@2 1
+_1789_out="$(_1789_run_gh run_pr_agent_review 5)"
+run_test "1789_T2.26_pr_agent_failed_read_keeps_last_signal" "escalate|pr_agent_run_failed|2" "$(_1789_rre "$_1789_out")"
+
+unset _1789_H _1789_OLD _1789_gh_bin _1789_gh_dir _1789_state _1789_concl _1789_saved_t22_branch
+unset _1789_t22_budget _1789_t22_src _1789_t22_adj _1789_t22_poll
+unset -f _1789_gh_reset _1789_fx _1789_tick _1789_posts _1789_run_gh _1789_rre _1789_assert_waiting \
+  _1789_assert_kept_skip _1789_assert_failed _1789_bb_run _1789_dv_run _1789_cr_status _1789_cr_count \
+  _1789_pra _1789_pra_runs 2>/dev/null || true
 
 # --- Summary result line for reviewer-no-verdict-yet (partial D12 wording)
 run_test "1789_T2_summary_result_line_wording" "1" \

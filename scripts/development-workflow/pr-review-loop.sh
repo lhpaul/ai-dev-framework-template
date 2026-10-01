@@ -2153,14 +2153,15 @@ run_greptile_review() {
 
     if [ "$elapsed" -ge "$max_wait" ]; then
       rm -f "$blocking_lines_file"
-      print_kv RESULT escalate
-      print_kv REASON timeout
+      # #1789 (plan D8 Greptile row): no bot thumbs-up by budget end is
+      # neither a verdict nor failure evidence — No verdict yet.
+      print_no_verdict_yet "$platform" no_acknowledgement "${loop_head_sha:-$head_sha}" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID "$review_comment_id"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-      return 2
+      return 4
     fi
 
     _interruptible_sleep "$poll_interval"
@@ -2683,7 +2684,9 @@ run_copilot_review() {
   # review state to the standard exit-code contract:
   #   0 → RESULT=clean      (APPROVED or COMMENTED only)
   #   1 → RESULT=needs_fixes (CHANGES_REQUESTED)
-  #   2 → RESULT=escalate   (timeout or Copilot feature unavailable)
+  #   2 → RESULT=escalate   (Copilot feature unavailable, head SHA unavailable)
+  #   4 → RESULT=waiting_on_reviewer (no review on the head within the budget;
+  #       REASON=reviewer-no-verdict-yet, #1789)
   #
   # Env var override:
   #   COPILOT_BOT_LOGIN  — override the default bot login
@@ -2843,14 +2846,14 @@ run_copilot_review() {
     elapsed=$(( elapsed + effective_poll_interval ))
   done
 
-  # Timeout — no review posted within max_wait.
-  print_kv RESULT escalate
-  print_kv REASON timeout
+  # #1789 (plan D8 Copilot row): no review bound to the head within the
+  # budget — No verdict yet, never a failure.
+  print_no_verdict_yet "$platform" review_not_submitted "${current_sha:-$head_sha}" ""
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-  return 2
+  return 4
 }
 
 run_ronda_review() {
@@ -2889,8 +2892,10 @@ run_ronda_review() {
   #   2 → RESULT=escalate    (conclusion=success with a missing, duplicated,
   #                           or unparseable severity line; conclusion=failure
   #                           — a pass failure, not a code finding; any other
-  #                           terminal conclusion; timeout;
+  #                           terminal conclusion;
   #                           head-sha-unavailable; fetch-failed)
+  #   4 → RESULT=waiting_on_reviewer (no completed check run within the budget;
+  #                           REASON=reviewer-no-verdict-yet, #1789)
   #
   # Env var overrides:
   #   RONDA_CHECK_NAME  — override check-run name (default: "Ronda review")
@@ -3102,14 +3107,14 @@ run_ronda_review() {
     esac
   done
 
-  # Timeout — no completed check run observed within max_wait.
-  print_kv RESULT escalate
-  print_kv REASON timeout
+  # #1789 (plan D8 Ronda row): no completed check run on the head within the
+  # budget — No verdict yet. A completed failure keeps ronda_pass_failed above.
+  print_no_verdict_yet "$platform" check_not_completed "${current_sha:-$head_sha}" ""
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-  return 2
+  return 4
 }
 
 bugbot_return_disabled() {
@@ -3400,10 +3405,16 @@ run_bugbot_review() {
   #   1 → RESULT=needs_fixes (conclusion=failure/action_required, neutral with
   #                           retrievable findings, or existing blocking
   #                           cursor[bot] findings on current head)
-  #   2 → RESULT=escalate   (timeout, unavailable, head-sha-unavailable, or a
-  #                           neutral conclusion whose verdict could not be
-  #                           established — see REASON=bugbot-unverified-verdict
-  #                           and REASON=bugbot-findings-not-retrievable)
+  #   2 → RESULT=escalate   (Bugbot's own timed_out run as
+  #                           REASON=bugbot-run-timed-out, head-sha-unavailable,
+  #                           fetch/trigger failures, or a neutral conclusion
+  #                           whose verdict could not be established — see
+  #                           REASON=bugbot-unverified-verdict and
+  #                           REASON=bugbot-findings-not-retrievable)
+  #   4 → RESULT=waiting_on_reviewer (#1789: the budget ran out with no
+  #                           completed run on the head; REASON=
+  #                           reviewer-no-verdict-yet, WAIT_EXPIRED_DETAIL
+  #                           check_not_completed or check_not_started)
   #
   # Env var overrides:
   #   BUGBOT_BOT_LOGIN        — override bot login (default: "cursor[bot]")
@@ -3726,13 +3737,41 @@ run_bugbot_review() {
   fi
 
   # --- Phase 3: Poll the "Cursor Bugbot" check run on the current head SHA ---
-  # Wrapped in a one-shot retry (issue #1390): Bugbot intermittently leaves its
-  # check run unfinished, and a single re-trigger with the trigger comment has
-  # been observed to recover it every time. A timeout is not a finding, so
-  # retry once before declaring the reviewer unavailable.
+  # One-shot re-trigger (issue #1390): Bugbot intermittently leaves its check
+  # run unfinished, and a single re-trigger with the trigger comment has been
+  # observed to recover it every time. #1789 (plan D3): the budget bounds the
+  # whole wait, both attempts included, and the re-trigger fires once the
+  # elapsed counter reaches budget - min(600, floor(budget / 2)) (1800 s for
+  # the 2400 s default), so a verdict arriving up to 1500 s after the request
+  # is always observed before any re-trigger.
   local bugbot_retry_attempted=0
-  while :; do
+  local bugbot_retrigger_margin=$(( max_wait / 2 ))
+  [ "$bugbot_retrigger_margin" -gt 600 ] && bugbot_retrigger_margin=600
+  local bugbot_retrigger_at=$(( max_wait - bugbot_retrigger_margin ))
   while [ "$elapsed" -lt "$max_wait" ]; do
+    if [ "$bugbot_retry_attempted" -eq 0 ] && [ "$elapsed" -gt 0 ] \
+        && [ "$elapsed" -ge "$bugbot_retrigger_at" ]; then
+      bugbot_retry_attempted=1
+      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${elapsed}s of a ${max_wait}s budget for PR #$pr_number — re-triggering once" >&2
+      set +e
+      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" > /dev/null 2>&1
+      local _bb_retry_rc=$?
+      set -e
+      if [ "$_bb_retry_rc" -ne 0 ]; then
+        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON trigger-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+    fi
     # Re-resolve head SHA each iteration so a mid-review push retargets the filter.
     set +e
     local _current_sha
@@ -4271,9 +4310,10 @@ run_bugbot_review() {
           ;;
 
         timed_out)
-          # Bugbot's own internal timeout.
+          # Bugbot's own run reported it timed out: failure evidence for the
+          # head (#1789, plan D8), distinct from the loop's own wait budget.
           print_kv RESULT escalate
-          print_kv REASON timeout
+          print_kv REASON bugbot-run-timed-out
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -4314,66 +4354,19 @@ run_bugbot_review() {
     elapsed=$(( elapsed + poll_interval ))
   done
 
-    # Poll budget exhausted for this attempt. Retry once with the trigger comment
-    # before declaring the reviewer failed (issue #1390): an unfinished Bugbot run
-    # is a timeout, not a finding, and the stale reviewer-failed label it produces
-    # reads like one.
-    if [ "$bugbot_retry_attempted" -eq 0 ]; then
-      bugbot_retry_attempted=1
-      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${max_wait}s for PR #$pr_number — re-triggering once" >&2
-      set +e
-      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
-        --raw-field body="$trigger_comment" > /dev/null 2>&1
-      local _bb_retry_rc=$?
-      set -e
-      if [ "$_bb_retry_rc" -ne 0 ]; then
-        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
-        print_kv RESULT escalate
-        print_kv REASON trigger-failed
-        print_kv PLATFORM "$platform"
-        print_kv PR_NUMBER "$pr_number"
-        print_kv BRANCH "$branch_name"
-        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-        print_kv COMMENT_COUNT 0
-        print_kv BLOCKING_COUNT 0
-        print_kv SUGGESTION_COUNT 0
-        return 2
-      fi
-      elapsed=0
-      check_appeared=0
-      status_val=""
-      conclusion=""
-      continue
-    fi
-    break
-  done
-
-  # Poll budget exhausted across both attempts.  Distinguish timeout (run
-  # appeared) from unavailable (no Cursor Bugbot check run ever appeared —
-  # Cursor app likely not installed). Either way, never report as clean (AC-5).
-  if [ "$check_appeared" -eq 0 ]; then
-    print_kv RESULT escalate
-    print_kv REASON unavailable
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv COMMENT_COUNT 0
-    print_kv BLOCKING_COUNT 0
-    print_kv SUGGESTION_COUNT 0
-    return 2
-  fi
-
-  print_kv RESULT escalate
-  print_kv REASON timeout
+  # #1789 (plan D8 Bugbot row): the budget ran out across both attempts with
+  # no completed run on the head. Neither a verdict nor failure evidence, so
+  # never clean (AC-5) and never a failed reviewer: No verdict yet, with the
+  # detail telling a run that appeared but never completed from no run ever
+  # appearing. Bugbot's own failure-type conclusions are handled above.
+  local _bb_wait_detail=check_not_completed
+  [ "$check_appeared" -eq 0 ] && _bb_wait_detail=check_not_started
+  print_no_verdict_yet "$platform" "$_bb_wait_detail" "${_current_sha:-$head_sha}" ""
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-  print_kv COMMENT_COUNT 0
-  print_kv BLOCKING_COUNT 0
-  print_kv SUGGESTION_COUNT 0
-  return 2
+  return 4
 }
 
 run_haystack_review() {
@@ -5173,6 +5166,14 @@ run_devin_review() {
   local since_check_completed=0
   local devin_status_count=0
   local devin_completed_status_count=0
+  # #1789 (plan D8 failure-type completion signals): whether the newest Devin
+  # check run or status on the head reports Devin's own run as failed or timed
+  # out (re-read every poll), and whether the wait ended on a check-or-status
+  # completion rather than on a completion review.
+  local devin_failed_check_count=0
+  local devin_failed_status_count=0
+  local devin_failure_signal=0
+  local devin_ended_on_check=0
 
   while :; do
     # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
@@ -5194,20 +5195,22 @@ run_devin_review() {
       break
     fi
 
-    read -r devin_any_check_count check_completed < <(
+    read -r devin_any_check_count check_completed devin_failed_check_count < <(
       gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
             ([.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
               (.name | test("devin"; "i"))
             )] | dedupe_status_check_rollup) as $runs
             | ($runs | length),
-              ($runs | map(select(.status == "completed")) | length)
+              ($runs | map(select(.status == "completed")) | length),
+              ($runs | map(select(reviewer_failed_completion)) | length)
             | tostring
           ' | tr '\n' ' '; echo
     )
     devin_any_check_count="${devin_any_check_count:-0}"
     check_completed="${check_completed:-0}"
+    devin_failed_check_count="${devin_failed_check_count:-0}"
 
     # Also count Devin status contexts (Devin sometimes signals via a GitHub Status
     # Context on the commit rather than a Check Run — both mean Devin has completed).
@@ -5219,20 +5222,29 @@ run_devin_review() {
     # when the same context transitions through multiple states (e.g. pending → success).
     # Shared dedupe (workflow-lib.sh, #1559); the REST list is newest-first, so it
     # is reversed first and a same-second tie resolves to the newer status.
-    read -r devin_status_count devin_completed_status_count < <(
+    read -r devin_status_count devin_completed_status_count devin_failed_status_count < <(
       gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
+        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
             ( [.[].[] | select(.context | test("devin"; "i"))]
               | reverse | dedupe_status_check_rollup | length ),
             ( [.[].[] | select(.context | test("devin"; "i"))]
               | reverse | dedupe_status_check_rollup
               | map(select(.state == "success" or .state == "failure" or .state == "error"))
+              | length ),
+            ( [.[].[] | select(.context | test("devin"; "i"))]
+              | reverse | dedupe_status_check_rollup
+              | map(select(reviewer_failed_completion))
               | length )
             | tostring
           ' | tr '\n' ' '; echo
     )
     devin_status_count="${devin_status_count:-0}"
     devin_completed_status_count="${devin_completed_status_count:-0}"
+    devin_failed_status_count="${devin_failed_status_count:-0}"
+    devin_failure_signal=0
+    if [ "$devin_failed_check_count" -gt 0 ] || [ "$devin_failed_status_count" -gt 0 ]; then
+      devin_failure_signal=1
+    fi
     if [ "$devin_status_count" -gt 0 ]; then
       devin_any_check_count=$(( devin_any_check_count + devin_status_count ))
     fi
@@ -5248,11 +5260,20 @@ run_devin_review() {
       fi
       since_check_completed=$(( elapsed - check_completed_at ))
       if [ "$since_check_completed" -ge "$devin_post_check_grace" ]; then
+        devin_ended_on_check=1
         break
       fi
     fi
 
     if [ "$elapsed" -ge "$max_wait" ]; then
+      if [ "$check_completed" -gt 0 ] && [ "$devin_failure_signal" -eq 1 ]; then
+        # #1789 (plan D8 Devin row): the budget ended inside the post-check
+        # grace after Devin's own run reported failure. Collect results as if
+        # the grace had ended, so Phase 3 applies the failure rule instead of
+        # reporting No verdict yet for a reviewer that already failed.
+        devin_ended_on_check=1
+        break
+      fi
       if [ "$devin_any_check_count" -eq 0 ]; then
         # Devin didn't review this HEAD (common after merging the base branch
         # when the diff didn't change). Before reporting "skipped", scan the
@@ -5320,8 +5341,10 @@ run_devin_review() {
         fi
         rm -f "$stale_file"
 
+        # #1789 (plan D8): kept expired-wait skip, reported as No verdict yet.
         print_kv RESULT skipped
         print_kv REASON no_check_run
+        print_no_verdict_yet_kept_skip_keys no_check_run
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -5332,14 +5355,15 @@ run_devin_review() {
         print_kv SUGGESTION_COUNT 0
         return 0
       fi
-      print_kv RESULT escalate
-      print_kv REASON timeout
+      # #1789 (plan D8 Devin row): a Devin check or status was seen but no
+      # completion and no failure-type signal by budget end — No verdict yet.
+      print_no_verdict_yet "$platform" check_not_completed "$head_sha" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID ""
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-      return 2
+      return 4
     fi
 
     _interruptible_sleep "$poll_interval"
@@ -5452,6 +5476,24 @@ run_devin_review() {
   fi
 
   rm -f "$blocking_lines_file"
+  if [ "$devin_ended_on_check" -eq 1 ] && [ "$devin_failure_signal" -eq 1 ]; then
+    # #1789 (plan D8 failure-type completion signals): the wait ended on a
+    # Devin check run or status on the head that reports Devin's own run as
+    # failed or timed out, with no completion review and no finding. That is
+    # failure evidence, never a clean verdict.
+    echo "WARN: run_devin_review: Devin's own run on $head_sha reported failure (check run or status) with no review — escalating as devin_run_failed" >&2
+    print_kv RESULT escalate
+    print_kv REASON devin_run_failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
   print_kv RESULT clean
     {
       [ -n "${comments:-}" ] && printf '%s\n' "$comments"
@@ -5503,6 +5545,16 @@ run_pr_agent_review() {
   local elapsed=0
   local comment_body=""
   local trigger_body="/review"
+  # #1789 (plan D8 failure-type completion signals, PR-Agent row). An
+  # outstanding request is one this invocation posted or a recent /review
+  # trigger it reused; it stays 0 when posting was skipped only because a
+  # PR-Agent review run on the head was already active. (The D11 re-wait
+  # adopted-request variant is added with re-wait mode.)
+  local pr_agent_outstanding_request=0
+  # Conclusion of the newest PR-Agent review run on the head when it is
+  # completed and failure-type; empty otherwise. A failed read keeps the last
+  # successful read's value.
+  local pr_agent_failed_conclusion=""
 
   require_gh
   cd_workflow_repo_root
@@ -5614,10 +5666,41 @@ run_pr_agent_review() {
     if [ -n "$recent_trigger_created_at" ]; then
       print_kv PR_AGENT_TRIGGER_SKIPPED recent_review_trigger
       print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$recent_trigger_created_at"
+      pr_agent_outstanding_request=1
       return 0
     fi
 
     return 1
+  }
+
+  # #1789 (plan D8 failure-type completion signals): reads the "PR-Agent
+  # review" check runs on the head, keeps the newest with
+  # dedupe_status_check_rollup (latest started_at, then highest id), and prints
+  # its conclusion when it is completed and failure-type
+  # (REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS); prints nothing otherwise.
+  # Returns non-zero when the check runs could not be read, so the caller can
+  # keep the last successful read in force.
+  _pr_agent_failed_review_check_conclusion() {
+    local check_runs_json=""
+    local failed_conclusion=""
+    if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null)"; then
+      return 1
+    fi
+    [ -n "$check_runs_json" ] || return 1
+    if ! failed_conclusion="$(
+      printf '%s\n' "$check_runs_json" \
+        | jq -rs "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+            [.[] | (if type == "object" then (.check_runs // []) else [] end)[]
+                 | select(type == "object" and .name == "PR-Agent review")]
+            | dedupe_status_check_rollup
+            | map(select(reviewer_failed_completion))
+            | (.[0].conclusion // "")
+          ' 2>/dev/null
+    )"; then
+      return 1
+    fi
+    printf '%s' "$failed_conclusion"
+    return 0
   }
 
   _pr_agent_trigger_review() {
@@ -5634,6 +5717,7 @@ run_pr_agent_review() {
       fi
     fi
     print_kv PR_AGENT_TRIGGER_COMMENT "$trigger_body"
+    pr_agent_outstanding_request=1
     return 0
   }
 
@@ -5896,9 +5980,40 @@ _PR_AGENT_LABELS_
       break
     fi
 
+    # #1789 (plan D8 failure-type completion signals): this poll bound no
+    # summary, so read whether the newest PR-Agent review run on the head
+    # failed. A failed read leaves the last successful read in force.
+    local _pr_agent_read_conclusion=""
+    if _pr_agent_read_conclusion="$(_pr_agent_failed_review_check_conclusion)"; then
+      pr_agent_failed_conclusion="$_pr_agent_read_conclusion"
+    fi
+    if [ -n "$pr_agent_failed_conclusion" ] \
+        && { [ "$pr_agent_outstanding_request" -eq 0 ] || [ "$elapsed" -ge "$max_wait" ]; }; then
+      # No outstanding request: the run that was active when posting was
+      # skipped has failed, and nothing else can answer — failure now. With an
+      # outstanding request, its answer can still supersede the failed run
+      # (a bound summary or a newer run on the head), so the failure is
+      # reported only at budget end, in place of the no_review kept skip.
+      echo "WARN: run_pr_agent_review: the newest PR-Agent review run on $head_sha concluded '$pr_agent_failed_conclusion' with no summary bound to the head — escalating as pr_agent_run_failed" >&2
+      print_kv RESULT escalate
+      print_kv REASON pr_agent_run_failed
+      print_kv PR_AGENT_RUN_CONCLUSION "$pr_agent_failed_conclusion"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
     if [ "$elapsed" -ge "$max_wait" ]; then
+      # #1789 (plan D8): kept expired-wait skip, reported as No verdict yet.
       print_kv RESULT skipped
       print_kv REASON no_review
+      print_no_verdict_yet_kept_skip_keys no_review
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -6597,6 +6712,49 @@ coderabbit_success_status_count() {
                      | not)
               ))
             | length'
+}
+
+# coderabbit_failed_status_count <repo> <head_sha>
+#
+# #1789 (plan D8 failure-type completion signals): the count of CodeRabbit
+# commit statuses on <head_sha> whose newest state per context is `failure` or
+# `error` (the shared reviewer_failed_completion predicate). Same context
+# match, dedupe, and #1437 description guard as
+# coderabbit_success_status_count: a failure status whose description matches
+# the rate/review-limit pattern is not counted, so the rate-limit handling keeps
+# its outcome (AC-13). Always prints an integer and returns 0 (callers assign
+# it under `set -e`); an unreadable status list counts as 0.
+coderabbit_failed_status_count() {
+  local repo="$1" head_sha="$2"
+  local statuses_json="" count=""
+  if [ -z "$repo" ] || [ -z "$head_sha" ]; then
+    printf '%s\n' 0
+    return 0
+  fi
+  if ! statuses_json="$(gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>/dev/null)"; then
+    printf '%s\n' 0
+    return 0
+  fi
+  count="$(
+    printf '%s\n' "$statuses_json" \
+      | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+          [.[] | (if type == "array" then .[] else empty end)
+               | select(type == "object"
+                        and (.context // "" | ascii_downcase | test("coderabbit")))]
+          | reverse | dedupe_status_check_rollup
+          | map(select(
+              reviewer_failed_completion
+              and ((.description // "")
+                   | test("rate.?limit|review limit|next review available"; "i")
+                   | not)
+            ))
+          | length' 2>/dev/null
+  )" || count=0
+  case "$count" in
+    ''|*[!0-9]*) count=0 ;;
+  esac
+  printf '%s\n' "$count"
+  return 0
 }
 
 # coderabbit_no_trigger_timeout_default <max_wait>
@@ -7313,6 +7471,7 @@ run_coderabbit_review() {
   #
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
+  local coderabbit_status_failed_seen=0
   # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
   local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
@@ -7363,6 +7522,18 @@ run_coderabbit_review() {
 
     if [ "$coderabbit_review_count" -gt 0 ]; then
       coderabbit_any_activity=1
+      break
+    fi
+
+    # #1789 (plan D8 failure-type completion signals): a CodeRabbit commit
+    # status on the head in `failure` or `error` (outside the #1437
+    # rate/review-limit wording) reports CodeRabbit's own run as failed. It
+    # ends the wait like a success status; Phase 3 decides between a bound
+    # verdict and coderabbit_status_failed.
+    local coderabbit_failed_status_poll_count
+    coderabbit_failed_status_poll_count="$(coderabbit_failed_status_count "$repo" "$head_sha")"
+    if [ "${coderabbit_failed_status_poll_count:-0}" -gt 0 ]; then
+      coderabbit_status_failed_seen=1
       break
     fi
 
@@ -7927,8 +8098,10 @@ run_coderabbit_review() {
           return 2
         fi
 
+        # #1789 (plan D8): kept expired-wait skip, reported as No verdict yet.
         print_kv RESULT skipped
         print_kv REASON no_review
+        print_no_verdict_yet_kept_skip_keys no_review
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -7941,8 +8114,9 @@ run_coderabbit_review() {
         print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
         return 0
       fi
-      print_kv RESULT escalate
-      print_kv REASON timeout
+      # #1789 (plan D8 CodeRabbit row): CodeRabbit activity was seen but no
+      # review was submitted by budget end — No verdict yet, not a failure.
+      print_no_verdict_yet "$platform" review_not_submitted "$head_sha" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -7950,7 +8124,7 @@ run_coderabbit_review() {
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
       print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
       print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
-      return 2
+      return 4
     fi
 
     _interruptible_sleep "$poll_interval"
@@ -8041,6 +8215,41 @@ run_coderabbit_review() {
   fi
 
   rm -f "$blocking_lines_file"
+  if [ "$coderabbit_status_failed_seen" -eq 1 ]; then
+    # #1789 (plan D8 failure-type completion signals): the wait ended on a
+    # failed CodeRabbit status on the head. Findings were handled above; a
+    # CodeRabbit review bound to the head (commit_id == head) keeps today's
+    # verdict; with neither, the failed status is failure evidence.
+    local coderabbit_bound_review_count=0
+    coderabbit_bound_review_count="$(
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+        | jq -s --arg bot "$bot_login" --arg sha "$head_sha" '
+            [.[] | (if type == "array" then .[] else empty end)
+             | select(type == "object" and .user.login == $bot
+                      and ((.commit_id // .commitId // "") == $sha))]
+            | length
+          ' 2>/dev/null
+    )" || coderabbit_bound_review_count=0
+    case "$coderabbit_bound_review_count" in
+      ''|*[!0-9]*) coderabbit_bound_review_count=0 ;;
+    esac
+    if [ "$coderabbit_bound_review_count" -eq 0 ]; then
+      echo "WARN: run_coderabbit_review: CodeRabbit reported a failed status on $head_sha with no review bound to the head — escalating as coderabbit_status_failed" >&2
+      print_kv RESULT escalate
+      print_kv REASON coderabbit_status_failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+      print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
+      return 2
+    fi
+  fi
   coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
   cr_phase3_gate_rc=$?
   if [ "$cr_phase3_gate_rc" -ne 0 ]; then
@@ -8634,7 +8843,7 @@ normalize_platform_verdict() {
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries|pending_timeout)
+        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries|pending_timeout|bugbot-run-timed-out)
           printf 'timed out' ;;
         *)
           printf 'unavailable' ;;
