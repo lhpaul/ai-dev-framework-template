@@ -714,9 +714,12 @@ Subcommands:
 --compare:
   Run all configured platforms to completion regardless of individual verdicts
   (disables the short-circuit on the first blocking platform). After all platforms
-  run, the overall exit code and RESULT are identical to what normal mode would
-  produce: the first platform that would have blocked in config order governs.
-  Per-platform verdicts are emitted as COMPARE_VERDICT_<n>_PLATFORM /
+  run, the overall exit code and RESULT follow the cross-platform precedence:
+  a failed reviewer (escalate) first, then findings (needs_fixes/needs_rerun),
+  then No verdict yet (waiting_on_reviewer), then clean or skipped; ties go to
+  the earliest platform in evaluation order, whose output becomes the overall
+  output. Loop-level escalations (cycle caps, ledger persistence, thread audit)
+  still apply afterwards. Per-platform verdicts are emitted as COMPARE_VERDICT_<n>_PLATFORM /
   COMPARE_VERDICT_<n>_RESULT key=value lines, and one row is appended to
   docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
   not for normal orchestration where early exit is desired.
@@ -3745,9 +3748,10 @@ run_bugbot_review() {
   # the 2400 s default), so a verdict arriving up to 1500 s after the request
   # is always observed before any re-trigger.
   local bugbot_retry_attempted=0
-  local bugbot_retrigger_margin=$(( max_wait / 2 ))
+  local bugbot_retrigger_margin bugbot_retrigger_at
+  bugbot_retrigger_margin=$(( max_wait / 2 ))
   [ "$bugbot_retrigger_margin" -gt 600 ] && bugbot_retrigger_margin=600
-  local bugbot_retrigger_at=$(( max_wait - bugbot_retrigger_margin ))
+  bugbot_retrigger_at=$(( max_wait - bugbot_retrigger_margin ))
   while [ "$elapsed" -lt "$max_wait" ]; do
     if [ "$bugbot_retry_attempted" -eq 0 ] && [ "$elapsed" -gt 0 ] \
         && [ "$elapsed" -ge "$bugbot_retrigger_at" ]; then
@@ -8942,6 +8946,160 @@ sync_reviewer_failed_label() {
   return 0
 }
 
+# reviewer_loop_reconcile_reviewer_failed_label <pr> <aggregate_result> <aggregate_reason>
+#
+# #1789 (plan D9): bring the reviewer-failed label in step with THIS run's
+# reviewer evidence. The label is required when any platform evaluated in this
+# invocation recorded failure evidence (reviewer_failed_required, reset per
+# invocation and set per platform by reviewer_loop_process_platform_output —
+# including platforms replayed from the ledger under #1692 staging) or when the
+# final aggregate itself requires it. Otherwise the label is removed, so a run
+# that re-reviews (or replays) clean, needs-fixes, or No verdict yet evidence
+# clears a stale label. A failed add or remove is reported by
+# sync_reviewer_failed_label's WARN lines and never changes the result.
+#
+# Called once, from the main post-loop path. The not-configured and
+# release-guard exits keep their own sync_reviewer_failed_label "$pr" 0;
+# ownership refusals, lock contention, truncated_run, and
+# execution_budget_misconfigured exits never reach either call.
+reviewer_loop_reconcile_reviewer_failed_label() {
+  local pr_number_arg="${1:-}"
+  local agg_result="${2:-}"
+  local agg_reason="${3:-}"
+  local required=0
+
+  if [ "${reviewer_failed_required:-0}" = "1" ]; then
+    required=1
+  fi
+  if reviewer_failed_label_required_for_result "$agg_result" "$agg_reason"; then
+    required=1
+  fi
+  reviewer_failed_required="$required"
+  sync_reviewer_failed_label "$pr_number_arg" "$required"
+  return 0
+}
+
+# reviewer_loop_precedence_rank <result>
+#
+# #1789 (plan D10) cross-platform precedence: 1 = escalate or any unrecognized
+# result (Reviewer failed), 2 = needs_fixes / needs_rerun (findings),
+# 3 = waiting_on_reviewer (No verdict yet), 4 = clean / skipped (kept skips are
+# skipped and therefore rank 4). Lower is stronger.
+reviewer_loop_precedence_rank() {
+  case "${1:-}" in
+    needs_fixes|needs_rerun) printf '2\n' ;;
+    waiting_on_reviewer) printf '3\n' ;;
+    clean|skipped) printf '4\n' ;;
+    *) printf '1\n' ;;
+  esac
+}
+
+# reviewer_loop_precedence_select [entry ...]
+#
+# #1789 (plan D10): pick the governing outcome among recorded platform outcomes.
+# Each entry is "platform|result|reason" (the platform_peer_evidence shape);
+# with no arguments the current platform_peer_evidence array is read. Entries
+# are in evaluation order: the best (lowest) rank wins and a tie goes to the
+# earliest entry. Prints "<rank>|<platform>|<result>|<reason>" for the winner,
+# or nothing (return 1) when there is no non-empty entry.
+# shellcheck disable=SC2120  # arguments are optional; the loop reads the array
+reviewer_loop_precedence_select() {
+  local entry platform result reason rank
+  local best_rank=5 best_line=""
+  local -a entries=()
+
+  if [ "$#" -gt 0 ]; then
+    entries=("$@")
+  elif declare -p platform_peer_evidence >/dev/null 2>&1 \
+      && [ "${#platform_peer_evidence[@]}" -gt 0 ]; then
+    entries=("${platform_peer_evidence[@]}")
+  fi
+
+  for entry in "${entries[@]+"${entries[@]}"}"; do
+    [ -n "$entry" ] || continue
+    platform="${entry%%|*}"
+    result="${entry#*|}"
+    reason=""
+    case "$result" in
+      *"|"*)
+        reason="${result#*|}"
+        result="${result%%|*}"
+        ;;
+    esac
+    rank="$(reviewer_loop_precedence_rank "$result")"
+    if [ "$rank" -lt "$best_rank" ]; then
+      best_rank="$rank"
+      best_line="${rank}|${platform}|${result}|${reason}"
+    fi
+  done
+
+  [ -n "$best_line" ] || return 1
+  printf '%s\n' "$best_line"
+}
+
+# reviewer_loop_compare_restore_aggregate
+#
+# --compare runs evaluate every platform, so later outcomes may have
+# overwritten aggregate_*. When at least one platform recorded a blocking
+# outcome (compare_first_blocking_result is set), the overall result is chosen
+# by the D10 precedence over every recorded platform outcome (rank 1 Reviewer
+# failed, 2 findings, 3 No verdict yet, 4 clean/skipped; ties to the earliest
+# platform), and that platform's recorded output becomes aggregate_output.
+# This replaces the earlier "first blocking platform governs" rule (#1789).
+# When nothing blocked, the aggregate is left as the loop computed it, so
+# loop-level outcomes (for example a #1656 second-pass refusal) stay intact.
+reviewer_loop_compare_restore_aggregate() {
+  local selection rank platform result reason entry output="" status
+
+  [ "${compare_mode:-0}" -eq 1 ] || return 0
+  [ -n "${compare_first_blocking_result:-}" ] || return 0
+
+  if ! selection="$(reviewer_loop_precedence_select)" || [ -z "$selection" ]; then
+    selection=""
+  fi
+  IFS='|' read -r rank platform result reason <<<"$selection"
+  if [ -z "$selection" ] || ! [ "${rank:-5}" -le 3 ] 2>/dev/null; then
+    # Defensive: a blocking outcome was seen but the recorded evidence holds no
+    # rank 1-3 entry. Fall back to the first blocking outcome (fail closed:
+    # never report clean when a platform blocked).
+    aggregate_result="$compare_first_blocking_result"
+    aggregate_reason="$compare_first_blocking_reason"
+    aggregate_output="$compare_first_blocking_output"
+    aggregate_status=$compare_first_blocking_status
+    return 0
+  fi
+
+  if declare -p platform_blocking_outputs >/dev/null 2>&1 \
+      && [ "${#platform_blocking_outputs[@]}" -gt 0 ]; then
+    for entry in "${platform_blocking_outputs[@]}"; do
+      if [ "${entry%%$'\036'*}" = "$platform" ]; then
+        output="${entry#*$'\036'}"
+        break
+      fi
+    done
+  fi
+
+  case "$result" in
+    escalate) status=2 ;;
+    needs_fixes) status=1 ;;
+    needs_rerun)
+      status=3
+      reason=""
+      ;;
+    waiting_on_reviewer) status=4 ;;
+    *)
+      result="escalate"
+      reason="unknown-platform-result"
+      status=2
+      ;;
+  esac
+  aggregate_result="$result"
+  aggregate_reason="$reason"
+  aggregate_output="$output"
+  aggregate_status=$status
+  return 0
+}
+
 # append_compare_metrics_row: append one structured row to the platform metrics log.
 # Called at the end of the platform loop when compare_mode=1.
 # $1 = pr_number
@@ -13928,8 +14086,10 @@ expensive_gate_last_head=""
 # Per-platform review-policy status notes for the PR summary comment. Haystack
 # emits these from `pr-status`; other platforms normally leave this empty.
 declare -a platform_policy_status_notes=()
-# Compare-mode: track the first blocking platform seen so later clean platforms
-# do not overwrite the aggregate. These variables are set once and never reset.
+# Compare-mode: track the first blocking platform seen. These variables are set
+# once and never reset; they gate the #1656 second pass in compare mode, mark
+# that some platform blocked (so reviewer_loop_compare_restore_aggregate applies
+# the #1789 D10 precedence), and are its defensive fallback.
 compare_first_blocking_result=""
 compare_first_blocking_reason=""
 compare_first_blocking_output=""
@@ -14704,22 +14864,16 @@ if [ -z "$last_platform" ]; then
   exit 0
 fi
 
-# --- Compare mode: restore first-blocking aggregate, emit output, write metrics ---
-# When compare mode is active, all platforms ran to completion. Later clean platforms
-# may have overwritten aggregate_result after the first blocking platform set it.
-# Restore the first-blocking state now to ensure the overall result is identical to
-# what normal mode would have produced (BR-1: first blocking platform in config order
-# governs).
+# --- Compare mode: select the governing aggregate, emit output, write metrics ---
+# When compare mode is active, all platforms ran to completion, so later
+# platforms may have overwritten aggregate_result. The overall result is now
+# chosen by the cross-platform precedence (#1789, plan D10): Reviewer failed,
+# then findings, then No verdict yet, then clean/skipped, ties to the earliest
+# platform in evaluation order (reviewer_loop_compare_restore_aggregate).
 if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
-  # Restore aggregate from the first blocking platform, if any.
-  if [ -n "$compare_first_blocking_result" ]; then
-    aggregate_result="$compare_first_blocking_result"
-    aggregate_reason="$compare_first_blocking_reason"
-    aggregate_output="$compare_first_blocking_output"
-    aggregate_status=$compare_first_blocking_status
-  fi
-  # aggregate_result is now clean/skipped (if no platform blocked) or the result
-  # of the first blocking platform in config order.
+  reviewer_loop_compare_restore_aggregate
+  # aggregate_result is now clean/skipped (if no platform blocked) or the
+  # highest-precedence platform outcome.
 
   # Emit compare-mode key=value output lines.
   print_kv COMPARE_MODE 1
@@ -15134,10 +15288,10 @@ fi
 # reached. A "clean" result is never overridden. An already-"escalate"
 # result keeps its own (more specific) reason rather than being relabeled.
 # This MUST run before the persistence step, compare-mode metrics-row
-# append, and the single RESULT= print below: --compare mode's own
-# contract is "the overall exit code and RESULT are identical to what
-# normal mode would produce" (see the script's usage doc), and these
-# overrides are unconditional (they also apply in --compare mode) — so the
+# append, and the single RESULT= print below: --compare mode's overall
+# exit code and RESULT follow the cross-platform precedence and then the
+# loop-level escalations (see the script's usage doc, #1789 plan D10), and
+# these overrides are unconditional (they also apply in --compare mode) — so the
 # metrics row and the printed RESULT must reflect the post-override
 # result, not a stale pre-cap value.
 #
@@ -15249,10 +15403,11 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   set -e
 fi
 
-if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
-  reviewer_failed_required=1
-fi
-sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
+# #1789 (plan D9): reconcile reviewer-failed from this run's per-platform
+# failure evidence and the final aggregate — every platform-evaluating run
+# reaches this point, including one whose platforms were all replayed from the
+# ledger (#1692), so a stale label is removed once the evidence is clean.
+reviewer_loop_reconcile_reviewer_failed_label "$pr_number" "$aggregate_result" "$aggregate_reason"
 
 print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
 print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"

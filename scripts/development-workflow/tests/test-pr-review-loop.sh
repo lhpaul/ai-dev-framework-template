@@ -22763,6 +22763,251 @@ _1789_fx check-runs-fail@2 1
 _1789_out="$(_1789_run_gh run_pr_agent_review 5)"
 run_test "1789_T2.26_pr_agent_failed_read_keeps_last_signal" "escalate|pr_agent_run_failed|2" "$(_1789_rre "$_1789_out")"
 
+# ---------------------------------------------------------------------------
+# Phase 3 — reviewer-failed label reconciliation (plan D9) and cross-platform
+# precedence (plan D10): T3.1–T3.8. Platform outcomes are recorded through the
+# real reviewer_loop_process_platform_output, then the post-loop functions run
+# against the global mock gh (MOCK_GH_CALL_LOG records the label edits;
+# MOCK_GH_OUTPUT is what `gh pr view --json labels` returns).
+# ---------------------------------------------------------------------------
+_1789_o() {
+  # _1789_o <result> [reason]: a minimal platform output block.
+  printf 'RESULT=%s\n' "$1"
+  [ -n "${2:-}" ] && printf 'REASON=%s\n' "$2"
+  printf 'COMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n'
+}
+_1789_rec_log="$_1789_dir/reconcile-calls.log"
+# _1789_reconcile <label_present 0|1>: run the reconcile with the current
+# aggregate and print "<adds>|<removes>|<status>".
+_1789_reconcile() {
+  local _st=0 _adds _removes _labels='some-other-label'
+  : > "$_1789_rec_log"
+  [ "$1" = "1" ] && _labels='reviewer-failed'
+  (
+    export MOCK_GH_CALL_LOG="$_1789_rec_log" MOCK_GH_OUTPUT="$_labels"
+    unset MOCK_GH_EXIT MOCK_GH_PR_EDIT_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT
+    reviewer_loop_reconcile_reviewer_failed_label "42" "$aggregate_result" "$aggregate_reason" 2>/dev/null
+  ) || _st=$?
+  _adds="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_1789_rec_log" || true)"
+  _removes="$(grep -c -- 'pr edit 42 --remove-label reviewer-failed' "$_1789_rec_log" || true)"
+  printf '%s|%s|%s\n' "$_adds" "$_removes" "$_st"
+}
+
+# T3.1 — the PR carries reviewer-failed; this run re-reviews and is clean →
+# the label is removed (D9: required = per-platform evidence OR aggregate).
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "bugbot" 2 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+run_test "1789_T3.1_clean_rereview_removes_label" "0|1|0" "$(_1789_reconcile 1)"
+run_test "1789_T3.1_clean_rereview_absent_label_noop" "0|0|0" "$(_1789_reconcile 0)"
+
+# T3.2 — same, but every platform replayed from a clean ledger (#1692 staging):
+# the replay output goes through reviewer_loop_process_platform_output exactly
+# as the main loop's pre-dispatch replay does, and reconciliation removes the
+# stale label.
+_1789_reset_processing_globals
+for _1789_p in local-ai-reviewer bugbot; do
+  reviewer_loop_process_platform_output "$_1789_p" 1 "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1 >/dev/null 2>&1
+done
+run_test "1789_T3.2_replayed_aggregate_clean" "clean" "$aggregate_result"
+run_test "1789_T3.2_replayed_no_failure_evidence" "0" "$reviewer_failed_required"
+run_test "1789_T3.2_replayed_run_removes_label" "0|1|0" "$(_1789_reconcile 1)"
+# The main loop's replay path is the one composed above: the pre-dispatch replay
+# calls reviewer_loop_process_platform_output with the stage-skip output, and
+# the loop's `replay` action continues to the post-loop path (no exit between).
+run_test "1789_T3.2_replay_path_processes_output" "1" \
+  "$(awk '/^reviewer_loop_platform_pre_dispatch\(\)/{f=1} f && /reviewer_loop_stage_skip_output "\$loop_head_sha"/{print 1; exit} f && /^}/{exit}' "$_1789_loop_src")"
+
+# T3.3 — needs-fixes or waiting run with no failure evidence → the label is
+# removed (when present) and never added.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o needs_fixes blocking)" 1 1 >/dev/null 2>&1
+run_test "1789_T3.3_needs_fixes_removes_label" "0|1|0" "$(_1789_reconcile 1)"
+run_test "1789_T3.3_needs_fixes_not_added" "0|0|0" "$(_1789_reconcile 0)"
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "bugbot" 1 "$(print_no_verdict_yet bugbot check_not_completed "$loop_head_sha" "")" 4 1 >/dev/null 2>&1
+run_test "1789_T3.3_waiting_aggregate" "waiting_on_reviewer|reviewer-no-verdict-yet" "${aggregate_result}|${aggregate_reason}"
+run_test "1789_T3.3_waiting_removes_label" "0|1|0" "$(_1789_reconcile 1)"
+run_test "1789_T3.3_waiting_not_added" "0|0|0" "$(_1789_reconcile 0)"
+
+# T3.4 — failure evidence anywhere in the run adds the label.
+# (a) Mixed compare run: one failed platform plus one clean.
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "bugbot" 1 "$(_1789_o escalate bugbot-run-timed-out)" 2 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "pr-agent" 2 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.4_compare_failed_plus_clean_aggregate" "escalate|bugbot-run-timed-out" "${aggregate_result}|${aggregate_reason}"
+run_test "1789_T3.4_compare_failed_plus_clean_adds_label" "1|0|0" "$(_1789_reconcile 0)"
+# (b) A needs-fixes run with a skipped/unavailable peer.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "greptile" 1 "$(_1789_o skipped unavailable)" 0 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "pr-agent" 2 "$(_1789_o needs_fixes blocking)" 1 1 >/dev/null 2>&1
+run_test "1789_T3.4_needs_fixes_unavailable_peer_aggregate" "needs_fixes" "$aggregate_result"
+run_test "1789_T3.4_needs_fixes_unavailable_peer_adds_label" "1|0|0" "$(_1789_reconcile 1)"
+# (c) A clean run with a CodeRabbit CLI skipped/no_output peer (the T2.28
+# composed path through the real companion) → label added.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "coderabbit-cli" 1 "$(_1789_run_cr_cli 124 "" 30)" 0 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "pr-agent" 2 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+run_test "1789_T3.4_cli_no_output_peer_aggregate" "clean" "$aggregate_result"
+run_test "1789_T3.4_cli_no_output_peer_adds_label" "1|0|0" "$(_1789_reconcile 0)"
+# (d) The same clean run with the CodeRabbit CLI `timeout` kept skip instead →
+# no failure evidence, so a present label is removed.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "coderabbit-cli" 1 "$(_1789_run_cr_cli 0 4 1)" 0 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "pr-agent" 2 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+run_test "1789_T3.4_cli_kept_skip_peer_flag" "1" \
+  "$(printf '%s\n' "${platform_blocking_outputs[0]#*$'\036'}" | awk -F= '/^NO_VERDICT_YET=/{print $2; exit}')"
+run_test "1789_T3.4_cli_kept_skip_peer_removes_label" "0|1|0" "$(_1789_reconcile 1)"
+# (e) The aggregate alone also requires it (a loop-level escalation with no
+# failed platform, for example ledger_persist_failed after a clean round).
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+aggregate_result="escalate"; aggregate_reason="ledger_persist_failed"
+run_test "1789_T3.4_aggregate_escalate_adds_label" "1|0|0" "$(_1789_reconcile 0)"
+# ...and an availability escalate (rate_limited) neither adds nor keeps it.
+aggregate_reason="rate_limited"
+run_test "1789_T3.4_aggregate_rate_limited_removes_label" "0|1|0" "$(_1789_reconcile 1)"
+
+# T3.5 — a failed add or remove prints the WARN and changes neither the
+# function's status nor the aggregate.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+_1789_err="$(export MOCK_GH_OUTPUT='reviewer-failed' MOCK_GH_PR_EDIT_EXIT=1; unset MOCK_GH_CALL_LOG MOCK_GH_EXIT; \
+  reviewer_loop_reconcile_reviewer_failed_label "42" "$aggregate_result" "$aggregate_reason" 2>&1 >/dev/null)" && _1789_rc=0 || _1789_rc=$?
+run_test "1789_T3.5_remove_failure_status" "0" "$_1789_rc"
+run_test "1789_T3.5_remove_failure_warns" "1" \
+  "$(printf '%s\n' "$_1789_err" | grep -c 'WARN: failed to remove reviewer-failed label from PR #42' || true)"
+run_test "1789_T3.5_remove_failure_aggregate_unchanged" "clean" "$aggregate_result"
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output "bugbot" 1 "$(_1789_o escalate fetch-failed)" 2 1 >/dev/null 2>&1
+_1789_err="$(export MOCK_GH_OUTPUT='some-other-label' MOCK_GH_LABEL_VIEW_EXIT=0 MOCK_GH_PR_EDIT_EXIT=1; unset MOCK_GH_CALL_LOG MOCK_GH_EXIT; \
+  reviewer_loop_reconcile_reviewer_failed_label "42" "$aggregate_result" "$aggregate_reason" 2>&1 >/dev/null)" && _1789_rc=0 || _1789_rc=$?
+run_test "1789_T3.5_add_failure_status" "0" "$_1789_rc"
+run_test "1789_T3.5_add_failure_warns" "1" \
+  "$(printf '%s\n' "$_1789_err" | grep -c 'WARN: failed to apply reviewer-failed label to PR #42' || true)"
+run_test "1789_T3.5_add_failure_aggregate_unchanged" "escalate|fetch-failed" "${aggregate_result}|${aggregate_reason}"
+
+# T3.6 — source order: the main flow (after the harness return point) calls the
+# reconcile function exactly once, after the platform loop and after the
+# persistence step; the only other label syncs in the main flow are the
+# release-guard and not-configured exits, both removal-only (`… 0`). Every
+# pre-loop refusal exit (ownership, lock, truncated_run,
+# execution_budget_misconfigured) therefore leaves the label unchanged.
+_1789_ret_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' "$_1789_loop_src" | head -1 | cut -d: -f1)"
+_1789_main_calls="$(awk -v start="$_1789_ret_line" 'NR > start && /^[^#]*reviewer_loop_reconcile_reviewer_failed_label "/ {print NR}' "$_1789_loop_src")"
+run_test "1789_T3.6_reconcile_called_once_in_main_flow" "1" "$(printf '%s\n' "$_1789_main_calls" | grep -c . || true)"
+_1789_loop_start="$(awk -v start="$_1789_ret_line" 'NR > start && /^for index in "\$\{!platforms\[@\]\}"; do/ {print NR; exit}' "$_1789_loop_src")"
+_1789_persist_line="$(awk -v start="$_1789_ret_line" 'NR > start && /^  _post_review_summary "\$aggregate_result" "\$aggregate_reason"/ {print NR; exit}' "$_1789_loop_src")"
+run_test "1789_T3.6_reconcile_after_loop_and_persistence" "yes" \
+  "$( [ -n "$_1789_main_calls" ] && [ -n "$_1789_loop_start" ] && [ -n "$_1789_persist_line" ] \
+      && [ "$_1789_main_calls" -gt "$_1789_loop_start" ] && [ "$_1789_main_calls" -gt "$_1789_persist_line" ] \
+      && echo yes || echo no)"
+run_test "1789_T3.6_main_flow_other_syncs_are_removal_only" "2|2" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /^[^#]*sync_reviewer_failed_label "/' "$_1789_loop_src" | grep -c . || true)|$(awk -v start="$_1789_ret_line" 'NR > start && /^[^#]*sync_reviewer_failed_label "\$pr_number" 0$/' "$_1789_loop_src" | grep -c . || true)"
+run_test "1789_T3.6_no_label_sync_before_release_guard" "0" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /^# --- Release PR early-exit guard ---/{exit} NR > start && /^[^#]*(sync_reviewer_failed_label|reviewer_loop_reconcile_reviewer_failed_label) "/' "$_1789_loop_src" | grep -c . || true)"
+run_test "1789_T3.6_reconcile_defined_before_harness_return" "yes" \
+  "$(_1789_fn_line="$(grep -n '^reviewer_loop_reconcile_reviewer_failed_label()' "$_1789_loop_src" | cut -d: -f1)"; \
+     [ -n "$_1789_fn_line" ] && [ "$_1789_fn_line" -lt "$_1789_ret_line" ] && echo yes || echo no)"
+run_test "1789_T3.6_no_direct_aggregate_sync_left" "0" \
+  "$(grep -c 'sync_reviewer_failed_label "\$pr_number" "\$reviewer_failed_required"' "$_1789_loop_src" || true)"
+
+# T3.7 — precedence function (D10): failed + waiting → escalate; findings +
+# waiting → needs_fixes; waiting + clean → waiting; kept skip + clean → clean;
+# a tie → the earliest platform; an unrecognized result ranks with failures.
+run_test "1789_T3.7_failed_beats_waiting" "1|devin|escalate|devin_run_failed" \
+  "$(reviewer_loop_precedence_select "bugbot|waiting_on_reviewer|reviewer-no-verdict-yet" "devin|escalate|devin_run_failed")"
+run_test "1789_T3.7_findings_beat_waiting" "2|pr-agent|needs_fixes|blocking" \
+  "$(reviewer_loop_precedence_select "bugbot|waiting_on_reviewer|reviewer-no-verdict-yet" "pr-agent|needs_fixes|blocking")"
+run_test "1789_T3.7_waiting_beats_clean" "3|bugbot|waiting_on_reviewer|reviewer-no-verdict-yet" \
+  "$(reviewer_loop_precedence_select "pr-agent|clean|" "bugbot|waiting_on_reviewer|reviewer-no-verdict-yet")"
+run_test "1789_T3.7_kept_skip_and_clean_is_clean" "4|devin|skipped|no_check_run" \
+  "$(reviewer_loop_precedence_select "devin|skipped|no_check_run" "pr-agent|clean|")"
+run_test "1789_T3.7_tie_goes_to_earliest" "2|greptile|needs_fixes|a" \
+  "$(reviewer_loop_precedence_select "greptile|needs_fixes|a" "pr-agent|needs_rerun|" "bugbot|needs_fixes|b")"
+run_test "1789_T3.7_failed_tie_earliest" "1|coderabbit|escalate|coderabbit_status_failed" \
+  "$(reviewer_loop_precedence_select "pr-agent|clean|" "coderabbit|escalate|coderabbit_status_failed" "bugbot|escalate|fetch-failed")"
+run_test "1789_T3.7_unrecognized_ranks_as_failure" "1|x|weird|" \
+  "$(reviewer_loop_precedence_select "bugbot|needs_fixes|blocking" "x|weird|")"
+run_test "1789_T3.7_ranks" "1 2 2 3 4 4 1" \
+  "$(for _1789_r in escalate needs_fixes needs_rerun waiting_on_reviewer clean skipped bogus; do reviewer_loop_precedence_rank "$_1789_r"; done | tr '\n' ' ' | sed 's/ $//')"
+run_test "1789_T3.7_empty_selects_nothing" "|1" \
+  "$(_1789_s="$(reviewer_loop_precedence_select "" 2>/dev/null)" && _1789_x=0 || _1789_x=$?; printf '%s|%s' "$_1789_s" "$_1789_x")"
+_1789_reset_processing_globals
+platform_peer_evidence=("pr-agent|clean|" "bugbot|waiting_on_reviewer|reviewer-no-verdict-yet")
+run_test "1789_T3.7_reads_peer_evidence_by_default" "3|bugbot|waiting_on_reviewer|reviewer-no-verdict-yet" \
+  "$(reviewer_loop_precedence_select)"
+
+# T3.8 — compare mode uses the precedence function, not "first blocking
+# platform governs": waiting first, findings later → needs_fixes with the
+# findings platform's output (the old rule returned the waiting platform).
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "bugbot" 1 "$(print_no_verdict_yet bugbot check_not_completed "$loop_head_sha" "")" 4 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "pr-agent" 2 "$(printf 'RESULT=needs_fixes\nREASON=blocking\nREVIEW_COMMENT_ID=901\nCOMMENT_COUNT=1\nBLOCKING_COUNT=1\nSUGGESTION_COUNT=0\n')" 1 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "greptile" 3 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+run_test "1789_T3.8_first_blocking_was_waiting" "waiting_on_reviewer" "$compare_first_blocking_result"
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.8_compare_findings_beat_earlier_waiting" "needs_fixes|blocking|1" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
+run_test "1789_T3.8_compare_output_is_governing_platform" "901" "$(kv_value_default REVIEW_COMMENT_ID "$aggregate_output" "")"
+# Failed after findings → escalate (rank 1), output of the failed platform.
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o needs_fixes blocking)" 1 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "devin" 2 "$(_1789_o escalate devin_run_failed)" 2 1 >/dev/null 2>&1
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.8_compare_failed_beats_earlier_findings" "escalate|devin_run_failed|2" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
+run_test "1789_T3.8_compare_failed_output" "devin_run_failed" "$(kv_value_default REASON "$aggregate_output" "")"
+# Waiting plus clean in compare mode → waiting; kept skip plus clean → clean.
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "bugbot" 2 "$(print_no_verdict_yet bugbot check_not_completed "$loop_head_sha" "")" 4 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "greptile" 3 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+run_test "1789_T3.8_compare_last_platform_overwrote" "clean" "$aggregate_result"
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.8_compare_waiting_beats_clean" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "devin" 1 "$(printf 'RESULT=skipped\nREASON=no_check_run\nNO_VERDICT_YET=1\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')" 0 1 >/dev/null 2>&1
+reviewer_loop_process_platform_output "pr-agent" 2 "$(_1789_o clean)" 0 1 >/dev/null 2>&1
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.8_compare_kept_skip_and_clean_is_clean" "clean" "$aggregate_result"
+# Not compare mode → the restore is a no-op (normal runs stop at the first
+# non-clean outcome; BR 5 forbids changing when evaluation stops).
+_1789_reset_processing_globals
+aggregate_result="needs_fixes"; aggregate_reason="sentinel"
+compare_first_blocking_result="escalate"
+platform_peer_evidence=("x|escalate|boom")
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.8_normal_mode_untouched" "needs_fixes|sentinel" "${aggregate_result}|${aggregate_reason}"
+# Defensive fallback: a blocking outcome was seen but no rank 1-3 evidence
+# remains → the first blocking outcome (fail closed, never clean).
+_1789_reset_processing_globals
+compare_mode=1
+aggregate_result="clean"
+compare_first_blocking_result="escalate"; compare_first_blocking_reason="r"
+compare_first_blocking_output="$(_1789_o escalate r)"; compare_first_blocking_status=2
+platform_peer_evidence=("pr-agent|clean|")
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.8_defensive_fallback_first_blocking" "escalate|r|2" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
+# Source: the main flow's compare block calls the restore function and no
+# longer copies compare_first_blocking_* into the aggregate itself.
+run_test "1789_T3.8_main_flow_uses_restore" "1" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /^  reviewer_loop_compare_restore_aggregate$/' "$_1789_loop_src" | grep -c . || true)"
+run_test "1789_T3.8_main_flow_no_first_blocking_copy" "0" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /aggregate_output="\$compare_first_blocking_output"/' "$_1789_loop_src" | grep -c . || true)"
+run_test "1789_T3.8_help_text_states_precedence" "1" \
+  "$(grep -c 'run, the overall exit code and RESULT follow the cross-platform precedence:' "$_1789_loop_src" || true)"
+run_test "1789_T3.8_precedence_helpers_before_harness_return" "yes" \
+  "$(_1789_a="$(grep -n '^reviewer_loop_precedence_select()' "$_1789_loop_src" | cut -d: -f1)"; \
+     _1789_b="$(grep -n '^reviewer_loop_compare_restore_aggregate()' "$_1789_loop_src" | cut -d: -f1)"; \
+     [ -n "$_1789_a" ] && [ -n "$_1789_b" ] && [ "$_1789_a" -lt "$_1789_ret_line" ] && [ "$_1789_b" -lt "$_1789_ret_line" ] && echo yes || echo no)"
+unset _1789_rec_log _1789_main_calls _1789_loop_start _1789_persist_line _1789_rc _1789_err
+unset -f _1789_o _1789_reconcile 2>/dev/null || true
+
 unset _1789_H _1789_OLD _1789_gh_bin _1789_gh_dir _1789_state _1789_concl _1789_saved_t22_branch
 unset _1789_t22_budget _1789_t22_src _1789_t22_adj _1789_t22_poll
 unset -f _1789_gh_reset _1789_fx _1789_tick _1789_posts _1789_run_gh _1789_rre _1789_assert_waiting \
