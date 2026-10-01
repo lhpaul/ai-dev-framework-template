@@ -68,6 +68,7 @@ The shipped workflow is triggered via `workflow_dispatch` — not by posting a
 comment on the PR. When `pr-review-loop.sh` runs the `claude-code-action`
 platform, it calls the GitHub Actions dispatch API directly:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api "repos/$OWNER/$REPO/actions/workflows/claude-code-review.yml/dispatches" \
   --method POST \

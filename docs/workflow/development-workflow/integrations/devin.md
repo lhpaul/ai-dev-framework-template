@@ -94,6 +94,7 @@ the current head's commit, so they are already bound.
 
 ### Step 7.3 — Fetch inline comments
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .original_commit_id == \"$head_sha\" and .in_reply_to_id == null) | {path, line, body}]"

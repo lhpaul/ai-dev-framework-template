@@ -121,6 +121,7 @@ A missing trigger comment id stays a failure (`escalate`).
 
 ### Step 7.3 — Fetch inline comments
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .created_at > \"$last_push_at\" and .original_commit_id == \"$head_sha\") | {path, line, body}]"

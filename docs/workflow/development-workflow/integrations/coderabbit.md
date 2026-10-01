@@ -386,6 +386,7 @@ current head (GitHub moves a comment's `commit_id` to the newest head while the
 commented line is unchanged) and from reviews whose `commit_id` is the current
 head:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq "[.[] | select(.user.login == \"coderabbitai[bot]\" and .created_at > \"$since_iso\" and .original_commit_id == \"$head_sha\" and .in_reply_to_id == null) | {path, line, body}]"
