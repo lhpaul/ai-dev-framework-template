@@ -2026,6 +2026,24 @@ run_greptile_review() {
     trigger_author_login="$(gh api user --jq '.login')"
   fi
 
+  # #1789 (plan D15 greptile row): the head every piece of evidence is bound
+  # to — the loop head, or the PR head read here (as before) when the loop has
+  # none. With neither, nothing can be bound: escalate before posting.
+  head_sha="${loop_head_sha:-}"
+  if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
+    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha' 2>/dev/null || true)"
+  fi
+  if [ -z "$head_sha" ] || [ "$head_sha" = "null" ]; then
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
   # #1789 (plan D11 Greptile row): in re-wait mode, reuse the recorded trigger
   # comment regardless of the reuse window when its reactions can be read; a
   # bot thumbs-up on it is that request's answer. An empty ref or an
@@ -2048,18 +2066,28 @@ run_greptile_review() {
     reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
   fi
 
+  # #1789 (plan D15 greptile row): outside re-wait mode an age-window trigger
+  # is reused only when its id is a request recorded for this head
+  # (reviewer_loop_head_request_refs, from reviewer_loop_head_recorded_request_refs).
+  # A trigger posted while a previous head was the PR head is never reused, so
+  # its late thumbs-up and comments cannot become this head's verdict.
   if [ "$greptile_adopted" -eq 0 ]; then
+    local _gr_head_refs_json="[]"
+    _gr_head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || _gr_head_refs_json="[]"
+    [ -n "$_gr_head_refs_json" ] || _gr_head_refs_json="[]"
     recent_trigger_comment="$(
       gh api "repos/$repo/issues/$pr_number/comments" --paginate \
         | jq --arg author "$trigger_author_login" \
             --arg trigger "$trigger_comment" \
             --argjson max_wait "$max_wait" \
+            --argjson head_refs "$_gr_head_refs_json" \
             '
               .[]
               | select(
                   .user.login == $author and
                   .body == $trigger and
-                  ((now - (.created_at | fromdateiso8601)) <= $max_wait)
+                  ((now - (.created_at | fromdateiso8601)) <= $max_wait) and
+                  ((.id | tostring) as $id | any($head_refs[]; . == $id))
                 )
               | {id, created_at}
             ' \
@@ -2077,34 +2105,40 @@ run_greptile_review() {
     if [ "$existing_thumbs_up" -gt 0 ]; then
       review_comment_id=""
       review_window_start=""
+    else
+      # #1789 (plan D12/D15): a reused trigger recorded for this head is this
+      # invocation's request — record its server time and id.
+      echo "INFO: reusing the greptile trigger ${review_comment_id} recorded for ${head_sha}; not posting a new trigger" >&2
+      print_review_request_keys "$review_window_start" "$review_comment_id"
     fi
   fi
 
   if [ -z "$review_comment_id" ]; then
-    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
-    if [ -n "$head_sha" ]; then
-      since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
-    fi
+    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
     if [ -z "$since_iso" ]; then
       since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
     fi
 
+    # #1789 (plan D15 greptile row): pre-trigger findings must also be bound
+    # to the head — review comments by original_commit_id, reviews by
+    # commit_id — not only created after the head commit's committer time.
     existing_comments="$(
       gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-        | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
-            | select(.user.login == $bot and .created_at > $since)
+            | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
             | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
             | @json
           '
     )"
     existing_reviews="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
             | select(
                 .user.login == $bot and
                 .submitted_at > $since and
+                bound_review($head) and
                 .state == "CHANGES_REQUESTED"
               )
             | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
@@ -2191,7 +2225,7 @@ run_greptile_review() {
       rm -f "$blocking_lines_file"
       # #1789 (plan D8 Greptile row): no bot thumbs-up by budget end is
       # neither a verdict nor failure evidence — No verdict yet.
-      print_no_verdict_yet "$platform" no_acknowledgement "${loop_head_sha:-$head_sha}" ""
+      print_no_verdict_yet "$platform" no_acknowledgement "$head_sha" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -2204,11 +2238,13 @@ run_greptile_review() {
     elapsed=$((elapsed + poll_interval))
   done
 
+  # #1789 (plan D15 greptile row): findings after the thumbs-up count only when
+  # bound to the head, in addition to the request-time filter.
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
-        | select(.user.login == $bot and .created_at > $since)
+        | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
         | {
             path,
             line: (.line // .original_line // 0),
@@ -2221,11 +2257,12 @@ run_greptile_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
             .user.login == $bot and
             .submitted_at > $since and
+            bound_review($head) and
             .state == "CHANGES_REQUESTED"
           )
         | {
@@ -13166,6 +13203,93 @@ reviewer_loop_rewait_recorded_request() {
   return 0
 }
 
+# reviewer_loop_head_recorded_request_refs <history_payload> <head_sha> <platform>
+#
+# Fresh-mode reuse (#1789, plan D15): the requests recorded for <head_sha>.
+# Prints, one per line, every non-empty request_ref held by a <platform>
+# platform_results[] record with requested_at_source "request", in any ledger
+# entry whose invocation head (classification_head, D11) is <head_sha> —
+# whatever the entry's run_id or result. Such a request was posted by an
+# invocation that had already read <head_sha> as its loop head, so its answer
+# belongs to that revision. Prints nothing when the ledger is unavailable or
+# unreadable, or the head is unknown. Re-wait adoption keeps
+# reviewer_loop_rewait_recorded_request (D11).
+reviewer_loop_head_recorded_request_refs() {
+  local payload="${1:-}"
+  local head="${2:-}"
+  local platform="${3:-}"
+  local out=""
+
+  [ -n "$platform" ] || return 0
+  reviewer_loop_head_is_unknown_or_invalid "$head" && return 0
+  reviewer_loop_rewait_payload_usable "$payload" || return 0
+  out="$(printf '%s' "$payload" | jq -r --arg head "$head" --arg platform "$platform" \
+      "$REVIEWER_LOOP_INVOCATION_HEAD_JQ"'
+        [ (.entries // [])[]
+          | select(type == "object")
+          | select(invocation_head_matches($head))
+          | (.platform_results // [])[]
+          | select(type == "object" and .platform == $platform
+                   and (.requested_at_source // "") == "request")
+          | (.request_ref // "")
+          | if type == "string" or type == "number" then tostring else "" end
+          | gsub("[\r\n]"; "")
+          | select(. != "")
+        ] | unique | .[]' 2>/dev/null)" || out=""
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+
+# reviewer_loop_head_refs_prepare_platform <platform> <pr_number>
+#
+# Called immediately before each dispatch (plan D15). For greptile and
+# pr-agent, loads reviewer_loop_head_request_refs — the request refs recorded
+# for the loop head — for the handler's fresh-mode trigger reuse; clears it
+# for every other platform. The ledger is read at most once per invocation,
+# reusing a payload the stage-skip or re-wait resolution already loaded.
+reviewer_loop_head_refs_payload=""
+reviewer_loop_head_refs_payload_loaded=0
+reviewer_loop_head_request_refs=""
+reviewer_loop_head_refs_prepare_platform() {
+  local platform="${1:-}"
+  local pr_number_arg="${2:-}"
+
+  reviewer_loop_head_request_refs=""
+  case "$platform" in
+    greptile|pr-agent) ;;
+    *) return 0 ;;
+  esac
+  reviewer_loop_head_is_unknown_or_invalid "${loop_head_sha:-}" && return 0
+  if [ "${reviewer_loop_head_refs_payload_loaded:-0}" -ne 1 ]; then
+    if [ -n "${reviewer_loop_rewait_history_payload:-}" ]; then
+      reviewer_loop_head_refs_payload="$reviewer_loop_rewait_history_payload"
+    elif [ "${stage_skip_enabled:-0}" -eq 1 ] && [ -n "${stage_skip_history_payload:-}" ]; then
+      reviewer_loop_head_refs_payload="$stage_skip_history_payload"
+    elif [ -n "$pr_number_arg" ]; then
+      reviewer_loop_head_refs_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+    else
+      reviewer_loop_head_refs_payload=""
+    fi
+    reviewer_loop_head_refs_payload_loaded=1
+  fi
+  reviewer_loop_head_request_refs="$(reviewer_loop_head_recorded_request_refs "$reviewer_loop_head_refs_payload" "$loop_head_sha" "$platform")"
+  return 0
+}
+
+# reviewer_loop_head_request_ref_listed <ref>
+# True when <ref> is one of the request refs recorded for the loop head
+# (reviewer_loop_head_request_refs, plan D15).
+reviewer_loop_head_request_ref_listed() {
+  local ref="${1:-}" line
+  [ -n "$ref" ] || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] && [ "$line" = "$ref" ] && return 0
+  done <<_HEAD_REQUEST_REFS_
+${reviewer_loop_head_request_refs:-}
+_HEAD_REQUEST_REFS_
+  return 1
+}
+
 # reviewer_loop_no_verdict_rewait_value <state> <post_summary_status>
 #
 # The NO_VERDICT_REWAIT value for a waiting_on_reviewer result with a No
@@ -15122,6 +15246,8 @@ for index in "${!platforms[@]}"; do
   read -r platform_max_wait platform_budget_source platform_budget_adjustment < <(reviewer_wait_budget_for_platform "$platform_name")
   platform_poll_interval="$(reviewer_poll_interval_resolve "$platform_name" "$platform_max_wait")"
   reviewer_loop_rewait_prepare_platform "$platform_name"
+  # Fresh-mode trigger reuse reads the requests recorded for the loop head (D15).
+  reviewer_loop_head_refs_prepare_platform "$platform_name" "$pr_number"
   # Wait start immediately before the dispatch, end immediately after (D12).
   reviewer_loop_timing_begin "$platform_max_wait" "$platform_budget_source" "$platform_budget_adjustment"
   set +e

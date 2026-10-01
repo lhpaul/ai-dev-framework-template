@@ -22517,8 +22517,7 @@ case "$*" in
   *"/reactions"*)
     all_args="$*"; cid="${all_args#*comments/}"; cid="${cid%%/*}"
     [ -e "$d/reactions-fail.$cid" ] && exit 1
-    if [ -e "$d/reactions.$cid" ]; then out="$(cat "$d/reactions.$cid")"
-    else out="$(fixture reactions '[]')"; fi
+    out="$(fixture "reactions.$cid" "$(fixture reactions '[]')")"
     ;;
   *"/pulls/42/comments"*) out="$(fixture review-comments '[]')" ;;
   *"/pulls/42/reviews"*) out="$(fixture reviews '[]')" ;;
@@ -22562,7 +22561,7 @@ _1789_run_gh() {
     export CODERABBIT_NO_TRIGGER_TIMEOUT="${_1789_cr_no_trigger_timeout:-999999}" FALLBACK_THREAD_SETTLE_WAIT=0
     unset PR_REVIEW_TRIGGER_AUTHOR_LOGIN COPILOT_BOT_LOGIN BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME
     unset BUGBOT_TRIGGER_COMMENT PR_AGENT_BOT_LOGIN RONDA_CHECK_NAME PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS
-    loop_head_sha="$_1789_H"
+    loop_head_sha="${_1789_gh_loop_head-$_1789_H}"
     _ec=0
     "$1" "42" "feature/1789-x" "${3:-1}" "$2" 2>"$_1789_gh_dir/stderr" || _ec=$?
     printf 'EXIT=%s\n' "$_ec"
@@ -23854,6 +23853,188 @@ run_test "1789_T2.19_loop_omits_head_sha_without_valid_head" "0" "$(grep -c -- '
 _1789_out="$(_1789_handler_loop_head="" _1789_run_handler run_claude_code_action_review 30)"
 run_test "1789_T2.19_loop_omits_head_sha_without_head" "0" "$(grep -c -- '--head-sha' "$_1789_claude_args" || true)"
 unset reviewer_loop_rewait_history_payload
+
+# ---------------------------------------------------------------------------
+# Phase 5 — requests recorded for the head (plan D15) and Greptile binding:
+# T2.21 (reviewer_loop_head_recorded_request_refs), T2.15 (fresh-mode reuse),
+# T2.14 (regression: a previous-head request answers after the new-head
+# invocation begins), T2.16 (Greptile pre-trigger drift), T2.20 (unresolved
+# older-revision thread still blocks through the aggregate audit).
+# ---------------------------------------------------------------------------
+_1789_refs() { reviewer_loop_head_recorded_request_refs "$1" "$2" "$3" | paste -sd ',' -; }
+_1789_gr_rec() { _1789_req_rec greptile "${2:-request}" "$1" 2020-01-01T00:00:03Z; }
+_1789_t221_payload="$(_1789_ledger \
+  "$(_1789_entry run-a "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_gr_rec 9501)]")" \
+  "$(_1789_entry run-b "$_1789_H" "$_1789_H" clean "" "[$(_1789_gr_rec 9502),$(_1789_gr_rec 9503 wait_start),$(_1789_gr_rec "")]")" \
+  "$(_1789_entry run-c "$_1789_OLD" "$_1789_OLD" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_gr_rec 9504)]")" \
+  "$(_1789_entry run-d "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_req_rec pr-agent request 9505 2020-01-01T00:00:03Z)]")")"
+# --- T2.21
+run_test "1789_T2.21_two_runs_waiting_and_clean_both_listed" "9501,9502" "$(_1789_refs "$_1789_t221_payload" "$_1789_H" greptile)"
+run_test "1789_T2.21_wait_start_empty_other_head_other_platform_not_listed" "no" \
+  "$(_1789_refs "$_1789_t221_payload" "$_1789_H" greptile | grep -qE '9503|9504|9505|(^|,)(,|$)' && echo yes || echo no)"
+run_test "1789_T2.21_other_platform_listed_for_itself" "9505" "$(_1789_refs "$_1789_t221_payload" "$_1789_H" pr-agent)"
+run_test "1789_T2.21_other_head_lists_its_own" "9504" "$(_1789_refs "$_1789_t221_payload" "$_1789_OLD" greptile)"
+run_test "1789_T2.21_head_case_insensitive" "9501,9502" \
+  "$(_1789_refs "$_1789_t221_payload" "$(printf '%s' "$_1789_H" | tr 'a-f' 'A-F')" greptile)"
+run_test "1789_T2.21_unavailable_ledger_nothing" "" \
+  "$(_1789_refs '{"schema":"reviewer_loop_history.v1","history_status":"unavailable","entries":[]}' "$_1789_H" greptile)"
+run_test "1789_T2.21_unreadable_ledger_nothing" "" "$(_1789_refs 'not json' "$_1789_H" greptile)"
+run_test "1789_T2.21_unknown_head_nothing" "" "$(_1789_refs "$_1789_t221_payload" "unknown-1" greptile)"
+run_test "1789_T2.21_numeric_ref_listed" "9506" \
+  "$(_1789_refs "$(_1789_ledger "$(_1789_entry run-e "$_1789_H" "$_1789_H" clean "" '[{"platform":"greptile","requested_at_source":"request","request_ref":9506}]')")" "$_1789_H" greptile)"
+# T2.15 (helper half): a push before persistence — classification_head H0 and
+# head_sha H1 — is listed for H0 (its invocation head), never for H1.
+_1789_t215_push="$(_1789_ledger "$(_1789_entry run-f "$_1789_OLD" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_gr_rec 9507)]")")"
+run_test "1789_T2.15_push_entry_not_listed_for_new_head" "" "$(_1789_refs "$_1789_t215_push" "$_1789_H" greptile)"
+run_test "1789_T2.15_push_entry_listed_for_invocation_head" "9507" "$(_1789_refs "$_1789_t215_push" "$_1789_OLD" greptile)"
+
+# The loop hand-off: reviewer_loop_head_refs_prepare_platform loads the list
+# for greptile and pr-agent only, reading the ledger once per invocation and
+# reusing a payload already loaded by the re-wait resolution.
+reviewer_loop_head_refs_payload_loaded=0
+reviewer_loop_rewait_history_payload="$_1789_t221_payload"
+loop_head_sha="$_1789_H"
+reviewer_loop_head_refs_prepare_platform greptile 42
+run_test "1789_T2.15_prepare_greptile_loads_refs" "9501,9502" "$(printf '%s\n' "$reviewer_loop_head_request_refs" | paste -sd ',' -)"
+reviewer_loop_head_refs_prepare_platform pr-agent 42
+run_test "1789_T2.15_prepare_pr_agent_loads_refs" "9505" "$reviewer_loop_head_request_refs"
+reviewer_loop_head_refs_prepare_platform bugbot 42
+run_test "1789_T2.15_prepare_other_platform_clears" "" "$reviewer_loop_head_request_refs"
+run_test "1789_T2.15_prepare_listed_ref" "yes|no" \
+  "$(reviewer_loop_head_refs_prepare_platform greptile 42; reviewer_loop_head_request_ref_listed 9502 && echo yes || echo no)|$(reviewer_loop_head_refs_prepare_platform greptile 42; reviewer_loop_head_request_ref_listed 9504 && echo yes || echo no)"
+reviewer_loop_head_refs_payload_loaded=0
+reviewer_loop_rewait_history_payload='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","entries":[]}'
+reviewer_loop_head_refs_prepare_platform greptile 42
+run_test "1789_T2.15_prepare_unavailable_ledger_empty" "" "$reviewer_loop_head_request_refs"
+reviewer_loop_head_refs_payload_loaded=0
+reviewer_loop_rewait_history_payload="$_1789_t221_payload"
+loop_head_sha=""
+reviewer_loop_head_refs_prepare_platform greptile 42
+run_test "1789_T2.15_prepare_no_loop_head_empty" "" "$reviewer_loop_head_request_refs"
+loop_head_sha="$_1789_H"
+reviewer_loop_head_refs_payload_loaded=0
+unset reviewer_loop_rewait_history_payload
+reviewer_loop_head_request_refs=""
+run_test "1789_T2.15_main_flow_prepares_before_dispatch" "yes" \
+  "$(_1789_a="$(awk -v start="$_1789_ret_line" 'NR > start && /^ *reviewer_loop_rewait_prepare_platform "\$platform_name"$/ {print NR; exit}' "$_1789_loop_src")"; \
+     _1789_b="$(awk -v start="$_1789_ret_line" 'NR > start && /^ *reviewer_loop_head_refs_prepare_platform "\$platform_name" "\$pr_number"$/ {print NR; exit}' "$_1789_loop_src")"; \
+     _1789_c="$(awk -v start="$_1789_ret_line" 'NR > start && /platform_output="\$\(run_platform_review "\$platform_name"/ {print NR; exit}' "$_1789_loop_src")"; \
+     [ -n "$_1789_a" ] && [ -n "$_1789_b" ] && [ -n "$_1789_c" ] && [ "$_1789_a" -lt "$_1789_b" ] && [ "$_1789_b" -lt "$_1789_c" ] && echo yes || echo no)"
+
+# --- T2.15 (handler half): Greptile fresh-mode reuse.
+_1789_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+_1789_gr_trigger() { printf '[{"id":%s,"user":{"login":"runner"},"created_at":"%s","body":"@greptile review"}]' "$1" "$_1789_now"; }
+_1789_gr_up='[{"content":"+1","user":{"login":"greptile-apps[bot]"}}]'
+# A trigger inside the age window whose id is listed for H is reused: no post,
+# and the reuse is recorded as this invocation's request (D12).
+_1789_gh_reset
+_1789_fx issue-comments "$(_1789_gr_trigger 9510)"
+reviewer_loop_head_request_refs="9510"
+_1789_out="$(_1789_run_gh run_greptile_review 600 300)"
+run_test "1789_T2.15_greptile_listed_trigger_reused_no_post" "0" "$(_1789_posts)"
+run_test "1789_T2.15_greptile_listed_trigger_request_recorded" "${_1789_now}|9510" "$(_1789_keys "$_1789_out")"
+run_test "1789_T2.15_greptile_listed_trigger_polled" "yes" \
+  "$( [ "$(grep -c 'issues/comments/9510/reactions' "$_1789_gh_dir/calls.log")" -ge 2 ] && echo yes || echo no)"
+run_test "1789_T2.15_greptile_listed_trigger_waiting" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+# The same trigger recorded only for H0 (not listed for H) is not reused.
+_1789_gh_reset
+_1789_fx issue-comments "$(_1789_gr_trigger 9510)"
+reviewer_loop_head_request_refs=""
+_1789_out="$(_1789_run_gh run_greptile_review 600 300)"
+run_test "1789_T2.15_greptile_unlisted_trigger_posts_new" "1|9001" "$(_1789_posts)|$(kv_value_default REVIEW_REQUEST_REF "$_1789_out" "")"
+run_test "1789_T2.15_greptile_unlisted_trigger_never_polled" "0" "$(grep -c 'issues/comments/9510/reactions' "$_1789_gh_dir/calls.log" || true)"
+# A listed trigger that the bot already acknowledged is spent: post a new one.
+_1789_gh_reset
+_1789_fx issue-comments "$(_1789_gr_trigger 9511)"
+_1789_fx reactions.9511 "$_1789_gr_up"
+reviewer_loop_head_request_refs="9511"
+_1789_out="$(_1789_run_gh run_greptile_review 600 300)"
+run_test "1789_T2.15_greptile_listed_but_answered_posts_new" "1|9001" "$(_1789_posts)|$(kv_value_default REVIEW_REQUEST_REF "$_1789_out" "")"
+reviewer_loop_head_request_refs=""
+# No loop head and an empty .head.sha → head-sha-unavailable, nothing posted.
+_1789_gh_reset
+printf '\n' > "$_1789_gh_dir/head"
+_1789_out="$(_1789_gh_loop_head="" _1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.15_greptile_no_head_escalates" "escalate|head-sha-unavailable|2" "$(_1789_rre "$_1789_out")"
+run_test "1789_T2.15_greptile_no_head_posts_nothing" "0" "$(_1789_posts)"
+# No loop head but a readable .head.sha → bound to it, as before.
+_1789_gh_reset
+_1789_out="$(_1789_gh_loop_head="" _1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.15_greptile_reads_pr_head_without_loop_head" "waiting_on_reviewer|reviewer-no-verdict-yet|4|$_1789_H" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default PENDING_REVIEW_HEAD_SHA "$_1789_out" "")"
+
+# --- T2.14 regression: trigger T0 (9400) was posted for H0 and sits inside the
+# reuse window, but no ledger record holds it for H (=H1 here); the invocation
+# posts T1 (9001). The bot then thumbs-up T0, and a Greptile review comment
+# written against H0 (original_commit_id H0, commit_id moved to H) is created
+# after T1.
+_1789_gr_h0_comment="$(_1789_rc 631 "greptile-apps[bot]" "$_1789_H" "$_1789_OLD" "Logic error on the old head" 2099-01-01T00:00:00Z)"
+_1789_gr_h1_comment="$(_1789_rc 632 "greptile-apps[bot]" "$_1789_H" "$_1789_H" "Logic error on the current head" 2099-01-01T00:00:01Z)"
+_1789_gh_reset
+_1789_fx issue-comments "$(_1789_gr_trigger 9400)"
+_1789_fx reactions.9400 "$_1789_gr_up"
+_1789_fx review-comments@1 "[$_1789_gr_h0_comment]"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+_1789_assert_waiting T2.14_greptile_previous_head_answer greptile "$_1789_out" no_acknowledgement "$_1789_H"
+run_test "1789_T2.14_greptile_request_ref_is_t1" "9001|1" "$(kv_value_default REVIEW_REQUEST_REF "$_1789_out" "")|$(_1789_posts)"
+run_test "1789_T2.14_greptile_t0_thumbs_up_never_read" "0" "$(grep -c 'issues/comments/9400/reactions' "$_1789_gh_dir/calls.log" || true)"
+# Variant: T1 is acknowledged too → clean; the H0 comment is not counted.
+_1789_gh_reset
+_1789_fx issue-comments "$(_1789_gr_trigger 9400)"
+_1789_fx reactions.9400 "$_1789_gr_up"
+_1789_fx reactions.9001@1 "$_1789_gr_up"
+_1789_fx review-comments@1 "[$_1789_gr_h0_comment]"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.14_greptile_t1_acknowledged_clean_h0_not_counted" "clean||0|0" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default COMMENT_COUNT "$_1789_out" "")"
+# ...with an H1 comment as well → needs_fixes listing only the H1 finding.
+_1789_fx review-comments@1 "[$_1789_gr_h0_comment,$_1789_gr_h1_comment]"
+printf '0\n' > "$_1789_gh_dir/tick"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.14_greptile_only_h1_finding_listed" "needs_fixes|1|Logic error on the current head|0" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default BLOCKING_COUNT "$_1789_out" "")|$(kv_value_default BLOCKING_1_BODY "$_1789_out" "")|$(printf '%s\n' "$_1789_out" | grep -c 'old head' || true)"
+
+# --- T2.16 Greptile pre-trigger findings: a drifted comment created after the
+# head commit's committer time is ignored (a trigger is posted); the same
+# comment bound to H is an existing finding (nothing posted).
+_1789_gh_reset
+_1789_fx review-comments "[$_1789_gr_h0_comment]"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.16_greptile_drifted_pre_trigger_ignored" "waiting_on_reviewer|reviewer-no-verdict-yet|4|1" \
+  "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+_1789_gh_reset
+_1789_fx review-comments "[$_1789_gr_h1_comment]"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.16_greptile_bound_pre_trigger_existing_finding" "needs_fixes|existing_findings|1|0" \
+  "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+# A Greptile CHANGES_REQUESTED review on another revision is not a pre-trigger finding.
+_1789_gh_reset
+_1789_fx reviews "[{\"id\":13,\"user\":{\"login\":\"greptile-apps[bot]\"},\"state\":\"CHANGES_REQUESTED\",\"submitted_at\":\"2099-01-01T00:00:00Z\",\"commit_id\":\"$_1789_OLD\",\"body\":\"Fix it\"}]"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.16_greptile_other_revision_review_not_a_finding" "waiting_on_reviewer|reviewer-no-verdict-yet|4|1" \
+  "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+
+# --- T2.20: the older-revision Greptile finding the D15 filters drop still
+# blocks while its thread is unresolved. Composed, because the aggregate audit
+# runs in the main flow after the harness return point: (1) Greptile with the
+# drifted H0 comment and an acknowledged trigger is clean; (2) greptile's
+# GraphQL login is in the audit's bot list; (3) the strict audit counts the
+# unresolved H0 thread; (4) the main flow turns a clean aggregate with a
+# positive count into needs_fixes / unresolved_review_threads.
+_1789_gh_reset
+_1789_fx reactions.9001 "$_1789_gr_up"
+_1789_fx review-comments "[$_1789_gr_h0_comment]"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_T2.20_greptile_clean_with_dropped_h0_finding" "clean||0" "$(_1789_rre "$_1789_out")"
+_1789_gr_login="$(bot_login_for_platform greptile)"
+run_test "1789_T2.20_greptile_in_audit_bot_logins" "greptile-apps" "${_1789_gr_login%\[bot\]}"
+run_test "1789_T2.20_strict_audit_counts_unresolved_h0_thread" "1" \
+  "$(MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT9","isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"greptile-apps"},"body":"Logic error on the old head"}]}}]}}' \
+     check_unresolved_threads 42 owner/repo strict greptile-apps)"
+run_test "1789_T2.20_main_flow_clean_with_threads_becomes_needs_fixes" "yes" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /if \[ "\$unresolved_thread_count" -gt 0 \]; then/ {f=NR} f && NR > f && NR <= f + 2 && /aggregate_result="needs_fixes"/ {a=1} f && NR > f && NR <= f + 3 && /aggregate_reason="unresolved_review_threads"/ {b=1} END {print (a && b) ? "yes" : "no"}' "$_1789_loop_src")"
+unset _1789_t221_payload _1789_t215_push _1789_now _1789_gr_up _1789_gr_h0_comment _1789_gr_h1_comment _1789_gr_login
+unset -f _1789_refs _1789_gr_rec _1789_gr_trigger
 
 unset _1789_T0 _1789_kv_file _1789_rec_verdict _1789_rec_waiting _1789_rec_replay _1789_t53_payload _1789_t212_payload
 unset _1789_section _1789_wk _1789_line _1789_claude_args _1789_t47_rec _1789_t47_payload
