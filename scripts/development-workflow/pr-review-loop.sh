@@ -10029,20 +10029,31 @@ reviewer_loop_normalize_platform_outcome() {
 
 # Build one compact platform_results JSON object from raw RESULT/REASON.
 # Optional fourth argument: the platform output's NO_VERDICT_YET flag (#1789).
+# Optional fifth argument: a JSON object of D12 additive ledger keys
+# (outcome_class, wait_budget_seconds, wait_budget_source,
+# wait_budget_adjustment, requested_at, requested_at_source, request_ref,
+# elapsed_seconds, elapsed_kind, reused; #1789 plan D12) merged into the record.
+# Anything that is not a JSON object is ignored. The schema string is unchanged.
 reviewer_loop_platform_result_record_json() {
   local platform="${1:-}"
   local raw_result="${2:-}"
   local raw_reason="${3:-}"
   local no_verdict_flag="${4:-0}"
+  local extra_json="${5:-}"
   local normalized
 
+  if [ -z "$extra_json" ] \
+      || ! printf '%s' "$extra_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    extra_json='{}'
+  fi
   normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason" "$no_verdict_flag")"
   jq -nc \
     --arg platform "$platform" \
     --arg result "$normalized" \
     --arg raw_result "$raw_result" \
     --arg raw_reason "$raw_reason" \
-    '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason}'
+    --argjson extra "$extra_json" \
+    '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason} + $extra'
 }
 
 # reviewer_loop_replace_current_round_platform_record <platform_name>
@@ -10075,6 +10086,18 @@ reviewer_loop_replace_current_round_platform_record() {
       fi
     done
     platform_result_records=("${kept_records[@]+"${kept_records[@]}"}")
+  fi
+
+  # #1789 (plan D12): a second local pass replaces the first pass's timing.
+  if declare -p platform_timing_records >/dev/null 2>&1 \
+      && [ "${#platform_timing_records[@]}" -gt 0 ]; then
+    local kept_timing=()
+    for record in "${platform_timing_records[@]}"; do
+      if [ "$(printf '%s' "$record" | jq -r '.platform // ""')" != "$platform_name" ]; then
+        kept_timing+=("$record")
+      fi
+    done
+    platform_timing_records=("${kept_timing[@]+"${kept_timing[@]}"}")
   fi
 
   if declare -p platform_peer_evidence >/dev/null 2>&1 \
@@ -10792,14 +10815,18 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   local_second_pass=1
   # Per-platform budget and poll interval (#1789, plan D7/D14): the second
   # pass waits with local-ai-reviewer's own budget, never another platform's.
-  local _sl_max_wait _sl_poll_interval
-  read -r _sl_max_wait _ _ < <(reviewer_wait_budget_for_platform "local-ai-reviewer")
+  local _sl_max_wait _sl_poll_interval _sl_budget_source _sl_budget_adjustment
+  read -r _sl_max_wait _sl_budget_source _sl_budget_adjustment < <(reviewer_wait_budget_for_platform "local-ai-reviewer")
   _sl_poll_interval="$(reviewer_poll_interval_resolve "local-ai-reviewer" "$_sl_max_wait")"
   reviewer_loop_rewait_prepare_platform "local-ai-reviewer"
+  # Wait start/end around the second pass's own dispatch (D12); its record
+  # replaces the first pass's (reviewer_loop_replace_current_round_platform_record).
+  reviewer_loop_timing_begin "$_sl_max_wait" "$_sl_budget_source" "$_sl_budget_adjustment"
   set +e
   _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$_sl_poll_interval" "$_sl_max_wait")"
   _sl_status=$?
   set -e
+  reviewer_loop_timing_end
   _sl_platform_index=$((${#platforms[@]} + 1))
   reviewer_loop_platform_loop_should_break=0
   reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_output" "$_sl_status" 0
@@ -10941,7 +10968,10 @@ reviewer_loop_process_platform_output() {
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
-  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)")")
+  # #1789 (plan D12): budget, request, and latency for this outcome (or the
+  # #1692 reused marker), printed and carried into the ledger record.
+  reviewer_loop_record_platform_timing "$platform_name" "$platform_index" "$platform_output" "$platform_result" "$platform_reason"
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)" "$reviewer_loop_last_timing_json")")
   platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
@@ -13148,6 +13178,338 @@ reviewer_loop_rewait_log_no_recorded_request() {
   return 0
 }
 
+# --- Reviewer timing and the waiting-result keys (#1789, plan D12) ---
+#
+# Around each dispatch the loop records the wait start immediately before
+# run_platform_review and the end immediately after
+# (reviewer_loop_timing_begin / reviewer_loop_timing_end); the next
+# reviewer_loop_process_platform_output call consumes that context in
+# reviewer_loop_record_platform_timing, which prints the PLATFORM_<n>_* timing
+# keys, appends one JSON object to platform_timing_records (for the summary's
+# Reviewer timing section and the waiting keys), and leaves the D12 additive
+# ledger keys in reviewer_loop_last_timing_json for the platform_results[]
+# record. A #1692 replay (STAGE_SKIP=1) records only that the verdict was
+# reused.
+reviewer_loop_timing_pending=0
+reviewer_loop_timing_start_epoch=""
+reviewer_loop_timing_end_epoch=""
+reviewer_loop_timing_budget=""
+reviewer_loop_timing_budget_source=""
+reviewer_loop_timing_budget_adjustment=""
+reviewer_loop_last_timing_json=""
+
+# reviewer_loop_epoch_to_iso <epoch>: ISO-8601 UTC (BSD date, GNU date).
+reviewer_loop_epoch_to_iso() {
+  local epoch="${1:-}"
+  [[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+  date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+  return 1
+}
+
+# reviewer_loop_timing_begin <budget_seconds> <budget_source> <budget_adjustment>
+reviewer_loop_timing_begin() {
+  reviewer_loop_timing_budget="${1:-}"
+  reviewer_loop_timing_budget_source="${2:-}"
+  reviewer_loop_timing_budget_adjustment="${3:-none}"
+  reviewer_loop_timing_start_epoch="$(date -u +%s)"
+  reviewer_loop_timing_end_epoch=""
+  reviewer_loop_timing_pending=1
+}
+
+# reviewer_loop_timing_end
+reviewer_loop_timing_end() {
+  reviewer_loop_timing_end_epoch="$(date -u +%s)"
+}
+
+# reviewer_loop_record_platform_timing <platform> <index> <output> <result> <reason>
+#
+# Prints the D12 PLATFORM_<n>_* keys for one platform outcome and records it.
+# Called from reviewer_loop_process_platform_output (never in a subshell: it
+# appends to platform_timing_records). Without a pending timing context and
+# without STAGE_SKIP=1 it records nothing.
+reviewer_loop_record_platform_timing() {
+  local platform="${1:-}" index="${2:-}" output="${3:-}" result="${4:-}" reason="${5:-}"
+  local no_verdict class requested_at requested_source request_ref
+  local start_epoch end_epoch requested_epoch seconds kind start_iso
+
+  reviewer_loop_last_timing_json=""
+  no_verdict="$(kv_value_default NO_VERDICT_YET "$output" 0)"
+  class="$(reviewer_loop_platform_outcome_class "$result" "$reason" "$no_verdict")"
+
+  if [ "$(kv_value STAGE_SKIP "$output")" = "1" ]; then
+    # #1692 replay: no budget, requested-at, or seconds key (D12).
+    reviewer_loop_timing_pending=0
+    print_kv "PLATFORM_${index}_OUTCOME_CLASS" "$class"
+    print_kv "PLATFORM_${index}_VERDICT_REUSED" 1
+    reviewer_loop_last_timing_json="$(jq -nc --arg class "$class" '{outcome_class: $class, reused: true}')"
+    platform_timing_records+=("$(jq -nc --arg p "$platform" --arg class "$class" --arg r "$result" --arg why "$reason" \
+      '{platform: $p, outcome_class: $class, result: $r, reason: $why, reused: true}')")
+    return 0
+  fi
+  [ "${reviewer_loop_timing_pending:-0}" -eq 1 ] || return 0
+  reviewer_loop_timing_pending=0
+
+  start_epoch="${reviewer_loop_timing_start_epoch:-}"
+  end_epoch="${reviewer_loop_timing_end_epoch:-}"
+  [[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch="$(date -u +%s)"
+  [[ "$end_epoch" =~ ^[0-9]+$ ]] || end_epoch="$(date -u +%s)"
+  start_iso="$(reviewer_loop_epoch_to_iso "$start_epoch")" || start_iso=""
+
+  # The handler's own request record (it posted or adopted a request), else
+  # the wait start. An unparsable request time is not trusted.
+  requested_at="$(kv_value REVIEW_REQUESTED_AT "$output")"
+  requested_source="request"
+  requested_epoch=""
+  if [[ "$requested_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    requested_epoch="$(_iso8601_to_epoch "$requested_at")" || requested_epoch=""
+  fi
+  if ! [[ "$requested_epoch" =~ ^[0-9]+$ ]]; then
+    requested_at="$start_iso"
+    requested_source="wait_start"
+    requested_epoch="$start_epoch"
+  fi
+  request_ref="$(kv_value REVIEW_REQUEST_REF "$output")"
+
+  seconds=$(( end_epoch - requested_epoch ))
+  [ "$seconds" -ge 0 ] || seconds=0
+  case "$class" in
+    verdict_received|reviewer_failed|existing_handling) kind="latency" ;;
+    no_verdict_yet) kind="waited" ;;
+    *) kind="elapsed" ;;
+  esac
+
+  print_kv "PLATFORM_${index}_OUTCOME_CLASS" "$class"
+  print_kv "PLATFORM_${index}_WAIT_BUDGET_SECONDS" "$reviewer_loop_timing_budget"
+  print_kv "PLATFORM_${index}_WAIT_BUDGET_SOURCE" "$reviewer_loop_timing_budget_source"
+  print_kv "PLATFORM_${index}_WAIT_BUDGET_ADJUSTMENT" "${reviewer_loop_timing_budget_adjustment:-none}"
+  print_kv "PLATFORM_${index}_REQUESTED_AT" "$requested_at"
+  print_kv "PLATFORM_${index}_REQUESTED_AT_SOURCE" "$requested_source"
+  [ -n "$request_ref" ] && print_kv "PLATFORM_${index}_REQUEST_REF" "$request_ref"
+  case "$kind" in
+    latency) print_kv "PLATFORM_${index}_LATENCY_SECONDS" "$seconds" ;;
+    waited) print_kv "PLATFORM_${index}_WAITED_SECONDS" "$seconds" ;;
+    *) print_kv "PLATFORM_${index}_ELAPSED_SECONDS" "$seconds" ;;
+  esac
+
+  reviewer_loop_last_timing_json="$(jq -nc \
+    --arg class "$class" \
+    --arg budget "$reviewer_loop_timing_budget" \
+    --arg source "$reviewer_loop_timing_budget_source" \
+    --arg adjustment "${reviewer_loop_timing_budget_adjustment:-none}" \
+    --arg at "$requested_at" \
+    --arg at_source "$requested_source" \
+    --arg ref "$request_ref" \
+    --argjson seconds "$seconds" \
+    --arg kind "$kind" '
+      {
+        outcome_class: $class,
+        wait_budget_seconds: ($budget | tonumber? // null),
+        wait_budget_source: $source,
+        wait_budget_adjustment: $adjustment,
+        requested_at: $at,
+        requested_at_source: $at_source
+      }
+      + (if ($ref | length) > 0 then {request_ref: $ref} else {} end)
+      + {elapsed_seconds: $seconds, elapsed_kind: $kind, reused: false}')" || reviewer_loop_last_timing_json=""
+  if [ -n "$reviewer_loop_last_timing_json" ]; then
+    platform_timing_records+=("$(printf '%s' "$reviewer_loop_last_timing_json" \
+      | jq -c --arg p "$platform" --arg r "$result" --arg why "$reason" '. + {platform: $p, result: $r, reason: $why}')")
+  fi
+  return 0
+}
+
+# reviewer_loop_timing_summary_section
+#
+# The summary comment's "Reviewer timing" section (plan D12): one line per
+# recorded platform, at most 200 characters each, plus a one-time note that
+# latency is measured to the observing poll. Empty when nothing was recorded.
+reviewer_loop_timing_summary_section() {
+  local timing_lines=""
+  if ! declare -p platform_timing_records >/dev/null 2>&1 \
+      || [ "${#platform_timing_records[@]}" -eq 0 ]; then
+    return 0
+  fi
+  timing_lines="$(printf '%s\n' "${platform_timing_records[@]}" | jq -r '
+      def source_label:
+        if . == "default" then "built-in default"
+        elif . == "configured" then "configured"
+        elif . == "override" then "one-run override"
+        else (. // "unknown") end;
+      def adjustment_label:
+        if . == "documentation_branch" then ", documentation branch"
+        elif . == "large_diff" then ", large diff"
+        else "" end;
+      def class_label:
+        (.reason // "") as $why
+        | if .outcome_class == "verdict_received" then "verdict received (\(.result))"
+          elif .outcome_class == "no_verdict_yet" then
+            (if .result == "skipped" then "no verdict yet (non-blocking skip: \($why))" else "no verdict yet" end)
+          elif .outcome_class == "reviewer_failed" then "reviewer failed (\(if $why == "" then .result else $why end))"
+          elif .outcome_class == "existing_handling" then "\(.result) (\($why))"
+          elif .outcome_class == "skipped_failure_evidence" then "skipped with failure evidence (\($why))"
+          else "skipped (\(if $why == "" then "no reason" else $why end))" end;
+      select(type == "object")
+      | (if .reused == true then
+           "- \(.platform): verdict reused from an earlier run on this revision"
+         else
+           "- \(.platform): \(class_label) — budget \(.wait_budget_seconds // "?")s (\(.wait_budget_source | source_label)\(.wait_budget_adjustment | adjustment_label)); requested \(.requested_at // "unknown")\(if .requested_at_source == "wait_start" then " (wait start)" else "" end); \(.elapsed_kind // "elapsed") \(.elapsed_seconds // 0)s"
+         end)
+      | if length > 200 then .[0:197] + "..." else . end
+    ' 2>/dev/null)" || timing_lines=""
+  [ -n "$timing_lines" ] || return 0
+  printf '\n\n**Reviewer timing:**\n%s\n_Latency is measured to the poll that observed the verdict, so it can overstate the platform'"'"'s own latency by up to one poll interval._' "$timing_lines"
+}
+
+# reviewer_loop_failed_peer_platforms
+#
+# One `<platform>|<reason>` line, in evaluation order, per platform_peer_evidence
+# entry that satisfies reviewer_failed_label_required_for_result (the entries
+# D9's reviewer_failed_required is set from). Feeds FAILED_PEER_PLATFORMS and
+# the summary's failure-evidence clause (plan D12).
+reviewer_loop_failed_peer_platforms() {
+  local entry peer_platform peer_result peer_reason
+  declare -p platform_peer_evidence >/dev/null 2>&1 || return 0
+  for entry in "${platform_peer_evidence[@]:-}"; do
+    [ -n "$entry" ] || continue
+    peer_platform="${entry%%|*}"
+    peer_result="${entry#*|}"
+    peer_reason="${peer_result#*|}"
+    peer_result="${peer_result%%|*}"
+    if reviewer_failed_label_required_for_result "$peer_result" "$peer_reason"; then
+      printf '%s|%s\n' "$peer_platform" "$peer_reason"
+    fi
+  done
+  return 0
+}
+
+# reviewer_loop_pending_review_fields
+#
+# For a waiting_on_reviewer aggregate with a No verdict yet reason, sets:
+#   pending_review_platform, pending_review_head_sha — from the aggregate
+#     output's PENDING_REVIEWER / PENDING_REVIEW_HEAD_SHA (else the last
+#     platform and the loop head);
+#   pending_review_requested_at, pending_review_waited_seconds,
+#   pending_review_budget, pending_review_budget_source — from that platform's
+#     newest timing record (empty when none was recorded);
+#   pending_no_failure_detected — 1 when no failure evidence was recorded in
+#     this run, else 0;
+#   pending_failed_peer_platforms — comma-separated failure-evidence peers;
+#   pending_failed_peer_clause — "<peer> (<reason>)[, …]".
+#
+# NO_FAILURE_DETECTED follows this invocation's D9 label decision. It is 0
+# when any peer carries failure evidence and also, defensively, when
+# reviewer_failed_required is set with no such peer listed — a state the
+# per-platform recording does not produce today (reviewer_failed_required is
+# set from the same peer entries). It fails closed: the loop never claims "no
+# failure detected" while the label decision says the label is required.
+reviewer_loop_pending_review_fields() {
+  local peers line peer reason
+  pending_review_platform="$(kv_value_default PENDING_REVIEWER "${aggregate_output:-}" "${last_platform:-}")"
+  pending_review_head_sha="$(kv_value_default PENDING_REVIEW_HEAD_SHA "${aggregate_output:-}" "${loop_head_sha:-}")"
+  pending_review_requested_at=""
+  pending_review_waited_seconds=""
+  pending_review_budget=""
+  pending_review_budget_source=""
+  if [ -n "$pending_review_platform" ] && declare -p platform_timing_records >/dev/null 2>&1 \
+      && [ "${#platform_timing_records[@]}" -gt 0 ]; then
+    local rec=""
+    rec="$(printf '%s\n' "${platform_timing_records[@]}" | jq -sc --arg p "$pending_review_platform" \
+      '[.[] | select(type == "object" and .platform == $p and (.reused // false) == false)] | last // empty' 2>/dev/null)" || rec=""
+    if [ -n "$rec" ]; then
+      pending_review_requested_at="$(printf '%s' "$rec" | jq -r '.requested_at // empty')"
+      pending_review_waited_seconds="$(printf '%s' "$rec" | jq -r '.elapsed_seconds // empty')"
+      pending_review_budget="$(printf '%s' "$rec" | jq -r '.wait_budget_seconds // empty')"
+      pending_review_budget_source="$(printf '%s' "$rec" | jq -r '.wait_budget_source // empty')"
+    fi
+  fi
+
+  pending_failed_peer_platforms=""
+  pending_failed_peer_clause=""
+  peers="$(reviewer_loop_failed_peer_platforms)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    peer="${line%%|*}"
+    reason="${line#*|}"
+    pending_failed_peer_platforms="${pending_failed_peer_platforms:+${pending_failed_peer_platforms},}${peer}"
+    pending_failed_peer_clause="${pending_failed_peer_clause:+${pending_failed_peer_clause}, }${peer} (${reason:-unknown})"
+  done <<< "$peers"
+  if [ -n "$pending_failed_peer_platforms" ] || [ "${reviewer_failed_required:-0}" -eq 1 ]; then
+    pending_no_failure_detected=0
+  else
+    pending_no_failure_detected=1
+  fi
+  return 0
+}
+
+# reviewer_loop_failure_evidence_clause
+# The D12 summary clause after the waiting statement, from the fields above.
+reviewer_loop_failure_evidence_clause() {
+  if [ "${pending_no_failure_detected:-0}" = "1" ]; then
+    printf '; no reviewer failure was detected'
+  elif [ -n "${pending_failed_peer_clause:-}" ]; then
+    printf '; failure evidence from %s — reviewer-failed applied' "$pending_failed_peer_clause"
+  else
+    printf '; reviewer-failed applied'
+  fi
+}
+
+# reviewer_loop_no_verdict_result_line <reason>
+#
+# The summary result line for a waiting_on_reviewer aggregate with a No
+# verdict yet reason (plan D12). reviewer-no-verdict-yet:
+#   waiting_on_reviewer (reviewer-no-verdict-yet) — <platform> has not returned
+#   a verdict for <head> after <seconds>s (budget <budget>s, <source>); no
+#   reviewer failure was detected
+# with the last clause replaced by the failure-evidence clause when failure
+# evidence was recorded. The Codex wait reasons keep their existing line, with
+# the failure-evidence clause appended only when failure evidence exists.
+reviewer_loop_no_verdict_result_line() {
+  local reason="${1:-}"
+  local wait_clause budget_clause
+  reviewer_loop_pending_review_fields
+  if [ "$reason" = "reviewer-no-verdict-yet" ]; then
+    if [ -n "$pending_review_waited_seconds" ]; then
+      wait_clause="after ${pending_review_waited_seconds}s"
+    else
+      wait_clause="within its wait budget"
+    fi
+    budget_clause=""
+    if [ -n "$pending_review_budget" ]; then
+      budget_clause=" (budget ${pending_review_budget}s, ${pending_review_budget_source:-unknown})"
+    fi
+    printf 'waiting_on_reviewer (reviewer-no-verdict-yet) — %s has not returned a verdict for %s %s%s%s\n' \
+      "${pending_review_platform:-a reviewer}" "${pending_review_head_sha:-the current head}" \
+      "$wait_clause" "$budget_clause" "$(reviewer_loop_failure_evidence_clause)"
+    return 0
+  fi
+  if [ "${pending_no_failure_detected:-0}" = "1" ]; then
+    printf 'waiting_on_reviewer (%s) — current-head review trigger posted; reviewer has not returned terminal evidence yet\n' \
+      "${reason:-codex-github-review-pending}"
+  else
+    printf 'waiting_on_reviewer (%s) — current-head review trigger posted; reviewer has not returned terminal evidence yet%s\n' \
+      "${reason:-codex-github-review-pending}" "$(reviewer_loop_failure_evidence_clause)"
+  fi
+}
+
+# reviewer_loop_emit_waiting_keys
+#
+# The D12 keys printed with a waiting_on_reviewer result whose reason is in
+# REVIEWER_LOOP_NO_VERDICT_REASONS: PENDING_REVIEWER, PENDING_REVIEW_HEAD_SHA,
+# PENDING_REVIEW_REQUESTED_AT and PENDING_REVIEW_WAITED_SECONDS (when
+# recorded), NO_FAILURE_DETECTED, and FAILED_PEER_PLATFORMS (only when
+# non-empty).
+reviewer_loop_emit_waiting_keys() {
+  reviewer_loop_pending_review_fields
+  print_kv PENDING_REVIEWER "$pending_review_platform"
+  print_kv PENDING_REVIEW_HEAD_SHA "$pending_review_head_sha"
+  [ -n "$pending_review_requested_at" ] && print_kv PENDING_REVIEW_REQUESTED_AT "$pending_review_requested_at"
+  [ -n "$pending_review_waited_seconds" ] && print_kv PENDING_REVIEW_WAITED_SECONDS "$pending_review_waited_seconds"
+  print_kv NO_FAILURE_DETECTED "$pending_no_failure_detected"
+  [ -n "$pending_failed_peer_platforms" ] && print_kv FAILED_PEER_PLATFORMS "$pending_failed_peer_platforms"
+  return 0
+}
+
 # reviewer_loop_resolve_max_cycles <config_value>
 #
 # Resolves the effective PER-RUN cap (Protocol 91:1719's `max_cycles`).
@@ -14440,6 +14802,11 @@ declare -a platform_result_tokens=()
 declare -a platform_reviewed_heads=()
 # Per-platform raw outcomes for missed-finding telemetry (issue #1651).
 declare -a platform_result_records=()
+# Per-platform budget, request, and latency records (#1789, plan D12): one
+# JSON object per evaluated platform, for the summary's Reviewer timing
+# section and the waiting-result keys.
+declare -a platform_timing_records=()
+reviewer_loop_timing_pending=0
 # Parallel platform outputs for path extraction when building missed_findings.
 declare -a platform_blocking_outputs=()
 missed_findings_json='[]'
@@ -14669,13 +15036,16 @@ for index in "${!platforms[@]}"; do
   esac
 
   # Per-platform budget and poll interval (#1789, plan D7/D14).
-  read -r platform_max_wait _ _ < <(reviewer_wait_budget_for_platform "$platform_name")
+  read -r platform_max_wait platform_budget_source platform_budget_adjustment < <(reviewer_wait_budget_for_platform "$platform_name")
   platform_poll_interval="$(reviewer_poll_interval_resolve "$platform_name" "$platform_max_wait")"
   reviewer_loop_rewait_prepare_platform "$platform_name"
+  # Wait start immediately before the dispatch, end immediately after (D12).
+  reviewer_loop_timing_begin "$platform_max_wait" "$platform_budget_source" "$platform_budget_adjustment"
   set +e
   platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$platform_poll_interval" "$platform_max_wait")"
   platform_status=$?
   set -e
+  reviewer_loop_timing_end
 
   reviewer_loop_platform_loop_should_break=0
   reviewer_loop_process_platform_output "$platform_name" "$platform_index" "$platform_output" "$platform_status" 1
@@ -14745,13 +15115,10 @@ _post_review_summary() {
       result_line="escalated (${reason:-unknown})"
       ;;
     waiting_on_reviewer)
-      if [ "$reason" = "reviewer-no-verdict-yet" ]; then
-        # #1789 (plan D12, partial): the budget and waited-seconds clause and
-        # the failure-evidence clause are added with the timing keys.
-        local _nvy_platform _nvy_head
-        _nvy_platform="$(kv_value_default PENDING_REVIEWER "${aggregate_output:-}" "")"
-        _nvy_head="$(kv_value_default PENDING_REVIEW_HEAD_SHA "${aggregate_output:-}" "")"
-        result_line="waiting_on_reviewer (reviewer-no-verdict-yet) — ${_nvy_platform:-a reviewer} has not returned a verdict for ${_nvy_head:-the current head} within its wait budget"
+      if reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}"; then
+        # #1789 (plan D12): waited seconds, budget and source, and either "no
+        # reviewer failure was detected" or the failure-evidence clause.
+        result_line="$(reviewer_loop_no_verdict_result_line "$reason")"
       else
         result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
       fi
@@ -14879,6 +15246,10 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 
 $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
   fi
+
+  # #1789 (plan D12): per-platform budget, source, request time, and latency.
+  local reviewer_timing_section=""
+  reviewer_timing_section="$(reviewer_loop_timing_summary_section)"
 
   local expensive_gate_section=""
   if [ -n "${expensive_gate_last_result:-}" ]; then
@@ -15156,7 +15527,7 @@ ${_attr_line}"
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${second_local_pass_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${reviewer_timing_section}${expensive_gate_section}${second_local_pass_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -15807,6 +16178,10 @@ print_kv SUGGESTION_COUNT "$total_suggestion_count"
 if [ "$aggregate_result" = "waiting_on_reviewer" ] \
     && reviewer_loop_reason_in_list "$aggregate_reason" "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}"; then
   print_kv NO_VERDICT_REWAIT "$(reviewer_loop_no_verdict_rewait_value "${reviewer_loop_rewait_state:-untracked}" "${_post_summary_exit:-1}")"
+  # #1789 (plan D12): who is pending, since when, for how long, and whether
+  # this run recorded failure evidence (NO_FAILURE_DETECTED /
+  # FAILED_PEER_PLATFORMS follow this run's reviewer-failed decision).
+  reviewer_loop_emit_waiting_keys
 fi
 
 if [ -n "$aggregate_output" ]; then

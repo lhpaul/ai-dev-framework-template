@@ -22181,6 +22181,8 @@ _1789_reset_processing_globals() {
   platform_reviewed_heads=()
   platform_result_tokens=()
   platform_blocking_outputs=()
+  platform_timing_records=()
+  reviewer_loop_timing_pending=0
   aggregate_blocking_paths=()
   aggregate_blocking_findings=()
   platform_policy_status_notes=()
@@ -22193,6 +22195,7 @@ _1789_reset_processing_globals() {
   phase_after_clean_started=0
   reviewer_loop_platform_loop_should_break=0
   loop_head_sha="1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  last_platform=""
 }
 _1789_handler_overrides='
   require_gh() { :; }
@@ -23399,6 +23402,240 @@ _1789_handler_overrides="$_1789_handler_overrides_saved"
 unset _1789_handler_overrides_saved _1789_codex_args
 
 _1789_rewait_off
+
+# ---------------------------------------------------------------------------
+# Phase 4b — timing, ledger, summary, and waiting keys (plan D12): T5.1–T5.5,
+# T4.7, and the D12 carry-forward half of T2.12. Wait start/end epochs are
+# pinned after reviewer_loop_timing_begin/_end so seconds are deterministic.
+# ---------------------------------------------------------------------------
+_1789_T0=1577836800   # 2020-01-01T00:00:00Z
+_1789_kv_file="$_1789_dir/kv.out"
+# _1789_timed <platform> <index> <status> <budget> <source> <adjustment> <seconds> <output>:
+# processes one output with a timing context whose wait started at T0 and
+# ended <seconds> later; the printed keys land in $_1789_kv_file.
+_1789_timed() {
+  reviewer_loop_timing_begin "$4" "$5" "$6"
+  reviewer_loop_timing_end
+  reviewer_loop_timing_start_epoch="$_1789_T0"
+  reviewer_loop_timing_end_epoch="$((_1789_T0 + $7))"
+  reviewer_loop_process_platform_output "$1" "$2" "$8" "$3" 1 > "$_1789_kv_file" 2>/dev/null
+}
+_1789_kv() { kv_value_default "$1" "$(cat "$_1789_kv_file")" ""; }
+_1789_has_key() { grep -c "^$1=" "$_1789_kv_file" || true; }
+_1789_last_record() { printf '%s\n' "${platform_result_records[@]}" | jq -sc 'last'; }
+
+# --- T5.1: timing keys
+# A verdict on a request the handler posted → latency from the request time.
+_1789_reset_processing_globals
+_1789_timed bugbot 1 0 2400 default none 316 \
+  "$(printf 'RESULT=clean\nREVIEW_REQUESTED_AT=2020-01-01T00:00:00Z\nREVIEW_REQUEST_REF=9001\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+run_test "1789_T5.1_verdict_keys" "verdict_received|2400|default|none|2020-01-01T00:00:00Z|request|9001|316" \
+  "$(_1789_kv PLATFORM_1_OUTCOME_CLASS)|$(_1789_kv PLATFORM_1_WAIT_BUDGET_SECONDS)|$(_1789_kv PLATFORM_1_WAIT_BUDGET_SOURCE)|$(_1789_kv PLATFORM_1_WAIT_BUDGET_ADJUSTMENT)|$(_1789_kv PLATFORM_1_REQUESTED_AT)|$(_1789_kv PLATFORM_1_REQUESTED_AT_SOURCE)|$(_1789_kv PLATFORM_1_REQUEST_REF)|$(_1789_kv PLATFORM_1_LATENCY_SECONDS)"
+run_test "1789_T5.1_verdict_no_waited_or_elapsed" "0|0" "$(_1789_has_key PLATFORM_1_WAITED_SECONDS)|$(_1789_has_key PLATFORM_1_ELAPSED_SECONDS)"
+_1789_rec_verdict="$(_1789_last_record)"
+# No verdict yet with no request printed → the wait start, waited seconds, no ref.
+_1789_timed greptile 2 4 1200 configured large_diff 1200 "$(print_no_verdict_yet greptile no_acknowledgement "$_1789_H" "")"
+run_test "1789_T5.1_no_verdict_keys" "no_verdict_yet|1200|configured|large_diff|2020-01-01T00:00:00Z|wait_start|1200" \
+  "$(_1789_kv PLATFORM_2_OUTCOME_CLASS)|$(_1789_kv PLATFORM_2_WAIT_BUDGET_SECONDS)|$(_1789_kv PLATFORM_2_WAIT_BUDGET_SOURCE)|$(_1789_kv PLATFORM_2_WAIT_BUDGET_ADJUSTMENT)|$(_1789_kv PLATFORM_2_REQUESTED_AT)|$(_1789_kv PLATFORM_2_REQUESTED_AT_SOURCE)|$(_1789_kv PLATFORM_2_WAITED_SECONDS)"
+run_test "1789_T5.1_no_request_ref_without_handler_ref" "0|0" "$(_1789_has_key PLATFORM_2_REQUEST_REF)|$(_1789_has_key PLATFORM_2_LATENCY_SECONDS)"
+_1789_rec_waiting="$(_1789_last_record)"
+# A failure-evidence skip → elapsed; a failure → latency.
+_1789_reset_processing_globals
+_1789_timed coderabbit-cli 1 0 1200 default none 40 "$(_1789_o skipped no_output)"
+run_test "1789_T5.1_skip_keys" "skipped_failure_evidence|40|0" \
+  "$(_1789_kv PLATFORM_1_OUTCOME_CLASS)|$(_1789_kv PLATFORM_1_ELAPSED_SECONDS)|$(_1789_has_key PLATFORM_1_LATENCY_SECONDS)"
+_1789_timed bugbot 2 2 2400 default none 75 "$(_1789_o escalate bugbot-run-timed-out)"
+run_test "1789_T5.1_failure_keys" "reviewer_failed|75" "$(_1789_kv PLATFORM_2_OUTCOME_CLASS)|$(_1789_kv PLATFORM_2_LATENCY_SECONDS)"
+_1789_timed devin 3 0 1200 default none 9 "$(printf 'RESULT=skipped\nREASON=no_check_run\nNO_VERDICT_YET=1\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+run_test "1789_T5.1_kept_skip_waited" "no_verdict_yet|9" "$(_1789_kv PLATFORM_3_OUTCOME_CLASS)|$(_1789_kv PLATFORM_3_WAITED_SECONDS)"
+# An unparsable REVIEW_REQUESTED_AT is not trusted → the wait start.
+_1789_timed copilot 4 4 1200 default none 5 "$(printf 'RESULT=waiting_on_reviewer\nREASON=reviewer-no-verdict-yet\nREVIEW_REQUESTED_AT=yesterday\n')"
+run_test "1789_T5.1_unparsable_request_time_is_wait_start" "wait_start|2020-01-01T00:00:00Z|5" \
+  "$(_1789_kv PLATFORM_4_REQUESTED_AT_SOURCE)|$(_1789_kv PLATFORM_4_REQUESTED_AT)|$(_1789_kv PLATFORM_4_WAITED_SECONDS)"
+# A #1692 replay → VERDICT_REUSED=1 and no budget, requested-at, or seconds key.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output pr-agent 1 "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1 > "$_1789_kv_file" 2>/dev/null
+run_test "1789_T5.1_replay_reused" "1|verdict_received" "$(_1789_kv PLATFORM_1_VERDICT_REUSED)|$(_1789_kv PLATFORM_1_OUTCOME_CLASS)"
+run_test "1789_T5.1_replay_no_timing_keys" "0" \
+  "$(grep -c '^PLATFORM_1_\(WAIT_BUDGET_SECONDS\|REQUESTED_AT\|LATENCY_SECONDS\|WAITED_SECONDS\|ELAPSED_SECONDS\)=' "$_1789_kv_file" || true)"
+_1789_rec_replay="$(_1789_last_record)"
+run_test "1789_T5.1_replay_record" "true|verdict_received|false" \
+  "$(printf '%s' "$_1789_rec_replay" | jq -r '[.reused, .outcome_class, has("requested_at")] | map(tostring) | join("|")')"
+# Without a timing context (a call outside a dispatch) nothing is added.
+_1789_reset_processing_globals
+reviewer_loop_process_platform_output pr-agent 1 "$(_1789_o clean)" 0 1 > "$_1789_kv_file" 2>/dev/null
+run_test "1789_T5.1_no_context_no_keys" "0|false" \
+  "$(_1789_has_key PLATFORM_1_OUTCOME_CLASS)|$(_1789_last_record | jq -r 'has("outcome_class")')"
+# Both dispatch sites take the wait start immediately before run_platform_review
+# and the end immediately after.
+run_test "1789_T5.1_timing_around_both_dispatch_sites" "2|2" \
+  "$(grep -c '^ *reviewer_loop_timing_begin "' "$_1789_loop_src" || true)|$(grep -c '^ *reviewer_loop_timing_end$' "$_1789_loop_src" || true)"
+run_test "1789_T5.1_begin_immediately_before_dispatch" "2" \
+  "$(awk '/^ *reviewer_loop_timing_begin "/{b=NR} /run_platform_review "/ && b && NR - b <= 3 {c++; b=0} END{print c+0}' "$_1789_loop_src")"
+
+# --- T5.3: ledger platform_results[] additive fields; existing readers still pass.
+run_test "1789_T5.3_record_additive_fields" "clean|verdict_received|2400|default|none|2020-01-01T00:00:00Z|request|9001|316|latency|false" \
+  "$(printf '%s' "$_1789_rec_verdict" | jq -r '[.result, .outcome_class, .wait_budget_seconds, .wait_budget_source, .wait_budget_adjustment, .requested_at, .requested_at_source, .request_ref, .elapsed_seconds, .elapsed_kind, .reused] | map(tostring) | join("|")')"
+run_test "1789_T5.3_request_ref_only_when_printed" "false|waited" \
+  "$(printf '%s' "$_1789_rec_waiting" | jq -r '[has("request_ref"), .elapsed_kind] | map(tostring) | join("|")')"
+run_test "1789_T5.3_record_keeps_existing_keys" "bugbot|clean|clean|" \
+  "$(printf '%s' "$_1789_rec_verdict" | jq -r '[.platform, .result, .raw_result, .raw_reason] | join("|")')"
+_1789_t53_payload="$(jq -nc --argjson rec "$_1789_rec_verdict" --arg h "$_1789_H" \
+  '{schema: "reviewer_loop_history.v1", entries: [{iteration: 1, platform_results: [$rec], reviewed_heads: [{platform: "bugbot", reviewed_head: $h}]}]}')"
+run_test "1789_T5.3_clean_for_head_reader_unchanged" "clean_current" \
+  "$(reviewer_loop_platform_clean_for_head "$_1789_t53_payload" bugbot "$_1789_H")"
+run_test "1789_T5.3_extra_arg_must_be_object" '{"platform":"p","result":"clean","raw_result":"clean","raw_reason":""}' \
+  "$(reviewer_loop_platform_result_record_json p clean "" 0 '[1]')"
+
+# --- T2.12 (D12 carry-forward): the Bugbot re-wait adoption output, recorded
+# through the loop, writes the recorded request unchanged, so a third
+# invocation with the same run id and head adopts the same comment.
+_1789_reset_processing_globals
+loop_head_sha="$_1789_H"
+_1789_timed bugbot 1 4 2400 default none 2400 \
+  "$(printf 'REVIEW_REQUESTED_AT=2020-01-01T00:00:02Z\nREVIEW_REQUEST_REF=9300\n'; print_no_verdict_yet bugbot check_not_started "$_1789_H" "")"
+_1789_t212_payload="$(_1789_ledger "$(_1789_entry "$_1789_RUN" "$_1789_H" "$_1789_H" waiting_on_reviewer reviewer-no-verdict-yet "[$(_1789_last_record)]")")"
+run_test "1789_T2.12_carry_forward_third_invocation_adopts_same" "RECORDED_REQUEST_REF=9300|RECORDED_REQUESTED_AT=2020-01-01T00:00:02Z" \
+  "$(_1789_recorded "$_1789_t212_payload" "$_1789_H" bugbot | paste -sd '|' -)"
+
+# --- T5.2: the summary's Reviewer timing section and the result line.
+_1789_reset_processing_globals
+_1789_timed bugbot 1 0 2400 default none 316 \
+  "$(printf 'RESULT=clean\nREVIEW_REQUESTED_AT=2020-01-01T00:00:00Z\nREVIEW_REQUEST_REF=9001\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+_1789_timed greptile 2 4 1200 configured large_diff 1200 "$(print_no_verdict_yet greptile no_acknowledgement "$_1789_H" "")"
+reviewer_loop_process_platform_output pr-agent 3 "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1 >/dev/null 2>&1
+_1789_section="$(reviewer_loop_timing_summary_section)"
+run_test "1789_T5.2_section_heading" "1" "$(printf '%s\n' "$_1789_section" | grep -c '^\*\*Reviewer timing:\*\*$' || true)"
+run_test "1789_T5.2_verdict_line" "1" \
+  "$(printf '%s\n' "$_1789_section" | grep -Fxc -- '- bugbot: verdict received (clean) — budget 2400s (built-in default); requested 2020-01-01T00:00:00Z; latency 316s' || true)"
+run_test "1789_T5.2_no_verdict_line" "1" \
+  "$(printf '%s\n' "$_1789_section" | grep -Fxc -- '- greptile: no verdict yet — budget 1200s (configured, large diff); requested 2020-01-01T00:00:00Z (wait start); waited 1200s' || true)"
+run_test "1789_T5.2_reused_line" "1" \
+  "$(printf '%s\n' "$_1789_section" | grep -Fxc -- '- pr-agent: verdict reused from an earlier run on this revision' || true)"
+run_test "1789_T5.2_latency_note_once" "1" "$(printf '%s\n' "$_1789_section" | grep -c '^_Latency is measured to the poll that observed the verdict' || true)"
+run_test "1789_T5.2_lines_at_most_200_chars" "0" \
+  "$(printf '%s\n' "$_1789_section" | jq -Rr 'select(length > 200)' | grep -c . || true)"
+_1789_reset_processing_globals
+_1789_timed devin 1 2 1200 default none 3 "$(_1789_o escalate "$(printf 'x%.0s' $(seq 1 260))")"
+run_test "1789_T5.2_long_line_capped" "200" \
+  "$(reviewer_loop_timing_summary_section | grep '^- devin:' | jq -Rr 'length')"
+_1789_reset_processing_globals
+run_test "1789_T5.2_empty_without_records" "" "$(reviewer_loop_timing_summary_section)"
+run_test "1789_T5.2_summary_uses_section_and_line" "1|1" \
+  "$(grep -c '^  reviewer_timing_section="\$(reviewer_loop_timing_summary_section)"$' "$_1789_loop_src" || true)|$(grep -c 'result_line="\$(reviewer_loop_no_verdict_result_line "\$reason")"' "$_1789_loop_src" || true)"
+run_test "1789_T5.2_section_in_comment_body" "1" \
+  "$(grep -c '\${head_evidence_section}\${reviewer_timing_section}' "$_1789_loop_src" || true)"
+
+# --- T5.4: a waiting aggregate with no failure-evidence peer.
+_1789_reset_processing_globals
+loop_head_sha="$_1789_H"
+_1789_timed pr-agent 1 0 1200 default none 50 "$(_1789_o clean)"
+_1789_timed bugbot 2 4 2400 default none 2400 \
+  "$(printf 'REVIEW_REQUESTED_AT=2020-01-01T00:00:00Z\nREVIEW_REQUEST_REF=9001\n'; print_no_verdict_yet bugbot check_not_completed "$_1789_H" "")"
+_1789_wk="$(reviewer_loop_emit_waiting_keys)"
+run_test "1789_T5.4_waiting_keys" "bugbot|${_1789_H}|2020-01-01T00:00:00Z|2400|1" \
+  "$(kv_value PENDING_REVIEWER "$_1789_wk")|$(kv_value PENDING_REVIEW_HEAD_SHA "$_1789_wk")|$(kv_value PENDING_REVIEW_REQUESTED_AT "$_1789_wk")|$(kv_value PENDING_REVIEW_WAITED_SECONDS "$_1789_wk")|$(kv_value NO_FAILURE_DETECTED "$_1789_wk")"
+run_test "1789_T5.4_no_failed_peer_key" "0" "$(printf '%s\n' "$_1789_wk" | grep -c '^FAILED_PEER_PLATFORMS=' || true)"
+run_test "1789_T5.4_result_line" "waiting_on_reviewer (reviewer-no-verdict-yet) — bugbot has not returned a verdict for ${_1789_H} after 2400s (budget 2400s, default); no reviewer failure was detected" \
+  "$(reviewer_loop_no_verdict_result_line reviewer-no-verdict-yet)"
+run_test "1789_T5.4_main_flow_emits_in_rewait_block" "yes" \
+  "$(awk -v start="$_1789_ret_line" 'NR > start && /print_kv NO_VERDICT_REWAIT/ {f=1} f && /^  reviewer_loop_emit_waiting_keys$/ {print "yes"; exit} f && /^fi$/ {print "no"; exit}' "$_1789_loop_src")"
+
+# --- T5.5: regression — a failure-evidence skip before a waiting platform.
+# The real CodeRabbit CLI companion exits immediately with empty stdout
+# (skipped/no_output), then Bugbot never completes.
+_1789_reset_processing_globals
+loop_head_sha="$_1789_H"
+_1789_timed coderabbit-cli 1 0 1200 default none 2 "$(_1789_run_cr_cli 124 "" 30)"
+_1789_timed bugbot 2 4 2400 default none 2400 "$(print_no_verdict_yet bugbot check_not_completed "$_1789_H" "")"
+run_test "1789_T5.5_aggregate_waiting" "waiting_on_reviewer|reviewer-no-verdict-yet" "${aggregate_result}|${aggregate_reason}"
+_1789_wk="$(reviewer_loop_emit_waiting_keys)"
+run_test "1789_T5.5_pending_bugbot_failure_detected" "bugbot|0|coderabbit-cli" \
+  "$(kv_value PENDING_REVIEWER "$_1789_wk")|$(kv_value NO_FAILURE_DETECTED "$_1789_wk")|$(kv_value FAILED_PEER_PLATFORMS "$_1789_wk")"
+run_test "1789_T5.5_failed_peer_pairs" "coderabbit-cli|no_output" "$(reviewer_loop_failed_peer_platforms)"
+run_test "1789_T5.5_label_added" "1|0|0" "$(_1789_reconcile 0)"
+run_test "1789_T5.5_rewait_still_available" "available" "$(reviewer_loop_no_verdict_rewait_value fresh 0)"
+_1789_line="$(reviewer_loop_no_verdict_result_line reviewer-no-verdict-yet)"
+run_test "1789_T5.5_result_line_names_peer" "waiting_on_reviewer (reviewer-no-verdict-yet) — bugbot has not returned a verdict for ${_1789_H} after 2400s (budget 2400s, default); failure evidence from coderabbit-cli (no_output) — reviewer-failed applied" "$_1789_line"
+run_test "1789_T5.5_result_line_no_false_claim" "0" "$(printf '%s\n' "$_1789_line" | grep -c 'no reviewer failure was detected' || true)"
+# Variant: the CLI sleeps past its budget instead (the timeout kept skip).
+_1789_reset_processing_globals
+loop_head_sha="$_1789_H"
+_1789_timed coderabbit-cli 1 0 1 default none 4 "$(_1789_run_cr_cli 0 4 1)"
+_1789_timed bugbot 2 4 2400 default none 2400 "$(print_no_verdict_yet bugbot check_not_completed "$_1789_H" "")"
+_1789_wk="$(reviewer_loop_emit_waiting_keys)"
+run_test "1789_T5.5_kept_skip_no_failure" "1|0" \
+  "$(kv_value NO_FAILURE_DETECTED "$_1789_wk")|$(printf '%s\n' "$_1789_wk" | grep -c '^FAILED_PEER_PLATFORMS=' || true)"
+run_test "1789_T5.5_kept_skip_label_not_added" "0|0|0" "$(_1789_reconcile 0)"
+# Deferred note (c): the defensive branch — reviewer_failed_required set with
+# no failure-evidence peer listed (not produced by today's recording, which
+# sets the flag from the same peer entries). It fails closed: NO_FAILURE_DETECTED=0,
+# no FAILED_PEER_PLATFORMS, and the line states only that the label was applied.
+reviewer_failed_required=1
+_1789_wk="$(reviewer_loop_emit_waiting_keys)"
+run_test "1789_T5.5_defensive_required_without_peer" "0|0" \
+  "$(kv_value NO_FAILURE_DETECTED "$_1789_wk")|$(printf '%s\n' "$_1789_wk" | grep -c '^FAILED_PEER_PLATFORMS=' || true)"
+run_test "1789_T5.5_defensive_result_line" "waiting_on_reviewer (reviewer-no-verdict-yet) — bugbot has not returned a verdict for ${_1789_H} after 2400s (budget 2400s, default); reviewer-failed applied" \
+  "$(reviewer_loop_no_verdict_result_line reviewer-no-verdict-yet)"
+# The Codex wait reasons keep their existing line; the failure clause is
+# appended only when failure evidence exists.
+reviewer_failed_required=0
+run_test "1789_T5.5_codex_line_unchanged_without_failure" "waiting_on_reviewer (codex-github-review-pending) — current-head review trigger posted; reviewer has not returned terminal evidence yet" \
+  "$(reviewer_loop_no_verdict_result_line codex-github-review-pending)"
+platform_peer_evidence+=("coderabbit-cli|skipped|no_output")
+run_test "1789_T5.5_codex_line_with_failure_clause" "waiting_on_reviewer (codex-github-reaction-without-review) — current-head review trigger posted; reviewer has not returned terminal evidence yet; failure evidence from coderabbit-cli (no_output) — reviewer-failed applied" \
+  "$(reviewer_loop_no_verdict_result_line codex-github-reaction-without-review)"
+
+# --- T4.7: the loop-side Claude handler with a mock companion. A fresh run
+# that exits 4 after printing REVIEW_REQUESTED_AT / REVIEW_REQUEST_REF yields
+# PLATFORM_<n>_REQUEST_REF and a ledger request_ref; the re-wait invocation
+# (same run id and head) passes --adopt-run-id / --adopt-requested-at with
+# those values and its own record carries the same request; with only a
+# recorded requested_at it passes neither.
+_1789_claude_args="$_1789_dir/claude-args.log"
+cat > "$_1789_stub_root/scripts/development-workflow/claude-code-action-reviewer.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$_1789_claude_args"
+printf 'DISPATCH_RESULT=accepted\nREVIEW_REQUESTED_AT=2020-01-01T00:00:07Z\nREVIEW_REQUEST_REF=777\nVERDICT: NO_VERDICT_YET\n'
+exit 4
+STUB
+chmod +x "$_1789_stub_root/scripts/development-workflow/claude-code-action-reviewer.sh"
+_1789_reset_processing_globals
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T4.7_fresh_no_adopt_flags" "0" "$(grep -c -- '--adopt-' "$_1789_claude_args" || true)"
+run_test "1789_T4.7_fresh_forwards_request" "2020-01-01T00:00:07Z|777|4" \
+  "$(_1789_keys "$_1789_out")|$(kv_value_default EXIT "$_1789_out" "")"
+_1789_timed claude-code-action 1 4 1200 default none 30 "$_1789_out"
+run_test "1789_T4.7_platform_request_ref" "777|request" "$(_1789_kv PLATFORM_1_REQUEST_REF)|$(_1789_kv PLATFORM_1_REQUESTED_AT_SOURCE)"
+_1789_t47_rec="$(_1789_last_record)"
+run_test "1789_T4.7_ledger_request_ref" "777|2020-01-01T00:00:07Z" \
+  "$(printf '%s' "$_1789_t47_rec" | jq -r '[.request_ref, .requested_at] | join("|")')"
+# The next invocation: same run id and head → rewait; the recorded request is
+# loaded for the platform and handed to the companion.
+_1789_t47_payload="$(_1789_ledger "$(_1789_entry "$_1789_RUN" "1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" waiting_on_reviewer reviewer-no-verdict-yet "[$_1789_t47_rec]")")"
+loop_head_sha="1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+reviewer_loop_rewait_mode=1
+reviewer_loop_rewait_history_payload="$_1789_t47_payload"
+PR_REVIEW_LOOP_RUN_ID="$_1789_RUN" reviewer_loop_rewait_prepare_platform claude-code-action
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T4.7_rewait_passes_adopt_flags" "1" \
+  "$(grep -c -- '--adopt-run-id 777 --adopt-requested-at 2020-01-01T00:00:07Z' "$_1789_claude_args" || true)"
+_1789_reset_processing_globals
+_1789_timed claude-code-action 1 4 1200 default none 30 "$_1789_out"
+run_test "1789_T4.7_rewait_record_carries_request" "777|2020-01-01T00:00:07Z|request" \
+  "$(_1789_last_record | jq -r '[.request_ref, .requested_at, .requested_at_source] | join("|")')"
+# Only a recorded requested_at (empty ref) → neither flag; the companion dispatches.
+reviewer_loop_rewait_mode=1; reviewer_loop_recorded_request_found=1
+reviewer_loop_recorded_request_ref=""; reviewer_loop_recorded_requested_at="2020-01-01T00:00:07Z"
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T4.7_requested_at_only_no_flags" "0" "$(grep -c -- '--adopt-' "$_1789_claude_args" || true)"
+_1789_rewait_off
+unset reviewer_loop_rewait_history_payload
+
+unset _1789_T0 _1789_kv_file _1789_rec_verdict _1789_rec_waiting _1789_rec_replay _1789_t53_payload _1789_t212_payload
+unset _1789_section _1789_wk _1789_line _1789_claude_args _1789_t47_rec _1789_t47_payload
+unset -f _1789_timed _1789_kv _1789_has_key _1789_last_record
+
 unset _1789_wait_entry _1789_rec_bb _1789_rw _1789_push_entry _1789_nf_entry _1789_k _1789_pl _1789_rl _1789_hl
 unset -f _1789_rewait _1789_rewait_none _1789_rewait_off _1789_stderr_has _1789_count_body
 
@@ -23411,9 +23648,6 @@ unset -f _1789_gh_reset _1789_fx _1789_tick _1789_posts _1789_run_gh _1789_rre _
   _1789_assert_kept_skip _1789_assert_failed _1789_bb_run _1789_dv_run _1789_cr_status _1789_cr_count \
   _1789_pra _1789_pra_runs 2>/dev/null || true
 
-# --- Summary result line for reviewer-no-verdict-yet (partial D12 wording)
-run_test "1789_T2_summary_result_line_wording" "1" \
-  "$(grep -c 'has not returned a verdict for \${_nvy_head:-the current head} within its wait budget' "$_1789_loop_src" || true)"
 
 unset _1789_RUN _1789_H1
 unset -f _1789_entry _1789_ledger _1789_req_rec _1789_state _1789_recorded _1789_keys 2>/dev/null || true
